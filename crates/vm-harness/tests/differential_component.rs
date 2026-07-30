@@ -87,7 +87,9 @@ enum Outcome {
     Other(String),
 }
 
-fn blessed_outcome(export: &str, borrows: bool, len: usize) -> Result<(Outcome, TestHost)> {
+const FUEL: u64 = 1_000_000_000;
+
+fn blessed_outcome(export: &str, borrows: bool, len: usize) -> Result<(Outcome, TestHost, u64)> {
     let bytes = parse_str(KERNEL_GUEST_WAT)?;
     validate_component(&bytes)?;
     let engine = blessed_engine()?;
@@ -95,7 +97,7 @@ fn blessed_outcome(export: &str, borrows: bool, len: usize) -> Result<(Outcome, 
     let mut linker = Linker::<TestHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut store = Store::new(&engine, TestHost::new(len));
-    store.set_fuel(1_000_000_000)?;
+    store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
 
     // The borrow-liveness check surfaces from post_return, so its error is
@@ -129,10 +131,11 @@ fn blessed_outcome(export: &str, borrows: bool, len: usize) -> Result<(Outcome, 
         }
     };
     let host = store.data().clone();
-    Ok((outcome, host))
+    let fuel = FUEL - store.get_fuel()?;
+    Ok((outcome, host, fuel))
 }
 
-fn ref_outcome(export: &str, borrows: bool, len: usize) -> Result<(Outcome, TestHost)> {
+fn ref_outcome(export: &str, borrows: bool, len: usize) -> Result<(Outcome, TestHost, u64)> {
     let bytes = parse_str(KERNEL_GUEST_WAT)?;
     let comp = RefComponent::decode(&bytes)?;
     let mut instance = RefComponentInstance::instantiate(&comp, TestHost::new(len))?;
@@ -150,15 +153,17 @@ fn ref_outcome(export: &str, borrows: bool, len: usize) -> Result<(Outcome, Test
         Err(ExecError::Canon(CanonError::BorrowsRemain)) => Outcome::BorrowsRemain,
         Err(e) => Outcome::Other(format!("{e:?}")),
     };
-    Ok((outcome, instance.into_host()))
+    let fuel = instance.fuel_consumed();
+    Ok((outcome, instance.into_host(), fuel))
 }
 
 #[test]
 fn component_outcomes_agree_between_blessed_engine_and_vm_ref() -> Result<()> {
     for len in [0usize, 1, 8, 1_000, 65_000] {
-        let (blessed, blessed_host) = blessed_outcome("run", true, len)?;
-        let (reference, ref_host) = ref_outcome("run", true, len)?;
+        let (blessed, blessed_host, blessed_fuel) = blessed_outcome("run", true, len)?;
+        let (reference, ref_host, ref_fuel) = ref_outcome("run", true, len)?;
         assert_eq!(blessed, reference, "run diverged at len {len}");
+        assert_eq!(blessed_fuel, ref_fuel, "fuel diverged at len {len}");
         assert_eq!(
             blessed_host.values, ref_host.values,
             "host state diverged at len {len}"
@@ -180,15 +185,15 @@ fn component_outcomes_agree_between_blessed_engine_and_vm_ref() -> Result<()> {
 #[test]
 fn forged_handles_and_leaked_borrows_agree() -> Result<()> {
     use anyhow::Context as _;
-    let (blessed_forge, blessed_host) =
+    let (blessed_forge, blessed_host, _) =
         blessed_outcome("forge", false, 8).context("blessed forge")?;
-    let (ref_forge, ref_host) = ref_outcome("forge", false, 8).context("ref forge")?;
+    let (ref_forge, ref_host, _) = ref_outcome("forge", false, 8).context("ref forge")?;
     assert_eq!(blessed_forge, Outcome::UnknownHandle);
     assert_eq!(ref_forge, Outcome::UnknownHandle);
     assert!(blessed_host.log.is_empty() && ref_host.log.is_empty());
 
-    let (blessed_leak, _) = blessed_outcome("leak", true, 8).context("blessed leak")?;
-    let (ref_leak, _) = ref_outcome("leak", true, 8).context("ref leak")?;
+    let (blessed_leak, _, _) = blessed_outcome("leak", true, 8).context("blessed leak")?;
+    let (ref_leak, _, _) = ref_outcome("leak", true, 8).context("ref leak")?;
     assert_eq!(blessed_leak, Outcome::BorrowsRemain);
     assert_eq!(ref_leak, Outcome::BorrowsRemain);
     Ok(())

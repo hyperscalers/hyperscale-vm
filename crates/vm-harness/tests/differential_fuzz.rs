@@ -87,7 +87,12 @@ const fn map_trap(trap: Trap) -> Option<RefTrap> {
     }
 }
 
-fn wasmtime_outcome(engine: &Engine, module: &Module, export: &str, args: &[Value]) -> Outcome {
+fn wasmtime_outcome(
+    engine: &Engine,
+    module: &Module,
+    export: &str,
+    args: &[Value],
+) -> (Outcome, Option<u64>) {
     let mut store = Store::new(engine, ());
     store.set_fuel(WASMTIME_FUEL).expect("fuel on");
     let instance = match Instance::new(&mut store, module, &[]) {
@@ -95,17 +100,19 @@ fn wasmtime_outcome(engine: &Engine, module: &Module, export: &str, args: &[Valu
         // Instantiation traps (an out-of-bounds active segment) compare like
         // call traps.
         Err(e) => {
-            return e
-                .downcast_ref::<Trap>()
-                .and_then(|t| map_trap(*t))
-                .map_or_else(
-                    || Outcome::Other(format!("instantiate: {e:#}")),
-                    Outcome::Trap,
-                );
+            return (
+                e.downcast_ref::<Trap>()
+                    .and_then(|t| map_trap(*t))
+                    .map_or_else(
+                        || Outcome::Other(format!("instantiate: {e:#}")),
+                        Outcome::Trap,
+                    ),
+                None,
+            );
         }
     };
     let Some(func) = instance.get_func(&mut store, export) else {
-        return Outcome::Other("missing export".to_string());
+        return (Outcome::Other("missing export".to_string()), None);
     };
     let vals: Vec<Val> = args
         .iter()
@@ -117,38 +124,52 @@ fn wasmtime_outcome(engine: &Engine, module: &Module, export: &str, args: &[Valu
     let result_len = func.ty(&store).results().len();
     let mut results = vec![Val::I32(0); result_len];
     match func.call(&mut store, &vals, &mut results) {
-        Ok(()) => Outcome::Values(
-            results
-                .iter()
-                .map(|v| match v {
-                    Val::I32(x) => Value::I32(*x),
-                    Val::I64(x) => Value::I64(*x),
-                    other => panic!("non-integer result {other:?}"),
-                })
-                .collect(),
+        Ok(()) => {
+            let fuel = WASMTIME_FUEL - store.get_fuel().expect("fuel on");
+            (
+                Outcome::Values(
+                    results
+                        .iter()
+                        .map(|v| match v {
+                            Val::I32(x) => Value::I32(*x),
+                            Val::I64(x) => Value::I64(*x),
+                            other => panic!("non-integer result {other:?}"),
+                        })
+                        .collect(),
+                ),
+                Some(fuel),
+            )
+        }
+        Err(e) => (
+            match e.downcast_ref::<Trap>() {
+                Some(Trap::OutOfFuel | Trap::StackOverflow) => Outcome::Exhausted,
+                Some(t) => map_trap(*t).map_or_else(
+                    || Outcome::Other(format!("unmapped trap {t:?}")),
+                    Outcome::Trap,
+                ),
+                None => Outcome::Other(format!("{e:#}")),
+            },
+            None,
         ),
-        Err(e) => match e.downcast_ref::<Trap>() {
-            Some(Trap::OutOfFuel | Trap::StackOverflow) => Outcome::Exhausted,
-            Some(t) => map_trap(*t).map_or_else(
-                || Outcome::Other(format!("unmapped trap {t:?}")),
-                Outcome::Trap,
-            ),
-            None => Outcome::Other(format!("{e:#}")),
-        },
     }
 }
 
-fn ref_outcome(module: &RefModule, export: &str, args: &[Value]) -> Outcome {
+fn ref_outcome(module: &RefModule, export: &str, args: &[Value]) -> (Outcome, Option<u64>) {
     let mut instance = match RefInstance::instantiate(module) {
         Ok(i) => i,
-        Err(t) => return Outcome::Trap(t),
+        Err(t) => return (Outcome::Trap(t), None),
     };
     instance.set_step_limit(REF_STEPS);
     match instance.invoke(export, args) {
-        Ok(Ok(values)) => Outcome::Values(values),
-        Ok(Err(RefTrap::StepBudgetExhausted | RefTrap::CallDepthExhausted)) => Outcome::Exhausted,
-        Ok(Err(trap)) => Outcome::Trap(trap),
-        Err(e) => Outcome::Other(format!("{e:#}")),
+        Ok(Ok(values)) => {
+            let fuel = instance.fuel_consumed();
+            (Outcome::Values(values), Some(fuel))
+        }
+        Ok(Err(RefTrap::StepBudgetExhausted | RefTrap::CallDepthExhausted)) => {
+            (Outcome::Exhausted, None)
+        }
+        Ok(Err(trap)) => (Outcome::Trap(trap), None),
+        Err(e) => (Outcome::Other(format!("{e:#}")), None),
     }
 }
 
@@ -234,8 +255,9 @@ fn fuzz_body() -> Result<()> {
                 .map(|t| matches!(t, Ty::I64))
                 .collect();
             for args in arg_sets(&params) {
-                let blessed = wasmtime_outcome(&engine, &wasmtime_module, &export, &args);
-                let reference = ref_outcome(&ref_module, &export, &args);
+                let (blessed, blessed_fuel) =
+                    wasmtime_outcome(&engine, &wasmtime_module, &export, &args);
+                let (reference, ref_fuel) = ref_outcome(&ref_module, &export, &args);
                 if blessed == Outcome::Exhausted || reference == Outcome::Exhausted {
                     exhausted += 1;
                     continue;
@@ -244,6 +266,12 @@ fn fuzz_body() -> Result<()> {
                     blessed, reference,
                     "divergence at seed {seed} export {export} args {args:?}"
                 );
+                if let (Some(b), Some(r)) = (blessed_fuel, ref_fuel) {
+                    assert_eq!(
+                        b, r,
+                        "fuel diverged at seed {seed} export {export} args {args:?}"
+                    );
+                }
                 compared += 1;
             }
         }

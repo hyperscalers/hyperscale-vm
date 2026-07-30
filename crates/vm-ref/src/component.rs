@@ -465,8 +465,15 @@ struct KernelCanon<'c, H> {
     resolved_core_funcs: Vec<FuncAddr>,
     resolved_memories: Vec<u32>,
     handles: Vec<Handle>,
+    /// Bytes crossing the canonical ABI boundary, mirroring the runtime's
+    /// per-byte fuel supplement.
+    boundary_bytes: u64,
     host: H,
 }
+
+/// Fuel charged per boundary byte; must equal the runtime's rate (asserted by
+/// the differential fuel lane).
+pub const FUEL_PER_BOUNDARY_BYTE: u64 = 1;
 
 /// An instantiated component.
 pub struct RefComponentInstance<'c, H> {
@@ -635,6 +642,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                 resolved_core_funcs,
                 resolved_memories: resolved_memories_by_alias,
                 handles: Vec::new(),
+                boundary_bytes: 0,
                 host,
             },
         })
@@ -716,6 +724,13 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
             Err(e) => Err(e),
         };
         Ok(result)
+    }
+
+    /// Total fuel consumed: the spec instruction schedule plus the boundary
+    /// byte supplement, matching the blessed runtime's accounting.
+    #[must_use]
+    pub const fn fuel_consumed(&self) -> u64 {
+        self.store.fuel_consumed + self.canon.boundary_bytes * FUEL_PER_BOUNDARY_BYTE
     }
 
     /// Consumes the instance, returning the host.
@@ -858,6 +873,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::Read => {
                         let rep = self.resolve_handle(args[0])?;
                         let bytes = self.host.read(rep);
+                        self.boundary_bytes += bytes.len() as u64;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[1])?;
                         Ok(Vec::new())
@@ -866,11 +882,13 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let rep = self.resolve_handle(args[0])?;
                         let mem = self.mem_opt(id)?;
                         let bytes = Self::read_guest_bytes(store, mem, args[1], args[2])?;
+                        self.boundary_bytes += bytes.len() as u64;
                         self.host.write(rep, bytes);
                         Ok(Vec::new())
                     }
                     HostFn::Randomness => {
                         let draw = self.host.randomness();
+                        self.boundary_bytes += draw.len() as u64;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &draw, args[0])?;
                         Ok(Vec::new())
@@ -879,6 +897,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         let data = Self::read_guest_bytes(store, mem, args[0], args[1])?;
                         let digest = self.host.hash(&data);
+                        self.boundary_bytes += data.len() as u64 + digest.len() as u64;
                         self.lower_list(modules, store, mem, realloc, &digest, args[2])?;
                         Ok(Vec::new())
                     }

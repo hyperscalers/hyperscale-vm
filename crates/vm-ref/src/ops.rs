@@ -230,6 +230,27 @@ pub struct BrTargets {
     pub default: u32,
 }
 
+/// The fuel schedule of the pinned engine, reimplemented as the spec.
+///
+/// Extracted from wasmtime 36's cranelift translation (`fuel_before_op`):
+/// `nop`, `drop`, and pure control structure (`block`, `loop`, `unreachable`,
+/// `return`, `else`, `end`) are free; every other operator costs one; each
+/// function entry costs one. Verified to the unit against the engine by the
+/// differential fuel lane.
+pub(crate) const fn fuel_cost(op: &Op) -> u64 {
+    match op {
+        Op::Nop
+        | Op::Drop
+        | Op::Block { .. }
+        | Op::Loop { .. }
+        | Op::Unreachable
+        | Op::Return
+        | Op::Else
+        | Op::End => 0,
+        _ => 1,
+    }
+}
+
 fn bool32(b: bool) -> Value {
     Value::I32(i32::from(b))
 }

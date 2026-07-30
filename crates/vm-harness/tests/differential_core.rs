@@ -35,12 +35,19 @@ const fn map_trap(trap: Trap) -> Option<RefTrap> {
     }
 }
 
-fn wasmtime_outcome(engine: &Engine, module: &Module, export: &str, args: &[Value]) -> Outcome {
+const FUEL: u64 = 1_000_000_000;
+
+fn wasmtime_outcome(
+    engine: &Engine,
+    module: &Module,
+    export: &str,
+    args: &[Value],
+) -> (Outcome, Option<u64>) {
     let mut store = Store::new(engine, ());
-    store.set_fuel(1_000_000_000).expect("fuel on");
+    store.set_fuel(FUEL).expect("fuel on");
     let instance = match Instance::new(&mut store, module, &[]) {
         Ok(i) => i,
-        Err(e) => return Outcome::HostError(format!("instantiate: {e:#}")),
+        Err(e) => return (Outcome::HostError(format!("instantiate: {e:#}")), None),
     };
     let func = instance
         .get_func(&mut store, export)
@@ -55,37 +62,49 @@ fn wasmtime_outcome(engine: &Engine, module: &Module, export: &str, args: &[Valu
     let result_len = func.ty(&store).results().len();
     let mut results = vec![Val::I32(0); result_len];
     match func.call(&mut store, &vals, &mut results) {
-        Ok(()) => Outcome::Values(
-            results
-                .iter()
-                .map(|v| match v {
-                    Val::I32(x) => Value::I32(*x),
-                    Val::I64(x) => Value::I64(*x),
-                    other => panic!("non-integer result {other:?}"),
-                })
-                .collect(),
-        ),
-        Err(e) => e.downcast_ref::<Trap>().map_or_else(
-            || Outcome::HostError(format!("{e:#}")),
-            |t| {
-                map_trap(*t).map_or_else(
-                    || Outcome::HostError(format!("unmapped trap {t:?}")),
-                    Outcome::Trap,
-                )
-            },
+        Ok(()) => {
+            let fuel = FUEL - store.get_fuel().expect("fuel on");
+            (
+                Outcome::Values(
+                    results
+                        .iter()
+                        .map(|v| match v {
+                            Val::I32(x) => Value::I32(*x),
+                            Val::I64(x) => Value::I64(*x),
+                            other => panic!("non-integer result {other:?}"),
+                        })
+                        .collect(),
+                ),
+                Some(fuel),
+            )
+        }
+        Err(e) => (
+            e.downcast_ref::<Trap>().map_or_else(
+                || Outcome::HostError(format!("{e:#}")),
+                |t| {
+                    map_trap(*t).map_or_else(
+                        || Outcome::HostError(format!("unmapped trap {t:?}")),
+                        Outcome::Trap,
+                    )
+                },
+            ),
+            None,
         ),
     }
 }
 
-fn ref_outcome(module: &RefModule, export: &str, args: &[Value]) -> Outcome {
+fn ref_outcome(module: &RefModule, export: &str, args: &[Value]) -> (Outcome, Option<u64>) {
     let mut instance = match RefInstance::instantiate(module) {
         Ok(i) => i,
-        Err(t) => return Outcome::Trap(t),
+        Err(t) => return (Outcome::Trap(t), None),
     };
     match instance.invoke(export, args) {
-        Ok(Ok(values)) => Outcome::Values(values),
-        Ok(Err(trap)) => Outcome::Trap(trap),
-        Err(e) => Outcome::HostError(format!("{e:#}")),
+        Ok(Ok(values)) => {
+            let fuel = instance.fuel_consumed();
+            (Outcome::Values(values), Some(fuel))
+        }
+        Ok(Err(trap)) => (Outcome::Trap(trap), None),
+        Err(e) => (Outcome::HostError(format!("{e:#}")), None),
     }
 }
 
@@ -138,12 +157,15 @@ fn compare_fixture(name: &str, wat_text: &str) -> Result<usize> {
             .map(|t| matches!(t, Ty::I64))
             .collect();
         for args in arg_matrix(&params) {
-            let blessed = wasmtime_outcome(&engine, &module, &export, &args);
-            let reference = ref_outcome(&ref_module, &export, &args);
+            let (blessed, blessed_fuel) = wasmtime_outcome(&engine, &module, &export, &args);
+            let (reference, ref_fuel) = ref_outcome(&ref_module, &export, &args);
             assert_eq!(
                 blessed, reference,
                 "divergence in {name}::{export} with args {args:?}"
             );
+            if let (Some(b), Some(r)) = (blessed_fuel, ref_fuel) {
+                assert_eq!(b, r, "fuel diverged in {name}::{export} with args {args:?}");
+            }
             invocations += 1;
         }
     }

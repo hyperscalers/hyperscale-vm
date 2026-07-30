@@ -9,7 +9,7 @@
 
 use crate::error::{DecodeError, Trap};
 use crate::module::{RefModule, Ty};
-use crate::ops::{LoadKind, Op, StoreKind, Value, eval_binary, eval_unary};
+use crate::ops::{LoadKind, Op, StoreKind, Value, eval_binary, eval_unary, fuel_cost};
 
 pub(crate) const PAGE: usize = 64 * 1024;
 const MAX_CALL_DEPTH: usize = 512;
@@ -94,6 +94,9 @@ pub(crate) struct Store {
     pub depth: usize,
     /// Optional instruction budget; `None` is unbounded.
     pub steps_remaining: Option<u64>,
+    /// Fuel consumed under the spec schedule ([`fuel_cost`] plus one per
+    /// function entry).
+    pub fuel_consumed: u64,
 }
 
 /// Dispatch for canon-defined functions.
@@ -187,8 +190,10 @@ fn run(
         is_loop: false,
     }];
     let mut pc = 0usize;
+    store.fuel_consumed += 1; // function entry
 
     while pc < func.ops.len() {
+        store.fuel_consumed += fuel_cost(&func.ops[pc]);
         if let Some(remaining) = store.steps_remaining.as_mut() {
             if *remaining == 0 {
                 return Err(Trap::StepBudgetExhausted.into());
@@ -626,6 +631,12 @@ impl<'m> RefInstance<'m> {
     /// — a harness safety valve for generated corpora.
     pub const fn set_step_limit(&mut self, limit: u64) {
         self.store.steps_remaining = Some(limit);
+    }
+
+    /// Total fuel consumed under the spec schedule.
+    #[must_use]
+    pub const fn fuel_consumed(&self) -> u64 {
+        self.store.fuel_consumed
     }
 
     /// Invokes an exported function.

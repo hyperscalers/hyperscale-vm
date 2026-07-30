@@ -76,13 +76,15 @@ enum Outcome {
     Other(String),
 }
 
-fn blessed(component: &[u8], from: u64, amount: u64) -> Result<(Outcome, TestHost)> {
+const FUEL: u64 = 100_000_000;
+
+fn blessed(component: &[u8], from: u64, amount: u64) -> Result<(Outcome, TestHost, u64)> {
     let engine = blessed_engine()?;
     let compiled = Component::new(&engine, component)?;
     let mut linker = Linker::<TestHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut store = Store::new(&engine, starting_host(from));
-    store.set_fuel(100_000_000)?;
+    store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &compiled)?;
     let run = instance.get_typed_func::<(Resource<Substate>, Resource<Substate>, u64), (u64,)>(
         &mut store, "run",
@@ -103,10 +105,11 @@ fn blessed(component: &[u8], from: u64, amount: u64) -> Result<(Outcome, TestHos
             }
         }
     };
-    Ok((outcome, store.data().clone()))
+    let fuel = FUEL - store.get_fuel()?;
+    Ok((outcome, store.data().clone(), fuel))
 }
 
-fn reference(component: &[u8], from: u64, amount: u64) -> Result<(Outcome, TestHost)> {
+fn reference(component: &[u8], from: u64, amount: u64) -> Result<(Outcome, TestHost, u64)> {
     let comp = RefComponent::decode(component)?;
     let mut instance = RefComponentInstance::instantiate(&comp, starting_host(from))?;
     let outcome = match instance.invoke(
@@ -120,7 +123,8 @@ fn reference(component: &[u8], from: u64, amount: u64) -> Result<(Outcome, TestH
         Err(ExecError::Trap(RefTrap::Unreachable)) => Outcome::Unreachable,
         Err(e) => Outcome::Other(format!("{e:?}")),
     };
-    Ok((outcome, instance.into_host()))
+    let fuel = instance.fuel_consumed();
+    Ok((outcome, instance.into_host(), fuel))
 }
 
 #[test]
@@ -129,17 +133,23 @@ fn the_rust_guest_agrees_between_blessed_engine_and_vm_ref() -> Result<()> {
 
     // The happy transfer and the insufficient-balance panic.
     for (from, amount) in [(500u64, 100u64), (500, 500), (50, 100)] {
-        let (b, b_host) = blessed(&component, from, amount)?;
-        let (r, r_host) = reference(&component, from, amount)?;
+        let (b, b_host, b_fuel) = blessed(&component, from, amount)?;
+        let (r, r_host, r_fuel) = reference(&component, from, amount)?;
         assert_eq!(b, r, "outcome diverged for from={from} amount={amount}");
         assert_eq!(
             b_host.values, r_host.values,
             "host state diverged for from={from} amount={amount}"
         );
+        if matches!(b, Outcome::Value(_)) {
+            assert_eq!(
+                b_fuel, r_fuel,
+                "fuel diverged for from={from} amount={amount}"
+            );
+        }
     }
 
     // Spot-check the expected value independently of both implementations.
-    let (outcome, host) = reference(&component, 500, 100)?;
+    let (outcome, host, _) = reference(&component, 500, 100)?;
     let hash_first = 3u8.wrapping_mul(32);
     assert_eq!(
         outcome,
