@@ -176,11 +176,11 @@ pub struct AppliedDelta {
 /// The in-memory, access-recording store.
 #[derive(Clone, Debug, Default)]
 pub struct MemoryStore {
-    cells: BTreeMap<SubstateKey, Vec<u8>>,
-    entries: BTreeMap<(Address, RoleId), BTreeMap<u128, Vec<u8>>>,
-    locked: BTreeSet<SubstateKey>,
-    pending_deltas: BTreeMap<SubstateKey, Vec<DeltaOp>>,
-    held: BTreeMap<SubstateKey, BTreeMap<TxHash, u128>>,
+    pub(crate) cells: BTreeMap<SubstateKey, Vec<u8>>,
+    pub(crate) entries: BTreeMap<(Address, RoleId), BTreeMap<u128, Vec<u8>>>,
+    pub(crate) locked: BTreeSet<SubstateKey>,
+    pub(crate) pending_deltas: BTreeMap<SubstateKey, Vec<DeltaOp>>,
+    pub(crate) held: BTreeMap<SubstateKey, BTreeMap<TxHash, u128>>,
     log: Vec<Access>,
 }
 

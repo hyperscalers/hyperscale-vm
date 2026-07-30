@@ -16,6 +16,7 @@ pub mod conflict;
 pub mod executor;
 pub mod modes;
 pub mod oracle;
+pub mod overlay;
 pub mod ownership;
 pub mod session;
 pub mod store;
@@ -30,6 +31,7 @@ pub use modes::{
     fold_deltas, judge,
 };
 pub use oracle::{covered, permits, target_covers, undeclared_accesses};
+pub use overlay::OverlayStore;
 pub use ownership::{CreationContext, MoveError, move_object};
 pub use session::{
     Capability, EnvInputs, FinishError, KernelSession, MaterializeError, Movement, Outcome,
