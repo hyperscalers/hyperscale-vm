@@ -3,6 +3,8 @@
 //! profile — the empirical floats-ban test — and run it under the blessed
 //! engine with the kernel session as host.
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
@@ -12,7 +14,7 @@ use hyperscale_vm_harness::fixtures::{build_transfer_component, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, KernelSession, MaterializeError, MemoryStore, Movement, Outcome,
-    SubstateStore, TxHash, encode_amount,
+    OverlayStore, SubstateStore, TxHash, encode_amount,
 };
 use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,
@@ -58,10 +60,8 @@ fn session(committed: u128, reserve: u128) -> Result<KernelSession, MaterializeE
         .write(sender, encode_amount(committed).to_vec())
         .unwrap();
     store.clear_log();
-    let pinned = store.clone();
     KernelSession::materialize(
-        store,
-        pinned,
+        OverlayStore::new(Arc::new(store)),
         &declared(reserve),
         TxHash(Hash32([0x44; 32])),
         EnvInputs {

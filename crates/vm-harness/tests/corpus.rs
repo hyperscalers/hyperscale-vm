@@ -9,6 +9,7 @@
 //! trace-subset oracle standing at every receipt.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use hyperscale_vm_effects::stdlib::{
@@ -23,8 +24,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, Outcome, Receipt, SubstateStore, TxHash,
-    decode_amount, encode_amount,
+    Capability, EnvInputs, KernelSession, MemoryStore, Outcome, OverlayStore, Receipt,
+    SubstateStore, TxHash, decode_amount, encode_amount,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
@@ -245,9 +246,14 @@ fn execute_manifest(
     let manifest_hash = manifest.hash(&TestHasher);
 
     let before = store.clone();
-    let mut session =
-        KernelSession::materialize(store, before.clone(), declared, tx, env(), test_hash)
-            .expect("corpus manifests are feasible");
+    let mut session = KernelSession::materialize(
+        OverlayStore::new(Arc::new(store)),
+        declared,
+        tx,
+        env(),
+        test_hash,
+    )
+    .expect("corpus manifests are feasible");
 
     // Per-node outputs: the bucket cells later nodes consume.
     let mut outputs: Vec<Vec<Vec<u8>>> = Vec::with_capacity(graph.nodes.len());
@@ -356,10 +362,10 @@ fn execute_manifest(
         outputs.push(node_outputs);
     }
 
-    let (receipt, store) = session
+    let (receipt, threaded) = session
         .finish(Outcome::Completed { value: None }, fuel_total)
         .expect("the oracle stands on every corpus receipt");
-    Ok((TxResult::Completed(receipt), store))
+    Ok((TxResult::Completed(receipt), threaded.collapse()))
 }
 
 type Invoked = (KernelSession, Vec<Vec<u8>>, u64);

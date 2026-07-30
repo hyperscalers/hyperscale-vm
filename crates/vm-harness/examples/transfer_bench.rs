@@ -8,6 +8,7 @@
 //! and the batch executor (judge, conflict-group, execute, apply). Wall
 //! clock is observability here, never a verdict; run with `--release`.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -21,7 +22,7 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession, MemoryStore,
-    Outcome, RunResult, SubstateStore, TxHash, encode_amount, execute_batch,
+    Outcome, OverlayStore, RunResult, SubstateStore, TxHash, encode_amount, execute_batch,
 };
 use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,
@@ -280,24 +281,17 @@ fn main() -> Result<()> {
     }
 
     // Section 2: the session pipeline — materialize, two guest calls,
-    // finish — threading one store like a block, at growing store sizes to
-    // expose the clone-based state model's scaling.
+    // finish — threading one store like a block, at growing store sizes so
+    // any state-size scaling in the kernel shows.
     println!();
     for senders in [100u32, 1_000, 4_000] {
-        let mut store = funded_store(senders);
+        let mut store = OverlayStore::new(Arc::new(funded_store(senders)));
         let start = Instant::now();
         for index in 0..senders {
             let from = sender(index);
-            let pinned = store.clone();
-            let session = KernelSession::materialize(
-                store,
-                pinned,
-                &declared(from),
-                tx(index),
-                env(),
-                test_hash,
-            )
-            .expect("feasible");
+            let session =
+                KernelSession::materialize(store, &declared(from), tx(index), env(), test_hash)
+                    .expect("feasible");
             let (session, fuel) = bench.run_transfer(from, session);
             let (_receipt, threaded) = session
                 .finish(Outcome::Completed { value: None }, fuel)
@@ -349,12 +343,11 @@ fn main() -> Result<()> {
     println!();
     {
         let count = 2_000u32;
-        let store = funded_store(1);
+        let base = Arc::new(funded_store(1));
         let sessions: Vec<KernelSession> = (0..count)
             .map(|index| {
                 KernelSession::materialize(
-                    store.clone(),
-                    store.clone(),
+                    OverlayStore::new(Arc::clone(&base)),
                     &declared(sender(0)),
                     tx(index),
                     env(),
@@ -374,16 +367,10 @@ fn main() -> Result<()> {
     }
 
     let fuel_check = {
-        let store = funded_store(1);
-        let session = KernelSession::materialize(
-            store.clone(),
-            store,
-            &declared(sender(0)),
-            tx(0),
-            env(),
-            test_hash,
-        )
-        .expect("feasible");
+        let store = OverlayStore::new(Arc::new(funded_store(1)));
+        let session =
+            KernelSession::materialize(store, &declared(sender(0)), tx(0), env(), test_hash)
+                .expect("feasible");
         bench.run_transfer(sender(0), session).1
     };
     println!("\nfuel per transfer: {fuel_check} (engine schedule + boundary supplement)");

@@ -13,12 +13,14 @@
 //! canonical order — absolute writes, movement folds, settlements.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::thread;
 
 use hyperscale_vm_effects::{Effect, EffectSet, EffectTarget, Mode, SubstateKey};
 
 use crate::conflict::conflicts;
 use crate::modes::{DeltaOp, ModeError, TxHash};
+use crate::overlay::OverlayStore;
 use crate::session::{
     EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt, StateDelta,
 };
@@ -166,7 +168,7 @@ fn abort_receipt(outcome: Outcome, fuel: u64) -> Receipt {
 /// the group's store; a non-completed transaction leaves the store as it
 /// found it.
 fn run_group<R: GuestRunner>(
-    judged: &MemoryStore,
+    judged: &Arc<MemoryStore>,
     batch: &[&BatchTx],
     group: &[usize],
     runner: &R,
@@ -174,43 +176,42 @@ fn run_group<R: GuestRunner>(
     hash_fn: fn(&[u8]) -> [u8; 32],
 ) -> Result<Vec<(TxHash, Receipt)>, BatchError> {
     let mut receipts = Vec::with_capacity(group.len());
-    let mut store = judged.clone();
+    let mut store = OverlayStore::new(Arc::clone(judged));
     for &index in group {
         let entry = batch[index];
         let before = store.clone();
-        let session = match KernelSession::materialize(
-            store,
-            judged.clone(),
-            &entry.declared,
-            entry.tx,
-            env,
-            hash_fn,
-        ) {
-            Ok(session) => session,
-            Err(MaterializeError::Infeasible { key, amount }) => {
-                // Adoption makes this unreachable for batch-judged
-                // reservations; kept as an honest per-transaction abort.
-                receipts.push((
-                    entry.tx,
-                    abort_receipt(Outcome::Infeasible { key, amount }, 0),
-                ));
-                store = before;
-                continue;
-            }
-            Err(defect) => {
-                receipts.push((
-                    entry.tx,
-                    abort_receipt(
-                        Outcome::UserError {
-                            reason: defect.to_string(),
-                        },
-                        0,
-                    ),
-                ));
-                store = before;
-                continue;
-            }
-        };
+        let session =
+            match KernelSession::materialize(store, &entry.declared, entry.tx, env, hash_fn) {
+                Ok(session) => {
+                    // The rollback clone must drop here: it keeps the threaded
+                    // layer's Arc unshared, so finish merges it in place.
+                    drop(before);
+                    session
+                }
+                Err(MaterializeError::Infeasible { key, amount }) => {
+                    // Adoption makes this unreachable for batch-judged
+                    // reservations; kept as an honest per-transaction abort.
+                    receipts.push((
+                        entry.tx,
+                        abort_receipt(Outcome::Infeasible { key, amount }, 0),
+                    ));
+                    store = before;
+                    continue;
+                }
+                Err(defect) => {
+                    receipts.push((
+                        entry.tx,
+                        abort_receipt(
+                            Outcome::UserError {
+                                reason: defect.to_string(),
+                            },
+                            0,
+                        ),
+                    ));
+                    store = before;
+                    continue;
+                }
+            };
         let result = runner.run(entry.tx, session);
         match result.outcome {
             Outcome::Completed { .. } => {
@@ -226,7 +227,7 @@ fn run_group<R: GuestRunner>(
             }
             aborted => {
                 // The guest failed: its partial writes never commit.
-                store = before;
+                store = result.session.discard();
                 receipts.push((entry.tx, abort_receipt(aborted, result.fuel)));
             }
         }
@@ -243,7 +244,8 @@ fn run_group<R: GuestRunner>(
 ///
 /// # Panics
 ///
-/// Only if a runner panics; the panic propagates from its worker.
+/// Only if a runner panics — the panic propagates from its worker — or on
+/// the kernel defect of a group overlay outliving its group.
 pub fn execute_batch<R: GuestRunner>(
     committed: MemoryStore,
     batch: &[BatchTx],
@@ -291,7 +293,9 @@ pub fn execute_batch<R: GuestRunner>(
     }
     judged.clear_log();
 
-    // Group and execute.
+    // Group and execute; every group's overlay shares the judged store as
+    // its immutable base.
+    let judged = Arc::new(judged);
     let groups = conflict_groups(&runnable);
     let executed: Vec<Result<Vec<(TxHash, Receipt)>, BatchError>> = match mode {
         ExecutionMode::Serial => groups
@@ -320,12 +324,10 @@ pub fn execute_batch<R: GuestRunner>(
         }
     }
 
-    apply_receipts(&mut judged, batch, &receipts)?;
+    let mut store = Arc::try_unwrap(judged).expect("no group overlay outlives its group");
+    apply_receipts(&mut store, batch, &receipts)?;
 
-    Ok(BatchOutcome {
-        receipts,
-        store: judged,
-    })
+    Ok(BatchOutcome { receipts, store })
 }
 
 /// Canonical-order application: absolute writes and entry changes, then

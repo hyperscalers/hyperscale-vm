@@ -4,6 +4,8 @@
 //! receipts must agree byte-identically, and the trace-subset oracle runs
 //! after every successful execution.
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result, anyhow};
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
@@ -12,8 +14,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome, Receipt, SubstateStore,
-    TxHash, encode_amount,
+    Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome, OverlayStore, Receipt,
+    SubstateStore, TxHash, encode_amount,
 };
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
@@ -137,8 +139,7 @@ fn fixture() -> Fixture {
 
 fn session(fx: &Fixture) -> KernelSession {
     KernelSession::materialize(
-        fx.store.clone(),
-        fx.store.clone(),
+        OverlayStore::new(Arc::new(fx.store.clone())),
         &fx.declared,
         tx(),
         env(),

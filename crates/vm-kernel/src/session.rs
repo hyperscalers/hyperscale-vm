@@ -22,7 +22,8 @@ use hyperscale_vm_effects::{
 
 use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
 use crate::oracle::undeclared_accesses;
-use crate::store::{Access, MemoryStore, StoreError, SubstateStore};
+use crate::overlay::OverlayStore;
+use crate::store::{Access, StoreError, SubstateStore};
 
 /// One materialized capability: what a handle rep grants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -243,9 +244,7 @@ pub enum FinishError {
 /// The per-transaction kernel session.
 #[derive(Debug)]
 pub struct KernelSession {
-    store: MemoryStore,
-    baseline: MemoryStore,
-    pinned: MemoryStore,
+    store: OverlayStore,
     declared: EffectSet,
     table: Vec<Capability>,
     tx: TxHash,
@@ -254,14 +253,14 @@ pub struct KernelSession {
 }
 
 impl KernelSession {
-    /// Materialize capabilities for a declared effect set over committed
-    /// state, judging and holding the declared reservations — or adopting
-    /// reservations a batch judge already holds for this transaction.
+    /// Materialize capabilities for a declared effect set over the
+    /// overlay's state, judging and holding the declared reservations — or
+    /// adopting reservations a batch judge already holds for this
+    /// transaction.
     ///
-    /// `pinned` is the snapshot source: the attested version snapshot
-    /// reads resolve against, fixed for the whole batch regardless of what
-    /// concurrent transactions commit. For a lone transaction it is simply
-    /// a clone of `store`.
+    /// The overlay's base is the snapshot source: the attested version
+    /// snapshot reads resolve against, fixed for the whole batch
+    /// regardless of what the group threads on top.
     ///
     /// The capability table's order is the effect set's canonical order,
     /// so reps are deterministic; the caller passes handles to the guest
@@ -271,15 +270,13 @@ impl KernelSession {
     ///
     /// Any [`MaterializeError`]; all are pre-execution aborts.
     pub fn materialize(
-        mut store: MemoryStore,
-        pinned: MemoryStore,
+        mut store: OverlayStore,
         declared: &EffectSet,
         tx: TxHash,
         env: EnvInputs,
         hash_fn: fn(&[u8]) -> [u8; 32],
     ) -> Result<Self, MaterializeError> {
         store.clear_log();
-        let baseline = store.clone();
         let mut table = Vec::with_capacity(declared.len());
         let mut reservations = Vec::new();
         for effect in declared.iter() {
@@ -314,8 +311,6 @@ impl KernelSession {
 
         Ok(Self {
             store,
-            baseline,
-            pinned,
             declared: declared.clone(),
             table,
             tx,
@@ -351,19 +346,15 @@ impl KernelSession {
     }
 
     /// A pinned read through a snapshot capability: the value comes from
-    /// the pinned store — the attested version — never from state
-    /// concurrent transactions are changing. The access records on the
-    /// live store for the oracle.
+    /// the overlay's base — the attested version — never from state
+    /// concurrent transactions are changing.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`].
     pub fn snap_cell(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
         match self.capability(rep)? {
-            Capability::Snapshot(key) => {
-                self.store.snapshot(key)?;
-                Ok(self.pinned.snapshot(key)?.unwrap_or_default())
-            }
+            Capability::Snapshot(key) => Ok(self.store.snapshot(key)?.unwrap_or_default()),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
     }
@@ -582,7 +573,7 @@ impl KernelSession {
         mut self,
         outcome: Outcome,
         fuel: u64,
-    ) -> Result<(Receipt, MemoryStore), FinishError> {
+    ) -> Result<(Receipt, OverlayStore), FinishError> {
         // Movements first: the pending deltas, as checked totals.
         let mut movements: BTreeMap<SubstateKey, Movement> = BTreeMap::new();
         for (key, ops) in self.store.pending_deltas() {
@@ -592,13 +583,13 @@ impl KernelSession {
                     DeltaOp::Add(amount) => {
                         movement.credit = movement
                             .credit
-                            .checked_add(*amount)
+                            .checked_add(amount)
                             .ok_or(StoreError::Mode(ModeError::DeltaOverflow))?;
                     }
                     DeltaOp::Sub(amount) => {
                         movement.debit = movement
                             .debit
-                            .checked_add(*amount)
+                            .checked_add(amount)
                             .ok_or(StoreError::Mode(ModeError::DeltaOverflow))?;
                     }
                 }
@@ -617,13 +608,14 @@ impl KernelSession {
         if !escaped.is_empty() {
             return Err(FinishError::Undeclared(escaped));
         }
-        let mut delta = diff(&self.baseline, &self.store);
+        let mut delta = diff(&self.store);
         // Commutative changes report as movements, never as absolutes.
         delta
             .cells
             .retain(|key, _| !movements.contains_key(key) && !settles.contains_key(key));
         delta.movements = movements;
         delta.settles = settles;
+        self.store.merge_active();
         Ok((
             Receipt {
                 outcome,
@@ -634,9 +626,17 @@ impl KernelSession {
         ))
     }
 
+    /// Abandon the session: the transaction's layer is dropped and the
+    /// store returns as the session found it.
+    #[must_use]
+    pub fn discard(mut self) -> OverlayStore {
+        self.store.discard_active();
+        self.store
+    }
+
     /// The session's store, for test inspection.
     #[must_use]
-    pub const fn store(&self) -> &MemoryStore {
+    pub const fn store(&self) -> &OverlayStore {
         &self.store
     }
 }
@@ -669,7 +669,7 @@ fn reject_self_conflicts(declared: &EffectSet) -> Result<(), MaterializeError> {
 /// The capability form of one declared effect: the world-design mapping.
 /// Entry targets are degenerate one-entry intervals, so collection access
 /// needs exactly two resource shapes.
-fn capability_for(store: &MemoryStore, effect: Effect) -> Result<Capability, MaterializeError> {
+fn capability_for(store: &OverlayStore, effect: Effect) -> Result<Capability, MaterializeError> {
     let locked_checked = |key: SubstateKey| {
         if store.is_locked(key) {
             Err(MaterializeError::LockedTarget(key))
@@ -759,30 +759,21 @@ fn indexed<T>(entries: &[T], index: u32) -> Result<&T, SessionTrap> {
         })
 }
 
-fn diff(before: &MemoryStore, after: &MemoryStore) -> StateDelta {
+/// The committed state change: the active layer against what the store
+/// held before this transaction — a write of the value already in place
+/// is no change at all.
+fn diff(store: &OverlayStore) -> StateDelta {
     let mut delta = StateDelta::default();
-    let before_cells: BTreeMap<_, _> = before.cells().collect();
-    let after_cells: BTreeMap<_, _> = after.cells().collect();
-    for (key, value) in &after_cells {
-        if before_cells.get(key) != Some(value) {
-            delta.cells.insert(*key, Some(value.to_vec()));
+    for (key, after) in store.active_cells() {
+        if store.pre_active_cell(key).as_deref() != after {
+            delta.cells.insert(key, after.map(<[u8]>::to_vec));
         }
     }
-    for key in before_cells.keys() {
-        if !after_cells.contains_key(key) {
-            delta.cells.insert(*key, None);
-        }
-    }
-    let before_entries: BTreeMap<_, _> = before.collection_entries().collect();
-    let after_entries: BTreeMap<_, _> = after.collection_entries().collect();
-    for (key, value) in &after_entries {
-        if before_entries.get(key) != Some(value) {
-            delta.entries.insert(*key, Some(value.to_vec()));
-        }
-    }
-    for key in before_entries.keys() {
-        if !after_entries.contains_key(key) {
-            delta.entries.insert(*key, None);
+    for ((owner, collection, order), after) in store.active_entries() {
+        if store.pre_active_entry(owner, collection, order).as_deref() != after {
+            delta
+                .entries
+                .insert((owner, collection, order), after.map(<[u8]>::to_vec));
         }
     }
     delta
