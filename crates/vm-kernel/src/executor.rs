@@ -9,8 +9,10 @@
 //! whether groups run serially, in parallel, or under adversarial worker
 //! timing cannot influence any receipt, because cross-group interaction is
 //! commutative by construction and snapshots pin to the batch baseline);
-//! **apply** every receipt's operations to the committed store in
-//! canonical order — absolute writes, movement folds, settlements.
+//! **apply** every receipt's operations to the committed store, one
+//! transaction at a time in canonical order — absolute writes, movements
+//! floored at outstanding reservations, settlements. An uncovered debit
+//! aborts its transaction as infeasible, never the batch.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -19,7 +21,7 @@ use std::thread;
 use hyperscale_vm_effects::{Effect, EffectSet, EffectTarget, Mode, SubstateKey};
 
 use crate::conflict::conflicts;
-use crate::modes::{DeltaOp, ModeError, TxHash};
+use crate::modes::{ModeError, TxHash};
 use crate::overlay::OverlayStore;
 use crate::session::{
     EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt, StateDelta,
@@ -93,9 +95,6 @@ pub enum BatchError {
     /// A store failure while applying receipts.
     #[error(transparent)]
     Apply(#[from] StoreError),
-    /// A fold failure while applying movements.
-    #[error(transparent)]
-    Mode(#[from] ModeError),
 }
 
 /// The executed batch: every receipt, canonically ordered, and the
@@ -267,19 +266,43 @@ pub fn execute_batch<R: GuestRunner>(
     ordered.sort_by_key(|entry| entry.tx);
     let mut receipts: BTreeMap<TxHash, Receipt> = BTreeMap::new();
 
-    // Judge every declared reservation in canonical order; hold the
-    // feasible, abort the infeasible.
+    // A reserve declared on an unusable target — a locked substate, a
+    // malformed amount cell — is the sender's declaration defect: it
+    // aborts its transaction here, so the judge sees only sound requests
+    // and its own errors stay kernel defects.
     let mut judged = committed;
     judged.clear_log();
+    let mut sound: Vec<&BatchTx> = Vec::with_capacity(ordered.len());
+    for entry in ordered {
+        let defect = declared_reservations(&entry.declared)
+            .into_iter()
+            .find_map(|(key, _)| judged.check_reserve_target(key).err());
+        if let Some(error) = defect {
+            receipts.insert(
+                entry.tx,
+                abort_receipt(
+                    Outcome::UserError {
+                        reason: error.to_string(),
+                    },
+                    0,
+                ),
+            );
+        } else {
+            sound.push(entry);
+        }
+    }
+
+    // Judge every declared reservation in canonical order; hold the
+    // feasible, abort the infeasible.
     let mut requests = Vec::new();
-    for entry in &ordered {
+    for entry in &sound {
         for (key, amount) in declared_reservations(&entry.declared) {
             requests.push((entry.tx, key, amount));
         }
     }
     let verdicts = judged.judge_and_hold(&requests)?;
     let mut runnable: Vec<&BatchTx> = Vec::with_capacity(batch.len());
-    for entry in ordered {
+    for entry in sound {
         let refused = declared_reservations(&entry.declared)
             .into_iter()
             .find(|(key, _)| {
@@ -330,21 +353,39 @@ pub fn execute_batch<R: GuestRunner>(
     }
 
     let mut store = Arc::try_unwrap(judged).expect("no group overlay outlives its group");
-    apply_receipts(&mut store, batch, &receipts)?;
+    apply_receipts(&mut store, batch, &mut receipts)?;
 
     Ok(BatchOutcome { receipts, store })
 }
 
-/// Canonical-order application: absolute writes and entry changes, then
-/// movement folds, settles for the completed, releases for the rest.
+/// Canonical-order application, one transaction at a time: absolute writes
+/// and entry changes, movements under the reservation floor, settles for
+/// the completed, releases for the rest. A completed transaction whose
+/// debit the floor no longer covers — earlier transactions drained the
+/// cell — flips to an infeasible receipt here, its fuel kept, its state
+/// never applied.
 fn apply_receipts(
     store: &mut MemoryStore,
     batch: &[BatchTx],
-    receipts: &BTreeMap<TxHash, Receipt>,
+    receipts: &mut BTreeMap<TxHash, Receipt>,
 ) -> Result<(), BatchError> {
-    let mut deltas: Vec<(SubstateKey, DeltaOp)> = Vec::new();
-    for (tx, receipt) in receipts {
+    let order: Vec<TxHash> = receipts.keys().copied().collect();
+    for tx in order {
+        let receipt = receipts.get(&tx).expect("walked from keys");
+        let mut refusal = None;
         if matches!(receipt.outcome, Outcome::Completed { .. }) {
+            for (key, movement) in &receipt.delta.movements {
+                match store.judge_movement(*key, movement.credit, movement.debit) {
+                    Ok(_) => {}
+                    Err(StoreError::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)) => {
+                        refusal = Some((*key, movement.debit));
+                        break;
+                    }
+                    Err(defect) => return Err(defect.into()),
+                }
+            }
+        }
+        if matches!(receipt.outcome, Outcome::Completed { .. }) && refusal.is_none() {
             for (key, change) in &receipt.delta.cells {
                 match change {
                     Some(value) => store.write(*key, value.clone())?,
@@ -362,27 +403,26 @@ fn apply_receipts(
                 }
             }
             for (key, movement) in &receipt.delta.movements {
-                deltas.push((*key, DeltaOp::Add(movement.credit)));
-                deltas.push((*key, DeltaOp::Sub(movement.debit)));
+                store.apply_movement(*key, movement.credit, movement.debit)?;
             }
             for key in receipt.delta.settles.keys() {
-                store.settle(*key, *tx)?;
+                store.settle(*key, tx)?;
             }
         } else {
+            if let Some((key, amount)) = refusal {
+                let fuel = receipt.fuel;
+                receipts.insert(tx, abort_receipt(Outcome::Infeasible { key, amount }, fuel));
+            }
             // Release whatever the judge held for an aborted transaction.
-            for entry in batch.iter().filter(|entry| entry.tx == *tx) {
+            for entry in batch.iter().filter(|entry| entry.tx == tx) {
                 for (key, _) in declared_reservations(&entry.declared) {
-                    if store.held_reservation(key, *tx).is_some() {
-                        store.release(key, *tx)?;
+                    if store.held_reservation(key, tx).is_some() {
+                        store.release(key, tx)?;
                     }
                 }
             }
         }
     }
-    for (key, op) in deltas {
-        store.queue_delta(key, op)?;
-    }
-    store.commit_deltas()?;
     store.clear_log();
     Ok(())
 }

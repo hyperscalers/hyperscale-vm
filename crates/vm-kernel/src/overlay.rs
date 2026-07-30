@@ -21,7 +21,7 @@ use std::sync::Arc;
 use hyperscale_vm_effects::{Address, EffectTarget, ModeKind, RoleId, SubstateKey};
 
 use crate::modes::{
-    DeltaOp, Feasibility, TxHash, decode_amount, encode_amount, fold_deltas, judge,
+    DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount, fold_deltas, judge,
 };
 use crate::store::{Access, AppliedDelta, MemoryStore, StoreError, SubstateStore};
 
@@ -284,6 +284,38 @@ impl OverlayStore {
             }
         }
         Ok(verdicts)
+    }
+
+    /// Judge one transaction's net movement on an amount cell against
+    /// effective state. Semantics mirror [`MemoryStore::judge_movement`]
+    /// exactly: the floor is committed plus the credit minus every
+    /// outstanding reservation.
+    ///
+    /// # Errors
+    ///
+    /// Exactly [`MemoryStore::judge_movement`]'s.
+    pub fn judge_movement(
+        &self,
+        key: SubstateKey,
+        credit: u128,
+        debit: u128,
+    ) -> Result<u128, StoreError> {
+        let held_total = self
+            .effective_holds(key)
+            .values()
+            .try_fold(0u128, |acc, amount| acc.checked_add(*amount))
+            .ok_or(StoreError::HeldExceedsCommitted(key))?;
+        let credited = self
+            .committed_amount(key)?
+            .checked_add(credit)
+            .ok_or(ModeError::CellOverflow)?;
+        let available = credited
+            .checked_sub(held_total)
+            .ok_or(StoreError::HeldExceedsCommitted(key))?;
+        available
+            .checked_sub(debit)
+            .ok_or(ModeError::CellUnderflow)?;
+        Ok(credited - debit)
     }
 
     /// Settle a held reservation: decrement the cell and drop the hold.
@@ -637,7 +669,7 @@ mod tests {
     use hyperscale_vm_effects::{Address, Hash32, RoleId, SubstateKey, TestHasher, child_key};
 
     use super::OverlayStore;
-    use crate::modes::{DeltaOp, TxHash, decode_amount, encode_amount};
+    use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
     use crate::store::{MemoryStore, StoreError, SubstateStore};
 
     fn key(byte: u8) -> SubstateKey {
@@ -765,6 +797,34 @@ mod tests {
         );
         assert_eq!(overlay.release(vault, tx(3)), Ok(40));
         assert_eq!(overlay.held_reservation(vault, tx(3)), None);
+    }
+
+    #[test]
+    fn movement_judging_mirrors_the_plain_store() {
+        let mut base = MemoryStore::new();
+        let vault = key(4);
+        base.write(vault, encode_amount(60).to_vec()).unwrap();
+        base.judge_and_hold(&[(tx(1), vault, 50)]).unwrap();
+        base.clear_log();
+        let overlay = OverlayStore::new(Arc::new(base.clone()));
+
+        for (credit, debit) in [(0, 10), (0, 11), (5, 15), (0, 0), (u128::MAX, 0)] {
+            assert_eq!(
+                overlay.judge_movement(vault, credit, debit),
+                base.judge_movement(vault, credit, debit),
+                "credit {credit}, debit {debit}"
+            );
+        }
+
+        // A layered settle moves the hold out of the floor on the overlay
+        // side only.
+        let mut settled = OverlayStore::new(Arc::new(base.clone()));
+        settled.settle(vault, tx(1)).unwrap();
+        assert_eq!(settled.judge_movement(vault, 0, 10), Ok(0));
+        assert_eq!(
+            base.judge_movement(vault, 0, 11),
+            Err(StoreError::Mode(ModeError::CellUnderflow))
+        );
     }
 
     #[test]

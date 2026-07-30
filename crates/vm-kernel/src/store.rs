@@ -269,6 +269,78 @@ impl MemoryStore {
         }
     }
 
+    fn held_total(&self, key: SubstateKey) -> Result<u128, StoreError> {
+        self.held
+            .get(&key)
+            .map_or(Some(0), |holds| {
+                holds
+                    .values()
+                    .try_fold(0u128, |acc, amount| acc.checked_add(*amount))
+            })
+            .ok_or(StoreError::HeldExceedsCommitted(key))
+    }
+
+    /// Whether `key` can carry a reservation at all: unlocked and either
+    /// absent or a well-formed amount cell. A refusal here is a
+    /// declaration defect — the sender's fault, judged before the
+    /// feasibility race.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Locked`] or an amount-cell decode failure.
+    pub fn check_reserve_target(&self, key: SubstateKey) -> Result<(), StoreError> {
+        self.reject_locked(key)?;
+        self.committed_amount(key)?;
+        Ok(())
+    }
+
+    /// Judge one transaction's net movement on an amount cell, returning
+    /// the value the cell would take. The floor is committed plus the
+    /// credit minus every outstanding reservation: an unconditional debit
+    /// can never consume value a held reservation still covers.
+    ///
+    /// # Errors
+    ///
+    /// [`ModeError::CellUnderflow`] for a debit past the floor,
+    /// [`ModeError::CellOverflow`] on credit overflow — both the judged
+    /// transaction's deterministic loss — or a decode/ledger failure.
+    pub fn judge_movement(
+        &self,
+        key: SubstateKey,
+        credit: u128,
+        debit: u128,
+    ) -> Result<u128, StoreError> {
+        let credited = self
+            .committed_amount(key)?
+            .checked_add(credit)
+            .ok_or(ModeError::CellOverflow)?;
+        let available = credited
+            .checked_sub(self.held_total(key)?)
+            .ok_or(StoreError::HeldExceedsCommitted(key))?;
+        available
+            .checked_sub(debit)
+            .ok_or(ModeError::CellUnderflow)?;
+        Ok(credited - debit)
+    }
+
+    /// Apply one transaction's net movement to an amount cell, under
+    /// [`Self::judge_movement`]'s floor.
+    ///
+    /// # Errors
+    ///
+    /// Exactly [`Self::judge_movement`]'s; a refusal leaves the cell
+    /// untouched.
+    pub fn apply_movement(
+        &mut self,
+        key: SubstateKey,
+        credit: u128,
+        debit: u128,
+    ) -> Result<u128, StoreError> {
+        let after = self.judge_movement(key, credit, debit)?;
+        self.cells.insert(key, encode_amount(after).to_vec());
+        Ok(after)
+    }
+
     /// Judge a batch of reservation requests, holding the feasible ones.
     ///
     /// Per cell: available is committed minus reservations already held,
@@ -293,18 +365,9 @@ impl MemoryStore {
         }
         let mut verdicts = BTreeMap::new();
         for (key, batch) in by_key {
-            let committed = self.committed_amount(key)?;
-            let held_total = self
-                .held
-                .get(&key)
-                .map_or(Some(0), |holds| {
-                    holds
-                        .values()
-                        .try_fold(0u128, |acc, amount| acc.checked_add(*amount))
-                })
-                .ok_or(StoreError::HeldExceedsCommitted(key))?;
-            let available = committed
-                .checked_sub(held_total)
+            let available = self
+                .committed_amount(key)?
+                .checked_sub(self.held_total(key)?)
                 .ok_or(StoreError::HeldExceedsCommitted(key))?;
             for (tx, verdict) in judge(available, &batch) {
                 if verdict.is_feasible() {
@@ -526,7 +589,7 @@ mod tests {
     };
 
     use super::{Access, MemoryStore, StoreError, SubstateStore};
-    use crate::modes::{DeltaOp, Feasibility, TxHash, decode_amount, encode_amount};
+    use crate::modes::{DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount};
 
     fn key(byte: u8) -> SubstateKey {
         child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[])
@@ -534,6 +597,31 @@ mod tests {
 
     fn tx(byte: u8) -> TxHash {
         TxHash(Hash32([byte; 32]))
+    }
+
+    #[test]
+    fn movements_floor_at_outstanding_holds() {
+        let mut store = MemoryStore::new();
+        let vault = key(9);
+        store.write(vault, encode_amount(60).to_vec()).unwrap();
+        store.judge_and_hold(&[(tx(1), vault, 50)]).unwrap();
+
+        // Ten of headroom above the hold; eleven is past the floor.
+        assert_eq!(store.judge_movement(vault, 0, 10), Ok(50));
+        assert_eq!(
+            store.judge_movement(vault, 0, 11),
+            Err(StoreError::Mode(ModeError::CellUnderflow))
+        );
+        // The transaction's own credit funds its debit above the floor.
+        assert_eq!(store.judge_movement(vault, 5, 15), Ok(50));
+
+        // A refused application leaves the cell untouched; an accepted one
+        // lands, and the hold survives both.
+        assert!(store.apply_movement(vault, 0, 11).is_err());
+        assert_eq!(store.judge_movement(vault, 0, 0), Ok(60));
+        assert_eq!(store.apply_movement(vault, 0, 10), Ok(50));
+        assert_eq!(store.held_reservation(vault, tx(1)), Some(50));
+        assert_eq!(store.settle(vault, tx(1)), Ok(50));
     }
 
     #[test]

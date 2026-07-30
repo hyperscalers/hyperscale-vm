@@ -4,9 +4,11 @@
 //! Everything here is a pure function with a deterministic verdict — the
 //! commutative modes are exactly the ones whose outcome cannot depend on
 //! scheduling, and these functions are where that property is enforced:
-//! delta folds are total sums, and reservation feasibility is judged in
-//! canonical transaction-hash order against committed balance minus prior
-//! reservations, never counting in-flight deltas.
+//! delta folds are total sums within one transaction, applied per
+//! transaction in canonical transaction-hash order under a floor of
+//! outstanding reservations, and reservation feasibility is judged in the
+//! same order against committed balance minus prior reservations, never
+//! counting in-flight deltas.
 
 use hyperscale_vm_effects::Hash32;
 

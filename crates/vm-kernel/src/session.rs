@@ -160,12 +160,14 @@ pub enum Outcome {
         /// The deterministic reason class.
         reason: String,
     },
-    /// A declared reservation the committed balance could not cover — a
-    /// stale declaration, aborted before any execution at floor cost.
+    /// A lost deterministic race: a declared reservation the committed
+    /// balance could not cover — aborted before any execution — or an
+    /// unconditional debit past the floor of committed minus outstanding
+    /// reservations, aborted at commit with its fuel charged.
     Infeasible {
-        /// The cell reserved against.
+        /// The cell that could not cover it.
         key: SubstateKey,
-        /// The declared amount.
+        /// The uncovered amount.
         amount: u128,
     },
     /// A kernel or store invariant failure — never the sender's fault, and
@@ -565,10 +567,16 @@ impl KernelSession {
     /// together with the threaded store (the input for the next
     /// transaction in a conflict group).
     ///
+    /// A debit past the movement floor — committed plus this
+    /// transaction's credit, minus every outstanding reservation — is the
+    /// transaction's own deterministic loss: it comes back as an
+    /// [`Outcome::Infeasible`] receipt over the untouched store, never as
+    /// an error.
+    ///
     /// # Errors
     ///
     /// [`FinishError::Undeclared`] if any recorded access escaped the
-    /// declared set; a store failure otherwise.
+    /// declared set; a store failure otherwise. All are kernel defects.
     pub fn finish(
         mut self,
         outcome: Outcome,
@@ -595,6 +603,30 @@ impl KernelSession {
                 }
             }
             movements.insert(key, movement);
+        }
+        for (key, movement) in &movements {
+            match self
+                .store
+                .judge_movement(*key, movement.credit, movement.debit)
+            {
+                Ok(_) => {}
+                Err(StoreError::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)) => {
+                    let refusal = Outcome::Infeasible {
+                        key: *key,
+                        amount: movement.debit,
+                    };
+                    self.store.discard_active();
+                    return Ok((
+                        Receipt {
+                            outcome: refusal,
+                            delta: StateDelta::default(),
+                            fuel,
+                        },
+                        self.store,
+                    ));
+                }
+                Err(defect) => return Err(defect.into()),
+            }
         }
         self.store.commit_deltas()?;
         let mut settles = BTreeMap::new();
