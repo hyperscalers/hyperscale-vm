@@ -233,9 +233,10 @@ fn execute_manifest(
     tx: TxHash,
 ) -> Result<(TxResult, MemoryStore)> {
     let (cache, instances) = world;
-    let manifest = admit(graph, cache, instances, &TestHasher).context("admission")?;
+    let admitted = admit(graph, cache, instances, &TestHasher).context("admission")?;
     let routing = route(
-        &manifest,
+        &admitted.manifest,
+        admitted.identity,
         cache,
         instances,
         &TestHasher,
@@ -243,7 +244,8 @@ fn execute_manifest(
     )
     .context("routing")?;
     let declared = &routing.per_shard[&ShardId(0)];
-    let manifest_hash = manifest.hash(&TestHasher);
+    let identity = admitted.identity;
+    let manifest = admitted.manifest;
 
     let before = store.clone();
     let mut session = KernelSession::materialize(
@@ -327,8 +329,9 @@ fn execute_manifest(
                 };
                 let seq = fresh_id(
                     &TestHasher,
-                    manifest_hash,
+                    identity,
                     u32::try_from(index).expect("bounded"),
+                    0,
                     0,
                 );
                 NodeCall::Place {
@@ -657,9 +660,10 @@ fn shard_of(address: Address) -> ShardId {
 
 fn sharded_routing(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> Routing {
     let (cache, instances) = world;
-    let manifest = admit(graph, cache, instances, &TestHasher).expect("admits");
+    let admitted = admit(graph, cache, instances, &TestHasher).expect("admits");
     let first = route(
-        &manifest,
+        &admitted.manifest,
+        admitted.identity,
         cache,
         instances,
         &TestHasher,
@@ -667,7 +671,8 @@ fn sharded_routing(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGr
     )
     .expect("routes");
     let second = route(
-        &manifest,
+        &admitted.manifest,
+        admitted.identity,
         cache,
         instances,
         &TestHasher,
@@ -1103,8 +1108,8 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
     };
 
     // The placed ask landed at the declared fresh sequence.
-    let lowered = admit(&place, &world.0, &world.1, &TestHasher).unwrap();
-    let seq = fresh_id(&TestHasher, lowered.hash(&TestHasher), 1, 0);
+    let admitted = admit(&place, &world.0, &world.1, &TestHasher).unwrap();
+    let seq = fresh_id(&TestHasher, admitted.identity, 1, 0, 0);
     let placed_order = (3u128 << 64) | u128::from(seq);
     assert_eq!(
         place_receipt.delta.entries.get(&(BOOK, ASKS, placed_order)),

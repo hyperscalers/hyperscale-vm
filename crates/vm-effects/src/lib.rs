@@ -31,7 +31,9 @@ pub use dsl::{
     Clause, EvalError, EvalInputs, Expr, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr,
     evaluate_effects, evaluate_expr, fresh_id, fresh_local,
 };
-pub use graph::{AdmissionError, Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, admit};
+pub use graph::{
+    AdmissionError, Admitted, Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, admit,
+};
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use manifest::{Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{

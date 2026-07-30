@@ -8,9 +8,10 @@ pub use hyperscale_vm_effects::stdlib::{
     splitter_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, CallSite, Clause, Effect, EffectSet, Expr, Hasher, InstanceMeta, InstanceRegistry,
-    MetadataCache, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType,
-    PrefixShardResolver, RoleId, ShardId, SubstateKey, TargetExpr, TestHasher, Value, child_key,
+    Address, CallSite, Clause, Effect, EffectSet, Expr, Hash32, Hasher, InstanceMeta,
+    InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr, PackageHash,
+    PackageMetadata, ParamType, PrefixShardResolver, RoleId, ShardId, SubstateKey, TargetExpr,
+    TestHasher, Value, child_key,
 };
 
 pub const ALICE: Address = Address([0x10; 16]);
@@ -33,6 +34,13 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 #[must_use]
 pub fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
+}
+
+/// A stand-in transaction identity for tests that route hand-built
+/// manifests without going through admission.
+#[must_use]
+pub const fn identity() -> ManifestHash {
+    ManifestHash(Hash32([0x1D; 32]))
 }
 
 /// The published world every shape test routes against.

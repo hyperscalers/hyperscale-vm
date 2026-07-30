@@ -9,7 +9,7 @@ use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vaul
 use hyperscale_vm_effects::{
     Address, AdmissionError, Constraint, EdgeRef, Effect, EffectTarget, GraphArg, GraphNode,
     InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit,
-    route,
+    fresh_id, route,
 };
 use proptest::prelude::{any, proptest};
 
@@ -84,10 +84,18 @@ fn valid_graph() -> ManifestGraph {
 #[test]
 fn a_well_formed_graph_lowers_and_routes() {
     let (cache, instances) = setup();
-    let manifest = admit(&valid_graph(), &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&valid_graph(), &cache, &instances, &TestHasher).expect("admits");
 
     // The lowered edges carry their static resource types.
-    let routing = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+    let routing = route(
+        &admitted.manifest,
+        admitted.identity,
+        &cache,
+        &instances,
+        &TestHasher,
+        &resolver(),
+    )
+    .unwrap();
     let alice_set = &routing.per_shard[&shard_of(ALICE)];
     assert!(alice_set.contains(&Effect {
         target: EffectTarget::Point(vault(ALICE, RES_X)),
@@ -102,6 +110,28 @@ fn a_well_formed_graph_lowers_and_routes() {
         target: EffectTarget::Point(vault(BOB, RES_X)),
         mode: Mode::Delta,
     }));
+}
+
+#[test]
+fn constraint_changes_change_the_fresh_id_root() {
+    let (cache, instances) = setup();
+    let mut loosened = valid_graph();
+    let GraphArg::Edge { constraints, .. } = &mut loosened.nodes[2].args[0] else {
+        panic!("edge arg");
+    };
+    constraints[0] = Constraint::MinAmount(29);
+
+    let strict = admit(&valid_graph(), &cache, &instances, &TestHasher).expect("admits");
+    let loose = admit(&loosened, &cache, &instances, &TestHasher).expect("admits");
+    // Lowering erases constraints, so the manifests coincide — but the
+    // identity is the signed graph's hash, so two distinct signed
+    // transactions never share a fresh-ID root.
+    assert_eq!(strict.manifest, loose.manifest);
+    assert_ne!(strict.identity, loose.identity);
+    assert_ne!(
+        fresh_id(&TestHasher, strict.identity, 1, 0, 0),
+        fresh_id(&TestHasher, loose.identity, 1, 0, 0)
+    );
 }
 
 #[test]

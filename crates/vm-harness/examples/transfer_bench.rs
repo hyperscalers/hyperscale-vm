@@ -244,14 +244,15 @@ fn main() -> Result<()> {
         let resolver = PrefixShardResolver { bits: 0 };
         // Warmup.
         for index in 0..200 {
-            let manifest = admit(
+            let admitted = admit(
                 &transfer_graph(sender(index)),
                 &cache,
                 &instances,
                 &TestHasher,
             )?;
             std::hint::black_box(route(
-                &manifest,
+                &admitted.manifest,
+                admitted.identity,
                 &cache,
                 &instances,
                 &TestHasher,
@@ -260,14 +261,15 @@ fn main() -> Result<()> {
         }
         let start = Instant::now();
         for index in 0..count {
-            let manifest = admit(
+            let admitted = admit(
                 &transfer_graph(sender(index)),
                 &cache,
                 &instances,
                 &TestHasher,
             )?;
             std::hint::black_box(route(
-                &manifest,
+                &admitted.manifest,
+                admitted.identity,
                 &cache,
                 &instances,
                 &TestHasher,

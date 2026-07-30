@@ -16,27 +16,31 @@ use crate::store::{StoreError, SubstateStore};
 /// The creating context: who owns what this call creates, and the
 /// derivation root that makes every created key deterministic.
 ///
-/// Fresh keys are `owner | fresh_local(manifest hash, node index, slot)` —
+/// Fresh keys are `owner | fresh_local(identity, node, frame, slot)` —
 /// the identical derivation the effect DSL's fresh-key expression
 /// evaluates, so a declared creation and the kernel's execution of it name
-/// the same key by construction.
+/// the same key by construction. `identity` is the transaction's signed
+/// graph hash; `frame` is the executing frame's preorder position in the
+/// node's call tree, zero for the node itself.
 #[derive(Clone, Copy, Debug)]
 pub struct CreationContext {
     owner: Address,
-    manifest_hash: ManifestHash,
+    identity: ManifestHash,
     node_index: u32,
+    frame: u32,
     next_slot: u32,
 }
 
 impl CreationContext {
     /// A context owning its creations under `owner`, deriving from the
-    /// invoking manifest node.
+    /// invoking manifest node and executing frame.
     #[must_use]
-    pub const fn new(owner: Address, manifest_hash: ManifestHash, node_index: u32) -> Self {
+    pub const fn new(owner: Address, identity: ManifestHash, node_index: u32, frame: u32) -> Self {
         Self {
             owner,
-            manifest_hash,
+            identity,
             node_index,
+            frame,
             next_slot: 0,
         }
     }
@@ -51,7 +55,13 @@ impl CreationContext {
     /// creation; the counter wraps only past 2^32 creations, unreachable
     /// under any fuel bound.
     pub fn fresh_key(&mut self, hasher: &dyn Hasher) -> SubstateKey {
-        let local = fresh_local(hasher, self.manifest_hash, self.node_index, self.next_slot);
+        let local = fresh_local(
+            hasher,
+            self.identity,
+            self.node_index,
+            self.frame,
+            self.next_slot,
+        );
         self.next_slot = self.next_slot.wrapping_add(1);
         SubstateKey {
             owner: self.owner,
@@ -140,7 +150,12 @@ mod tests {
     use crate::store::{MemoryStore, StoreError, SubstateStore};
 
     fn context(owner_byte: u8) -> CreationContext {
-        CreationContext::new(Address([owner_byte; 16]), ManifestHash(Hash32([7; 32])), 2)
+        CreationContext::new(
+            Address([owner_byte; 16]),
+            ManifestHash(Hash32([7; 32])),
+            2,
+            0,
+        )
     }
 
     #[test]

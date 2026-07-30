@@ -174,12 +174,17 @@ pub enum RouteError {
 /// fold the results into per-shard effect sets, snapshot obligations, and
 /// the static call graph.
 ///
+/// `identity` is the transaction's identity — the signed graph's hash that
+/// [`crate::graph::admit`] returns. Admission and routing evaluate fresh
+/// derivations at this one root, so declared and routed fresh keys agree.
+///
 /// # Errors
 ///
 /// Any [`RouteError`]; verdicts are deterministic and identical on every
 /// node.
 pub fn route(
     manifest: &Manifest,
+    identity: ManifestHash,
     cache: &MetadataCache,
     instances: &InstanceRegistry,
     hasher: &dyn Hasher,
@@ -188,16 +193,16 @@ pub fn route(
     if manifest.nodes.len() > MAX_MANIFEST_NODES {
         return Err(RouteError::TooManyNodes);
     }
-    let manifest_hash = manifest.hash(hasher);
     let mut fold = Fold {
         cache,
         instances,
         hasher,
         shards,
-        manifest_hash,
+        identity,
         per_shard: BTreeMap::new(),
         edges: BTreeSet::new(),
         evaluations: 0,
+        frames: 0,
     };
     let mut roots = BTreeSet::new();
     for (index, node) in manifest.nodes.iter().enumerate() {
@@ -224,6 +229,7 @@ pub fn route(
             method: node.method.clone(),
         });
         let mut stack = Vec::new();
+        fold.frames = 0;
         fold.call(
             node.target,
             &node.method,
@@ -264,10 +270,13 @@ struct Fold<'a> {
     instances: &'a InstanceRegistry,
     hasher: &'a dyn Hasher,
     shards: &'a dyn ShardResolver,
-    manifest_hash: ManifestHash,
+    identity: ManifestHash,
     per_shard: BTreeMap<ShardId, EffectSet>,
     edges: BTreeSet<CallEdge>,
     evaluations: usize,
+    // The current node's frame ordinal: preorder over its call tree, reset
+    // per root node, the node's own frame being zero.
+    frames: u32,
 }
 
 impl Fold<'_> {
@@ -287,6 +296,8 @@ impl Fold<'_> {
         if stack.len() >= MAX_CALL_DEPTH {
             return Err(RouteError::CallDepthExceeded);
         }
+        let frame = self.frames;
+        self.frames += 1;
         let meta = self
             .instances
             .get(instance)
@@ -316,7 +327,8 @@ impl Fold<'_> {
             args,
             config: &meta.config,
             node_index,
-            manifest_hash: self.manifest_hash,
+            frame,
+            identity: self.identity,
         };
         let eval_context = |source| RouteError::Eval {
             node: node_index,
@@ -381,9 +393,9 @@ mod tests {
         CallEdge, MAX_CALL_DEPTH, MethodRef, PrefixShardResolver, RouteError, ShardResolver,
         SnapshotObligation, route,
     };
-    use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, WindowExpr};
-    use crate::hash::{Hasher, TestHasher};
-    use crate::manifest::{Manifest, Node, NodeInput};
+    use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, WindowExpr, fresh_id};
+    use crate::hash::{Hash32, Hasher, TestHasher};
+    use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
     use crate::metadata::{
         CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
         PackageMetadata,
@@ -392,6 +404,10 @@ mod tests {
 
     fn pkg(name: &str) -> PackageHash {
         PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
+    }
+
+    fn identity() -> ManifestHash {
+        ManifestHash(Hash32([0x1D; 32]))
     }
 
     fn addr(byte: u8) -> Address {
@@ -483,7 +499,15 @@ mod tests {
             }],
         };
 
-        let routing = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let routing = route(
+            &manifest,
+            identity(),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
         let shards: Vec<_> = routing.shards().collect();
         assert_eq!(shards, vec![ShardId(0x11), ShardId(0x22)]);
         assert!(routing.per_shard[&ShardId(0x11)].contains(&Effect {
@@ -510,6 +534,91 @@ mod tests {
                 callee: recv_ref,
             }])
         );
+    }
+
+    #[test]
+    fn caller_and_callee_fresh_slots_never_collide() {
+        // One package's slot 0 and its callee's slot 0 are authored
+        // independently; the frame ordinal keeps their fresh IDs apart even
+        // under a shared literal owner.
+        let ledger = addr(0x33);
+        let fresh_entry = || Clause::Effect {
+            target: TargetExpr::Entry {
+                owner: Expr::Literal(Value::Address(ledger)),
+                collection: RoleId(6),
+                order: Expr::Pack {
+                    hi: Box::new(Expr::Literal(Value::U64(0))),
+                    lo: Box::new(Expr::FreshId { slot: 0 }),
+                },
+            },
+            mode: ModeExpr::Write,
+        };
+        let mut cache = MetadataCache::new();
+        let mut maker = PackageMetadata::default();
+        maker.methods.insert(
+            "make".into(),
+            method(
+                vec![fresh_entry()],
+                vec![CallSite {
+                    target: Expr::Literal(Value::Address(addr(2))),
+                    method: "assist".into(),
+                    args: vec![],
+                }],
+            ),
+        );
+        let mut helper = PackageMetadata::default();
+        helper
+            .methods
+            .insert("assist".into(), method(vec![fresh_entry()], vec![]));
+        cache.publish(pkg("maker"), maker);
+        cache.publish(pkg("helper"), helper);
+        let mut instances = InstanceRegistry::new();
+        instances.register(
+            addr(1),
+            InstanceMeta {
+                package: pkg("maker"),
+                config: vec![],
+            },
+        );
+        instances.register(
+            addr(2),
+            InstanceMeta {
+                package: pkg("helper"),
+                config: vec![],
+            },
+        );
+        let manifest = Manifest {
+            nodes: vec![Node {
+                target: addr(1),
+                method: "make".into(),
+                inputs: vec![],
+            }],
+        };
+
+        let routing = route(
+            &manifest,
+            identity(),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
+        let orders: Vec<u128> = (0..2u32)
+            .map(|frame| u128::from(fresh_id(&TestHasher, identity(), 0, frame, 0)))
+            .collect();
+        assert_ne!(orders[0], orders[1]);
+        let set = &routing.per_shard[&ShardId(0x33)];
+        for order in orders {
+            assert!(set.contains(&Effect {
+                target: EffectTarget::Entry {
+                    owner: ledger,
+                    collection: RoleId(6),
+                    order,
+                },
+                mode: Mode::Write,
+            }));
+        }
     }
 
     #[test]
@@ -544,7 +653,14 @@ mod tests {
             }],
         };
         assert_eq!(
-            route(&manifest, &cache, &instances, &TestHasher, &resolver()),
+            route(
+                &manifest,
+                identity(),
+                &cache,
+                &instances,
+                &TestHasher,
+                &resolver()
+            ),
             Err(RouteError::CyclicCalls {
                 package: pkg("loop"),
                 method: "m".into(),
@@ -604,7 +720,14 @@ mod tests {
             }],
         };
         assert_eq!(
-            route(&manifest, &cache, &instances, &TestHasher, &resolver()),
+            route(
+                &manifest,
+                identity(),
+                &cache,
+                &instances,
+                &TestHasher,
+                &resolver()
+            ),
             Err(RouteError::CyclicCalls {
                 package: pkg("first"),
                 method: "m".into(),
@@ -656,7 +779,15 @@ mod tests {
                 inputs: vec![],
             }],
         };
-        let routing = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let routing = route(
+            &manifest,
+            identity(),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
         assert_eq!(routing.call_graph.edges.len(), 4);
     }
 
@@ -675,6 +806,7 @@ mod tests {
         assert_eq!(
             route(
                 &manifest,
+                identity(),
                 &MetadataCache::new(),
                 &InstanceRegistry::new(),
                 &TestHasher,
@@ -698,6 +830,7 @@ mod tests {
         };
         let empty = route(
             &manifest,
+            identity(),
             &MetadataCache::new(),
             &InstanceRegistry::new(),
             &TestHasher,
@@ -715,6 +848,7 @@ mod tests {
         );
         let missing_pkg = route(
             &manifest,
+            identity(),
             &MetadataCache::new(),
             &instances,
             &TestHasher,
@@ -724,7 +858,14 @@ mod tests {
 
         let mut cache = MetadataCache::new();
         cache.publish(pkg("ghost"), PackageMetadata::default());
-        let missing_method = route(&manifest, &cache, &instances, &TestHasher, &resolver());
+        let missing_method = route(
+            &manifest,
+            identity(),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        );
         assert_eq!(
             missing_method,
             Err(RouteError::UnknownMethod {
@@ -767,7 +908,15 @@ mod tests {
                 inputs: vec![],
             }],
         };
-        let routing = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let routing = route(
+            &manifest,
+            identity(),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
         assert_eq!(
             routing.snapshot_obligations,
             BTreeSet::from([SnapshotObligation {
@@ -825,7 +974,14 @@ mod tests {
             }],
         };
         assert_eq!(
-            route(&manifest, &cache, &instances, &TestHasher, &resolver()),
+            route(
+                &manifest,
+                identity(),
+                &cache,
+                &instances,
+                &TestHasher,
+                &resolver()
+            ),
             Err(RouteError::CallBudgetExhausted)
         );
     }
@@ -860,7 +1016,14 @@ mod tests {
             }],
         };
         assert_eq!(
-            route(&manifest, &cache, &instances, &TestHasher, &resolver()),
+            route(
+                &manifest,
+                identity(),
+                &cache,
+                &instances,
+                &TestHasher,
+                &resolver()
+            ),
             Err(RouteError::CallDepthExceeded)
         );
     }

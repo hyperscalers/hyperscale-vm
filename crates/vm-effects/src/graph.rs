@@ -253,6 +253,18 @@ pub enum AdmissionError {
     },
 }
 
+/// An admitted transaction: the routing manifest plus the identity that
+/// roots fresh-ID derivation — the signed graph's hash, so distinct
+/// signed transactions never mint the same fresh key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Admitted {
+    /// The lowered routing manifest.
+    pub manifest: Manifest,
+    /// The signed graph's hash: the transaction identity every fresh
+    /// derivation binds to, at admission and at routing alike.
+    pub identity: ManifestHash,
+}
+
 /// Admit a graph: check well-formedness, linearity, and type agreement
 /// against package metadata, and lower it to the routing manifest.
 ///
@@ -266,7 +278,7 @@ pub fn admit(
     cache: &MetadataCache,
     instances: &InstanceRegistry,
     hasher: &dyn Hasher,
-) -> Result<Manifest, AdmissionError> {
+) -> Result<Admitted, AdmissionError> {
     if graph.nodes.len() > MAX_MANIFEST_NODES {
         return Err(AdmissionError::TooManyNodes);
     }
@@ -372,7 +384,8 @@ pub fn admit(
             args: &bound,
             config: &meta.config,
             node_index,
-            manifest_hash: graph_hash,
+            frame: 0,
+            identity: graph_hash,
         };
         let mut node_outputs = Vec::with_capacity(signature.outputs.len());
         for (slot, expr) in signature.outputs.iter().enumerate() {
@@ -412,7 +425,10 @@ pub fn admit(
         }
     }
 
-    Ok(Manifest { nodes: lowered })
+    Ok(Admitted {
+        manifest: Manifest { nodes: lowered },
+        identity: graph_hash,
+    })
 }
 
 fn check_constraints(

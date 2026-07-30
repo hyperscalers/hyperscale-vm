@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{account_metadata, pkg, resolver, shard_of, vault};
+use common::{account_metadata, identity, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
     Address, CallSite, Effect, EffectTarget, EvalInputs, Expr, Hash32, InstanceMeta,
     InstanceRegistry, Manifest, ManifestHash, MetadataCache, MethodSignature, Mode, Node,
@@ -81,7 +81,8 @@ proptest! {
             args: &args,
             config: &config,
             node_index,
-            manifest_hash: ManifestHash(Hash32(seed)),
+            frame: 0,
+            identity: ManifestHash(Hash32(seed)),
         };
         let first = evaluate_expr(&expr, &inputs, &TestHasher);
         let second = evaluate_expr(&expr, &inputs, &TestHasher);
@@ -124,8 +125,8 @@ proptest! {
                 },
             ],
         };
-        let first = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
-        let second = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let first = route(&manifest, identity(), &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let second = route(&manifest, identity(), &cache, &instances, &TestHasher, &resolver()).unwrap();
         assert_eq!(first, second);
 
         let sender_set = &first.per_shard[&shard_of(sender)];
@@ -186,8 +187,8 @@ proptest! {
                 ],
             }],
         };
-        let first = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
-        let second = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let first = route(&manifest, identity(), &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let second = route(&manifest, identity(), &cache, &instances, &TestHasher, &resolver()).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.call_graph.edges.len(), 1);
         assert!(first.per_shard[&shard_of(recipient)].contains(&Effect {

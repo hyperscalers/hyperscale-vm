@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use common::{
     ALICE, ASKS, BASE, BOB, BOOK, FILL_CAP, POOL, QUOTE, RES_X, RES_Y, claims, config_leaf,
-    effect_set, pkg, resolver, shard_of, vault, wide_account_metadata, world,
+    effect_set, identity, pkg, resolver, shard_of, vault, wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
     Effect, EffectTarget, InstanceMeta, InstanceRegistry, Manifest, MetadataCache, Mode, Node,
@@ -40,7 +40,15 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
             },
         ],
     };
-    let routing = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+    let routing = route(
+        &manifest,
+        identity(),
+        &cache,
+        &instances,
+        &TestHasher,
+        &resolver(),
+    )
+    .unwrap();
 
     let expected = BTreeMap::from([
         (
@@ -103,7 +111,15 @@ fn swap_writes_both_reserves_and_snapshots_locked_config() {
             },
         ],
     };
-    let routing = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+    let routing = route(
+        &manifest,
+        identity(),
+        &cache,
+        &instances,
+        &TestHasher,
+        &resolver(),
+    )
+    .unwrap();
 
     let expected = BTreeMap::from([
         (
@@ -174,9 +190,17 @@ fn order_book_place_inserts_at_a_computed_entry() {
             },
         ],
     };
-    let routing = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+    let routing = route(
+        &manifest,
+        identity(),
+        &cache,
+        &instances,
+        &TestHasher,
+        &resolver(),
+    )
+    .unwrap();
 
-    let seq = fresh_id(&TestHasher, manifest.hash(&TestHasher), 1, 0);
+    let seq = fresh_id(&TestHasher, identity(), 1, 0, 0);
     let expected = BTreeMap::from([
         (
             shard_of(ALICE),
@@ -241,7 +265,15 @@ fn order_book_fill_declares_a_capped_price_interval() {
             },
         ],
     };
-    let routing = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+    let routing = route(
+        &manifest,
+        identity(),
+        &cache,
+        &instances,
+        &TestHasher,
+        &resolver(),
+    )
+    .unwrap();
 
     let expected = BTreeMap::from([
         (
@@ -310,7 +342,15 @@ fn a_declared_superset_evaluates_without_error() {
             ],
         }],
     };
-    let routing = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+    let routing = route(
+        &manifest,
+        identity(),
+        &cache,
+        &instances,
+        &TestHasher,
+        &resolver(),
+    )
+    .unwrap();
     let set = &routing.per_shard[&shard_of(ALICE)];
     // The exact effect and the never-touched superset both routed.
     assert!(set.contains(&Effect {

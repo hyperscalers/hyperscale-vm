@@ -55,18 +55,19 @@ pub enum Expr {
         /// The address material, canonically encoded into the hash.
         material: Vec<Self>,
     },
-    /// A deterministic fresh 64-bit id, from the manifest hash, the node
-    /// index, and the slot. Slots must be unique within a node's
-    /// transitive signature.
+    /// A deterministic fresh 64-bit id, from the transaction identity, the
+    /// node index, the frame, and the slot. Slots need be unique only
+    /// within one signature: the frame ordinal keeps independently
+    /// authored caller and callee slots apart.
     FreshId {
-        /// The creation slot within this node.
+        /// The creation slot within this frame.
         slot: u32,
     },
     /// The key of an object this call creates: a fresh 16-byte local id
     /// under the target instance's own prefix, from the same derivation as
     /// [`Expr::FreshId`].
     FreshKey {
-        /// The creation slot within this node.
+        /// The creation slot within this frame.
         slot: u32,
     },
     /// A 128-bit order key packed from two 64-bit halves.
@@ -217,57 +218,68 @@ pub struct EvalInputs<'a> {
     pub config: &'a [Value],
     /// The invoking manifest node's index; namespaces fresh IDs.
     pub node_index: u32,
-    /// The manifest's identity; roots fresh-ID derivation.
-    pub manifest_hash: ManifestHash,
+    /// This frame's preorder position in the invoking node's transitive
+    /// call tree; the node's own frame is zero. Namespaces fresh IDs per
+    /// frame, so independently authored caller and callee slots never
+    /// collide.
+    pub frame: u32,
+    /// The transaction's identity — the signed graph's hash; the one root
+    /// of every fresh-ID derivation.
+    pub identity: ManifestHash,
 }
 
 const DOMAIN_FRESH: &[u8] = b"hyperscale-vm/fresh-id";
 
 fn fresh_digest(
     hasher: &dyn Hasher,
-    manifest_hash: ManifestHash,
+    identity: ManifestHash,
     node_index: u32,
+    frame: u32,
     slot: u32,
 ) -> Hash32 {
     hasher.hash(
         DOMAIN_FRESH,
         &[
-            &manifest_hash.0.0,
+            &identity.0.0,
             &node_index.to_le_bytes(),
+            &frame.to_le_bytes(),
             &slot.to_le_bytes(),
         ],
     )
 }
 
-/// The deterministic fresh 64-bit id for `(manifest, node, slot)`.
+/// The deterministic fresh 64-bit id for `(transaction, node, frame,
+/// slot)`.
 ///
 /// This is the value [`Expr::FreshId`] evaluates to; the kernel derives
-/// created-object ids the same way, so declaration and execution agree on
-/// every fresh key.
+/// created-object ids from the same root, so declaration and execution
+/// agree on every fresh key.
 #[must_use]
 pub fn fresh_id(
     hasher: &dyn Hasher,
-    manifest_hash: ManifestHash,
+    identity: ManifestHash,
     node_index: u32,
+    frame: u32,
     slot: u32,
 ) -> u64 {
-    let digest = fresh_digest(hasher, manifest_hash, node_index, slot);
+    let digest = fresh_digest(hasher, identity, node_index, frame, slot);
     let mut bytes = [0u8; 8];
     bytes.copy_from_slice(&digest.0[..8]);
     u64::from_le_bytes(bytes)
 }
 
-/// The deterministic fresh local key for `(manifest, node, slot)` — the
-/// local half [`Expr::FreshKey`] places under the creating instance's
-/// prefix.
+/// The deterministic fresh local key for `(transaction, node, frame,
+/// slot)` — the local half [`Expr::FreshKey`] places under the creating
+/// instance's prefix.
 #[must_use]
 pub fn fresh_local(
     hasher: &dyn Hasher,
-    manifest_hash: ManifestHash,
+    identity: ManifestHash,
     node_index: u32,
+    frame: u32,
     slot: u32,
 ) -> LocalKey {
-    let digest = fresh_digest(hasher, manifest_hash, node_index, slot);
+    let digest = fresh_digest(hasher, identity, node_index, frame, slot);
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&digest.0[..16]);
     LocalKey(bytes)
@@ -477,13 +489,20 @@ fn eval_expr(
         }
         Expr::FreshId { slot } => Ok(Value::U64(fresh_id(
             hasher,
-            inputs.manifest_hash,
+            inputs.identity,
             inputs.node_index,
+            inputs.frame,
             *slot,
         ))),
         Expr::FreshKey { slot } => Ok(Value::Key(SubstateKey {
             owner: inputs.self_addr,
-            local: fresh_local(hasher, inputs.manifest_hash, inputs.node_index, *slot),
+            local: fresh_local(
+                hasher,
+                inputs.identity,
+                inputs.node_index,
+                inputs.frame,
+                *slot,
+            ),
         })),
         Expr::Pack { hi, lo } => {
             let hi = as_u64(eval_expr(hi, inputs, hasher, bindings)?)?;
@@ -576,7 +595,8 @@ mod tests {
             args,
             config,
             node_index: 3,
-            manifest_hash: ManifestHash(Hash32([9; 32])),
+            frame: 0,
+            identity: ManifestHash(Hash32([9; 32])),
         }
     }
 
@@ -623,23 +643,24 @@ mod tests {
         );
 
         let id = evaluate_expr(&Expr::FreshId { slot: 0 }, &ins, &TestHasher).unwrap();
-        assert_eq!(
-            id,
-            Value::U64(fresh_id(&TestHasher, ins.manifest_hash, 3, 0))
+        assert_eq!(id, Value::U64(fresh_id(&TestHasher, ins.identity, 3, 0, 0)));
+        assert_ne!(
+            fresh_id(&TestHasher, ins.identity, 3, 0, 0),
+            fresh_id(&TestHasher, ins.identity, 3, 0, 1)
         );
         assert_ne!(
-            fresh_id(&TestHasher, ins.manifest_hash, 3, 0),
-            fresh_id(&TestHasher, ins.manifest_hash, 3, 1)
+            fresh_id(&TestHasher, ins.identity, 3, 0, 0),
+            fresh_id(&TestHasher, ins.identity, 4, 0, 0)
         );
         assert_ne!(
-            fresh_id(&TestHasher, ins.manifest_hash, 3, 0),
-            fresh_id(&TestHasher, ins.manifest_hash, 4, 0)
+            fresh_id(&TestHasher, ins.identity, 3, 0, 0),
+            fresh_id(&TestHasher, ins.identity, 3, 1, 0)
         );
 
         let key = evaluate_expr(&Expr::FreshKey { slot: 2 }, &ins, &TestHasher).unwrap();
         let Value::Key(key) = key else { panic!() };
         assert_eq!(key.owner, ins.self_addr);
-        assert_eq!(key.local, fresh_local(&TestHasher, ins.manifest_hash, 3, 2));
+        assert_eq!(key.local, fresh_local(&TestHasher, ins.identity, 3, 0, 2));
     }
 
     #[test]

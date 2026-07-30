@@ -5,8 +5,9 @@
 
 use hyperscale_vm_effects::{
     Address, Clause, Effect, EffectTarget, Expr, Hash32, InstanceMeta, InstanceRegistry, Manifest,
-    MetadataCache, MethodSignature, Mode, ModeExpr, Node, PackageHash, PackageMetadata,
-    PrefixShardResolver, RoleId, ShardId, TargetExpr, TestHasher, Value, fresh_id, route,
+    ManifestHash, MetadataCache, MethodSignature, Mode, ModeExpr, Node, PackageHash,
+    PackageMetadata, PrefixShardResolver, RoleId, ShardId, TargetExpr, TestHasher, Value, fresh_id,
+    route,
 };
 use hyperscale_vm_kernel::{CreationContext, MemoryStore, SubstateStore};
 
@@ -69,8 +70,10 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
             },
         ],
     };
+    let identity = ManifestHash(Hash32([0x1D; 32]));
     let routing = route(
         &manifest,
+        identity,
         &cache,
         &instances,
         &TestHasher,
@@ -80,10 +83,9 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     let declared = &routing.per_shard[&ShardId(0x11)];
 
     // The kernel executes node 1: its creation context derives from the
-    // same manifest hash and node index.
-    let manifest_hash = manifest.hash(&TestHasher);
+    // same transaction identity, node index, and frame.
     let mut store = MemoryStore::new();
-    let mut ctx = CreationContext::new(creator, manifest_hash, 1);
+    let mut ctx = CreationContext::new(creator, identity, 1, 0);
     let created = ctx.create(&mut store, &TestHasher, vec![42]).unwrap();
     assert!(declared.contains(&Effect {
         target: EffectTarget::Point(created),
@@ -91,7 +93,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     }));
 
     // The entry's fresh sequence agrees the same way.
-    let seq = fresh_id(&TestHasher, manifest_hash, 1, 1);
+    let seq = fresh_id(&TestHasher, identity, 1, 0, 1);
     store
         .entry_write(
             creator,
@@ -110,7 +112,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     }));
 
     // Node 0's creation is a different key: the node index namespaces.
-    let mut other = CreationContext::new(creator, manifest_hash, 0);
+    let mut other = CreationContext::new(creator, identity, 0, 0);
     let from_node_zero = other.fresh_key(&TestHasher);
     assert_ne!(from_node_zero, created);
     assert!(declared.contains(&Effect {
