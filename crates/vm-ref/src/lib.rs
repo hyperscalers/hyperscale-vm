@@ -4,4 +4,14 @@
 //! validator admits — the executable spec, differentially tested against the
 //! blessed engine. Execution semantics, canonical-ABI lift/lower, and the fuel
 //! schedule are implemented independently of wasmtime; sharing is permitted
-//! only at the decode layer.
+//! only at the decode layer (wasmparser).
+
+pub mod error;
+pub mod interp;
+pub mod module;
+pub mod ops;
+
+pub use error::{DecodeError, Trap};
+pub use interp::RefInstance;
+pub use module::RefModule;
+pub use ops::Value;

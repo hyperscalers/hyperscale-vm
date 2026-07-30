@@ -5,6 +5,8 @@ edition.workspace = true
 description = "Reference interpreter of the deterministic profile: the executable spec"
 
 [dependencies]
+thiserror.workspace = true
+wasmparser.workspace = true
 
 [lints]
 workspace = true

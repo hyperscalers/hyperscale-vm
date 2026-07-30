@@ -530,6 +530,10 @@ dependencies = [
 [[package]]
 name = "hyperscale-vm-ref"
 version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.19",
+ "wasmparser 0.236.1",
+]
 
 [[package]]
 name = "hyperscale-vm-runtime"
