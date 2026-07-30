@@ -5,7 +5,12 @@ edition.workspace = true
 description = "Component Model host: blessed engine embedding, profile validator, kernel world, metering"
 
 [dependencies]
+thiserror.workspace = true
+wasmparser.workspace = true
 wasmtime.workspace = true
+
+[dev-dependencies]
+wat.workspace = true
 
 [lints]
 workspace = true

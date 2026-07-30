@@ -534,7 +534,10 @@ version = "0.1.0"
 name = "hyperscale-vm-runtime"
 version = "0.1.0"
 dependencies = [
+ "thiserror 2.0.19",
+ "wasmparser 0.236.1",
  "wasmtime",
+ "wat",
 ]
 
 [[package]]
