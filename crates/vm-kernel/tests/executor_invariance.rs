@@ -272,3 +272,45 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
     assert_eq!(cells(&serial), cells(&parallel));
     assert_eq!(cells(&serial), cells(&permuted));
 }
+
+#[test]
+fn input_order_cannot_influence_any_receipt() {
+    let (store, batch) = fixture();
+    let baseline = execute_batch(
+        store.clone(),
+        &batch,
+        &scripted,
+        env(),
+        test_hash,
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+
+    let mut reversed = batch.clone();
+    reversed.reverse();
+    let mut interleaved = batch;
+    interleaved.swap(0, 3);
+    interleaved.swap(2, 5);
+    for permutation in [reversed, interleaved] {
+        for mode in [ExecutionMode::Serial, ExecutionMode::Parallel] {
+            let outcome = execute_batch(
+                store.clone(),
+                &permutation,
+                &scripted,
+                env(),
+                test_hash,
+                mode,
+            )
+            .unwrap();
+            assert_eq!(baseline.receipts, outcome.receipts);
+            let cells = |outcome: &BatchOutcome| -> BTreeMap<_, Vec<u8>> {
+                outcome
+                    .store
+                    .cells()
+                    .map(|(key, value)| (key, value.to_vec()))
+                    .collect()
+            };
+            assert_eq!(cells(&baseline), cells(&outcome));
+        }
+    }
+}

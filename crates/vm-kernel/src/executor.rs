@@ -237,6 +237,9 @@ fn run_group<R: GuestRunner>(
 
 /// Execute a batch of transactions over committed state.
 ///
+/// Input order is immaterial: the batch is judged, grouped, executed, and
+/// applied in canonical transaction-hash order.
+///
 /// # Errors
 ///
 /// Any [`BatchError`] — all are kernel-level defects; per-transaction
@@ -260,6 +263,8 @@ pub fn execute_batch<R: GuestRunner>(
             return Err(BatchError::DuplicateTx(entry.tx));
         }
     }
+    let mut ordered: Vec<&BatchTx> = batch.iter().collect();
+    ordered.sort_by_key(|entry| entry.tx);
     let mut receipts: BTreeMap<TxHash, Receipt> = BTreeMap::new();
 
     // Judge every declared reservation in canonical order; hold the
@@ -267,14 +272,14 @@ pub fn execute_batch<R: GuestRunner>(
     let mut judged = committed;
     judged.clear_log();
     let mut requests = Vec::new();
-    for entry in batch {
+    for entry in &ordered {
         for (key, amount) in declared_reservations(&entry.declared) {
             requests.push((entry.tx, key, amount));
         }
     }
     let verdicts = judged.judge_and_hold(&requests)?;
     let mut runnable: Vec<&BatchTx> = Vec::with_capacity(batch.len());
-    for entry in batch {
+    for entry in ordered {
         let refused = declared_reservations(&entry.declared)
             .into_iter()
             .find(|(key, _)| {
