@@ -100,6 +100,8 @@ pub enum CVal {
     U64(u64),
     /// A borrowed capability handle carrying its host rep and its type.
     Borrow(u32, ResourceKind),
+    /// A `list<u8>` value at the export boundary.
+    Bytes(Vec<u8>),
 }
 
 /// A kernel-world import.
@@ -130,7 +132,12 @@ enum HostFn {
 #[derive(Debug, Clone, Copy)]
 enum CompFunc {
     Host(HostFn),
-    Lifted { core_func: u32, ty: u32 },
+    Lifted {
+        core_func: u32,
+        ty: u32,
+        opts: CanonOpts,
+        post_return: Option<u32>,
+    },
 }
 
 /// A core-function definition.
@@ -278,8 +285,28 @@ impl RefComponent {
                 Payload::ComponentExportSection(reader) => {
                     for export in reader {
                         let export = export.map_err(|e| DecodeError::Malformed(e.to_string()))?;
-                        if export.kind == ComponentExternalKind::Func {
-                            comp.exports.insert(export.name.0.to_string(), export.index);
+                        // An export also appends to the exported kind's
+                        // index space; later definitions reference past it.
+                        match export.kind {
+                            ComponentExternalKind::Func => {
+                                comp.exports.insert(export.name.0.to_string(), export.index);
+                                let aliased = comp
+                                    .comp_funcs
+                                    .get(export.index as usize)
+                                    .copied()
+                                    .ok_or_else(|| {
+                                    DecodeError::Malformed("export func index".to_string())
+                                })?;
+                                comp.comp_funcs.push(aliased);
+                            }
+                            ComponentExternalKind::Type => {
+                                let aliased =
+                                    comp.types.get(export.index as usize).cloned().ok_or_else(
+                                        || DecodeError::Malformed("export type index".to_string()),
+                                    )?;
+                                comp.types.push(aliased);
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -444,11 +471,19 @@ impl RefComponent {
             CanonicalFunction::Lift {
                 core_func_index,
                 type_index,
-                ..
+                options,
             } => {
+                let mut post_return = None;
+                for option in options {
+                    if let CanonicalOption::PostReturn(index) = option {
+                        post_return = Some(*index);
+                    }
+                }
                 self.comp_funcs.push(CompFunc::Lifted {
                     core_func: *core_func_index,
                     ty: *type_index,
+                    opts: parse_opts(options),
+                    post_return,
                 });
             }
             other => {
@@ -757,6 +792,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
     ///
     /// Only on index-space overflow past `u32`, which the profile's
     /// structural limits exclude.
+    #[allow(clippy::too_many_lines)] // one pass: lower args, call, lift results
     pub fn invoke(
         &mut self,
         export: &str,
@@ -767,10 +803,16 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
             .exports
             .get(export)
             .ok_or_else(|| DecodeError::NoSuchExport(export.to_string()))?;
-        let CompFunc::Lifted { core_func, ty } = self.comp.comp_funcs[func_idx as usize] else {
+        let CompFunc::Lifted {
+            core_func,
+            ty,
+            opts,
+            post_return,
+        } = self.comp.comp_funcs[func_idx as usize]
+        else {
             return Err(DecodeError::Unsupported("export of an import".to_string()));
         };
-        let CTypeEntry::Func(ctype) = &self.comp.types[ty as usize] else {
+        let CTypeEntry::Func(ctype) = self.comp.types[ty as usize].clone() else {
             return Err(DecodeError::Malformed("lift type".to_string()));
         };
         if ctype.params.len() != args.len() {
@@ -778,6 +820,15 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
         }
 
         self.canon.handles.clear();
+        let modules: Vec<&RefModule> = self.comp.modules.iter().collect();
+        self.store.depth = 0;
+        let mem_idx = opts
+            .memory
+            .and_then(|m| self.canon.resolved_memories.get(m as usize).copied());
+        let realloc = opts
+            .realloc
+            .and_then(|r| self.canon.resolved_core_funcs.get(r as usize).copied());
+
         let mut flat = Vec::new();
         for (arg, want) in args.iter().zip(&ctype.params) {
             match (arg, want) {
@@ -792,37 +843,118 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                     });
                     flat.push(Value::I32(idx.cast_signed()));
                 }
+                (CVal::Bytes(bytes), CTy::List8) => {
+                    // Lower through the lift options: the guest's realloc
+                    // allocates, the bytes copy in, the (ptr, len) pair
+                    // joins the flat arguments — exactly the blessed
+                    // engine's argument path, realloc metered as guest
+                    // code on both.
+                    let (Some(mem), Some(realloc)) = (mem_idx, realloc) else {
+                        return Err(DecodeError::Unsupported(
+                            "list argument without lift options".to_string(),
+                        ));
+                    };
+                    let len =
+                        i32::try_from(bytes.len()).map_err(|_| DecodeError::ArgumentMismatch)?;
+                    let allocated = call(
+                        &modules,
+                        &mut self.canon,
+                        &mut self.store,
+                        realloc,
+                        vec![Value::I32(0), Value::I32(0), Value::I32(1), Value::I32(len)],
+                    );
+                    let ptr = match allocated {
+                        Ok(values) => values.first().copied().unwrap_or(Value::I32(0)).as_i32(),
+                        Err(e) => return Ok(Err(e)),
+                    };
+                    let memory = &mut self.store.memories[mem as usize];
+                    let start = usize::try_from(ptr.cast_unsigned()).expect("32-bit");
+                    let Some(end) = start.checked_add(bytes.len()) else {
+                        return Ok(Err(ExecError::Trap(Trap::MemoryOutOfBounds)));
+                    };
+                    if end > memory.data.len() {
+                        return Ok(Err(ExecError::Trap(Trap::MemoryOutOfBounds)));
+                    }
+                    memory.data[start..end].copy_from_slice(bytes);
+                    flat.push(Value::I32(ptr));
+                    flat.push(Value::I32(len));
+                }
                 _ => return Err(DecodeError::ArgumentMismatch),
             }
         }
 
         let addr = self.canon.resolved_core_funcs[core_func as usize];
-        let modules: Vec<&RefModule> = self.comp.modules.iter().collect();
-        self.store.depth = 0;
         let outcome = call(&modules, &mut self.canon, &mut self.store, addr, flat);
         let result = match outcome {
             Ok(values) => {
                 if self.canon.handles.iter().any(|h| h.live) {
                     Err(ExecError::Canon(CanonError::BorrowsRemain))
                 } else {
-                    let mut out = Vec::new();
-                    for (v, t) in values.iter().zip(&ctype.results) {
-                        out.push(match t {
-                            CTy::U32 => CVal::U32(v.as_i32().cast_unsigned()),
-                            CTy::U64 => CVal::U64(v.as_i64().cast_unsigned()),
-                            _ => {
-                                return Err(DecodeError::Unsupported(
-                                    "non-flat result".to_string(),
-                                ));
-                            }
-                        });
+                    let lifted = self.lift_results(&ctype, &values, mem_idx);
+                    if let Ok(_) = &lifted
+                        && let Some(index) = post_return
+                        && let Some(addr) =
+                            self.canon.resolved_core_funcs.get(index as usize).copied()
+                    {
+                        let modules: Vec<&RefModule> = self.comp.modules.iter().collect();
+                        if let Err(e) =
+                            call(&modules, &mut self.canon, &mut self.store, addr, values)
+                        {
+                            return Ok(Err(e));
+                        }
                     }
-                    Ok(out)
+                    lifted
                 }
             }
             Err(e) => Err(e),
         };
         Ok(result)
+    }
+
+    /// Lift the core return values per the export's declared results:
+    /// scalars come back flat; a list result spills to a return area the
+    /// single returned pointer names.
+    fn lift_results(
+        &self,
+        ctype: &CType,
+        values: &[Value],
+        mem_idx: Option<u32>,
+    ) -> Result<Vec<CVal>, ExecError> {
+        match ctype.results.as_slice() {
+            [] => Ok(Vec::new()),
+            [CTy::U32] => Ok(vec![CVal::U32(
+                values.first().map_or(0, |v| v.as_i32().cast_unsigned()),
+            )]),
+            [CTy::U64] => Ok(vec![CVal::U64(
+                values.first().map_or(0, |v| v.as_i64().cast_unsigned()),
+            )]),
+            [CTy::List8] => {
+                let area = values.first().map_or(0, |v| v.as_i32().cast_unsigned()) as usize;
+                let Some(mem) = mem_idx else {
+                    return Err(ExecError::Canon(CanonError::Internal(
+                        "list result without a memory option",
+                    )));
+                };
+                let memory = &self.store.memories[mem as usize];
+                if area + 8 > memory.data.len() {
+                    return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+                }
+                let ptr =
+                    u32::from_le_bytes(memory.data[area..area + 4].try_into().expect("4 bytes"))
+                        as usize;
+                let len = u32::from_le_bytes(
+                    memory.data[area + 4..area + 8].try_into().expect("4 bytes"),
+                ) as usize;
+                let Some(end) = ptr.checked_add(len) else {
+                    return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+                };
+                if end > memory.data.len() {
+                    return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+                }
+                Ok(vec![CVal::Bytes(memory.data[ptr..end].to_vec())])
+            }
+            _ => Err(ExecError::Canon(CanonError::Internal("result shape"))),
+        }
     }
 
     /// Total fuel consumed: the spec instruction schedule plus the boundary

@@ -1,0 +1,99 @@
+/// The contract world: the only imports a contract component may name.
+/// Capability granularity is not in this surface — it comes from which
+/// handles the kernel materializes per transaction, and each mode of the
+/// effect lattice is its own resource type, so an undeclared mode is as
+/// inexpressible as an undeclared key: there is no handle type to receive.
+package hyperscale:kernel;
+
+/// Declared-state access, one resource per mode. Amounts and order keys
+/// cross the boundary in the kernel's cell representation: exactly 16
+/// bytes, little-endian u128.
+interface state {
+    /// A declared fresh read of one substate.
+    resource read-cell;
+    /// A declared pinned (snapshot) read of one substate.
+    resource snap-cell;
+    /// A declared exclusive read-modify-write of one substate.
+    resource write-cell;
+    /// A declared commutative movement on one amount cell.
+    resource delta-cell;
+    /// A declared reservation, already judged feasible and held.
+    resource reserve-cell;
+    /// A declared read interval of an ordered collection.
+    resource range-read;
+    /// A declared read-modify-write interval of an ordered collection.
+    resource range-write;
+
+    /// The substate's current bytes; empty if absent.
+    read-cell-get: func(c: borrow<read-cell>) -> list<u8>;
+
+    /// The substate's pinned bytes; empty if absent.
+    snap-cell-get: func(c: borrow<snap-cell>) -> list<u8>;
+
+    /// The substate's current bytes; empty if absent.
+    write-cell-get: func(c: borrow<write-cell>) -> list<u8>;
+
+    /// Replace the substate's bytes.
+    write-cell-set: func(c: borrow<write-cell>, value: list<u8>);
+
+    /// Credit the amount cell.
+    delta-cell-add: func(c: borrow<delta-cell>, amount: list<u8>);
+
+    /// Debit the amount cell unconditionally.
+    delta-cell-sub: func(c: borrow<delta-cell>, amount: list<u8>);
+
+    /// The reserved amount this transaction holds.
+    reserve-cell-amount: func(c: borrow<reserve-cell>) -> list<u8>;
+
+    /// Entries currently in the interval, bounded by the declared cap.
+    range-read-count: func(r: borrow<range-read>) -> u32;
+
+    /// The order key of the entry at `index`, ascending.
+    range-read-order: func(r: borrow<range-read>, index: u32) -> list<u8>;
+
+    /// The value of the entry at `index`, ascending.
+    range-read-entry: func(r: borrow<range-read>, index: u32) -> list<u8>;
+
+    /// Entries currently in the interval, bounded by the declared cap.
+    range-write-count: func(r: borrow<range-write>) -> u32;
+
+    /// The order key of the entry at `index`, ascending.
+    range-write-order: func(r: borrow<range-write>, index: u32) -> list<u8>;
+
+    /// The value of the entry at `index`, ascending.
+    range-write-entry: func(r: borrow<range-write>, index: u32) -> list<u8>;
+
+    /// Replace the value of the entry at `index`.
+    range-write-set: func(r: borrow<range-write>, index: u32, value: list<u8>);
+
+    /// Insert (or replace) the entry at `order`, which must lie inside the
+    /// declared interval.
+    range-write-insert: func(r: borrow<range-write>, order: list<u8>, value: list<u8>);
+
+    /// Remove the entry at `index`.
+    range-write-remove: func(r: borrow<range-write>, index: u32);
+}
+
+/// The deterministic environment: identical on every replica for a given
+/// transaction, by construction.
+interface env {
+    /// The transaction clock: the canonical weighted-time anchor of the
+    /// payer-shard block that committed this transaction, in milliseconds.
+    clock: func() -> u64;
+
+    /// Beacon randomness, domain-separated per transaction. 32 bytes.
+    randomness: func() -> list<u8>;
+}
+
+/// Host-side cryptography; guests never carry their own.
+interface crypto {
+    /// The protocol hash function. 32-byte digest.
+    hash: func(data: list<u8>) -> list<u8>;
+}
+
+/// The world every contract component targets.
+world contract {
+    import state;
+    import env;
+    import crypto;
+}

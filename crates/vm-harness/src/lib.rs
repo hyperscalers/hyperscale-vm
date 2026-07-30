@@ -28,14 +28,14 @@ pub mod fixtures {
             .to_path_buf()
     }
 
-    /// Builds the `guests/transfer` crate with the pinned toolchain and
+    /// Builds a `guests/<name>` crate with the pinned toolchain and
     /// returns the componentized artifact.
     ///
     /// # Errors
     ///
     /// Fails if the guest build or componentization fails.
-    pub fn build_transfer_component() -> Result<Vec<u8>> {
-        let guest_dir = repo_root().join("guests/transfer");
+    pub fn build_guest(name: &str) -> Result<Vec<u8>> {
+        let guest_dir = repo_root().join("guests").join(name);
         let status = Command::new("cargo")
             .args(["build", "--release", "--target", "wasm32-unknown-unknown"])
             .current_dir(&guest_dir)
@@ -44,7 +44,9 @@ pub mod fixtures {
         ensure!(status.success(), "guest build failed");
 
         let core = std::fs::read(
-            guest_dir.join("target/wasm32-unknown-unknown/release/transfer_guest.wasm"),
+            guest_dir
+                .join("target/wasm32-unknown-unknown/release")
+                .join(format!("{}_guest.wasm", name.replace('-', "_"))),
         )
         .context("read guest core module")?;
         let component = ComponentEncoder::default()
@@ -54,6 +56,15 @@ pub mod fixtures {
             .encode()
             .context("componentize")?;
         Ok(component)
+    }
+
+    /// The transfer fixture's artifact.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the guest build or componentization fails.
+    pub fn build_transfer_component() -> Result<Vec<u8>> {
+        build_guest("transfer")
     }
     /// The kernel-world component guest, exercising the per-mode surface.
     ///

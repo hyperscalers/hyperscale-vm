@@ -1,0 +1,19 @@
+package test:guest;
+
+/// The constant-product pool: one swap over two reserve cells and a locked
+/// fee configuration.
+world amm {
+    import hyperscale:kernel/state;
+
+    use hyperscale:kernel/state.{snap-cell, write-cell};
+
+    /// Swap `input` against the pool; aborts unless the output covers
+    /// `min-out`. Returns the output amount.
+    export swap: func(
+        config: borrow<snap-cell>,
+        reserve-in: borrow<write-cell>,
+        reserve-out: borrow<write-cell>,
+        input: list<u8>,
+        min-out: list<u8>,
+    ) -> list<u8>;
+}

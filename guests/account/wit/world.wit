@@ -1,0 +1,15 @@
+package test:guest;
+
+/// The minimal account: reservation-backed withdrawal and delta deposit.
+world account {
+    import hyperscale:kernel/state;
+
+    use hyperscale:kernel/state.{reserve-cell, delta-cell};
+
+    /// Take the reserved amount as a bucket; the requested amount must
+    /// equal the reservation.
+    export withdraw: func(vault: borrow<reserve-cell>, amount: list<u8>) -> list<u8>;
+
+    /// Credit a bucket's amount into the vault.
+    export deposit: func(vault: borrow<delta-cell>, amount: list<u8>);
+}

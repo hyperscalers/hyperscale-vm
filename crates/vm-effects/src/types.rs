@@ -389,6 +389,25 @@ impl EffectSet {
         self.by_target.is_empty()
     }
 
+    /// The provision requirement of this effect set: the targets whose
+    /// committed values a counterpart shard must carry — fresh reads and
+    /// the prior values of read-modify-writes. Snapshot reads are
+    /// client-proven, deltas read nothing, and reservation feasibility is
+    /// judged at the owning shard, so none of them provision. A
+    /// commutative-only leg therefore provisions nothing at all.
+    #[must_use]
+    pub fn provision_targets(&self) -> BTreeSet<EffectTarget> {
+        self.by_target
+            .iter()
+            .filter(|(_, modes)| {
+                modes
+                    .iter()
+                    .any(|mode| matches!(mode.kind(), ModeKind::Read | ModeKind::Write))
+            })
+            .map(|(target, _)| *target)
+            .collect()
+    }
+
     /// Whether the exact (target, mode) pair is present.
     #[must_use]
     pub fn contains(&self, effect: &Effect) -> bool {

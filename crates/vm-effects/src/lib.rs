@@ -24,6 +24,7 @@ pub mod hash;
 pub mod manifest;
 pub mod metadata;
 pub mod route;
+pub mod stdlib;
 pub mod types;
 
 pub use dsl::{

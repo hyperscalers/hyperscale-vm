@@ -8,4 +8,6 @@ The Hyperscale execution runtime, developed in isolation from the protocol works
 - `crates/vm-ref` — the reference interpreter of the profile: the executable spec, independently written, differentially tested against the blessed engine.
 - `crates/vm-harness` — differential lanes, corpora, and guest fixtures. Dev-only; never a dependency of the other two.
 
+`guests/` holds the pinned-toolchain guest fixtures: the transfer fixture plus the minimal stdlib — account, constant-product pool, and order book — that the pattern corpus executes on both runtimes.
+
 Isolation is a build fact: nothing here depends on the protocol workspace, and nothing there depends on this repo until the runtime integrates behind the executor seam.

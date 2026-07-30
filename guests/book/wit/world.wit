@@ -1,0 +1,29 @@
+package test:guest;
+
+/// The order book: makers place asks into a declared interval, takers fill
+/// by price-time priority within it.
+world book {
+    import hyperscale:kernel/state;
+
+    use hyperscale:kernel/state.{range-write, delta-cell};
+
+    /// Insert an ask at `price` with the caller-provided fresh `seq`,
+    /// escrowing the bucket into the book's base vault.
+    export place: func(
+        asks: borrow<range-write>,
+        escrow: borrow<delta-cell>,
+        price: u64,
+        seq: u64,
+        amount: list<u8>,
+    );
+
+    /// Buy base with a quote budget, best price first, within the declared
+    /// interval. Returns the bought amount and the unspent change as two
+    /// concatenated 16-byte cells.
+    export fill: func(
+        asks: borrow<range-write>,
+        base-escrow: borrow<delta-cell>,
+        quote-escrow: borrow<delta-cell>,
+        budget: list<u8>,
+    ) -> list<u8>;
+}
