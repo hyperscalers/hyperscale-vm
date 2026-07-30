@@ -5,6 +5,7 @@ edition.workspace = true
 description = "Component Model host: blessed engine embedding, profile validator, kernel world, metering"
 
 [dependencies]
+wasmtime.workspace = true
 
 [lints]
 workspace = true
