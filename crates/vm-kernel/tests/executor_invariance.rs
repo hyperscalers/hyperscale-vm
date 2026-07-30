@@ -1,0 +1,274 @@
+//! The batch executor at the kernel level: conflict grouping, canonical
+//! application, and schedule invariance, with a scripted runner in place
+//! of an engine.
+
+use std::collections::BTreeMap;
+use std::thread::sleep;
+use std::time::Duration;
+
+use hyperscale_vm_effects::{
+    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
+    TestHasher, child_key,
+};
+use hyperscale_vm_kernel::{
+    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, MemoryStore,
+    Movement, Outcome, RunResult, SubstateStore, TxHash, decode_amount, encode_amount,
+    execute_batch,
+};
+
+fn test_hash(data: &[u8]) -> [u8; 32] {
+    TestHasher.hash(b"crypto", &[data]).0
+}
+
+const fn env() -> EnvInputs {
+    EnvInputs {
+        clock_ms: 1_000,
+        randomness: [1; 32],
+    }
+}
+
+const fn tx(byte: u8) -> TxHash {
+    TxHash(Hash32([byte; 32]))
+}
+
+fn cell(byte: u8) -> SubstateKey {
+    child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[])
+}
+
+fn point(key: SubstateKey, mode: Mode) -> EffectSet {
+    let mut set = EffectSet::new();
+    set.insert(Effect {
+        target: EffectTarget::Point(key),
+        mode,
+    })
+    .unwrap();
+    set
+}
+
+fn reserve_and_delta(sender: SubstateKey, amount: u128, recipient: SubstateKey) -> EffectSet {
+    let mut set = point(sender, Mode::Reserve { amount });
+    set.insert(Effect {
+        target: EffectTarget::Point(recipient),
+        mode: Mode::Delta,
+    })
+    .unwrap();
+    set
+}
+
+fn rep_of(session: &KernelSession, wanted: &Capability) -> u32 {
+    u32::try_from(
+        session
+            .capabilities()
+            .iter()
+            .position(|c| c == wanted)
+            .expect("capability present"),
+    )
+    .expect("bounded")
+}
+
+/// The scripted guest: transfers move the reserved amount into the delta
+/// cell; writers bump their cell's first byte; the doomed writer mutates
+/// and then fails.
+fn scripted(tx_id: TxHash, mut session: KernelSession) -> RunResult {
+    let caps: Vec<Capability> = session.capabilities().to_vec();
+    let reserve = caps
+        .iter()
+        .find_map(|c| match c {
+            Capability::Reserve(key) => Some(*key),
+            _ => None,
+        })
+        .map(|key| rep_of(&session, &Capability::Reserve(key)));
+    let delta = caps.iter().find_map(|c| match c {
+        Capability::Delta(key) => Some(rep_of(&session, &Capability::Delta(*key))),
+        _ => None,
+    });
+    let write = caps.iter().find_map(|c| match c {
+        Capability::Write(key) => Some(rep_of(&session, &Capability::Write(*key))),
+        _ => None,
+    });
+
+    let outcome = if let (Some(reserve), Some(delta)) = (reserve, delta) {
+        let amount = session.reserve_amount(reserve).unwrap();
+        session.delta_add(delta, &amount).unwrap();
+        Outcome::Completed {
+            value: Some(u64::try_from(decode_amount(&amount).unwrap()).unwrap()),
+        }
+    } else if let Some(write) = write {
+        let mut value = session.write_cell_get(write).unwrap();
+        value[0] += 1;
+        session.write_cell_set(write, value.clone()).unwrap();
+        if tx_id == tx(0x66) {
+            // The doomed writer: state must not survive its failure.
+            Outcome::UserError {
+                reason: "scripted defect".into(),
+            }
+        } else {
+            Outcome::Completed {
+                value: Some(u64::from(value[0])),
+            }
+        }
+    } else {
+        Outcome::Completed { value: None }
+    };
+    RunResult {
+        session,
+        outcome,
+        fuel: 10 + u64::from(tx_id.0.0[0]),
+    }
+}
+
+fn fixture() -> (MemoryStore, Vec<BatchTx>) {
+    let mut store = MemoryStore::new();
+    store.write(cell(0xA), encode_amount(100).to_vec()).unwrap();
+    store.write(cell(0xB), encode_amount(100).to_vec()).unwrap();
+    store.write(cell(0xE), vec![10]).unwrap();
+    store.write(cell(0xF), vec![10]).unwrap();
+    store.clear_log();
+
+    let batch = vec![
+        // Two transfers into the shared recipient: delta-delta compatible,
+        // so they land in different groups and merge by movement.
+        BatchTx {
+            tx: tx(0x01),
+            declared: reserve_and_delta(cell(0xA), 40, cell(0xC)),
+        },
+        BatchTx {
+            tx: tx(0x02),
+            declared: reserve_and_delta(cell(0xB), 25, cell(0xC)),
+        },
+        // Two writers of one cell: write-write conflict, one group,
+        // canonical order.
+        BatchTx {
+            tx: tx(0x03),
+            declared: point(cell(0xE), Mode::Write),
+        },
+        BatchTx {
+            tx: tx(0x04),
+            declared: point(cell(0xE), Mode::Write),
+        },
+        // Infeasible: the sender vault cannot cover it after tx 0x01.
+        BatchTx {
+            tx: tx(0x05),
+            declared: reserve_and_delta(cell(0xA), 1_000, cell(0xC)),
+        },
+        // The doomed writer on its own cell.
+        BatchTx {
+            tx: tx(0x66),
+            declared: point(cell(0xF), Mode::Write),
+        },
+    ];
+    (store, batch)
+}
+
+fn amount_at(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
+    let mut store = outcome.store.clone();
+    decode_amount(&store.read(key).unwrap().unwrap()).unwrap()
+}
+
+fn bytes_at(outcome: &BatchOutcome, key: SubstateKey) -> Vec<u8> {
+    let mut store = outcome.store.clone();
+    store.read(key).unwrap().unwrap()
+}
+
+#[test]
+fn the_batch_semantics_are_exact() {
+    let (store, batch) = fixture();
+    let outcome = execute_batch(
+        store,
+        &batch,
+        &scripted,
+        env(),
+        test_hash,
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+
+    // Settlements and movements composed: senders debited, the shared
+    // recipient credited by both transfers.
+    assert_eq!(amount_at(&outcome, cell(0xA)), 60);
+    assert_eq!(amount_at(&outcome, cell(0xB)), 75);
+    assert_eq!(amount_at(&outcome, cell(0xC)), 65);
+    // The conflicting writers applied in canonical order.
+    assert_eq!(bytes_at(&outcome, cell(0xE)), vec![12]);
+    // The doomed writer's mutation never committed.
+    assert_eq!(bytes_at(&outcome, cell(0xF)), vec![10]);
+
+    // Receipts carry the taxonomy and movement form.
+    assert_eq!(
+        outcome.receipts[&tx(0x01)].delta.movements[&cell(0xC)],
+        Movement {
+            credit: 40,
+            debit: 0,
+        }
+    );
+    assert_eq!(outcome.receipts[&tx(0x01)].delta.settles[&cell(0xA)], 40);
+    assert!(outcome.receipts[&tx(0x01)].delta.cells.is_empty());
+    assert!(matches!(
+        outcome.receipts[&tx(0x05)].outcome,
+        Outcome::Infeasible { amount: 1_000, .. }
+    ));
+    assert!(matches!(
+        outcome.receipts[&tx(0x66)].outcome,
+        Outcome::UserError { .. }
+    ));
+    assert_eq!(
+        outcome.receipts[&tx(0x04)].delta.cells[&cell(0xE)],
+        Some(vec![12])
+    );
+
+    // No reservation is left held anywhere.
+    assert_eq!(outcome.store.held_reservation(cell(0xA), tx(0x05)), None);
+}
+
+#[test]
+fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
+    let (store, batch) = fixture();
+    let serial = execute_batch(
+        store.clone(),
+        &batch,
+        &scripted,
+        env(),
+        test_hash,
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let parallel = execute_batch(
+        store.clone(),
+        &batch,
+        &scripted,
+        env(),
+        test_hash,
+        ExecutionMode::Parallel,
+    )
+    .unwrap();
+    // Adversarial worker timing: later hashes run eagerly, earlier ones
+    // stall, inverting any accidental reliance on arrival order.
+    let stalled = |tx_id: TxHash, session: KernelSession| {
+        sleep(Duration::from_millis(u64::from(
+            0xFF_u8.wrapping_sub(tx_id.0.0[0]) / 32,
+        )));
+        scripted(tx_id, session)
+    };
+    let permuted = execute_batch(
+        store,
+        &batch,
+        &stalled,
+        env(),
+        test_hash,
+        ExecutionMode::Parallel,
+    )
+    .unwrap();
+
+    assert_eq!(serial.receipts, parallel.receipts);
+    assert_eq!(serial.receipts, permuted.receipts);
+
+    let cells = |outcome: &BatchOutcome| -> BTreeMap<_, Vec<u8>> {
+        outcome
+            .store
+            .cells()
+            .map(|(key, value)| (key, value.to_vec()))
+            .collect()
+    };
+    assert_eq!(cells(&serial), cells(&parallel));
+    assert_eq!(cells(&serial), cells(&permuted));
+}

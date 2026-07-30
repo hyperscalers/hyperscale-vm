@@ -19,6 +19,7 @@
 //! the runtime or the protocol workspace.
 
 pub mod dsl;
+pub mod graph;
 pub mod hash;
 pub mod manifest;
 pub mod metadata;
@@ -29,15 +30,16 @@ pub use dsl::{
     Clause, EvalError, EvalInputs, Expr, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr,
     evaluate_effects, evaluate_expr, fresh_id, fresh_local,
 };
+pub use graph::{AdmissionError, Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, admit};
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use manifest::{Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
-    PackageMetadata,
+    PackageMetadata, ParamType,
 };
 pub use route::{
-    CallEdge, CallGraph, MAX_CALL_EVALUATIONS, MethodRef, PrefixShardResolver, RouteError, Routing,
-    ShardResolver, SnapshotObligation, route,
+    CallEdge, CallGraph, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver,
+    RouteError, Routing, ShardResolver, SnapshotObligation, route,
 };
 pub use types::{
     Address, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind, ReserveOverflow, RoleId,

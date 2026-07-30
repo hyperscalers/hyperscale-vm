@@ -11,7 +11,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::build_transfer_component;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, Outcome, SubstateStore, TxHash,
+    Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome, SubstateStore, TxHash,
     encode_amount,
 };
 use hyperscale_vm_ref::{
@@ -54,8 +54,10 @@ fn session(committed: u128, reserve: u128) -> KernelSession {
         mode: Mode::Delta,
     })
     .unwrap();
+    let pinned = store.clone();
     KernelSession::materialize(
         store,
+        pinned,
         &set,
         TxHash(Hash32([0x55; 32])),
         EnvInputs {
@@ -193,16 +195,16 @@ fn the_rust_guest_agrees_between_blessed_engine_and_vm_ref() -> Result<()> {
 
             // Byte-identical receipts, oracle clean on both sides.
             let outcome = Outcome::Completed { value: Some(v) };
-            let b_receipt = b_host.0.finish(outcome.clone(), b_fuel).expect("oracle");
-            let r_receipt = r_host.0.finish(outcome, r_fuel).expect("oracle");
+            let (b_receipt, _) = b_host.0.finish(outcome.clone(), b_fuel).expect("oracle");
+            let (r_receipt, _) = r_host.0.finish(outcome, r_fuel).expect("oracle");
             assert_eq!(b_receipt, r_receipt);
+            assert_eq!(b_receipt.delta.settles.get(&sender), Some(&reserve));
             assert_eq!(
-                b_receipt.delta.cells.get(&sender),
-                Some(&Some(encode_amount(committed - reserve).to_vec()))
-            );
-            assert_eq!(
-                b_receipt.delta.cells.get(&recipient),
-                Some(&Some(encode_amount(reserve).to_vec()))
+                b_receipt.delta.movements.get(&recipient),
+                Some(&Movement {
+                    credit: reserve,
+                    debit: 0,
+                })
             );
         }
     }

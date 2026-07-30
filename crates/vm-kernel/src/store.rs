@@ -224,6 +224,13 @@ impl MemoryStore {
             .copied()
     }
 
+    /// Deltas queued but not yet committed, per cell.
+    pub fn pending_deltas(&self) -> impl Iterator<Item = (SubstateKey, &[DeltaOp])> + '_ {
+        self.pending_deltas
+            .iter()
+            .map(|(key, ops)| (*key, ops.as_slice()))
+    }
+
     /// Every point cell, in canonical key order.
     pub fn cells(&self) -> impl Iterator<Item = (SubstateKey, &[u8])> + '_ {
         self.cells

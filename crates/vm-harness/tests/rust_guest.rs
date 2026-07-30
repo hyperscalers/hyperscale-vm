@@ -11,8 +11,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::{build_transfer_component, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MaterializeError, MemoryStore, Outcome, SubstateStore,
-    TxHash, encode_amount,
+    Capability, EnvInputs, KernelSession, MaterializeError, MemoryStore, Movement, Outcome,
+    SubstateStore, TxHash, encode_amount,
 };
 use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,
@@ -58,8 +58,10 @@ fn session(committed: u128, reserve: u128) -> Result<KernelSession, MaterializeE
         .write(sender, encode_amount(committed).to_vec())
         .unwrap();
     store.clear_log();
+    let pinned = store.clone();
     KernelSession::materialize(
         store,
+        pinned,
         &declared(reserve),
         TxHash(Hash32([0x44; 32])),
         EnvInputs {
@@ -137,19 +139,19 @@ fn the_wit_bindgen_guest_conforms_and_transfers() -> Result<()> {
 
     // The receipt: settlement debits the sender, the delta credits the
     // recipient, and the oracle is clean.
-    let receipt = store
+    let (receipt, _) = store
         .into_data()
         .0
         .finish(Outcome::Completed { value: Some(tag) }, fuel)
         .expect("oracle clean");
     let (sender, recipient) = keys();
+    assert_eq!(receipt.delta.settles.get(&sender), Some(&100));
     assert_eq!(
-        receipt.delta.cells.get(&sender),
-        Some(&Some(encode_amount(400).to_vec()))
-    );
-    assert_eq!(
-        receipt.delta.cells.get(&recipient),
-        Some(&Some(encode_amount(100).to_vec()))
+        receipt.delta.movements.get(&recipient),
+        Some(&Movement {
+            credit: 100,
+            debit: 0,
+        })
     );
     Ok(())
 }

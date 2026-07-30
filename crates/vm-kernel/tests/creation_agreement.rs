@@ -18,6 +18,8 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     package.methods.insert(
         "spawn".into(),
         MethodSignature {
+            params: vec![],
+            outputs: vec![],
             effects: vec![
                 Clause::Effect {
                     target: TargetExpr::Point(Expr::FreshKey { slot: 0 }),

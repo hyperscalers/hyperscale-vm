@@ -5,8 +5,9 @@
 
 use hyperscale_vm_effects::{
     Address, CallSite, Clause, Effect, EffectSet, Expr, Hasher, InstanceMeta, InstanceRegistry,
-    MetadataCache, MethodSignature, ModeExpr, PackageHash, PackageMetadata, PrefixShardResolver,
-    RoleId, ShardId, SubstateKey, TargetExpr, TestHasher, Value, WindowExpr, child_key,
+    MetadataCache, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType,
+    PrefixShardResolver, RoleId, ShardId, SubstateKey, TargetExpr, TestHasher, Value, WindowExpr,
+    child_key,
 };
 
 /// A fungible balance cell under its holder.
@@ -52,6 +53,8 @@ pub fn account_metadata() -> PackageMetadata {
     methods.methods.insert(
         "withdraw".into(),
         MethodSignature {
+            params: vec![ParamType::Address, ParamType::U128],
+            outputs: vec![Expr::Arg(0)],
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(self_child(VAULT, vec![Expr::Arg(0)])),
                 mode: ModeExpr::Reserve(Expr::Arg(1)),
@@ -62,6 +65,8 @@ pub fn account_metadata() -> PackageMetadata {
     methods.methods.insert(
         "deposit".into(),
         MethodSignature {
+            params: vec![ParamType::Bucket],
+            outputs: vec![],
             effects: vec![
                 Clause::Effect {
                     target: TargetExpr::Point(self_child(
@@ -93,6 +98,8 @@ pub fn amm_metadata() -> PackageMetadata {
     methods.methods.insert(
         "swap".into(),
         MethodSignature {
+            params: vec![ParamType::Bucket, ParamType::U128],
+            outputs: vec![Expr::Config(1)],
             effects: vec![
                 Clause::Effect {
                     target: TargetExpr::Point(self_child(CONFIG, vec![])),
@@ -124,6 +131,8 @@ pub fn book_metadata() -> PackageMetadata {
     methods.methods.insert(
         "place_ask".into(),
         MethodSignature {
+            params: vec![ParamType::U64, ParamType::Bucket],
+            outputs: vec![],
             effects: vec![
                 Clause::Effect {
                     target: TargetExpr::Entry {
@@ -150,6 +159,8 @@ pub fn book_metadata() -> PackageMetadata {
     methods.methods.insert(
         "fill_asks".into(),
         MethodSignature {
+            params: vec![ParamType::U64, ParamType::U64, ParamType::Bucket],
+            outputs: vec![Expr::Config(0)],
             effects: vec![
                 Clause::Effect {
                     target: TargetExpr::Range {
@@ -180,6 +191,26 @@ pub fn book_metadata() -> PackageMetadata {
                 },
             ],
             calls: vec![],
+        },
+    );
+    methods
+}
+
+/// `take(bucket, amount)`: split a bucket, producing the taken part and
+/// the rest — two output edges of the same resource, both of which
+/// linearity forces the manifest to route.
+#[must_use]
+pub fn splitter_metadata() -> PackageMetadata {
+    let mut methods = PackageMetadata::default();
+    methods.methods.insert(
+        "take".into(),
+        MethodSignature {
+            params: vec![ParamType::Bucket, ParamType::U128],
+            outputs: vec![
+                Expr::ResourceOf(Box::new(Expr::Arg(0))),
+                Expr::ResourceOf(Box::new(Expr::Arg(0))),
+            ],
+            ..MethodSignature::default()
         },
     );
     methods
@@ -279,6 +310,8 @@ pub fn wide_account_metadata() -> PackageMetadata {
     methods.methods.insert(
         "withdraw_wide".into(),
         MethodSignature {
+            params: vec![ParamType::Address, ParamType::U128],
+            outputs: vec![Expr::Arg(0)],
             effects,
             calls: vec![],
         },
@@ -294,6 +327,8 @@ pub fn router_metadata() -> PackageMetadata {
     methods.methods.insert(
         "forward".into(),
         MethodSignature {
+            params: vec![],
+            outputs: vec![],
             effects: vec![],
             calls: vec![CallSite {
                 target: Expr::Arg(0),

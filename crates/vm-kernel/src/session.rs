@@ -16,9 +16,11 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_effects::{Address, Effect, EffectSet, EffectTarget, Mode, RoleId, SubstateKey};
+use hyperscale_vm_effects::{
+    Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, SubstateKey,
+};
 
-use crate::modes::{DeltaOp, TxHash, decode_amount, encode_amount};
+use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
 use crate::oracle::undeclared_accesses;
 use crate::store::{Access, MemoryStore, StoreError, SubstateStore};
 
@@ -81,6 +83,15 @@ pub enum MaterializeError {
         /// The declared amount.
         amount: u128,
     },
+    /// One transaction declaring an exclusive and a commutative mode on
+    /// the same cell — absolute and movement semantics cannot compose
+    /// within one receipt.
+    #[error("write and delta/reserve declared on the same cell {0:?}")]
+    SelfConflicting(SubstateKey),
+    /// An already-held reservation whose amount differs from the declared
+    /// one — a batch bookkeeping defect, surfaced rather than adopted.
+    #[error("held reservation on {0:?} does not match the declaration")]
+    HeldMismatch(SubstateKey),
     /// A store failure while judging reservations.
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -133,7 +144,7 @@ pub struct EnvInputs {
     pub randomness: [u8; 32],
 }
 
-/// How execution ended, as the receipt records it.
+/// How execution ended: the abort taxonomy as the receipt records it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// The export returned; its scalar result if it had one.
@@ -141,27 +152,66 @@ pub enum Outcome {
         /// The export's return value, when the signature has one.
         value: Option<u64>,
     },
-    /// Execution trapped; the deterministic reason class.
-    Trapped {
-        /// The trap's classification text.
+    /// A guest defect: a trap, a panic, a kernel refusal of bad guest
+    /// arguments, a declaration defect. The sender's fault; priced at the
+    /// sender.
+    UserError {
+        /// The deterministic reason class.
+        reason: String,
+    },
+    /// A declared reservation the committed balance could not cover — a
+    /// stale declaration, aborted before any execution at floor cost.
+    Infeasible {
+        /// The cell reserved against.
+        key: SubstateKey,
+        /// The declared amount.
+        amount: u128,
+    },
+    /// A kernel or store invariant failure — never the sender's fault, and
+    /// never expected to occur.
+    ProtocolError {
+        /// The deterministic reason class.
         reason: String,
     },
 }
 
+/// This transaction's commutative movement on one amount cell: checked
+/// credit and debit totals.
+///
+/// Recording movements rather than absolute cell values is what makes
+/// receipts schedule-invariant — another transaction's compatible deltas
+/// on the same cell cannot leak into this receipt.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Movement {
+    /// Total credited.
+    pub credit: u128,
+    /// Total debited.
+    pub debit: u128,
+}
+
 /// The committed state change, keyed canonically: `None` is a removal.
+/// Exclusive accesses report absolute outcomes; commutative accesses
+/// report movements.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StateDelta {
-    /// Changed point cells.
+    /// Cells changed under exclusive write capabilities.
     pub cells: BTreeMap<SubstateKey, Option<Vec<u8>>>,
     /// Changed ordered-collection entries.
     pub entries: BTreeMap<(Address, RoleId, u128), Option<Vec<u8>>>,
+    /// Delta movements per amount cell.
+    pub movements: BTreeMap<SubstateKey, Movement>,
+    /// Settled reservation amounts per cell.
+    pub settles: BTreeMap<SubstateKey, u128>,
 }
 
 impl StateDelta {
     /// Whether nothing changed.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.cells.is_empty() && self.entries.is_empty()
+        self.cells.is_empty()
+            && self.entries.is_empty()
+            && self.movements.is_empty()
+            && self.settles.is_empty()
     }
 }
 
@@ -195,6 +245,7 @@ pub enum FinishError {
 pub struct KernelSession {
     store: MemoryStore,
     baseline: MemoryStore,
+    pinned: MemoryStore,
     declared: EffectSet,
     table: Vec<Capability>,
     tx: TxHash,
@@ -204,7 +255,13 @@ pub struct KernelSession {
 
 impl KernelSession {
     /// Materialize capabilities for a declared effect set over committed
-    /// state, judging and holding the declared reservations.
+    /// state, judging and holding the declared reservations — or adopting
+    /// reservations a batch judge already holds for this transaction.
+    ///
+    /// `pinned` is the snapshot source: the attested version snapshot
+    /// reads resolve against, fixed for the whole batch regardless of what
+    /// concurrent transactions commit. For a lone transaction it is simply
+    /// a clone of `store`.
     ///
     /// The capability table's order is the effect set's canonical order,
     /// so reps are deterministic; the caller passes handles to the guest
@@ -215,11 +272,13 @@ impl KernelSession {
     /// Any [`MaterializeError`]; all are pre-execution aborts.
     pub fn materialize(
         mut store: MemoryStore,
+        pinned: MemoryStore,
         declared: &EffectSet,
         tx: TxHash,
         env: EnvInputs,
         hash_fn: fn(&[u8]) -> [u8; 32],
     ) -> Result<Self, MaterializeError> {
+        store.clear_log();
         let baseline = store.clone();
         let mut table = Vec::with_capacity(declared.len());
         let mut reservations = Vec::new();
@@ -230,10 +289,15 @@ impl KernelSession {
                 if store.is_locked(key) {
                     return Err(MaterializeError::LockedTarget(key));
                 }
-                reservations.push((tx, key, amount));
+                match store.held_reservation(key, tx) {
+                    Some(held) if held == amount => {}
+                    Some(_) => return Err(MaterializeError::HeldMismatch(key)),
+                    None => reservations.push((tx, key, amount)),
+                }
             }
             table.push(capability_for(&store, effect)?);
         }
+        reject_self_conflicts(declared)?;
 
         let verdicts = store.judge_and_hold(&reservations)?;
         for ((verdict_tx, key), feasibility) in verdicts {
@@ -251,6 +315,7 @@ impl KernelSession {
         Ok(Self {
             store,
             baseline,
+            pinned,
             declared: declared.clone(),
             table,
             tx,
@@ -285,14 +350,20 @@ impl KernelSession {
         }
     }
 
-    /// A pinned read through a snapshot capability.
+    /// A pinned read through a snapshot capability: the value comes from
+    /// the pinned store — the attested version — never from state
+    /// concurrent transactions are changing. The access records on the
+    /// live store for the oracle.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`].
     pub fn snap_cell(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
         match self.capability(rep)? {
-            Capability::Snapshot(key) => Ok(self.store.snapshot(key)?.unwrap_or_default()),
+            Capability::Snapshot(key) => {
+                self.store.snapshot(key)?;
+                Ok(self.pinned.snapshot(key)?.unwrap_or_default())
+            }
             _ => Err(SessionTrap::WrongMode(rep)),
         }
     }
@@ -499,28 +570,68 @@ impl KernelSession {
     }
 
     /// Close the session: fold queued deltas, settle this transaction's
-    /// reservations, run the trace-subset oracle, and produce the receipt.
+    /// reservations, run the trace-subset oracle, and produce the receipt
+    /// together with the threaded store (the input for the next
+    /// transaction in a conflict group).
     ///
     /// # Errors
     ///
     /// [`FinishError::Undeclared`] if any recorded access escaped the
     /// declared set; a store failure otherwise.
-    pub fn finish(mut self, outcome: Outcome, fuel: u64) -> Result<Receipt, FinishError> {
+    pub fn finish(
+        mut self,
+        outcome: Outcome,
+        fuel: u64,
+    ) -> Result<(Receipt, MemoryStore), FinishError> {
+        // Movements first: the pending deltas, as checked totals.
+        let mut movements: BTreeMap<SubstateKey, Movement> = BTreeMap::new();
+        for (key, ops) in self.store.pending_deltas() {
+            let mut movement = Movement::default();
+            for op in ops {
+                match op {
+                    DeltaOp::Add(amount) => {
+                        movement.credit = movement
+                            .credit
+                            .checked_add(*amount)
+                            .ok_or(StoreError::Mode(ModeError::DeltaOverflow))?;
+                    }
+                    DeltaOp::Sub(amount) => {
+                        movement.debit = movement
+                            .debit
+                            .checked_add(*amount)
+                            .ok_or(StoreError::Mode(ModeError::DeltaOverflow))?;
+                    }
+                }
+            }
+            movements.insert(key, movement);
+        }
         self.store.commit_deltas()?;
+        let mut settles = BTreeMap::new();
         for capability in &self.table {
             if let Capability::Reserve(key) = capability {
-                self.store.settle(*key, self.tx)?;
+                let amount = self.store.settle(*key, self.tx)?;
+                settles.insert(*key, amount);
             }
         }
         let escaped = undeclared_accesses(self.store.access_log(), &self.declared);
         if !escaped.is_empty() {
             return Err(FinishError::Undeclared(escaped));
         }
-        Ok(Receipt {
-            outcome,
-            delta: diff(&self.baseline, &self.store),
-            fuel,
-        })
+        let mut delta = diff(&self.baseline, &self.store);
+        // Commutative changes report as movements, never as absolutes.
+        delta
+            .cells
+            .retain(|key, _| !movements.contains_key(key) && !settles.contains_key(key));
+        delta.movements = movements;
+        delta.settles = settles;
+        Ok((
+            Receipt {
+                outcome,
+                delta,
+                fuel,
+            },
+            self.store,
+        ))
     }
 
     /// The session's store, for test inspection.
@@ -528,6 +639,31 @@ impl KernelSession {
     pub const fn store(&self) -> &MemoryStore {
         &self.store
     }
+}
+
+/// One transaction may not declare both an exclusive write and a
+/// commutative mode on the same cell: the receipt records absolutes for
+/// the one and movements for the other, and they cannot compose.
+fn reject_self_conflicts(declared: &EffectSet) -> Result<(), MaterializeError> {
+    let effects: Vec<Effect> = declared.iter().collect();
+    for (index, a) in effects.iter().enumerate() {
+        for b in &effects[index + 1..] {
+            if let (EffectTarget::Point(key), EffectTarget::Point(other)) = (a.target, b.target)
+                && key == other
+            {
+                let kinds = (a.mode.kind(), b.mode.kind());
+                let exclusive_and_commutative = matches!(
+                    kinds,
+                    (ModeKind::Write, ModeKind::Delta | ModeKind::Reserve)
+                        | (ModeKind::Delta | ModeKind::Reserve, ModeKind::Write)
+                );
+                if exclusive_and_commutative {
+                    return Err(MaterializeError::SelfConflicting(key));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The capability form of one declared effect: the world-design mapping.

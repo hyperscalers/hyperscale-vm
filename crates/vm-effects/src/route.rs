@@ -96,6 +96,9 @@ impl Routing {
     }
 }
 
+/// The bound on manifest nodes admission or routing will address.
+pub const MAX_MANIFEST_NODES: usize = 4096;
+
 /// The bound on call-site evaluations across one routing fold — a totality
 /// backstop against fan-out blowup in pathological metadata, far above any
 /// admissible manifest.
@@ -182,6 +185,9 @@ pub fn route(
     hasher: &dyn Hasher,
     shards: &dyn ShardResolver,
 ) -> Result<Routing, RouteError> {
+    if manifest.nodes.len() > MAX_MANIFEST_NODES {
+        return Err(RouteError::TooManyNodes);
+    }
     let manifest_hash = manifest.hash(hasher);
     let mut fold = Fold {
         cache,
@@ -408,7 +414,11 @@ mod tests {
     }
 
     fn method(effects: Vec<Clause>, calls: Vec<CallSite>) -> MethodSignature {
-        MethodSignature { effects, calls }
+        MethodSignature {
+            effects,
+            calls,
+            ..MethodSignature::default()
+        }
     }
 
     fn resolver() -> PrefixShardResolver {

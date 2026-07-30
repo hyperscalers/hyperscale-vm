@@ -13,6 +13,7 @@
 //! execution touches nothing it did not declare.
 
 pub mod conflict;
+pub mod executor;
 pub mod modes;
 pub mod oracle;
 pub mod ownership;
@@ -21,6 +22,9 @@ pub mod store;
 pub mod supply;
 
 pub use conflict::{conflicts, targets_overlap};
+pub use executor::{
+    BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, execute_batch,
+};
 pub use modes::{
     AMOUNT_CELL_BYTES, DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount,
     fold_deltas, judge,
@@ -28,8 +32,8 @@ pub use modes::{
 pub use oracle::{covered, permits, target_covers, undeclared_accesses};
 pub use ownership::{CreationContext, MoveError, move_object};
 pub use session::{
-    Capability, EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt,
-    SessionTrap, StateDelta,
+    Capability, EnvInputs, FinishError, KernelSession, MaterializeError, Movement, Outcome,
+    Receipt, SessionTrap, StateDelta,
 };
 pub use store::{Access, AppliedDelta, MemoryStore, StoreError, SubstateStore};
 pub use supply::SupplyLedger;

@@ -25,11 +25,60 @@ pub struct CallSite {
     pub args: Vec<Expr>,
 }
 
+/// A method parameter's admitted kind. Bucket parameters consume a value
+/// edge; every other kind binds a literal or envelope input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamType {
+    /// An unsigned 64-bit integer.
+    U64,
+    /// An unsigned 128-bit integer.
+    U128,
+    /// Opaque bytes.
+    Bytes,
+    /// A global object's address.
+    Address,
+    /// A value edge; its resource type is static, its amount dynamic.
+    Bucket,
+}
+
+impl ParamType {
+    /// The kind name, for diagnostics.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::U64 => "u64",
+            Self::U128 => "u128",
+            Self::Bytes => "bytes",
+            Self::Address => "address",
+            Self::Bucket => "bucket",
+        }
+    }
+
+    /// Whether a literal value has this kind. Buckets are never literals —
+    /// they arrive only as edges.
+    #[must_use]
+    pub const fn admits(self, value: &Value) -> bool {
+        matches!(
+            (self, value),
+            (Self::U64, Value::U64(_))
+                | (Self::U128, Value::U128(_))
+                | (Self::Bytes, Value::Bytes(_))
+                | (Self::Address, Value::Address(_))
+        )
+    }
+}
+
 /// A method's declared access. Its transitive effect set is the fold of its
 /// callees' signatures over the static call graph, which is acyclic — a DAG
 /// fold, never a fixpoint.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MethodSignature {
+    /// The method's parameter kinds, in order; admission types every node
+    /// against them.
+    pub params: Vec<ParamType>,
+    /// The static resource type of each value edge the method produces, as
+    /// an expression over the method's bound inputs.
+    pub outputs: Vec<Expr>,
     /// The method's own effect clauses.
     pub effects: Vec<Clause>,
     /// The method's static call sites.

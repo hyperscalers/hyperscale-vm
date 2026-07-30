@@ -1,0 +1,302 @@
+//! Admission end to end: a well-formed graph lowers to the routing view
+//! and routes; every malformed-graph mutation of it rejects — dangling
+//! edge, double consumption, cycle shape, type mismatch, constraint
+//! contradictions — with a deterministic verdict.
+
+mod common;
+
+use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
+use hyperscale_vm_effects::{
+    Address, AdmissionError, Constraint, EdgeRef, Effect, EffectTarget, GraphArg, GraphNode,
+    InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit,
+    route,
+};
+use proptest::prelude::{any, proptest};
+
+const SPLITTER: Address = Address([0x77; 16]);
+
+fn setup() -> (MetadataCache, InstanceRegistry) {
+    let (mut cache, mut instances) = world();
+    cache.publish(pkg("splitter"), splitter_metadata());
+    instances.register(
+        SPLITTER,
+        InstanceMeta {
+            package: pkg("splitter"),
+            config: vec![],
+        },
+    );
+    (cache, instances)
+}
+
+/// Withdraw 100, split off 30, deposit the taken part to Bob and the rest
+/// back to Alice — the rest-edge shape, fully consumed.
+fn valid_graph() -> ManifestGraph {
+    ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE,
+                method: "withdraw".into(),
+                args: vec![
+                    GraphArg::Literal(Value::Address(RES_X)),
+                    GraphArg::Literal(Value::U128(100)),
+                ],
+            },
+            GraphNode {
+                target: SPLITTER,
+                method: "take".into(),
+                args: vec![
+                    GraphArg::Edge {
+                        edge: EdgeRef {
+                            producer: 0,
+                            output: 0,
+                        },
+                        constraints: vec![Constraint::ResourceIs(RES_X)],
+                    },
+                    GraphArg::Literal(Value::U128(30)),
+                ],
+            },
+            GraphNode {
+                target: BOB,
+                method: "deposit".into(),
+                args: vec![GraphArg::Edge {
+                    edge: EdgeRef {
+                        producer: 1,
+                        output: 0,
+                    },
+                    constraints: vec![Constraint::MinAmount(30), Constraint::MaxAmount(30)],
+                }],
+            },
+            GraphNode {
+                target: ALICE,
+                method: "deposit".into(),
+                args: vec![GraphArg::Edge {
+                    edge: EdgeRef {
+                        producer: 1,
+                        output: 1,
+                    },
+                    constraints: vec![],
+                }],
+            },
+        ],
+    }
+}
+
+#[test]
+fn a_well_formed_graph_lowers_and_routes() {
+    let (cache, instances) = setup();
+    let manifest = admit(&valid_graph(), &cache, &instances, &TestHasher).expect("admits");
+
+    // The lowered edges carry their static resource types.
+    let routing = route(&manifest, &cache, &instances, &TestHasher, &resolver()).unwrap();
+    let alice_set = &routing.per_shard[&shard_of(ALICE)];
+    assert!(alice_set.contains(&Effect {
+        target: EffectTarget::Point(vault(ALICE, RES_X)),
+        mode: Mode::Reserve { amount: 100 },
+    }));
+    assert!(alice_set.contains(&Effect {
+        target: EffectTarget::Point(vault(ALICE, RES_X)),
+        mode: Mode::Delta,
+    }));
+    let bob_set = &routing.per_shard[&shard_of(BOB)];
+    assert!(bob_set.contains(&Effect {
+        target: EffectTarget::Point(vault(BOB, RES_X)),
+        mode: Mode::Delta,
+    }));
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // one assertion block per mutation class
+fn every_malformed_mutation_rejects() {
+    let (cache, instances) = setup();
+    let admit_it = |graph: &ManifestGraph| admit(graph, &cache, &instances, &TestHasher);
+
+    // Dangling edge: drop the rest-consuming node.
+    let mut dangling = valid_graph();
+    dangling.nodes.pop();
+    assert_eq!(
+        admit_it(&dangling),
+        Err(AdmissionError::UnconsumedOutput {
+            producer: 1,
+            output: 1,
+        })
+    );
+
+    // Double consumption: the last node consumes the taken part again.
+    let mut double = valid_graph();
+    double.nodes[3].args[0] = GraphArg::Edge {
+        edge: EdgeRef {
+            producer: 1,
+            output: 0,
+        },
+        constraints: vec![],
+    };
+    assert_eq!(
+        admit_it(&double),
+        Err(AdmissionError::DoubleConsumption {
+            producer: 1,
+            output: 0,
+        })
+    );
+
+    // The cycle shape: a producer at or after its consumer cannot parse.
+    let mut cyclic = valid_graph();
+    cyclic.nodes[1].args[0] = GraphArg::Edge {
+        edge: EdgeRef {
+            producer: 2,
+            output: 0,
+        },
+        constraints: vec![],
+    };
+    assert_eq!(
+        admit_it(&cyclic),
+        Err(AdmissionError::ForwardEdge {
+            node: 1,
+            producer: 2,
+        })
+    );
+    let mut self_edge = valid_graph();
+    self_edge.nodes[1].args[0] = GraphArg::Edge {
+        edge: EdgeRef {
+            producer: 1,
+            output: 0,
+        },
+        constraints: vec![],
+    };
+    assert_eq!(
+        admit_it(&self_edge),
+        Err(AdmissionError::ForwardEdge {
+            node: 1,
+            producer: 1,
+        })
+    );
+
+    // Type mismatches: a literal of the wrong kind, a literal where a
+    // bucket is due, an edge into a value parameter, a phantom output.
+    let mut wrong_kind = valid_graph();
+    wrong_kind.nodes[0].args[1] = GraphArg::Literal(Value::U64(100));
+    assert_eq!(
+        admit_it(&wrong_kind),
+        Err(AdmissionError::ParamKind {
+            node: 0,
+            param: 1,
+            expected: "u128",
+            found: "u64",
+        })
+    );
+    let mut literal_bucket = valid_graph();
+    literal_bucket.nodes[2].args[0] = GraphArg::Literal(Value::U128(30));
+    assert_eq!(
+        admit_it(&literal_bucket),
+        Err(AdmissionError::LiteralForBucketParam { node: 2, param: 0 })
+    );
+    let mut edge_value = valid_graph();
+    edge_value.nodes[1].args[1] = GraphArg::Edge {
+        edge: EdgeRef {
+            producer: 0,
+            output: 0,
+        },
+        constraints: vec![],
+    };
+    assert_eq!(
+        admit_it(&edge_value),
+        Err(AdmissionError::EdgeForValueParam { node: 1, param: 1 })
+    );
+    let mut phantom = valid_graph();
+    phantom.nodes[2].args[0] = GraphArg::Edge {
+        edge: EdgeRef {
+            producer: 0,
+            output: 5,
+        },
+        constraints: vec![],
+    };
+    assert_eq!(
+        admit_it(&phantom),
+        Err(AdmissionError::NoSuchOutput {
+            producer: 0,
+            output: 5,
+        })
+    );
+
+    // Arity.
+    let mut arity = valid_graph();
+    arity.nodes[0].args.pop();
+    assert_eq!(
+        admit_it(&arity),
+        Err(AdmissionError::ArityMismatch {
+            node: 0,
+            expected: 2,
+            found: 1,
+        })
+    );
+
+    // Constraints: a contradicted resource, an empty amount window.
+    let mut wrong_resource = valid_graph();
+    wrong_resource.nodes[1].args[0] = GraphArg::Edge {
+        edge: EdgeRef {
+            producer: 0,
+            output: 0,
+        },
+        constraints: vec![Constraint::ResourceIs(common::RES_Y)],
+    };
+    assert_eq!(
+        admit_it(&wrong_resource),
+        Err(AdmissionError::ResourceMismatch { node: 1, param: 0 })
+    );
+    let mut empty_window = valid_graph();
+    empty_window.nodes[2].args[0] = GraphArg::Edge {
+        edge: EdgeRef {
+            producer: 1,
+            output: 0,
+        },
+        constraints: vec![Constraint::MinAmount(31), Constraint::MaxAmount(30)],
+    };
+    assert_eq!(
+        admit_it(&empty_window),
+        Err(AdmissionError::UnsatisfiableConstraint { node: 2, param: 0 })
+    );
+}
+
+proptest! {
+    /// Point any edge reference anywhere: admission either accepts a graph
+    /// equivalent to the valid one or rejects deterministically — it never
+    /// panics and never mistypes an edge.
+    #[test]
+    fn arbitrary_edge_rewires_never_break_admission(
+        node in 0usize..4,
+        arg in 0usize..2,
+        producer in any::<u32>(),
+        output in any::<u32>(),
+    ) {
+        let (cache, instances) = setup();
+        let mut graph = valid_graph();
+        let args = &mut graph.nodes[node].args;
+        let slot = arg.min(args.len() - 1);
+        args[slot] = GraphArg::Edge {
+            edge: EdgeRef { producer, output },
+            constraints: vec![],
+        };
+        let first = admit(&graph, &cache, &instances, &TestHasher);
+        let second = admit(&graph, &cache, &instances, &TestHasher);
+        assert_eq!(first, second);
+    }
+
+    /// Amount-window constraints reject exactly when the window is empty.
+    #[test]
+    fn amount_windows_admit_iff_satisfiable(min in any::<u128>(), max in any::<u128>()) {
+        let (cache, instances) = setup();
+        let mut graph = valid_graph();
+        graph.nodes[2].args[0] = GraphArg::Edge {
+            edge: EdgeRef { producer: 1, output: 0 },
+            constraints: vec![Constraint::MinAmount(min), Constraint::MaxAmount(max)],
+        };
+        let verdict = admit(&graph, &cache, &instances, &TestHasher);
+        if min > max {
+            assert_eq!(
+                verdict,
+                Err(AdmissionError::UnsatisfiableConstraint { node: 2, param: 0 })
+            );
+        } else {
+            assert!(verdict.is_ok());
+        }
+    }
+}

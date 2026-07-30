@@ -156,6 +156,8 @@ proptest! {
         forward.methods.insert(
             "forward".into(),
             MethodSignature {
+                params: vec![],
+                outputs: vec![],
                 effects: vec![],
                 calls: vec![CallSite {
                     target: Expr::Arg(0),

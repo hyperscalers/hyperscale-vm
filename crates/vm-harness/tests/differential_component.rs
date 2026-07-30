@@ -12,8 +12,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, Outcome, Receipt, SubstateStore, TxHash,
-    encode_amount,
+    Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome, Receipt, SubstateStore,
+    TxHash, encode_amount,
 };
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
@@ -136,8 +136,15 @@ fn fixture() -> Fixture {
 }
 
 fn session(fx: &Fixture) -> KernelSession {
-    KernelSession::materialize(fx.store.clone(), &fx.declared, tx(), env(), test_hash)
-        .expect("fixture materializes")
+    KernelSession::materialize(
+        fx.store.clone(),
+        fx.store.clone(),
+        &fx.declared,
+        tx(),
+        env(),
+        test_hash,
+    )
+    .expect("fixture materializes")
 }
 
 fn rep_where(caps: &[Capability], pred: impl Fn(&Capability) -> bool) -> u32 {
@@ -322,11 +329,11 @@ fn receipts_agree(fx: &Fixture, export: &str) -> Result<Receipt> {
         panic!("{export} did not complete: {blessed:?}");
     };
     let outcome = Outcome::Completed { value: Some(value) };
-    let blessed_receipt = blessed_host
+    let (blessed_receipt, _) = blessed_host
         .0
         .finish(outcome.clone(), blessed_fuel)
         .expect("oracle clean on the blessed side");
-    let ref_receipt = ref_host
+    let (ref_receipt, _) = ref_host
         .0
         .finish(outcome, ref_fuel)
         .expect("oracle clean on the reference side");
@@ -341,16 +348,18 @@ fn transfer_agrees_and_the_receipt_settles_the_reservation() -> Result<()> {
     assert_eq!(outcome, LaneOutcome::Value(75));
 
     let receipt = receipts_agree(&fx, "transfer")?;
-    // Settlement decrements the sender; the delta credits the recipient.
+    // Commutative changes report as movements: the settlement debits the
+    // sender, the delta credits the recipient, and no absolute cell value
+    // appears — that is what keeps receipts schedule-invariant.
+    assert_eq!(receipt.delta.settles.get(&fx.sender), Some(&75));
     assert_eq!(
-        receipt.delta.cells.get(&fx.sender),
-        Some(&Some(encode_amount(25).to_vec()))
+        receipt.delta.movements.get(&fx.recipient),
+        Some(&Movement {
+            credit: 75,
+            debit: 0,
+        })
     );
-    assert_eq!(
-        receipt.delta.cells.get(&fx.recipient),
-        Some(&Some(encode_amount(75).to_vec()))
-    );
-    assert_eq!(receipt.delta.cells.len(), 2);
+    assert!(receipt.delta.cells.is_empty());
     assert!(receipt.delta.entries.is_empty());
     Ok(())
 }
