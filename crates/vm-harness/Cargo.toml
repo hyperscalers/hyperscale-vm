@@ -11,6 +11,7 @@ hyperscale-vm-runtime.workspace = true
 [dev-dependencies]
 anyhow.workspace = true
 wasmtime.workspace = true
+wat.workspace = true
 
 [lints]
 workspace = true

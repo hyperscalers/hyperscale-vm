@@ -523,6 +523,7 @@ dependencies = [
  "hyperscale-vm-ref",
  "hyperscale-vm-runtime",
  "wasmtime",
+ "wat",
 ]
 
 [[package]]

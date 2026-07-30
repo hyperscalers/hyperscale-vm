@@ -15,6 +15,7 @@ hyperscale-vm-ref = { path = "crates/vm-ref" }
 hyperscale-vm-runtime = { path = "crates/vm-runtime" }
 
 anyhow = "1"
+wat = "1"
 # The blessed engine, pinned exactly to the current LTS. Upgrades are
 # deliberate protocol events, never dependency drift.
 wasmtime = { version = "=36.0.12", features = ["component-model", "winch", "pulley"] }
