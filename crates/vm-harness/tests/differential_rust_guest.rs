@@ -1,127 +1,164 @@
 //! Differential lane 2 over the realistic guest: the wit-bindgen transfer
 //! component runs under the blessed engine and the reference interpreter
-//! with identical hosts; results, host state, and the trap case must agree.
+//! with the same kernel session as host; outcomes, access logs, fuel, and
+//! receipts must agree.
 
 use anyhow::Result;
-use hyperscale_vm_harness::fixtures::build_transfer_component;
-use hyperscale_vm_ref::{
-    CVal, ExecError, RefComponent, RefComponentInstance, RefKernelHost, Trap as RefTrap,
+use hyperscale_vm_effects::{
+    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
+    TestHasher, child_key,
 };
-use hyperscale_vm_runtime::{KernelHost, Substate, add_kernel_to_linker, blessed_engine};
+use hyperscale_vm_harness::fixtures::build_transfer_component;
+use hyperscale_vm_harness::session_host::SessionHost;
+use hyperscale_vm_kernel::{
+    Capability, EnvInputs, KernelSession, MemoryStore, Outcome, SubstateStore, TxHash,
+    encode_amount,
+};
+use hyperscale_vm_ref::{
+    CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
+};
+use hyperscale_vm_runtime::{DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine};
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Store, Trap};
 
 const CLOCK_MS: u64 = 777_000;
+const RANDOMNESS: [u8; 32] = [3; 32];
+const FUEL: u64 = 100_000_000;
 
-#[derive(Clone)]
-struct TestHost {
-    values: Vec<Vec<u8>>,
+fn test_hash(data: &[u8]) -> [u8; 32] {
+    TestHasher.hash(b"crypto", &[data]).0
 }
 
-impl KernelHost for TestHost {
-    fn read(&mut self, rep: u32) -> Vec<u8> {
-        self.values[rep as usize].clone()
-    }
-
-    fn write(&mut self, rep: u32, value: Vec<u8>) {
-        self.values[rep as usize] = value;
-    }
-
-    fn clock_ms(&self) -> u64 {
-        CLOCK_MS
-    }
-
-    fn randomness(&self) -> [u8; 32] {
-        [3; 32]
-    }
-
-    fn hash(&self, data: &[u8]) -> [u8; 32] {
-        let sum = data.iter().fold(0u8, |acc, b| acc.wrapping_add(*b));
-        [sum; 32]
-    }
+fn keys() -> (SubstateKey, SubstateKey) {
+    (
+        child_key(&TestHasher, Address([1; 16]), RoleId(1), &[]),
+        child_key(&TestHasher, Address([2; 16]), RoleId(1), &[]),
+    )
 }
 
-impl RefKernelHost for TestHost {
-    fn read(&mut self, rep: u32) -> Vec<u8> {
-        KernelHost::read(self, rep)
-    }
-
-    fn write(&mut self, rep: u32, value: Vec<u8>) {
-        KernelHost::write(self, rep, value);
-    }
-
-    fn clock_ms(&self) -> u64 {
-        KernelHost::clock_ms(self)
-    }
-
-    fn randomness(&self) -> [u8; 32] {
-        KernelHost::randomness(self)
-    }
-
-    fn hash(&self, data: &[u8]) -> [u8; 32] {
-        KernelHost::hash(self, data)
-    }
+fn session(committed: u128, reserve: u128) -> KernelSession {
+    let (sender, recipient) = keys();
+    let mut store = MemoryStore::new();
+    store
+        .write(sender, encode_amount(committed).to_vec())
+        .unwrap();
+    store.clear_log();
+    let mut set = EffectSet::new();
+    set.insert(Effect {
+        target: EffectTarget::Point(sender),
+        mode: Mode::Reserve { amount: reserve },
+    })
+    .unwrap();
+    set.insert(Effect {
+        target: EffectTarget::Point(recipient),
+        mode: Mode::Delta,
+    })
+    .unwrap();
+    KernelSession::materialize(
+        store,
+        &set,
+        TxHash(Hash32([0x55; 32])),
+        EnvInputs {
+            clock_ms: CLOCK_MS,
+            randomness: RANDOMNESS,
+        },
+        test_hash,
+    )
+    .expect("feasible fixture")
 }
 
-fn starting_host(from: u64) -> TestHost {
-    TestHost {
-        values: vec![from.to_le_bytes().to_vec(), 20u64.to_le_bytes().to_vec()],
-    }
+fn reps(session: &KernelSession) -> (u32, u32) {
+    let (sender, recipient) = keys();
+    let position = |wanted: Capability| {
+        u32::try_from(
+            session
+                .capabilities()
+                .iter()
+                .position(|c| *c == wanted)
+                .expect("capability present"),
+        )
+        .expect("bounded")
+    };
+    (
+        position(Capability::Reserve(sender)),
+        position(Capability::Delta(recipient)),
+    )
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum Outcome {
+enum LaneOutcome {
     Value(u64),
     Unreachable,
     Other(String),
 }
 
-const FUEL: u64 = 100_000_000;
-
-fn blessed(component: &[u8], from: u64, amount: u64) -> Result<(Outcome, TestHost, u64)> {
+fn blessed(
+    component: &[u8],
+    committed: u128,
+    reserve: u128,
+    min: u64,
+) -> Result<(LaneOutcome, SessionHost, u64)> {
     let engine = blessed_engine()?;
     let compiled = Component::new(&engine, component)?;
-    let mut linker = Linker::<TestHost>::new(&engine);
+    let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
-    let mut store = Store::new(&engine, starting_host(from));
+    let host = SessionHost(session(committed, reserve));
+    let (sender_rep, recipient_rep) = reps(&host.0);
+    let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &compiled)?;
-    let run = instance.get_typed_func::<(Resource<Substate>, Resource<Substate>, u64), (u64,)>(
-        &mut store, "run",
-    )?;
+    let run = instance
+        .get_typed_func::<(Resource<ReserveCell>, Resource<DeltaCell>, u64), (u64,)>(
+            &mut store, "run",
+        )?;
     let result = run
         .call(
             &mut store,
-            (Resource::new_borrow(0), Resource::new_borrow(1), amount),
+            (
+                Resource::new_borrow(sender_rep),
+                Resource::new_borrow(recipient_rep),
+                min,
+            ),
         )
         .and_then(|(v,)| run.post_return(&mut store).map(|()| v));
     let outcome = match result {
-        Ok(v) => Outcome::Value(v),
+        Ok(v) => LaneOutcome::Value(v),
         Err(e) => {
             if e.downcast_ref::<Trap>() == Some(&Trap::UnreachableCodeReached) {
-                Outcome::Unreachable
+                LaneOutcome::Unreachable
             } else {
-                Outcome::Other(format!("{e:#}"))
+                LaneOutcome::Other(format!("{e:#}"))
             }
         }
     };
     let fuel = FUEL - store.get_fuel()?;
-    Ok((outcome, store.data().clone(), fuel))
+    Ok((outcome, store.into_data(), fuel))
 }
 
-fn reference(component: &[u8], from: u64, amount: u64) -> Result<(Outcome, TestHost, u64)> {
+fn reference(
+    component: &[u8],
+    committed: u128,
+    reserve: u128,
+    min: u64,
+) -> Result<(LaneOutcome, SessionHost, u64)> {
     let comp = RefComponent::decode(component)?;
-    let mut instance = RefComponentInstance::instantiate(&comp, starting_host(from))?;
+    let host = SessionHost(session(committed, reserve));
+    let (sender_rep, recipient_rep) = reps(&host.0);
+    let mut instance = RefComponentInstance::instantiate(&comp, host)?;
     let outcome = match instance.invoke(
         "run",
-        &[CVal::Borrow(0), CVal::Borrow(1), CVal::U64(amount)],
+        &[
+            CVal::Borrow(sender_rep, ResourceKind::ReserveCell),
+            CVal::Borrow(recipient_rep, ResourceKind::DeltaCell),
+            CVal::U64(min),
+        ],
     )? {
         Ok(values) => match values.as_slice() {
-            [CVal::U64(v)] => Outcome::Value(*v),
-            other => Outcome::Other(format!("unexpected values {other:?}")),
+            [CVal::U64(v)] => LaneOutcome::Value(*v),
+            other => LaneOutcome::Other(format!("unexpected values {other:?}")),
         },
-        Err(ExecError::Trap(RefTrap::Unreachable)) => Outcome::Unreachable,
-        Err(e) => Outcome::Other(format!("{e:?}")),
+        Err(ExecError::Trap(RefTrap::Unreachable)) => LaneOutcome::Unreachable,
+        Err(e) => LaneOutcome::Other(format!("{e:?}")),
     };
     let fuel = instance.fuel_consumed();
     Ok((outcome, instance.into_host(), fuel))
@@ -130,32 +167,44 @@ fn reference(component: &[u8], from: u64, amount: u64) -> Result<(Outcome, TestH
 #[test]
 fn the_rust_guest_agrees_between_blessed_engine_and_vm_ref() -> Result<()> {
     let component = build_transfer_component()?;
+    let (sender, recipient) = keys();
 
-    // The happy transfer and the insufficient-balance panic.
-    for (from, amount) in [(500u64, 100u64), (500, 500), (50, 100)] {
-        let (b, b_host, b_fuel) = blessed(&component, from, amount)?;
-        let (r, r_host, r_fuel) = reference(&component, from, amount)?;
-        assert_eq!(b, r, "outcome diverged for from={from} amount={amount}");
+    // The happy transfer, the exact-amount edge, and the floor panic.
+    for (committed, reserve, min) in [(500u128, 100u128, 1u64), (500, 500, 500), (500, 100, 200)] {
+        let (b, b_host, b_fuel) = blessed(&component, committed, reserve, min)?;
+        let (r, r_host, r_fuel) = reference(&component, committed, reserve, min)?;
+        assert_eq!(b, r, "outcome diverged for reserve={reserve} min={min}");
         assert_eq!(
-            b_host.values, r_host.values,
-            "host state diverged for from={from} amount={amount}"
+            b_host.0.store().access_log(),
+            r_host.0.store().access_log(),
+            "access log diverged for reserve={reserve} min={min}"
         );
-        if matches!(b, Outcome::Value(_)) {
+        assert_eq!(
+            b_fuel, r_fuel,
+            "fuel diverged for reserve={reserve} min={min}"
+        );
+
+        if let LaneOutcome::Value(v) = b {
+            // The expected tag, computed independently of both
+            // implementations.
+            let digest = test_hash(&RANDOMNESS);
+            let reserved = u64::try_from(reserve).expect("fixture fits");
+            assert_eq!(v, CLOCK_MS + reserved + u64::from(digest[0]));
+
+            // Byte-identical receipts, oracle clean on both sides.
+            let outcome = Outcome::Completed { value: Some(v) };
+            let b_receipt = b_host.0.finish(outcome.clone(), b_fuel).expect("oracle");
+            let r_receipt = r_host.0.finish(outcome, r_fuel).expect("oracle");
+            assert_eq!(b_receipt, r_receipt);
             assert_eq!(
-                b_fuel, r_fuel,
-                "fuel diverged for from={from} amount={amount}"
+                b_receipt.delta.cells.get(&sender),
+                Some(&Some(encode_amount(committed - reserve).to_vec()))
+            );
+            assert_eq!(
+                b_receipt.delta.cells.get(&recipient),
+                Some(&Some(encode_amount(reserve).to_vec()))
             );
         }
     }
-
-    // Spot-check the expected value independently of both implementations.
-    let (outcome, host, _) = reference(&component, 500, 100)?;
-    let hash_first = 3u8.wrapping_mul(32);
-    assert_eq!(
-        outcome,
-        Outcome::Value(CLOCK_MS + 120 + u64::from(hash_first))
-    );
-    assert_eq!(host.values[0], 400u64.to_le_bytes().to_vec());
-    assert_eq!(host.values[1], 120u64.to_le_bytes().to_vec());
     Ok(())
 }

@@ -594,6 +594,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arbitrary",
+ "hyperscale-vm-effects",
+ "hyperscale-vm-kernel",
  "hyperscale-vm-ref",
  "hyperscale-vm-runtime",
  "wasm-smith",

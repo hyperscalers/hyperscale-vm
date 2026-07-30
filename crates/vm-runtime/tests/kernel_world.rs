@@ -4,14 +4,15 @@
 
 use hyperscale_vm_runtime::gas::FUEL_PER_BOUNDARY_BYTE;
 use hyperscale_vm_runtime::{
-    KernelHost, Substate, add_kernel_to_linker, blessed_engine, validate_component,
+    KernelHost, ReadCell, WriteCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Engine, Result, Store, Trap};
 use wat::parse_str;
 
-/// A guest that reads substate `a`, writes those bytes to substate `b`,
-/// then folds clock, randomness, and a hash into its return value:
+/// A guest that reads cell `a` through a read capability, writes those
+/// bytes to cell `b` through a write capability, then folds clock,
+/// randomness, and a hash into its return value:
 /// `clock + len(a) + len(hash) + hash[0]`.
 ///
 /// List-returning imports lower through a separate allocator module
@@ -20,18 +21,20 @@ use wat::parse_str;
 const GUEST_WAT: &str = r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
-    (export "substate" (type $substate (sub resource)))
-    (export "read" (func (param "s" (borrow $substate)) (result (list u8))))
-    (export "write" (func (param "s" (borrow $substate)) (param "value" (list u8))))))
+    (export "read-cell" (type $rc (sub resource)))
+    (export "write-cell" (type $wc (sub resource)))
+    (export "read-cell-get" (func (param "c" (borrow $rc)) (result (list u8))))
+    (export "write-cell-set" (func (param "c" (borrow $wc)) (param "value" (list u8))))))
   (import "hyperscale:kernel/env" (instance $env
     (export "clock" (func (result u64)))
     (export "randomness" (func (result (list u8))))))
   (import "hyperscale:kernel/crypto" (instance $crypto
     (export "hash" (func (param "data" (list u8)) (result (list u8))))))
 
-  (alias export $state "substate" (type $sub))
-  (alias export $state "read" (func $read))
-  (alias export $state "write" (func $write))
+  (alias export $state "read-cell" (type $rcell))
+  (alias export $state "write-cell" (type $wcell))
+  (alias export $state "read-cell-get" (func $read))
+  (alias export $state "write-cell-set" (func $write))
   (alias export $env "clock" (func $clock))
   (alias export $env "randomness" (func $randomness))
   (alias export $crypto "hash" (func $hash))
@@ -53,13 +56,14 @@ const GUEST_WAT: &str = r#"
   (core func $read_l (canon lower (func $read)
     (memory $a "mem") (realloc (func $a "realloc"))))
   (core func $write_l (canon lower (func $write)
-    (memory $a "mem") (realloc (func $a "realloc"))))
+    (memory $a "mem")))
   (core func $clock_l (canon lower (func $clock)))
   (core func $randomness_l (canon lower (func $randomness)
     (memory $a "mem") (realloc (func $a "realloc"))))
   (core func $hash_l (canon lower (func $hash)
     (memory $a "mem") (realloc (func $a "realloc"))))
-  (core func $drop_l (canon resource.drop $sub))
+  (core func $drop_r (canon resource.drop $rcell))
+  (core func $drop_w (canon resource.drop $wcell))
 
   (core module $m
     (import "env" "mem" (memory 4 4))
@@ -68,7 +72,8 @@ const GUEST_WAT: &str = r#"
     (import "k" "clock" (func $clock (result i64)))
     (import "k" "randomness" (func $randomness (param i32)))
     (import "k" "hash" (func $hash (param i32 i32 i32)))
-    (import "k" "drop" (func $drop (param i32)))
+    (import "k" "drop-r" (func $drop_r (param i32)))
+    (import "k" "drop-w" (func $drop_w (param i32)))
     (func (export "run") (param i32 i32) (result i64)
       (local $ptr i32) (local $len i32) (local $now i64)
       ;; read(a) -> return area at 8: {ptr, len}
@@ -115,9 +120,9 @@ const GUEST_WAT: &str = r#"
       i64.add
       ;; borrows must drop before return
       local.get 0
-      call $drop
+      call $drop_r
       local.get 1
-      call $drop))
+      call $drop_w))
 
   (core instance $i (instantiate $m
     (with "env" (instance (export "mem" (memory $a "mem"))))
@@ -127,10 +132,11 @@ const GUEST_WAT: &str = r#"
       (export "clock" (func $clock_l))
       (export "randomness" (func $randomness_l))
       (export "hash" (func $hash_l))
-      (export "drop" (func $drop_l))))))
+      (export "drop-r" (func $drop_r))
+      (export "drop-w" (func $drop_w))))))
 
   (func (export "run")
-    (param "a" (borrow $sub)) (param "b" (borrow $sub)) (result u64)
+    (param "a" (borrow $rcell)) (param "b" (borrow $wcell)) (result u64)
     (canon lift (core func $i "run"))))
 "#;
 
@@ -141,12 +147,67 @@ struct TestHost {
 }
 
 impl KernelHost for TestHost {
-    fn read(&mut self, rep: u32) -> Vec<u8> {
-        self.values[rep as usize].clone()
+    fn read_cell(&mut self, rep: u32) -> std::result::Result<Vec<u8>, String> {
+        Ok(self.values[rep as usize].clone())
     }
 
-    fn write(&mut self, rep: u32, value: Vec<u8>) {
+    fn snap_cell(&mut self, rep: u32) -> std::result::Result<Vec<u8>, String> {
+        Ok(self.values[rep as usize].clone())
+    }
+
+    fn write_cell_get(&mut self, rep: u32) -> std::result::Result<Vec<u8>, String> {
+        Ok(self.values[rep as usize].clone())
+    }
+
+    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> std::result::Result<(), String> {
         self.values[rep as usize] = value;
+        Ok(())
+    }
+
+    fn delta_add(&mut self, _rep: u32, _amount: &[u8]) -> std::result::Result<(), String> {
+        Err("unused in this fixture".into())
+    }
+
+    fn delta_sub(&mut self, _rep: u32, _amount: &[u8]) -> std::result::Result<(), String> {
+        Err("unused in this fixture".into())
+    }
+
+    fn reserve_amount(&mut self, _rep: u32) -> std::result::Result<Vec<u8>, String> {
+        Ok(vec![0; 16])
+    }
+
+    fn range_count(&mut self, _rep: u32) -> std::result::Result<u32, String> {
+        Ok(0)
+    }
+
+    fn range_order(&mut self, _rep: u32, _index: u32) -> std::result::Result<Vec<u8>, String> {
+        Err("unused in this fixture".into())
+    }
+
+    fn range_entry(&mut self, _rep: u32, _index: u32) -> std::result::Result<Vec<u8>, String> {
+        Err("unused in this fixture".into())
+    }
+
+    fn range_set(
+        &mut self,
+        _rep: u32,
+        _index: u32,
+        _value: Vec<u8>,
+    ) -> std::result::Result<(), String> {
+        Err("unused in this fixture".into())
+    }
+
+    fn range_insert(
+        &mut self,
+        _rep: u32,
+        _order: &[u8],
+        _value: Vec<u8>,
+    ) -> std::result::Result<(), String> {
+        Err("unused in this fixture".into())
+    }
+
+    fn range_remove(&mut self, _rep: u32, _index: u32) -> std::result::Result<(), String> {
+        Err("unused in this fixture".into())
     }
 
     fn clock_ms(&self) -> u64 {
@@ -179,7 +240,7 @@ fn run_guest(engine: &Engine, substate_len: usize, fuel: u64) -> Result<(u64, u6
     store.set_fuel(fuel)?;
     let instance = linker.instantiate(&mut store, &component)?;
     let run = instance
-        .get_typed_func::<(Resource<Substate>, Resource<Substate>), (u64,)>(&mut store, "run")?;
+        .get_typed_func::<(Resource<ReadCell>, Resource<WriteCell>), (u64,)>(&mut store, "run")?;
     let (out,) = run.call(
         &mut store,
         (Resource::new_borrow(0), Resource::new_borrow(1)),
@@ -201,7 +262,7 @@ fn kernel_world_round_trips_state_env_and_crypto() -> Result<()> {
     let expected = CLOCK_MS + len as u64 + 32 + u64::from(hash_first);
     assert_eq!(out, expected);
 
-    // The write leg copied substate 0's bytes into substate 1.
+    // The write leg copied cell 0's bytes into cell 1.
     assert_eq!(values[1], vec![3; len]);
     Ok(())
 }

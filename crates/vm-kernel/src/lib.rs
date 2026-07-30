@@ -16,6 +16,7 @@ pub mod conflict;
 pub mod modes;
 pub mod oracle;
 pub mod ownership;
+pub mod session;
 pub mod store;
 pub mod supply;
 
@@ -26,5 +27,9 @@ pub use modes::{
 };
 pub use oracle::{covered, permits, target_covers, undeclared_accesses};
 pub use ownership::{CreationContext, MoveError, move_object};
+pub use session::{
+    Capability, EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt,
+    SessionTrap, StateDelta,
+};
 pub use store::{Access, AppliedDelta, MemoryStore, StoreError, SubstateStore};
 pub use supply::SupplyLedger;

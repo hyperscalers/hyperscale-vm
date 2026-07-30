@@ -12,4 +12,7 @@ pub mod world;
 
 pub use engine::{blessed_config, blessed_engine};
 pub use validator::{ProfileError, validate_component};
-pub use world::{KernelHost, Substate, add_kernel_to_linker};
+pub use world::{
+    DeltaCell, KernelHost, RangeRead, RangeWrite, ReadCell, ReserveCell, SnapCell, WriteCell,
+    add_kernel_to_linker,
+};

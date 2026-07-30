@@ -6,10 +6,10 @@ world transfer {
     import hyperscale:kernel/env;
     import hyperscale:kernel/crypto;
 
-    use hyperscale:kernel/state.{substate};
+    use hyperscale:kernel/state.{reserve-cell, delta-cell};
 
-    /// Move `amount` from `a` to `b`; returns a receipt tag folding the
-    /// clock and a hash of the randomness draw, so every kernel interface
-    /// is exercised.
-    export run: func(a: borrow<substate>, b: borrow<substate>, amount: u64) -> u64;
+    /// Move the reserved amount into the recipient's delta cell, asserting
+    /// it covers `min`; returns a receipt tag folding the clock and a hash
+    /// of the randomness draw, so every kernel interface is exercised.
+    export run: func(sender: borrow<reserve-cell>, recipient: borrow<delta-cell>, min: u64) -> u64;
 }

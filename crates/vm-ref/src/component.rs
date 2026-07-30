@@ -24,19 +24,71 @@ use crate::interp::{
 use crate::module::{CoreImportKind, RefModule};
 use crate::ops::Value;
 
-/// The host surface behind the kernel world. Mirrors the runtime's trait so
-/// one test host can implement both.
+/// The host surface behind the kernel world.
+///
+/// Mirrors the runtime's trait — same operations, same deterministic
+/// refusal messages — so one host drives both implementations. Every
+/// `Err` is a kernel refusal that traps with its message.
+#[allow(missing_docs)] // mirrors the documented runtime trait method for method
+#[allow(clippy::missing_errors_doc)] // every Err is a deterministic kernel refusal
 pub trait RefKernelHost {
-    /// The substate's current bytes; empty if absent.
-    fn read(&mut self, rep: u32) -> Vec<u8>;
-    /// Replace the substate's bytes.
-    fn write(&mut self, rep: u32, value: Vec<u8>);
+    fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, String>;
+    fn snap_cell(&mut self, rep: u32) -> Result<Vec<u8>, String>;
+    fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, String>;
+    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), String>;
+    fn delta_add(&mut self, rep: u32, amount: &[u8]) -> Result<(), String>;
+    fn delta_sub(&mut self, rep: u32, amount: &[u8]) -> Result<(), String>;
+    fn reserve_amount(&mut self, rep: u32) -> Result<Vec<u8>, String>;
+    fn range_count(&mut self, rep: u32) -> Result<u32, String>;
+    fn range_order(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, String>;
+    fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, String>;
+    fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), String>;
+    fn range_insert(&mut self, rep: u32, order: &[u8], value: Vec<u8>) -> Result<(), String>;
+    fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), String>;
     /// The transaction clock in milliseconds.
     fn clock_ms(&self) -> u64;
     /// The transaction's randomness draw.
     fn randomness(&self) -> [u8; 32];
     /// The protocol hash function.
     fn hash(&self, data: &[u8]) -> [u8; 32];
+}
+
+/// The state interface's resource types: one per access mode.
+///
+/// Handles are typed with these, and lifting a borrow of the wrong type
+/// traps exactly as the blessed engine's canonical ABI does — the
+/// mode-escape trap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceKind {
+    /// `read-cell`.
+    ReadCell,
+    /// `snap-cell`.
+    SnapCell,
+    /// `write-cell`.
+    WriteCell,
+    /// `delta-cell`.
+    DeltaCell,
+    /// `reserve-cell`.
+    ReserveCell,
+    /// `range-read`.
+    RangeRead,
+    /// `range-write`.
+    RangeWrite,
+}
+
+impl ResourceKind {
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "read-cell" => Some(Self::ReadCell),
+            "snap-cell" => Some(Self::SnapCell),
+            "write-cell" => Some(Self::WriteCell),
+            "delta-cell" => Some(Self::DeltaCell),
+            "reserve-cell" => Some(Self::ReserveCell),
+            "range-read" => Some(Self::RangeRead),
+            "range-write" => Some(Self::RangeWrite),
+            _ => None,
+        }
+    }
 }
 
 /// A component-level value at the export boundary.
@@ -46,15 +98,29 @@ pub enum CVal {
     U32(u32),
     /// `u64`.
     U64(u64),
-    /// A borrowed substate handle carrying its host rep.
-    Borrow(u32),
+    /// A borrowed capability handle carrying its host rep and its type.
+    Borrow(u32, ResourceKind),
 }
 
 /// A kernel-world import.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HostFn {
-    Read,
-    Write,
+    ReadCellGet,
+    SnapCellGet,
+    WriteCellGet,
+    WriteCellSet,
+    DeltaAdd,
+    DeltaSub,
+    ReserveAmount,
+    RangeReadCount,
+    RangeReadOrder,
+    RangeReadEntry,
+    RangeWriteCount,
+    RangeWriteOrder,
+    RangeWriteEntry,
+    RangeWriteSet,
+    RangeWriteInsert,
+    RangeWriteRemove,
     Clock,
     Randomness,
     Hash,
@@ -71,7 +137,7 @@ enum CompFunc {
 #[derive(Debug, Clone)]
 enum CoreFuncDef {
     Lower { func: u32, opts: CanonOpts },
-    ResourceDrop,
+    ResourceDrop { kind: Option<ResourceKind> },
     Alias { instance: u32, name: String },
 }
 
@@ -91,11 +157,14 @@ enum CoreInstanceDef {
     Exports(Vec<(String, ExternalKind, u32)>),
 }
 
-/// A component-level type entry (only function types carry semantics here).
+/// A component-level type entry. Resource entries track which state
+/// resource an aliased or imported type names, so `resource.drop` can be
+/// type-checked like the blessed engine does.
 #[derive(Debug, Clone)]
 enum CTypeEntry {
     Func(CType),
     Defined(CTy),
+    Resource(ResourceKind),
     Other,
 }
 
@@ -173,7 +242,12 @@ impl RefComponent {
                             ComponentTypeRef::Instance(_) => {
                                 comp.import_names.push(import.name.0.to_string());
                             }
-                            ComponentTypeRef::Type(_) => comp.types.push(CTypeEntry::Other),
+                            ComponentTypeRef::Type(_) => {
+                                comp.types.push(
+                                    ResourceKind::from_name(import.name.0)
+                                        .map_or(CTypeEntry::Other, CTypeEntry::Resource),
+                                );
+                            }
                             other => {
                                 return Err(DecodeError::Unsupported(format!(
                                     "component import {other:?}"
@@ -272,7 +346,12 @@ impl RefComponent {
                     let host = self.host_fn(*instance_index, name)?;
                     self.comp_funcs.push(CompFunc::Host(host));
                 }
-                ComponentExternalKind::Type => self.types.push(CTypeEntry::Other),
+                ComponentExternalKind::Type => {
+                    self.types.push(
+                        ResourceKind::from_name(name)
+                            .map_or(CTypeEntry::Other, CTypeEntry::Resource),
+                    );
+                }
                 _ => {
                     return Err(DecodeError::Unsupported(format!(
                         "component alias kind {kind:?}"
@@ -318,8 +397,22 @@ impl RefComponent {
             .rsplit_once('/')
             .map_or(interface.as_str(), |(_, s)| s);
         match (suffix, name) {
-            ("state", "read") => Ok(HostFn::Read),
-            ("state", "write") => Ok(HostFn::Write),
+            ("state", "read-cell-get") => Ok(HostFn::ReadCellGet),
+            ("state", "snap-cell-get") => Ok(HostFn::SnapCellGet),
+            ("state", "write-cell-get") => Ok(HostFn::WriteCellGet),
+            ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
+            ("state", "delta-cell-add") => Ok(HostFn::DeltaAdd),
+            ("state", "delta-cell-sub") => Ok(HostFn::DeltaSub),
+            ("state", "reserve-cell-amount") => Ok(HostFn::ReserveAmount),
+            ("state", "range-read-count") => Ok(HostFn::RangeReadCount),
+            ("state", "range-read-order") => Ok(HostFn::RangeReadOrder),
+            ("state", "range-read-entry") => Ok(HostFn::RangeReadEntry),
+            ("state", "range-write-count") => Ok(HostFn::RangeWriteCount),
+            ("state", "range-write-order") => Ok(HostFn::RangeWriteOrder),
+            ("state", "range-write-entry") => Ok(HostFn::RangeWriteEntry),
+            ("state", "range-write-set") => Ok(HostFn::RangeWriteSet),
+            ("state", "range-write-insert") => Ok(HostFn::RangeWriteInsert),
+            ("state", "range-write-remove") => Ok(HostFn::RangeWriteRemove),
             ("env", "clock") => Ok(HostFn::Clock),
             ("env", "randomness") => Ok(HostFn::Randomness),
             ("crypto", "hash") => Ok(HostFn::Hash),
@@ -341,8 +434,12 @@ impl RefComponent {
                     opts,
                 });
             }
-            CanonicalFunction::ResourceDrop { .. } => {
-                self.core_funcs.push(CoreFuncDef::ResourceDrop);
+            CanonicalFunction::ResourceDrop { resource } => {
+                let kind = match self.types.get(*resource as usize) {
+                    Some(CTypeEntry::Resource(kind)) => Some(*kind),
+                    _ => None,
+                };
+                self.core_funcs.push(CoreFuncDef::ResourceDrop { kind });
             }
             CanonicalFunction::Lift {
                 core_func_index,
@@ -423,7 +520,7 @@ fn resolve_core_func(
         .get(index as usize)
         .ok_or_else(|| DecodeError::Malformed("core func index".to_string()))?
     {
-        CoreFuncDef::Lower { .. } | CoreFuncDef::ResourceDrop => Ok(FuncAddr::Canon(index)),
+        CoreFuncDef::Lower { .. } | CoreFuncDef::ResourceDrop { .. } => Ok(FuncAddr::Canon(index)),
         CoreFuncDef::Alias { instance, name } => instance_exports
             .get(*instance as usize)
             .and_then(|m| m.get(name))
@@ -452,9 +549,10 @@ fn resolve_alias<T>(
         .ok_or_else(|| DecodeError::Malformed("alias resolution".to_string()))
 }
 
-/// A live handle-table entry.
+/// A live handle-table entry, typed with its resource kind.
 struct Handle {
     rep: u32,
+    kind: ResourceKind,
     live: bool,
 }
 
@@ -685,10 +783,11 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
             match (arg, want) {
                 (CVal::U32(v), CTy::U32) => flat.push(Value::I32(v.cast_signed())),
                 (CVal::U64(v), CTy::U64) => flat.push(Value::I64(v.cast_signed())),
-                (CVal::Borrow(rep), CTy::Borrow) => {
+                (CVal::Borrow(rep, kind), CTy::Borrow) => {
                     let idx = u32::try_from(self.canon.handles.len()).expect("bounded");
                     self.canon.handles.push(Handle {
                         rep: *rep,
+                        kind: *kind,
                         live: true,
                     });
                     flat.push(Value::I32(idx.cast_signed()));
@@ -763,10 +862,11 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
             .ok_or(ExecError::Canon(CanonError::Internal("realloc option")))
     }
 
-    fn resolve_handle(&self, index: Value) -> Result<u32, ExecError> {
+    fn resolve_handle(&self, index: Value, expected: ResourceKind) -> Result<u32, ExecError> {
         let idx = index.as_i32().cast_unsigned() as usize;
         match self.handles.get(idx) {
-            Some(h) if h.live => Ok(h.rep),
+            Some(h) if h.live && h.kind == expected => Ok(h.rep),
+            Some(h) if h.live => Err(ExecError::Canon(CanonError::WrongHandleType)),
             _ => Err(ExecError::Canon(CanonError::UnknownHandle)),
         }
     }
@@ -832,17 +932,37 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
 impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
     fn param_count(&self, id: u32) -> usize {
         match &self.comp.core_funcs[id as usize] {
-            CoreFuncDef::ResourceDrop => 1,
+            CoreFuncDef::ResourceDrop { .. } => 1,
             CoreFuncDef::Lower { func, .. } => match self.comp.comp_funcs[*func as usize] {
-                CompFunc::Host(HostFn::Read) => 2,
-                CompFunc::Host(HostFn::Write | HostFn::Hash) => 3,
+                CompFunc::Host(
+                    HostFn::RangeReadCount | HostFn::RangeWriteCount | HostFn::Randomness,
+                ) => 1,
+                CompFunc::Host(
+                    HostFn::ReadCellGet
+                    | HostFn::SnapCellGet
+                    | HostFn::WriteCellGet
+                    | HostFn::ReserveAmount
+                    | HostFn::RangeWriteRemove,
+                ) => 2,
+                CompFunc::Host(
+                    HostFn::WriteCellSet
+                    | HostFn::DeltaAdd
+                    | HostFn::DeltaSub
+                    | HostFn::RangeReadOrder
+                    | HostFn::RangeReadEntry
+                    | HostFn::RangeWriteOrder
+                    | HostFn::RangeWriteEntry
+                    | HostFn::Hash,
+                ) => 3,
+                CompFunc::Host(HostFn::RangeWriteSet) => 4,
+                CompFunc::Host(HostFn::RangeWriteInsert) => 5,
                 CompFunc::Host(HostFn::Clock) | CompFunc::Lifted { .. } => 0,
-                CompFunc::Host(HostFn::Randomness) => 1,
             },
             CoreFuncDef::Alias { .. } => unreachable!("aliases resolve to wasm addresses"),
         }
     }
 
+    #[allow(clippy::too_many_lines)] // one dispatch over the world's host functions
     fn dispatch(
         &mut self,
         modules: &[&RefModule],
@@ -852,13 +972,14 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
     ) -> Result<Vec<Value>, ExecError> {
         let def = self.comp.core_funcs[id as usize].clone();
         match def {
-            CoreFuncDef::ResourceDrop => {
+            CoreFuncDef::ResourceDrop { kind } => {
                 let idx = args[0].as_i32().cast_unsigned() as usize;
                 match self.handles.get_mut(idx) {
-                    Some(h) if h.live => {
+                    Some(h) if h.live && kind.is_none_or(|k| k == h.kind) => {
                         h.live = false;
                         Ok(Vec::new())
                     }
+                    Some(h) if h.live => Err(ExecError::Canon(CanonError::WrongHandleType)),
                     _ => Err(ExecError::Canon(CanonError::UnknownHandle)),
                 }
             }
@@ -870,20 +991,117 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                 };
                 match host_fn {
                     HostFn::Clock => Ok(vec![Value::I64(self.host.clock_ms().cast_signed())]),
-                    HostFn::Read => {
-                        let rep = self.resolve_handle(args[0])?;
-                        let bytes = self.host.read(rep);
+                    HostFn::ReadCellGet
+                    | HostFn::SnapCellGet
+                    | HostFn::WriteCellGet
+                    | HostFn::ReserveAmount => {
+                        let expected = match host_fn {
+                            HostFn::ReadCellGet => ResourceKind::ReadCell,
+                            HostFn::SnapCellGet => ResourceKind::SnapCell,
+                            HostFn::WriteCellGet => ResourceKind::WriteCell,
+                            _ => ResourceKind::ReserveCell,
+                        };
+                        let rep = self.resolve_handle(args[0], expected)?;
+                        let result = match host_fn {
+                            HostFn::ReadCellGet => self.host.read_cell(rep),
+                            HostFn::SnapCellGet => self.host.snap_cell(rep),
+                            HostFn::WriteCellGet => self.host.write_cell_get(rep),
+                            _ => self.host.reserve_amount(rep),
+                        };
+                        let bytes = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         self.boundary_bytes += bytes.len() as u64;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[1])?;
                         Ok(Vec::new())
                     }
-                    HostFn::Write => {
-                        let rep = self.resolve_handle(args[0])?;
+                    HostFn::WriteCellSet => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::WriteCell)?;
                         let mem = self.mem_opt(id)?;
                         let bytes = Self::read_guest_bytes(store, mem, args[1], args[2])?;
                         self.boundary_bytes += bytes.len() as u64;
-                        self.host.write(rep, bytes);
+                        self.host
+                            .write_cell_set(rep, bytes)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::DeltaAdd | HostFn::DeltaSub => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::DeltaCell)?;
+                        let mem = self.mem_opt(id)?;
+                        let amount = Self::read_guest_bytes(store, mem, args[1], args[2])?;
+                        self.boundary_bytes += amount.len() as u64;
+                        let result = if host_fn == HostFn::DeltaAdd {
+                            self.host.delta_add(rep, &amount)
+                        } else {
+                            self.host.delta_sub(rep, &amount)
+                        };
+                        result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::RangeReadCount | HostFn::RangeWriteCount => {
+                        let expected = if host_fn == HostFn::RangeReadCount {
+                            ResourceKind::RangeRead
+                        } else {
+                            ResourceKind::RangeWrite
+                        };
+                        let rep = self.resolve_handle(args[0], expected)?;
+                        let count = self
+                            .host
+                            .range_count(rep)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(vec![Value::I32(count.cast_signed())])
+                    }
+                    HostFn::RangeReadOrder
+                    | HostFn::RangeReadEntry
+                    | HostFn::RangeWriteOrder
+                    | HostFn::RangeWriteEntry => {
+                        let expected = match host_fn {
+                            HostFn::RangeReadOrder | HostFn::RangeReadEntry => {
+                                ResourceKind::RangeRead
+                            }
+                            _ => ResourceKind::RangeWrite,
+                        };
+                        let rep = self.resolve_handle(args[0], expected)?;
+                        let index = args[1].as_i32().cast_unsigned();
+                        let result = match host_fn {
+                            HostFn::RangeReadOrder | HostFn::RangeWriteOrder => {
+                                self.host.range_order(rep, index)
+                            }
+                            _ => self.host.range_entry(rep, index),
+                        };
+                        let bytes = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        self.boundary_bytes += bytes.len() as u64;
+                        let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
+                        self.lower_list(modules, store, mem, realloc, &bytes, args[2])?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::RangeWriteSet => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
+                        let index = args[1].as_i32().cast_unsigned();
+                        let mem = self.mem_opt(id)?;
+                        let value = Self::read_guest_bytes(store, mem, args[2], args[3])?;
+                        self.boundary_bytes += value.len() as u64;
+                        self.host
+                            .range_set(rep, index, value)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::RangeWriteInsert => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
+                        let mem = self.mem_opt(id)?;
+                        let order = Self::read_guest_bytes(store, mem, args[1], args[2])?;
+                        let value = Self::read_guest_bytes(store, mem, args[3], args[4])?;
+                        self.boundary_bytes += order.len() as u64 + value.len() as u64;
+                        self.host
+                            .range_insert(rep, &order, value)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::RangeWriteRemove => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
+                        let index = args[1].as_i32().cast_unsigned();
+                        self.host
+                            .range_remove(rep, index)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(Vec::new())
                     }
                     HostFn::Randomness => {

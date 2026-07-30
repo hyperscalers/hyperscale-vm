@@ -224,6 +224,26 @@ impl MemoryStore {
             .copied()
     }
 
+    /// Every point cell, in canonical key order.
+    pub fn cells(&self) -> impl Iterator<Item = (SubstateKey, &[u8])> + '_ {
+        self.cells
+            .iter()
+            .map(|(key, value)| (*key, value.as_slice()))
+    }
+
+    /// Every ordered-collection entry, in canonical order.
+    pub fn collection_entries(
+        &self,
+    ) -> impl Iterator<Item = ((Address, RoleId, u128), &[u8])> + '_ {
+        self.entries
+            .iter()
+            .flat_map(|((owner, collection), entries)| {
+                entries
+                    .iter()
+                    .map(|(order, value)| ((*owner, *collection, *order), value.as_slice()))
+            })
+    }
+
     fn record(&mut self, target: EffectTarget, kind: ModeKind) {
         self.log.push(Access { target, kind });
     }

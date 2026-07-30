@@ -1,43 +1,91 @@
 //! The realistic guest fixture end to end: build `guests/transfer` with the
 //! pinned wit-bindgen toolchain, componentize it, validate it against the
 //! profile — the empirical floats-ban test — and run it under the blessed
-//! engine with the kernel world.
+//! engine with the kernel session as host.
 
 use anyhow::{Context, Result};
+use hyperscale_vm_effects::{
+    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
+    TestHasher, child_key,
+};
 use hyperscale_vm_harness::fixtures::{build_transfer_component, repo_root};
+use hyperscale_vm_harness::session_host::SessionHost;
+use hyperscale_vm_kernel::{
+    Capability, EnvInputs, KernelSession, MaterializeError, MemoryStore, Outcome, SubstateStore,
+    TxHash, encode_amount,
+};
 use hyperscale_vm_runtime::{
-    KernelHost, Substate, add_kernel_to_linker, blessed_engine, validate_component,
+    DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Store, Trap};
 
 const CLOCK_MS: u64 = 1_234_567;
+const RANDOMNESS: [u8; 32] = [9; 32];
+const FUEL: u64 = 10_000_000;
 
-struct TestHost {
-    values: Vec<Vec<u8>>,
+fn test_hash(data: &[u8]) -> [u8; 32] {
+    TestHasher.hash(b"crypto", &[data]).0
 }
 
-impl KernelHost for TestHost {
-    fn read(&mut self, rep: u32) -> Vec<u8> {
-        self.values[rep as usize].clone()
-    }
+fn keys() -> (SubstateKey, SubstateKey) {
+    (
+        child_key(&TestHasher, Address([1; 16]), RoleId(1), &[]),
+        child_key(&TestHasher, Address([2; 16]), RoleId(1), &[]),
+    )
+}
 
-    fn write(&mut self, rep: u32, value: Vec<u8>) {
-        self.values[rep as usize] = value;
-    }
+fn declared(reserve: u128) -> EffectSet {
+    let (sender, recipient) = keys();
+    let mut set = EffectSet::new();
+    set.insert(Effect {
+        target: EffectTarget::Point(sender),
+        mode: Mode::Reserve { amount: reserve },
+    })
+    .unwrap();
+    set.insert(Effect {
+        target: EffectTarget::Point(recipient),
+        mode: Mode::Delta,
+    })
+    .unwrap();
+    set
+}
 
-    fn clock_ms(&self) -> u64 {
-        CLOCK_MS
-    }
+fn session(committed: u128, reserve: u128) -> Result<KernelSession, MaterializeError> {
+    let (sender, _) = keys();
+    let mut store = MemoryStore::new();
+    store
+        .write(sender, encode_amount(committed).to_vec())
+        .unwrap();
+    store.clear_log();
+    KernelSession::materialize(
+        store,
+        &declared(reserve),
+        TxHash(Hash32([0x44; 32])),
+        EnvInputs {
+            clock_ms: CLOCK_MS,
+            randomness: RANDOMNESS,
+        },
+        test_hash,
+    )
+}
 
-    fn randomness(&self) -> [u8; 32] {
-        [9; 32]
-    }
-
-    fn hash(&self, data: &[u8]) -> [u8; 32] {
-        let sum = data.iter().fold(0u8, |acc, b| acc.wrapping_add(*b));
-        [sum; 32]
-    }
+fn handle_reps(session: &KernelSession) -> (u32, u32) {
+    let (sender, recipient) = keys();
+    let position = |wanted: Capability| {
+        u32::try_from(
+            session
+                .capabilities()
+                .iter()
+                .position(|c| *c == wanted)
+                .expect("capability present"),
+        )
+        .expect("bounded")
+    };
+    (
+        position(Capability::Reserve(sender)),
+        position(Capability::Delta(recipient)),
+    )
 }
 
 #[test]
@@ -56,72 +104,102 @@ fn the_wit_bindgen_guest_conforms_and_transfers() -> Result<()> {
 
     let engine = blessed_engine()?;
     let compiled = Component::new(&engine, &component)?;
-    let mut linker = Linker::<TestHost>::new(&engine);
+    let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
 
-    let mut store = Store::new(
-        &engine,
-        TestHost {
-            values: vec![500u64.to_le_bytes().to_vec(), 20u64.to_le_bytes().to_vec()],
-        },
-    );
-    store.set_fuel(10_000_000)?;
+    let host = SessionHost(session(500, 100).expect("feasible"));
+    let (sender_rep, recipient_rep) = handle_reps(&host.0);
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &compiled)?;
-    let run = instance.get_typed_func::<(Resource<Substate>, Resource<Substate>, u64), (u64,)>(
-        &mut store, "run",
-    )?;
+    let run = instance
+        .get_typed_func::<(Resource<ReserveCell>, Resource<DeltaCell>, u64), (u64,)>(
+            &mut store, "run",
+        )?;
     let (tag,) = run.call(
         &mut store,
-        (Resource::new_borrow(0), Resource::new_borrow(1), 100),
+        (
+            Resource::new_borrow(sender_rep),
+            Resource::new_borrow(recipient_rep),
+            100,
+        ),
     )?;
     run.post_return(&mut store)?;
 
-    // Balances moved.
-    assert_eq!(store.data_mut().read(0), 400u64.to_le_bytes().to_vec());
-    assert_eq!(store.data_mut().read(1), 120u64.to_le_bytes().to_vec());
-
-    // The receipt tag folds clock + new balance + hash[0] of the randomness.
-    let hash_first = 9u8.wrapping_mul(32);
-    assert_eq!(tag, CLOCK_MS + 120 + u64::from(hash_first));
+    // The receipt tag folds clock + reserved amount + hash[0] of the
+    // randomness draw, computed independently of the guest.
+    let digest = test_hash(&RANDOMNESS);
+    assert_eq!(tag, CLOCK_MS + 100 + u64::from(digest[0]));
 
     // Fuel was actually metered.
-    assert!(store.get_fuel()? < 10_000_000);
+    let fuel = FUEL - store.get_fuel()?;
+    assert!(fuel > 0);
+
+    // The receipt: settlement debits the sender, the delta credits the
+    // recipient, and the oracle is clean.
+    let receipt = store
+        .into_data()
+        .0
+        .finish(Outcome::Completed { value: Some(tag) }, fuel)
+        .expect("oracle clean");
+    let (sender, recipient) = keys();
+    assert_eq!(
+        receipt.delta.cells.get(&sender),
+        Some(&Some(encode_amount(400).to_vec()))
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&recipient),
+        Some(&Some(encode_amount(100).to_vec()))
+    );
     Ok(())
 }
 
 #[test]
-fn the_guest_panic_is_a_deterministic_trap() -> Result<()> {
+fn the_guest_floor_panic_is_a_deterministic_trap() -> Result<()> {
     let component = build_transfer_component()?;
     let engine = blessed_engine()?;
     let compiled = Component::new(&engine, &component)?;
-    let mut linker = Linker::<TestHost>::new(&engine);
+    let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
 
-    let mut store = Store::new(
-        &engine,
-        TestHost {
-            values: vec![50u64.to_le_bytes().to_vec(), Vec::new()],
-        },
-    );
+    let host = SessionHost(session(500, 100).expect("feasible"));
+    let (sender_rep, recipient_rep) = handle_reps(&host.0);
+    let mut store = Store::new(&engine, host);
     store.set_fuel(10_000_000)?;
     let instance = linker.instantiate(&mut store, &compiled)?;
-    let run = instance.get_typed_func::<(Resource<Substate>, Resource<Substate>, u64), (u64,)>(
-        &mut store, "run",
-    )?;
-    // Insufficient balance: the guest's assert must land as a trap, and no
-    // partial write may have reached the host.
+    let run = instance
+        .get_typed_func::<(Resource<ReserveCell>, Resource<DeltaCell>, u64), (u64,)>(
+            &mut store, "run",
+        )?;
+    // The application floor exceeds the reserved amount: the guest's
+    // assert must land as a trap, before any delta was queued.
     let err = run
         .call(
             &mut store,
-            (Resource::new_borrow(0), Resource::new_borrow(1), 100),
+            (
+                Resource::new_borrow(sender_rep),
+                Resource::new_borrow(recipient_rep),
+                200,
+            ),
         )
-        .expect_err("insufficient balance must trap");
+        .expect_err("floor violation must trap");
     assert_eq!(
         err.downcast_ref::<Trap>(),
         Some(&Trap::UnreachableCodeReached),
         "got: {err:#}"
     );
-    assert_eq!(store.data_mut().read(0), 50u64.to_le_bytes().to_vec());
-    assert_eq!(store.data_mut().read(1), Vec::<u8>::new());
     Ok(())
+}
+
+#[test]
+fn an_infeasible_reservation_aborts_before_any_execution() {
+    let (sender, _) = keys();
+    let refused = session(50, 100).expect_err("50 cannot cover 100");
+    assert_eq!(
+        refused,
+        MaterializeError::Infeasible {
+            key: sender,
+            amount: 100,
+        }
+    );
 }

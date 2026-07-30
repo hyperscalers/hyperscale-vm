@@ -25,12 +25,16 @@ pub enum ExecError {
 }
 
 /// Canonical-ABI violations, mirroring the blessed engine's error classes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CanonError {
     /// A handle index with no live table entry.
     UnknownHandle,
+    /// A live handle of the wrong resource type — the mode-escape trap.
+    WrongHandleType,
     /// Borrow handles still live when the export returned.
     BorrowsRemain,
+    /// A deterministic kernel refusal, carrying the host's message.
+    Host(String),
     /// An unresolved canon definition — a decoder or instantiation defect,
     /// never guest-reachable.
     Internal(&'static str),
