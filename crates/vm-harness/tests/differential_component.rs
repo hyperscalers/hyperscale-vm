@@ -148,7 +148,7 @@ fn ref_outcome(export: &str, borrows: bool, len: usize) -> Result<(Outcome, Test
         },
         Err(ExecError::Canon(CanonError::UnknownHandle)) => Outcome::UnknownHandle,
         Err(ExecError::Canon(CanonError::BorrowsRemain)) => Outcome::BorrowsRemain,
-        Err(ExecError::Trap(t)) => Outcome::Other(format!("trap {t:?}")),
+        Err(e) => Outcome::Other(format!("{e:?}")),
     };
     Ok((outcome, instance.into_host()))
 }

@@ -3,46 +3,13 @@
 //! profile — the empirical floats-ban test — and run it under the blessed
 //! engine with the kernel world.
 
-use std::path::PathBuf;
-use std::process::Command;
-
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
+use hyperscale_vm_harness::fixtures::{build_transfer_component, repo_root};
 use hyperscale_vm_runtime::{
     KernelHost, Substate, add_kernel_to_linker, blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Store, Trap};
-use wit_component::ComponentEncoder;
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("crates/vm-harness has a repo root")
-        .to_path_buf()
-}
-
-/// Builds the guest crate and returns the componentized artifact.
-fn build_transfer_component() -> Result<Vec<u8>> {
-    let guest_dir = repo_root().join("guests/transfer");
-    let status = Command::new("cargo")
-        .args(["build", "--release", "--target", "wasm32-unknown-unknown"])
-        .current_dir(&guest_dir)
-        .status()
-        .context("spawn cargo for the guest build")?;
-    ensure!(status.success(), "guest build failed");
-
-    let core =
-        std::fs::read(guest_dir.join("target/wasm32-unknown-unknown/release/transfer_guest.wasm"))
-            .context("read guest core module")?;
-    let component = ComponentEncoder::default()
-        .validate(true)
-        .module(&core)
-        .context("encode component")?
-        .encode()
-        .context("componentize")?;
-    Ok(component)
-}
 
 const CLOCK_MS: u64 = 1_234_567;
 

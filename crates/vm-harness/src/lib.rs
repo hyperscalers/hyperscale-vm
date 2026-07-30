@@ -8,6 +8,53 @@
 
 /// Shared guest fixtures for the differential lanes.
 pub mod fixtures {
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    use anyhow::{Context, Result, ensure};
+    use wit_component::ComponentEncoder;
+
+    /// The repository root, derived from this crate's manifest directory.
+    ///
+    /// # Panics
+    ///
+    /// If the crate is somehow not two levels below a root.
+    #[must_use]
+    pub fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("crates/vm-harness has a repo root")
+            .to_path_buf()
+    }
+
+    /// Builds the `guests/transfer` crate with the pinned toolchain and
+    /// returns the componentized artifact.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the guest build or componentization fails.
+    pub fn build_transfer_component() -> Result<Vec<u8>> {
+        let guest_dir = repo_root().join("guests/transfer");
+        let status = Command::new("cargo")
+            .args(["build", "--release", "--target", "wasm32-unknown-unknown"])
+            .current_dir(&guest_dir)
+            .status()
+            .context("spawn cargo for the guest build")?;
+        ensure!(status.success(), "guest build failed");
+
+        let core = std::fs::read(
+            guest_dir.join("target/wasm32-unknown-unknown/release/transfer_guest.wasm"),
+        )
+        .context("read guest core module")?;
+        let component = ComponentEncoder::default()
+            .validate(true)
+            .module(&core)
+            .context("encode component")?
+            .encode()
+            .context("componentize")?;
+        Ok(component)
+    }
     /// The kernel-world component guest.
     ///
     /// `run` reads substate `a`, writes its bytes to substate `b`, and folds

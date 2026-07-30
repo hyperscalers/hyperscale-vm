@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use wasmparser::{
     CanonicalFunction, CanonicalOption, ComponentAlias, ComponentDefinedType,
-    ComponentExternalKind, ComponentType, ComponentValType, ExternalKind,
+    ComponentExternalKind, ComponentType, ComponentTypeRef, ComponentValType, ExternalKind,
     Instance as CoreInstanceReader, InstantiationArgKind, Parser, Payload, PrimitiveValType,
 };
 
@@ -123,6 +123,7 @@ pub struct RefComponent {
     comp_funcs: Vec<CompFunc>,
     core_funcs: Vec<CoreFuncDef>,
     core_memories: Vec<(u32, String)>,
+    core_tables: Vec<(u32, String)>,
     core_instances: Vec<CoreInstanceDef>,
     exports: HashMap<String, u32>,
 }
@@ -143,6 +144,7 @@ impl RefComponent {
             comp_funcs: Vec::new(),
             core_funcs: Vec::new(),
             core_memories: Vec::new(),
+            core_tables: Vec::new(),
             core_instances: Vec::new(),
             exports: HashMap::new(),
         };
@@ -164,7 +166,20 @@ impl RefComponent {
                 Payload::ComponentImportSection(reader) => {
                     for import in reader {
                         let import = import.map_err(|e| DecodeError::Malformed(e.to_string()))?;
-                        comp.import_names.push(import.name.0.to_string());
+                        // Each import kind appends to its own index space:
+                        // instances to the instance space, types (a
+                        // world-level `use`) to the type space.
+                        match import.ty {
+                            ComponentTypeRef::Instance(_) => {
+                                comp.import_names.push(import.name.0.to_string());
+                            }
+                            ComponentTypeRef::Type(_) => comp.types.push(CTypeEntry::Other),
+                            other => {
+                                return Err(DecodeError::Unsupported(format!(
+                                    "component import {other:?}"
+                                )));
+                            }
+                        }
                     }
                 }
                 Payload::ComponentAliasSection(reader) => {
@@ -277,6 +292,10 @@ impl RefComponent {
                     self.core_memories
                         .push((*instance_index, (*name).to_string()));
                 }
+                ExternalKind::Table => {
+                    self.core_tables
+                        .push((*instance_index, (*name).to_string()));
+                }
                 _ => {
                     return Err(DecodeError::Unsupported(format!(
                         "core alias kind {kind:?}"
@@ -384,8 +403,54 @@ fn parse_opts(options: &[CanonicalOption]) -> CanonOpts {
     opts
 }
 
-/// A resolved core-instance export: kind, callable address, memory index.
-type ResolvedExport = (ExternalKind, FuncAddr, Option<u32>);
+/// A resolved core-instance export.
+#[derive(Clone, Copy)]
+enum ResolvedItem {
+    Func(FuncAddr),
+    Memory(u32),
+    Table(u32),
+}
+
+/// Resolves a core-function index to a callable address; alias entries look
+/// up already-built instances.
+fn resolve_core_func(
+    comp: &RefComponent,
+    instance_exports: &[HashMap<String, ResolvedItem>],
+    index: u32,
+) -> Result<FuncAddr, DecodeError> {
+    match comp
+        .core_funcs
+        .get(index as usize)
+        .ok_or_else(|| DecodeError::Malformed("core func index".to_string()))?
+    {
+        CoreFuncDef::Lower { .. } | CoreFuncDef::ResourceDrop => Ok(FuncAddr::Canon(index)),
+        CoreFuncDef::Alias { instance, name } => instance_exports
+            .get(*instance as usize)
+            .and_then(|m| m.get(name))
+            .and_then(|item| match item {
+                ResolvedItem::Func(addr) => Some(*addr),
+                _ => None,
+            })
+            .ok_or_else(|| DecodeError::Malformed("core func alias".to_string())),
+    }
+}
+
+/// Resolves an aliased core memory or table through its exporting instance.
+fn resolve_alias<T>(
+    aliases: &[(u32, String)],
+    instance_exports: &[HashMap<String, ResolvedItem>],
+    index: u32,
+    pick: impl Fn(ResolvedItem) -> Option<T>,
+) -> Result<T, DecodeError> {
+    let (instance, name) = aliases
+        .get(index as usize)
+        .ok_or_else(|| DecodeError::Malformed("alias index".to_string()))?;
+    instance_exports
+        .get(*instance as usize)
+        .and_then(|m| m.get(name))
+        .and_then(|item| pick(*item))
+        .ok_or_else(|| DecodeError::Malformed("alias resolution".to_string()))
+}
 
 /// A live handle-table entry.
 struct Handle {
@@ -427,11 +492,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
         let modules: Vec<&RefModule> = comp.modules.iter().collect();
         let mut store = Store::default();
         // Core instance index -> resolved export map.
-        let mut instance_exports: Vec<HashMap<String, ResolvedExport>> = Vec::new();
-        // Store instance index per core Instantiate def, aligned with defs.
-        let mut resolved_memories_by_alias: Vec<u32> = Vec::new();
-
-        let canon_addr = |idx: u32| FuncAddr::Canon(idx);
+        let mut instance_exports: Vec<HashMap<String, ResolvedItem>> = Vec::new();
 
         for def in &comp.core_instances {
             match def {
@@ -439,36 +500,29 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                     let mut map = HashMap::new();
                     for (name, kind, index) in list {
                         let resolved = match kind {
-                            ExternalKind::Func => {
-                                let addr =
-                                    match comp.core_funcs.get(*index as usize).ok_or_else(|| {
-                                        DecodeError::Malformed("core func index".to_string())
-                                    })? {
-                                        CoreFuncDef::Lower { .. } | CoreFuncDef::ResourceDrop => {
-                                            canon_addr(*index)
-                                        }
-                                        CoreFuncDef::Alias { .. } => {
-                                            return Err(DecodeError::Unsupported(
-                                                "alias in export instance".to_string(),
-                                            ));
-                                        }
-                                    };
-                                (ExternalKind::Func, addr, None)
-                            }
-                            ExternalKind::Memory => {
-                                let (inst, name) =
-                                    comp.core_memories.get(*index as usize).ok_or_else(|| {
-                                        DecodeError::Malformed("core memory index".to_string())
-                                    })?;
-                                let mem = instance_exports
-                                    .get(*inst as usize)
-                                    .and_then(|m| m.get(name))
-                                    .and_then(|(_, _, mem)| *mem)
-                                    .ok_or_else(|| {
-                                        DecodeError::Malformed("memory alias".to_string())
-                                    })?;
-                                (ExternalKind::Memory, canon_addr(0), Some(mem))
-                            }
+                            ExternalKind::Func => ResolvedItem::Func(resolve_core_func(
+                                comp,
+                                &instance_exports,
+                                *index,
+                            )?),
+                            ExternalKind::Memory => ResolvedItem::Memory(resolve_alias(
+                                &comp.core_memories,
+                                &instance_exports,
+                                *index,
+                                |item| match item {
+                                    ResolvedItem::Memory(m) => Some(m),
+                                    _ => None,
+                                },
+                            )?),
+                            ExternalKind::Table => ResolvedItem::Table(resolve_alias(
+                                &comp.core_tables,
+                                &instance_exports,
+                                *index,
+                                |item| match item {
+                                    ResolvedItem::Table(t) => Some(t),
+                                    _ => None,
+                                },
+                            )?),
                             _ => {
                                 return Err(DecodeError::Unsupported(
                                     "export instance kind".to_string(),
@@ -486,6 +540,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                         .ok_or_else(|| DecodeError::Malformed("module index".to_string()))?;
                     let mut imported_funcs = Vec::new();
                     let mut imported_memory = None;
+                    let mut imported_table = None;
                     for import in &m.imports.entries {
                         let (_, arg_instance) = args
                             .iter()
@@ -496,23 +551,23 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                         let exports = instance_exports
                             .get(*arg_instance as usize)
                             .ok_or_else(|| DecodeError::Malformed("arg instance".to_string()))?;
-                        let (kind, addr, mem) = exports.get(&import.name).ok_or_else(|| {
+                        let item = exports.get(&import.name).ok_or_else(|| {
                             DecodeError::Malformed(format!("missing export {}", import.name))
                         })?;
-                        match import.kind {
-                            CoreImportKind::Func(_) => {
-                                if *kind != ExternalKind::Func {
-                                    return Err(DecodeError::Malformed(
-                                        "import kind mismatch".to_string(),
-                                    ));
-                                }
+                        match (import.kind, item) {
+                            (CoreImportKind::Func(_), ResolvedItem::Func(addr)) => {
                                 imported_funcs.push(*addr);
                             }
-                            CoreImportKind::Memory => {
-                                imported_memory = *mem;
+                            (CoreImportKind::Memory, ResolvedItem::Memory(mem)) => {
+                                imported_memory = Some(*mem);
                             }
-                            CoreImportKind::Table => {
-                                return Err(DecodeError::Unsupported("table import".to_string()));
+                            (CoreImportKind::Table, ResolvedItem::Table(table)) => {
+                                imported_table = Some(*table);
+                            }
+                            _ => {
+                                return Err(DecodeError::Malformed(
+                                    "import kind mismatch".to_string(),
+                                ));
                             }
                         }
                     }
@@ -522,7 +577,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                         *module,
                         imported_funcs,
                         imported_memory,
-                        None,
+                        imported_table,
                     )
                     .map_err(|t| DecodeError::Malformed(format!("instantiation trap: {t}")))?;
                     // Expose this instance's exports for later definitions.
@@ -530,19 +585,19 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                     for (name, func_idx) in &m.exports {
                         map.insert(
                             name.clone(),
-                            (
-                                ExternalKind::Func,
+                            ResolvedItem::Func(
                                 store.instances[instance_idx as usize].funcs[*func_idx as usize],
-                                None,
                             ),
                         );
                     }
                     if let Some(mem) = store.instances[instance_idx as usize].memory {
                         for name in &m.memory_exports {
-                            map.insert(
-                                name.clone(),
-                                (ExternalKind::Memory, canon_addr(0), Some(mem)),
-                            );
+                            map.insert(name.clone(), ResolvedItem::Memory(mem));
+                        }
+                    }
+                    if let Some(table) = store.instances[instance_idx as usize].table {
+                        for name in &m.table_exports {
+                            map.insert(name.clone(), ResolvedItem::Table(table));
                         }
                     }
                     instance_exports.push(map);
@@ -552,26 +607,24 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
 
         // Resolve the core-function and core-memory index spaces.
         let mut resolved_core_funcs = Vec::new();
-        for (i, def) in comp.core_funcs.iter().enumerate() {
-            let addr = match def {
-                CoreFuncDef::Lower { .. } | CoreFuncDef::ResourceDrop => {
-                    FuncAddr::Canon(u32::try_from(i).expect("bounded"))
-                }
-                CoreFuncDef::Alias { instance, name } => instance_exports
-                    .get(*instance as usize)
-                    .and_then(|m| m.get(name))
-                    .map(|(_, addr, _)| *addr)
-                    .ok_or_else(|| DecodeError::Malformed("core func alias".to_string()))?,
-            };
-            resolved_core_funcs.push(addr);
+        for i in 0..comp.core_funcs.len() {
+            resolved_core_funcs.push(resolve_core_func(
+                comp,
+                &instance_exports,
+                u32::try_from(i).expect("bounded"),
+            )?);
         }
-        for (instance, name) in &comp.core_memories {
-            let mem = instance_exports
-                .get(*instance as usize)
-                .and_then(|m| m.get(name))
-                .and_then(|(_, _, mem)| *mem)
-                .ok_or_else(|| DecodeError::Malformed("memory alias".to_string()))?;
-            resolved_memories_by_alias.push(mem);
+        let mut resolved_memories_by_alias: Vec<u32> = Vec::new();
+        for i in 0..comp.core_memories.len() {
+            resolved_memories_by_alias.push(resolve_alias(
+                &comp.core_memories,
+                &instance_exports,
+                u32::try_from(i).expect("bounded"),
+                |item| match item {
+                    ResolvedItem::Memory(m) => Some(m),
+                    _ => None,
+                },
+            )?);
         }
 
         Ok(Self {
@@ -672,19 +725,27 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
 }
 
 impl<H: RefKernelHost> KernelCanon<'_, H> {
-    fn opts(&self, id: u32) -> Result<(u32, FuncAddr), ExecError> {
-        let CoreFuncDef::Lower { opts, .. } = &self.comp.core_funcs[id as usize] else {
-            return Err(ExecError::Canon(CanonError::UnknownHandle));
-        };
-        let mem = opts
+    fn canon_opts(&self, id: u32) -> Result<CanonOpts, ExecError> {
+        match &self.comp.core_funcs[id as usize] {
+            CoreFuncDef::Lower { opts, .. } => Ok(*opts),
+            _ => Err(ExecError::Canon(CanonError::Internal("opts on non-lower"))),
+        }
+    }
+
+    /// The lower's memory option, resolved to a store memory index.
+    fn mem_opt(&self, id: u32) -> Result<u32, ExecError> {
+        self.canon_opts(id)?
             .memory
             .and_then(|m| self.resolved_memories.get(m as usize).copied())
-            .ok_or(ExecError::Canon(CanonError::UnknownHandle))?;
-        let realloc = opts
+            .ok_or(ExecError::Canon(CanonError::Internal("memory option")))
+    }
+
+    /// The lower's realloc option, resolved to a callable address.
+    fn realloc_opt(&self, id: u32) -> Result<FuncAddr, ExecError> {
+        self.canon_opts(id)?
             .realloc
             .and_then(|r| self.resolved_core_funcs.get(r as usize).copied())
-            .ok_or(ExecError::Canon(CanonError::UnknownHandle))?;
-        Ok((mem, realloc))
+            .ok_or(ExecError::Canon(CanonError::Internal("realloc option")))
     }
 
     fn resolve_handle(&self, index: Value) -> Result<u32, ExecError> {
@@ -788,32 +849,34 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
             }
             CoreFuncDef::Lower { func, .. } => {
                 let CompFunc::Host(host_fn) = self.comp.comp_funcs[func as usize] else {
-                    return Err(ExecError::Canon(CanonError::UnknownHandle));
+                    return Err(ExecError::Canon(CanonError::Internal(
+                        "lower of non-import",
+                    )));
                 };
                 match host_fn {
                     HostFn::Clock => Ok(vec![Value::I64(self.host.clock_ms().cast_signed())]),
                     HostFn::Read => {
                         let rep = self.resolve_handle(args[0])?;
                         let bytes = self.host.read(rep);
-                        let (mem, realloc) = self.opts(id)?;
+                        let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[1])?;
                         Ok(Vec::new())
                     }
                     HostFn::Write => {
                         let rep = self.resolve_handle(args[0])?;
-                        let (mem, _) = self.opts(id)?;
+                        let mem = self.mem_opt(id)?;
                         let bytes = Self::read_guest_bytes(store, mem, args[1], args[2])?;
                         self.host.write(rep, bytes);
                         Ok(Vec::new())
                     }
                     HostFn::Randomness => {
                         let draw = self.host.randomness();
-                        let (mem, realloc) = self.opts(id)?;
+                        let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &draw, args[0])?;
                         Ok(Vec::new())
                     }
                     HostFn::Hash => {
-                        let (mem, realloc) = self.opts(id)?;
+                        let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         let data = Self::read_guest_bytes(store, mem, args[0], args[1])?;
                         let digest = self.host.hash(&data);
                         self.lower_list(modules, store, mem, realloc, &digest, args[2])?;

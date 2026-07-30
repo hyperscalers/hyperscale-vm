@@ -137,6 +137,8 @@ pub struct RefModule {
     pub exports: HashMap<String, u32>,
     /// Memory export names (a module has at most one memory).
     pub memory_exports: Vec<String>,
+    /// Table export names (a module has at most one table).
+    pub table_exports: Vec<String>,
 }
 
 impl RefModule {
@@ -179,26 +181,14 @@ impl RefModule {
                 Payload::MemorySection(reader) => {
                     for memory in reader {
                         let memory = memory.map_err(|e| DecodeError::Malformed(e.to_string()))?;
-                        if module.memory.is_some() {
-                            return Err(DecodeError::Unsupported("second memory".to_string()));
-                        }
-                        let max = memory
-                            .maximum
-                            .ok_or_else(|| DecodeError::Unsupported("no memory max".to_string()))?;
-                        module.memory = Some((memory.initial, max));
+                        module.memory = Some(sized(module.memory, memory.initial, memory.maximum)?);
                     }
                 }
                 Payload::TableSection(reader) => {
                     for table in reader {
                         let table = table.map_err(|e| DecodeError::Malformed(e.to_string()))?;
-                        if module.table.is_some() {
-                            return Err(DecodeError::Unsupported("second table".to_string()));
-                        }
-                        let max = table
-                            .ty
-                            .maximum
-                            .ok_or_else(|| DecodeError::Unsupported("no table max".to_string()))?;
-                        module.table = Some((table.ty.initial, max));
+                        module.table =
+                            Some(sized(module.table, table.ty.initial, table.ty.maximum)?);
                     }
                 }
                 Payload::GlobalSection(reader) => {
@@ -217,6 +207,9 @@ impl RefModule {
                             }
                             ExternalKind::Memory => {
                                 module.memory_exports.push(export.name.to_string());
+                            }
+                            ExternalKind::Table => {
+                                module.table_exports.push(export.name.to_string());
                             }
                             _ => {}
                         }
@@ -275,6 +268,22 @@ impl RefModule {
     pub fn func_type(&self, func: u32) -> &FuncType {
         &self.types[self.func_type_index(func) as usize]
     }
+}
+
+/// One memory or table declaration: rejects a second declaration and an
+/// absent maximum.
+fn sized(
+    existing: Option<(u64, u64)>,
+    initial: u64,
+    maximum: Option<u64>,
+) -> Result<(u64, u64), DecodeError> {
+    if existing.is_some() {
+        return Err(DecodeError::Unsupported(
+            "second memory or table".to_string(),
+        ));
+    }
+    let max = maximum.ok_or_else(|| DecodeError::Unsupported("no declared maximum".to_string()))?;
+    Ok((initial, max))
 }
 
 fn import_entry(import: &Import<'_>) -> Result<CoreImport, DecodeError> {

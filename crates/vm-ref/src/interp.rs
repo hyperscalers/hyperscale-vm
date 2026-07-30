@@ -31,6 +31,9 @@ pub enum CanonError {
     UnknownHandle,
     /// Borrow handles still live when the export returned.
     BorrowsRemain,
+    /// An unresolved canon definition — a decoder or instantiation defect,
+    /// never guest-reachable.
+    Internal(&'static str),
 }
 
 impl From<Trap> for ExecError {
