@@ -1,0 +1,12 @@
+[package]
+name = "hyperscale-vm-harness"
+version.workspace = true
+edition.workspace = true
+description = "Differential lanes, corpora, and guest fixtures for vm-runtime vs vm-ref"
+
+[dependencies]
+hyperscale-vm-ref.workspace = true
+hyperscale-vm-runtime.workspace = true
+
+[lints]
+workspace = true

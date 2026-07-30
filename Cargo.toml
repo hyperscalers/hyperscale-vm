@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/vm-harness",
+    "crates/vm-ref",
+    "crates/vm-runtime",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+hyperscale-vm-ref = { path = "crates/vm-ref" }
+hyperscale-vm-runtime = { path = "crates/vm-runtime" }
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+absolute_paths = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "warn"
+invalid_codeblock_attributes = "warn"
+private_intra_doc_links = "allow"
+redundant_explicit_links = "warn"

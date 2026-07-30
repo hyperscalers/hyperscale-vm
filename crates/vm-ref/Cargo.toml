@@ -1,0 +1,10 @@
+[package]
+name = "hyperscale-vm-ref"
+version.workspace = true
+edition.workspace = true
+description = "Reference interpreter of the deterministic profile: the executable spec"
+
+[dependencies]
+
+[lints]
+workspace = true
