@@ -1,0 +1,11 @@
+[package]
+name = "hyperscale-vm-stdlib"
+version.workspace = true
+edition.workspace = true
+description = "Prebuilt genesis stdlib artifacts and their effect metadata"
+
+[dependencies]
+hyperscale-vm-effects.workspace = true
+
+[lints]
+workspace = true

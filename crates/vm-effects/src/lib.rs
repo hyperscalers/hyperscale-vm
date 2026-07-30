@@ -38,7 +38,7 @@ pub use hash::{Hash32, Hasher, TestHasher};
 pub use manifest::{Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
-    PackageMetadata, ParamType,
+    PackageMetadata, ParamType, package_hash,
 };
 pub use route::{
     CallEdge, CallGraph, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver,

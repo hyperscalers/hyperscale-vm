@@ -14,6 +14,7 @@ wit-component.workspace = true
 
 [dev-dependencies]
 arbitrary = "1"
+hyperscale-vm-stdlib.workspace = true
 wasm-smith = "0.236"
 wasmtime.workspace = true
 wat.workspace = true

@@ -598,6 +598,7 @@ dependencies = [
  "hyperscale-vm-kernel",
  "hyperscale-vm-ref",
  "hyperscale-vm-runtime",
+ "hyperscale-vm-stdlib",
  "wasm-smith",
  "wasmtime",
  "wat",
@@ -629,6 +630,13 @@ dependencies = [
  "wasmparser 0.236.1",
  "wasmtime",
  "wat",
+]
+
+[[package]]
+name = "hyperscale-vm-stdlib"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-vm-effects",
 ]
 
 [[package]]

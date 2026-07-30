@@ -6,6 +6,7 @@ members = [
     "crates/vm-kernel",
     "crates/vm-ref",
     "crates/vm-runtime",
+    "crates/vm-stdlib",
 ]
 
 [workspace.package]
@@ -17,6 +18,7 @@ hyperscale-vm-effects = { path = "crates/vm-effects" }
 hyperscale-vm-kernel = { path = "crates/vm-kernel" }
 hyperscale-vm-ref = { path = "crates/vm-ref" }
 hyperscale-vm-runtime = { path = "crates/vm-runtime" }
+hyperscale-vm-stdlib = { path = "crates/vm-stdlib" }
 
 anyhow = "1"
 proptest = "1"

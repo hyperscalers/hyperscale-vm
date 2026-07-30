@@ -4,13 +4,22 @@
 use std::collections::BTreeMap;
 
 use crate::dsl::{Clause, Expr};
-use crate::hash::Hash32;
+use crate::hash::{Hash32, Hasher};
 use crate::types::{Address, Value};
 
 /// A published package's identity: the hash of its artifact, which covers
 /// the metadata section, so metadata is immutable with the package.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PackageHash(pub Hash32);
+
+const DOMAIN_PACKAGE: &[u8] = b"hyperscale-vm/package";
+
+/// The content address of a package artifact — the identity the metadata
+/// cache keys on and instances bind to.
+#[must_use]
+pub fn package_hash(hasher: &dyn Hasher, artifact: &[u8]) -> PackageHash {
+    PackageHash(hasher.hash(DOMAIN_PACKAGE, &[artifact]))
+}
 
 /// A static call site: the callee named by an input-derived address, its
 /// method, and the callee's arguments as expressions over the caller's
