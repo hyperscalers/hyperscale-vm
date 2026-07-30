@@ -181,6 +181,9 @@ impl RefModule {
                 Payload::MemorySection(reader) => {
                     for memory in reader {
                         let memory = memory.map_err(|e| DecodeError::Malformed(e.to_string()))?;
+                        if memory.shared {
+                            return Err(DecodeError::Unsupported("shared memory".to_string()));
+                        }
                         module.memory = Some(sized(module.memory, memory.initial, memory.maximum)?);
                     }
                 }

@@ -60,4 +60,8 @@ pub enum Trap {
     /// comparison until the deploy-time stack bounds land.
     #[error("call depth exhausted")]
     CallDepthExhausted,
+    /// The optional step budget ran out — a harness safety valve for
+    /// generated corpora, never a consensus verdict.
+    #[error("step budget exhausted")]
+    StepBudgetExhausted,
 }

@@ -11,6 +11,8 @@ hyperscale-vm-runtime.workspace = true
 wit-component.workspace = true
 
 [dev-dependencies]
+arbitrary = "1"
+wasm-smith = "0.236"
 wasmtime.workspace = true
 wat.workspace = true
 

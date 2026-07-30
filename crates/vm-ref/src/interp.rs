@@ -92,6 +92,8 @@ pub(crate) struct Store {
     pub tables: Vec<Vec<Option<TableEntry>>>,
     pub instances: Vec<InstanceData>,
     pub depth: usize,
+    /// Optional instruction budget; `None` is unbounded.
+    pub steps_remaining: Option<u64>,
 }
 
 /// Dispatch for canon-defined functions.
@@ -187,6 +189,12 @@ fn run(
     let mut pc = 0usize;
 
     while pc < func.ops.len() {
+        if let Some(remaining) = store.steps_remaining.as_mut() {
+            if *remaining == 0 {
+                return Err(Trap::StepBudgetExhausted.into());
+            }
+            *remaining -= 1;
+        }
         match &func.ops[pc] {
             Op::Unreachable => return Err(Trap::Unreachable.into()),
             Op::Nop => {}
@@ -365,7 +373,9 @@ fn run(
         }
         pc += 1;
     }
-    unreachable!("validated function bodies end with End");
+    // Reached only by a branch to the function-level label: the branch
+    // truncated to the label's height and left exactly the results.
+    Ok(split_top(&mut stack, result_arity))
 }
 
 fn dispatch_call(
@@ -610,6 +620,12 @@ impl<'m> RefInstance<'m> {
         let mut store = Store::default();
         instantiate_module(&[module], &mut store, 0, Vec::new(), None, None)?;
         Ok(Self { module, store })
+    }
+
+    /// Bounds each subsequent invocation to `limit` interpreted instructions
+    /// — a harness safety valve for generated corpora.
+    pub const fn set_step_limit(&mut self, limit: u64) {
+        self.store.steps_remaining = Some(limit);
     }
 
     /// Invokes an exported function.
