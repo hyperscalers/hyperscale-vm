@@ -5,8 +5,8 @@ use std::collections::HashMap;
 
 use wasmparser::{
     BlockType, CompositeInnerType, ConstExpr, Data, DataKind, Element, ElementItems, ElementKind,
-    ExternalKind, FuncType as WasmFuncType, FunctionBody, MemArg, Operator, Parser, Payload,
-    ValType,
+    ExternalKind, FuncType as WasmFuncType, FunctionBody, Import, MemArg, Operator, Parser,
+    Payload, TypeRef, ValType,
 };
 
 use crate::error::DecodeError;
@@ -74,9 +74,51 @@ pub struct Segment<T> {
     pub items: T,
 }
 
+/// One imported item.
+#[derive(Debug)]
+pub struct CoreImport {
+    /// Import module name.
+    pub module: String,
+    /// Import field name.
+    pub name: String,
+    /// Item kind.
+    pub kind: CoreImportKind,
+}
+
+/// The kind of an imported item.
+#[derive(Debug, Clone, Copy)]
+pub enum CoreImportKind {
+    /// A function with its type index.
+    Func(u32),
+    /// A linear memory.
+    Memory,
+    /// A table.
+    Table,
+}
+
+/// The module's import section.
+#[derive(Debug, Default)]
+pub struct CoreImports {
+    /// Imports in declaration order.
+    pub entries: Vec<CoreImport>,
+}
+
+impl CoreImports {
+    /// Number of imported functions (they occupy the low function indices).
+    #[must_use]
+    pub fn func_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|i| matches!(i.kind, CoreImportKind::Func(_)))
+            .count()
+    }
+}
+
 /// A decoded module over the profile subset.
 #[derive(Debug, Default)]
 pub struct RefModule {
+    /// Imports.
+    pub imports: CoreImports,
     /// Function types.
     pub types: Vec<FuncType>,
     /// Functions.
@@ -93,6 +135,8 @@ pub struct RefModule {
     pub datas: Vec<Segment<Vec<u8>>>,
     /// Function exports by name.
     pub exports: HashMap<String, u32>,
+    /// Memory export names (a module has at most one memory).
+    pub memory_exports: Vec<String>,
 }
 
 impl RefModule {
@@ -121,8 +165,11 @@ impl RefModule {
                         }
                     }
                 }
-                Payload::ImportSection(_) => {
-                    return Err(DecodeError::Unsupported("imports".to_string()));
+                Payload::ImportSection(reader) => {
+                    for import in reader {
+                        let import = import.map_err(|e| DecodeError::Malformed(e.to_string()))?;
+                        module.imports.entries.push(import_entry(&import)?);
+                    }
                 }
                 Payload::FunctionSection(reader) => {
                     for t in reader {
@@ -164,8 +211,14 @@ impl RefModule {
                 Payload::ExportSection(reader) => {
                     for export in reader {
                         let export = export.map_err(|e| DecodeError::Malformed(e.to_string()))?;
-                        if export.kind == ExternalKind::Func {
-                            module.exports.insert(export.name.to_string(), export.index);
+                        match export.kind {
+                            ExternalKind::Func => {
+                                module.exports.insert(export.name.to_string(), export.index);
+                            }
+                            ExternalKind::Memory => {
+                                module.memory_exports.push(export.name.to_string());
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -196,6 +249,46 @@ impl RefModule {
         }
         Ok(module)
     }
+
+    /// The type index of a function by its global index (imports first).
+    #[must_use]
+    pub fn func_type_index(&self, func: u32) -> u32 {
+        let imported = self.imports.func_count();
+        if (func as usize) < imported {
+            let mut seen = 0usize;
+            for import in &self.imports.entries {
+                if let CoreImportKind::Func(t) = import.kind {
+                    if seen == func as usize {
+                        return t;
+                    }
+                    seen += 1;
+                }
+            }
+            unreachable!("func index within imported range");
+        } else {
+            self.funcs[func as usize - imported].ty
+        }
+    }
+
+    /// The type of a function by its global index.
+    #[must_use]
+    pub fn func_type(&self, func: u32) -> &FuncType {
+        &self.types[self.func_type_index(func) as usize]
+    }
+}
+
+fn import_entry(import: &Import<'_>) -> Result<CoreImport, DecodeError> {
+    let kind = match import.ty {
+        TypeRef::Func(t) => CoreImportKind::Func(t),
+        TypeRef::Memory(_) => CoreImportKind::Memory,
+        TypeRef::Table(_) => CoreImportKind::Table,
+        _ => return Err(DecodeError::Unsupported("global or tag import".to_string())),
+    };
+    Ok(CoreImport {
+        module: import.module.to_string(),
+        name: import.name.to_string(),
+        kind,
+    })
 }
 
 fn func_type(f: &WasmFuncType) -> Result<FuncType, DecodeError> {

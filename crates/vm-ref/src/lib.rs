@@ -6,12 +6,14 @@
 //! schedule are implemented independently of wasmtime; sharing is permitted
 //! only at the decode layer (wasmparser).
 
+pub mod component;
 pub mod error;
 pub mod interp;
 pub mod module;
 pub mod ops;
 
+pub use component::{CVal, RefComponent, RefComponentInstance, RefKernelHost};
 pub use error::{DecodeError, Trap};
-pub use interp::RefInstance;
+pub use interp::{CanonError, ExecError, RefInstance};
 pub use module::RefModule;
 pub use ops::Value;
