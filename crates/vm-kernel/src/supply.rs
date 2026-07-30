@@ -1,0 +1,138 @@
+//! Per-shard supply accumulators: the linearity substrate.
+//!
+//! Aggregates are never global cells — each shard accumulates, per
+//! resource, the total amount its cells hold. The accumulator changes only
+//! on mint, burn, and cross-shard movement; same-shard transfers conserve
+//! it by construction. Composition is per-resource addition, so splitting
+//! and merging shards composes accumulators exactly — the reshape-clean
+//! property the design demands of every stdlib accumulator.
+
+use std::collections::BTreeMap;
+
+use hyperscale_vm_effects::Address;
+
+use crate::modes::ModeError;
+
+/// A shard's per-resource supply accumulator.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SupplyLedger {
+    by_resource: BTreeMap<Address, u128>,
+}
+
+impl SupplyLedger {
+    /// An empty ledger.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            by_resource: BTreeMap::new(),
+        }
+    }
+
+    /// The accumulated amount for a resource; zero when untracked.
+    #[must_use]
+    pub fn amount(&self, resource: Address) -> u128 {
+        self.by_resource.get(&resource).copied().unwrap_or(0)
+    }
+
+    /// Credit a resource: mint or inbound cross-shard movement.
+    ///
+    /// # Errors
+    ///
+    /// [`ModeError::SupplyOutOfBounds`] on overflow.
+    pub fn credit(&mut self, resource: Address, amount: u128) -> Result<(), ModeError> {
+        let total = self
+            .amount(resource)
+            .checked_add(amount)
+            .ok_or(ModeError::SupplyOutOfBounds)?;
+        self.by_resource.insert(resource, total);
+        Ok(())
+    }
+
+    /// Debit a resource: burn or outbound cross-shard movement.
+    ///
+    /// # Errors
+    ///
+    /// [`ModeError::SupplyOutOfBounds`] if the debit exceeds the
+    /// accumulated amount.
+    pub fn debit(&mut self, resource: Address, amount: u128) -> Result<(), ModeError> {
+        let total = self
+            .amount(resource)
+            .checked_sub(amount)
+            .ok_or(ModeError::SupplyOutOfBounds)?;
+        if total == 0 {
+            self.by_resource.remove(&resource);
+        } else {
+            self.by_resource.insert(resource, total);
+        }
+        Ok(())
+    }
+
+    /// Compose two ledgers by per-resource addition — the split/merge
+    /// composition: composing two children yields exactly the parent.
+    ///
+    /// # Errors
+    ///
+    /// [`ModeError::SupplyOutOfBounds`] on overflow.
+    pub fn compose(&self, other: &Self) -> Result<Self, ModeError> {
+        let mut composed = self.clone();
+        for (resource, amount) in &other.by_resource {
+            composed.credit(*resource, *amount)?;
+        }
+        Ok(composed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hyperscale_vm_effects::Address;
+
+    use super::SupplyLedger;
+    use crate::modes::ModeError;
+
+    fn resource(byte: u8) -> Address {
+        Address([byte; 16])
+    }
+
+    #[test]
+    fn credits_and_debits_are_checked() {
+        let mut ledger = SupplyLedger::new();
+        ledger.credit(resource(1), 100).unwrap();
+        ledger.debit(resource(1), 40).unwrap();
+        assert_eq!(ledger.amount(resource(1)), 60);
+        assert_eq!(
+            ledger.debit(resource(1), 61),
+            Err(ModeError::SupplyOutOfBounds)
+        );
+        ledger.credit(resource(1), u128::MAX - 60).unwrap();
+        assert_eq!(
+            ledger.credit(resource(1), 1),
+            Err(ModeError::SupplyOutOfBounds)
+        );
+    }
+
+    #[test]
+    fn composition_reassembles_the_parent_exactly() {
+        let mut parent = SupplyLedger::new();
+        parent.credit(resource(1), 1_000).unwrap();
+        parent.credit(resource(2), 250).unwrap();
+
+        // An arbitrary split of the parent's holdings across two children.
+        let mut left = SupplyLedger::new();
+        left.credit(resource(1), 731).unwrap();
+        left.credit(resource(2), 250).unwrap();
+        let mut right = SupplyLedger::new();
+        right.credit(resource(1), 269).unwrap();
+
+        assert_eq!(left.compose(&right).unwrap(), parent);
+        // Composition commutes.
+        assert_eq!(right.compose(&left).unwrap(), parent);
+    }
+
+    #[test]
+    fn a_fully_debited_resource_leaves_no_residue() {
+        let mut ledger = SupplyLedger::new();
+        ledger.credit(resource(3), 10).unwrap();
+        ledger.debit(resource(3), 10).unwrap();
+        assert_eq!(ledger, SupplyLedger::new());
+    }
+}

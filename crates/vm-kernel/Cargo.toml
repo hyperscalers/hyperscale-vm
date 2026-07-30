@@ -1,0 +1,15 @@
+[package]
+name = "hyperscale-vm-kernel"
+version.workspace = true
+edition.workspace = true
+description = "The object model and mode semantics: substate store, ownership, conservation"
+
+[dependencies]
+hyperscale-vm-effects.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

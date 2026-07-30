@@ -603,6 +603,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperscale-vm-kernel"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-vm-effects",
+ "proptest",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "hyperscale-vm-ref"
 version = "0.1.0"
 dependencies = [
