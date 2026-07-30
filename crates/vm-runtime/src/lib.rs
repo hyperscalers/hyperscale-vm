@@ -5,8 +5,11 @@
 //! metering layer (engine fuel plus the canonical-ABI copy supplement).
 
 pub mod engine;
+pub mod gas;
 pub mod profile;
 pub mod validator;
+pub mod world;
 
 pub use engine::{blessed_config, blessed_engine};
 pub use validator::{ProfileError, validate_component};
+pub use world::{KernelHost, Substate, add_kernel_to_linker};

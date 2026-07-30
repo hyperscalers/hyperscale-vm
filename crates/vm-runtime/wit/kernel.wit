@@ -1,0 +1,41 @@
+/// The contract world: the only imports a contract component may name.
+/// Capability granularity is not in this surface — it comes from which
+/// substate handles the kernel materializes per transaction.
+package hyperscale:kernel;
+
+/// Declared-state access. A handle exists for exactly the declared effect
+/// set; undeclared access has no handle to name.
+interface state {
+    /// One declared substate at one declared mode.
+    resource substate;
+
+    /// The substate's current bytes; empty if absent.
+    read: func(s: borrow<substate>) -> list<u8>;
+
+    /// Replace the substate's bytes.
+    write: func(s: borrow<substate>, value: list<u8>);
+}
+
+/// The deterministic environment: identical on every replica for a given
+/// transaction, by construction.
+interface env {
+    /// The transaction clock: the canonical weighted-time anchor of the
+    /// payer-shard block that committed this transaction, in milliseconds.
+    clock: func() -> u64;
+
+    /// Beacon randomness, domain-separated per transaction. 32 bytes.
+    randomness: func() -> list<u8>;
+}
+
+/// Host-side cryptography; guests never carry their own.
+interface crypto {
+    /// The protocol hash function. 32-byte digest.
+    hash: func(data: list<u8>) -> list<u8>;
+}
+
+/// The world every contract component targets.
+world contract {
+    import state;
+    import env;
+    import crypto;
+}
