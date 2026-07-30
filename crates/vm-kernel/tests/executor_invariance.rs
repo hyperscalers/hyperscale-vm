@@ -3,6 +3,7 @@
 //! of an engine.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -165,6 +166,15 @@ fn amount_at(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
     decode_amount(&store.read(key).unwrap().unwrap()).unwrap()
 }
 
+/// The end state's full cell map, through the collapsed overlay.
+fn collect_cells(outcome: &BatchOutcome) -> BTreeMap<SubstateKey, Vec<u8>> {
+    let store = outcome.store.clone().collapse();
+    store
+        .cells()
+        .map(|(key, value)| (key, value.to_vec()))
+        .collect()
+}
+
 fn bytes_at(outcome: &BatchOutcome, key: SubstateKey) -> Vec<u8> {
     let mut store = outcome.store.clone();
     store.read(key).unwrap().unwrap()
@@ -174,7 +184,7 @@ fn bytes_at(outcome: &BatchOutcome, key: SubstateKey) -> Vec<u8> {
 fn the_batch_semantics_are_exact() {
     let (store, batch) = fixture();
     let outcome = execute_batch(
-        store,
+        Arc::new(store),
         &batch,
         &scripted,
         env(),
@@ -224,7 +234,7 @@ fn the_batch_semantics_are_exact() {
 fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
     let (store, batch) = fixture();
     let serial = execute_batch(
-        store.clone(),
+        Arc::new(store.clone()),
         &batch,
         &scripted,
         env(),
@@ -233,7 +243,7 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
     )
     .unwrap();
     let parallel = execute_batch(
-        store.clone(),
+        Arc::new(store.clone()),
         &batch,
         &scripted,
         env(),
@@ -250,7 +260,7 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         scripted(tx_id, session)
     };
     let permuted = execute_batch(
-        store,
+        Arc::new(store),
         &batch,
         &stalled,
         env(),
@@ -262,22 +272,15 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
     assert_eq!(serial.receipts, parallel.receipts);
     assert_eq!(serial.receipts, permuted.receipts);
 
-    let cells = |outcome: &BatchOutcome| -> BTreeMap<_, Vec<u8>> {
-        outcome
-            .store
-            .cells()
-            .map(|(key, value)| (key, value.to_vec()))
-            .collect()
-    };
-    assert_eq!(cells(&serial), cells(&parallel));
-    assert_eq!(cells(&serial), cells(&permuted));
+    assert_eq!(collect_cells(&serial), collect_cells(&parallel));
+    assert_eq!(collect_cells(&serial), collect_cells(&permuted));
 }
 
 #[test]
 fn input_order_cannot_influence_any_receipt() {
     let (store, batch) = fixture();
     let baseline = execute_batch(
-        store.clone(),
+        Arc::new(store.clone()),
         &batch,
         &scripted,
         env(),
@@ -294,7 +297,7 @@ fn input_order_cannot_influence_any_receipt() {
     for permutation in [reversed, interleaved] {
         for mode in [ExecutionMode::Serial, ExecutionMode::Parallel] {
             let outcome = execute_batch(
-                store.clone(),
+                Arc::new(store.clone()),
                 &permutation,
                 &scripted,
                 env(),
@@ -303,14 +306,7 @@ fn input_order_cannot_influence_any_receipt() {
             )
             .unwrap();
             assert_eq!(baseline.receipts, outcome.receipts);
-            let cells = |outcome: &BatchOutcome| -> BTreeMap<_, Vec<u8>> {
-                outcome
-                    .store
-                    .cells()
-                    .map(|(key, value)| (key, value.to_vec()))
-                    .collect()
-            };
-            assert_eq!(cells(&baseline), cells(&outcome));
+            assert_eq!(collect_cells(&baseline), collect_cells(&outcome));
         }
     }
 }

@@ -1,7 +1,7 @@
 //! The overlay store: a transaction's state surface as layers over a
 //! shared committed base.
 //!
-//! An [`OverlayStore`] holds an immutable base (`Arc<MemoryStore>`), a
+//! An [`OverlayStore`] holds an immutable base (`Arc<dyn Base>`), a
 //! `committed` layer carrying what earlier transactions in the same
 //! conflict group threaded, and an `active` layer carrying the current
 //! transaction's effects. Every mutation lands in `active`; reads fall
@@ -23,10 +23,26 @@ use hyperscale_vm_effects::{Address, EffectTarget, ModeKind, RoleId, SubstateKey
 use crate::modes::{
     DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount, fold_deltas, judge,
 };
-use crate::store::{Access, AppliedDelta, MemoryStore, StoreError, SubstateStore};
+use crate::store::{Access, AppliedDelta, Base, MemoryStore, StoreError, SubstateStore};
 
 /// A collection's layered entry changes: `None` values are tombstones.
 type EntryChanges = BTreeMap<u128, Option<Vec<u8>>>;
+
+/// One layer's entry changes within `[lo, hi]`, ascending.
+fn layer_range<'a>(
+    layer: &'a Layer,
+    empty: &'a EntryChanges,
+    owner: Address,
+    collection: RoleId,
+    lo: u128,
+    hi: u128,
+) -> std::collections::btree_map::Range<'a, u128, Option<Vec<u8>>> {
+    layer
+        .entries
+        .get(&(owner, collection))
+        .unwrap_or(empty)
+        .range(lo..=hi)
+}
 
 /// One overlay layer. `None` values are tombstones: a removal of the
 /// corresponding base or lower-layer state.
@@ -47,7 +63,7 @@ struct Layer {
 /// group's threading O(overlay), not O(store).
 #[derive(Clone, Debug)]
 pub struct OverlayStore {
-    base: Arc<MemoryStore>,
+    base: Arc<dyn Base>,
     committed: Arc<Layer>,
     active: Layer,
     log: Vec<Access>,
@@ -56,7 +72,7 @@ pub struct OverlayStore {
 impl OverlayStore {
     /// An empty overlay over `base`.
     #[must_use]
-    pub fn new(base: Arc<MemoryStore>) -> Self {
+    pub fn new(base: Arc<dyn Base>) -> Self {
         Self {
             base,
             committed: Arc::new(Layer::default()),
@@ -67,7 +83,7 @@ impl OverlayStore {
 
     /// The shared base: the batch baseline snapshot reads resolve against.
     #[must_use]
-    pub const fn base(&self) -> &Arc<MemoryStore> {
+    pub const fn base(&self) -> &Arc<dyn Base> {
         &self.base
     }
 
@@ -110,7 +126,7 @@ impl OverlayStore {
         if let Some(change) = self.committed.cells.get(&key) {
             return change.clone();
         }
-        self.base.cells.get(&key).cloned()
+        self.base.cell(key)
     }
 
     /// The effective pre-active value of a point cell: what the cell held
@@ -120,7 +136,7 @@ impl OverlayStore {
         if let Some(change) = self.committed.cells.get(&key) {
             return change.clone();
         }
-        self.base.cells.get(&key).cloned()
+        self.base.cell(key)
     }
 
     /// The active layer's cell changes, in canonical key order; `None` is
@@ -149,10 +165,10 @@ impl OverlayStore {
             return change.clone();
         }
         self.base
-            .entries
-            .get(&(owner, collection))
-            .and_then(|entries| entries.get(&order))
-            .cloned()
+            .entries_in_range(owner, collection, order, order, 1)
+            .into_iter()
+            .next()
+            .map(|(_, value)| value)
     }
 
     /// The active layer's entry changes, in canonical order; `None` is a
@@ -192,7 +208,7 @@ impl OverlayStore {
     /// The effective holds on a cell: base holds with both layers' changes
     /// applied.
     fn effective_holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128> {
-        let mut holds = self.base.held.get(&key).cloned().unwrap_or_default();
+        let mut holds = self.base.holds(key);
         for layer in [self.committed.as_ref(), &self.active] {
             if let Some(changes) = layer.held.get(&key) {
                 for (tx, change) in changes {
@@ -390,6 +406,102 @@ impl OverlayStore {
         Ok(applied)
     }
 
+    /// The merged view of an ordered collection over `[lo, hi]`: at each
+    /// order key the topmost layer that mentions it wins, and tombstones
+    /// drop the entry without consuming the limit — the result is exactly
+    /// what a scan of the collapsed store would return.
+    ///
+    /// The base fetch is bounded: the merge consumes at most `limit` base
+    /// entries that become or shadow hits, plus one per layer tombstone in
+    /// the range — so that many smallest-order entries always suffice.
+    fn merged_entries(
+        &self,
+        owner: Address,
+        collection: RoleId,
+        lo: u128,
+        hi: u128,
+        limit: usize,
+    ) -> Vec<(u128, Vec<u8>)> {
+        if lo > hi || limit == 0 {
+            return Vec::new();
+        }
+        let empty_layer = EntryChanges::new();
+        let tombstones = [self.committed.as_ref(), &self.active]
+            .into_iter()
+            .flat_map(|layer| layer_range(layer, &empty_layer, owner, collection, lo, hi))
+            .filter(|(_, change)| change.is_none())
+            .count();
+        let mut base = self
+            .base
+            .entries_in_range(owner, collection, lo, hi, limit.saturating_add(tombstones))
+            .into_iter()
+            .peekable();
+        let mut committed =
+            layer_range(&self.committed, &empty_layer, owner, collection, lo, hi).peekable();
+        let mut active =
+            layer_range(&self.active, &empty_layer, owner, collection, lo, hi).peekable();
+        let mut hits = Vec::new();
+        while hits.len() < limit {
+            let next = [
+                active.peek().map(|(order, _)| **order),
+                committed.peek().map(|(order, _)| **order),
+                base.peek().map(|(order, _)| *order),
+            ]
+            .into_iter()
+            .flatten()
+            .min();
+            let Some(order) = next else {
+                break;
+            };
+            let active_hit = active
+                .next_if(|(candidate, _)| **candidate == order)
+                .map(|(_, change)| change.clone());
+            let committed_hit = committed
+                .next_if(|(candidate, _)| **candidate == order)
+                .map(|(_, change)| change.clone());
+            let base_hit = base
+                .next_if(|(candidate, _)| *candidate == order)
+                .map(|(_, value)| value);
+            if let Some(value) = active_hit.or(committed_hit).unwrap_or(base_hit) {
+                hits.push((order, value));
+            }
+        }
+        hits
+    }
+
+    /// Whether `key` can carry a reservation at all. Semantics mirror
+    /// [`MemoryStore::check_reserve_target`] exactly.
+    ///
+    /// # Errors
+    ///
+    /// Exactly [`MemoryStore::check_reserve_target`]'s.
+    pub fn check_reserve_target(&self, key: SubstateKey) -> Result<(), StoreError> {
+        self.reject_locked(key)?;
+        self.committed_amount(key)?;
+        Ok(())
+    }
+
+    /// Apply one transaction's net movement to an amount cell under
+    /// [`Self::judge_movement`]'s floor. Semantics mirror
+    /// [`MemoryStore::apply_movement`] exactly.
+    ///
+    /// # Errors
+    ///
+    /// Exactly [`Self::judge_movement`]'s; a refusal leaves the cell
+    /// untouched.
+    pub fn apply_movement(
+        &mut self,
+        key: SubstateKey,
+        credit: u128,
+        debit: u128,
+    ) -> Result<u128, StoreError> {
+        let after = self.judge_movement(key, credit, debit)?;
+        self.active
+            .cells
+            .insert(key, Some(encode_amount(after).to_vec()));
+        Ok(after)
+    }
+
     /// Fold the active layer into the committed layer: the transaction's
     /// effects become part of what the group has threaded. In-place when
     /// the committed layer is unshared; a shared layer is copied first.
@@ -422,9 +534,20 @@ impl OverlayStore {
     /// Collapse the overlay into a plain store: the base with both layers
     /// applied and a clear access log. The base is taken over when
     /// unshared, copied otherwise.
+    ///
+    /// # Panics
+    ///
+    /// If the base is not a plain [`MemoryStore`] — collapse is the
+    /// kernel-suite convenience; integration bases diff the layers
+    /// instead.
     #[must_use]
     pub fn collapse(self) -> MemoryStore {
-        let mut store = Arc::try_unwrap(self.base).unwrap_or_else(|shared| (*shared).clone());
+        let base = self
+            .base
+            .into_any()
+            .downcast::<MemoryStore>()
+            .expect("collapse requires a MemoryStore base");
+        let mut store = Arc::try_unwrap(base).unwrap_or_else(|shared| (*shared).clone());
         let committed = Arc::try_unwrap(self.committed).unwrap_or_else(|shared| (*shared).clone());
         for layer in [committed, self.active] {
             for (key, change) in layer.cells {
@@ -487,7 +610,7 @@ impl SubstateStore for OverlayStore {
 
     fn snapshot(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
         self.record(EffectTarget::Point(key), ModeKind::Snapshot);
-        Ok(self.base.cells.get(&key).cloned())
+        Ok(self.base.cell(key))
     }
 
     fn write(&mut self, key: SubstateKey, value: Vec<u8>) -> Result<(), StoreError> {
@@ -601,64 +724,46 @@ impl SubstateStore for OverlayStore {
             },
             ModeKind::Read,
         );
-        if lo > hi {
-            return Ok(Vec::new());
-        }
-        let limit = usize::try_from(cap).unwrap_or(usize::MAX);
-        let empty_base = BTreeMap::new();
-        let empty_layer = BTreeMap::new();
-        let mut base = self
-            .base
-            .entries
-            .get(&(owner, collection))
-            .unwrap_or(&empty_base)
-            .range(lo..=hi)
-            .peekable();
-        let mut committed = self
-            .committed
-            .entries
-            .get(&(owner, collection))
-            .unwrap_or(&empty_layer)
-            .range(lo..=hi)
-            .peekable();
-        let mut active = self
-            .active
-            .entries
-            .get(&(owner, collection))
-            .unwrap_or(&empty_layer)
-            .range(lo..=hi)
-            .peekable();
-        // Three-way ordered merge: at each order key the topmost layer
-        // that mentions it wins, and tombstones drop the entry without
-        // consuming the cap — the result is exactly what a scan of the
-        // collapsed store would return.
-        let mut hits = Vec::new();
-        while hits.len() < limit {
-            let next = [
-                active.peek().map(|(order, _)| **order),
-                committed.peek().map(|(order, _)| **order),
-                base.peek().map(|(order, _)| **order),
-            ]
-            .into_iter()
-            .flatten()
-            .min();
-            let Some(order) = next else {
-                break;
-            };
-            let active_hit = active
-                .next_if(|(candidate, _)| **candidate == order)
-                .map(|(_, change)| change.clone());
-            let committed_hit = committed
-                .next_if(|(candidate, _)| **candidate == order)
-                .map(|(_, change)| change.clone());
-            let base_hit = base
-                .next_if(|(candidate, _)| **candidate == order)
-                .map(|(_, value)| value.clone());
-            if let Some(value) = active_hit.or(committed_hit).unwrap_or(base_hit) {
-                hits.push((order, value));
-            }
-        }
-        Ok(hits)
+        Ok(self.merged_entries(
+            owner,
+            collection,
+            lo,
+            hi,
+            usize::try_from(cap).unwrap_or(usize::MAX),
+        ))
+    }
+}
+
+impl Base for OverlayStore {
+    fn cell(&self, key: SubstateKey) -> Option<Vec<u8>> {
+        self.cell_value(key)
+    }
+
+    fn entries_in_range(
+        &self,
+        owner: Address,
+        collection: RoleId,
+        lo: u128,
+        hi: u128,
+        limit: usize,
+    ) -> Vec<(u128, Vec<u8>)> {
+        self.merged_entries(owner, collection, lo, hi, limit)
+    }
+
+    fn is_locked(&self, key: SubstateKey) -> bool {
+        Self::is_locked(self, key)
+    }
+
+    fn holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128> {
+        self.effective_holds(key)
+    }
+
+    fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
+        Self::held_reservation(self, key, tx)
+    }
+
+    fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+        self
     }
 }
 

@@ -3,13 +3,15 @@
 //! the transaction they belong to — the batch itself never fails on user
 //! input.
 
+use std::sync::Arc;
+
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
     TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, MemoryStore, Outcome, RunResult,
-    SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
+    BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, MemoryStore, Outcome,
+    OverlayStore, RunResult, SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
 };
 
 const FUEL: u64 = 7;
@@ -84,7 +86,7 @@ fn scripted(sub: u128) -> impl Fn(TxHash, KernelSession) -> RunResult + Sync {
     }
 }
 
-fn amount_at(store: &MemoryStore, key: SubstateKey) -> u128 {
+fn amount_at(store: &OverlayStore, key: SubstateKey) -> u128 {
     let mut store = store.clone();
     decode_amount(&store.read(key).unwrap().unwrap()).unwrap()
 }
@@ -108,8 +110,15 @@ fn a_debit_below_a_held_reservation_aborts_only_its_transaction() {
     ];
 
     for mode in [ExecutionMode::Serial, ExecutionMode::Parallel] {
-        let outcome =
-            execute_batch(store.clone(), &batch, &scripted(10), env(), test_hash, mode).unwrap();
+        let outcome = execute_batch(
+            Arc::new(store.clone()),
+            &batch,
+            &scripted(10),
+            env(),
+            test_hash,
+            mode,
+        )
+        .unwrap();
         assert!(matches!(
             outcome.receipts[&tx(0x01)].outcome,
             Outcome::Completed { .. }
@@ -145,7 +154,7 @@ fn a_covered_debit_completes_beside_a_reservation() {
     ];
 
     let outcome = execute_batch(
-        store,
+        Arc::new(store),
         &batch,
         &scripted(10),
         env(),
@@ -188,9 +197,15 @@ fn racing_debits_lose_deterministically_in_canonical_order() {
 
     for input in [batch, reversed] {
         for mode in [ExecutionMode::Serial, ExecutionMode::Parallel] {
-            let outcome =
-                execute_batch(store.clone(), &input, &scripted(15), env(), test_hash, mode)
-                    .unwrap();
+            let outcome = execute_batch(
+                Arc::new(store.clone()),
+                &input,
+                &scripted(15),
+                env(),
+                test_hash,
+                mode,
+            )
+            .unwrap();
             assert!(matches!(
                 outcome.receipts[&tx(0x01)].outcome,
                 Outcome::Completed { .. }
@@ -234,7 +249,7 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
     ];
 
     let outcome = execute_batch(
-        store,
+        Arc::new(store),
         &batch,
         &scripted(0),
         env(),

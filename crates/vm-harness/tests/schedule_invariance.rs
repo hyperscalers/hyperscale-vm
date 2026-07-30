@@ -4,6 +4,7 @@
 //! byte-identical outcome: receipts, fuel, and the committed store.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -16,8 +17,8 @@ use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
-    MemoryStore, Outcome, RunResult, SubstateStore, TxHash, decode_amount, encode_amount,
-    execute_batch,
+    MemoryStore, Outcome, OverlayStore, RunResult, SubstateStore, TxHash, decode_amount,
+    encode_amount, execute_batch,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
@@ -274,8 +275,8 @@ impl GuestRunner for RefRunner {
 }
 
 fn cells(outcome: &BatchOutcome) -> BTreeMap<SubstateKey, Vec<u8>> {
-    outcome
-        .store
+    let store = outcome.store.clone().collapse();
+    store
         .cells()
         .map(|(key, value)| (key, value.to_vec()))
         .collect()
@@ -297,11 +298,27 @@ fn six_schedules_one_outcome() -> Result<()> {
             }
             outcomes.push((
                 format!("blessed/{mode:?}/delay={delay}"),
-                execute_batch(store.clone(), &batch, &blessed, env(), test_hash, mode).unwrap(),
+                execute_batch(
+                    Arc::new(store.clone()),
+                    &batch,
+                    &blessed,
+                    env(),
+                    test_hash,
+                    mode,
+                )
+                .unwrap(),
             ));
             outcomes.push((
                 format!("ref/{mode:?}/delay={delay}"),
-                execute_batch(store.clone(), &batch, &reference, env(), test_hash, mode).unwrap(),
+                execute_batch(
+                    Arc::new(store.clone()),
+                    &batch,
+                    &reference,
+                    env(),
+                    test_hash,
+                    mode,
+                )
+                .unwrap(),
             ));
         }
     }
@@ -323,7 +340,7 @@ fn six_schedules_one_outcome() -> Result<()> {
     // one shared recipient accumulating every credit, two serialized
     // read-modify-writes.
     let mut final_store = baseline.store.clone();
-    let amount = |store: &mut MemoryStore, key: SubstateKey| {
+    let amount = |store: &mut OverlayStore, key: SubstateKey| {
         decode_amount(&store.read(key).unwrap().unwrap()).unwrap()
     };
     assert_eq!(amount(&mut final_store, vault(1)), 70);

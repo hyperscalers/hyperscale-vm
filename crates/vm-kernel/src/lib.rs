@@ -37,5 +37,5 @@ pub use session::{
     Capability, EnvInputs, FinishError, KernelSession, MaterializeError, Movement, Outcome,
     Receipt, SessionTrap, StateDelta,
 };
-pub use store::{Access, AppliedDelta, MemoryStore, StoreError, SubstateStore};
+pub use store::{Access, AppliedDelta, Base, MemoryStore, StoreError, SubstateStore};
 pub use supply::SupplyLedger;

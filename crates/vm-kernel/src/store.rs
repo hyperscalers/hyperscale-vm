@@ -173,6 +173,86 @@ pub struct AppliedDelta {
     pub after: u128,
 }
 
+/// Committed state as an overlay's baseline reads it.
+///
+/// Point cells, ordered-collection entries, permanent locks, and
+/// outstanding reservations. [`MemoryStore`] implements it for the kernel
+/// suite; a state-tree snapshot implements it at integration. Every read
+/// is of committed content only — pending deltas and access logs are
+/// working state, not baseline.
+pub trait Base: std::fmt::Debug + Send + Sync + 'static {
+    /// The committed value of a point cell.
+    fn cell(&self, key: SubstateKey) -> Option<Vec<u8>>;
+
+    /// Committed entries of an ordered collection within `[lo, hi]`,
+    /// ascending by order key, at most `limit` of them.
+    fn entries_in_range(
+        &self,
+        owner: Address,
+        collection: RoleId,
+        lo: u128,
+        hi: u128,
+        limit: usize,
+    ) -> Vec<(u128, Vec<u8>)>;
+
+    /// Whether the committed store permanently locks `key`.
+    fn is_locked(&self, key: SubstateKey) -> bool;
+
+    /// Every outstanding reservation on `key`.
+    fn holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128>;
+
+    /// The reservation `tx` holds on `key`, if any.
+    fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
+        self.holds(key).get(&tx).copied()
+    }
+
+    /// The base as `Any`, for the collapse path's recovery of a concrete
+    /// [`MemoryStore`].
+    fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync>;
+}
+
+impl Base for MemoryStore {
+    fn cell(&self, key: SubstateKey) -> Option<Vec<u8>> {
+        self.cells.get(&key).cloned()
+    }
+
+    fn entries_in_range(
+        &self,
+        owner: Address,
+        collection: RoleId,
+        lo: u128,
+        hi: u128,
+        limit: usize,
+    ) -> Vec<(u128, Vec<u8>)> {
+        if lo > hi {
+            return Vec::new();
+        }
+        self.entries
+            .get(&(owner, collection))
+            .into_iter()
+            .flat_map(|entries| entries.range(lo..=hi))
+            .take(limit)
+            .map(|(order, value)| (*order, value.clone()))
+            .collect()
+    }
+
+    fn is_locked(&self, key: SubstateKey) -> bool {
+        Self::is_locked(self, key)
+    }
+
+    fn holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128> {
+        self.held.get(&key).cloned().unwrap_or_default()
+    }
+
+    fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
+        Self::held_reservation(self, key, tx)
+    }
+
+    fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+}
+
 /// The in-memory, access-recording store.
 #[derive(Clone, Debug, Default)]
 pub struct MemoryStore {

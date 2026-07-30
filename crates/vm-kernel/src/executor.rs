@@ -26,7 +26,7 @@ use crate::overlay::OverlayStore;
 use crate::session::{
     EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt, StateDelta,
 };
-use crate::store::{MemoryStore, StoreError, SubstateStore};
+use crate::store::{Base, StoreError, SubstateStore};
 
 /// One transaction of a batch: its identity and its routed effect set.
 #[derive(Clone, Debug)]
@@ -97,14 +97,15 @@ pub enum BatchError {
     Apply(#[from] StoreError),
 }
 
-/// The executed batch: every receipt, canonically ordered, and the
-/// committed store.
+/// The executed batch: every receipt, canonically ordered, and the end
+/// state.
 #[derive(Debug)]
 pub struct BatchOutcome {
     /// Per-transaction receipts, in canonical order.
     pub receipts: BTreeMap<TxHash, Receipt>,
-    /// Committed state after canonical-order application.
-    pub store: MemoryStore,
+    /// The end state: the given base untouched, with the batch's full
+    /// delta in the overlay's committed layer.
+    pub store: OverlayStore,
 }
 
 fn declared_reservations(declared: &EffectSet) -> Vec<(SubstateKey, u128)> {
@@ -167,7 +168,7 @@ fn abort_receipt(outcome: Outcome, fuel: u64) -> Receipt {
 /// the group's store; a non-completed transaction leaves the store as it
 /// found it.
 fn run_group<R: GuestRunner>(
-    judged: &Arc<MemoryStore>,
+    judged: &Arc<OverlayStore>,
     batch: &[&BatchTx],
     group: &[usize],
     runner: &R,
@@ -175,7 +176,8 @@ fn run_group<R: GuestRunner>(
     hash_fn: fn(&[u8]) -> [u8; 32],
 ) -> Result<Vec<(TxHash, Receipt)>, BatchError> {
     let mut receipts = Vec::with_capacity(group.len());
-    let mut store = OverlayStore::new(Arc::clone(judged));
+    let shared: Arc<dyn Base> = Arc::<OverlayStore>::clone(judged);
+    let mut store = OverlayStore::new(shared);
     for &index in group {
         let entry = batch[index];
         let before = store.clone();
@@ -249,7 +251,7 @@ fn run_group<R: GuestRunner>(
 /// Only if a runner panics — the panic propagates from its worker — or on
 /// the kernel defect of a group overlay outliving its group.
 pub fn execute_batch<R: GuestRunner>(
-    committed: MemoryStore,
+    base: Arc<dyn Base>,
     batch: &[BatchTx],
     runner: &R,
     env: EnvInputs,
@@ -270,8 +272,7 @@ pub fn execute_batch<R: GuestRunner>(
     // malformed amount cell — is the sender's declaration defect: it
     // aborts its transaction here, so the judge sees only sound requests
     // and its own errors stay kernel defects.
-    let mut judged = committed;
-    judged.clear_log();
+    let mut judged = OverlayStore::new(base);
     let mut sound: Vec<&BatchTx> = Vec::with_capacity(ordered.len());
     for entry in ordered {
         let defect = declared_reservations(&entry.declared)
@@ -320,6 +321,7 @@ pub fn execute_batch<R: GuestRunner>(
         }
     }
     judged.clear_log();
+    judged.merge_active();
 
     // Group and execute; every group's overlay shares the judged store as
     // its immutable base.
@@ -354,6 +356,7 @@ pub fn execute_batch<R: GuestRunner>(
 
     let mut store = Arc::try_unwrap(judged).expect("no group overlay outlives its group");
     apply_receipts(&mut store, batch, &mut receipts)?;
+    store.merge_active();
 
     Ok(BatchOutcome { receipts, store })
 }
@@ -365,7 +368,7 @@ pub fn execute_batch<R: GuestRunner>(
 /// cell — flips to an infeasible receipt here, its fuel kept, its state
 /// never applied.
 fn apply_receipts(
-    store: &mut MemoryStore,
+    store: &mut OverlayStore,
     batch: &[BatchTx],
     receipts: &mut BTreeMap<TxHash, Receipt>,
 ) -> Result<(), BatchError> {

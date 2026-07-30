@@ -21,7 +21,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession, MemoryStore,
+    Base, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession, MemoryStore,
     Outcome, OverlayStore, RunResult, SubstateStore, TxHash, encode_amount, execute_batch,
 };
 use hyperscale_vm_runtime::{
@@ -319,7 +319,7 @@ fn main() -> Result<()> {
             .collect();
         let start = Instant::now();
         let outcome = execute_batch(
-            store,
+            Arc::new(store),
             &batch,
             &bench,
             env(),
@@ -349,7 +349,7 @@ fn main() -> Result<()> {
         let sessions: Vec<KernelSession> = (0..count)
             .map(|index| {
                 KernelSession::materialize(
-                    OverlayStore::new(Arc::clone(&base)),
+                    OverlayStore::new(Arc::clone(&base) as Arc<dyn Base>),
                     &declared(sender(0)),
                     tx(index),
                     env(),
