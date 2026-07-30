@@ -135,6 +135,24 @@ fn rejects_memory_without_or_over_maximum() {
 }
 
 #[test]
+fn rejects_too_many_functions() {
+    let funcs = "(func) ".repeat(10_001);
+    let bytes = component_with_core(&funcs);
+    assert_rejected(&bytes, "functions per module");
+}
+
+#[test]
+fn rejects_too_many_types() {
+    let mut types = String::new();
+    for i in 0..1_001 {
+        use std::fmt::Write as _;
+        let _ = write!(types, "(type (func (param {})))", "i32 ".repeat(i % 8));
+    }
+    let bytes = component_with_core(&types);
+    assert_rejected(&bytes, "types per module");
+}
+
+#[test]
 fn rejects_oversized_function_bodies() {
     let body = "nop\n".repeat(140_000);
     let bytes = component_with_core(&format!("(func {body})"));
