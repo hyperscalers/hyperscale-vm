@@ -12,6 +12,7 @@ hyperscale-vm-runtime.workspace = true
 anyhow.workspace = true
 wasmtime.workspace = true
 wat.workspace = true
+wit-component.workspace = true
 
 [lints]
 workspace = true

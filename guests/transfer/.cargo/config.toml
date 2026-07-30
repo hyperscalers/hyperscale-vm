@@ -1,0 +1,4 @@
+# The profile requires a declared memory maximum; 16 MiB = the profile's
+# 256-page ceiling.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=--max-memory=16777216"]

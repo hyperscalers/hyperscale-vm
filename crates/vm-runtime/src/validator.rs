@@ -9,7 +9,8 @@
 
 use thiserror::Error;
 use wasmparser::{
-    CompositeInnerType, FunctionBody, Operator, Parser, Payload, TypeRef, Validator, WasmFeatures,
+    ComponentTypeRef, CompositeInnerType, FunctionBody, Operator, Parser, Payload, TypeRef,
+    Validator, WasmFeatures,
 };
 
 use crate::profile;
@@ -110,6 +111,12 @@ fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
                 for import in reader {
                     let import = import.map_err(|e| ProfileError::Feature(e.to_string()))?;
                     let name = import.name.0;
+                    // Type imports confer no capability — they are how a
+                    // world-level `use` of a kernel resource type encodes —
+                    // so only value-carrying imports are gated.
+                    if matches!(import.ty, ComponentTypeRef::Type(_)) {
+                        continue;
+                    }
                     if !name.starts_with(profile::KERNEL_IMPORT_PREFIX) {
                         return Err(ProfileError::ForbiddenImport(name.to_string()));
                     }
