@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/vm-effects",
     "crates/vm-harness",
     "crates/vm-ref",
     "crates/vm-runtime",
@@ -11,10 +12,12 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
+hyperscale-vm-effects = { path = "crates/vm-effects" }
 hyperscale-vm-ref = { path = "crates/vm-ref" }
 hyperscale-vm-runtime = { path = "crates/vm-runtime" }
 
 anyhow = "1"
+proptest = "1"
 thiserror = "2"
 wasmparser = "0.236"
 wat = "1"

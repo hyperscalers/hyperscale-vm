@@ -1,0 +1,14 @@
+[package]
+name = "hyperscale-vm-effects"
+version.workspace = true
+edition.workspace = true
+description = "Effect signatures, the access DSL evaluator, and the routing fold"
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
