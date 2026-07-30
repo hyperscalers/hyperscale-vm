@@ -40,8 +40,9 @@ pub const MAX_MEMORIES_PER_MODULE: usize = 1;
 /// maximum, and it must not exceed this.
 pub const MAX_MEMORY_PAGES: u64 = 256;
 
-/// Maximum tables per core module.
-pub const MAX_TABLES_PER_MODULE: usize = 2;
+/// Maximum tables per core module — one, matching the executable spec's
+/// hard single-table decode limit.
+pub const MAX_TABLES_PER_MODULE: usize = 1;
 
 /// Maximum elements in one table; a table must declare a maximum, and it must
 /// not exceed this.

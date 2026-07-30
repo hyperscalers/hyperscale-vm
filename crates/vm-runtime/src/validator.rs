@@ -10,7 +10,7 @@
 use thiserror::Error;
 use wasmparser::{
     ComponentTypeRef, CompositeInnerType, FunctionBody, Operator, Parser, Payload, TypeRef,
-    Validator, WasmFeatures,
+    TypeSectionReader, Validator, WasmFeatures,
 };
 
 use crate::profile;
@@ -48,7 +48,9 @@ pub enum ProfileError {
 }
 
 /// The profile's wasm feature set: wasmparser defaults minus every proposal
-/// the profile disables.
+/// the profile disables. Everything admitted here has an executable-spec
+/// witness in vm-ref; bulk memory's table operations are the one
+/// finer-than-a-feature exclusion, rejected in the operator walk.
 fn profile_features() -> WasmFeatures {
     let mut features = WasmFeatures::default();
     features.remove(WasmFeatures::FLOATS);
@@ -62,6 +64,8 @@ fn profile_features() -> WasmFeatures {
     features.remove(WasmFeatures::MEMORY64);
     features.remove(WasmFeatures::GC);
     features.remove(WasmFeatures::CM_ASYNC);
+    features.remove(WasmFeatures::MULTI_MEMORY);
+    features.remove(WasmFeatures::EXTENDED_CONST);
     features
 }
 
@@ -140,40 +144,25 @@ fn validate_core_module(bytes: &[u8]) -> Result<(), ProfileError> {
         let payload = payload.map_err(|e| ProfileError::Feature(e.to_string()))?;
         match payload {
             Payload::TypeSection(reader) => {
-                for group in reader {
-                    let group = group.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    for subtype in group.types() {
-                        let params = match &subtype.composite_type.inner {
-                            CompositeInnerType::Func(f) => f.params().len(),
-                            _ => 0,
-                        };
-                        type_param_counts.push(params);
-                    }
-                }
-                check(
-                    type_param_counts.len(),
-                    profile::MAX_TYPES_PER_MODULE,
-                    "types per module",
-                )?;
-                if let Some(worst) = type_param_counts.iter().max() {
-                    check(
-                        *worst,
-                        profile::MAX_PARAMS_PER_FUNCTION,
-                        "params per function",
-                    )?;
-                }
+                check_types(reader, &mut type_param_counts)?;
             }
             Payload::ImportSection(reader) => {
                 for import in reader {
                     let import = import.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    match import.ty {
-                        TypeRef::Func(_) => imported_functions += 1,
-                        TypeRef::Memory(_) => memories += 1,
-                        TypeRef::Table(_) => tables += 1,
-                        TypeRef::Global(_) => globals += 1,
-                        TypeRef::Tag(_) => {}
-                    }
+                    check_import(
+                        &import.ty,
+                        &mut imported_functions,
+                        &mut memories,
+                        &mut tables,
+                        &mut globals,
+                    )?;
                 }
+                check(
+                    memories,
+                    profile::MAX_MEMORIES_PER_MODULE,
+                    "memories per module",
+                )?;
+                check(tables, profile::MAX_TABLES_PER_MODULE, "tables per module")?;
             }
             Payload::FunctionSection(reader) => {
                 check(
@@ -229,6 +218,62 @@ fn validate_core_module(bytes: &[u8]) -> Result<(), ProfileError> {
     Ok(())
 }
 
+/// Checks the type section's counts: types per module and the worst
+/// per-function parameter count.
+fn check_types(
+    reader: TypeSectionReader<'_>,
+    type_param_counts: &mut Vec<usize>,
+) -> Result<(), ProfileError> {
+    for group in reader {
+        let group = group.map_err(|e| ProfileError::Feature(e.to_string()))?;
+        for subtype in group.types() {
+            let params = match &subtype.composite_type.inner {
+                CompositeInnerType::Func(f) => f.params().len(),
+                _ => 0,
+            };
+            type_param_counts.push(params);
+        }
+    }
+    check(
+        type_param_counts.len(),
+        profile::MAX_TYPES_PER_MODULE,
+        "types per module",
+    )?;
+    if let Some(worst) = type_param_counts.iter().max() {
+        check(
+            *worst,
+            profile::MAX_PARAMS_PER_FUNCTION,
+            "params per function",
+        )?;
+    }
+    Ok(())
+}
+
+/// Counts one import into the per-kind totals; imported memories and tables
+/// carry the same maximum bounds as declared ones.
+fn check_import(
+    ty: &TypeRef,
+    imported_functions: &mut usize,
+    memories: &mut usize,
+    tables: &mut usize,
+    globals: &mut usize,
+) -> Result<(), ProfileError> {
+    match ty {
+        TypeRef::Func(_) => *imported_functions += 1,
+        TypeRef::Memory(memory) => {
+            *memories += 1;
+            bounded_maximum(memory.maximum, profile::MAX_MEMORY_PAGES, "memory pages")?;
+        }
+        TypeRef::Table(table) => {
+            *tables += 1;
+            bounded_maximum(table.maximum, profile::MAX_TABLE_ELEMENTS, "table elements")?;
+        }
+        TypeRef::Global(_) => *globals += 1,
+        TypeRef::Tag(_) => {}
+    }
+    Ok(())
+}
+
 /// Checks one function body's structural limits; returns its block count for
 /// the per-module total.
 fn validate_function_body(body: &FunctionBody<'_>) -> Result<usize, ProfileError> {
@@ -258,6 +303,27 @@ fn validate_function_body(body: &FunctionBody<'_>) -> Result<usize, ProfileError
         .map_err(|e| ProfileError::Feature(e.to_string()))?;
     for op in ops {
         let op = op.map_err(|e| ProfileError::Feature(e.to_string()))?;
+        // Bulk memory's table operations and reference-types' operators
+        // have no vm-ref witness; the features stay enabled only for
+        // memory.copy/fill and the call_indirect encoding.
+        if matches!(
+            op,
+            Operator::TableCopy { .. }
+                | Operator::TableInit { .. }
+                | Operator::ElemDrop { .. }
+                | Operator::TableGet { .. }
+                | Operator::TableSet { .. }
+                | Operator::TableGrow { .. }
+                | Operator::TableSize { .. }
+                | Operator::TableFill { .. }
+                | Operator::RefNull { .. }
+                | Operator::RefIsNull
+                | Operator::RefFunc { .. }
+        ) {
+            return Err(ProfileError::Feature(
+                "table and reference operators are outside the profile".to_string(),
+            ));
+        }
         if matches!(
             op,
             Operator::Block { .. } | Operator::Loop { .. } | Operator::If { .. }

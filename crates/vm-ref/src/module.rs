@@ -347,14 +347,24 @@ fn data_segment(data: &Data<'_>) -> Result<Segment<Vec<u8>>, DecodeError> {
     })
 }
 
+/// A constant expression is exactly one constant and its `end` — anything
+/// longer (an extended-const computation) is unsupported, never silently
+/// truncated to its first operand.
 fn const_expr(expr: &ConstExpr<'_>) -> Result<Value, DecodeError> {
     let mut reader = expr.get_operators_reader();
     let op = reader
         .read()
         .map_err(|e| DecodeError::Malformed(e.to_string()))?;
-    match op {
-        Operator::I32Const { value } => Ok(Value::I32(value)),
-        Operator::I64Const { value } => Ok(Value::I64(value)),
+    let value = match op {
+        Operator::I32Const { value } => Value::I32(value),
+        Operator::I64Const { value } => Value::I64(value),
+        other => return Err(DecodeError::UnsupportedOp(format!("{other:?} in const"))),
+    };
+    match reader
+        .read()
+        .map_err(|e| DecodeError::Malformed(e.to_string()))?
+    {
+        Operator::End => Ok(value),
         other => Err(DecodeError::UnsupportedOp(format!("{other:?} in const"))),
     }
 }

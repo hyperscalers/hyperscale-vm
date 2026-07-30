@@ -23,6 +23,9 @@ pub fn blessed_config() -> Config {
     config.wasm_threads(false);
     config.wasm_tail_call(false);
     config.wasm_memory64(false);
+    config.wasm_gc(false);
+    config.wasm_extended_const(false);
+    config.wasm_multi_memory(false);
     config.max_wasm_stack(MAX_WASM_STACK_BYTES);
     config
 }

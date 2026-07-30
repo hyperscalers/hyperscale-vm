@@ -11,7 +11,7 @@ use hyperscale_vm_runtime::validate_component;
 use wat::parse_str;
 
 /// Feature-class fixtures: (name, core module body).
-const FEATURE_FIXTURES: [(&str, &str); 4] = [
+const FEATURE_FIXTURES: [(&str, &str); 8] = [
     (
         "floats",
         "(func (param f64) (result f64) local.get 0 local.get 0 f64.add)",
@@ -19,6 +19,17 @@ const FEATURE_FIXTURES: [(&str, &str); 4] = [
     ("simd", "(func (result v128) v128.const i64x2 0 0)"),
     ("shared_memory", "(memory 1 1 shared)"),
     ("tail_call", "(func $a) (func return_call $a)"),
+    ("multi_memory", "(memory 1 1) (memory 1 1)"),
+    ("two_tables", "(table 1 1 funcref) (table 1 1 funcref)"),
+    (
+        "extended_const",
+        "(global i32 (i32.add (i32.const 1) (i32.const 2)))",
+    ),
+    (
+        "table_copy",
+        "(table 1 1 funcref) \
+         (func i32.const 0 i32.const 0 i32.const 0 table.copy)",
+    ),
 ];
 
 #[test]
