@@ -17,6 +17,8 @@ pub const CLAIMS: RoleId = RoleId(2);
 pub const CONFIG: RoleId = RoleId(3);
 /// The order book's ask-side ordered collection.
 pub const ASKS: RoleId = RoleId(4);
+/// An account's entropy leaf: the transaction draw a stamp records.
+pub const ENTROPY: RoleId = RoleId(5);
 
 /// The entry cap the book's fill range declares.
 pub const FILL_CAP: u32 = 64;
@@ -36,7 +38,8 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 /// the claims-area fallback cell, both keyed by the bucket's resource.
 /// `assert-balance(resource, min, window)`: a bounded-window snapshot of
 /// the vault for `resource` — refuses unless the pinned balance covers
-/// `min`, touching nothing.
+/// `min`, touching nothing. `stamp-entropy()`: an exclusive write of the
+/// transaction's randomness draw into the account's entropy leaf.
 #[must_use]
 pub fn account_metadata() -> PackageMetadata {
     let mut methods = PackageMetadata::default();
@@ -84,6 +87,18 @@ pub fn account_metadata() -> PackageMetadata {
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(self_child(VAULT, vec![Expr::Arg(0)])),
                 mode: ModeExpr::Snapshot(WindowExpr::Bounded(Expr::Arg(2))),
+            }],
+            calls: vec![],
+        },
+    );
+    methods.methods.insert(
+        "stamp-entropy".into(),
+        MethodSignature {
+            params: vec![],
+            outputs: vec![],
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(self_child(ENTROPY, vec![])),
+                mode: ModeExpr::Write,
             }],
             calls: vec![],
         },

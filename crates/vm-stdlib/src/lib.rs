@@ -8,13 +8,14 @@
 //! harness's blob conformance lane runs them under both runtimes.
 
 pub use hyperscale_vm_effects::stdlib::{
-    ASKS, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
+    ASKS, CLAIMS, CONFIG, ENTROPY, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
     splitter_metadata,
 };
 use hyperscale_vm_effects::{Hasher, PackageHash, package_hash};
 
 /// The componentized account guest: reservation-backed `withdraw`, delta
-/// `deposit`, and the pinned balance guard `assert-balance`.
+/// `deposit`, the pinned balance guard `assert-balance`, and the
+/// randomness stamp `stamp-entropy`.
 pub const ACCOUNT_COMPONENT: &[u8] = include_bytes!("../blobs/account.component.wasm");
 
 /// The account package's content address under `hasher` — the key its

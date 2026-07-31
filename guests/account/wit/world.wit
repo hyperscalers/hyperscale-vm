@@ -4,8 +4,9 @@ package test:guest;
 /// a pinned balance guard.
 world account {
     import hyperscale:kernel/state;
+    import hyperscale:kernel/env;
 
-    use hyperscale:kernel/state.{reserve-cell, delta-cell, snap-cell};
+    use hyperscale:kernel/state.{reserve-cell, delta-cell, snap-cell, write-cell};
 
     /// Take the reserved amount as a bucket; the requested amount must
     /// equal the reservation.
@@ -16,4 +17,9 @@ world account {
 
     /// Refuse unless the pinned balance covers `min`.
     export assert-balance: func(vault: borrow<snap-cell>, min: list<u8>);
+
+    /// Record the transaction's randomness draw in the account's entropy
+    /// leaf — a value no signer chose, fixed by the block that committed
+    /// the transaction.
+    export stamp-entropy: func(leaf: borrow<write-cell>);
 }

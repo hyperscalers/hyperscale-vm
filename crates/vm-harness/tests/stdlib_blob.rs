@@ -3,8 +3,8 @@
 //! `hyperscale-vm-stdlib` ships the account component as committed bytes
 //! that CI never rebuilds, so this lane runs those exact bytes: profile
 //! validation, then a withdraw+deposit transfer with a pinned balance
-//! guard on the blessed engine and the reference interpreter, receipts
-//! and fuel byte-identical.
+//! guard and an entropy stamp on the blessed engine and the reference
+//! interpreter, receipts and fuel byte-identical.
 
 use std::sync::Arc;
 
@@ -19,7 +19,8 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
-    DeltaCell, ReserveCell, SnapCell, add_kernel_to_linker, blessed_engine, validate_component,
+    DeltaCell, ReserveCell, SnapCell, WriteCell, add_kernel_to_linker, blessed_engine,
+    validate_component,
 };
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
 use wasmtime::component::{Component, Linker, Resource};
@@ -40,6 +41,11 @@ fn keys() -> (SubstateKey, SubstateKey) {
         child_key(&TestHasher, Address([1; 16]), RoleId(1), &[]),
         child_key(&TestHasher, Address([2; 16]), RoleId(1), &[]),
     )
+}
+
+/// The sender's entropy leaf — the stamp's exclusive-write target.
+fn entropy_key() -> SubstateKey {
+    child_key(&TestHasher, Address([1; 16]), RoleId(5), &[])
 }
 
 fn session() -> KernelSession {
@@ -63,6 +69,12 @@ fn session() -> KernelSession {
             mode: Mode::Snapshot {
                 window: Window::Bounded(8),
             },
+        })
+        .unwrap();
+    declared
+        .insert(Effect {
+            target: EffectTarget::Point(entropy_key()),
+            mode: Mode::Write,
         })
         .unwrap();
     let mut store = MemoryStore::new();
@@ -154,7 +166,17 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
             encode_amount(400).as_slice(),
         ),
     )?;
-    let fuel = withdraw_fuel + deposit_fuel + (FUEL - store.get_fuel()?);
+    let guard_fuel = FUEL - store.get_fuel()?;
+    let host = store.into_data();
+
+    let entropy_rep = rep_of(&host.0, &Capability::Write(entropy_key()));
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &compiled)?;
+    let stamp =
+        instance.get_typed_func::<(Resource<WriteCell>,), ()>(&mut store, "stamp-entropy")?;
+    stamp.call(&mut store, (Resource::new_borrow(entropy_rep),))?;
+    let fuel = withdraw_fuel + deposit_fuel + guard_fuel + (FUEL - store.get_fuel()?);
 
     Ok((finish(store.into_data().0, fuel), fuel))
 }
@@ -208,7 +230,17 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
         ],
     )?;
     outcome.map_err(|trap| wasmtime::error::format_err!("assert-balance trapped: {trap:?}"))?;
-    let fuel = withdraw_fuel + deposit_fuel + instance.fuel_consumed();
+    let guard_fuel = instance.fuel_consumed();
+    let host = instance.into_host();
+
+    let entropy_rep = rep_of(&host.0, &Capability::Write(entropy_key()));
+    let mut instance = RefComponentInstance::instantiate(&component, host)?;
+    let outcome = instance.invoke(
+        "stamp-entropy",
+        &[CVal::Borrow(entropy_rep, ResourceKind::WriteCell)],
+    )?;
+    outcome.map_err(|trap| wasmtime::error::format_err!("stamp-entropy trapped: {trap:?}"))?;
+    let fuel = withdraw_fuel + deposit_fuel + guard_fuel + instance.fuel_consumed();
 
     Ok((finish(instance.into_host().0, fuel), fuel))
 }
@@ -220,6 +252,12 @@ fn the_committed_blob_validates_and_transfers_on_both_runtimes() -> Result<()> {
     let (blessed_receipt, blessed_fuel) = blessed_transfer()?;
     let (sender, recipient) = keys();
     assert_eq!(blessed_receipt.delta.settles.get(&sender), Some(&AMOUNT));
+    // The stamp wrote the draw the environment handed the transaction —
+    // the guest's own output is a function of it.
+    assert_eq!(
+        blessed_receipt.delta.cells.get(&entropy_key()),
+        Some(&Some(RANDOMNESS.to_vec()))
+    );
     assert_eq!(
         blessed_receipt.delta.movements.get(&recipient),
         Some(&Movement {

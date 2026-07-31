@@ -1,7 +1,7 @@
 //! The minimal stdlib account: reservation-backed withdrawal, delta
-//! deposit, and a pinned balance guard. Feasibility is judged before
-//! execution, so `withdraw` only checks that the granted reservation is
-//! the amount the manifest asked for.
+//! deposit, a pinned balance guard, and the entropy stamp. Feasibility is
+//! judged before execution, so `withdraw` only checks that the granted
+//! reservation is the amount the manifest asked for.
 
 wit_bindgen::generate!({
     path: "wit",
@@ -9,7 +9,10 @@ wit_bindgen::generate!({
     generate_all,
 });
 
-use hyperscale::kernel::state::{delta_cell_add, reserve_cell_amount, snap_cell_get};
+use hyperscale::kernel::env::randomness;
+use hyperscale::kernel::state::{
+    delta_cell_add, reserve_cell_amount, snap_cell_get, write_cell_set,
+};
 
 struct Account;
 
@@ -36,6 +39,10 @@ impl Guest for Account {
             amount_of(&snap_cell_get(vault)) >= amount_of(&min),
             "pinned balance below the required minimum"
         );
+    }
+
+    fn stamp_entropy(leaf: &WriteCell) {
+        write_cell_set(leaf, &randomness());
     }
 }
 
