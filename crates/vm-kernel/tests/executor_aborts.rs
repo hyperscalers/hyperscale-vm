@@ -506,3 +506,74 @@ fn an_aborted_transaction_spends_no_nullifier() {
         Some(tx(0x02).0.0.to_vec())
     );
 }
+
+#[test]
+fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
+    // A write capability grants arbitrary bytes, so a transaction can
+    // leave a cell that is not an amount cell. A later delta on it cannot
+    // fold — but that is a declaration defect belonging to the delta,
+    // exactly as an unusable reserve target is, and must not take the
+    // batch down with it.
+    let poisoned = cell(0xE);
+    let mut store = MemoryStore::new();
+    store.write(poisoned, encode_amount(100).to_vec()).unwrap();
+    store.clear_log();
+
+    let writer = |_id: TxHash, mut session: KernelSession| {
+        let rep = session
+            .capabilities()
+            .iter()
+            .position(|c| matches!(c, Capability::Write(_)))
+            .map(|rep| u32::try_from(rep).unwrap());
+        if let Some(rep) = rep {
+            // One byte: a legal write, an illegal amount cell.
+            session.write_cell_set(rep, vec![7]).unwrap();
+        }
+        let delta = session
+            .capabilities()
+            .iter()
+            .position(|c| matches!(c, Capability::Delta(_)))
+            .map(|rep| u32::try_from(rep).unwrap());
+        if let Some(rep) = delta {
+            session.delta_add(rep, &encode_amount(1)).unwrap();
+        }
+        RunResult {
+            session,
+            outcome: Outcome::Completed { value: None },
+            fuel: FUEL,
+        }
+    };
+
+    let outcome = execute_batch(
+        Arc::new(store),
+        &[
+            BatchTx::new(
+                tx(0x01),
+                point(poisoned, Mode::Write),
+                env().clock_ms,
+                env().randomness,
+            ),
+            BatchTx::new(
+                tx(0x02),
+                point(poisoned, Mode::Delta),
+                env().clock_ms,
+                env().randomness,
+            ),
+        ],
+        &writer,
+        test_hash,
+        ExecutionMode::Serial,
+        &Locality::All,
+    )
+    .expect("one bad cell must not fail the batch");
+
+    // The writer got its write; the delta lost only itself.
+    assert!(matches!(
+        outcome.receipts[&tx(0x01)].outcome,
+        Outcome::Completed { .. }
+    ));
+    match &outcome.receipts[&tx(0x02)].outcome {
+        Outcome::UserError { reason } => assert!(reason.contains("amount cell"), "{reason}"),
+        other => panic!("expected a user error, found {other:?}"),
+    }
+}

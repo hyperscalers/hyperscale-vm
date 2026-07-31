@@ -692,42 +692,49 @@ impl KernelSession {
                 // movement is the outbound record.
                 continue;
             }
-            match self
+            let refusal = match self
                 .store
                 .judge_movement(*key, movement.credit, movement.debit)
             {
-                Ok(_) => {}
+                Ok(_) => continue,
                 Err(StoreError::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)) => {
-                    let refusal = Outcome::Infeasible {
+                    Outcome::Infeasible {
                         key: *key,
                         amount: movement.debit,
-                    };
-                    self.store.discard_active();
-                    return Ok((
-                        Receipt {
-                            outcome: refusal,
-                            delta: StateDelta::default(),
-                            fuel,
-                        },
-                        self.store,
-                    ));
+                    }
                 }
-                Err(defect) => return Err(defect.into()),
-            }
+                Err(defect) => match declaration_defect(&defect) {
+                    Some(outcome) => outcome,
+                    None => return Err(defect.into()),
+                },
+            };
+            return Ok(abort_with(self.store, refusal, fuel));
         }
-        self.store.commit_deltas()?;
+        if let Err(defect) = self.store.commit_deltas()
+            && let Some(outcome) = declaration_defect(&defect)
+        {
+            return Ok(abort_with(self.store, outcome, fuel));
+        }
         let mut settles = BTreeMap::new();
-        for capability in &self.table {
+        for capability in &self.table.clone() {
             if let Capability::Reserve(key) = capability {
                 // A remote reservation settles at its owning shard; here
                 // the hold releases and the receipt keeps the amount as
                 // the outbound record.
-                let amount = if self.locality.is_local(key.owner) {
-                    self.store.settle(*key, self.tx)?
+                let settled = if self.locality.is_local(key.owner) {
+                    self.store.settle(*key, self.tx)
                 } else {
-                    self.store.release(*key, self.tx)?
+                    self.store.release(*key, self.tx)
                 };
-                settles.insert(*key, amount);
+                match settled {
+                    Ok(amount) => {
+                        settles.insert(*key, amount);
+                    }
+                    Err(defect) => match declaration_defect(&defect) {
+                        Some(outcome) => return Ok(abort_with(self.store, outcome, fuel)),
+                        None => return Err(defect.into()),
+                    },
+                }
             }
         }
         let escaped = undeclared_accesses(self.store.access_log(), &self.declared);
@@ -764,6 +771,37 @@ impl KernelSession {
     #[must_use]
     pub const fn store(&self) -> &OverlayStore {
         &self.store
+    }
+}
+
+/// Abandon everything this transaction did and report the failure as its
+/// own rather than the batch's.
+fn abort_with(mut store: OverlayStore, outcome: Outcome, fuel: u64) -> (Receipt, OverlayStore) {
+    store.discard_active();
+    (
+        Receipt {
+            outcome,
+            delta: StateDelta::default(),
+            fuel,
+        },
+        store,
+    )
+}
+
+/// Whether a store refusal belongs to the transaction that provoked it.
+///
+/// A cell that is not an amount cell is the one such refusal: something
+/// holding an exclusive write put other bytes there, and a commutative
+/// mode declared over it cannot fold. That is the declaring transaction's
+/// defect — the same verdict an unusable reserve target gets — and the
+/// batch carries on without it. Every other store refusal is a kernel
+/// defect and stops the batch.
+fn declaration_defect(defect: &StoreError) -> Option<Outcome> {
+    match defect {
+        StoreError::Mode(error @ ModeError::BadAmountCell(_)) => Some(Outcome::UserError {
+            reason: error.to_string(),
+        }),
+        _ => None,
     }
 }
 
