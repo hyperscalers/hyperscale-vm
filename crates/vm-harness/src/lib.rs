@@ -11,7 +11,8 @@ pub mod fixtures {
     use std::path::PathBuf;
     use std::process::Command;
 
-    use anyhow::{Context, Result, ensure};
+    use wasmtime::Result;
+    use wasmtime::error::{Context, ensure, format_err};
     use wit_component::ComponentEncoder;
 
     /// The repository root, derived from this crate's manifest directory.
@@ -49,12 +50,14 @@ pub mod fixtures {
                 .join(format!("{}_guest.wasm", name.replace('-', "_"))),
         )
         .context("read guest core module")?;
+        // wit-component's API errors with `anyhow::Error`, which has no
+        // `StdError` impl to convert through; flatten its chain instead.
         let component = ComponentEncoder::default()
             .validate(true)
             .module(&core)
-            .context("encode component")?
+            .map_err(|e| format_err!("encode component: {e:#}"))?
             .encode()
-            .context("componentize")?;
+            .map_err(|e| format_err!("componentize: {e:#}"))?;
         Ok(component)
     }
 

@@ -11,7 +11,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
 use hyperscale_vm_effects::stdlib::{
     ASKS, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
 };
@@ -33,7 +32,8 @@ use hyperscale_vm_runtime::{
     validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
-use wasmtime::{Engine, Store};
+use wasmtime::error::{Context, bail};
+use wasmtime::{Engine, Result, Store};
 
 const ALICE: Address = Address([0x10; 16]);
 const BOB: Address = Address([0x20; 16]);

@@ -5,9 +5,10 @@
 //! embeds. The committed bytes are the protocol artifact — run this only to
 //! deliberately roll the stdlib, and commit the result.
 
-use anyhow::{Context, Result};
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_runtime::validate_component;
+use wasmtime::Result;
+use wasmtime::error::Context;
 
 fn main() -> Result<()> {
     let artifact = build_guest("account")?;

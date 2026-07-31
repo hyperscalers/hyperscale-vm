@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
     TestHasher, child_key,
@@ -22,8 +21,9 @@ use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
-use wasmtime::Store;
 use wasmtime::component::{Component, Linker, Resource};
+use wasmtime::error::Context;
+use wasmtime::{Result, Store};
 
 const CLOCK_MS: u64 = 77;
 const RANDOMNESS: [u8; 32] = [3; 32];
@@ -147,9 +147,10 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
             CVal::Bytes(encode_amount(AMOUNT).to_vec()),
         ],
     )?;
-    let values = outcome.map_err(|trap| anyhow::anyhow!("withdraw trapped: {trap:?}"))?;
+    let values =
+        outcome.map_err(|trap| wasmtime::error::format_err!("withdraw trapped: {trap:?}"))?;
     let [CVal::Bytes(bucket)] = values.as_slice() else {
-        anyhow::bail!("unexpected withdraw result shape");
+        wasmtime::error::bail!("unexpected withdraw result shape");
     };
     assert_eq!(*bucket, encode_amount(AMOUNT).to_vec());
     let bucket = bucket.clone();
@@ -165,7 +166,7 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
             CVal::Bytes(bucket),
         ],
     )?;
-    outcome.map_err(|trap| anyhow::anyhow!("deposit trapped: {trap:?}"))?;
+    outcome.map_err(|trap| wasmtime::error::format_err!("deposit trapped: {trap:?}"))?;
     let fuel = withdraw_fuel + instance.fuel_consumed();
 
     Ok((finish(instance.into_host().0, fuel), fuel))

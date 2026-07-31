@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
     TestHasher, child_key,
@@ -21,7 +20,7 @@ use hyperscale_vm_ref::{
 };
 use hyperscale_vm_runtime::{DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine};
 use wasmtime::component::{Component, Linker, Resource};
-use wasmtime::{Store, Trap};
+use wasmtime::{Result, Store, Trap};
 
 const CLOCK_MS: u64 = 777_000;
 const RANDOMNESS: [u8; 32] = [3; 32];

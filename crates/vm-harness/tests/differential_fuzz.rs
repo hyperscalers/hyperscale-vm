@@ -8,13 +8,12 @@
 //! The corpus is seeded and deterministic: every run generates the identical
 //! module set.
 
-use anyhow::Result;
 use arbitrary::Unstructured;
 use hyperscale_vm_ref::module::Ty;
 use hyperscale_vm_ref::{RefInstance, RefModule, Trap as RefTrap, Value};
 use hyperscale_vm_runtime::blessed_engine;
 use wasm_smith::{Config, Module as SmithModule};
-use wasmtime::{Engine, Instance, Module, Store, Trap, Val};
+use wasmtime::{Engine, Instance, Module, Result, Store, Trap, Val};
 
 const SEEDS: u64 = 256;
 const ENTROPY_BYTES: usize = 4096;

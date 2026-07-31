@@ -5,18 +5,17 @@ edition.workspace = true
 description = "Differential lanes, corpora, and guest fixtures for vm-runtime vs vm-ref"
 
 [dependencies]
-anyhow.workspace = true
 hyperscale-vm-effects.workspace = true
 hyperscale-vm-kernel.workspace = true
 hyperscale-vm-ref.workspace = true
 hyperscale-vm-runtime.workspace = true
+wasmtime.workspace = true
 wit-component.workspace = true
 
 [dev-dependencies]
 arbitrary = "1"
 hyperscale-vm-stdlib.workspace = true
 wasm-smith = "0.236"
-wasmtime.workspace = true
 wat.workspace = true
 
 [lints]

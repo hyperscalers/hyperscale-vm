@@ -334,6 +334,15 @@ impl OverlayStore {
         Ok(credited - debit)
     }
 
+    /// Record a hold without judging feasibility. The cross-shard form:
+    /// a reservation on a key another shard owns is judged there, and
+    /// held here only so capability adoption and settlement accounting
+    /// see the declared amount.
+    pub fn hold_unjudged(&mut self, key: SubstateKey, tx: TxHash, amount: u128) {
+        self.record(EffectTarget::Point(key), ModeKind::Reserve);
+        self.active.held.entry(key).or_default().insert(tx, Some(amount));
+    }
+
     /// Settle a held reservation: decrement the cell and drop the hold.
     /// Returns the settled amount.
     ///

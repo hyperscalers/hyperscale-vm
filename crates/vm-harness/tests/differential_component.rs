@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
     TestHasher, Window, child_key,
@@ -25,7 +24,8 @@ use hyperscale_vm_runtime::{
     add_kernel_to_linker, blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
-use wasmtime::{Error, Store};
+use wasmtime::error::{Context, format_err};
+use wasmtime::{Error, Result, Store};
 use wat::parse_str;
 
 const CLOCK_MS: u64 = 424_242;
@@ -265,7 +265,7 @@ fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, 
             ResourceKind::RangeRead => call1::<RangeRead>(&mut store, &instance, export, *rep),
             ResourceKind::RangeWrite => call1::<RangeWrite>(&mut store, &instance, export, *rep),
         },
-        _ => return Err(anyhow!("unexpected arg shape for {export}")),
+        _ => return Err(format_err!("unexpected arg shape for {export}")),
     };
 
     let outcome = match result {

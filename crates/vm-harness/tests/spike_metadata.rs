@@ -8,9 +8,9 @@
 //! the artifact's identity (its bytes, hence any content address) covers the
 //! metadata: same code with different metadata is a different artifact.
 
-use anyhow::{Result, anyhow};
 use wasmtime::component::{Component, Linker};
-use wasmtime::{Config, Engine, Store};
+use wasmtime::error::format_err;
+use wasmtime::{Config, Engine, Result, Store};
 use wat::parse_str;
 
 const COMPONENT_WAT: &str = r#"
@@ -43,7 +43,9 @@ fn read_leb128(bytes: &[u8], pos: &mut usize) -> Result<u32> {
     let mut value = 0u32;
     let mut shift = 0;
     loop {
-        let byte = *bytes.get(*pos).ok_or_else(|| anyhow!("truncated leb128"))?;
+        let byte = *bytes
+            .get(*pos)
+            .ok_or_else(|| format_err!("truncated leb128"))?;
         *pos += 1;
         value |= u32::from(byte & 0x7f) << shift;
         if byte & 0x80 == 0 {

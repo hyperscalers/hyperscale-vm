@@ -10,11 +10,10 @@
 
 use std::time::Instant;
 
-use anyhow::Result;
 use wasmtime::component::{Component, InstancePre, Linker, Resource, ResourceType};
 use wasmtime::{
-    Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig, Store, StoreContextMut,
-    Strategy,
+    Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig, Result, Store,
+    StoreContextMut, Strategy,
 };
 
 struct SubstateMarker;

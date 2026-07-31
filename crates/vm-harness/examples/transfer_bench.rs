@@ -11,7 +11,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
     Address, Constraint, EdgeRef, Effect, EffectSet, EffectTarget, GraphArg, GraphNode, Hash32,
@@ -28,7 +27,8 @@ use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, InstancePre, Linker, Resource};
-use wasmtime::{Engine, Store};
+use wasmtime::error::Context;
+use wasmtime::{Engine, Result, Store};
 
 const RES: Address = Address([0xE1; 16]);
 const RECIPIENT: Address = Address([0xFE; 16]);

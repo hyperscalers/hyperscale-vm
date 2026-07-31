@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
-use anyhow::Result;
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
     TestHasher, child_key,
@@ -25,7 +24,7 @@ use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, WriteCell, add_kernel_to_linker, blessed_engine,
 };
 use wasmtime::component::{Component, Linker, Resource};
-use wasmtime::{Engine, Store};
+use wasmtime::{Engine, Result, Store};
 use wat::parse_str;
 
 const FUEL: u64 = 1_000_000_000;

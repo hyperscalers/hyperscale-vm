@@ -4,11 +4,11 @@
 //! kind — must match exactly. Fresh instances per invocation keep the two
 //! sides' state histories identical.
 
-use anyhow::{Context, Result};
 use hyperscale_vm_ref::module::Ty;
 use hyperscale_vm_ref::{RefInstance, RefModule, Trap as RefTrap, Value};
 use hyperscale_vm_runtime::blessed_engine;
-use wasmtime::{Engine, Instance, Module, Store, Trap, Val};
+use wasmtime::error::Context;
+use wasmtime::{Engine, Instance, Module, Result, Store, Trap, Val};
 use wat::parse_str;
 
 const I32_EDGES: [i32; 9] = [0, 1, -1, 2, 7, 31, 33, i32::MIN, i32::MAX];

@@ -9,9 +9,8 @@
 //! (the import surface has no constructor); and a guest forging a raw handle
 //! index at the core level traps deterministically instead of reaching state.
 
-use anyhow::Result;
 use wasmtime::component::{Component, Linker, Resource, ResourceType};
-use wasmtime::{Config, Engine, Store, StoreContextMut};
+use wasmtime::{Config, Engine, Result, Store, StoreContextMut};
 
 /// Host-side marker for the substate resource; the handle's rep indexes the
 /// store's substate table.

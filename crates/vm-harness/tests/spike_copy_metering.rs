@@ -7,9 +7,8 @@
 //! byte counts it needs to charge the supplement itself (the fix is possible
 //! with no engine support).
 
-use anyhow::Result;
 use wasmtime::component::{Component, Linker};
-use wasmtime::{Config, Engine, Store};
+use wasmtime::{Config, Engine, Result, Store};
 
 // A guest with real canonical-ABI copies: a string crosses host→guest (lower,
 // via guest realloc into linear memory) and the guest returns its length.
