@@ -9,10 +9,15 @@
 //! So the bound is proven at deploy. Each function's frame is modelled from
 //! its slot count ([`profile::STACK_BYTES_PER_SLOT`], measured by
 //! `spike_frame_size`), the intra-module call graph is required to be
-//! acyclic, and the heaviest path through it must fit the budget. An
-//! artifact that passes cannot exhaust the stack in either runtime, so the
-//! divergence has no reachable witness and `vm-ref`'s depth counter becomes
-//! unreachable rather than load-bearing.
+//! acyclic, and the heaviest path through it must fit the budget.
+//!
+//! Two budgets, not one. Stack bytes are what the blessed engine exhausts,
+//! and frames are what the executable spec counts; a chain fits only if it
+//! meets both, and the deepest chain need not be the heaviest one. The
+//! frame cap ([`profile::MAX_CALL_CHAIN_FRAMES`]) is what keeps the spec's
+//! counter out of reach — the byte budget alone admits chains well past
+//! it — so an artifact that passes cannot exhaust the stack in either
+//! runtime, and the divergence has no reachable witness.
 //!
 //! `call_indirect` resolves to the element-segment functions whose type
 //! matches the call site — an over-approximation, but a type-directed one:
@@ -89,10 +94,16 @@ pub fn check_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
 
     let imported = u32::try_from(facts.imported_funcs).unwrap_or(u32::MAX);
     let mut graph: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
-    let mut weight: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut cost: BTreeMap<u32, Cost> = BTreeMap::new();
     for (local, func) in facts.funcs.iter().enumerate() {
         let index = imported.saturating_add(u32::try_from(local).unwrap_or(u32::MAX));
-        weight.insert(index, frame_bytes(func.slots));
+        cost.insert(
+            index,
+            Cost {
+                bytes: frame_bytes(func.slots),
+                frames: 1,
+            },
+        );
         let edges = graph.entry(index).or_default();
         edges.extend(func.callees.iter().copied());
         for ty in &func.indirect {
@@ -102,33 +113,68 @@ pub fn check_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
         }
     }
 
-    let heaviest = heaviest_path(&graph, &weight)?;
-    if heaviest > profile::MAX_CALL_CHAIN_BYTES {
+    let heaviest = heaviest_path(&graph, &cost)?;
+    if heaviest.bytes > profile::MAX_CALL_CHAIN_BYTES {
         return Err(ProfileError::Structural(format!(
-            "the heaviest call chain needs {heaviest} stack bytes, over the {} the profile \
+            "the heaviest call chain needs {} stack bytes, over the {} the profile \
              reserves for one chain",
+            heaviest.bytes,
             profile::MAX_CALL_CHAIN_BYTES
+        )));
+    }
+    if heaviest.frames > profile::MAX_CALL_CHAIN_FRAMES {
+        return Err(ProfileError::Structural(format!(
+            "the deepest call chain stands {} frames, over the {} the profile admits",
+            heaviest.frames,
+            profile::MAX_CALL_CHAIN_FRAMES
         )));
     }
     Ok(())
 }
 
+/// What one call chain costs, in the two currencies the profile budgets.
+#[derive(Clone, Copy, Default)]
+struct Cost {
+    bytes: usize,
+    frames: usize,
+}
+
+impl Cost {
+    /// This node's own cost on top of the heaviest chain below it.
+    const fn over(self, below: Self) -> Self {
+        Self {
+            bytes: self.bytes + below.bytes,
+            frames: self.frames + below.frames,
+        }
+    }
+
+    /// The componentwise maximum. The two budgets are taken independently
+    /// because the deepest chain and the heaviest one need not be the same
+    /// chain, and a chain has to fit both.
+    fn worst(self, other: Self) -> Self {
+        Self {
+            bytes: self.bytes.max(other.bytes),
+            frames: self.frames.max(other.frames),
+        }
+    }
+}
+
 /// The heaviest root-to-leaf path, rejecting cycles.
 ///
-/// Imported functions carry no weight: they are host frames at the
+/// Imported functions cost nothing: they are host frames at the
 /// canonical-ABI boundary, covered by the reserve rather than by this walk.
 fn heaviest_path(
     graph: &BTreeMap<u32, BTreeSet<u32>>,
-    weight: &BTreeMap<u32, usize>,
-) -> Result<usize, ProfileError> {
+    cost: &BTreeMap<u32, Cost>,
+) -> Result<Cost, ProfileError> {
     /// Visit state: on the current path, or finished.
     enum Mark {
         Open,
-        Done(usize),
+        Done(Cost),
     }
 
     let mut marks: BTreeMap<u32, Mark> = BTreeMap::new();
-    let mut heaviest = 0usize;
+    let mut heaviest = Cost::default();
     // Iterative post-order so a deep graph cannot exhaust our own stack.
     for &root in graph.keys() {
         if marks.contains_key(&root) {
@@ -142,14 +188,13 @@ fn heaviest_path(
                     .into_iter()
                     .flatten()
                     .map(|next| match marks.get(next) {
-                        Some(Mark::Done(w)) => *w,
-                        _ => 0,
+                        Some(Mark::Done(cost)) => *cost,
+                        _ => Cost::default(),
                     })
-                    .max()
-                    .unwrap_or(0);
-                let total = weight.get(&node).copied().unwrap_or(0) + below;
+                    .fold(Cost::default(), Cost::worst);
+                let total = cost.get(&node).copied().unwrap_or_default().over(below);
                 marks.insert(node, Mark::Done(total));
-                heaviest = heaviest.max(total);
+                heaviest = heaviest.worst(total);
                 continue;
             }
             match marks.get(&node) {

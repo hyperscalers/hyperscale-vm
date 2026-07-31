@@ -12,7 +12,22 @@ use crate::module::{RefModule, Ty};
 use crate::ops::{LoadKind, Op, StoreKind, Value, eval_binary, eval_unary, fuel_cost};
 
 pub(crate) const PAGE: usize = 64 * 1024;
-const MAX_CALL_DEPTH: usize = 512;
+
+/// The interpreter's call-depth bound: a net, not a limit the profile
+/// leans on.
+///
+/// The deploy-time frame bound admits chains well below this, so an
+/// artifact that validates cannot reach it — which is what makes
+/// [`Trap::CallDepthExhausted`] a defect in that bound rather than a
+/// divergence between the runtimes. The counter stays because the
+/// interpreter also runs modules that never faced the validator, where
+/// unbounded recursion would take the process down instead of returning a
+/// verdict.
+///
+/// `vm-harness` asserts the ordering against the profile at compile time;
+/// it is the only crate that can see both constants, and coupling the spec
+/// to the runtime would cost the independence the comparison rests on.
+pub const MAX_CALL_DEPTH: usize = 512;
 
 /// An execution failure: a wasm trap, or a canonical-ABI violation at the
 /// component boundary.

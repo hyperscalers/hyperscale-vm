@@ -59,10 +59,10 @@ pub enum Trap {
     /// The interpreter's own call-depth bound.
     ///
     /// Unreachable for an artifact the profile admits: the deploy-time
-    /// frame bound proves the heaviest call chain fits the native stack,
-    /// and this counter sits far above it. The differential lanes treat
-    /// reaching it as a failure of that bound rather than as a divergence
-    /// to excuse.
+    /// frame bound caps the deepest admissible chain at half this counter,
+    /// and a `vm-harness` assertion holds the two in that order. The
+    /// differential lanes treat reaching it as a failure of that bound
+    /// rather than as a divergence to excuse.
     #[error("call depth exhausted")]
     CallDepthExhausted,
     /// The fuel budget ran out. Charged on the spec schedule and tested

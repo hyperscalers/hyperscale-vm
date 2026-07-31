@@ -6,6 +6,31 @@
 //! WAT compiled at test time, plus one realistic Rust guest). Dev-only: never
 //! a dependency of `vm-runtime` or `vm-ref`.
 
+/// Native stack for a lane that drives the executable spec near its
+/// call-depth bound.
+///
+/// `vm-ref` recurses on the native stack once per wasm frame, and its own
+/// frames are large in an unoptimised build — deep enough that the default
+/// test thread runs out well before the counter does. An overflow there
+/// aborts the process instead of producing the verdict the lane exists to
+/// compare, so the lanes size their stack rather than inherit one.
+pub const DEEP_STACK_BYTES: usize = 256 * 1024 * 1024;
+
+/// Runs `body` on a thread with [`DEEP_STACK_BYTES`] of stack, carrying its
+/// panic rather than replacing it.
+///
+/// # Panics
+///
+/// If the thread cannot be spawned, or with `body`'s own payload.
+pub fn on_deep_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(DEEP_STACK_BYTES)
+        .spawn(body)
+        .expect("spawn a deep-stack thread")
+        .join()
+        .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+}
+
 /// Shared guest fixtures for the differential lanes.
 pub mod fixtures {
     use std::path::PathBuf;

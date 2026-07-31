@@ -17,6 +17,7 @@
 //! module set.
 
 use arbitrary::Unstructured;
+use hyperscale_vm_harness::on_deep_stack;
 use hyperscale_vm_ref::module::Ty;
 use hyperscale_vm_ref::{RefInstance, RefModule, Trap as RefTrap, Value};
 use hyperscale_vm_runtime::{blessed_engine, validate_core_module};
@@ -223,14 +224,7 @@ fn arg_sets(params: &[bool]) -> Vec<Vec<Value>> {
 
 #[test]
 fn generated_corpus_agrees_between_blessed_engine_and_vm_ref() -> Result<()> {
-    // The interpreter recurses on the Rust stack, and its debug-build frames
-    // at 512 call depth exceed the default test-thread stack.
-    std::thread::Builder::new()
-        .stack_size(256 * 1024 * 1024)
-        .spawn(fuzz_body)
-        .expect("spawn fuzz thread")
-        .join()
-        .expect("fuzz thread panicked")
+    on_deep_stack(fuzz_body)
 }
 
 fn fuzz_body() -> Result<()> {

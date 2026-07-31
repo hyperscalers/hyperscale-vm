@@ -83,6 +83,23 @@ pub const HOST_FRAME_RESERVE_BYTES: usize = 64 * 1024;
 /// function, so one level of re-entry is the whole of it.
 pub const MAX_CALL_CHAIN_BYTES: usize = (MAX_WASM_STACK_BYTES - HOST_FRAME_RESERVE_BYTES) / 2;
 
+/// How many frames one guest call chain may stand at once.
+///
+/// The byte budget bounds a chain's stack consumption, which is not the
+/// same limit as its depth: at [`STACK_FRAME_OVERHEAD_BYTES`], the
+/// cheapest frame anything can cost, [`MAX_CALL_CHAIN_BYTES`] alone admits
+/// eight hundred and ninety-six of them — deeper than the executable
+/// spec's own call counter tolerates, so an artifact could validate here
+/// and trap there.
+///
+/// Both runtimes have to execute what the profile admits, so depth is
+/// bounded too. The cap sits at half the spec's counter: reaching that
+/// counter then means this bound failed, not that a guest was merely deep,
+/// which is what lets the differential lanes treat it as a defect rather
+/// than as a divergence to excuse. `vm-harness` asserts the ordering at
+/// compile time — it is the only crate that can see both constants.
+pub const MAX_CALL_CHAIN_FRAMES: usize = 256;
+
 /// The single import package a contract world may name.
 ///
 /// Component import names follow the `package:namespace/interface` grammar,
