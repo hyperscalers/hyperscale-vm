@@ -169,7 +169,7 @@ fn the_batch_semantics_are_exact() {
         Arc::new(store),
         &batch,
         &scripted,
-        env(),
+        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
@@ -220,7 +220,7 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         Arc::new(store.clone()),
         &batch,
         &scripted,
-        env(),
+        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
@@ -230,7 +230,7 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         Arc::new(store.clone()),
         &batch,
         &scripted,
-        env(),
+        env().randomness,
         test_hash,
         ExecutionMode::Parallel,
         &Locality::All,
@@ -248,7 +248,7 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         Arc::new(store),
         &batch,
         &stalled,
-        env(),
+        env().randomness,
         test_hash,
         ExecutionMode::Parallel,
         &Locality::All,
@@ -269,7 +269,7 @@ fn input_order_cannot_influence_any_receipt() {
         Arc::new(store.clone()),
         &batch,
         &scripted,
-        env(),
+        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
@@ -287,7 +287,7 @@ fn input_order_cannot_influence_any_receipt() {
                 Arc::new(store.clone()),
                 &permutation,
                 &scripted,
-                env(),
+                env().randomness,
                 test_hash,
                 mode,
                 &Locality::All,
@@ -297,4 +297,47 @@ fn input_order_cannot_influence_any_receipt() {
             assert_eq!(collect_cells(&baseline), collect_cells(&outcome));
         }
     }
+}
+
+#[test]
+fn each_transaction_sees_its_own_clock() {
+    // One batch, two clocks: the clock is a per-transaction input — a
+    // cross-shard batch mixes transactions committed by different payer
+    // blocks — so each session must carry its own entry's value.
+    let mut store = MemoryStore::new();
+    store.write(cell(0xE), vec![10]).unwrap();
+    store.write(cell(0xF), vec![10]).unwrap();
+    store.clear_log();
+
+    let mut early = BatchTx::new(tx(0x01), point(cell(0xE), Mode::Write));
+    early.clock_ms = 1_000;
+    let mut late = BatchTx::new(tx(0x02), point(cell(0xF), Mode::Write));
+    late.clock_ms = 2_000;
+
+    let observe = |tx_id: TxHash, session: KernelSession| RunResult {
+        outcome: Outcome::Completed {
+            value: Some(session.clock_ms()),
+        },
+        session,
+        fuel: u64::from(tx_id.0.0[0]),
+    };
+    let outcome = execute_batch(
+        Arc::new(store),
+        &[early, late],
+        &observe,
+        env().randomness,
+        test_hash,
+        ExecutionMode::Parallel,
+        &Locality::All,
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome.receipts[&tx(0x01)].outcome,
+        Outcome::Completed { value: Some(1_000) }
+    );
+    assert_eq!(
+        outcome.receipts[&tx(0x02)].outcome,
+        Outcome::Completed { value: Some(2_000) }
+    );
 }

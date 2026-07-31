@@ -41,16 +41,21 @@ pub struct BatchTx {
     /// runs; completing writes them all — once-only by creation
     /// conflict.
     pub nullifiers: Vec<SubstateKey>,
+    /// The transaction's clock in milliseconds. Per transaction, not per
+    /// batch: every replica executing this transaction must pass the same
+    /// value, and one batch may mix transactions with different clocks.
+    pub clock_ms: u64,
 }
 
 impl BatchTx {
-    /// A transaction with no bound subintents.
+    /// A transaction with no bound subintents and a zero clock.
     #[must_use]
     pub const fn new(tx: TxHash, declared: EffectSet) -> Self {
         Self {
             tx,
             declared,
             nullifiers: Vec::new(),
+            clock_ms: 0,
         }
     }
 }
@@ -190,7 +195,7 @@ fn run_group<R: GuestRunner>(
     batch: &[&BatchTx],
     group: &[usize],
     runner: &R,
-    env: EnvInputs,
+    randomness: [u8; 32],
     hash_fn: fn(&[u8]) -> [u8; 32],
     locality: &Locality,
 ) -> Result<Vec<(TxHash, Receipt)>, BatchError> {
@@ -221,6 +226,10 @@ fn run_group<R: GuestRunner>(
             continue;
         }
         let before = store.clone();
+        let env = EnvInputs {
+            clock_ms: entry.clock_ms,
+            randomness,
+        };
         let session =
             match KernelSession::materialize(store, &entry.declared, entry.tx, env, hash_fn) {
                 Ok(session) => {
@@ -289,44 +298,16 @@ fn run_group<R: GuestRunner>(
     Ok(receipts)
 }
 
-/// Execute a batch of transactions over committed state.
-///
-/// Input order is immaterial: the batch is judged, grouped, executed, and
-/// applied in canonical transaction-hash order.
-///
-/// # Errors
-///
-/// Any [`BatchError`] — all are kernel-level defects; per-transaction
-/// failures land in receipts, never here.
-///
-/// # Panics
-///
-/// Only if a runner panics — the panic propagates from its worker — or on
-/// the kernel defect of a group overlay outliving its group.
-pub fn execute_batch<R: GuestRunner>(
-    base: Arc<dyn Base>,
-    batch: &[BatchTx],
-    runner: &R,
-    env: EnvInputs,
-    hash_fn: fn(&[u8]) -> [u8; 32],
-    mode: ExecutionMode,
+/// The reserve-target pre-screen: a reserve declared on an unusable
+/// target — a locked substate, a malformed amount cell — is the sender's
+/// declaration defect. It aborts its transaction here, so the judge sees
+/// only sound requests and its own errors stay kernel defects.
+fn screen_reserve_targets<'batch>(
+    judged: &OverlayStore,
+    ordered: Vec<&'batch BatchTx>,
     locality: &Locality,
-) -> Result<BatchOutcome, BatchError> {
-    let mut seen = std::collections::BTreeSet::new();
-    for entry in batch {
-        if !seen.insert(entry.tx) {
-            return Err(BatchError::DuplicateTx(entry.tx));
-        }
-    }
-    let mut ordered: Vec<&BatchTx> = batch.iter().collect();
-    ordered.sort_by_key(|entry| entry.tx);
-    let mut receipts: BTreeMap<TxHash, Receipt> = BTreeMap::new();
-
-    // A reserve declared on an unusable target — a locked substate, a
-    // malformed amount cell — is the sender's declaration defect: it
-    // aborts its transaction here, so the judge sees only sound requests
-    // and its own errors stay kernel defects.
-    let mut judged = OverlayStore::new(base);
+    receipts: &mut BTreeMap<TxHash, Receipt>,
+) -> Vec<&'batch BatchTx> {
     let mut sound: Vec<&BatchTx> = Vec::with_capacity(ordered.len());
     for entry in ordered {
         let defect = declared_reservations(&entry.declared)
@@ -347,6 +328,44 @@ pub fn execute_batch<R: GuestRunner>(
             sound.push(entry);
         }
     }
+    sound
+}
+
+/// Execute a batch of transactions over committed state.
+///
+/// Input order is immaterial: the batch is judged, grouped, executed, and
+/// applied in canonical transaction-hash order.
+///
+/// # Errors
+///
+/// Any [`BatchError`] — all are kernel-level defects; per-transaction
+/// failures land in receipts, never here.
+///
+/// # Panics
+///
+/// Only if a runner panics — the panic propagates from its worker — or on
+/// the kernel defect of a group overlay outliving its group.
+pub fn execute_batch<R: GuestRunner>(
+    base: Arc<dyn Base>,
+    batch: &[BatchTx],
+    runner: &R,
+    randomness: [u8; 32],
+    hash_fn: fn(&[u8]) -> [u8; 32],
+    mode: ExecutionMode,
+    locality: &Locality,
+) -> Result<BatchOutcome, BatchError> {
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in batch {
+        if !seen.insert(entry.tx) {
+            return Err(BatchError::DuplicateTx(entry.tx));
+        }
+    }
+    let mut ordered: Vec<&BatchTx> = batch.iter().collect();
+    ordered.sort_by_key(|entry| entry.tx);
+    let mut receipts: BTreeMap<TxHash, Receipt> = BTreeMap::new();
+
+    let mut judged = OverlayStore::new(base);
+    let sound = screen_reserve_targets(&judged, ordered, locality, &mut receipts);
 
     // Judge every locally owned reservation in canonical order; hold the
     // feasible, abort the infeasible. Remote reservations are held at
@@ -390,7 +409,11 @@ pub fn execute_batch<R: GuestRunner>(
     let executed: Vec<Result<Vec<(TxHash, Receipt)>, BatchError>> = match mode {
         ExecutionMode::Serial => groups
             .iter()
-            .map(|group| run_group(&judged, &runnable, group, runner, env, hash_fn, locality))
+            .map(|group| {
+                run_group(
+                    &judged, &runnable, group, runner, randomness, hash_fn, locality,
+                )
+            })
             .collect(),
         ExecutionMode::Parallel => thread::scope(|scope| {
             #[allow(clippy::needless_collect)] // spawn every worker before joining any
@@ -400,7 +423,9 @@ pub fn execute_batch<R: GuestRunner>(
                     let judged = &judged;
                     let runnable = &runnable;
                     scope.spawn(move || {
-                        run_group(judged, runnable, group, runner, env, hash_fn, locality)
+                        run_group(
+                            judged, runnable, group, runner, randomness, hash_fn, locality,
+                        )
                     })
                 })
                 .collect();

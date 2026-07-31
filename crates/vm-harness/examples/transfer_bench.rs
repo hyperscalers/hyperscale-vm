@@ -318,7 +318,7 @@ fn main() -> Result<()> {
             Arc::new(store),
             &batch,
             &bench,
-            env(),
+            env().randomness,
             test_hash,
             ExecutionMode::Serial,
             &Locality::All,
