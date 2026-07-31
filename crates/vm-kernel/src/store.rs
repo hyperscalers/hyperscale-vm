@@ -39,6 +39,17 @@ pub enum StoreError {
     /// violation surfaced as an error rather than silently misjudged.
     #[error("held reservations exceed committed balance on {0:?}")]
     HeldExceedsCommitted(SubstateKey),
+    /// One judging batch carrying the same transaction and cell twice.
+    /// The verdict map would keep the last and the held amount the first,
+    /// so a pair with conflicting amounts would hold one and report the
+    /// other; the request is refused instead.
+    #[error("{tx:?} requests a reservation on {key:?} twice in one batch")]
+    DuplicateRequest {
+        /// The repeated transaction.
+        tx: TxHash,
+        /// The cell it repeats.
+        key: SubstateKey,
+    },
     /// An amount-cell or fold failure.
     #[error(transparent)]
     Mode(#[from] ModeError),
@@ -442,6 +453,7 @@ impl MemoryStore {
     ///
     /// # Errors
     ///
+    /// [`StoreError::DuplicateRequest`] for a repeated `(tx, key)` pair,
     /// [`StoreError::Locked`] for a reservation on a locked substate,
     /// [`StoreError::HeldExceedsCommitted`] on a violated ledger
     /// invariant, or an amount-cell decode failure.
@@ -450,7 +462,11 @@ impl MemoryStore {
         requests: &[(TxHash, SubstateKey, u128)],
     ) -> Result<BTreeMap<(TxHash, SubstateKey), Feasibility>, StoreError> {
         let mut by_key: BTreeMap<SubstateKey, Vec<(TxHash, u128)>> = BTreeMap::new();
+        let mut seen = BTreeSet::new();
         for (tx, key, amount) in requests {
+            if !seen.insert((*tx, *key)) {
+                return Err(StoreError::DuplicateRequest { tx: *tx, key: *key });
+            }
             self.reject_locked(*key)?;
             self.record(EffectTarget::Point(*key), ModeKind::Reserve);
             by_key.entry(*key).or_default().push((*tx, *amount));

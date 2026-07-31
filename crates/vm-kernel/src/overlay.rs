@@ -260,15 +260,17 @@ impl OverlayStore {
     ///
     /// # Errors
     ///
-    /// [`StoreError::Locked`] for a reservation on a locked substate,
-    /// [`StoreError::HeldExceedsCommitted`] on a violated ledger
-    /// invariant, or an amount-cell decode failure.
+    /// Exactly [`MemoryStore::judge_and_hold`]'s.
     pub fn judge_and_hold(
         &mut self,
         requests: &[(TxHash, SubstateKey, u128)],
     ) -> Result<BTreeMap<(TxHash, SubstateKey), Feasibility>, StoreError> {
         let mut by_key: BTreeMap<SubstateKey, Vec<(TxHash, u128)>> = BTreeMap::new();
+        let mut seen = BTreeSet::new();
         for (tx, key, amount) in requests {
+            if !seen.insert((*tx, *key)) {
+                return Err(StoreError::DuplicateRequest { tx: *tx, key: *key });
+            }
             self.reject_locked(*key)?;
             self.record(EffectTarget::Point(*key), ModeKind::Reserve);
             by_key.entry(*key).or_default().push((*tx, *amount));
@@ -542,6 +544,17 @@ impl OverlayStore {
     /// committed layer and the base are untouched.
     pub fn discard_active(&mut self) {
         self.active = Layer::default();
+    }
+
+    /// Whether either layer carries a cell change.
+    ///
+    /// Snapshot reads resolve against the base alone, so the overlay a
+    /// batch forks its groups from must not have written a cell: if it
+    /// had, every group's pinned reads would silently resolve against
+    /// post-judge state instead of the attested baseline.
+    #[must_use]
+    pub fn has_layered_cells(&self) -> bool {
+        !self.active.cells.is_empty() || !self.committed.cells.is_empty()
     }
 
     /// Collapse the overlay into a plain store: the base with both layers

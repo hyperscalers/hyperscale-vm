@@ -13,6 +13,17 @@
 //! transaction at a time in canonical order — absolute writes, movements
 //! floored at outstanding reservations, settlements. An uncovered debit
 //! aborts its transaction as infeasible, never the batch.
+//!
+//! Grouping is a pure function of the batch, so the outcome is
+//! deterministic — but it is a function of the *grouping*, not of
+//! canonical order alone. A transaction's debit is judged against its own
+//! group's store, so it can flip to infeasible there even though a
+//! canonically earlier transaction in a different group credited the same
+//! cell; that credit becomes visible only at apply, where the converse
+//! flip is handled. Every replica agrees, because every replica groups
+//! identically — but a change to how batches are composed can change
+//! which transaction loses a contested cell, and that is a property of
+//! batch composition rather than of the executor.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -213,6 +224,23 @@ fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
     groups.into_values().collect()
 }
 
+/// How a materialization failure ends its transaction.
+///
+/// A declaration the world cannot honor is the sender's: they asked for a
+/// mode on a target that cannot carry it. A held reservation that does not
+/// match, or a store refusal, is the crate's own bookkeeping by its own
+/// taxonomy — charging the sender for it would price our defect to them.
+fn materialize_abort(defect: &MaterializeError) -> Outcome {
+    match defect {
+        MaterializeError::HeldMismatch(_) | MaterializeError::Store(_) => Outcome::ProtocolError {
+            reason: defect.to_string(),
+        },
+        _ => Outcome::UserError {
+            reason: defect.to_string(),
+        },
+    }
+}
+
 fn abort_receipt(outcome: Outcome, fuel: u64) -> Receipt {
     Receipt {
         outcome,
@@ -282,15 +310,7 @@ fn run_group<R: GuestRunner>(
                     continue;
                 }
                 Err(defect) => {
-                    receipts.push((
-                        entry.tx,
-                        abort_receipt(
-                            Outcome::UserError {
-                                reason: defect.to_string(),
-                            },
-                            0,
-                        ),
-                    ));
+                    receipts.push((entry.tx, abort_receipt(materialize_abort(&defect), 0)));
                     store = before;
                     continue;
                 }
@@ -378,8 +398,9 @@ fn screen_reserve_targets<'batch>(
 ///
 /// # Panics
 ///
-/// Only if a runner panics — the panic propagates from its worker — or on
-/// the kernel defect of a group overlay outliving its group.
+/// Only if a runner panics — the panic propagates from its worker — on the
+/// kernel defect of a group overlay outliving its group, or if judging
+/// wrote a cell and unpinned the batch's snapshots.
 pub fn execute_batch<R: GuestRunner>(
     base: Arc<dyn Base>,
     batch: &[BatchTx],
@@ -448,7 +469,12 @@ pub fn execute_batch<R: GuestRunner>(
     judged.merge_active();
 
     // Group and execute; every group's overlay shares the judged store as
-    // its immutable base.
+    // its immutable base. Snapshots resolve against that base, so judging
+    // must not have written a cell — see `has_layered_cells`.
+    assert!(
+        !judged.has_layered_cells(),
+        "judging wrote a cell, so every group's snapshots would pin to post-judge state"
+    );
     let judged = Arc::new(judged);
     let groups = conflict_groups(&runnable);
     let executed: Vec<Result<Vec<(TxHash, Receipt)>, BatchError>> = match mode {
@@ -580,4 +606,56 @@ fn apply_receipts(
     }
     store.clear_log();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use hyperscale_vm_effects::{
+        Address, Effect, EffectTarget, Mode, RoleId, TestHasher, child_key,
+    };
+
+    use super::{Outcome, materialize_abort};
+    use crate::modes::ModeError;
+    use crate::session::MaterializeError;
+    use crate::store::StoreError;
+
+    /// Materialization failures split by whose fault they are.
+    ///
+    /// Neither kernel-defect arm is reachable through `execute_batch` —
+    /// the batch judge overwrites a stale hold before materialization can
+    /// see it, and the reserve pre-screen catches unusable targets — so
+    /// the classification is asserted here rather than through a batch
+    /// that cannot produce one.
+    #[test]
+    fn only_the_senders_own_defects_are_priced_to_them() {
+        let key = child_key(&TestHasher, Address([1; 16]), RoleId(1), &[]);
+
+        for sender_fault in [
+            MaterializeError::LockedTarget(key),
+            MaterializeError::SelfConflicting(key),
+            MaterializeError::Unsupported(Effect {
+                target: EffectTarget::Point(key),
+                mode: Mode::Read,
+            }),
+        ] {
+            assert!(
+                matches!(materialize_abort(&sender_fault), Outcome::UserError { .. }),
+                "{sender_fault:?} is the sender's declaration defect"
+            );
+        }
+
+        for kernel_defect in [
+            MaterializeError::HeldMismatch(key),
+            MaterializeError::Store(StoreError::HeldExceedsCommitted(key)),
+            MaterializeError::Store(StoreError::Mode(ModeError::BadAmountCell(3))),
+        ] {
+            assert!(
+                matches!(
+                    materialize_abort(&kernel_defect),
+                    Outcome::ProtocolError { .. }
+                ),
+                "{kernel_defect:?} is our own bookkeeping"
+            );
+        }
+    }
 }

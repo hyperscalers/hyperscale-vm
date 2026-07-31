@@ -868,3 +868,284 @@ fn diff(store: &OverlayStore) -> StateDelta {
     }
     delta
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use hyperscale_vm_effects::{
+        Address, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId, SubstateKey, TestHasher,
+        Window, child_key,
+    };
+
+    use super::{EnvInputs, KernelSession, MaterializeError, SessionTrap};
+    use crate::modes::{TxHash, encode_amount};
+    use crate::overlay::OverlayStore;
+    use crate::store::{MemoryStore, StoreError, SubstateStore};
+
+    fn key(byte: u8) -> SubstateKey {
+        child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[])
+    }
+
+    const fn tx(byte: u8) -> TxHash {
+        TxHash(Hash32([byte; 32]))
+    }
+
+    /// A stand-in protocol hash: the length in the first byte is enough
+    /// to show the seam carries the guest's bytes through.
+    fn hash(data: &[u8]) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        out[0] = u8::try_from(data.len()).unwrap_or(u8::MAX);
+        out
+    }
+
+    const fn env() -> EnvInputs {
+        EnvInputs {
+            clock_ms: 5,
+            randomness: [3; 32],
+        }
+    }
+
+    fn declared(effects: &[Effect]) -> EffectSet {
+        let mut set = EffectSet::new();
+        for effect in effects {
+            set.insert(*effect).unwrap();
+        }
+        set
+    }
+
+    fn session_over(store: MemoryStore, set: &EffectSet) -> KernelSession {
+        KernelSession::materialize(OverlayStore::new(Arc::new(store)), set, tx(1), env(), hash)
+            .expect("materializes")
+    }
+
+    #[test]
+    fn a_rep_outside_the_table_is_an_unknown_handle() {
+        let set = declared(&[Effect {
+            target: EffectTarget::Point(key(1)),
+            mode: Mode::Read,
+        }]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        assert_eq!(session.read_cell(7), Err(SessionTrap::UnknownHandle(7)));
+        assert_eq!(session.range_count(7), Err(SessionTrap::UnknownHandle(7)));
+    }
+
+    #[test]
+    fn a_capability_grants_only_its_own_operation() {
+        let set = declared(&[Effect {
+            target: EffectTarget::Point(key(1)),
+            mode: Mode::Read,
+        }]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        // A read handle is not a snapshot, a write, a delta, a reserve, or
+        // an interval.
+        assert_eq!(session.snap_cell(0), Err(SessionTrap::WrongMode(0)));
+        assert_eq!(session.write_cell_get(0), Err(SessionTrap::WrongMode(0)));
+        assert_eq!(
+            session.write_cell_set(0, vec![1]),
+            Err(SessionTrap::WrongMode(0))
+        );
+        assert_eq!(
+            session.delta_add(0, &encode_amount(1)),
+            Err(SessionTrap::WrongMode(0))
+        );
+        assert_eq!(session.reserve_amount(0), Err(SessionTrap::WrongMode(0)));
+        assert_eq!(session.range_count(0), Err(SessionTrap::WrongMode(0)));
+    }
+
+    #[test]
+    fn malformed_amount_and_order_cells_are_named_refusals() {
+        let vault = key(2);
+        let set = declared(&[Effect {
+            target: EffectTarget::Point(vault),
+            mode: Mode::Delta,
+        }]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        assert_eq!(
+            session.delta_add(0, &[1, 2, 3]),
+            Err(SessionTrap::BadAmountCell(3))
+        );
+        assert_eq!(
+            session.delta_sub(0, &[]),
+            Err(SessionTrap::BadAmountCell(0))
+        );
+    }
+
+    #[test]
+    fn interval_operations_bound_their_index_and_order() {
+        let owner = Address([9; 16]);
+        let collection = RoleId(4);
+        let mut store = MemoryStore::new();
+        store.entry_write(owner, collection, 10, vec![1]).unwrap();
+        store.clear_log();
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 5,
+                hi: 15,
+                cap: 4,
+            },
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(store, &set);
+
+        assert_eq!(session.range_count(0), Ok(1));
+        assert_eq!(session.range_entry(0, 0), Ok(vec![1]));
+        assert_eq!(
+            session.range_entry(0, 1),
+            Err(SessionTrap::IndexOutOfBounds { index: 1, count: 1 })
+        );
+        assert_eq!(
+            session.range_remove(0, 9),
+            Err(SessionTrap::IndexOutOfBounds { index: 9, count: 1 })
+        );
+        // An insert must land inside the declared interval, and its order
+        // key is an amount cell like any other.
+        assert_eq!(
+            session.range_insert(0, &encode_amount(99), vec![2]),
+            Err(SessionTrap::OrderOutsideInterval)
+        );
+        assert_eq!(
+            session.range_insert(0, &[0, 1], vec![2]),
+            Err(SessionTrap::BadOrderCell(2))
+        );
+        assert_eq!(session.range_insert(0, &encode_amount(12), vec![2]), Ok(()));
+        assert_eq!(session.range_count(0), Ok(2));
+    }
+
+    #[test]
+    fn a_read_interval_refuses_every_mutation() {
+        let owner = Address([9; 16]);
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection: RoleId(4),
+                lo: 0,
+                hi: 10,
+                cap: 4,
+            },
+            mode: Mode::Read,
+        }]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        assert_eq!(
+            session.range_set(0, 0, vec![1]),
+            Err(SessionTrap::WrongMode(0))
+        );
+        assert_eq!(
+            session.range_insert(0, &encode_amount(1), vec![1]),
+            Err(SessionTrap::WrongMode(0))
+        );
+        assert_eq!(session.range_remove(0, 0), Err(SessionTrap::WrongMode(0)));
+    }
+
+    #[test]
+    fn one_transaction_cannot_hold_both_absolute_and_commutative_modes() {
+        let cell = key(3);
+        let set = declared(&[
+            Effect {
+                target: EffectTarget::Point(cell),
+                mode: Mode::Write,
+            },
+            Effect {
+                target: EffectTarget::Point(cell),
+                mode: Mode::Delta,
+            },
+        ]);
+        assert_eq!(
+            KernelSession::materialize(
+                OverlayStore::new(Arc::new(MemoryStore::new())),
+                &set,
+                tx(1),
+                env(),
+                hash,
+            )
+            .expect_err("absolute and movement semantics cannot compose"),
+            MaterializeError::SelfConflicting(cell)
+        );
+    }
+
+    #[test]
+    fn a_mismatched_held_reservation_is_surfaced_not_adopted() {
+        let vault = key(4);
+        let mut store = MemoryStore::new();
+        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        // A batch judge already holds a different amount for this
+        // transaction than the declaration asks for.
+        store.judge_and_hold(&[(tx(1), vault, 40)]).unwrap();
+        store.clear_log();
+        let set = declared(&[Effect {
+            target: EffectTarget::Point(vault),
+            mode: Mode::Reserve { amount: 50 },
+        }]);
+        assert_eq!(
+            KernelSession::materialize(
+                OverlayStore::new(Arc::new(store)),
+                &set,
+                tx(1),
+                env(),
+                hash,
+            )
+            .expect_err("a bookkeeping mismatch is a defect, not an adoption"),
+            MaterializeError::HeldMismatch(vault)
+        );
+    }
+
+    #[test]
+    fn a_mode_the_world_cannot_hand_out_refuses_at_materialization() {
+        // A snapshot of a collection interval has no capability form.
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner: Address([9; 16]),
+                collection: RoleId(4),
+                lo: 0,
+                hi: 1,
+                cap: 1,
+            },
+            mode: Mode::Snapshot {
+                window: Window::Bounded(4),
+            },
+        }]);
+        assert!(matches!(
+            KernelSession::materialize(
+                OverlayStore::new(Arc::new(MemoryStore::new())),
+                &set,
+                tx(1),
+                env(),
+                hash,
+            ),
+            Err(MaterializeError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn the_environment_reaches_the_guest_unchanged() {
+        let session = session_over(MemoryStore::new(), &EffectSet::new());
+        assert_eq!(session.clock_ms(), env().clock_ms);
+        assert_eq!(session.randomness(), env().randomness);
+        assert_eq!(session.hash(&[1, 2, 3])[0], 3);
+        assert!(session.capabilities().is_empty());
+    }
+
+    #[test]
+    fn judging_refuses_the_same_pair_twice() {
+        let vault = key(5);
+        let mut store = MemoryStore::new();
+        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        assert_eq!(
+            store.judge_and_hold(&[(tx(1), vault, 10), (tx(1), vault, 20)]),
+            Err(StoreError::DuplicateRequest {
+                tx: tx(1),
+                key: vault,
+            })
+        );
+        let mut overlay = OverlayStore::new(Arc::new(store));
+        assert_eq!(
+            overlay.judge_and_hold(&[(tx(1), vault, 10), (tx(1), vault, 20)]),
+            Err(StoreError::DuplicateRequest {
+                tx: tx(1),
+                key: vault,
+            })
+        );
+    }
+}
