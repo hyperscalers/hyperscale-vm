@@ -1,0 +1,7 @@
+# The guest artifacts are consensus inputs: their bytes are what deploys,
+# and the deploy-time stack bound is proven against the code this exact
+# toolchain emits. Upgrades are deliberate events, never drift.
+[toolchain]
+channel = "nightly-2026-06-08"
+components = ["rust-src"]
+targets = ["wasm32-unknown-unknown"]

@@ -244,3 +244,40 @@ fn rejects_component_types_outside_the_vocabulary() {
     let bytes = parse_str(r"(component (type (list u32)))").expect("fixture must parse");
     assert_rejected(&bytes, "list<u8>");
 }
+
+#[test]
+fn rejects_a_cyclic_call_graph() {
+    // Recursion leaves the native stack unbounded, and the engine has no
+    // wasm-level depth counter to trap on, so the bound is proven at
+    // deploy or not at all.
+    let bytes = component_with_core("(func (result i32) call 0)");
+    assert_rejected(&bytes, "cyclic");
+
+    let bytes = component_with_core("(func (result i32) call 1) (func (result i32) call 0)");
+    assert_rejected(&bytes, "cyclic");
+}
+
+#[test]
+fn rejects_a_call_chain_that_will_not_fit() {
+    // Each frame carries 512 locals; enough of them in a row and the
+    // chain no longer fits the stack the profile reserves for it.
+    let locals = "(local i64) ".repeat(512);
+    let chain: String = (0..16)
+        .map(|i| format!("(func {locals} call {})", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let bytes = component_with_core(&format!("{chain}\n(func)"));
+    assert_rejected(&bytes, "call chain");
+}
+
+#[test]
+fn accepts_a_deep_but_light_chain() {
+    // Depth alone is not the bound — weight is. A long chain of small
+    // frames stays well inside it.
+    let chain: String = (0..64)
+        .map(|i| format!("(func call {})", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let bytes = component_with_core(&format!("{chain}\n(func)"));
+    validate_component(&bytes).expect("a light chain must be admitted");
+}

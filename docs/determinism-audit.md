@@ -51,6 +51,24 @@ divergence at any step is a release blocker, whichever side is wrong.
    deterministic under the profile (no time, no randomness, no
    address-dependent behavior observable in outputs). This is the step that
    keeps a Go GC or an embedded JS engine out until someone does the work.
+5. **Acyclic prelude.** The toolchain's emitted code — not just the
+   contract's — must leave the core call graph acyclic, or the deploy-time
+   stack bound cannot be proven and the artifact is inadmissible. For Rust
+   this is one obligation: build without panic-formatting machinery
+   (`-Zbuild-std` with `panic=immediate-abort`), since `core::fmt` and
+   `std::panicking` are the only things in a guest that recurse. Measured
+   on the account guest: 15 back edges with the default prelude, none
+   without it.
+
+## The frame model is measured, not assumed
+
+The deploy-time bound converts a function's slot count into native bytes,
+which is a codegen detail. `spike_frame_size` measures it — recurse to
+exhaustion, divide the stack budget by the depth reached — across every
+backend the matrix admits, and asserts the profile's model over-approximates
+what it observes. Cranelift costs 48 bytes plus 8 per slot; Winch 64 plus 8.
+The model charges 256 plus 32, a margin of at least four. A codegen change
+that erodes the margin fails the spike before it reaches consensus.
 
 ## For `vm-ref` changes
 

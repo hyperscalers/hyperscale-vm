@@ -5,6 +5,7 @@
 //! metering layer (engine fuel plus the canonical-ABI copy supplement).
 
 pub mod engine;
+pub mod frames;
 pub mod gas;
 pub mod profile;
 pub mod validator;

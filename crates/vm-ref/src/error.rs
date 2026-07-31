@@ -56,8 +56,13 @@ pub enum Trap {
     /// `call_indirect` signature mismatch.
     #[error("indirect call signature mismatch")]
     BadSignature,
-    /// The interpreter's own call-depth bound; excluded from differential
-    /// comparison until the deploy-time stack bounds land.
+    /// The interpreter's own call-depth bound.
+    ///
+    /// Unreachable for an artifact the profile admits: the deploy-time
+    /// frame bound proves the heaviest call chain fits the native stack,
+    /// and this counter sits far above it. The differential lanes treat
+    /// reaching it as a failure of that bound rather than as a divergence
+    /// to excuse.
     #[error("call depth exhausted")]
     CallDepthExhausted,
     /// The fuel budget ran out. Charged on the spec schedule and tested

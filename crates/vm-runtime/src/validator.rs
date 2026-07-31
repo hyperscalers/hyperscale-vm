@@ -16,6 +16,7 @@ use wasmparser::{
     ValType, Validator, WasmFeatures,
 };
 
+use crate::frames::check_stack_bounds;
 use crate::profile;
 
 /// A profile violation. Every variant is a deterministic deploy-time verdict.
@@ -55,7 +56,7 @@ pub enum ProfileError {
 /// parser bump turns on by default stays out until deliberately added here.
 /// Bulk memory's table operations are the one finer-than-a-feature
 /// exclusion, rejected in the operator walk.
-fn profile_features() -> WasmFeatures {
+pub(crate) fn profile_features() -> WasmFeatures {
     WasmFeatures::MUTABLE_GLOBAL
         | WasmFeatures::SATURATING_FLOAT_TO_INT
         | WasmFeatures::SIGN_EXTENSION
@@ -163,7 +164,8 @@ pub fn validate_core_module(bytes: &[u8]) -> Result<(), ProfileError> {
     Validator::new_with_features(profile_features())
         .validate_all(bytes)
         .map_err(|e| ProfileError::Feature(e.to_string()))?;
-    core_structural_pass(bytes)
+    core_structural_pass(bytes)?;
+    check_stack_bounds(bytes)
 }
 
 /// Gates component imports to the kernel world and tracks the type-index
@@ -206,7 +208,9 @@ fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
                         profile::MAX_CORE_MODULES
                     )));
                 }
-                core_structural_pass(&bytes[unchecked_range])?;
+                let core = &bytes[unchecked_range];
+                core_structural_pass(core)?;
+                check_stack_bounds(core)?;
             }
             Payload::ComponentSection { .. } => return Err(ProfileError::NestedComponent),
             Payload::ComponentTypeSection(reader) => {

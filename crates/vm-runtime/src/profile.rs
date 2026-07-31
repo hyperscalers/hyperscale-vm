@@ -54,6 +54,35 @@ pub const MAX_GLOBALS_PER_MODULE: usize = 1_000;
 /// Host stack budget for guest execution, in bytes.
 pub const MAX_WASM_STACK_BYTES: usize = 512 * 1024;
 
+/// Native frame bytes charged per value slot — parameters, declared
+/// locals, and operands live across a call.
+///
+/// Measured, not assumed: `spike_frame_size` recurses to exhaustion and
+/// divides the stack budget by the depth reached. Cranelift costs exactly
+/// eight bytes per slot over a forty-eight byte fixed frame; the model
+/// carries margin over that so a codegen change moves the spike before it
+/// moves consensus.
+pub const STACK_BYTES_PER_SLOT: usize = 32;
+
+/// Native frame bytes charged before any slot: saved registers, the
+/// return address, and alignment.
+pub const STACK_FRAME_OVERHEAD_BYTES: usize = 256;
+
+/// Maximum value slots one frame may need: parameters, declared locals,
+/// and the deepest operand stack together.
+pub const MAX_SLOTS_PER_FRAME: usize = MAX_PARAMS_PER_FUNCTION + MAX_LOCALS_PER_FUNCTION + 256;
+
+/// Native stack reserved for host frames at the canonical-ABI boundary.
+pub const HOST_FRAME_RESERVE_BYTES: usize = 64 * 1024;
+
+/// What one guest call chain may consume.
+///
+/// Halved because lowering re-enters the guest: a host function calls the
+/// guest's realloc while the original chain is still live, so two chains
+/// can stand at once. Realloc is ordinary guest code and reaches no host
+/// function, so one level of re-entry is the whole of it.
+pub const MAX_CALL_CHAIN_BYTES: usize = (MAX_WASM_STACK_BYTES - HOST_FRAME_RESERVE_BYTES) / 2;
+
 /// The single import package a contract world may name.
 ///
 /// Component import names follow the `package:namespace/interface` grammar,

@@ -32,6 +32,12 @@ pub mod fixtures {
     /// Builds a `guests/<name>` crate with the pinned toolchain and
     /// returns the componentized artifact.
     ///
+    /// The environment is scrubbed of the caller's toolchain selection:
+    /// a `cargo` spawned from inside a cargo run inherits
+    /// `RUSTUP_TOOLCHAIN`, which overrides `guests/rust-toolchain.toml`
+    /// and would build a consensus artifact with whatever the host
+    /// happens to have. The pin is only a pin if it wins.
+    ///
     /// # Errors
     ///
     /// Fails if the guest build or componentization fails.
@@ -40,6 +46,11 @@ pub mod fixtures {
         let status = Command::new("cargo")
             .args(["build", "--release", "--target", "wasm32-unknown-unknown"])
             .current_dir(&guest_dir)
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .env_remove("CARGO")
+            .env_remove("CARGO_HOME")
+            .env_remove("RUSTC")
+            .env_remove("RUSTUP_HOME")
             .status()
             .context("spawn cargo for the guest build")?;
         ensure!(status.success(), "guest build failed");

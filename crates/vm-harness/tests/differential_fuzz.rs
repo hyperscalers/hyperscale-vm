@@ -9,6 +9,10 @@
 //! validator has to have rejected it too, which is the same implication
 //! `differential_admission` asserts over a wider corpus.
 //!
+//! Nor is stack exhaustion masked any longer. The deploy-time frame bound
+//! makes it unreachable for an admitted artifact, so either side reaching
+//! it is a failure of that bound rather than a case to skip.
+//!
 //! The corpus is seeded and deterministic: every run generates the identical
 //! module set.
 
@@ -19,7 +23,7 @@ use hyperscale_vm_runtime::{blessed_engine, validate_core_module};
 use wasm_smith::{Config, Module as SmithModule};
 use wasmtime::{Engine, Instance, Module, Result, Store, Trap, Val};
 
-const SEEDS: u64 = 1_024;
+const SEEDS: u64 = 3_072;
 const ENTROPY_BYTES: usize = 4096;
 const WASMTIME_FUEL: u64 = 5_000_000;
 const REF_STEPS: u64 = 5_000_000;
@@ -147,7 +151,10 @@ fn wasmtime_outcome(
         Err(e) => (
             match e.downcast_ref::<Trap>() {
                 Some(Trap::OutOfFuel) => Outcome::OutOfFuel,
-                Some(Trap::StackOverflow) => Outcome::Exhausted,
+                Some(Trap::StackOverflow) => panic!(
+                    "an admitted module overflowed the engine's stack; the deploy-time \
+                     frame bound is not holding"
+                ),
                 Some(t) => map_trap(*t).map_or_else(
                     || Outcome::Other(format!("unmapped trap {t:?}")),
                     Outcome::Trap,
@@ -173,9 +180,11 @@ fn ref_outcome(module: &RefModule, export: &str, args: &[Value]) -> (Outcome, Op
             (Outcome::Values(values), Some(fuel))
         }
         Ok(Err(RefTrap::OutOfFuel)) => (Outcome::OutOfFuel, None),
-        Ok(Err(RefTrap::StepBudgetExhausted | RefTrap::CallDepthExhausted)) => {
-            (Outcome::Exhausted, None)
-        }
+        Ok(Err(RefTrap::CallDepthExhausted)) => panic!(
+            "an admitted module exhausted the spec's call depth; the deploy-time frame \
+             bound is not holding"
+        ),
+        Ok(Err(RefTrap::StepBudgetExhausted)) => (Outcome::Exhausted, None),
         Ok(Err(trap)) => (Outcome::Trap(trap), None),
         Err(e) => (Outcome::Other(format!("{e:#}")), None),
     }
