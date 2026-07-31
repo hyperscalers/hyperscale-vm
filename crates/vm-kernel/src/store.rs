@@ -519,6 +519,13 @@ impl MemoryStore {
     /// Release a held reservation without touching the cell. Returns the
     /// released amount.
     ///
+    /// Releasing records no access, and neither does [`Self::settle`],
+    /// while [`Self::judge_and_hold`] does. The trace exists to catch a
+    /// guest touching state its transaction never declared, and taking the
+    /// hold is the declaration being exercised; disposing of it afterwards
+    /// is the batch's own bookkeeping, running when no guest is left to
+    /// attribute it to.
+    ///
     /// # Errors
     ///
     /// [`StoreError::MissingReservation`] if `tx` holds nothing on `key`.

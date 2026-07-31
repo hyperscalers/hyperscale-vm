@@ -489,6 +489,22 @@ fn screen_reserve_targets<'batch>(
 /// Input order is immaterial: the batch is judged, grouped, executed, and
 /// applied in canonical transaction-hash order.
 ///
+/// # Declaration well-formedness
+///
+/// The executor judges exactly two things about the declarations it is
+/// given, and both are batch-level facts nothing else can see: that no
+/// transaction hash repeats, and that every nullifier a transaction
+/// commits is declared as an exclusive write. Both fail the batch, because
+/// neither transaction alone could have been judged on it.
+///
+/// Everything else about a declared set belongs to whoever built it —
+/// that its modes compose, that its targets can carry them, that it is
+/// what routing derived from the signed transaction — and is reported per
+/// transaction: a set that cannot materialize aborts its own transaction
+/// as a user error and the batch carries on without it. A batch-level
+/// refusal discards other senders' work, so it stays reserved for what a
+/// single transaction is not enough to decide.
+///
 /// # Errors
 ///
 /// Any [`BatchError`] — all are kernel-level defects; per-transaction
@@ -714,14 +730,127 @@ fn apply_receipts(
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{
-        Address, Effect, EffectTarget, Mode, RoleId, TestHasher, child_key,
-    };
+    use std::collections::BTreeMap;
 
-    use super::{Outcome, materialize_abort};
-    use crate::modes::ModeError;
+    use hyperscale_vm_effects::{
+        Address, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId, TestHasher, Window,
+        child_key,
+    };
+    use proptest::collection::vec as prop_vec;
+    use proptest::prelude::{Strategy, prop_oneof, proptest};
+
+    use super::{BatchTx, Outcome, conflict_groups, materialize_abort, merge, root};
+    use crate::conflict::conflicts;
+    use crate::modes::{ModeError, TxHash};
     use crate::session::MaterializeError;
     use crate::store::StoreError;
+
+    const BOOK: Address = Address([0x77; 16]);
+    const ASKS: RoleId = RoleId(4);
+
+    const fn nth_mode(index: u8) -> Mode {
+        match index {
+            0 => Mode::Read,
+            1 => Mode::Snapshot {
+                window: Window::Bounded(4),
+            },
+            2 => Mode::Delta,
+            3 => Mode::Reserve { amount: 1 },
+            _ => Mode::Write,
+        }
+    }
+
+    /// One generated declaration, over a key space small enough that
+    /// transactions actually collide.
+    fn arb_effect() -> impl Strategy<Value = Effect> {
+        prop_oneof![
+            (0u8..4, 0u8..5).prop_map(|(key, mode)| Effect {
+                target: EffectTarget::Point(child_key(
+                    &TestHasher,
+                    Address([0xC0 + key; 16]),
+                    RoleId(1),
+                    &[],
+                )),
+                mode: nth_mode(mode),
+            }),
+            (0u128..6, 0u8..2).prop_map(|(order, write)| Effect {
+                target: EffectTarget::Entry {
+                    owner: BOOK,
+                    collection: ASKS,
+                    order,
+                },
+                mode: if write == 0 { Mode::Read } else { Mode::Write },
+            }),
+            (0u128..6, 0u128..6, 0u8..2).prop_map(|(a, b, write)| Effect {
+                target: EffectTarget::Range {
+                    owner: BOOK,
+                    collection: ASKS,
+                    lo: a.min(b),
+                    hi: a.max(b),
+                    cap: 4,
+                },
+                mode: if write == 0 { Mode::Read } else { Mode::Write },
+            }),
+        ]
+    }
+
+    /// The conflict relation's components, computed the slow way: every
+    /// pair of transactions, every pair of their effects.
+    fn pairwise_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
+        let mut component: Vec<usize> = (0..batch.len()).collect();
+        for (left, first) in batch.iter().enumerate() {
+            for (right, second) in batch.iter().enumerate().skip(left + 1) {
+                let clashes = first
+                    .declared
+                    .iter()
+                    .any(|a| second.declared.iter().any(|b| conflicts(&a, &b)));
+                if clashes {
+                    merge(&mut component, left, right);
+                }
+            }
+        }
+        let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for index in 0..batch.len() {
+            groups
+                .entry(root(&mut component, index))
+                .or_default()
+                .push(index);
+        }
+        groups.into_values().collect()
+    }
+
+    proptest! {
+        /// The bucketed grouping is an optimisation of the conflict
+        /// relation, and its correctness rests on three facts about the
+        /// mode lattice: reads are internally compatible, the commutative
+        /// modes are, and a write conflicts with everything but a snapshot.
+        /// Those facts live in the lattice, where the optimisation cannot
+        /// see them — so rather than argue the two agree, they are run
+        /// against each other.
+        #[test]
+        fn bucketed_grouping_agrees_with_the_pairwise_relation(
+            declarations in prop_vec(prop_vec(arb_effect(), 0..4), 1..6),
+        ) {
+            let batch: Vec<BatchTx> = declarations
+                .iter()
+                .enumerate()
+                .map(|(index, effects)| {
+                    let mut declared = EffectSet::new();
+                    for effect in effects {
+                        declared.insert(*effect).expect("unit reserve amounts");
+                    }
+                    BatchTx::new(
+                        TxHash(Hash32([u8::try_from(index).expect("small batch"); 32])),
+                        declared,
+                        0,
+                        [0; 32],
+                    )
+                })
+                .collect();
+            let entries: Vec<&BatchTx> = batch.iter().collect();
+            assert_eq!(conflict_groups(&entries), pairwise_groups(&entries));
+        }
+    }
 
     /// Materialization failures split by whose fault they are.
     ///
