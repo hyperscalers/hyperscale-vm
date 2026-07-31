@@ -19,6 +19,21 @@ use crate::types::{
 /// signature evaluation O(manifest size) whatever the metadata declares.
 pub const MAX_FOREACH_ELEMENTS: usize = 1024;
 
+/// The bound on expression nesting. The evaluator recurses per subterm, so
+/// this is what keeps a pathological signature a deterministic rejection
+/// rather than a native stack abort.
+pub const MAX_EXPR_DEPTH: usize = 32;
+
+/// The bound on `for-each` nesting within one signature.
+pub const MAX_CLAUSE_DEPTH: usize = 4;
+
+/// The bound on the effects one signature evaluation may declare.
+///
+/// Width and nesting compose multiplicatively — nested `for-each` clauses
+/// at [`MAX_FOREACH_ELEMENTS`] each reach `1024^depth` — so the depth bound
+/// alone is not a bound on work. This is.
+pub const MAX_EFFECTS_PER_SIGNATURE: usize = 4096;
+
 /// An expression over a method's inputs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
@@ -193,6 +208,15 @@ pub enum EvalError {
         /// The collection's length.
         len: usize,
     },
+    /// An expression nested past [`MAX_EXPR_DEPTH`].
+    #[error("expression nests deeper than {MAX_EXPR_DEPTH}")]
+    ExpressionTooDeep,
+    /// `for-each` clauses nested past [`MAX_CLAUSE_DEPTH`].
+    #[error("for-each clauses nest deeper than {MAX_CLAUSE_DEPTH}")]
+    ClausesTooDeep,
+    /// A signature declaring more than [`MAX_EFFECTS_PER_SIGNATURE`].
+    #[error("signature declares more than {MAX_EFFECTS_PER_SIGNATURE} effects")]
+    TooManyEffects,
     /// A range whose lower bound exceeds its upper bound.
     #[error("range bounds inverted: lo > hi")]
     InvalidRange,
@@ -298,8 +322,24 @@ pub fn evaluate_effects(
 ) -> Result<EffectSet, EvalError> {
     let mut set = EffectSet::new();
     let mut bindings = Vec::new();
-    eval_clauses(clauses, inputs, hasher, &mut bindings, &mut set)?;
+    let mut budget = Budget::default();
+    eval_clauses(
+        clauses,
+        inputs,
+        hasher,
+        &mut bindings,
+        &mut set,
+        &mut budget,
+    )?;
     Ok(set)
+}
+
+/// One signature evaluation's structural allowance: how deep the clause
+/// nesting has gone and how much it has declared so far.
+#[derive(Default)]
+struct Budget {
+    clause_depth: usize,
+    declared: usize,
 }
 
 /// Evaluate one expression with no enclosing `for-each` bindings.
@@ -313,7 +353,7 @@ pub fn evaluate_expr(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
 ) -> Result<Value, EvalError> {
-    eval_expr(expr, inputs, hasher, &[])
+    eval_expr(expr, inputs, hasher, &[], 0)
 }
 
 fn eval_clauses(
@@ -322,25 +362,35 @@ fn eval_clauses(
     hasher: &dyn Hasher,
     bindings: &mut Vec<Value>,
     out: &mut EffectSet,
+    budget: &mut Budget,
 ) -> Result<(), EvalError> {
+    if budget.clause_depth > MAX_CLAUSE_DEPTH {
+        return Err(EvalError::ClausesTooDeep);
+    }
     for clause in clauses {
         match clause {
             Clause::Effect { target, mode } => {
                 let target = eval_target(target, inputs, hasher, bindings)?;
                 let mode = eval_mode(mode, inputs, hasher, bindings)?;
+                budget.declared += 1;
+                if budget.declared > MAX_EFFECTS_PER_SIGNATURE {
+                    return Err(EvalError::TooManyEffects);
+                }
                 out.insert(Effect { target, mode })?;
             }
             Clause::ForEach { list, body } => {
-                let items = as_list(eval_expr(list, inputs, hasher, bindings)?)?;
+                let items = as_list(eval_expr(list, inputs, hasher, bindings, 0)?)?;
                 if items.len() > MAX_FOREACH_ELEMENTS {
                     return Err(EvalError::ForEachTooLong { len: items.len() });
                 }
+                budget.clause_depth += 1;
                 for item in items {
                     bindings.push(item);
-                    let result = eval_clauses(body, inputs, hasher, bindings, out);
+                    let result = eval_clauses(body, inputs, hasher, bindings, out, budget);
                     bindings.pop();
                     result?;
                 }
+                budget.clause_depth -= 1;
             }
         }
     }
@@ -355,7 +405,7 @@ fn eval_target(
 ) -> Result<EffectTarget, EvalError> {
     match target {
         TargetExpr::Point(expr) => {
-            let key = as_key(eval_expr(expr, inputs, hasher, bindings)?)?;
+            let key = as_key(eval_expr(expr, inputs, hasher, bindings, 0)?)?;
             Ok(EffectTarget::Point(key))
         }
         TargetExpr::Entry {
@@ -363,8 +413,8 @@ fn eval_target(
             collection,
             order,
         } => {
-            let owner = as_address(eval_expr(owner, inputs, hasher, bindings)?)?;
-            let order = as_u128(eval_expr(order, inputs, hasher, bindings)?)?;
+            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, 0)?)?;
+            let order = as_u128(eval_expr(order, inputs, hasher, bindings, 0)?)?;
             Ok(EffectTarget::Entry {
                 owner,
                 collection: *collection,
@@ -378,9 +428,9 @@ fn eval_target(
             hi,
             cap,
         } => {
-            let owner = as_address(eval_expr(owner, inputs, hasher, bindings)?)?;
-            let lo = as_u128(eval_expr(lo, inputs, hasher, bindings)?)?;
-            let hi = as_u128(eval_expr(hi, inputs, hasher, bindings)?)?;
+            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, 0)?)?;
+            let lo = as_u128(eval_expr(lo, inputs, hasher, bindings, 0)?)?;
+            let hi = as_u128(eval_expr(hi, inputs, hasher, bindings, 0)?)?;
             if lo > hi {
                 return Err(EvalError::InvalidRange);
             }
@@ -406,7 +456,7 @@ fn eval_mode(
         ModeExpr::Snapshot(window) => {
             let window = match window {
                 WindowExpr::Bounded(expr) => {
-                    Window::Bounded(as_u64(eval_expr(expr, inputs, hasher, bindings)?)?)
+                    Window::Bounded(as_u64(eval_expr(expr, inputs, hasher, bindings, 0)?)?)
                 }
                 WindowExpr::Unbounded => Window::Unbounded,
             };
@@ -414,7 +464,7 @@ fn eval_mode(
         }
         ModeExpr::Delta => Ok(Mode::Delta),
         ModeExpr::Reserve(expr) => {
-            let amount = as_u128(eval_expr(expr, inputs, hasher, bindings)?)?;
+            let amount = as_u128(eval_expr(expr, inputs, hasher, bindings, 0)?)?;
             Ok(Mode::Reserve { amount })
         }
         ModeExpr::Write => Ok(Mode::Write),
@@ -426,7 +476,12 @@ fn eval_expr(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
+    depth: usize,
 ) -> Result<Value, EvalError> {
+    if depth > MAX_EXPR_DEPTH {
+        return Err(EvalError::ExpressionTooDeep);
+    }
+    let deeper = depth + 1;
     match expr {
         Expr::Literal(value) => Ok(value.clone()),
         Expr::Arg(index) => indexed(inputs.args, *index)
@@ -443,7 +498,7 @@ fn eval_expr(
             .ok_or(EvalError::BindingOutOfRange(*index)),
         Expr::SelfAddr => Ok(Value::Address(inputs.self_addr)),
         Expr::Field(tuple, index) => {
-            let fields = as_tuple(eval_expr(tuple, inputs, hasher, bindings)?)?;
+            let fields = as_tuple(eval_expr(tuple, inputs, hasher, bindings, deeper)?)?;
             let arity = fields.len();
             indexed(&fields, *index)
                 .cloned()
@@ -452,7 +507,7 @@ fn eval_expr(
                     arity,
                 })
         }
-        Expr::ResourceOf(bucket) => match eval_expr(bucket, inputs, hasher, bindings)? {
+        Expr::ResourceOf(bucket) => match eval_expr(bucket, inputs, hasher, bindings, deeper)? {
             Value::Bucket { resource } => Ok(Value::Address(resource)),
             other => Err(EvalError::TypeMismatch {
                 expected: "bucket",
@@ -460,8 +515,8 @@ fn eval_expr(
             }),
         },
         Expr::Lookup { map, key } => {
-            let pairs = as_list(eval_expr(map, inputs, hasher, bindings)?)?;
-            let key = eval_expr(key, inputs, hasher, bindings)?;
+            let pairs = as_list(eval_expr(map, inputs, hasher, bindings, deeper)?)?;
+            let key = eval_expr(key, inputs, hasher, bindings, deeper)?;
             for pair in pairs {
                 let Value::Tuple(fields) = pair else {
                     return Err(EvalError::LookupNotPairs);
@@ -480,10 +535,10 @@ fn eval_expr(
             role,
             material,
         } => {
-            let owner = as_address(eval_expr(owner, inputs, hasher, bindings)?)?;
+            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, deeper)?)?;
             let mut encoded = Vec::with_capacity(material.len());
             for expr in material {
-                encoded.push(eval_expr(expr, inputs, hasher, bindings)?.canonical_bytes());
+                encoded.push(eval_expr(expr, inputs, hasher, bindings, deeper)?.canonical_bytes());
             }
             Ok(Value::Key(child_key(hasher, owner, *role, &encoded)))
         }
@@ -505,8 +560,8 @@ fn eval_expr(
             ),
         })),
         Expr::Pack { hi, lo } => {
-            let hi = as_u64(eval_expr(hi, inputs, hasher, bindings)?)?;
-            let lo = as_u64(eval_expr(lo, inputs, hasher, bindings)?)?;
+            let hi = as_u64(eval_expr(hi, inputs, hasher, bindings, deeper)?)?;
+            let lo = as_u64(eval_expr(lo, inputs, hasher, bindings, deeper)?)?;
             Ok(Value::U128((u128::from(hi) << 64) | u128::from(lo)))
         }
     }
@@ -582,8 +637,9 @@ fn as_list(value: Value) -> Result<Vec<Value>, EvalError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Clause, EvalError, EvalInputs, Expr, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr,
-        WindowExpr, evaluate_effects, evaluate_expr, fresh_id, fresh_local,
+        Clause, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
+        MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr, evaluate_effects, evaluate_expr,
+        fresh_id, fresh_local,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::manifest::ManifestHash;
@@ -703,6 +759,76 @@ mod tests {
                 mode: Mode::Delta,
             }));
         }
+    }
+
+    /// A left-nested projection chain `Field(Field(…Arg(0)…))`.
+    fn nested_projection(depth: usize) -> Expr {
+        let mut expr = Expr::Arg(0);
+        for _ in 0..depth {
+            expr = Expr::Field(Box::new(expr), 0);
+        }
+        expr
+    }
+
+    #[test]
+    fn expression_nesting_is_bounded() {
+        // A tuple with exactly one layer per admitted projection, so what
+        // rejects the deeper expression is the depth bound and not a type
+        // mismatch at the bottom.
+        let mut value = Value::U64(7);
+        for _ in 0..MAX_EXPR_DEPTH {
+            value = Value::Tuple(vec![value]);
+        }
+        let args = [value];
+        let ins = inputs(&args, &[]);
+
+        assert_eq!(
+            evaluate_expr(&nested_projection(MAX_EXPR_DEPTH), &ins, &TestHasher),
+            Ok(Value::U64(7))
+        );
+        assert_eq!(
+            evaluate_expr(&nested_projection(MAX_EXPR_DEPTH + 1), &ins, &TestHasher),
+            Err(EvalError::ExpressionTooDeep)
+        );
+    }
+
+    #[test]
+    fn clause_nesting_and_declared_effects_are_bounded() {
+        // One element per level, so nesting is what the bound catches.
+        let args = [Value::List(vec![Value::U64(0)])];
+        let ins = inputs(&args, &[]);
+        let effect = Clause::Effect {
+            target: TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                role: RoleId(1),
+                material: vec![],
+            }),
+            mode: ModeExpr::Read,
+        };
+        let nest = |depth: usize| {
+            let mut clause = effect.clone();
+            for _ in 0..depth {
+                clause = Clause::ForEach {
+                    list: Expr::Arg(0),
+                    body: vec![clause],
+                };
+            }
+            clause
+        };
+        assert!(evaluate_effects(&[nest(MAX_CLAUSE_DEPTH)], &ins, &TestHasher).is_ok());
+        assert_eq!(
+            evaluate_effects(&[nest(MAX_CLAUSE_DEPTH + 1)], &ins, &TestHasher),
+            Err(EvalError::ClausesTooDeep)
+        );
+
+        // Width within the bound: two levels of 1024 declare a million
+        // effects from a signature that says nothing about its own cost.
+        let wide = [Value::List(vec![Value::U64(0); MAX_FOREACH_ELEMENTS])];
+        let wide_ins = inputs(&wide, &[]);
+        assert_eq!(
+            evaluate_effects(&[nest(2)], &wide_ins, &TestHasher),
+            Err(EvalError::TooManyEffects)
+        );
     }
 
     #[test]

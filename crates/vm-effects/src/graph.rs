@@ -15,7 +15,7 @@ use crate::envelope::{IntentView, admit_intents};
 use crate::hash::Hasher;
 use crate::manifest::{Manifest, ManifestHash};
 use crate::metadata::{InstanceRegistry, MetadataCache, PackageHash};
-use crate::types::{Address, Value};
+use crate::types::{Address, MAX_VALUE_DEPTH, Value};
 
 /// One produced value edge: the `output`-th edge of the `producer` node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -335,6 +335,35 @@ pub enum AdmissionError {
         #[source]
         source: EvalError,
     },
+    /// A literal nested past [`MAX_VALUE_DEPTH`].
+    #[error("node {node} argument {param}: literal nests deeper than {MAX_VALUE_DEPTH}")]
+    ValueTooDeep {
+        /// The offending node, in the intent's own numbering.
+        node: u32,
+        /// The argument position.
+        param: u32,
+    },
+}
+
+/// Reject literals nested past [`MAX_VALUE_DEPTH`].
+///
+/// Runs before the graph hash, not after: the hash feeds on literal bytes,
+/// so bounding them first is what keeps admission's one unvalidated step
+/// over bounded input.
+pub(crate) fn check_value_depth(graph: &ManifestGraph) -> Result<(), AdmissionError> {
+    for (index, node) in graph.nodes.iter().enumerate() {
+        for (position, arg) in node.args.iter().enumerate() {
+            if let GraphArg::Literal(value) = arg
+                && value.depth() > MAX_VALUE_DEPTH
+            {
+                return Err(AdmissionError::ValueTooDeep {
+                    node: u32::try_from(index).unwrap_or(u32::MAX),
+                    param: u32::try_from(position).unwrap_or(u32::MAX),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// An admitted transaction: the routing manifest plus the identity that
@@ -367,6 +396,7 @@ pub fn admit(
     instances: &InstanceRegistry,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
+    check_value_depth(graph)?;
     let identity = graph.hash(hasher);
     let manifest = admit_intents(
         &[IntentView {

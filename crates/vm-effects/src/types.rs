@@ -86,6 +86,15 @@ pub fn child_key(
     }
 }
 
+/// The bound on a value's nesting depth.
+///
+/// Admission rejects a deeper literal before it reaches the manifest hash.
+/// A wire decoder is expected to bound nesting too — a value deep enough
+/// to exhaust the native stack in `Clone` or `Drop` never reaches this
+/// crate — and this bound is what makes a decoder that does not agree a
+/// deterministic rejection rather than a divergence.
+pub const MAX_VALUE_DEPTH: usize = 16;
+
 /// A typed value the DSL evaluates over: manifest literals, edge
 /// projections, instance configuration fields, and everything derivable
 /// from them.
@@ -132,56 +141,72 @@ impl Value {
     /// A canonical, unambiguous byte form: the hashing feed for
     /// child-address material and manifest identity. Deliberately not a
     /// wire format.
+    ///
+    /// The encoding walks an explicit stack rather than the native one, so
+    /// hashing a value of any nesting depth is a bounded computation — the
+    /// manifest hash is taken before admission has judged anything, and an
+    /// abort there would be a verdict no replica could reproduce.
     #[must_use]
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        self.write_canonical(&mut out);
-        out
-    }
-
-    fn write_canonical(&self, out: &mut Vec<u8>) {
-        match self {
-            Self::U64(v) => {
-                out.push(1);
-                out.extend(v.to_le_bytes());
-            }
-            Self::U128(v) => {
-                out.push(2);
-                out.extend(v.to_le_bytes());
-            }
-            Self::Bytes(bytes) => {
-                out.push(3);
-                out.extend((bytes.len() as u64).to_le_bytes());
-                out.extend(bytes);
-            }
-            Self::Address(addr) => {
-                out.push(4);
-                out.extend(addr.0);
-            }
-            Self::Key(key) => {
-                out.push(5);
-                out.extend(key.owner.0);
-                out.extend(key.local.0);
-            }
-            Self::Bucket { resource } => {
-                out.push(6);
-                out.extend(resource.0);
-            }
-            Self::Tuple(values) => {
-                out.push(7);
-                out.extend((values.len() as u64).to_le_bytes());
-                for value in values {
-                    value.write_canonical(out);
+        let mut stack: Vec<&Self> = vec![self];
+        while let Some(value) = stack.pop() {
+            match value {
+                Self::U64(v) => {
+                    out.push(1);
+                    out.extend(v.to_le_bytes());
                 }
-            }
-            Self::List(values) => {
-                out.push(8);
-                out.extend((values.len() as u64).to_le_bytes());
-                for value in values {
-                    value.write_canonical(out);
+                Self::U128(v) => {
+                    out.push(2);
+                    out.extend(v.to_le_bytes());
+                }
+                Self::Bytes(bytes) => {
+                    out.push(3);
+                    out.extend((bytes.len() as u64).to_le_bytes());
+                    out.extend(bytes);
+                }
+                Self::Address(addr) => {
+                    out.push(4);
+                    out.extend(addr.0);
+                }
+                Self::Key(key) => {
+                    out.push(5);
+                    out.extend(key.owner.0);
+                    out.extend(key.local.0);
+                }
+                Self::Bucket { resource } => {
+                    out.push(6);
+                    out.extend(resource.0);
+                }
+                Self::Tuple(values) => {
+                    out.push(7);
+                    out.extend((values.len() as u64).to_le_bytes());
+                    stack.extend(values.iter().rev());
+                }
+                Self::List(values) => {
+                    out.push(8);
+                    out.extend((values.len() as u64).to_le_bytes());
+                    stack.extend(values.iter().rev());
                 }
             }
         }
+        out
+    }
+
+    /// The value's nesting depth: a scalar is one, a tuple or list one more
+    /// than its deepest element. Measured over an explicit stack, for the
+    /// same reason the encoding is.
+    #[must_use]
+    pub fn depth(&self) -> usize {
+        let mut deepest = 0;
+        let mut stack: Vec<(&Self, usize)> = vec![(self, 1)];
+        while let Some((value, depth)) = stack.pop() {
+            deepest = deepest.max(depth);
+            if let Self::Tuple(values) | Self::List(values) = value {
+                stack.extend(values.iter().map(|child| (child, depth + 1)));
+            }
+        }
+        deepest
     }
 }
 
@@ -420,7 +445,8 @@ impl EffectSet {
 #[cfg(test)]
 mod tests {
     use super::{
-        Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, child_key, compatible,
+        Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, Value, child_key,
+        compatible,
     };
     use crate::hash::TestHasher;
 
@@ -441,6 +467,37 @@ mod tests {
                 assert_eq!(compatible(a, b), compatible(b, a), "symmetry {a:?}/{b:?}");
             }
         }
+    }
+
+    #[test]
+    fn canonical_encoding_walks_an_explicit_stack() {
+        /// A depth the native stack would not survive.
+        const DEEP: usize = 100_000;
+
+        // Preorder, unchanged by the walk: tag, element count, then the
+        // elements in order.
+        let value = Value::Tuple(vec![Value::U64(1), Value::List(vec![Value::U64(2)])]);
+        let mut expected = vec![7u8];
+        expected.extend(2u64.to_le_bytes());
+        expected.push(1);
+        expected.extend(1u64.to_le_bytes());
+        expected.push(8);
+        expected.extend(1u64.to_le_bytes());
+        expected.push(1);
+        expected.extend(2u64.to_le_bytes());
+        assert_eq!(value.canonical_bytes(), expected);
+
+        // Hashing happens before admission has judged anything, so it
+        // must not abort here. The value is leaked rather than dropped:
+        // `Drop` is derived and does recurse, which is the residual
+        // MAX_VALUE_DEPTH keeps out of the crate in the first place.
+        let mut deep = Value::U64(0);
+        for _ in 0..DEEP {
+            deep = Value::Tuple(vec![deep]);
+        }
+        assert_eq!(deep.depth(), DEEP + 1);
+        assert_eq!(deep.canonical_bytes().len(), DEEP * 9 + 9);
+        std::mem::forget(deep);
     }
 
     #[test]

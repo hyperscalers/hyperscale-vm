@@ -29,8 +29,9 @@ pub mod stdlib;
 pub mod types;
 
 pub use dsl::{
-    Clause, EvalError, EvalInputs, Expr, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr,
-    evaluate_effects, evaluate_expr, fresh_id, fresh_local,
+    Clause, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr, evaluate_effects,
+    evaluate_expr, fresh_id, fresh_local,
 };
 pub use envelope::{
     AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_ROLE, Subintent,
@@ -51,6 +52,6 @@ pub use route::{
     RouteError, Routing, ShardResolver, SnapshotObligation, route,
 };
 pub use types::{
-    Address, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind, ReserveOverflow, RoleId,
-    ShardId, SubstateKey, Value, Window, child_key, compatible,
+    Address, Effect, EffectSet, EffectTarget, LocalKey, MAX_VALUE_DEPTH, Mode, ModeKind,
+    ReserveOverflow, RoleId, ShardId, SubstateKey, Value, Window, child_key, compatible,
 };

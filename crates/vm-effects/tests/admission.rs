@@ -8,8 +8,8 @@ mod common;
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
 use hyperscale_vm_effects::{
     Address, AdmissionError, Constraint, EdgeRef, Effect, EffectTarget, GraphArg, GraphNode,
-    InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit,
-    fresh_id, route,
+    InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, Mode,
+    TestHasher, Value, admit, fresh_id, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -285,6 +285,33 @@ fn every_malformed_mutation_rejects() {
         admit_it(&empty_window),
         Err(AdmissionError::UnsatisfiableConstraint { node: 2, param: 0 })
     );
+}
+
+#[test]
+fn a_literal_nested_past_the_bound_rejects_ahead_of_the_hash() {
+    let (cache, instances) = setup();
+    let nest = |levels: usize| {
+        let mut value = Value::U64(0);
+        for _ in 0..levels {
+            value = Value::Tuple(vec![value]);
+        }
+        value
+    };
+
+    let mut graph = valid_graph();
+    graph.nodes[0].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH));
+    assert_eq!(
+        admit(&graph, &cache, &instances, &TestHasher),
+        Err(AdmissionError::ValueTooDeep { node: 0, param: 0 })
+    );
+
+    // One level shallower the depth check passes and ordinary typing
+    // takes over, so the bound is exactly where it says it is.
+    graph.nodes[0].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH - 1));
+    assert!(matches!(
+        admit(&graph, &cache, &instances, &TestHasher),
+        Err(AdmissionError::ParamKind { .. })
+    ));
 }
 
 #[test]

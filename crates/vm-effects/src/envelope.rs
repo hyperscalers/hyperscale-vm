@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 use crate::dsl::{EvalInputs, evaluate_expr};
 use crate::graph::{
     AdmissionError, Admitted, Constraint, EdgeRef, GraphArg, ManifestGraph, check_constraints,
-    encode_constraints,
+    check_value_depth, encode_constraints,
 };
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
@@ -225,6 +225,12 @@ pub fn admit_tree(
 ) -> Result<AdmittedTree, AdmissionError> {
     if tree.subintents.len() > MAX_SUBINTENTS {
         return Err(AdmissionError::TooManySubintents);
+    }
+    // Ahead of every subintent hash, for the reason `admit` checks ahead
+    // of the graph hash.
+    check_value_depth(&tree.root.graph)?;
+    for subintent in &tree.subintents {
+        check_value_depth(&subintent.decl.graph)?;
     }
     let mut records = Vec::with_capacity(tree.subintents.len());
     let mut seen = BTreeSet::new();
