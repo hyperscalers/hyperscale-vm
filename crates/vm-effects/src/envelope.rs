@@ -258,7 +258,7 @@ pub fn admit_tree(
     }
     let manifest = admit_intents(&views, identity, cache, instances, hasher)?;
     Ok(AdmittedTree {
-        admitted: Admitted { manifest, identity },
+        admitted: Admitted::new(manifest, identity),
         subintents: records,
     })
 }
@@ -285,14 +285,7 @@ pub fn route_tree(
     hasher: &dyn Hasher,
     shards: &dyn ShardResolver,
 ) -> Result<Routing, RouteError> {
-    let mut routing = route(
-        &tree.admitted.manifest,
-        tree.admitted.identity,
-        cache,
-        instances,
-        hasher,
-        shards,
-    )?;
+    let mut routing = route(&tree.admitted, cache, instances, hasher, shards)?;
     for record in &tree.subintents {
         let shard = shards.shard_of(record.signer);
         routing

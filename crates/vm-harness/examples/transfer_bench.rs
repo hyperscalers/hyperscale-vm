@@ -250,8 +250,7 @@ fn main() -> Result<()> {
                 &TestHasher,
             )?;
             std::hint::black_box(route(
-                &admitted.manifest,
-                admitted.identity,
+                &admitted,
                 &cache,
                 &instances,
                 &TestHasher,
@@ -267,8 +266,7 @@ fn main() -> Result<()> {
                 &TestHasher,
             )?;
             std::hint::black_box(route(
-                &admitted.manifest,
-                admitted.identity,
+                &admitted,
                 &cache,
                 &instances,
                 &TestHasher,

@@ -8,9 +8,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::admission::Admitted;
 use crate::dsl::{EvalError, EvalInputs, evaluate_effects, evaluate_expr};
 use crate::hash::Hasher;
-use crate::manifest::{Manifest, ManifestHash, NodeInput};
+use crate::manifest::{ManifestHash, NodeInput};
 use crate::metadata::{InstanceRegistry, MetadataCache, PackageHash};
 use crate::types::{Address, EffectSet, EffectTarget, Mode, ShardId, Value, Window};
 
@@ -179,26 +180,27 @@ pub enum RouteError {
     },
 }
 
-/// Route a manifest: evaluate every node's transitive effect signature and
-/// fold the results into per-shard effect sets, snapshot obligations, and
-/// the static call graph.
+/// Route an admitted transaction: evaluate every node's transitive effect
+/// signature and fold the results into per-shard effect sets, snapshot
+/// obligations, and the static call graph.
 ///
-/// `identity` is the transaction's identity — the signed graph's hash that
-/// [`crate::graph::admit`] returns. Admission and routing evaluate fresh
-/// derivations at this one root, so declared and routed fresh keys agree.
+/// Admission and routing evaluate fresh derivations at one root — the
+/// signed form's hash, carried on the [`Admitted`] — so declared and routed
+/// fresh keys agree by construction.
 ///
 /// # Errors
 ///
 /// Any [`RouteError`]; verdicts are deterministic and identical on every
 /// node.
 pub fn route(
-    manifest: &Manifest,
-    identity: ManifestHash,
+    admitted: &Admitted,
     cache: &MetadataCache,
     instances: &InstanceRegistry,
     hasher: &dyn Hasher,
     shards: &dyn ShardResolver,
 ) -> Result<Routing, RouteError> {
+    let manifest = admitted.manifest();
+    let identity = admitted.identity();
     if manifest.nodes.len() > MAX_MANIFEST_NODES {
         return Err(RouteError::TooManyNodes);
     }
@@ -399,8 +401,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        CallEdge, MAX_CALL_DEPTH, MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver, RouteError,
-        ShardResolver, SnapshotObligation, route,
+        Admitted, CallEdge, MAX_CALL_DEPTH, MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver,
+        RouteError, ShardResolver, SnapshotObligation, route,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, WindowExpr, fresh_id};
     use crate::hash::{Hash32, Hasher, TestHasher};
@@ -417,6 +419,13 @@ mod tests {
 
     fn identity() -> ManifestHash {
         ManifestHash(Hash32([0x1D; 32]))
+    }
+
+    /// Routing's own defences have to hold for manifests admission would
+    /// never produce — a forward edge, a metadata cycle — so these tests
+    /// build the admitted form directly rather than through `admit`.
+    fn admitted(manifest: &Manifest) -> Admitted {
+        Admitted::new(manifest.clone(), identity())
     }
 
     fn addr(byte: u8) -> Address {
@@ -509,8 +518,7 @@ mod tests {
         };
 
         let routing = route(
-            &manifest,
-            identity(),
+            &admitted(&manifest),
             &cache,
             &instances,
             &TestHasher,
@@ -605,8 +613,7 @@ mod tests {
         };
 
         let routing = route(
-            &manifest,
-            identity(),
+            &admitted(&manifest),
             &cache,
             &instances,
             &TestHasher,
@@ -663,8 +670,7 @@ mod tests {
         };
         assert_eq!(
             route(
-                &manifest,
-                identity(),
+                &admitted(&manifest),
                 &cache,
                 &instances,
                 &TestHasher,
@@ -730,8 +736,7 @@ mod tests {
         };
         assert_eq!(
             route(
-                &manifest,
-                identity(),
+                &admitted(&manifest),
                 &cache,
                 &instances,
                 &TestHasher,
@@ -789,8 +794,7 @@ mod tests {
             }],
         };
         let routing = route(
-            &manifest,
-            identity(),
+            &admitted(&manifest),
             &cache,
             &instances,
             &TestHasher,
@@ -814,8 +818,7 @@ mod tests {
         };
         assert_eq!(
             route(
-                &manifest,
-                identity(),
+                &admitted(&manifest),
                 &MetadataCache::new(),
                 &InstanceRegistry::new(),
                 &TestHasher,
@@ -838,8 +841,7 @@ mod tests {
             }],
         };
         let empty = route(
-            &manifest,
-            identity(),
+            &admitted(&manifest),
             &MetadataCache::new(),
             &InstanceRegistry::new(),
             &TestHasher,
@@ -856,8 +858,7 @@ mod tests {
             },
         );
         let missing_pkg = route(
-            &manifest,
-            identity(),
+            &admitted(&manifest),
             &MetadataCache::new(),
             &instances,
             &TestHasher,
@@ -868,8 +869,7 @@ mod tests {
         let mut cache = MetadataCache::new();
         cache.publish(pkg("ghost"), PackageMetadata::default());
         let missing_method = route(
-            &manifest,
-            identity(),
+            &admitted(&manifest),
             &cache,
             &instances,
             &TestHasher,
@@ -918,8 +918,7 @@ mod tests {
             }],
         };
         let routing = route(
-            &manifest,
-            identity(),
+            &admitted(&manifest),
             &cache,
             &instances,
             &TestHasher,
@@ -986,8 +985,7 @@ mod tests {
         };
         assert_eq!(
             route(
-                &manifest,
-                identity(),
+                &admitted(&manifest),
                 &cache,
                 &instances,
                 &TestHasher,
@@ -1028,8 +1026,7 @@ mod tests {
         };
         assert_eq!(
             route(
-                &manifest,
-                identity(),
+                &admitted(&manifest),
                 &cache,
                 &instances,
                 &TestHasher,
@@ -1068,8 +1065,7 @@ mod tests {
         };
         let route_at = |count: usize| {
             route(
-                &nodes(count),
-                identity(),
+                &admitted(&nodes(count)),
                 &cache,
                 &instances,
                 &TestHasher,

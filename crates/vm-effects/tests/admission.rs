@@ -88,15 +88,7 @@ fn a_well_formed_graph_lowers_and_routes() {
     let admitted = admit(&valid_graph(), &cache, &instances, &TestHasher).expect("admits");
 
     // The lowered edges carry their static resource types.
-    let routing = route(
-        &admitted.manifest,
-        admitted.identity,
-        &cache,
-        &instances,
-        &TestHasher,
-        &resolver(),
-    )
-    .unwrap();
+    let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
     let alice_set = &routing.per_shard[&shard_of(ALICE)];
     assert!(alice_set.contains(&Effect {
         target: EffectTarget::Point(vault(ALICE, RES_X)),
@@ -127,11 +119,11 @@ fn constraint_changes_change_the_fresh_id_root() {
     // Lowering erases constraints, so the manifests coincide — but the
     // identity is the signed graph's hash, so two distinct signed
     // transactions never share a fresh-ID root.
-    assert_eq!(strict.manifest, loose.manifest);
-    assert_ne!(strict.identity, loose.identity);
+    assert_eq!(strict.manifest(), loose.manifest());
+    assert_ne!(strict.identity(), loose.identity());
     assert_ne!(
-        fresh_id(&TestHasher, strict.identity, 1, 0, 0),
-        fresh_id(&TestHasher, loose.identity, 1, 0, 0)
+        fresh_id(&TestHasher, strict.identity(), 1, 0, 0),
+        fresh_id(&TestHasher, loose.identity(), 1, 0, 0)
     );
 }
 

@@ -4,10 +4,9 @@
 //! creates.
 
 use hyperscale_vm_effects::{
-    Address, Clause, Effect, EffectTarget, Expr, Hash32, InstanceMeta, InstanceRegistry, Manifest,
-    ManifestHash, MetadataCache, MethodSignature, Mode, ModeExpr, Node, PackageHash,
-    PackageMetadata, PrefixShardResolver, RoleId, ShardId, TargetExpr, TestHasher, Value, fresh_id,
-    route,
+    Address, Clause, Effect, EffectTarget, Expr, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
+    ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
+    PrefixShardResolver, RoleId, ShardId, TargetExpr, TestHasher, Value, admit, fresh_id, route,
 };
 use hyperscale_vm_kernel::{CreationContext, MemoryStore, SubstateStore};
 
@@ -56,24 +55,24 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
 
     // Two manifest nodes so the created object comes from a non-zero node
     // index — the namespacing the derivation must carry.
-    let manifest = Manifest {
+    let graph = ManifestGraph {
         nodes: vec![
-            Node {
+            GraphNode {
                 target: creator,
                 method: "spawn".into(),
-                inputs: vec![],
+                args: vec![],
             },
-            Node {
+            GraphNode {
                 target: creator,
                 method: "spawn".into(),
-                inputs: vec![],
+                args: vec![],
             },
         ],
     };
-    let identity = ManifestHash(Hash32([0x1D; 32]));
+    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let identity = admitted.identity();
     let routing = route(
-        &manifest,
-        identity,
+        &admitted,
         &cache,
         &instances,
         &TestHasher,

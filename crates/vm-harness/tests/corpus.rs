@@ -240,8 +240,7 @@ fn execute_manifest(
     let (cache, instances) = world;
     let admitted = admit(graph, cache, instances, &TestHasher).context("admission")?;
     let routing = route(
-        &admitted.manifest,
-        admitted.identity,
+        &admitted,
         cache,
         instances,
         &TestHasher,
@@ -249,8 +248,8 @@ fn execute_manifest(
     )
     .context("routing")?;
     let declared = &routing.per_shard[&ShardId(0)];
-    let identity = admitted.identity;
-    let manifest = admitted.manifest;
+    let identity = admitted.identity();
+    let manifest = admitted.manifest().clone();
 
     let before = store.clone();
     let mut session = KernelSession::materialize(
@@ -697,8 +696,7 @@ fn sharded_routing(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGr
     let (cache, instances) = world;
     let admitted = admit(graph, cache, instances, &TestHasher).expect("admits");
     let first = route(
-        &admitted.manifest,
-        admitted.identity,
+        &admitted,
         cache,
         instances,
         &TestHasher,
@@ -706,8 +704,7 @@ fn sharded_routing(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGr
     )
     .expect("routes");
     let second = route(
-        &admitted.manifest,
-        admitted.identity,
+        &admitted,
         cache,
         instances,
         &TestHasher,
@@ -1254,7 +1251,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
 
     // The placed ask landed at the declared fresh sequence.
     let admitted = admit(&place, &world.0, &world.1, &TestHasher).unwrap();
-    let seq = fresh_id(&TestHasher, admitted.identity, 1, 0, 0);
+    let seq = fresh_id(&TestHasher, admitted.identity(), 1, 0, 0);
     let placed_order = (3u128 << 64) | u128::from(seq);
     assert_eq!(
         place_receipt.delta.entries.get(&(BOOK, ASKS, placed_order)),

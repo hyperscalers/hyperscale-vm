@@ -273,13 +273,33 @@ pub(crate) fn check_value_depth(graph: &ManifestGraph) -> Result<(), AdmissionEr
 /// An admitted transaction: the routing manifest plus the identity that
 /// roots fresh-ID derivation — the signed graph's hash, so distinct
 /// signed transactions never mint the same fresh key.
+///
+/// Only admission constructs one, and [`crate::route`] takes nothing else,
+/// so "routing consumes admitted manifests" is a fact about the types
+/// rather than a convention callers are asked to keep.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Admitted {
+    manifest: Manifest,
+    identity: ManifestHash,
+}
+
+impl Admitted {
+    pub(crate) const fn new(manifest: Manifest, identity: ManifestHash) -> Self {
+        Self { manifest, identity }
+    }
+
     /// The lowered routing manifest.
-    pub manifest: Manifest,
-    /// The signed graph's hash: the transaction identity every fresh
+    #[must_use]
+    pub const fn manifest(&self) -> &Manifest {
+        &self.manifest
+    }
+
+    /// The signed form's hash: the transaction identity every fresh
     /// derivation binds to, at admission and at routing alike.
-    pub identity: ManifestHash,
+    #[must_use]
+    pub const fn identity(&self) -> ManifestHash {
+        self.identity
+    }
 }
 
 /// Admit a graph: check well-formedness, linearity, and type agreement
@@ -313,7 +333,7 @@ pub fn admit(
         instances,
         hasher,
     )?;
-    Ok(Admitted { manifest, identity })
+    Ok(Admitted::new(manifest, identity))
 }
 
 /// Check an edge's constraints against its static resource type.

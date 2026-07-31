@@ -9,46 +9,44 @@ use std::collections::BTreeMap;
 
 use common::{
     ALICE, ASKS, BASE, BOB, BOOK, FILL_CAP, POOL, QUOTE, RES_X, RES_Y, claims, config_leaf,
-    effect_set, identity, pkg, resolver, shard_of, vault, wide_account_metadata, world,
+    effect_set, pkg, resolver, shard_of, vault, wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
-    Effect, EffectTarget, InstanceMeta, InstanceRegistry, Manifest, MetadataCache, Mode, Node,
-    NodeInput, TestHasher, Value, Window, fresh_id, route,
+    EdgeRef, Effect, EffectTarget, GraphArg, GraphNode, InstanceMeta, InstanceRegistry,
+    ManifestGraph, MetadataCache, Mode, TestHasher, Value, Window, admit, fresh_id, route,
 };
+
+/// One consumed output edge, unconstrained.
+const fn edge(producer: u32, output: u32) -> GraphArg {
+    GraphArg::Edge {
+        edge: EdgeRef { producer, output },
+        constraints: vec![],
+    }
+}
 
 #[test]
 fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
     let (cache, instances) = world();
     let usdc = RES_X;
-    let manifest = Manifest {
+    let graph = ManifestGraph {
         nodes: vec![
-            Node {
+            GraphNode {
                 target: ALICE,
                 method: "withdraw".into(),
-                inputs: vec![
-                    NodeInput::Literal(Value::Address(usdc)),
-                    NodeInput::Literal(Value::U128(100)),
+                args: vec![
+                    GraphArg::Literal(Value::Address(usdc)),
+                    GraphArg::Literal(Value::U128(100)),
                 ],
             },
-            Node {
+            GraphNode {
                 target: BOB,
                 method: "deposit".into(),
-                inputs: vec![NodeInput::Edge {
-                    source: 0,
-                    resource: usdc,
-                }],
+                args: vec![edge(0, 0)],
             },
         ],
     };
-    let routing = route(
-        &manifest,
-        identity(),
-        &cache,
-        &instances,
-        &TestHasher,
-        &resolver(),
-    )
-    .unwrap();
+    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
 
     let expected = BTreeMap::from([
         (
@@ -80,46 +78,30 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
 #[test]
 fn swap_writes_both_reserves_and_snapshots_locked_config() {
     let (cache, instances) = world();
-    let manifest = Manifest {
+    let graph = ManifestGraph {
         nodes: vec![
-            Node {
+            GraphNode {
                 target: ALICE,
                 method: "withdraw".into(),
-                inputs: vec![
-                    NodeInput::Literal(Value::Address(RES_X)),
-                    NodeInput::Literal(Value::U128(500)),
+                args: vec![
+                    GraphArg::Literal(Value::Address(RES_X)),
+                    GraphArg::Literal(Value::U128(500)),
                 ],
             },
-            Node {
+            GraphNode {
                 target: POOL,
                 method: "swap".into(),
-                inputs: vec![
-                    NodeInput::Edge {
-                        source: 0,
-                        resource: RES_X,
-                    },
-                    NodeInput::Literal(Value::U128(50)),
-                ],
+                args: vec![edge(0, 0), GraphArg::Literal(Value::U128(50))],
             },
-            Node {
+            GraphNode {
                 target: ALICE,
                 method: "deposit".into(),
-                inputs: vec![NodeInput::Edge {
-                    source: 1,
-                    resource: RES_Y,
-                }],
+                args: vec![edge(1, 0)],
             },
         ],
     };
-    let routing = route(
-        &manifest,
-        identity(),
-        &cache,
-        &instances,
-        &TestHasher,
-        &resolver(),
-    )
-    .unwrap();
+    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
 
     let expected = BTreeMap::from([
         (
@@ -167,40 +149,27 @@ fn swap_writes_both_reserves_and_snapshots_locked_config() {
 #[test]
 fn order_book_place_inserts_at_a_computed_entry() {
     let (cache, instances) = world();
-    let manifest = Manifest {
+    let graph = ManifestGraph {
         nodes: vec![
-            Node {
+            GraphNode {
                 target: ALICE,
                 method: "withdraw".into(),
-                inputs: vec![
-                    NodeInput::Literal(Value::Address(BASE)),
-                    NodeInput::Literal(Value::U128(10)),
+                args: vec![
+                    GraphArg::Literal(Value::Address(BASE)),
+                    GraphArg::Literal(Value::U128(10)),
                 ],
             },
-            Node {
+            GraphNode {
                 target: BOOK,
                 method: "place_ask".into(),
-                inputs: vec![
-                    NodeInput::Literal(Value::U64(105)),
-                    NodeInput::Edge {
-                        source: 0,
-                        resource: BASE,
-                    },
-                ],
+                args: vec![GraphArg::Literal(Value::U64(105)), edge(0, 0)],
             },
         ],
     };
-    let routing = route(
-        &manifest,
-        identity(),
-        &cache,
-        &instances,
-        &TestHasher,
-        &resolver(),
-    )
-    .unwrap();
+    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
 
-    let seq = fresh_id(&TestHasher, identity(), 1, 0, 0);
+    let seq = fresh_id(&TestHasher, admitted.identity(), 1, 0, 0);
     let expected = BTreeMap::from([
         (
             shard_of(ALICE),
@@ -233,47 +202,41 @@ fn order_book_place_inserts_at_a_computed_entry() {
 #[test]
 fn order_book_fill_declares_a_capped_price_interval() {
     let (cache, instances) = world();
-    let manifest = Manifest {
+    let graph = ManifestGraph {
         nodes: vec![
-            Node {
+            GraphNode {
                 target: BOB,
                 method: "withdraw".into(),
-                inputs: vec![
-                    NodeInput::Literal(Value::Address(QUOTE)),
-                    NodeInput::Literal(Value::U128(1000)),
+                args: vec![
+                    GraphArg::Literal(Value::Address(QUOTE)),
+                    GraphArg::Literal(Value::U128(1000)),
                 ],
             },
-            Node {
+            GraphNode {
                 target: BOOK,
                 method: "fill_asks".into(),
-                inputs: vec![
-                    NodeInput::Literal(Value::U64(100)),
-                    NodeInput::Literal(Value::U64(110)),
-                    NodeInput::Edge {
-                        source: 0,
-                        resource: QUOTE,
-                    },
+                args: vec![
+                    GraphArg::Literal(Value::U64(100)),
+                    GraphArg::Literal(Value::U64(110)),
+                    edge(0, 0),
                 ],
             },
-            Node {
+            // The fill returns what it bought and what it did not spend;
+            // both edges have to land somewhere.
+            GraphNode {
                 target: BOB,
                 method: "deposit".into(),
-                inputs: vec![NodeInput::Edge {
-                    source: 1,
-                    resource: BASE,
-                }],
+                args: vec![edge(1, 0)],
+            },
+            GraphNode {
+                target: BOB,
+                method: "deposit".into(),
+                args: vec![edge(1, 1)],
             },
         ],
     };
-    let routing = route(
-        &manifest,
-        identity(),
-        &cache,
-        &instances,
-        &TestHasher,
-        &resolver(),
-    )
-    .unwrap();
+    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
 
     let expected = BTreeMap::from([
         (
@@ -289,6 +252,16 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 },
                 Effect {
                     target: EffectTarget::Point(claims(BOB, BASE)),
+                    mode: Mode::Delta,
+                },
+                // The unspent quote comes back to the same vault the
+                // reservation was taken from.
+                Effect {
+                    target: EffectTarget::Point(vault(BOB, QUOTE)),
+                    mode: Mode::Delta,
+                },
+                Effect {
+                    target: EffectTarget::Point(claims(BOB, QUOTE)),
                     mode: Mode::Delta,
                 },
             ]),
@@ -332,30 +305,31 @@ fn a_declared_superset_evaluates_without_error() {
             config: vec![],
         },
     );
-    let manifest = Manifest {
-        nodes: vec![Node {
-            target: ALICE,
-            method: "withdraw_wide".into(),
-            inputs: vec![
-                NodeInput::Literal(Value::Address(RES_X)),
-                NodeInput::Literal(Value::U128(1)),
-            ],
-        }],
+    let graph = ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE,
+                method: "withdraw_wide".into(),
+                args: vec![
+                    GraphArg::Literal(Value::Address(RES_X)),
+                    GraphArg::Literal(Value::U128(1)),
+                ],
+            },
+            GraphNode {
+                target: ALICE,
+                method: "deposit".into(),
+                args: vec![edge(0, 0)],
+            },
+        ],
     };
-    let routing = route(
-        &manifest,
-        identity(),
-        &cache,
-        &instances,
-        &TestHasher,
-        &resolver(),
-    )
-    .unwrap();
+    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
     let set = &routing.per_shard[&shard_of(ALICE)];
-    // The exact effect and the never-touched superset both routed.
+    // The exact effect and the never-touched superset both routed; the
+    // remaining two are the deposit that consumes the withdrawal.
     assert!(set.contains(&Effect {
         target: EffectTarget::Point(vault(ALICE, RES_X)),
         mode: Mode::Reserve { amount: 1 },
     }));
-    assert_eq!(set.len(), 2);
+    assert_eq!(set.len(), 4);
 }

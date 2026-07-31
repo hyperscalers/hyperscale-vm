@@ -4,11 +4,12 @@
 
 mod common;
 
-use common::{account_metadata, identity, pkg, resolver, shard_of, vault};
+use common::{account_metadata, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
-    Address, CallSite, Effect, EffectTarget, EvalInputs, Expr, Hash32, InstanceMeta,
-    InstanceRegistry, Manifest, ManifestHash, MetadataCache, MethodSignature, Mode, Node,
-    NodeInput, PackageMetadata, RoleId, TestHasher, Value, evaluate_expr, route,
+    Address, CallSite, EdgeRef, Effect, EffectTarget, EvalInputs, Expr, GraphArg, GraphNode,
+    Hash32, InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash, MetadataCache,
+    MethodSignature, Mode, PackageMetadata, ParamType, RoleId, TestHasher, Value, admit,
+    evaluate_expr, route,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
@@ -108,25 +109,29 @@ proptest! {
                 InstanceMeta { package: pkg("account"), config: vec![] },
             );
         }
-        let manifest = Manifest {
+        let graph = ManifestGraph {
             nodes: vec![
-                Node {
+                GraphNode {
                     target: sender,
                     method: "withdraw".into(),
-                    inputs: vec![
-                        NodeInput::Literal(Value::Address(resource)),
-                        NodeInput::Literal(Value::U128(amount)),
+                    args: vec![
+                        GraphArg::Literal(Value::Address(resource)),
+                        GraphArg::Literal(Value::U128(amount)),
                     ],
                 },
-                Node {
+                GraphNode {
                     target: recipient,
                     method: "deposit".into(),
-                    inputs: vec![NodeInput::Edge { source: 0, resource }],
+                    args: vec![GraphArg::Edge {
+                        edge: EdgeRef { producer: 0, output: 0 },
+                        constraints: vec![],
+                    }],
                 },
             ],
         };
-        let first = route(&manifest, identity(), &cache, &instances, &TestHasher, &resolver()).unwrap();
-        let second = route(&manifest, identity(), &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let admitted = admit(&graph, &cache, &instances, &TestHasher).unwrap();
+        let first = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let second = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
         assert_eq!(first, second);
 
         let sender_set = &first.per_shard[&shard_of(sender)];
@@ -157,7 +162,7 @@ proptest! {
         forward.methods.insert(
             "forward".into(),
             MethodSignature {
-                params: vec![],
+                params: vec![ParamType::Address, ParamType::Bucket],
                 outputs: vec![],
                 effects: vec![],
                 calls: vec![CallSite {
@@ -177,18 +182,39 @@ proptest! {
             recipient,
             InstanceMeta { package: pkg("account"), config: vec![] },
         );
-        let manifest = Manifest {
-            nodes: vec![Node {
-                target: router,
-                method: "forward".into(),
-                inputs: vec![
-                    NodeInput::Literal(Value::Address(recipient)),
-                    NodeInput::Literal(Value::Bucket { resource }),
-                ],
-            }],
+        // The funding account is non-uniform too, so no generated
+        // recipient collides with it.
+        let sender = Address([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+        instances.register(
+            sender,
+            InstanceMeta { package: pkg("account"), config: vec![] },
+        );
+        let graph = ManifestGraph {
+            nodes: vec![
+                GraphNode {
+                    target: sender,
+                    method: "withdraw".into(),
+                    args: vec![
+                        GraphArg::Literal(Value::Address(resource)),
+                        GraphArg::Literal(Value::U128(1)),
+                    ],
+                },
+                GraphNode {
+                    target: router,
+                    method: "forward".into(),
+                    args: vec![
+                        GraphArg::Literal(Value::Address(recipient)),
+                        GraphArg::Edge {
+                            edge: EdgeRef { producer: 0, output: 0 },
+                            constraints: vec![],
+                        },
+                    ],
+                },
+            ],
         };
-        let first = route(&manifest, identity(), &cache, &instances, &TestHasher, &resolver()).unwrap();
-        let second = route(&manifest, identity(), &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let admitted = admit(&graph, &cache, &instances, &TestHasher).unwrap();
+        let first = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let second = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.call_graph.edges.len(), 1);
         assert!(first.per_shard[&shard_of(recipient)].contains(&Effect {

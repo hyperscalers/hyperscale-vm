@@ -107,7 +107,7 @@ fn admit_composed(tree: &EnvelopeTree) -> Result<AdmittedTree, AdmissionError> {
 fn a_composed_tree_flattens_deterministically() {
     let tree = composed_tree(100);
     let admitted = admit_composed(&tree).unwrap();
-    let manifest = &admitted.admitted.manifest;
+    let manifest = admitted.admitted.manifest();
 
     // Root nodes lead where ready, yields interleave the rest: the
     // composer's withdraw, the subintent's withdraw, then the two
@@ -383,10 +383,14 @@ fn fresh_keys_root_at_the_envelope_identity() {
         .map(|identity| admit_tree(&tree, *identity, &cache, &instances, &TestHasher).unwrap())
         .collect();
     assert_eq!(
-        admitted[0].admitted.manifest, admitted[1].admitted.manifest,
+        admitted[0].admitted.manifest(),
+        admitted[1].admitted.manifest(),
         "the corpus graph mints no fresh keys, so the manifests agree"
     );
-    assert_ne!(admitted[0].admitted.identity, admitted[1].admitted.identity);
+    assert_ne!(
+        admitted[0].admitted.identity(),
+        admitted[1].admitted.identity()
+    );
 }
 
 #[test]

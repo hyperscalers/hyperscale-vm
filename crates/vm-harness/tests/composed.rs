@@ -433,7 +433,7 @@ fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     let world = world();
     let tree = composed_tree(ALICE, 100);
     let (entry, admitted) = batch_entry(&world, &tree)?;
-    let manifests = BTreeMap::from([(entry.tx, admitted.admitted.manifest.nodes.clone())]);
+    let manifests = BTreeMap::from([(entry.tx, admitted.admitted.manifest().nodes.clone())]);
     let nullifier = admitted.subintents[0].nullifier;
 
     let outcome = run_both(&seeded_store(), std::slice::from_ref(&entry), &manifests)?;
@@ -472,9 +472,12 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     let manifests = BTreeMap::from([
         (
             alice_entry.tx,
-            alice_admitted.admitted.manifest.nodes.clone(),
+            alice_admitted.admitted.manifest().nodes.clone(),
         ),
-        (carol_entry.tx, carol_admitted.admitted.manifest.nodes),
+        (
+            carol_entry.tx,
+            carol_admitted.admitted.manifest().nodes.clone(),
+        ),
     ]);
 
     let alice_wins = alice_entry.tx < carol_entry.tx;
@@ -525,14 +528,20 @@ fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
     let first = run_both(
         &seeded_store(),
         std::slice::from_ref(&alice_entry),
-        &BTreeMap::from([(alice_entry.tx, alice_admitted.admitted.manifest.nodes)]),
+        &BTreeMap::from([(
+            alice_entry.tx,
+            alice_admitted.admitted.manifest().nodes.clone(),
+        )]),
     )?;
     let committed = first.store.collapse();
 
     let second = run_both(
         &committed,
         std::slice::from_ref(&carol_entry),
-        &BTreeMap::from([(carol_entry.tx, carol_admitted.admitted.manifest.nodes)]),
+        &BTreeMap::from([(
+            carol_entry.tx,
+            carol_admitted.admitted.manifest().nodes.clone(),
+        )]),
     )?;
     assert_eq!(
         second.receipts[&carol_entry.tx].outcome,
