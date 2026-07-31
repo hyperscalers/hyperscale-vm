@@ -1,9 +1,12 @@
 //! Differential lane 1, generated corpus: wasm-smith modules constrained to
 //! the profile subset, executed under the blessed engine and the reference
-//! interpreter with edge-value arguments. Outcomes must agree whenever both
-//! sides terminate within budget; either side exhausting its budget skips the
-//! comparison (the fuel and step schedules are not comparable until the fuel
-//! spec artifact lands).
+//! interpreter with edge-value arguments. Outcomes and fuel must agree
+//! whenever both sides terminate within budget; either side exhausting its
+//! budget skips the comparison.
+//!
+//! A module the spec cannot decode is not skipped quietly: the profile
+//! validator has to have rejected it too, which is the same implication
+//! `differential_admission` asserts over a wider corpus.
 //!
 //! The corpus is seeded and deterministic: every run generates the identical
 //! module set.
@@ -11,11 +14,11 @@
 use arbitrary::Unstructured;
 use hyperscale_vm_ref::module::Ty;
 use hyperscale_vm_ref::{RefInstance, RefModule, Trap as RefTrap, Value};
-use hyperscale_vm_runtime::blessed_engine;
+use hyperscale_vm_runtime::{blessed_engine, validate_core_module};
 use wasm_smith::{Config, Module as SmithModule};
 use wasmtime::{Engine, Instance, Module, Result, Store, Trap, Val};
 
-const SEEDS: u64 = 256;
+const SEEDS: u64 = 1_024;
 const ENTROPY_BYTES: usize = 4096;
 const WASMTIME_FUEL: u64 = 5_000_000;
 const REF_STEPS: u64 = 5_000_000;
@@ -46,7 +49,7 @@ fn profile_config() -> Config {
     config.memory64_enabled = false;
     config.gc_enabled = false;
     config.reference_types_enabled = false;
-    config.bulk_memory_enabled = false;
+    config.bulk_memory_enabled = true;
     config.extended_const_enabled = false;
     config.custom_page_sizes_enabled = false;
     config.wide_arithmetic_enabled = false;
@@ -221,6 +224,7 @@ fn fuzz_body() -> Result<()> {
 
     let mut generated = 0usize;
     let mut skipped_decode = 0usize;
+    let mut skipped_profile = 0usize;
     let mut compared = 0usize;
     let mut exhausted = 0usize;
 
@@ -233,10 +237,25 @@ fn fuzz_body() -> Result<()> {
         let wasm = module.to_bytes();
         generated += 1;
 
-        let Ok(ref_module) = RefModule::decode(&wasm) else {
-            skipped_decode += 1;
-            continue;
+        let ref_module = match RefModule::decode(&wasm) {
+            Ok(module) => module,
+            Err(e) => {
+                // The spec's refusal is only sound if the profile refuses
+                // too; otherwise the artifact deploys and cannot execute.
+                assert!(
+                    validate_core_module(&wasm).is_err(),
+                    "seed {seed}: the profile admits a module the spec rejects: {e}"
+                );
+                skipped_decode += 1;
+                continue;
+            }
         };
+        // Bulk memory generates table and passive-segment operators the
+        // profile excludes; those modules leave the lane here.
+        if validate_core_module(&wasm).is_err() {
+            skipped_profile += 1;
+            continue;
+        }
         let wasmtime_module = Module::new(&engine, &wasm)?;
 
         let mut exports: Vec<(String, u32)> = ref_module
@@ -278,7 +297,8 @@ fn fuzz_body() -> Result<()> {
 
     println!(
         "fuzz lane: {generated} modules generated, {skipped_decode} skipped at decode, \
-         {compared} invocations compared, {exhausted} skipped as exhausted"
+         {skipped_profile} outside the profile, {compared} invocations compared, \
+         {exhausted} skipped as exhausted"
     );
     assert!(
         compared > 500,

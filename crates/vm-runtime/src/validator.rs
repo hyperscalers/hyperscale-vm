@@ -9,8 +9,11 @@
 
 use thiserror::Error;
 use wasmparser::{
-    ComponentTypeRef, CompositeInnerType, FunctionBody, Operator, Parser, Payload, TypeRef,
-    TypeSectionReader, Validator, WasmFeatures,
+    ComponentAlias, ComponentDefinedType, ComponentExternalKind, ComponentImportSectionReader,
+    ComponentType, ComponentTypeRef, ComponentValType, CompositeInnerType, ConstExpr, DataKind,
+    DataSectionReader, ElementItems, ElementKind, ElementSectionReader, FunctionBody,
+    GlobalSectionReader, Operator, Parser, Payload, PrimitiveValType, TypeRef, TypeSectionReader,
+    ValType, Validator, WasmFeatures,
 };
 
 use crate::profile;
@@ -90,8 +93,106 @@ pub fn validate_component(bytes: &[u8]) -> Result<(), ProfileError> {
     structural_pass(bytes)
 }
 
+/// Whether a component value type is one the executable spec models:
+/// `u8`/`u32`, `u64`, or a reference to a defined `list<u8>` or borrow.
+fn admits_value_type(defined: &[bool], vt: ComponentValType) -> bool {
+    match vt {
+        ComponentValType::Primitive(
+            PrimitiveValType::U8 | PrimitiveValType::U32 | PrimitiveValType::U64,
+        ) => true,
+        ComponentValType::Type(index) => {
+            usize::try_from(index).is_ok_and(|index| defined.get(index).copied().unwrap_or(false))
+        }
+        ComponentValType::Primitive(_) => false,
+    }
+}
+
+/// Records one component type entry, returning whether it names a defined
+/// value type. The walk mirrors the executable spec's type index space —
+/// declared types, then world-level `use` imports, aliases, and re-exports
+/// — because a function type resolves its parameters through it.
+fn record_component_type(
+    defined: &mut Vec<bool>,
+    entry: &ComponentType<'_>,
+) -> Result<(), ProfileError> {
+    let is_value = match entry {
+        ComponentType::Func(f) => {
+            for (_, vt) in &*f.params {
+                if !admits_value_type(defined, *vt) {
+                    return Err(ProfileError::Structural(
+                        "component parameter type is outside the profile vocabulary".to_string(),
+                    ));
+                }
+            }
+            if let Some(vt) = f.result
+                && !admits_value_type(defined, vt)
+            {
+                return Err(ProfileError::Structural(
+                    "component result type is outside the profile vocabulary".to_string(),
+                ));
+            }
+            false
+        }
+        ComponentType::Defined(ComponentDefinedType::List(element)) => {
+            if !matches!(element, ComponentValType::Primitive(PrimitiveValType::U8)) {
+                return Err(ProfileError::Structural(
+                    "only list<u8> is within the profile".to_string(),
+                ));
+            }
+            true
+        }
+        ComponentType::Defined(ComponentDefinedType::Borrow(_)) => true,
+        _ => false,
+    };
+    defined.push(is_value);
+    Ok(())
+}
+
+/// Validates a bare core module against the deterministic profile.
+///
+/// The component path reaches the same structural pass through
+/// [`validate_component`]; this entry exists so a core module can be
+/// judged on its own — which is what lets the differential lanes assert
+/// that everything the profile admits has an executable-spec witness.
+///
+/// # Errors
+///
+/// Returns the first [`ProfileError`] encountered; verdicts are
+/// deterministic functions of the bytes.
+pub fn validate_core_module(bytes: &[u8]) -> Result<(), ProfileError> {
+    Validator::new_with_features(profile_features())
+        .validate_all(bytes)
+        .map_err(|e| ProfileError::Feature(e.to_string()))?;
+    core_structural_pass(bytes)
+}
+
+/// Gates component imports to the kernel world and tracks the type-index
+/// slot a world-level `use` takes.
+fn check_component_imports(
+    reader: ComponentImportSectionReader<'_>,
+    defined: &mut Vec<bool>,
+) -> Result<(), ProfileError> {
+    for import in reader {
+        let import = import.map_err(|e| ProfileError::Feature(e.to_string()))?;
+        let name = import.name.name;
+        // Type imports confer no capability — they are how a world-level
+        // `use` of a kernel resource type encodes — so only value-carrying
+        // imports are gated. They do take a type-index slot.
+        if matches!(import.ty, ComponentTypeRef::Type(_)) {
+            defined.push(false);
+            continue;
+        }
+        if !name.starts_with(profile::KERNEL_IMPORT_PREFIX) {
+            return Err(ProfileError::ForbiddenImport(name.to_string()));
+        }
+    }
+    Ok(())
+}
+
 fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
     let mut core_modules = 0usize;
+    // Type-index slots, flagged by whether they name a defined value type.
+    let mut defined: Vec<bool> = Vec::new();
     for payload in Parser::new(0).parse_all(bytes) {
         let payload = payload.map_err(|e| ProfileError::Feature(e.to_string()))?;
         match payload {
@@ -105,21 +206,41 @@ fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
                         profile::MAX_CORE_MODULES
                     )));
                 }
-                validate_core_module(&bytes[unchecked_range])?;
+                core_structural_pass(&bytes[unchecked_range])?;
             }
             Payload::ComponentSection { .. } => return Err(ProfileError::NestedComponent),
+            Payload::ComponentTypeSection(reader) => {
+                for entry in reader {
+                    let entry = entry.map_err(|e| ProfileError::Feature(e.to_string()))?;
+                    record_component_type(&mut defined, &entry)?;
+                }
+            }
             Payload::ComponentImportSection(reader) => {
-                for import in reader {
-                    let import = import.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    let name = import.name.name;
-                    // Type imports confer no capability — they are how a
-                    // world-level `use` of a kernel resource type encodes —
-                    // so only value-carrying imports are gated.
-                    if matches!(import.ty, ComponentTypeRef::Type(_)) {
-                        continue;
+                check_component_imports(reader, &mut defined)?;
+            }
+            Payload::ComponentAliasSection(reader) => {
+                for alias in reader {
+                    let alias = alias.map_err(|e| ProfileError::Feature(e.to_string()))?;
+                    if matches!(
+                        alias,
+                        ComponentAlias::InstanceExport {
+                            kind: ComponentExternalKind::Type,
+                            ..
+                        }
+                    ) {
+                        defined.push(false);
                     }
-                    if !name.starts_with(profile::KERNEL_IMPORT_PREFIX) {
-                        return Err(ProfileError::ForbiddenImport(name.to_string()));
+                }
+            }
+            Payload::ComponentExportSection(reader) => {
+                for export in reader {
+                    let export = export.map_err(|e| ProfileError::Feature(e.to_string()))?;
+                    if export.kind == ComponentExternalKind::Type {
+                        let aliased = usize::try_from(export.index)
+                            .ok()
+                            .and_then(|index| defined.get(index).copied())
+                            .unwrap_or(false);
+                        defined.push(aliased);
                     }
                 }
             }
@@ -129,7 +250,7 @@ fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
     Ok(())
 }
 
-fn validate_core_module(bytes: &[u8]) -> Result<(), ProfileError> {
+fn core_structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
     let mut type_param_counts: Vec<usize> = Vec::new();
     let mut imported_functions = 0usize;
     let mut globals = 0usize;
@@ -151,7 +272,6 @@ fn validate_core_module(bytes: &[u8]) -> Result<(), ProfileError> {
                         &mut imported_functions,
                         &mut memories,
                         &mut tables,
-                        &mut globals,
                     )?;
                 }
                 check(
@@ -193,13 +313,15 @@ fn validate_core_module(bytes: &[u8]) -> Result<(), ProfileError> {
                 check(tables, profile::MAX_TABLES_PER_MODULE, "tables per module")?;
             }
             Payload::GlobalSection(reader) => {
-                globals += reader.count() as usize;
+                globals += check_globals(reader)?;
                 check(
                     globals,
                     profile::MAX_GLOBALS_PER_MODULE,
                     "globals per module",
                 )?;
             }
+            Payload::DataSection(reader) => check_data_segments(reader)?,
+            Payload::ElementSection(reader) => check_element_segments(reader)?,
             Payload::StartSection { .. } => return Err(ProfileError::StartSection),
             Payload::CodeSectionEntry(body) => {
                 module_blocks += validate_function_body(&body)?;
@@ -247,13 +369,14 @@ fn check_types(
 }
 
 /// Counts one import into the per-kind totals; imported memories and tables
-/// carry the same maximum bounds as declared ones.
+/// carry the same maximum bounds as declared ones. A global or tag import
+/// has no executable-spec witness, so it is a profile violation rather
+/// than a counted item.
 fn check_import(
     ty: &TypeRef,
     imported_functions: &mut usize,
     memories: &mut usize,
     tables: &mut usize,
-    globals: &mut usize,
 ) -> Result<(), ProfileError> {
     match ty {
         TypeRef::Func(_) | TypeRef::FuncExact(_) => *imported_functions += 1,
@@ -265,8 +388,11 @@ fn check_import(
             *tables += 1;
             bounded_maximum(table.maximum, profile::MAX_TABLE_ELEMENTS, "table elements")?;
         }
-        TypeRef::Global(_) => *globals += 1,
-        TypeRef::Tag(_) => {}
+        TypeRef::Global(_) | TypeRef::Tag(_) => {
+            return Err(ProfileError::Structural(
+                "only function, memory, and table imports are within the profile".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -300,9 +426,10 @@ fn validate_function_body(body: &FunctionBody<'_>) -> Result<usize, ProfileError
         .map_err(|e| ProfileError::Feature(e.to_string()))?;
     for op in ops {
         let op = op.map_err(|e| ProfileError::Feature(e.to_string()))?;
-        // Bulk memory's table operations and reference-types' operators
-        // have no vm-ref witness; the features stay enabled only for
-        // memory.copy/fill and the call_indirect encoding.
+        // Bulk memory's table and passive-segment operations, and
+        // reference-types' operators, have no vm-ref witness; the features
+        // stay enabled only for memory.copy/fill and the call_indirect
+        // encoding.
         if matches!(
             op,
             Operator::TableCopy { .. }
@@ -313,12 +440,15 @@ fn validate_function_body(body: &FunctionBody<'_>) -> Result<usize, ProfileError
                 | Operator::TableGrow { .. }
                 | Operator::TableSize { .. }
                 | Operator::TableFill { .. }
+                | Operator::MemoryInit { .. }
+                | Operator::DataDrop { .. }
                 | Operator::RefNull { .. }
                 | Operator::RefIsNull
                 | Operator::RefFunc { .. }
         ) {
             return Err(ProfileError::Feature(
-                "table and reference operators are outside the profile".to_string(),
+                "table, passive-segment, and reference operators are outside the profile"
+                    .to_string(),
             ));
         }
         if matches!(
@@ -334,6 +464,82 @@ fn validate_function_body(body: &FunctionBody<'_>) -> Result<usize, ProfileError
         "blocks per function",
     )?;
     Ok(blocks)
+}
+
+/// Globals are integer-typed with constant initializers; returns how many
+/// this section declares.
+fn check_globals(reader: GlobalSectionReader<'_>) -> Result<usize, ProfileError> {
+    let mut globals = 0usize;
+    for global in reader {
+        let global = global.map_err(|e| ProfileError::Feature(e.to_string()))?;
+        if !matches!(global.ty.content_type, ValType::I32 | ValType::I64) {
+            return Err(ProfileError::Structural(
+                "only i32 and i64 globals are within the profile".to_string(),
+            ));
+        }
+        check_const_expr(&global.init_expr, "global")?;
+        globals += 1;
+    }
+    Ok(globals)
+}
+
+/// Data segments are active with constant offsets: the spec applies them
+/// at instantiation and models no other form.
+fn check_data_segments(reader: DataSectionReader<'_>) -> Result<(), ProfileError> {
+    for data in reader {
+        let data = data.map_err(|e| ProfileError::Feature(e.to_string()))?;
+        let DataKind::Active { offset_expr, .. } = &data.kind else {
+            return Err(ProfileError::Structural(
+                "passive data segments are outside the profile".to_string(),
+            ));
+        };
+        check_const_expr(offset_expr, "data segment")?;
+    }
+    Ok(())
+}
+
+/// Element segments are active, constant-offset, and function-indexed.
+fn check_element_segments(reader: ElementSectionReader<'_>) -> Result<(), ProfileError> {
+    for element in reader {
+        let element = element.map_err(|e| ProfileError::Feature(e.to_string()))?;
+        let ElementKind::Active { offset_expr, .. } = &element.kind else {
+            return Err(ProfileError::Structural(
+                "passive element segments are outside the profile".to_string(),
+            ));
+        };
+        check_const_expr(offset_expr, "element segment")?;
+        if !matches!(element.items, ElementItems::Functions(_)) {
+            return Err(ProfileError::Structural(
+                "expression element segments are outside the profile".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A constant expression is exactly one integer constant and its `end`.
+///
+/// The operator blocklist walks function bodies, and a global initializer
+/// or a segment offset is neither — but the executable spec evaluates
+/// const expressions with the same integer-only vocabulary, so anything
+/// richer (a reference, an extended-const computation) is admitted here
+/// and unexecutable there.
+fn check_const_expr(expr: &ConstExpr<'_>, what: &str) -> Result<(), ProfileError> {
+    let outside = || ProfileError::Structural(format!("{what} initializer is outside the profile"));
+    let mut reader = expr.get_operators_reader();
+    let first = reader
+        .read()
+        .map_err(|e| ProfileError::Feature(e.to_string()))?;
+    if !matches!(first, Operator::I32Const { .. } | Operator::I64Const { .. }) {
+        return Err(outside());
+    }
+    match reader
+        .read()
+        .map_err(|e| ProfileError::Feature(e.to_string()))?
+    {
+        Operator::End => Ok(()),
+        _ => Err(outside()),
+    }
 }
 
 /// A memory or table must declare a maximum, and it must be within bounds.

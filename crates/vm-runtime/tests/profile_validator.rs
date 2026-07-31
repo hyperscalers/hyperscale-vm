@@ -200,3 +200,47 @@ fn rejects_oversized_artifacts() {
         Err(ProfileError::ComponentTooLarge { .. })
     ));
 }
+
+#[test]
+fn rejects_passive_data_and_its_operators() {
+    // The spec applies active segments at instantiation and models no
+    // other form, so `memory.init`/`data.drop` and the segments they read
+    // have no executable witness.
+    let bytes = component_with_core(
+        r#"(memory 1 1) (data "abc") (func (i32.const 0) (i32.const 0) (i32.const 3) (memory.init 0))"#,
+    );
+    assert_rejected(&bytes, "profile");
+
+    let bytes = component_with_core(r#"(memory 1 1) (data "abc")"#);
+    assert_rejected(&bytes, "passive data segments");
+}
+
+#[test]
+fn rejects_reference_typed_globals_and_initializers() {
+    // The operator blocklist walks function bodies; a global initializer
+    // is not one, and the spec's const-expression vocabulary is integers.
+    let bytes = component_with_core("(global externref (ref.null extern))");
+    assert_rejected(&bytes, "profile");
+
+    let bytes = component_with_core("(global i32 (i32.const 1)) (global i32 (global.get 0))");
+    assert_rejected(&bytes, "profile");
+}
+
+#[test]
+fn rejects_core_global_and_tag_imports() {
+    let bytes = component_with_core(r#"(import "env" "g" (global i32))"#);
+    assert_rejected(&bytes, "function, memory, and table imports");
+}
+
+#[test]
+fn rejects_component_types_outside_the_vocabulary() {
+    // A `string` parameter is a well-formed component type the spec has
+    // no lifting for; declaring one is enough.
+    let bytes =
+        parse_str(r#"(component (type (func (param "s" string))))"#).expect("fixture must parse");
+    assert_rejected(&bytes, "vocabulary");
+
+    // Lists are admitted only at u8.
+    let bytes = parse_str(r"(component (type (list u32)))").expect("fixture must parse");
+    assert_rejected(&bytes, "list<u8>");
+}

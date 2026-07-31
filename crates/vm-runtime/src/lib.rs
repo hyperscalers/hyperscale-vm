@@ -11,7 +11,7 @@ pub mod validator;
 pub mod world;
 
 pub use engine::{blessed_config, blessed_engine};
-pub use validator::{ProfileError, validate_component};
+pub use validator::{ProfileError, validate_component, validate_core_module};
 pub use world::{
     DeltaCell, KernelHost, RangeRead, RangeWrite, ReadCell, ReserveCell, SnapCell, WriteCell,
     add_kernel_to_linker,
