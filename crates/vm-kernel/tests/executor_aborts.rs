@@ -10,7 +10,7 @@ use hyperscale_vm_effects::{
     SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, MemoryStore, Outcome,
+    BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MemoryStore, Outcome,
     OverlayStore, RunResult, SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
 };
 
@@ -114,6 +114,7 @@ fn a_debit_below_a_held_reservation_aborts_only_its_transaction() {
             env(),
             test_hash,
             mode,
+            &Locality::All,
         )
         .unwrap();
         assert!(matches!(
@@ -154,6 +155,7 @@ fn a_covered_debit_completes_beside_a_reservation() {
         env(),
         test_hash,
         ExecutionMode::Serial,
+        &Locality::All,
     )
     .unwrap();
     assert!(matches!(
@@ -192,6 +194,7 @@ fn racing_debits_lose_deterministically_in_canonical_order() {
                 env(),
                 test_hash,
                 mode,
+                &Locality::All,
             )
             .unwrap();
             assert!(matches!(
@@ -243,6 +246,7 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
         env(),
         test_hash,
         ExecutionMode::Serial,
+        &Locality::All,
     )
     .unwrap();
     let reason = |id: u8| match &outcome.receipts[&tx(id)].outcome {
@@ -293,6 +297,7 @@ fn racing_nullifier_writers_commit_exactly_once() {
         env(),
         test_hash,
         ExecutionMode::Parallel,
+        &Locality::All,
     )
     .unwrap();
     assert!(matches!(
@@ -320,6 +325,7 @@ fn racing_nullifier_writers_commit_exactly_once() {
         env(),
         test_hash,
         ExecutionMode::Serial,
+        &Locality::All,
     )
     .unwrap();
     assert_eq!(
@@ -353,6 +359,7 @@ fn an_aborted_transaction_spends_no_nullifier() {
         env(),
         test_hash,
         ExecutionMode::Serial,
+        &Locality::All,
     )
     .unwrap();
     assert!(matches!(

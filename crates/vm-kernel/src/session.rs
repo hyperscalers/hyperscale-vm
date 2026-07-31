@@ -15,6 +15,7 @@
 //! and only then produces the receipt — outcome, state delta, fuel.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, SubstateKey,
@@ -136,6 +137,42 @@ pub enum SessionTrap {
     Store(#[from] StoreError),
 }
 
+/// Which keys the executing shard owns.
+///
+/// A single-shard batch owns everything. A cross-shard participant
+/// settles and judges only the keys it owns: a remote reservation is
+/// held at its declared amount without judging (the owning shard
+/// judges, and the wave combine carries its verdict), its settle
+/// releases the hold and keeps the amount in the receipt as the
+/// outbound record, and remote movements skip the local floor check.
+#[derive(Clone)]
+pub enum Locality {
+    /// Every key is local.
+    All,
+    /// Local exactly where the predicate holds for a key's owner.
+    Owned(Arc<dyn Fn(Address) -> bool + Send + Sync>),
+}
+
+impl Locality {
+    /// Whether this shard owns keys under `owner`.
+    #[must_use]
+    pub fn is_local(&self, owner: Address) -> bool {
+        match self {
+            Self::All => true,
+            Self::Owned(predicate) => predicate(owner),
+        }
+    }
+}
+
+impl std::fmt::Debug for Locality {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::All => f.write_str("Locality::All"),
+            Self::Owned(_) => f.write_str("Locality::Owned(..)"),
+        }
+    }
+}
+
 /// The deterministic environment a transaction executes under.
 #[derive(Clone, Copy, Debug)]
 pub struct EnvInputs {
@@ -252,6 +289,7 @@ pub struct KernelSession {
     tx: TxHash,
     env: EnvInputs,
     hash_fn: fn(&[u8]) -> [u8; 32],
+    locality: Locality,
 }
 
 impl KernelSession {
@@ -318,7 +356,15 @@ impl KernelSession {
             tx,
             env,
             hash_fn,
+            locality: Locality::All,
         })
+    }
+
+    /// Scope the session to the executing shard's keys; see [`Locality`].
+    #[must_use]
+    pub fn with_locality(mut self, locality: Locality) -> Self {
+        self.locality = locality;
+        self
     }
 
     /// The capability table; a handle's rep is its index here.
@@ -605,6 +651,11 @@ impl KernelSession {
             movements.insert(key, movement);
         }
         for (key, movement) in &movements {
+            if !self.locality.is_local(key.owner) {
+                // The owning shard judges its own cells; here the
+                // movement is the outbound record.
+                continue;
+            }
             match self
                 .store
                 .judge_movement(*key, movement.credit, movement.debit)
@@ -632,7 +683,14 @@ impl KernelSession {
         let mut settles = BTreeMap::new();
         for capability in &self.table {
             if let Capability::Reserve(key) = capability {
-                let amount = self.store.settle(*key, self.tx)?;
+                // A remote reservation settles at its owning shard; here
+                // the hold releases and the receipt keeps the amount as
+                // the outbound record.
+                let amount = if self.locality.is_local(key.owner) {
+                    self.store.settle(*key, self.tx)?
+                } else {
+                    self.store.release(*key, self.tx)?
+                };
                 settles.insert(*key, amount);
             }
         }

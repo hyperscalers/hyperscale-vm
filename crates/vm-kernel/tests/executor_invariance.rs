@@ -12,8 +12,8 @@ use hyperscale_vm_effects::{
     TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, MemoryStore,
-    Movement, Outcome, RunResult, SubstateStore, TxHash, decode_amount, encode_amount,
+    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
+    MemoryStore, Movement, Outcome, RunResult, SubstateStore, TxHash, decode_amount, encode_amount,
     execute_batch,
 };
 
@@ -172,6 +172,7 @@ fn the_batch_semantics_are_exact() {
         env(),
         test_hash,
         ExecutionMode::Serial,
+        &Locality::All,
     )
     .unwrap();
 
@@ -222,6 +223,7 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         env(),
         test_hash,
         ExecutionMode::Serial,
+        &Locality::All,
     )
     .unwrap();
     let parallel = execute_batch(
@@ -231,6 +233,7 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         env(),
         test_hash,
         ExecutionMode::Parallel,
+        &Locality::All,
     )
     .unwrap();
     // Adversarial worker timing: later hashes run eagerly, earlier ones
@@ -248,6 +251,7 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         env(),
         test_hash,
         ExecutionMode::Parallel,
+        &Locality::All,
     )
     .unwrap();
 
@@ -268,6 +272,7 @@ fn input_order_cannot_influence_any_receipt() {
         env(),
         test_hash,
         ExecutionMode::Serial,
+        &Locality::All,
     )
     .unwrap();
 
@@ -285,6 +290,7 @@ fn input_order_cannot_influence_any_receipt() {
                 env(),
                 test_hash,
                 mode,
+                &Locality::All,
             )
             .unwrap();
             assert_eq!(baseline.receipts, outcome.receipts);

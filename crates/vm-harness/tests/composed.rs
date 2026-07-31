@@ -17,7 +17,7 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
-    MemoryStore, Outcome, RunResult, SubstateStore, TxHash, decode_amount, encode_amount,
+    Locality, MemoryStore, Outcome, RunResult, SubstateStore, TxHash, decode_amount, encode_amount,
     execute_batch,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
@@ -402,6 +402,7 @@ fn run_both(
         env(),
         test_hash,
         ExecutionMode::Parallel,
+        &Locality::All,
     )
     .unwrap();
     let ref_outcome = execute_batch(
@@ -411,6 +412,7 @@ fn run_both(
         env(),
         test_hash,
         ExecutionMode::Serial,
+        &Locality::All,
     )
     .unwrap();
     assert_eq!(

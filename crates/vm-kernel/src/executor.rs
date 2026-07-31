@@ -24,7 +24,7 @@ use crate::conflict::conflicts;
 use crate::modes::{ModeError, TxHash};
 use crate::overlay::OverlayStore;
 use crate::session::{
-    EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt, StateDelta,
+    EnvInputs, FinishError, KernelSession, Locality, MaterializeError, Outcome, Receipt, StateDelta,
 };
 use crate::store::{Base, StoreError, SubstateStore};
 
@@ -192,6 +192,7 @@ fn run_group<R: GuestRunner>(
     runner: &R,
     env: EnvInputs,
     hash_fn: fn(&[u8]) -> [u8; 32],
+    locality: &Locality,
 ) -> Result<Vec<(TxHash, Receipt)>, BatchError> {
     let mut receipts = Vec::with_capacity(group.len());
     let shared: Arc<dyn Base> = Arc::<OverlayStore>::clone(judged);
@@ -200,11 +201,13 @@ fn run_group<R: GuestRunner>(
         let entry = batch[index];
         // A spent nullifier aborts before execution: some earlier
         // transaction — this group, an earlier batch, or the signer's
-        // own cancellation — already committed the subintent.
+        // own cancellation — already committed the subintent. Only the
+        // signer's shard holds the cell; elsewhere the owning shard's
+        // verdict arrives through the wave combine.
         if entry
             .nullifiers
             .iter()
-            .any(|key| store.cell(*key).is_some())
+            .any(|key| locality.is_local(key.owner) && store.cell(*key).is_some())
         {
             receipts.push((
                 entry.tx,
@@ -224,7 +227,7 @@ fn run_group<R: GuestRunner>(
                     // The rollback clone must drop here: it keeps the threaded
                     // layer's Arc unshared, so finish merges it in place.
                     drop(before);
-                    session
+                    session.with_locality(locality.clone())
                 }
                 Err(MaterializeError::Infeasible { key, amount }) => {
                     // Adoption makes this unreachable for batch-judged
@@ -261,8 +264,12 @@ fn run_group<R: GuestRunner>(
                         source,
                     })?;
                 // Committing spends every subintent: the nullifier cell
-                // records the consuming transaction.
+                // records the consuming transaction, at the signer's
+                // shard.
                 for key in &entry.nullifiers {
+                    if !locality.is_local(key.owner) {
+                        continue;
+                    }
                     threaded.write(*key, entry.tx.0.0.to_vec())?;
                     receipt
                         .delta
@@ -303,6 +310,7 @@ pub fn execute_batch<R: GuestRunner>(
     env: EnvInputs,
     hash_fn: fn(&[u8]) -> [u8; 32],
     mode: ExecutionMode,
+    locality: &Locality,
 ) -> Result<BatchOutcome, BatchError> {
     let mut seen = std::collections::BTreeSet::new();
     for entry in batch {
@@ -323,6 +331,7 @@ pub fn execute_batch<R: GuestRunner>(
     for entry in ordered {
         let defect = declared_reservations(&entry.declared)
             .into_iter()
+            .filter(|(key, _)| locality.is_local(key.owner))
             .find_map(|(key, _)| judged.check_reserve_target(key).err());
         if let Some(error) = defect {
             receipts.insert(
@@ -339,12 +348,17 @@ pub fn execute_batch<R: GuestRunner>(
         }
     }
 
-    // Judge every declared reservation in canonical order; hold the
-    // feasible, abort the infeasible.
+    // Judge every locally owned reservation in canonical order; hold the
+    // feasible, abort the infeasible. Remote reservations are held at
+    // their declared amounts without judging — the owning shard judges.
     let mut requests = Vec::new();
     for entry in &sound {
         for (key, amount) in declared_reservations(&entry.declared) {
-            requests.push((entry.tx, key, amount));
+            if locality.is_local(key.owner) {
+                requests.push((entry.tx, key, amount));
+            } else {
+                judged.hold_unjudged(key, entry.tx, amount);
+            }
         }
     }
     let verdicts = judged.judge_and_hold(&requests)?;
@@ -376,7 +390,7 @@ pub fn execute_batch<R: GuestRunner>(
     let executed: Vec<Result<Vec<(TxHash, Receipt)>, BatchError>> = match mode {
         ExecutionMode::Serial => groups
             .iter()
-            .map(|group| run_group(&judged, &runnable, group, runner, env, hash_fn))
+            .map(|group| run_group(&judged, &runnable, group, runner, env, hash_fn, locality))
             .collect(),
         ExecutionMode::Parallel => thread::scope(|scope| {
             #[allow(clippy::needless_collect)] // spawn every worker before joining any
@@ -385,7 +399,9 @@ pub fn execute_batch<R: GuestRunner>(
                 .map(|group| {
                     let judged = &judged;
                     let runnable = &runnable;
-                    scope.spawn(move || run_group(judged, runnable, group, runner, env, hash_fn))
+                    scope.spawn(move || {
+                        run_group(judged, runnable, group, runner, env, hash_fn, locality)
+                    })
                 })
                 .collect();
             handles
@@ -401,7 +417,7 @@ pub fn execute_batch<R: GuestRunner>(
     }
 
     let mut store = Arc::try_unwrap(judged).expect("no group overlay outlives its group");
-    apply_receipts(&mut store, batch, &mut receipts)?;
+    apply_receipts(&mut store, batch, &mut receipts, locality)?;
     store.merge_active();
 
     Ok(BatchOutcome { receipts, store })
@@ -409,14 +425,16 @@ pub fn execute_batch<R: GuestRunner>(
 
 /// Canonical-order application, one transaction at a time: absolute writes
 /// and entry changes, movements under the reservation floor, settles for
-/// the completed, releases for the rest. A completed transaction whose
-/// debit the floor no longer covers — earlier transactions drained the
-/// cell — flips to an infeasible receipt here, its fuel kept, its state
-/// never applied.
+/// the completed, releases for the rest — all on locally owned keys only;
+/// remote operations stay in the receipt as the outbound effect record. A
+/// completed transaction whose local debit the floor no longer covers —
+/// earlier transactions drained the cell — flips to an infeasible receipt
+/// here, its fuel kept, its state never applied.
 fn apply_receipts(
     store: &mut OverlayStore,
     batch: &[BatchTx],
     receipts: &mut BTreeMap<TxHash, Receipt>,
+    locality: &Locality,
 ) -> Result<(), BatchError> {
     let order: Vec<TxHash> = receipts.keys().copied().collect();
     for tx in order {
@@ -424,6 +442,9 @@ fn apply_receipts(
         let mut refusal = None;
         if matches!(receipt.outcome, Outcome::Completed { .. }) {
             for (key, movement) in &receipt.delta.movements {
+                if !locality.is_local(key.owner) {
+                    continue;
+                }
                 match store.judge_movement(*key, movement.credit, movement.debit) {
                     Ok(_) => {}
                     Err(StoreError::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)) => {
@@ -436,6 +457,9 @@ fn apply_receipts(
         }
         if matches!(receipt.outcome, Outcome::Completed { .. }) && refusal.is_none() {
             for (key, change) in &receipt.delta.cells {
+                if !locality.is_local(key.owner) {
+                    continue;
+                }
                 match change {
                     Some(value) => store.write(*key, value.clone())?,
                     None => {
@@ -444,6 +468,9 @@ fn apply_receipts(
                 }
             }
             for ((owner, collection, order), change) in &receipt.delta.entries {
+                if !locality.is_local(*owner) {
+                    continue;
+                }
                 match change {
                     Some(value) => store.entry_write(*owner, *collection, *order, value.clone())?,
                     None => {
@@ -452,17 +479,32 @@ fn apply_receipts(
                 }
             }
             for (key, movement) in &receipt.delta.movements {
+                if !locality.is_local(key.owner) {
+                    continue;
+                }
                 store.apply_movement(*key, movement.credit, movement.debit)?;
             }
             for key in receipt.delta.settles.keys() {
+                if !locality.is_local(key.owner) {
+                    continue;
+                }
                 store.settle(*key, tx)?;
+            }
+            // A completed transaction's remote holds release here: the
+            // settlement happened at the owning shard, not in this store.
+            for entry in batch.iter().filter(|entry| entry.tx == tx) {
+                for (key, _) in declared_reservations(&entry.declared) {
+                    if !locality.is_local(key.owner) && store.held_reservation(key, tx).is_some() {
+                        store.release(key, tx)?;
+                    }
+                }
             }
         } else {
             if let Some((key, amount)) = refusal {
                 let fuel = receipt.fuel;
                 receipts.insert(tx, abort_receipt(Outcome::Infeasible { key, amount }, fuel));
             }
-            // Release whatever the judge held for an aborted transaction.
+            // Release whatever was held for an aborted transaction.
             for entry in batch.iter().filter(|entry| entry.tx == tx) {
                 for (key, _) in declared_reservations(&entry.declared) {
                     if store.held_reservation(key, tx).is_some() {

@@ -20,8 +20,9 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Base, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession, MemoryStore,
-    Outcome, OverlayStore, RunResult, SubstateStore, TxHash, encode_amount, execute_batch,
+    Base, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession, Locality,
+    MemoryStore, Outcome, OverlayStore, RunResult, SubstateStore, TxHash, encode_amount,
+    execute_batch,
 };
 use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,
@@ -320,6 +321,7 @@ fn main() -> Result<()> {
             env(),
             test_hash,
             ExecutionMode::Serial,
+            &Locality::All,
         )
         .expect("batch");
         let elapsed = start.elapsed();

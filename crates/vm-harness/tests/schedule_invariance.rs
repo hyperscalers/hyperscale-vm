@@ -16,7 +16,7 @@ use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
-    MemoryStore, Outcome, OverlayStore, RunResult, SubstateStore, TxHash, decode_amount,
+    Locality, MemoryStore, Outcome, OverlayStore, RunResult, SubstateStore, TxHash, decode_amount,
     encode_amount, execute_batch,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
@@ -298,6 +298,7 @@ fn six_schedules_one_outcome() -> Result<()> {
                     env(),
                     test_hash,
                     mode,
+                    &Locality::All,
                 )
                 .unwrap(),
             ));
@@ -310,6 +311,7 @@ fn six_schedules_one_outcome() -> Result<()> {
                     env(),
                     test_hash,
                     mode,
+                    &Locality::All,
                 )
                 .unwrap(),
             ));

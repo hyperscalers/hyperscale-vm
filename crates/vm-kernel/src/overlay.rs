@@ -340,7 +340,11 @@ impl OverlayStore {
     /// see the declared amount.
     pub fn hold_unjudged(&mut self, key: SubstateKey, tx: TxHash, amount: u128) {
         self.record(EffectTarget::Point(key), ModeKind::Reserve);
-        self.active.held.entry(key).or_default().insert(tx, Some(amount));
+        self.active
+            .held
+            .entry(key)
+            .or_default()
+            .insert(tx, Some(amount));
     }
 
     /// Settle a held reservation: decrement the cell and drop the hold.
