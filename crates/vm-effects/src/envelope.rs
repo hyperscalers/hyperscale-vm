@@ -21,16 +21,13 @@
 
 use std::collections::BTreeSet;
 
-use crate::dsl::{EvalInputs, evaluate_expr};
-use crate::graph::{
-    AdmissionError, Admitted, Constraint, EdgeRef, GraphArg, ManifestGraph, check_constraints,
-    check_value_depth, encode_constraints,
-};
+use crate::admission::{AdmissionError, Admitted, IntentView, admit_intents, check_value_depth};
+use crate::graph::{Constraint, EdgeRef, ManifestGraph, encode_constraints};
 use crate::hash::{Hash32, Hasher};
-use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
-use crate::metadata::{InstanceRegistry, MetadataCache, ParamType};
-use crate::route::{MAX_MANIFEST_NODES, RouteError, Routing, ShardResolver, route};
-use crate::types::{Address, Effect, EffectTarget, Mode, RoleId, SubstateKey, Value, child_key};
+use crate::manifest::ManifestHash;
+use crate::metadata::{InstanceRegistry, MetadataCache};
+use crate::route::{RouteError, Routing, ShardResolver, route};
+use crate::types::{Address, Effect, EffectTarget, Mode, RoleId, SubstateKey, child_key};
 
 /// The bound on subintents one envelope may compose.
 pub const MAX_SUBINTENTS: usize = 32;
@@ -197,13 +194,6 @@ pub struct AdmittedTree {
     pub subintents: Vec<SubintentRecord>,
 }
 
-/// One intent as the shared admission checker consumes it.
-pub(crate) struct IntentView<'a> {
-    pub graph: &'a ManifestGraph,
-    pub params: &'a [YieldParam],
-    pub bindings: &'a [YieldBinding],
-}
-
 /// Admit a bound envelope tree: validate every intent, interleave the
 /// tree into one flattened manifest along its yield edges, and derive
 /// the subintent nullifier records.
@@ -216,6 +206,11 @@ pub(crate) struct IntentView<'a> {
 ///
 /// Any [`AdmissionError`]; verdicts are deterministic and identical on
 /// every node.
+///
+/// # Panics
+///
+/// Only on an index past `u32`, which the [`MAX_SUBINTENTS`] check above
+/// it excludes.
 pub fn admit_tree(
     tree: &EnvelopeTree,
     identity: ManifestHash,
@@ -238,7 +233,7 @@ pub fn admit_tree(
         let hash = subintent.decl.hash(hasher);
         if !seen.insert((subintent.signer, hash)) {
             return Err(AdmissionError::DuplicateSubintent {
-                index: u32::try_from(index).map_err(|_| AdmissionError::TooManySubintents)?,
+                index: u32::try_from(index).expect("bounded by MAX_SUBINTENTS"),
             });
         }
         records.push(SubintentRecord {
@@ -278,6 +273,11 @@ pub fn admit_tree(
 ///
 /// Any [`RouteError`]; verdicts are deterministic and identical on every
 /// node.
+///
+/// # Panics
+///
+/// Never: the only fallible insert folds reserve amounts, and a nullifier
+/// is declared as an exclusive write.
 pub fn route_tree(
     tree: &AdmittedTree,
     cache: &MetadataCache,
@@ -303,327 +303,7 @@ pub fn route_tree(
                 target: EffectTarget::Point(record.nullifier),
                 mode: Mode::Write,
             })
-            .map_err(|_| RouteError::ReserveOverflow)?;
+            .expect("only reserve amounts fold, and this is a write");
     }
     Ok(routing)
-}
-
-/// Check every intent's bindings and parameter consumption, interleave
-/// the intents into one flattened node order along the yield edges, and
-/// run the node-by-node admission check over that order.
-#[allow(clippy::too_many_lines)] // one pass over nodes, one check per rule
-pub(crate) fn admit_intents(
-    intents: &[IntentView<'_>],
-    identity: ManifestHash,
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
-    hasher: &dyn Hasher,
-) -> Result<Manifest, AdmissionError> {
-    let total: usize = intents.iter().map(|view| view.graph.nodes.len()).sum();
-    if total > MAX_MANIFEST_NODES {
-        return Err(AdmissionError::TooManyNodes);
-    }
-
-    // Bindings and parameter consumption, intent by intent: one binding
-    // per declared parameter, every binding naming a real source, every
-    // parameter consumed by exactly one node argument.
-    for (index, intent) in intents.iter().enumerate() {
-        let intent_index = u32::try_from(index).map_err(|_| AdmissionError::TooManySubintents)?;
-        if intent.bindings.len() != intent.params.len() {
-            return Err(AdmissionError::BindingArity {
-                intent: intent_index,
-                expected: intent.params.len(),
-                found: intent.bindings.len(),
-            });
-        }
-        for (position, binding) in intent.bindings.iter().enumerate() {
-            let param = u32::try_from(position).map_err(|_| AdmissionError::TooManyNodes)?;
-            let source = usize::try_from(binding.intent)
-                .ok()
-                .and_then(|source| intents.get(source));
-            let producer = usize::try_from(binding.edge.producer).unwrap_or(usize::MAX);
-            if source.is_none_or(|source| producer >= source.graph.nodes.len()) {
-                return Err(AdmissionError::UnknownYieldSource {
-                    intent: intent_index,
-                    param,
-                });
-            }
-        }
-        let mut uses = vec![0u32; intent.params.len()];
-        for node in &intent.graph.nodes {
-            for arg in &node.args {
-                if let GraphArg::Param(param) = arg
-                    && let Some(count) = usize::try_from(*param)
-                        .ok()
-                        .and_then(|position| uses.get_mut(position))
-                {
-                    *count += 1;
-                }
-            }
-        }
-        for (position, count) in uses.iter().enumerate() {
-            let param = u32::try_from(position).map_err(|_| AdmissionError::TooManyNodes)?;
-            match count {
-                0 => {
-                    return Err(AdmissionError::UnusedYieldParam {
-                        intent: intent_index,
-                        param,
-                    });
-                }
-                1 => {}
-                _ => {
-                    return Err(AdmissionError::YieldParamReused {
-                        intent: intent_index,
-                        param,
-                    });
-                }
-            }
-        }
-    }
-
-    // Deterministic interleave: repeatedly emit the lowest-indexed
-    // intent whose next node has every yield dependency satisfied.
-    // Intents keep their author order, so acyclicity is judged at yield
-    // granularity; a stall is a cycle.
-    let mut cursor = vec![0usize; intents.len()];
-    let mut flat_of: Vec<Vec<u32>> = intents
-        .iter()
-        .map(|view| vec![0u32; view.graph.nodes.len()])
-        .collect();
-    let mut order: Vec<(usize, usize)> = Vec::with_capacity(total);
-    while order.len() < total {
-        let mut progressed = false;
-        'candidates: for (index, intent) in intents.iter().enumerate() {
-            let next = cursor[index];
-            let Some(node) = intent.graph.nodes.get(next) else {
-                continue;
-            };
-            for arg in &node.args {
-                let GraphArg::Param(param) = arg else {
-                    continue;
-                };
-                // An out-of-range parameter carries no dependency; the
-                // node check below rejects it.
-                let Some(binding) = usize::try_from(*param)
-                    .ok()
-                    .and_then(|position| intent.bindings.get(position))
-                else {
-                    continue;
-                };
-                let source = usize::try_from(binding.intent).unwrap_or(usize::MAX);
-                let producer = usize::try_from(binding.edge.producer).unwrap_or(usize::MAX);
-                if cursor
-                    .get(source)
-                    .is_none_or(|&emitted| producer >= emitted)
-                {
-                    continue 'candidates;
-                }
-            }
-            flat_of[index][next] =
-                u32::try_from(order.len()).map_err(|_| AdmissionError::TooManyNodes)?;
-            order.push((index, next));
-            cursor[index] += 1;
-            progressed = true;
-            break;
-        }
-        if !progressed {
-            return Err(AdmissionError::CyclicYields);
-        }
-    }
-
-    // Per emitted node: evaluated output resource types and a
-    // consumption count per output slot, indexed by flattened position.
-    let mut outputs: Vec<Vec<Address>> = Vec::with_capacity(total);
-    let mut consumed: Vec<Vec<u32>> = Vec::with_capacity(total);
-    let mut lowered: Vec<Node> = Vec::with_capacity(total);
-
-    for &(intent_index, local_index) in &order {
-        let intent = &intents[intent_index];
-        let node = &intent.graph.nodes[local_index];
-        let node_index = u32::try_from(lowered.len()).map_err(|_| AdmissionError::TooManyNodes)?;
-        let local = u32::try_from(local_index).map_err(|_| AdmissionError::TooManyNodes)?;
-        let meta = instances
-            .get(node.target)
-            .ok_or(AdmissionError::UnknownInstance(node.target))?;
-        let package = cache
-            .get(meta.package)
-            .ok_or(AdmissionError::UnknownPackage(meta.package))?;
-        let signature =
-            package
-                .methods
-                .get(&node.method)
-                .ok_or_else(|| AdmissionError::UnknownMethod {
-                    package: meta.package,
-                    method: node.method.clone(),
-                })?;
-        if signature.params.len() != node.args.len() {
-            return Err(AdmissionError::ArityMismatch {
-                node: node_index,
-                expected: signature.params.len(),
-                found: node.args.len(),
-            });
-        }
-
-        let mut bound = Vec::with_capacity(node.args.len());
-        let mut inputs = Vec::with_capacity(node.args.len());
-        for (position, (arg, param)) in node.args.iter().zip(&signature.params).enumerate() {
-            let param_index = u32::try_from(position).map_err(|_| AdmissionError::TooManyNodes)?;
-            match arg {
-                GraphArg::Literal(value) => {
-                    if *param == ParamType::Bucket {
-                        return Err(AdmissionError::LiteralForBucketParam {
-                            node: node_index,
-                            param: param_index,
-                        });
-                    }
-                    if !param.admits(value) {
-                        return Err(AdmissionError::ParamKind {
-                            node: node_index,
-                            param: param_index,
-                            expected: param.name(),
-                            found: value.kind(),
-                        });
-                    }
-                    bound.push(value.clone());
-                    inputs.push(NodeInput::Literal(value.clone()));
-                }
-                GraphArg::Edge { edge, constraints } => {
-                    if *param != ParamType::Bucket {
-                        return Err(AdmissionError::EdgeForValueParam {
-                            node: node_index,
-                            param: param_index,
-                        });
-                    }
-                    if edge.producer >= local {
-                        return Err(AdmissionError::ForwardEdge {
-                            node: node_index,
-                            producer: edge.producer,
-                        });
-                    }
-                    let producer =
-                        usize::try_from(edge.producer).map_err(|_| AdmissionError::TooManyNodes)?;
-                    let source = flat_of[intent_index][producer];
-                    let flat = usize::try_from(source).map_err(|_| AdmissionError::TooManyNodes)?;
-                    let output =
-                        usize::try_from(edge.output).map_err(|_| AdmissionError::TooManyNodes)?;
-                    let resource =
-                        *outputs[flat]
-                            .get(output)
-                            .ok_or(AdmissionError::NoSuchOutput {
-                                producer: source,
-                                output: edge.output,
-                            })?;
-                    consumed[flat][output] += 1;
-                    if consumed[flat][output] > 1 {
-                        return Err(AdmissionError::DoubleConsumption {
-                            producer: source,
-                            output: edge.output,
-                        });
-                    }
-                    check_constraints(constraints, resource, node_index, param_index)?;
-                    bound.push(Value::Bucket { resource });
-                    inputs.push(NodeInput::Edge { source, resource });
-                }
-                GraphArg::Param(reference) => {
-                    let Some((decl, binding)) =
-                        usize::try_from(*reference).ok().and_then(|position| {
-                            Some((intent.params.get(position)?, intent.bindings.get(position)?))
-                        })
-                    else {
-                        return Err(AdmissionError::UnboundParam {
-                            node: node_index,
-                            param: *reference,
-                        });
-                    };
-                    if *param != ParamType::Bucket {
-                        return Err(AdmissionError::EdgeForValueParam {
-                            node: node_index,
-                            param: param_index,
-                        });
-                    }
-                    let source_intent = usize::try_from(binding.intent)
-                        .map_err(|_| AdmissionError::TooManyNodes)?;
-                    let producer = usize::try_from(binding.edge.producer)
-                        .map_err(|_| AdmissionError::TooManyNodes)?;
-                    let source = flat_of[source_intent][producer];
-                    let flat = usize::try_from(source).map_err(|_| AdmissionError::TooManyNodes)?;
-                    let output = usize::try_from(binding.edge.output)
-                        .map_err(|_| AdmissionError::TooManyNodes)?;
-                    let resource =
-                        *outputs[flat]
-                            .get(output)
-                            .ok_or(AdmissionError::NoSuchOutput {
-                                producer: source,
-                                output: binding.edge.output,
-                            })?;
-                    if resource != decl.resource {
-                        return Err(AdmissionError::YieldResourceMismatch {
-                            intent: u32::try_from(intent_index)
-                                .map_err(|_| AdmissionError::TooManySubintents)?,
-                            param: *reference,
-                        });
-                    }
-                    consumed[flat][output] += 1;
-                    if consumed[flat][output] > 1 {
-                        return Err(AdmissionError::DoubleConsumption {
-                            producer: source,
-                            output: binding.edge.output,
-                        });
-                    }
-                    check_constraints(&decl.constraints, resource, node_index, param_index)?;
-                    bound.push(Value::Bucket { resource });
-                    inputs.push(NodeInput::Edge { source, resource });
-                }
-            }
-        }
-
-        // Evaluate this node's output resource types over its bound
-        // inputs.
-        let eval_inputs = EvalInputs {
-            self_addr: node.target,
-            args: &bound,
-            config: &meta.config,
-            node_index,
-            frame: 0,
-            identity,
-        };
-        let mut node_outputs = Vec::with_capacity(signature.outputs.len());
-        for (slot, expr) in signature.outputs.iter().enumerate() {
-            let slot_index = u32::try_from(slot).map_err(|_| AdmissionError::TooManyNodes)?;
-            let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
-                AdmissionError::Eval {
-                    node: node_index,
-                    source,
-                }
-            })?;
-            let Value::Address(resource) = value else {
-                return Err(AdmissionError::OutputType {
-                    node: node_index,
-                    output: slot_index,
-                });
-            };
-            node_outputs.push(resource);
-        }
-        consumed.push(vec![0; node_outputs.len()]);
-        outputs.push(node_outputs);
-        lowered.push(Node {
-            target: node.target,
-            method: node.method.clone(),
-            inputs,
-        });
-    }
-
-    // Linearity: nothing dangles, yields included.
-    for (producer, counts) in consumed.iter().enumerate() {
-        for (output, count) in counts.iter().enumerate() {
-            if *count == 0 {
-                return Err(AdmissionError::UnconsumedOutput {
-                    producer: u32::try_from(producer).unwrap_or(u32::MAX),
-                    output: u32::try_from(output).unwrap_or(u32::MAX),
-                });
-            }
-        }
-    }
-
-    Ok(Manifest { nodes: lowered })
 }

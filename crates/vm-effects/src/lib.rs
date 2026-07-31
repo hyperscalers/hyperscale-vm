@@ -18,6 +18,7 @@
 //! seam, shard topology through [`ShardResolver`], and nothing here touches
 //! the runtime or the protocol workspace.
 
+pub mod admission;
 pub mod dsl;
 pub mod envelope;
 pub mod graph;
@@ -28,6 +29,7 @@ pub mod route;
 pub mod stdlib;
 pub mod types;
 
+pub use admission::{AdmissionError, Admitted, MAX_YIELD_PARAMS, admit};
 pub use dsl::{
     Clause, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr, evaluate_effects,
@@ -38,9 +40,7 @@ pub use envelope::{
     SubintentHash, SubintentRecord, YieldBinding, YieldParam, admit_tree, nullifier_key,
     route_tree,
 };
-pub use graph::{
-    AdmissionError, Admitted, Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, admit,
-};
+pub use graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use manifest::{Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{

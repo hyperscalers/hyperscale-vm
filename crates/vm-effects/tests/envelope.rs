@@ -5,10 +5,10 @@
 use hyperscale_vm_effects::stdlib::account_metadata;
 use hyperscale_vm_effects::{
     Address, AdmissionError, AdmittedTree, Constraint, EdgeRef, Effect, EffectTarget, EnvelopeTree,
-    GraphArg, GraphNode, Hasher, InstanceMeta, InstanceRegistry, IntentDecl, ManifestGraph,
-    ManifestHash, MetadataCache, Mode, NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver,
-    RoleId, ShardId, Subintent, TestHasher, Value, YieldBinding, YieldParam, admit, admit_tree,
-    child_key, nullifier_key, route_tree,
+    GraphArg, GraphNode, Hasher, InstanceMeta, InstanceRegistry, IntentDecl, MAX_YIELD_PARAMS,
+    ManifestGraph, ManifestHash, MetadataCache, Mode, NULLIFIER_ROLE, NodeInput, PackageHash,
+    PrefixShardResolver, RoleId, ShardId, Subintent, TestHasher, Value, YieldBinding, YieldParam,
+    admit, admit_tree, child_key, nullifier_key, route_tree,
 };
 
 const ALICE: Address = Address([0x10; 16]);
@@ -317,6 +317,41 @@ fn duplicate_subintents_reject() {
     assert_eq!(
         admit_composed(&tree),
         Err(AdmissionError::DuplicateSubintent { index: 1 })
+    );
+}
+
+#[test]
+fn an_intent_cannot_declare_unbounded_yield_params() {
+    // The parameter count bounds the binding vector, and both index by
+    // `u32` — so the cap is what makes those positions expressible by
+    // construction rather than by hope.
+    let mut tree = composed_tree(100);
+    let param = tree.subintents[0].decl.params[0].clone();
+    let binding = tree.subintents[0].bindings[0];
+    for _ in 0..MAX_YIELD_PARAMS {
+        tree.subintents[0].decl.params.push(param.clone());
+        tree.subintents[0].bindings.push(binding);
+    }
+    assert_eq!(
+        admit_composed(&tree),
+        Err(AdmissionError::TooManyYieldParams { intent: 1 })
+    );
+}
+
+#[test]
+fn a_yield_param_cannot_bind_a_value_parameter() {
+    // `withdraw(resource, amount)` takes no bucket, so binding a yield
+    // into it is a parameter defect — not the edge defect the shared
+    // arity check would otherwise report.
+    let mut tree = composed_tree(100);
+    tree.subintents[0].decl.graph.nodes[1] = GraphNode {
+        target: BOB,
+        method: "withdraw".into(),
+        args: vec![GraphArg::Param(0), GraphArg::Literal(Value::U128(1))],
+    };
+    assert_eq!(
+        admit_composed(&tree),
+        Err(AdmissionError::ParamForValueParam { node: 3, param: 0 })
     );
 }
 
