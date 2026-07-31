@@ -357,16 +357,16 @@ impl OverlayStore {
     /// [`StoreError::MissingReservation`] if `tx` holds nothing on `key`;
     /// a cell decode or underflow failure otherwise.
     pub fn settle(&mut self, key: SubstateKey, tx: TxHash) -> Result<u128, StoreError> {
+        // Fallible first, mutable after — the same discipline as
+        // MemoryStore::settle, which this mirrors op for op.
         let amount = self
             .held_reservation(key, tx)
             .ok_or(StoreError::MissingReservation { tx, key })?;
-        // The hold drops before the decrement is checked, mirroring
-        // MemoryStore::settle.
-        self.active.held.entry(key).or_default().insert(tx, None);
-        let committed = self.committed_amount(key)?;
-        let after = committed
+        let after = self
+            .committed_amount(key)?
             .checked_sub(amount)
             .ok_or(StoreError::HeldExceedsCommitted(key))?;
+        self.active.held.entry(key).or_default().insert(tx, None);
         self.active
             .cells
             .insert(key, amount_cell(after).map(|cell| cell.to_vec()));
@@ -984,6 +984,26 @@ mod tests {
             base.judge_movement(vault, 0, 11),
             Err(StoreError::Mode(ModeError::CellUnderflow))
         );
+    }
+
+    #[test]
+    fn a_refused_settle_leaves_the_hold_standing() {
+        // The overlay mirrors MemoryStore op for op, refusal ordering
+        // included.
+        let mut base = MemoryStore::new();
+        let vault = key(7);
+        base.write(vault, encode_amount(100).to_vec()).unwrap();
+        base.judge_and_hold(&[(tx(1), vault, 100)]).unwrap();
+        base.clear_log();
+        let mut overlay = OverlayStore::new(Arc::new(base));
+        overlay.write(vault, encode_amount(10).to_vec()).unwrap();
+
+        assert_eq!(
+            overlay.settle(vault, tx(1)),
+            Err(StoreError::HeldExceedsCommitted(vault))
+        );
+        assert_eq!(overlay.held_reservation(vault, tx(1)), Some(100));
+        assert_eq!(overlay.release(vault, tx(1)), Ok(100));
     }
 
     #[test]

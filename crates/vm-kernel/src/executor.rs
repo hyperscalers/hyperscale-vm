@@ -594,7 +594,12 @@ pub fn execute_batch<R: GuestRunner>(
                 .collect();
             handles
                 .into_iter()
-                .map(|handle| handle.join().expect("group worker never panics"))
+                .map(|handle| match handle.join() {
+                    Ok(result) => result,
+                    // Carry the worker's own panic rather than replacing
+                    // it: the payload is the diagnostic.
+                    Err(payload) => std::panic::resume_unwind(payload),
+                })
                 .collect()
         }),
     };

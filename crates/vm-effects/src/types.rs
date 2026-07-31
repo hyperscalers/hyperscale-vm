@@ -66,6 +66,12 @@ const DOMAIN_CHILD: &[u8] = b"hyperscale-vm/child-key";
 /// The local half is the hash of the role and the material, truncated to 16
 /// bytes — which is what makes level-one access ("the vault for resource R
 /// under account A") pure computation, never a state read.
+///
+/// Sixteen bytes is a deliberate choice, not a leftover: it puts the local
+/// half at a 64-bit birthday bound against collisions, and the collision
+/// domain is one owner's own children, which the owner also chooses the
+/// material for. The leaf key is the owner prefix plus this half, so a
+/// collision cannot cross a prefix and cannot cross a shard.
 #[must_use]
 pub fn child_key(
     hasher: &dyn Hasher,

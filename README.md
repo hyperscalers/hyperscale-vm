@@ -11,3 +11,14 @@ The Hyperscale execution runtime, developed in isolation from the protocol works
 `guests/` holds the pinned-toolchain guest fixtures: the transfer fixture plus the minimal stdlib — account, constant-product pool, and order book — that the pattern corpus executes on both runtimes.
 
 Isolation is a build fact: nothing here depends on the protocol workspace, and nothing there depends on this repo until the runtime integrates behind the executor seam.
+
+## Toolchains
+
+The crates build, test, and lint on the pinned stable in `rust-toolchain.toml` — nothing here needs an unstable feature, and a consensus-relevant codebase should not ride a channel that moves weekly.
+
+Two things are pinned separately, both deliberately:
+
+- **Formatting** wants `cargo +nightly-2026-06-08 fmt`. The import grouping in `rustfmt.toml` is a nightly rustfmt option; stable rustfmt warns, ignores it, and leaves existing formatting alone — so a stable `cargo fmt` is safe but will not enforce the grouping on new code.
+- **The guests** pin `guests/rust-toolchain.toml` and build with `-Zbuild-std` and `panic=immediate-abort`. That is not a preference: panic formatting is the only thing in a Rust guest that recurses, and the deploy-time stack bound is unprovable against a cyclic call graph. `build_guest` scrubs the caller's toolchain selection so this pin wins over an ambient one.
+
+`fuzz/` is its own workspace and is never built by an ordinary command; see `docs/determinism-audit.md` for when it runs.

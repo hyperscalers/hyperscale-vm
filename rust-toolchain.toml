@@ -1,3 +1,14 @@
+# The protocol crates build on stable: nothing here needs an unstable
+# feature, and a consensus-relevant codebase should not ride a channel
+# that moves weekly. Pinned exactly — upgrades are deliberate events,
+# never drift.
+#
+# Two things still want a pinned nightly, and both are scoped:
+# `cargo +nightly-2026-06-08 fmt` for the import grouping `rustfmt.toml`
+# asks for, and the guest artifacts, which pin their own toolchain in
+# `guests/rust-toolchain.toml` because the deploy-time stack bound needs
+# a prelude without panic formatting.
 [toolchain]
-channel = "nightly"
+channel = "1.96.0"
 components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]

@@ -499,15 +499,19 @@ impl MemoryStore {
     /// [`StoreError::MissingReservation`] if `tx` holds nothing on `key`;
     /// a cell decode or underflow failure otherwise.
     pub fn settle(&mut self, key: SubstateKey, tx: TxHash) -> Result<u128, StoreError> {
+        // Everything fallible happens before anything mutable: a refusal
+        // here leaves the hold standing, so the caller can still release
+        // it and the ledger stays accountable.
         let amount = self
-            .held
-            .get_mut(&key)
-            .and_then(|holds| holds.remove(&tx))
+            .held_reservation(key, tx)
             .ok_or(StoreError::MissingReservation { tx, key })?;
-        let committed = self.committed_amount(key)?;
-        let after = committed
+        let after = self
+            .committed_amount(key)?
             .checked_sub(amount)
             .ok_or(StoreError::HeldExceedsCommitted(key))?;
+        if let Some(holds) = self.held.get_mut(&key) {
+            holds.remove(&tx);
+        }
         self.write_amount(key, after);
         Ok(amount)
     }
@@ -823,6 +827,29 @@ mod tests {
                 key: vault,
             })
         );
+    }
+
+    #[test]
+    fn a_refused_settle_leaves_the_hold_standing() {
+        // The ledger invariant is violated — held exceeds committed — so
+        // settling must refuse. What it must not do is drop the hold on
+        // the way out: an accounted reservation would vanish, and the
+        // caller could no longer release it.
+        let mut store = MemoryStore::new();
+        let vault = key(6);
+        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.judge_and_hold(&[(tx(1), vault, 100)]).unwrap();
+        // Drain the cell behind the hold's back.
+        store.write(vault, encode_amount(10).to_vec()).unwrap();
+
+        assert_eq!(
+            store.settle(vault, tx(1)),
+            Err(StoreError::HeldExceedsCommitted(vault))
+        );
+        assert_eq!(store.held_reservation(vault, tx(1)), Some(100));
+        assert_eq!(decode_amount(&store.read(vault).unwrap().unwrap()), Ok(10));
+        // And the hold is still releasable, which is the point.
+        assert_eq!(store.release(vault, tx(1)), Ok(100));
     }
 
     #[test]
