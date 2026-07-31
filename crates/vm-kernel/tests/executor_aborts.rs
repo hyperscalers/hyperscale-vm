@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, child_key,
+    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubintentHash,
+    SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, MemoryStore, Outcome,
@@ -99,14 +99,11 @@ fn a_debit_below_a_held_reservation_aborts_only_its_transaction() {
     store.write(cell(0xA), encode_amount(50).to_vec()).unwrap();
     store.clear_log();
     let batch = vec![
-        BatchTx {
-            tx: tx(0x01),
-            declared: with_delta(point(cell(0xA), Mode::Reserve { amount: 50 }), cell(0xC)),
-        },
-        BatchTx {
-            tx: tx(0x02),
-            declared: point(cell(0xA), Mode::Delta),
-        },
+        BatchTx::new(
+            tx(0x01),
+            with_delta(point(cell(0xA), Mode::Reserve { amount: 50 }), cell(0xC)),
+        ),
+        BatchTx::new(tx(0x02), point(cell(0xA), Mode::Delta)),
     ];
 
     for mode in [ExecutionMode::Serial, ExecutionMode::Parallel] {
@@ -143,14 +140,11 @@ fn a_covered_debit_completes_beside_a_reservation() {
     store.write(cell(0xA), encode_amount(60).to_vec()).unwrap();
     store.clear_log();
     let batch = vec![
-        BatchTx {
-            tx: tx(0x01),
-            declared: with_delta(point(cell(0xA), Mode::Reserve { amount: 50 }), cell(0xC)),
-        },
-        BatchTx {
-            tx: tx(0x02),
-            declared: point(cell(0xA), Mode::Delta),
-        },
+        BatchTx::new(
+            tx(0x01),
+            with_delta(point(cell(0xA), Mode::Reserve { amount: 50 }), cell(0xC)),
+        ),
+        BatchTx::new(tx(0x02), point(cell(0xA), Mode::Delta)),
     ];
 
     let outcome = execute_batch(
@@ -183,14 +177,8 @@ fn racing_debits_lose_deterministically_in_canonical_order() {
     store.write(cell(0xA), encode_amount(20).to_vec()).unwrap();
     store.clear_log();
     let batch = vec![
-        BatchTx {
-            tx: tx(0x01),
-            declared: point(cell(0xA), Mode::Delta),
-        },
-        BatchTx {
-            tx: tx(0x02),
-            declared: point(cell(0xA), Mode::Delta),
-        },
+        BatchTx::new(tx(0x01), point(cell(0xA), Mode::Delta)),
+        BatchTx::new(tx(0x02), point(cell(0xA), Mode::Delta)),
     ];
     let mut reversed = batch.clone();
     reversed.reverse();
@@ -234,18 +222,18 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
         .unwrap();
     store.clear_log();
     let batch = vec![
-        BatchTx {
-            tx: tx(0x01),
-            declared: with_delta(point(cell(0xAB), Mode::Reserve { amount: 10 }), cell(0xC)),
-        },
-        BatchTx {
-            tx: tx(0x02),
-            declared: with_delta(point(cell(0xAC), Mode::Reserve { amount: 10 }), cell(0xC)),
-        },
-        BatchTx {
-            tx: tx(0x03),
-            declared: with_delta(point(cell(0xAD), Mode::Reserve { amount: 40 }), cell(0xC)),
-        },
+        BatchTx::new(
+            tx(0x01),
+            with_delta(point(cell(0xAB), Mode::Reserve { amount: 10 }), cell(0xC)),
+        ),
+        BatchTx::new(
+            tx(0x02),
+            with_delta(point(cell(0xAC), Mode::Reserve { amount: 10 }), cell(0xC)),
+        ),
+        BatchTx::new(
+            tx(0x03),
+            with_delta(point(cell(0xAD), Mode::Reserve { amount: 40 }), cell(0xC)),
+        ),
     ];
 
     let outcome = execute_batch(
@@ -269,4 +257,111 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
     ));
     assert_eq!(amount_at(&outcome.store, cell(0xAD)), 60);
     assert_eq!(amount_at(&outcome.store, cell(0xC)), 40);
+}
+
+fn nullifier() -> SubstateKey {
+    nullifier_key(
+        &TestHasher,
+        Address([0x77; 16]),
+        SubintentHash(Hash32([0x99; 32])),
+    )
+}
+
+fn nullifier_tx(id: u8) -> BatchTx {
+    BatchTx {
+        tx: tx(id),
+        declared: point(nullifier(), Mode::Write),
+        nullifiers: vec![nullifier()],
+    }
+}
+
+#[test]
+fn racing_nullifier_writers_commit_exactly_once() {
+    // Two envelopes commit the same signed subintent: both declare the
+    // nullifier's exclusive write, so they share a group, and canonical
+    // order picks the winner; the loser aborts before running.
+    let noop = |_id: TxHash, session: KernelSession| RunResult {
+        session,
+        outcome: Outcome::Completed { value: None },
+        fuel: FUEL,
+    };
+    let batch = vec![nullifier_tx(0x02), nullifier_tx(0x01)];
+    let outcome = execute_batch(
+        Arc::new(MemoryStore::new()),
+        &batch,
+        &noop,
+        env(),
+        test_hash,
+        ExecutionMode::Parallel,
+    )
+    .unwrap();
+    assert!(matches!(
+        outcome.receipts[&tx(0x01)].outcome,
+        Outcome::Completed { .. }
+    ));
+    assert_eq!(
+        outcome.receipts[&tx(0x02)].outcome,
+        Outcome::UserError {
+            reason: "subintent nullifier spent".into(),
+        }
+    );
+    // The cell records the consuming transaction.
+    let mut store = outcome.store.clone();
+    assert_eq!(
+        store.read(nullifier()).unwrap(),
+        Some(tx(0x01).0.0.to_vec())
+    );
+
+    // The next batch still sees it spent.
+    let replay = execute_batch(
+        Arc::new(outcome.store),
+        &[nullifier_tx(0x03)],
+        &noop,
+        env(),
+        test_hash,
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    assert_eq!(
+        replay.receipts[&tx(0x03)].outcome,
+        Outcome::UserError {
+            reason: "subintent nullifier spent".into(),
+        }
+    );
+}
+
+#[test]
+fn an_aborted_transaction_spends_no_nullifier() {
+    // The canonical-first envelope traps; the subintent stays unspent
+    // and the second envelope commits it.
+    let scripted = |id: TxHash, session: KernelSession| RunResult {
+        session,
+        outcome: if id == tx(0x01) {
+            Outcome::UserError {
+                reason: "guest trap".into(),
+            }
+        } else {
+            Outcome::Completed { value: None }
+        },
+        fuel: FUEL,
+    };
+    let batch = vec![nullifier_tx(0x01), nullifier_tx(0x02)];
+    let outcome = execute_batch(
+        Arc::new(MemoryStore::new()),
+        &batch,
+        &scripted,
+        env(),
+        test_hash,
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    assert!(matches!(
+        outcome.receipts[&tx(0x02)].outcome,
+        Outcome::Completed { .. }
+    ));
+    let mut store = outcome.store;
+    assert_eq!(
+        store.read(nullifier()).unwrap(),
+        Some(tx(0x02).0.0.to_vec())
+    );
 }

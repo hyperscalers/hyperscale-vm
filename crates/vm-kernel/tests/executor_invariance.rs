@@ -129,34 +129,16 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
     let batch = vec![
         // Two transfers into the shared recipient: delta-delta compatible,
         // so they land in different groups and merge by movement.
-        BatchTx {
-            tx: tx(0x01),
-            declared: reserve_and_delta(cell(0xA), 40, cell(0xC)),
-        },
-        BatchTx {
-            tx: tx(0x02),
-            declared: reserve_and_delta(cell(0xB), 25, cell(0xC)),
-        },
+        BatchTx::new(tx(0x01), reserve_and_delta(cell(0xA), 40, cell(0xC))),
+        BatchTx::new(tx(0x02), reserve_and_delta(cell(0xB), 25, cell(0xC))),
         // Two writers of one cell: write-write conflict, one group,
         // canonical order.
-        BatchTx {
-            tx: tx(0x03),
-            declared: point(cell(0xE), Mode::Write),
-        },
-        BatchTx {
-            tx: tx(0x04),
-            declared: point(cell(0xE), Mode::Write),
-        },
+        BatchTx::new(tx(0x03), point(cell(0xE), Mode::Write)),
+        BatchTx::new(tx(0x04), point(cell(0xE), Mode::Write)),
         // Infeasible: the sender vault cannot cover it after tx 0x01.
-        BatchTx {
-            tx: tx(0x05),
-            declared: reserve_and_delta(cell(0xA), 1_000, cell(0xC)),
-        },
+        BatchTx::new(tx(0x05), reserve_and_delta(cell(0xA), 1_000, cell(0xC))),
         // The doomed writer on its own cell.
-        BatchTx {
-            tx: tx(0x66),
-            declared: point(cell(0xF), Mode::Write),
-        },
+        BatchTx::new(tx(0x66), point(cell(0xF), Mode::Write)),
     ];
     (store, batch)
 }

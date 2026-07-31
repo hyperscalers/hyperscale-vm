@@ -35,6 +35,24 @@ pub struct BatchTx {
     pub tx: TxHash,
     /// The transaction's declared effect set on this shard.
     pub declared: EffectSet,
+    /// The nullifier keys of every subintent the transaction commits,
+    /// each also declared as an exclusive write in `declared`. An
+    /// existing cell at any of them aborts the transaction before it
+    /// runs; completing writes them all — once-only by creation
+    /// conflict.
+    pub nullifiers: Vec<SubstateKey>,
+}
+
+impl BatchTx {
+    /// A transaction with no bound subintents.
+    #[must_use]
+    pub const fn new(tx: TxHash, declared: EffectSet) -> Self {
+        Self {
+            tx,
+            declared,
+            nullifiers: Vec::new(),
+        }
+    }
 }
 
 /// The engine seam: runs one transaction's guest against its session.
@@ -180,6 +198,25 @@ fn run_group<R: GuestRunner>(
     let mut store = OverlayStore::new(shared);
     for &index in group {
         let entry = batch[index];
+        // A spent nullifier aborts before execution: some earlier
+        // transaction — this group, an earlier batch, or the signer's
+        // own cancellation — already committed the subintent.
+        if entry
+            .nullifiers
+            .iter()
+            .any(|key| store.cell(*key).is_some())
+        {
+            receipts.push((
+                entry.tx,
+                abort_receipt(
+                    Outcome::UserError {
+                        reason: "subintent nullifier spent".into(),
+                    },
+                    0,
+                ),
+            ));
+            continue;
+        }
         let before = store.clone();
         let session =
             match KernelSession::materialize(store, &entry.declared, entry.tx, env, hash_fn) {
@@ -216,13 +253,22 @@ fn run_group<R: GuestRunner>(
         let result = runner.run(entry.tx, session);
         match result.outcome {
             Outcome::Completed { .. } => {
-                let (receipt, threaded) = result
+                let (mut receipt, mut threaded) = result
                     .session
                     .finish(result.outcome, result.fuel)
                     .map_err(|source| BatchError::Finish {
                         tx: entry.tx,
                         source,
                     })?;
+                // Committing spends every subintent: the nullifier cell
+                // records the consuming transaction.
+                for key in &entry.nullifiers {
+                    threaded.write(*key, entry.tx.0.0.to_vec())?;
+                    receipt
+                        .delta
+                        .cells
+                        .insert(*key, Some(entry.tx.0.0.to_vec()));
+                }
                 store = threaded;
                 receipts.push((entry.tx, receipt));
             }

@@ -10,11 +10,11 @@
 //! lowers it to a [`Manifest`] whose edge inputs carry their static
 //! resource types.
 
-use crate::dsl::{EvalError, EvalInputs, evaluate_expr};
+use crate::dsl::EvalError;
+use crate::envelope::{IntentView, admit_intents};
 use crate::hash::Hasher;
-use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
-use crate::metadata::{InstanceRegistry, MetadataCache, PackageHash, ParamType};
-use crate::route::MAX_MANIFEST_NODES;
+use crate::manifest::{Manifest, ManifestHash};
+use crate::metadata::{InstanceRegistry, MetadataCache, PackageHash};
 use crate::types::{Address, Value};
 
 /// One produced value edge: the `output`-th edge of the `producer` node.
@@ -52,6 +52,11 @@ pub enum GraphArg {
         /// The consumer's declared constraints on it.
         constraints: Vec<Constraint>,
     },
+    /// Consumption of the enclosing intent's declared yield parameter —
+    /// a typed hole the composition binds to another intent's output
+    /// edge. Only meaningful inside an envelope tree; a bare graph
+    /// admits no parameters.
+    Param(u32),
 }
 
 /// A method invocation node.
@@ -76,6 +81,27 @@ pub struct ManifestGraph {
 const DOMAIN_GRAPH_NODE: &[u8] = b"hyperscale-vm/graph-node";
 const DOMAIN_GRAPH: &[u8] = b"hyperscale-vm/graph";
 
+/// The canonical byte form of a constraint list, shared by the graph hash
+/// and the subintent declaration hash.
+pub(crate) fn encode_constraints(out: &mut Vec<u8>, constraints: &[Constraint]) {
+    for constraint in constraints {
+        match constraint {
+            Constraint::MinAmount(amount) => {
+                out.push(2);
+                out.extend(amount.to_le_bytes());
+            }
+            Constraint::MaxAmount(amount) => {
+                out.push(3);
+                out.extend(amount.to_le_bytes());
+            }
+            Constraint::ResourceIs(address) => {
+                out.push(4);
+                out.extend(address.0);
+            }
+        }
+    }
+}
+
 impl ManifestGraph {
     /// The graph's identity through the hasher seam; the evaluation root
     /// for output-type expressions at admission.
@@ -97,22 +123,11 @@ impl ManifestGraph {
                         bytes.push(1);
                         bytes.extend(edge.producer.to_le_bytes());
                         bytes.extend(edge.output.to_le_bytes());
-                        for constraint in constraints {
-                            match constraint {
-                                Constraint::MinAmount(amount) => {
-                                    bytes.push(2);
-                                    bytes.extend(amount.to_le_bytes());
-                                }
-                                Constraint::MaxAmount(amount) => {
-                                    bytes.push(3);
-                                    bytes.extend(amount.to_le_bytes());
-                                }
-                                Constraint::ResourceIs(address) => {
-                                    bytes.push(4);
-                                    bytes.extend(address.0);
-                                }
-                            }
-                        }
+                        encode_constraints(&mut bytes, constraints);
+                    }
+                    GraphArg::Param(param) => {
+                        bytes.push(5);
+                        bytes.extend(param.to_le_bytes());
                     }
                 }
                 parts.push(bytes);
@@ -125,13 +140,82 @@ impl ManifestGraph {
     }
 }
 
-/// Why admission rejected a graph. Deterministic: every node reaches the
-/// identical verdict.
+/// Why admission rejected a graph or an envelope tree.
+///
+/// Deterministic: every node reaches the identical verdict. Node
+/// indices refer to the flattened manifest admission lowers to; for a
+/// bare graph the two numberings coincide.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AdmissionError {
     /// More nodes than an index can address.
     #[error("graph has more nodes than admission can address")]
     TooManyNodes,
+    /// More subintents than an envelope may bind.
+    #[error("envelope binds more subintents than admission accepts")]
+    TooManySubintents,
+    /// The same signed subintent bound twice into one envelope.
+    #[error("subintent {index} duplicates an earlier one")]
+    DuplicateSubintent {
+        /// The offending subintent's index.
+        index: u32,
+    },
+    /// An intent whose bindings do not match its declared parameters.
+    #[error("intent {intent} declares {expected} parameters, binds {found}")]
+    BindingArity {
+        /// The intent: `0` is the root, `i + 1` is subintent `i`.
+        intent: u32,
+        /// Declared parameter count.
+        expected: usize,
+        /// Bound yield edge count.
+        found: usize,
+    },
+    /// A yield binding naming an intent or node that does not exist.
+    #[error("intent {intent} parameter {param} binds a nonexistent yield source")]
+    UnknownYieldSource {
+        /// The consuming intent.
+        intent: u32,
+        /// The parameter position.
+        param: u32,
+    },
+    /// A yield edge carrying a different resource than the parameter
+    /// declares.
+    #[error("intent {intent} parameter {param}: yielded resource differs from the declared type")]
+    YieldResourceMismatch {
+        /// The consuming intent.
+        intent: u32,
+        /// The parameter position.
+        param: u32,
+    },
+    /// A declared parameter no node argument consumes — the yielded
+    /// bucket would dangle.
+    #[error("intent {intent} parameter {param} is never consumed")]
+    UnusedYieldParam {
+        /// The declaring intent.
+        intent: u32,
+        /// The parameter position.
+        param: u32,
+    },
+    /// A declared parameter consumed by more than one node argument.
+    #[error("intent {intent} parameter {param} is consumed twice")]
+    YieldParamReused {
+        /// The declaring intent.
+        intent: u32,
+        /// The parameter position.
+        param: u32,
+    },
+    /// A parameter reference past the intent's declared parameters — in
+    /// a bare graph, any parameter reference at all.
+    #[error("node {node} references parameter {param}, which is not declared")]
+    UnboundParam {
+        /// The consuming node.
+        node: u32,
+        /// The referenced parameter.
+        param: u32,
+    },
+    /// Yield edges admitting no execution order: intents wait on each
+    /// other's outputs in a cycle.
+    #[error("the envelope's yield edges admit no execution order")]
+    CyclicYields,
     /// A call target with no registered instance.
     #[error("no instance at {0:?}")]
     UnknownInstance(Address),
@@ -268,170 +352,37 @@ pub struct Admitted {
 /// Admit a graph: check well-formedness, linearity, and type agreement
 /// against package metadata, and lower it to the routing manifest.
 ///
+/// A bare graph is the degenerate envelope: one intent, no parameters,
+/// no subintents, its own hash as the identity. Envelope trees go
+/// through [`crate::envelope::admit_tree`], which supplies the identity
+/// from the signed envelope.
+///
 /// # Errors
 ///
 /// Any [`AdmissionError`]; verdicts are deterministic and identical on
 /// every node.
-#[allow(clippy::too_many_lines)] // one pass over nodes, one check per rule
 pub fn admit(
     graph: &ManifestGraph,
     cache: &MetadataCache,
     instances: &InstanceRegistry,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
-    if graph.nodes.len() > MAX_MANIFEST_NODES {
-        return Err(AdmissionError::TooManyNodes);
-    }
-    let graph_hash = graph.hash(hasher);
-
-    // Per prior node: its evaluated output resource types and a consumption
-    // count per output slot.
-    let mut outputs: Vec<Vec<Address>> = Vec::with_capacity(graph.nodes.len());
-    let mut consumed: Vec<Vec<u32>> = Vec::with_capacity(graph.nodes.len());
-    let mut lowered = Vec::with_capacity(graph.nodes.len());
-
-    for (index, node) in graph.nodes.iter().enumerate() {
-        let node_index = u32::try_from(index).map_err(|_| AdmissionError::TooManyNodes)?;
-        let meta = instances
-            .get(node.target)
-            .ok_or(AdmissionError::UnknownInstance(node.target))?;
-        let package = cache
-            .get(meta.package)
-            .ok_or(AdmissionError::UnknownPackage(meta.package))?;
-        let signature =
-            package
-                .methods
-                .get(&node.method)
-                .ok_or_else(|| AdmissionError::UnknownMethod {
-                    package: meta.package,
-                    method: node.method.clone(),
-                })?;
-        if signature.params.len() != node.args.len() {
-            return Err(AdmissionError::ArityMismatch {
-                node: node_index,
-                expected: signature.params.len(),
-                found: node.args.len(),
-            });
-        }
-
-        let mut bound = Vec::with_capacity(node.args.len());
-        let mut inputs = Vec::with_capacity(node.args.len());
-        for (position, (arg, param)) in node.args.iter().zip(&signature.params).enumerate() {
-            let param_index = u32::try_from(position).map_err(|_| AdmissionError::TooManyNodes)?;
-            match arg {
-                GraphArg::Literal(value) => {
-                    if *param == ParamType::Bucket {
-                        return Err(AdmissionError::LiteralForBucketParam {
-                            node: node_index,
-                            param: param_index,
-                        });
-                    }
-                    if !param.admits(value) {
-                        return Err(AdmissionError::ParamKind {
-                            node: node_index,
-                            param: param_index,
-                            expected: param.name(),
-                            found: value.kind(),
-                        });
-                    }
-                    bound.push(value.clone());
-                    inputs.push(NodeInput::Literal(value.clone()));
-                }
-                GraphArg::Edge { edge, constraints } => {
-                    if *param != ParamType::Bucket {
-                        return Err(AdmissionError::EdgeForValueParam {
-                            node: node_index,
-                            param: param_index,
-                        });
-                    }
-                    if edge.producer >= node_index {
-                        return Err(AdmissionError::ForwardEdge {
-                            node: node_index,
-                            producer: edge.producer,
-                        });
-                    }
-                    let producer =
-                        usize::try_from(edge.producer).map_err(|_| AdmissionError::TooManyNodes)?;
-                    let output =
-                        usize::try_from(edge.output).map_err(|_| AdmissionError::TooManyNodes)?;
-                    let resource =
-                        *outputs[producer]
-                            .get(output)
-                            .ok_or(AdmissionError::NoSuchOutput {
-                                producer: edge.producer,
-                                output: edge.output,
-                            })?;
-                    consumed[producer][output] += 1;
-                    if consumed[producer][output] > 1 {
-                        return Err(AdmissionError::DoubleConsumption {
-                            producer: edge.producer,
-                            output: edge.output,
-                        });
-                    }
-                    check_constraints(constraints, resource, node_index, param_index)?;
-                    bound.push(Value::Bucket { resource });
-                    inputs.push(NodeInput::Edge {
-                        source: edge.producer,
-                        resource,
-                    });
-                }
-            }
-        }
-
-        // Evaluate this node's output resource types over its bound inputs.
-        let eval_inputs = EvalInputs {
-            self_addr: node.target,
-            args: &bound,
-            config: &meta.config,
-            node_index,
-            frame: 0,
-            identity: graph_hash,
-        };
-        let mut node_outputs = Vec::with_capacity(signature.outputs.len());
-        for (slot, expr) in signature.outputs.iter().enumerate() {
-            let slot_index = u32::try_from(slot).map_err(|_| AdmissionError::TooManyNodes)?;
-            let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
-                AdmissionError::Eval {
-                    node: node_index,
-                    source,
-                }
-            })?;
-            let Value::Address(resource) = value else {
-                return Err(AdmissionError::OutputType {
-                    node: node_index,
-                    output: slot_index,
-                });
-            };
-            node_outputs.push(resource);
-        }
-        consumed.push(vec![0; node_outputs.len()]);
-        outputs.push(node_outputs);
-        lowered.push(Node {
-            target: node.target,
-            method: node.method.clone(),
-            inputs,
-        });
-    }
-
-    // Linearity: nothing dangles.
-    for (producer, counts) in consumed.iter().enumerate() {
-        for (output, count) in counts.iter().enumerate() {
-            if *count == 0 {
-                return Err(AdmissionError::UnconsumedOutput {
-                    producer: u32::try_from(producer).unwrap_or(u32::MAX),
-                    output: u32::try_from(output).unwrap_or(u32::MAX),
-                });
-            }
-        }
-    }
-
-    Ok(Admitted {
-        manifest: Manifest { nodes: lowered },
-        identity: graph_hash,
-    })
+    let identity = graph.hash(hasher);
+    let manifest = admit_intents(
+        &[IntentView {
+            graph,
+            params: &[],
+            bindings: &[],
+        }],
+        identity,
+        cache,
+        instances,
+        hasher,
+    )?;
+    Ok(Admitted { manifest, identity })
 }
 
-fn check_constraints(
+pub(crate) fn check_constraints(
     constraints: &[Constraint],
     resource: Address,
     node: u32,

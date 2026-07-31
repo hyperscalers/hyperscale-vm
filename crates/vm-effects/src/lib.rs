@@ -19,6 +19,7 @@
 //! the runtime or the protocol workspace.
 
 pub mod dsl;
+pub mod envelope;
 pub mod graph;
 pub mod hash;
 pub mod manifest;
@@ -30,6 +31,11 @@ pub mod types;
 pub use dsl::{
     Clause, EvalError, EvalInputs, Expr, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr,
     evaluate_effects, evaluate_expr, fresh_id, fresh_local,
+};
+pub use envelope::{
+    AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_ROLE, Subintent,
+    SubintentHash, SubintentRecord, YieldBinding, YieldParam, admit_tree, nullifier_key,
+    route_tree,
 };
 pub use graph::{
     AdmissionError, Admitted, Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, admit,

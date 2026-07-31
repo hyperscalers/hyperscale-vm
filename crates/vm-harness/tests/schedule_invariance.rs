@@ -93,10 +93,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
                 mode: Mode::Delta,
             })
             .unwrap();
-        batch.push(BatchTx {
-            tx: tx(id),
-            declared,
-        });
+        batch.push(BatchTx::new(tx(id), declared));
         shapes.insert(tx(id), Shape::Transfer { sender, recipient });
     }
     for id in [0x44u8, 0x55] {
@@ -107,10 +104,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
                 mode: Mode::Write,
             })
             .unwrap();
-        batch.push(BatchTx {
-            tx: tx(id),
-            declared,
-        });
+        batch.push(BatchTx::new(tx(id), declared));
         shapes.insert(tx(id), Shape::Rmw { cell: rmw_cell() });
     }
     (store, batch, shapes)
