@@ -54,8 +54,16 @@ pub enum ProfileError {
 /// The profile's wasm feature set, as an explicit allowlist. Everything
 /// admitted here has an executable-spec witness in vm-ref; a proposal a
 /// parser bump turns on by default stays out until deliberately added here.
-/// Bulk memory's table operations are the one finer-than-a-feature
-/// exclusion, rejected in the operator walk.
+///
+/// A feature left out is refused during validation, which is a stronger
+/// place to refuse than the operator walk: the walk sees function bodies,
+/// so it can reject an operator but not a type in a signature or a local.
+/// Typed function references are the case that proves it — blocking
+/// `call_ref` alone would still admit `(ref null $t)` in value position,
+/// which the spec has no decoding for. Bulk memory's table operations and
+/// the reference-types operators are the exceptions: their features stay
+/// on for `memory.copy`/`memory.fill` and the `call_indirect` encoding, and
+/// the operator walk excludes the rest.
 pub(crate) fn profile_features() -> WasmFeatures {
     WasmFeatures::MUTABLE_GLOBAL
         | WasmFeatures::SATURATING_FLOAT_TO_INT
@@ -65,8 +73,6 @@ pub(crate) fn profile_features() -> WasmFeatures {
         | WasmFeatures::CALL_INDIRECT_OVERLONG
         | WasmFeatures::BULK_MEMORY
         | WasmFeatures::BULK_MEMORY_OPT
-        | WasmFeatures::FUNCTION_REFERENCES
-        | WasmFeatures::GC_TYPES
         | WasmFeatures::COMPONENT_MODEL
 }
 

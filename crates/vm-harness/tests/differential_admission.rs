@@ -17,8 +17,8 @@ use wasm_smith::{Config, Module as SmithModule};
 use wasmtime::Result;
 use wat::parse_str;
 
-const SEEDS: u64 = 512;
-const ENTROPY_BYTES: usize = 4096;
+const SEEDS: u64 = 2_048;
+const ENTROPY_BYTES: usize = 16_384;
 
 /// Deterministic entropy from a seed: xorshift64* stream.
 fn entropy(seed: u64) -> Vec<u8> {
@@ -37,6 +37,7 @@ fn entropy(seed: u64) -> Vec<u8> {
 /// and the implication is asserted over real volume.
 fn profile_config() -> Config {
     let mut config = permissive_config();
+    config.gc_enabled = false;
     config.reference_types_enabled = false;
     config.bulk_memory_enabled = false;
     config.extended_const_enabled = false;
@@ -49,7 +50,13 @@ fn profile_config() -> Config {
 
 /// Generation deliberately wider than the profile: the interesting cases
 /// are the ones the validator has to refuse, so bulk memory, references,
-/// extended const, and multiple tables are all on.
+/// typed function references, GC, extended const, and multiple tables are
+/// all on.
+///
+/// `gc_enabled` drives both the GC proposal and typed function references,
+/// which is why it is on here: those are shapes that reach a signature or a
+/// local rather than an operator, and a corpus that never generates one
+/// cannot witness the profile refusing it.
 #[allow(clippy::field_reassign_with_default)] // a knob list reads better than a struct literal
 fn permissive_config() -> Config {
     let mut config = Config::default();
@@ -61,7 +68,7 @@ fn permissive_config() -> Config {
     config.exceptions_enabled = false;
     config.tail_call_enabled = false;
     config.memory64_enabled = false;
-    config.gc_enabled = false;
+    config.gc_enabled = true;
     config.reference_types_enabled = true;
     config.bulk_memory_enabled = true;
     config.extended_const_enabled = true;
@@ -120,6 +127,54 @@ fn every_admitted_core_module_decodes_under_the_spec() {
         rejected > 0,
         "the corpus exercises nothing outside the profile"
     );
+}
+
+/// The typed-function-reference surfaces, pinned by hand.
+///
+/// A generated corpus witnesses these only when the generator happens to
+/// emit one, and the shapes reach a local or a signature rather than an
+/// operator — so the same implication the lane asserts over volume is
+/// asserted here over the exact cases a blocklist would miss.
+#[test]
+fn typed_function_references_have_no_witness_and_no_admission() {
+    let fixtures = [
+        (
+            "typed funcref local",
+            r#"(module
+                (type $sig (func (result i32)))
+                (func (export "run") (result i32)
+                  (local $callee (ref null $sig))
+                  i32.const 0))"#,
+        ),
+        (
+            "call_ref",
+            r#"(module
+                (type $sig (func (result i32)))
+                (func (export "run") (result i32)
+                  (local $callee (ref null $sig))
+                  local.get $callee
+                  call_ref $sig))"#,
+        ),
+        (
+            "typed funcref parameter",
+            r#"(module
+                (type $sig (func (result i32)))
+                (func (export "run") (param $callee (ref null $sig)) (result i32)
+                  i32.const 0))"#,
+        ),
+    ];
+
+    for (name, wat) in fixtures {
+        let wasm = parse_str(wat).expect("fixture parses");
+        assert!(
+            RefModule::decode(&wasm).is_err(),
+            "{name}: the spec decodes it, so the profile could admit it"
+        );
+        assert!(
+            validate_core_module(&wasm).is_err(),
+            "{name}: the profile admits a module the spec cannot decode"
+        );
+    }
 }
 
 #[test]
