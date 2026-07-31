@@ -16,7 +16,7 @@ use wasmparser::{
     ValType, Validator, WasmFeatures,
 };
 
-use crate::frames::check_stack_bounds;
+use crate::frames::{check_component_stack_bounds, check_stack_bounds};
 use crate::profile;
 
 /// A profile violation. Every variant is a deterministic deploy-time verdict.
@@ -91,7 +91,11 @@ pub fn validate_component(bytes: &[u8]) -> Result<(), ProfileError> {
         .validate_all(bytes)
         .map_err(|e| ProfileError::Feature(e.to_string()))?;
 
-    structural_pass(bytes)
+    structural_pass(bytes)?;
+    // The stack bound runs once over the whole component: a core module's
+    // imports are wired to other modules' exports, and judging each module
+    // alone would weigh those edges at zero.
+    check_component_stack_bounds(bytes)
 }
 
 /// Whether a component value type is one the executable spec models:
@@ -208,9 +212,7 @@ fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
                         profile::MAX_CORE_MODULES
                     )));
                 }
-                let core = &bytes[unchecked_range];
-                core_structural_pass(core)?;
-                check_stack_bounds(core)?;
+                core_structural_pass(&bytes[unchecked_range])?;
             }
             Payload::ComponentSection { .. } => return Err(ProfileError::NestedComponent),
             Payload::ComponentTypeSection(reader) => {
