@@ -34,6 +34,9 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 /// `withdraw(resource, amount)`: reserve `amount` on the caller's vault
 /// for `resource`. `deposit(bucket)`: delta on the recipient's vault plus
 /// the claims-area fallback cell, both keyed by the bucket's resource.
+/// `assert-balance(resource, min, window)`: a bounded-window snapshot of
+/// the vault for `resource` — refuses unless the pinned balance covers
+/// `min`, touching nothing.
 #[must_use]
 pub fn account_metadata() -> PackageMetadata {
     let mut methods = PackageMetadata::default();
@@ -70,6 +73,18 @@ pub fn account_metadata() -> PackageMetadata {
                     mode: ModeExpr::Delta,
                 },
             ],
+            calls: vec![],
+        },
+    );
+    methods.methods.insert(
+        "assert-balance".into(),
+        MethodSignature {
+            params: vec![ParamType::Address, ParamType::U128, ParamType::U64],
+            outputs: vec![],
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(self_child(VAULT, vec![Expr::Arg(0)])),
+                mode: ModeExpr::Snapshot(WindowExpr::Bounded(Expr::Arg(2))),
+            }],
             calls: vec![],
         },
     );

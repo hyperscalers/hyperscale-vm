@@ -2,14 +2,15 @@
 //!
 //! `hyperscale-vm-stdlib` ships the account component as committed bytes
 //! that CI never rebuilds, so this lane runs those exact bytes: profile
-//! validation, then a withdraw+deposit transfer on the blessed engine and
-//! the reference interpreter, receipts and fuel byte-identical.
+//! validation, then a withdraw+deposit transfer with a pinned balance
+//! guard on the blessed engine and the reference interpreter, receipts
+//! and fuel byte-identical.
 
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, child_key,
+    TestHasher, Window, child_key,
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -18,7 +19,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
-    DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,
+    DeltaCell, ReserveCell, SnapCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
 use wasmtime::component::{Component, Linker, Resource};
@@ -54,6 +55,14 @@ fn session() -> KernelSession {
         .insert(Effect {
             target: EffectTarget::Point(recipient),
             mode: Mode::Delta,
+        })
+        .unwrap();
+    declared
+        .insert(Effect {
+            target: EffectTarget::Point(sender),
+            mode: Mode::Snapshot {
+                window: Window::Bounded(8),
+            },
         })
         .unwrap();
     let mut store = MemoryStore::new();
@@ -92,8 +101,9 @@ fn finish(session: KernelSession, fuel: u64) -> Receipt {
         .0
 }
 
-/// Withdraw then deposit on the blessed engine — one instantiation per
-/// call, the session threaded through, as execution invokes guests.
+/// Withdraw, deposit, then the pinned balance guard on the blessed
+/// engine — one instantiation per call, the session threaded through, as
+/// execution invokes guests.
 fn blessed_transfer() -> Result<(Receipt, u64)> {
     let engine = blessed_engine()?;
     let compiled = Component::new(&engine, ACCOUNT_COMPONENT)?;
@@ -126,13 +136,31 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
     let deposit =
         instance.get_typed_func::<(Resource<DeltaCell>, &[u8]), ()>(&mut store, "deposit")?;
     deposit.call(&mut store, (Resource::new_borrow(recipient_rep), &bucket))?;
-    let fuel = withdraw_fuel + (FUEL - store.get_fuel()?);
+    let deposit_fuel = FUEL - store.get_fuel()?;
+    let host = store.into_data();
+
+    // The guard reads the batch baseline: the seeded balance, not the
+    // reservation-diminished one.
+    let snap_rep = rep_of(&host.0, &Capability::Snapshot(sender));
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &compiled)?;
+    let guard =
+        instance.get_typed_func::<(Resource<SnapCell>, &[u8]), ()>(&mut store, "assert-balance")?;
+    guard.call(
+        &mut store,
+        (
+            Resource::new_borrow(snap_rep),
+            encode_amount(400).as_slice(),
+        ),
+    )?;
+    let fuel = withdraw_fuel + deposit_fuel + (FUEL - store.get_fuel()?);
 
     Ok((finish(store.into_data().0, fuel), fuel))
 }
 
-/// The same transfer on the reference interpreter, instantiated per call
-/// with the session threaded through.
+/// The same transfer and guard on the reference interpreter, instantiated
+/// per call with the session threaded through.
 fn reference_transfer() -> Result<(Receipt, u64)> {
     let component = RefComponent::decode(ACCOUNT_COMPONENT)?;
     let (sender, recipient) = keys();
@@ -167,7 +195,20 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
         ],
     )?;
     outcome.map_err(|trap| wasmtime::error::format_err!("deposit trapped: {trap:?}"))?;
-    let fuel = withdraw_fuel + instance.fuel_consumed();
+    let deposit_fuel = instance.fuel_consumed();
+    let host = instance.into_host();
+
+    let snap_rep = rep_of(&host.0, &Capability::Snapshot(sender));
+    let mut instance = RefComponentInstance::instantiate(&component, host)?;
+    let outcome = instance.invoke(
+        "assert-balance",
+        &[
+            CVal::Borrow(snap_rep, ResourceKind::SnapCell),
+            CVal::Bytes(encode_amount(400).to_vec()),
+        ],
+    )?;
+    outcome.map_err(|trap| wasmtime::error::format_err!("assert-balance trapped: {trap:?}"))?;
+    let fuel = withdraw_fuel + deposit_fuel + instance.fuel_consumed();
 
     Ok((finish(instance.into_host().0, fuel), fuel))
 }

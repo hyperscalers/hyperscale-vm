@@ -1,10 +1,11 @@
 package test:guest;
 
-/// The minimal account: reservation-backed withdrawal and delta deposit.
+/// The minimal account: reservation-backed withdrawal, delta deposit, and
+/// a pinned balance guard.
 world account {
     import hyperscale:kernel/state;
 
-    use hyperscale:kernel/state.{reserve-cell, delta-cell};
+    use hyperscale:kernel/state.{reserve-cell, delta-cell, snap-cell};
 
     /// Take the reserved amount as a bucket; the requested amount must
     /// equal the reservation.
@@ -12,4 +13,7 @@ world account {
 
     /// Credit a bucket's amount into the vault.
     export deposit: func(vault: borrow<delta-cell>, amount: list<u8>);
+
+    /// Refuse unless the pinned balance covers `min`.
+    export assert-balance: func(vault: borrow<snap-cell>, min: list<u8>);
 }
