@@ -89,7 +89,9 @@ change lands with the failing lane case promoted into the permanent corpus.
   byte charge — so out-of-fuel is a shared verdict, swept across the
   boundary by `differential_fuel`.
 - A workstation fuzz finding is promoted by checking its seed into the
-  relevant lane before the fix merges.
+  relevant lane before the fix merges. `fuzz/` holds the workstation lane
+  (`cargo fuzz run admitted_is_executable`); it is its own workspace, so an
+  ordinary build never touches it.
 
 ## Fuel at a trap is not a fee input
 

@@ -842,6 +842,28 @@ mod tests {
     }
 
     #[test]
+    fn tombstones_beyond_the_cap_do_not_starve_a_scan() {
+        // The base fetch is sized at the cap plus the tombstones in range,
+        // so a scan whose interval is mostly deletions still returns a
+        // full page of survivors rather than a short one.
+        let base: Vec<(u128, u8)> = (0..20u8).map(|order| (u128::from(order), order)).collect();
+        let mut overlay = overlay_over(&base);
+        for order in 0..16 {
+            overlay.entry_remove(BOOK, ASKS, order).unwrap();
+        }
+        overlay.merge_active();
+        // Sixteen tombstones stand between the interval's start and the
+        // first survivor, and the cap is two.
+        let hits = overlay.scan(BOOK, ASKS, 0, 100, 2).unwrap();
+        assert_eq!(hits, vec![(16, vec![16]), (17, vec![17])]);
+
+        // Deleting in the active layer over a merged one is the same.
+        overlay.entry_remove(BOOK, ASKS, 16).unwrap();
+        let hits = overlay.scan(BOOK, ASKS, 0, 100, 2).unwrap();
+        assert_eq!(hits, vec![(17, vec![17]), (18, vec![18])]);
+    }
+
+    #[test]
     fn reads_layer_and_snapshots_pin_to_the_base() {
         let mut base = MemoryStore::new();
         let cell = key(1);

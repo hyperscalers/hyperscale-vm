@@ -5,11 +5,12 @@
 use hyperscale_vm_effects::stdlib::account_metadata;
 use hyperscale_vm_effects::{
     Address, AdmissionError, AdmittedTree, Constraint, EdgeRef, Effect, EffectTarget, EnvelopeTree,
-    GraphArg, GraphNode, Hasher, InstanceMeta, InstanceRegistry, IntentDecl, MAX_YIELD_PARAMS,
-    ManifestGraph, ManifestHash, MetadataCache, Mode, NULLIFIER_ROLE, NodeInput, PackageHash,
-    PrefixShardResolver, RoleId, ShardId, Subintent, TestHasher, Value, YieldBinding, YieldParam,
-    admit, admit_tree, child_key, nullifier_key, route_tree,
+    GraphArg, GraphNode, Hasher, InstanceMeta, InstanceRegistry, IntentDecl, MAX_SUBINTENTS,
+    MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, Mode, NULLIFIER_ROLE, NodeInput,
+    PackageHash, PrefixShardResolver, RoleId, ShardId, Subintent, TestHasher, Value, YieldBinding,
+    YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
+use proptest::prelude::{any, proptest};
 
 const ALICE: Address = Address([0x10; 16]);
 const BOB: Address = Address([0x20; 16]);
@@ -396,4 +397,78 @@ fn fresh_keys_root_at_the_envelope_identity() {
 #[test]
 fn the_nullifier_role_stays_off_stdlib_roles() {
     assert!(NULLIFIER_ROLE > RoleId(0x00FF), "reserved role space");
+}
+
+#[test]
+fn the_subintent_cap_is_checked_before_anything_else() {
+    // At the cap the count check passes and ordinary rules take over —
+    // here the duplicate scan. One past it, the count is the verdict.
+    let mut at_cap = composed_tree(100);
+    let copy = at_cap.subintents[0].clone();
+    at_cap.subintents.resize(MAX_SUBINTENTS, copy.clone());
+    assert_eq!(
+        admit_composed(&at_cap),
+        Err(AdmissionError::DuplicateSubintent { index: 1 })
+    );
+
+    let mut past_cap = at_cap;
+    past_cap.subintents.push(copy);
+    assert_eq!(
+        admit_composed(&past_cap),
+        Err(AdmissionError::TooManySubintents)
+    );
+}
+
+#[test]
+fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
+    // The subintent's own hash is the signer's; the bindings are the
+    // composer's, and only the envelope identity covers them.
+    let tree = composed_tree(100);
+    let mut rebound = tree.clone();
+    rebound.root_bindings[0].edge = EdgeRef {
+        producer: 1,
+        output: 0,
+    };
+    assert_ne!(tree.hash(&TestHasher), rebound.hash(&TestHasher));
+    assert_eq!(
+        tree.subintents[0].decl.hash(&TestHasher),
+        rebound.subintents[0].decl.hash(&TestHasher)
+    );
+
+    let mut resigned = tree.clone();
+    resigned.subintents[0].signer = ALICE;
+    assert_ne!(tree.hash(&TestHasher), resigned.hash(&TestHasher));
+
+    let mut rebound_subintent = tree.clone();
+    rebound_subintent.subintents[0].bindings[0].edge = EdgeRef {
+        producer: 1,
+        output: 0,
+    };
+    assert_ne!(tree.hash(&TestHasher), rebound_subintent.hash(&TestHasher));
+}
+
+proptest! {
+    /// Point any yield binding anywhere: tree admission either accepts a
+    /// composition or rejects it deterministically — it never panics and
+    /// never disagrees with itself.
+    #[test]
+    fn arbitrary_yield_rebinds_never_break_admission(
+        intent in any::<u32>(),
+        producer in any::<u32>(),
+        output in any::<u32>(),
+        on_subintent in any::<bool>(),
+    ) {
+        let (cache, instances) = world();
+        let mut tree = composed_tree(100);
+        let binding = YieldBinding { intent, edge: EdgeRef { producer, output } };
+        if on_subintent {
+            tree.subintents[0].bindings[0] = binding;
+        } else {
+            tree.root_bindings[0] = binding;
+        }
+        let identity = tree.hash(&TestHasher);
+        let first = admit_tree(&tree, identity, &cache, &instances, &TestHasher);
+        let second = admit_tree(&tree, identity, &cache, &instances, &TestHasher);
+        assert_eq!(first, second);
+    }
 }

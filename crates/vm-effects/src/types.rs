@@ -444,8 +444,10 @@ impl EffectSet {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::{
-        Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, Value, child_key,
+        Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, Value, Window, child_key,
         compatible,
     };
     use crate::hash::TestHasher;
@@ -467,6 +469,60 @@ mod tests {
                 assert_eq!(compatible(a, b), compatible(b, a), "symmetry {a:?}/{b:?}");
             }
         }
+    }
+
+    #[test]
+    fn only_read_and_write_targets_provision() {
+        // A counterpart shard has to carry what execution reads: fresh
+        // reads, and the prior value a read-modify-write folds over.
+        // Snapshots are client-proven, deltas read nothing, and a
+        // reservation is judged where it lives — so a commutative-only
+        // leg provisions nothing at all.
+        let owner = Address([1; 16]);
+        let target =
+            |byte: u8| EffectTarget::Point(child_key(&TestHasher, owner, RoleId(byte.into()), &[]));
+        let mut set = EffectSet::new();
+        for (byte, mode) in [
+            (1, Mode::Read),
+            (2, Mode::Write),
+            (3, Mode::Delta),
+            (4, Mode::Reserve { amount: 5 }),
+            (
+                5,
+                Mode::Snapshot {
+                    window: Window::Bounded(8),
+                },
+            ),
+        ] {
+            set.insert(Effect {
+                target: target(byte),
+                mode,
+            })
+            .unwrap();
+        }
+        assert_eq!(
+            set.provision_targets(),
+            BTreeSet::from([target(1), target(2)])
+        );
+
+        // A cell carrying both a delta and a read still provisions: the
+        // read is what needs the value.
+        let mut mixed = EffectSet::new();
+        mixed
+            .insert(Effect {
+                target: target(3),
+                mode: Mode::Read,
+            })
+            .unwrap();
+        mixed
+            .insert(Effect {
+                target: target(3),
+                mode: Mode::Delta,
+            })
+            .unwrap();
+        assert_eq!(mixed.provision_targets(), BTreeSet::from([target(3)]));
+
+        assert!(EffectSet::new().provision_targets().is_empty());
     }
 
     #[test]

@@ -223,3 +223,82 @@ proptest! {
         }));
     }
 }
+
+/// Digests pinned by value, not by self-comparison.
+///
+/// The proptests above prove evaluation is a function; they cannot notice
+/// the function changing. These do: every one is a hash the protocol
+/// commits to — a transaction identity, a child address, a fresh key — so
+/// a shift in any encoding under them moves a value here rather than
+/// passing quietly.
+mod golden {
+    use hyperscale_vm_effects::{
+        Address, EdgeRef, GraphArg, GraphNode, ManifestGraph, RoleId, TestHasher, Value, child_key,
+        fresh_id, fresh_local,
+    };
+
+    fn hex(bytes: &[u8]) -> String {
+        use std::fmt::Write;
+        bytes.iter().fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+    }
+
+    #[test]
+    fn child_addresses_are_pinned() {
+        let owner = Address([0x11; 16]);
+        assert_eq!(
+            hex(&child_key(&TestHasher, owner, RoleId(1), &[]).local.0),
+            "5409bdf194b8510995d6534a516309fc"
+        );
+        assert_eq!(
+            hex(&child_key(
+                &TestHasher,
+                owner,
+                RoleId(1),
+                &[Value::Address(Address([0xE1; 16])).canonical_bytes()],
+            )
+            .local
+            .0),
+            "03b4df06252365e90d8d6cc4c37fb3a5"
+        );
+    }
+
+    #[test]
+    fn fresh_derivations_are_pinned() {
+        let graph = ManifestGraph {
+            nodes: vec![
+                GraphNode {
+                    target: Address([0x10; 16]),
+                    method: "withdraw".into(),
+                    args: vec![GraphArg::Literal(Value::U128(7))],
+                },
+                GraphNode {
+                    target: Address([0x20; 16]),
+                    method: "deposit".into(),
+                    args: vec![GraphArg::Edge {
+                        edge: EdgeRef {
+                            producer: 0,
+                            output: 0,
+                        },
+                        constraints: vec![],
+                    }],
+                },
+            ],
+        };
+        let identity = graph.hash(&TestHasher);
+        assert_eq!(
+            hex(&identity.0.0),
+            "6f1a6c09f6cfa6b220d01c8322d8dcea8dc1049be40cf1ae4ee238d5e72c2aac"
+        );
+        assert_eq!(
+            format!("{:016x}", fresh_id(&TestHasher, identity, 1, 0, 0)),
+            "feaaf691e78beadb"
+        );
+        assert_eq!(
+            hex(&fresh_local(&TestHasher, identity, 1, 0, 0).0),
+            "dbea8be791f6aafe46ac2f6357f32aa3"
+        );
+    }
+}

@@ -1084,6 +1084,55 @@ mod tests {
     }
 
     #[test]
+    fn folded_reserve_amounts_report_their_overflow() {
+        // The effect set sums reserves on one target, so two maximal
+        // declarations on the same cell leave `u128` — a routing verdict,
+        // not a panic.
+        let mut cache = MetadataCache::new();
+        let mut meta = PackageMetadata::default();
+        meta.methods.insert(
+            "take".into(),
+            method(
+                vec![Clause::Effect {
+                    target: TargetExpr::Point(Expr::ChildKey {
+                        owner: Box::new(Expr::SelfAddr),
+                        role: RoleId(1),
+                        material: vec![],
+                    }),
+                    mode: ModeExpr::Reserve(Expr::Arg(0)),
+                }],
+                vec![],
+            ),
+        );
+        cache.publish(pkg("vault"), meta);
+        let mut instances = InstanceRegistry::new();
+        instances.register(
+            addr(1),
+            InstanceMeta {
+                package: pkg("vault"),
+                config: vec![],
+            },
+        );
+        let node = || Node {
+            target: addr(1),
+            method: "take".into(),
+            inputs: vec![NodeInput::Literal(Value::U128(u128::MAX))],
+        };
+        assert_eq!(
+            route(
+                &admitted(&Manifest {
+                    nodes: vec![node(), node()],
+                }),
+                &cache,
+                &instances,
+                &TestHasher,
+                &resolver()
+            ),
+            Err(RouteError::ReserveOverflow)
+        );
+    }
+
+    #[test]
     fn prefix_resolver_takes_top_bits() {
         let resolver = PrefixShardResolver { bits: 4 };
         assert_eq!(resolver.shard_of(Address([0xAB; 16])), ShardId(0xA));

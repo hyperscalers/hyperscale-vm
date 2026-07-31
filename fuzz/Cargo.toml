@@ -1,0 +1,26 @@
+# Its own workspace: the fuzz target needs a sanitizer-instrumented build
+# and must not join the ordinary one.
+[package]
+name = "hyperscale-vm-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = "1"
+libfuzzer-sys = "0.4"
+wasm-smith = "0.236"
+hyperscale-vm-ref = { path = "../crates/vm-ref" }
+hyperscale-vm-runtime = { path = "../crates/vm-runtime" }
+
+[[bin]]
+name = "admitted_is_executable"
+path = "fuzz_targets/admitted_is_executable.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
