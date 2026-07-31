@@ -35,11 +35,13 @@ pub struct BatchTx {
     pub tx: TxHash,
     /// The transaction's declared effect set on this shard.
     pub declared: EffectSet,
-    /// The nullifier keys of every subintent the transaction commits,
-    /// each also declared as an exclusive write in `declared`. An
-    /// existing cell at any of them aborts the transaction before it
-    /// runs; completing writes them all — once-only by creation
-    /// conflict.
+    /// The nullifier keys of every subintent the transaction commits.
+    /// Each must also be declared as an exclusive write in `declared`,
+    /// which [`execute_batch`] enforces: the declaration is what puts
+    /// racing committers of one subintent in a single conflict group,
+    /// where the spent check sees the winner's write. An existing cell
+    /// at any of them aborts the transaction before it runs; completing
+    /// writes them all — once-only by creation conflict.
     pub nullifiers: Vec<SubstateKey>,
     /// The transaction's clock in milliseconds. Per transaction, not per
     /// batch: every replica executing this transaction must pass the same
@@ -106,6 +108,17 @@ pub enum BatchError {
     /// Two batch entries with the same transaction hash.
     #[error("duplicate transaction {0:?}")]
     DuplicateTx(TxHash),
+    /// A nullifier key the transaction's effect set does not declare as an
+    /// exclusive write. Once-only safety rests on that declaration: it is
+    /// what forces racing committers of one subintent into a single
+    /// conflict group, where the spent check sees the winner's write.
+    #[error("transaction {tx:?} commits an undeclared nullifier {key:?}")]
+    UndeclaredNullifier {
+        /// The offending transaction.
+        tx: TxHash,
+        /// The nullifier key missing from the declaration.
+        key: SubstateKey,
+    },
     /// A session refused to finish — an oracle violation or store failure.
     #[error("finishing {tx:?}")]
     Finish {
@@ -273,13 +286,15 @@ fn run_group<R: GuestRunner>(
                         source,
                     })?;
                 // Committing spends every subintent: the nullifier cell
-                // records the consuming transaction, at the signer's
-                // shard.
+                // records the consuming transaction. The write enters the
+                // receipt wherever the transaction runs — the outbound
+                // effect record, filtered at apply like every other
+                // operation — and reaches the store only at the signer's
+                // shard, which is where the spent check reads it.
                 for key in &entry.nullifiers {
-                    if !locality.is_local(key.owner) {
-                        continue;
+                    if locality.is_local(key.owner) {
+                        threaded.write(*key, entry.tx.0.0.to_vec())?;
                     }
-                    threaded.write(*key, entry.tx.0.0.to_vec())?;
                     receipt
                         .delta
                         .cells
@@ -358,6 +373,17 @@ pub fn execute_batch<R: GuestRunner>(
     for entry in batch {
         if !seen.insert(entry.tx) {
             return Err(BatchError::DuplicateTx(entry.tx));
+        }
+        for key in &entry.nullifiers {
+            if !entry.declared.contains(&Effect {
+                target: EffectTarget::Point(*key),
+                mode: Mode::Write,
+            }) {
+                return Err(BatchError::UndeclaredNullifier {
+                    tx: entry.tx,
+                    key: *key,
+                });
+            }
         }
     }
     let mut ordered: Vec<&BatchTx> = batch.iter().collect();

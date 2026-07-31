@@ -10,8 +10,9 @@ use hyperscale_vm_effects::{
     SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MemoryStore, Outcome,
-    OverlayStore, RunResult, SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
+    BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
+    MemoryStore, Outcome, OverlayStore, RunResult, SubstateStore, TxHash, decode_amount,
+    encode_amount, execute_batch,
 };
 
 const FUEL: u64 = 7;
@@ -334,6 +335,42 @@ fn racing_nullifier_writers_commit_exactly_once() {
         Outcome::UserError {
             reason: "subintent nullifier spent".into(),
         }
+    );
+}
+
+#[test]
+fn a_nullifier_outside_the_declaration_refuses_the_batch() {
+    // Once-only safety rests on the declared exclusive write: without it
+    // two committing envelopes fall into different conflict groups, each
+    // checks its own isolated store, and both spend the same subintent.
+    // The batch refuses rather than run.
+    let noop = |_id: TxHash, session: KernelSession| RunResult {
+        session,
+        outcome: Outcome::Completed { value: None },
+        fuel: FUEL,
+    };
+    // A read is not the write the conflict relation needs.
+    let undeclared = BatchTx {
+        tx: tx(0x01),
+        declared: point(nullifier(), Mode::Read),
+        nullifiers: vec![nullifier()],
+        clock_ms: 0,
+    };
+    let refused = execute_batch(
+        Arc::new(MemoryStore::new()),
+        &[undeclared],
+        &noop,
+        env().randomness,
+        test_hash,
+        ExecutionMode::Serial,
+        &Locality::All,
+    );
+    assert_eq!(
+        refused.err(),
+        Some(BatchError::UndeclaredNullifier {
+            tx: tx(0x01),
+            key: nullifier(),
+        })
     );
 }
 

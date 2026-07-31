@@ -2,13 +2,15 @@
 //! applies, and settles only the keys it owns; remote reservations are
 //! held at their declared amounts without judging; and the covered
 //! transfer's receipt is byte-identical on both sides — the outbound
-//! effect record every participant derives.
+//! effect record every participant derives. Nullifier writes follow the
+//! same convention: in the receipt everywhere, in the store only where
+//! the signer's shard reads them.
 
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, child_key,
+    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubintentHash,
+    SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MemoryStore, Outcome,
@@ -151,6 +153,82 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
     assert_eq!(recipient_state.read(cell(PAYER_BYTE)).unwrap(), None);
     // The unjudged remote hold released with the settlement elsewhere.
     assert_eq!(recipient.store.held_reservation(cell(PAYER_BYTE), tx), None);
+}
+
+/// The subintent's nullifier, under a signer the payer's shard owns.
+fn signed_nullifier() -> SubstateKey {
+    nullifier_key(
+        &TestHasher,
+        Address([PAYER_BYTE; 16]),
+        SubintentHash(Hash32([0x99; 32])),
+    )
+}
+
+/// A covered transfer that also commits one bound subintent.
+fn committing_envelope(id: u8, amount: u128) -> BatchTx {
+    let mut declared = transfer_declared(amount);
+    declared
+        .insert(Effect {
+            target: EffectTarget::Point(signed_nullifier()),
+            mode: Mode::Write,
+        })
+        .unwrap();
+    BatchTx {
+        tx: TxHash(Hash32([id; 32])),
+        declared,
+        nullifiers: vec![signed_nullifier()],
+        clock_ms: env().clock_ms,
+    }
+}
+
+#[test]
+fn a_committed_nullifier_reads_the_same_on_both_shards() {
+    let batch = vec![committing_envelope(0x33, 50)];
+    let tx = batch[0].tx;
+
+    let mut payer_store = MemoryStore::new();
+    payer_store
+        .write(cell(PAYER_BYTE), encode_amount(100).to_vec())
+        .unwrap();
+    payer_store.clear_log();
+    let payer = execute_batch(
+        Arc::new(payer_store),
+        &batch,
+        &transfer_guest,
+        env().randomness,
+        test_hash,
+        ExecutionMode::Serial,
+        &owned_by(PAYER_BYTE),
+    )
+    .unwrap();
+
+    let recipient = execute_batch(
+        Arc::new(MemoryStore::new()),
+        &batch,
+        &transfer_guest,
+        env().randomness,
+        test_hash,
+        ExecutionMode::Serial,
+        &owned_by(RECIPIENT_BYTE),
+    )
+    .unwrap();
+
+    // The spend is in both receipts: it is the outbound effect record,
+    // filtered at apply like a movement, never at the receipt.
+    assert_eq!(payer.receipts, recipient.receipts);
+    assert_eq!(
+        payer.receipts[&tx].delta.cells.get(&signed_nullifier()),
+        Some(&Some(tx.0.0.to_vec()))
+    );
+
+    // Only the signer's shard holds the cell.
+    let mut payer_state = payer.store;
+    assert_eq!(
+        payer_state.read(signed_nullifier()).unwrap(),
+        Some(tx.0.0.to_vec())
+    );
+    let mut recipient_state = recipient.store;
+    assert_eq!(recipient_state.read(signed_nullifier()).unwrap(), None);
 }
 
 #[test]
