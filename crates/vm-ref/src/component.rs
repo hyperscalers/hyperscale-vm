@@ -592,13 +592,21 @@ struct Handle {
     live: bool,
 }
 
+/// The handle table's reserved slot.
+///
+/// The component model reserves index 0 as never allocatable, so the
+/// blessed engine's table numbers from one (`HandleTable::insert` returns
+/// `next + 1`). Handle values are core `i32`s a guest can return, compare,
+/// or forge, so the numbering is guest-observable and has to match.
+const RESERVED_HANDLE: Option<Handle> = None;
+
 /// The canonical-ABI runtime: handle table plus the host, implementing canon
 /// dispatch for the interpreter.
 struct KernelCanon<'c, H> {
     comp: &'c RefComponent,
     resolved_core_funcs: Vec<FuncAddr>,
     resolved_memories: Vec<u32>,
-    handles: Vec<Handle>,
+    handles: Vec<Option<Handle>>,
     /// Bytes crossing the canonical ABI boundary, mirroring the runtime's
     /// per-byte fuel supplement.
     boundary_bytes: u64,
@@ -775,7 +783,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                 comp,
                 resolved_core_funcs,
                 resolved_memories: resolved_memories_by_alias,
-                handles: Vec::new(),
+                handles: vec![RESERVED_HANDLE],
                 boundary_bytes: 0,
                 host,
             },
@@ -821,6 +829,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
         }
 
         self.canon.handles.clear();
+        self.canon.handles.push(RESERVED_HANDLE);
         let modules: Vec<&RefModule> = self.comp.modules.iter().collect();
         self.store.depth = 0;
         let mem_idx = opts
@@ -837,11 +846,11 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                 (CVal::U64(v), CTy::U64) => flat.push(Value::I64(v.cast_signed())),
                 (CVal::Borrow(rep, kind), CTy::Borrow) => {
                     let idx = u32::try_from(self.canon.handles.len()).expect("bounded");
-                    self.canon.handles.push(Handle {
+                    self.canon.handles.push(Some(Handle {
                         rep: *rep,
                         kind: *kind,
                         live: true,
-                    });
+                    }));
                     flat.push(Value::I32(idx.cast_signed()));
                 }
                 (CVal::Bytes(bytes), CTy::List8) => {
@@ -888,7 +897,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
         let outcome = call(&modules, &mut self.canon, &mut self.store, addr, flat);
         let result = match outcome {
             Ok(values) => {
-                if self.canon.handles.iter().any(|h| h.live) {
+                if self.canon.handles.iter().flatten().any(|h| h.live) {
                     Err(ExecError::Canon(CanonError::BorrowsRemain))
                 } else {
                     let lifted = self.lift_results(&ctype, &values, mem_idx);
@@ -998,8 +1007,8 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
     fn resolve_handle(&self, index: Value, expected: ResourceKind) -> Result<u32, ExecError> {
         let idx = index.as_i32().cast_unsigned() as usize;
         match self.handles.get(idx) {
-            Some(h) if h.live && h.kind == expected => Ok(h.rep),
-            Some(h) if h.live => Err(ExecError::Canon(CanonError::WrongHandleType)),
+            Some(Some(h)) if h.live && h.kind == expected => Ok(h.rep),
+            Some(Some(h)) if h.live => Err(ExecError::Canon(CanonError::WrongHandleType)),
             _ => Err(ExecError::Canon(CanonError::UnknownHandle)),
         }
     }
@@ -1108,11 +1117,11 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
             CoreFuncDef::ResourceDrop { kind } => {
                 let idx = args[0].as_i32().cast_unsigned() as usize;
                 match self.handles.get_mut(idx) {
-                    Some(h) if h.live && kind.is_none_or(|k| k == h.kind) => {
+                    Some(Some(h)) if h.live && kind.is_none_or(|k| k == h.kind) => {
                         h.live = false;
                         Ok(Vec::new())
                     }
-                    Some(h) if h.live => Err(ExecError::Canon(CanonError::WrongHandleType)),
+                    Some(Some(h)) if h.live => Err(ExecError::Canon(CanonError::WrongHandleType)),
                     _ => Err(ExecError::Canon(CanonError::UnknownHandle)),
                 }
             }

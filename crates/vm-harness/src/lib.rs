@@ -165,6 +165,7 @@ pub mod fixtures {
     (memory $a "mem")))
   (core func $rw_remove_l (canon lower (func $rw_remove)))
   (core func $clock_l (canon lower (func $clock)))
+  (core func $drop_r (canon resource.drop $rcell))
   (core func $drop_s (canon resource.drop $scell))
   (core func $drop_w (canon resource.drop $wcell))
   (core func $drop_d (canon resource.drop $dcell))
@@ -188,6 +189,7 @@ pub mod fixtures {
     (import "k" "rw-insert" (func $rw_insert (param i32 i32 i32 i32 i32)))
     (import "k" "rw-remove" (func $rw_remove (param i32 i32)))
     (import "k" "clock" (func $clock (result i64)))
+    (import "k" "drop-r" (func $drop_r (param i32)))
     (import "k" "drop-s" (func $drop_s (param i32)))
     (import "k" "drop-w" (func $drop_w (param i32)))
     (import "k" "drop-d" (func $drop_d (param i32)))
@@ -362,6 +364,20 @@ pub mod fixtures {
       i32.load
       i64.extend_i32_u)
 
+    (func (export "handle-value") (param i32) (result i64)
+      local.get 0
+      i64.extend_i32_u
+      local.get 0
+      call $drop_r)
+
+    (func (export "forge-zero") (result i64)
+      i32.const 0
+      i32.const 8
+      call $read_get
+      i32.const 12
+      i32.load
+      i64.extend_i32_u)
+
     (func (export "leak") (param i32) (result i64)
       local.get 0
       i32.const 8
@@ -394,6 +410,7 @@ pub mod fixtures {
       (export "rw-insert" (func $rw_insert_l))
       (export "rw-remove" (func $rw_remove_l))
       (export "clock" (func $clock_l))
+      (export "drop-r" (func $drop_r))
       (export "drop-s" (func $drop_s))
       (export "drop-w" (func $drop_w))
       (export "drop-d" (func $drop_d))
@@ -424,6 +441,11 @@ pub mod fixtures {
     (canon lift (core func $i "escape")))
   (func (export "forge") (result u64)
     (canon lift (core func $i "forge")))
+  (func (export "handle-value")
+    (param "c" (borrow $rcell)) (result u64)
+    (canon lift (core func $i "handle-value")))
+  (func (export "forge-zero") (result u64)
+    (canon lift (core func $i "forge-zero")))
   (func (export "leak")
     (param "c" (borrow $rcell)) (result u64)
     (canon lift (core func $i "leak")))

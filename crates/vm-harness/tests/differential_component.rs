@@ -185,8 +185,8 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Resour
         "scan-sum" => vec![range(ResourceKind::RangeRead)],
         "fill" | "place" => vec![range(ResourceKind::RangeWrite)],
         "escape" | "bad-amount" => vec![point(fx.recipient, ResourceKind::DeltaCell)],
-        "leak" => vec![point(fx.readable, ResourceKind::ReadCell)],
-        "forge" => vec![],
+        "leak" | "handle-value" => vec![point(fx.readable, ResourceKind::ReadCell)],
+        "forge" | "forge-zero" => vec![],
         other => unreachable!("unknown export {other}"),
     }
 }
@@ -252,7 +252,7 @@ fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, 
             )
             .map(|(v,)| v)
         }
-        ("forge", []) => {
+        ("forge" | "forge-zero", []) => {
             let f = instance.get_typed_func::<(), (u64,)>(&mut store, export)?;
             f.call(&mut store, ()).map(|(v,)| v)
         }
@@ -418,6 +418,23 @@ fn undeclared_key_and_mode_trap_identically_with_untouched_state() -> Result<()>
     let (escape, escape_host, _) = both(&fx, "escape")?;
     assert_eq!(escape, LaneOutcome::WrongHandleType);
     assert_eq!(escape_host.0.store().access_log(), baseline);
+    Ok(())
+}
+
+#[test]
+fn handle_values_agree_and_index_zero_is_never_allocatable() -> Result<()> {
+    let fx = fixture();
+
+    // The borrow's core value reaches the guest, so it can be returned,
+    // compared, or arithmetic'd on. The component model reserves index 0,
+    // so the first lowered handle is 1 on both runtimes.
+    let (value, _, _) = both(&fx, "handle-value")?;
+    assert_eq!(value, LaneOutcome::Value(1));
+
+    // And the reserved slot resolves to nothing, rather than aliasing the
+    // first live handle.
+    let (zero, _, _) = both(&fx, "forge-zero")?;
+    assert_eq!(zero, LaneOutcome::UnknownHandle);
     Ok(())
 }
 
