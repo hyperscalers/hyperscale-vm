@@ -1,7 +1,7 @@
 //! Milestone 1 spike, question 4: custom-section round-trip and content
 //! addressing.
 //!
-//! The effect metadata rides a custom section in the component binary (D10).
+//! The effect metadata rides a custom section in the component binary.
 //! This probe attaches an opaque payload as a custom section to a compiled
 //! component, confirms the engine still compiles and runs the modified
 //! artifact, extracts the section back without instantiation, and checks that

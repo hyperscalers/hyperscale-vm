@@ -1,6 +1,6 @@
 //! Milestone 1 spike, question 6: canonical-ABI copy visibility.
 //!
-//! D22 charges canonical-ABI lift/lower proportional to bytes moved, as a
+//! Gas charges canonical-ABI lift/lower proportional to bytes moved, as a
 //! host-side supplement, because no engine provides it. This probe checks
 //! both halves of that plan at the pin: that engine fuel is indeed blind to
 //! boundary copy size (the gap is real), and that the host boundary sees the
@@ -71,7 +71,7 @@ fn engine_fuel_is_blind_to_boundary_copy_size() -> Result<()> {
     // equality (the realloc call is size-independent) is the expected shape.
     assert_eq!(
         small_fuel, large_fuel,
-        "engine fuel now varies with copy size; revisit the D22 supplement"
+        "engine fuel now varies with copy size; revisit the boundary supplement"
     );
     Ok(())
 }
