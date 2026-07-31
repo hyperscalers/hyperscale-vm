@@ -98,9 +98,31 @@ pub(crate) struct Store {
     pub depth: usize,
     /// Optional instruction budget; `None` is unbounded.
     pub steps_remaining: Option<u64>,
+    /// Optional fuel budget; `None` is unbounded.
+    pub fuel_limit: Option<u64>,
     /// Fuel consumed under the spec schedule ([`fuel_cost`] plus one per
     /// function entry, plus one per byte moved by `memory.fill`/`memory.copy`).
     pub fuel_consumed: u64,
+}
+
+impl Store {
+    /// Whether the fuel budget still covers what has been charged.
+    ///
+    /// The engine buffers per-operator cost into a function-local variable
+    /// and tests it at exactly three points — function entry, loop header,
+    /// and before a bulk-op byte charge (`fuel_function_entry`,
+    /// `translate_loop_header`, `manual_fuel_check`). The spec charges the
+    /// same schedule and tests at the same three, so the two exhaust on
+    /// the same operator.
+    pub(crate) const fn check_fuel(&self) -> Result<(), Trap> {
+        // The engine traps once consumption reaches its allotment, not
+        // once it passes it: its counter is `consumed - allotted` and the
+        // check is `>= 0`.
+        match self.fuel_limit {
+            Some(limit) if self.fuel_consumed >= limit => Err(Trap::OutOfFuel),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Dispatch for canon-defined functions.
@@ -195,6 +217,7 @@ fn run(
     }];
     let mut pc = 0usize;
     store.fuel_consumed += 1; // function entry
+    store.check_fuel()?;
 
     while pc < func.ops.len() {
         store.fuel_consumed += fuel_cost(&func.ops[pc]);
@@ -217,12 +240,15 @@ fn run(
                 cont: *cont,
                 is_loop: false,
             }),
-            Op::Loop { params } => control.push(Label {
-                height: stack.len() - usize::from(*params),
-                arity: usize::from(*params),
-                cont: u32::try_from(pc + 1).unwrap_or(u32::MAX),
-                is_loop: true,
-            }),
+            Op::Loop { params } => {
+                store.check_fuel()?;
+                control.push(Label {
+                    height: stack.len() - usize::from(*params),
+                    arity: usize::from(*params),
+                    cont: u32::try_from(pc + 1).unwrap_or(u32::MAX),
+                    is_loop: true,
+                });
+            }
             Op::If {
                 false_target,
                 cont,
@@ -259,19 +285,27 @@ fn run(
                 }
             }
             Op::Br(depth) => {
-                branch(&mut stack, &mut control, *depth as usize, &mut pc);
+                // A back edge re-enters the loop header, which is where
+                // the engine tests fuel again.
+                if branch(&mut stack, &mut control, *depth as usize, &mut pc) {
+                    store.check_fuel()?;
+                }
                 continue;
             }
             Op::BrIf(depth) => {
                 if stack.pop().expect("validated").as_i32() != 0 {
-                    branch(&mut stack, &mut control, *depth as usize, &mut pc);
+                    if branch(&mut stack, &mut control, *depth as usize, &mut pc) {
+                        store.check_fuel()?;
+                    }
                     continue;
                 }
             }
             Op::BrTable(targets) => {
                 let idx = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
                 let depth = targets.targets.get(idx).copied().unwrap_or(targets.default);
-                branch(&mut stack, &mut control, depth as usize, &mut pc);
+                if branch(&mut stack, &mut control, depth as usize, &mut pc) {
+                    store.check_fuel()?;
+                }
                 continue;
             }
             Op::Return => return Ok(split_top(&mut stack, result_arity)),
@@ -353,6 +387,7 @@ fn run(
                 let dest = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
                 // The engine charges the byte count before the bounds check.
                 store.fuel_consumed += n as u64;
+                store.check_fuel()?;
                 let mem = memory_mut(store, instance);
                 let end = dest.checked_add(n).ok_or(Trap::MemoryOutOfBounds)?;
                 if end > mem.data.len() {
@@ -366,6 +401,7 @@ fn run(
                 let dest = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
                 // The engine charges the byte count before the bounds check.
                 store.fuel_consumed += n as u64;
+                store.check_fuel()?;
                 let mem = memory_mut(store, instance);
                 let src_end = src.checked_add(n).ok_or(Trap::MemoryOutOfBounds)?;
                 let dest_end = dest.checked_add(n).ok_or(Trap::MemoryOutOfBounds)?;
@@ -492,8 +528,10 @@ fn store_value(
 }
 
 /// Pops `arity` values, truncates to the label's height, pushes them back,
-/// and sets the program counter to the label's continuation.
-fn branch(stack: &mut Vec<Value>, control: &mut Vec<Label>, depth: usize, pc: &mut usize) {
+/// and sets the program counter to the label's continuation. Returns
+/// whether the target was a loop — a back edge re-enters the loop header,
+/// which is where the engine tests fuel again.
+fn branch(stack: &mut Vec<Value>, control: &mut Vec<Label>, depth: usize, pc: &mut usize) -> bool {
     let idx = control.len() - 1 - depth;
     let (height, arity, cont, is_loop) = {
         let label = &control[idx];
@@ -508,6 +546,7 @@ fn branch(stack: &mut Vec<Value>, control: &mut Vec<Label>, depth: usize, pc: &m
         control.truncate(idx);
     }
     *pc = cont as usize;
+    is_loop
 }
 
 fn split_top(stack: &mut Vec<Value>, n: usize) -> Vec<Value> {
@@ -556,10 +595,12 @@ pub(crate) fn instantiate_module(
     let inits_imported_table = module.table.is_none() && !module.elements.is_empty();
     if !module.datas.is_empty() || inits_imported_table {
         store.fuel_consumed += 1;
+        store.check_fuel()?;
     }
     if let Some(mem_idx) = memory {
         for seg in &module.datas {
             store.fuel_consumed += 1 + seg.items.len() as u64;
+            store.check_fuel()?;
             let mem = &mut store.memories[mem_idx as usize];
             let start = seg.offset as usize;
             let end = start + seg.items.len();
@@ -636,11 +677,34 @@ impl<'m> RefInstance<'m> {
     /// If the module declares imports; bare instantiation is import-free by
     /// contract.
     pub fn instantiate(module: &'m RefModule) -> Result<Self, Trap> {
+        Self::build(module, None)
+    }
+
+    /// Instantiates under a fuel budget. Instantiation is metered — the
+    /// engine compiles an init function for active data segments and its
+    /// entry checks fuel like any other — so the budget has to be in place
+    /// before the segments apply, not after.
+    ///
+    /// # Errors
+    ///
+    /// Exactly [`RefInstance::instantiate`]'s, plus [`Trap::OutOfFuel`].
+    ///
+    /// # Panics
+    ///
+    /// If the module declares imports.
+    pub fn instantiate_with_fuel(module: &'m RefModule, fuel: u64) -> Result<Self, Trap> {
+        Self::build(module, Some(fuel))
+    }
+
+    fn build(module: &'m RefModule, fuel: Option<u64>) -> Result<Self, Trap> {
         assert!(
             module.imports.entries.is_empty(),
             "bare instantiation requires an import-free module"
         );
-        let mut store = Store::default();
+        let mut store = Store {
+            fuel_limit: fuel,
+            ..Store::default()
+        };
         instantiate_module(&[module], &mut store, 0, Vec::new(), None, None)?;
         Ok(Self { module, store })
     }
@@ -649,6 +713,11 @@ impl<'m> RefInstance<'m> {
     /// — a harness safety valve for generated corpora.
     pub const fn set_step_limit(&mut self, limit: u64) {
         self.store.steps_remaining = Some(limit);
+    }
+
+    /// Bounds execution to `limit` fuel on the spec schedule.
+    pub const fn set_fuel_limit(&mut self, limit: u64) {
+        self.store.fuel_limit = Some(limit);
     }
 
     /// Total fuel consumed under the spec schedule.

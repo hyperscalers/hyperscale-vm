@@ -1,8 +1,9 @@
 //! Differential lane 1, generated corpus: wasm-smith modules constrained to
 //! the profile subset, executed under the blessed engine and the reference
-//! interpreter with edge-value arguments. Outcomes and fuel must agree
-//! whenever both sides terminate within budget; either side exhausting its
-//! budget skips the comparison.
+//! interpreter with edge-value arguments. Outcomes and fuel must agree,
+//! exhaustion included: both sides run the same fuel budget and out-of-fuel
+//! is compared like any other verdict. Only a stack exhaustion still skips,
+//! until the deploy-time frame bound makes it unreachable.
 //!
 //! A module the spec cannot decode is not skipped quietly: the profile
 //! validator has to have rejected it too, which is the same implication
@@ -72,6 +73,7 @@ fn profile_config() -> Config {
 enum Outcome {
     Values(Vec<Value>),
     Trap(RefTrap),
+    OutOfFuel,
     Exhausted,
     Other(String),
 }
@@ -144,7 +146,8 @@ fn wasmtime_outcome(
         }
         Err(e) => (
             match e.downcast_ref::<Trap>() {
-                Some(Trap::OutOfFuel | Trap::StackOverflow) => Outcome::Exhausted,
+                Some(Trap::OutOfFuel) => Outcome::OutOfFuel,
+                Some(Trap::StackOverflow) => Outcome::Exhausted,
                 Some(t) => map_trap(*t).map_or_else(
                     || Outcome::Other(format!("unmapped trap {t:?}")),
                     Outcome::Trap,
@@ -159,14 +162,17 @@ fn wasmtime_outcome(
 fn ref_outcome(module: &RefModule, export: &str, args: &[Value]) -> (Outcome, Option<u64>) {
     let mut instance = match RefInstance::instantiate(module) {
         Ok(i) => i,
+        Err(RefTrap::OutOfFuel) => return (Outcome::OutOfFuel, None),
         Err(t) => return (Outcome::Trap(t), None),
     };
     instance.set_step_limit(REF_STEPS);
+    instance.set_fuel_limit(WASMTIME_FUEL);
     match instance.invoke(export, args) {
         Ok(Ok(values)) => {
             let fuel = instance.fuel_consumed();
             (Outcome::Values(values), Some(fuel))
         }
+        Ok(Err(RefTrap::OutOfFuel)) => (Outcome::OutOfFuel, None),
         Ok(Err(RefTrap::StepBudgetExhausted | RefTrap::CallDepthExhausted)) => {
             (Outcome::Exhausted, None)
         }

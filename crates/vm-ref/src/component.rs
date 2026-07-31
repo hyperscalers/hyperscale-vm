@@ -967,6 +967,12 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
         }
     }
 
+    /// Bounds execution to `limit` fuel: the instruction schedule plus the
+    /// boundary supplement, the same total the runtime meters.
+    pub const fn set_fuel_limit(&mut self, limit: u64) {
+        self.store.fuel_limit = Some(limit);
+    }
+
     /// Total fuel consumed: the spec instruction schedule plus the boundary
     /// byte supplement, matching the blessed runtime's accounting.
     #[must_use]
@@ -1002,6 +1008,21 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
             .realloc
             .and_then(|r| self.resolved_core_funcs.get(r as usize).copied())
             .ok_or(ExecError::Canon(CanonError::Internal("realloc option")))
+    }
+
+    /// Charges the canonical-ABI boundary supplement against the same
+    /// budget the instruction schedule draws on, mirroring the runtime's
+    /// `charge_boundary_bytes`: argument bytes before the host operation,
+    /// result bytes after it succeeds.
+    const fn charge_boundary(&mut self, store: &Store, bytes: usize) -> Result<(), ExecError> {
+        self.boundary_bytes += bytes as u64;
+        let total = store
+            .fuel_consumed
+            .saturating_add(self.boundary_bytes * FUEL_PER_BOUNDARY_BYTE);
+        match store.fuel_limit {
+            Some(limit) if total > limit => Err(ExecError::Trap(Trap::OutOfFuel)),
+            _ => Ok(()),
+        }
     }
 
     fn resolve_handle(&self, index: Value, expected: ResourceKind) -> Result<u32, ExecError> {
@@ -1151,7 +1172,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                             _ => self.host.reserve_amount(rep),
                         };
                         let bytes = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        self.boundary_bytes += bytes.len() as u64;
+                        self.charge_boundary(store, bytes.len())?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[1])?;
                         Ok(Vec::new())
@@ -1160,7 +1181,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let rep = self.resolve_handle(args[0], ResourceKind::WriteCell)?;
                         let mem = self.mem_opt(id)?;
                         let bytes = Self::read_guest_bytes(store, mem, args[1], args[2])?;
-                        self.boundary_bytes += bytes.len() as u64;
+                        self.charge_boundary(store, bytes.len())?;
                         self.host
                             .write_cell_set(rep, bytes)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
@@ -1170,7 +1191,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let rep = self.resolve_handle(args[0], ResourceKind::DeltaCell)?;
                         let mem = self.mem_opt(id)?;
                         let amount = Self::read_guest_bytes(store, mem, args[1], args[2])?;
-                        self.boundary_bytes += amount.len() as u64;
+                        self.charge_boundary(store, amount.len())?;
                         let result = if host_fn == HostFn::DeltaAdd {
                             self.host.delta_add(rep, &amount)
                         } else {
@@ -1211,7 +1232,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                             _ => self.host.range_entry(rep, index),
                         };
                         let bytes = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        self.boundary_bytes += bytes.len() as u64;
+                        self.charge_boundary(store, bytes.len())?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[2])?;
                         Ok(Vec::new())
@@ -1221,7 +1242,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let index = args[1].as_i32().cast_unsigned();
                         let mem = self.mem_opt(id)?;
                         let value = Self::read_guest_bytes(store, mem, args[2], args[3])?;
-                        self.boundary_bytes += value.len() as u64;
+                        self.charge_boundary(store, value.len())?;
                         self.host
                             .range_set(rep, index, value)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
@@ -1232,7 +1253,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let mem = self.mem_opt(id)?;
                         let order = Self::read_guest_bytes(store, mem, args[1], args[2])?;
                         let value = Self::read_guest_bytes(store, mem, args[3], args[4])?;
-                        self.boundary_bytes += order.len() as u64 + value.len() as u64;
+                        self.charge_boundary(store, order.len() + value.len())?;
                         self.host
                             .range_insert(rep, &order, value)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
@@ -1248,7 +1269,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::Randomness => {
                         let draw = self.host.randomness();
-                        self.boundary_bytes += draw.len() as u64;
+                        self.charge_boundary(store, draw.len())?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &draw, args[0])?;
                         Ok(Vec::new())
@@ -1257,7 +1278,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         let data = Self::read_guest_bytes(store, mem, args[0], args[1])?;
                         let digest = self.host.hash(&data);
-                        self.boundary_bytes += data.len() as u64 + digest.len() as u64;
+                        self.charge_boundary(store, data.len() + digest.len())?;
                         self.lower_list(modules, store, mem, realloc, &digest, args[2])?;
                         Ok(Vec::new())
                     }

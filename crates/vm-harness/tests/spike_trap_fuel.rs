@@ -3,10 +3,12 @@
 //! Wasmtime does not flush its in-register fuel counter when a core trap
 //! unwinds, so a mid-basic-block trap reports zero consumed fuel while
 //! vm-ref charges every executed operator. The differential lanes exclude
-//! fuel on trap paths because of exactly this; abort pricing cannot ship
-//! until the boundary is deterministic and spec-reproducible. This probe
-//! pins the current behavior — when it fails, wasmtime's flush semantics
-//! changed and the lane exclusion should be revisited.
+//! fuel on trap paths because of exactly this. Nothing prices off the
+//! number — an abort settles at its class floor — so the divergence is
+//! recorded rather than consensus-relevant; out-of-fuel, which is a
+//! verdict rather than a reading, agrees exactly (`differential_fuel`).
+//! This probe pins the current behavior: when it fails, wasmtime's flush
+//! semantics changed and the lane exclusion should be revisited.
 
 use hyperscale_vm_ref::{RefInstance, RefModule, Trap as RefTrap};
 use hyperscale_vm_runtime::blessed_engine;

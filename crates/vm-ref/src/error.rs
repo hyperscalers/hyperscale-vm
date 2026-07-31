@@ -60,6 +60,12 @@ pub enum Trap {
     /// comparison until the deploy-time stack bounds land.
     #[error("call depth exhausted")]
     CallDepthExhausted,
+    /// The fuel budget ran out. Charged on the spec schedule and tested
+    /// at the three points the engine tests its own — function entry,
+    /// loop header, and the bulk-op byte charge — so the verdict is
+    /// shared rather than engine-defined.
+    #[error("all fuel consumed by WebAssembly")]
+    OutOfFuel,
     /// The optional step budget ran out — a harness safety valve for
     /// generated corpora, never a consensus verdict.
     #[error("step budget exhausted")]
