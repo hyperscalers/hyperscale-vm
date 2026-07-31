@@ -382,18 +382,27 @@ pub fn admit(
     Ok(Admitted { manifest, identity })
 }
 
+/// Check an edge's constraints against its static resource type.
+///
+/// Repeated bounds fold to their conjunction — the greatest lower bound
+/// and the least upper bound — because execution enforces every
+/// constraint in the list, not the last of each kind.
 pub(crate) fn check_constraints(
     constraints: &[Constraint],
     resource: Address,
     node: u32,
     param: u32,
 ) -> Result<(), AdmissionError> {
-    let mut min = None;
-    let mut max = None;
+    let mut min: Option<u128> = None;
+    let mut max: Option<u128> = None;
     for constraint in constraints {
         match constraint {
-            Constraint::MinAmount(amount) => min = Some(*amount),
-            Constraint::MaxAmount(amount) => max = Some(*amount),
+            Constraint::MinAmount(amount) => {
+                min = Some(min.map_or(*amount, |bound| bound.max(*amount)));
+            }
+            Constraint::MaxAmount(amount) => {
+                max = Some(max.map_or(*amount, |bound| bound.min(*amount)));
+            }
             Constraint::ResourceIs(address) => {
                 if *address != resource {
                     return Err(AdmissionError::ResourceMismatch { node, param });

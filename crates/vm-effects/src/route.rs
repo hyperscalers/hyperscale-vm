@@ -100,9 +100,18 @@ impl Routing {
 pub const MAX_MANIFEST_NODES: usize = 4096;
 
 /// The bound on call-site evaluations across one routing fold — a totality
-/// backstop against fan-out blowup in pathological metadata, far above any
-/// admissible manifest.
-pub const MAX_CALL_EVALUATIONS: usize = 1024;
+/// backstop against fan-out blowup in pathological metadata.
+///
+/// Every manifest node costs at least one evaluation, so the budget has to
+/// dominate [`MAX_MANIFEST_NODES`] or an admissible manifest could fail
+/// routing on arithmetic alone; the surplus is the transitive fan-out
+/// allowance the whole fold shares.
+pub const MAX_CALL_EVALUATIONS: usize = 16 * MAX_MANIFEST_NODES;
+
+const _: () = assert!(
+    MAX_CALL_EVALUATIONS > MAX_MANIFEST_NODES,
+    "a manifest at the node cap must be routable"
+);
 
 /// The bound on static call chain depth.
 ///
@@ -390,8 +399,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        CallEdge, MAX_CALL_DEPTH, MethodRef, PrefixShardResolver, RouteError, ShardResolver,
-        SnapshotObligation, route,
+        CallEdge, MAX_CALL_DEPTH, MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver, RouteError,
+        ShardResolver, SnapshotObligation, route,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, WindowExpr, fresh_id};
     use crate::hash::{Hash32, Hasher, TestHasher};
@@ -928,8 +937,10 @@ mod tests {
 
     #[test]
     fn fan_out_exhausts_the_call_budget() {
-        // Wide but shallow: 40 mid methods each calling the same 40 leaves
-        // re-evaluates every leaf per caller — over the budget at depth 3.
+        // Wide but shallow: 256 mid methods each calling the same 256
+        // leaves re-evaluates every leaf per caller — 65,793 evaluations
+        // at depth 3, over the budget.
+        const WIDTH: usize = 256;
         let mut meta = PackageMetadata::default();
         let self_call = |name: String| CallSite {
             target: Expr::SelfAddr,
@@ -940,19 +951,19 @@ mod tests {
             "root".into(),
             method(
                 vec![],
-                (0..40).map(|i| self_call(format!("mid{i}"))).collect(),
+                (0..WIDTH).map(|i| self_call(format!("mid{i}"))).collect(),
             ),
         );
-        for mid in 0..40 {
+        for mid in 0..WIDTH {
             meta.methods.insert(
                 format!("mid{mid}"),
                 method(
                     vec![],
-                    (0..40).map(|i| self_call(format!("leaf{i}"))).collect(),
+                    (0..WIDTH).map(|i| self_call(format!("leaf{i}"))).collect(),
                 ),
             );
         }
-        for leaf in 0..40 {
+        for leaf in 0..WIDTH {
             meta.methods
                 .insert(format!("leaf{leaf}"), method(vec![], vec![]));
         }
@@ -1025,6 +1036,54 @@ mod tests {
                 &resolver()
             ),
             Err(RouteError::CallDepthExceeded)
+        );
+    }
+
+    #[test]
+    fn a_manifest_at_the_node_cap_routes_within_the_budget() {
+        // Every node costs one evaluation, so a call-free manifest at the
+        // node cap must route: the budget is sized from the cap, and a
+        // manifest one node past it is rejected for its size, never for
+        // arithmetic.
+        let mut cache = MetadataCache::new();
+        let mut meta = PackageMetadata::default();
+        meta.methods.insert("m".into(), method(vec![], vec![]));
+        cache.publish(pkg("wide"), meta);
+        let mut instances = InstanceRegistry::new();
+        instances.register(
+            addr(1),
+            InstanceMeta {
+                package: pkg("wide"),
+                config: vec![],
+            },
+        );
+        let nodes = |count: usize| Manifest {
+            nodes: (0..count)
+                .map(|_| Node {
+                    target: addr(1),
+                    method: "m".into(),
+                    inputs: vec![],
+                })
+                .collect(),
+        };
+        let route_at = |count: usize| {
+            route(
+                &nodes(count),
+                identity(),
+                &cache,
+                &instances,
+                &TestHasher,
+                &resolver(),
+            )
+        };
+
+        // The size at which the old budget started refusing admissible
+        // manifests.
+        assert!(route_at(1_025).is_ok());
+        assert!(route_at(MAX_MANIFEST_NODES).is_ok());
+        assert_eq!(
+            route_at(MAX_MANIFEST_NODES + 1),
+            Err(RouteError::TooManyNodes)
         );
     }
 

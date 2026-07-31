@@ -11,6 +11,7 @@ use hyperscale_vm_effects::{
     InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit,
     fresh_id, route,
 };
+use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
 
 const SPLITTER: Address = Address([0x77; 16]);
@@ -286,7 +287,79 @@ fn every_malformed_mutation_rejects() {
     );
 }
 
+#[test]
+fn repeated_amount_bounds_fold_to_their_conjunction() {
+    let (cache, instances) = setup();
+    let admit_it = |graph: &ManifestGraph| admit(graph, &cache, &instances, &TestHasher);
+
+    // Execution enforces every constraint in the list, so admission judges
+    // the conjunction — greatest lower bound against least upper bound.
+    // Under last-wins the first of these admits and then cannot be
+    // satisfied by anything.
+    let mut unsatisfiable = valid_graph();
+    unsatisfiable.nodes[2].args[0] = GraphArg::Edge {
+        edge: EdgeRef {
+            producer: 1,
+            output: 0,
+        },
+        constraints: vec![
+            Constraint::MinAmount(10),
+            Constraint::MinAmount(1),
+            Constraint::MaxAmount(5),
+        ],
+    };
+    assert_eq!(
+        admit_it(&unsatisfiable),
+        Err(AdmissionError::UnsatisfiableConstraint { node: 2, param: 0 })
+    );
+
+    // A satisfiable conjunction still admits, however it is spelled.
+    let mut satisfiable = valid_graph();
+    satisfiable.nodes[2].args[0] = GraphArg::Edge {
+        edge: EdgeRef {
+            producer: 1,
+            output: 0,
+        },
+        constraints: vec![
+            Constraint::MinAmount(1),
+            Constraint::MinAmount(4),
+            Constraint::MaxAmount(30),
+            Constraint::MaxAmount(5),
+        ],
+    };
+    assert!(admit_it(&satisfiable).is_ok());
+}
+
 proptest! {
+    /// Any multiset of bounds admits exactly when its conjunction is
+    /// satisfiable, independent of the order they are written in.
+    #[test]
+    fn repeated_bounds_admit_iff_the_conjunction_holds(
+        mins in prop_vec(any::<u128>(), 1..4),
+        maxes in prop_vec(any::<u128>(), 1..4),
+    ) {
+        let (cache, instances) = setup();
+        let mut graph = valid_graph();
+        let mut constraints: Vec<Constraint> =
+            mins.iter().copied().map(Constraint::MinAmount).collect();
+        constraints.extend(maxes.iter().copied().map(Constraint::MaxAmount));
+        graph.nodes[2].args[0] = GraphArg::Edge {
+            edge: EdgeRef { producer: 1, output: 0 },
+            constraints,
+        };
+        let verdict = admit(&graph, &cache, &instances, &TestHasher);
+        let lower = mins.iter().copied().max().expect("non-empty");
+        let upper = maxes.iter().copied().min().expect("non-empty");
+        if lower > upper {
+            assert_eq!(
+                verdict,
+                Err(AdmissionError::UnsatisfiableConstraint { node: 2, param: 0 })
+            );
+        } else {
+            assert!(verdict.is_ok());
+        }
+    }
+
     /// Point any edge reference anywhere: admission either accepts a graph
     /// equivalent to the valid one or rejects deterministically — it never
     /// panics and never mistypes an edge.
