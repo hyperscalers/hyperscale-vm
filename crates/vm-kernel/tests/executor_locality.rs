@@ -13,8 +13,8 @@ use hyperscale_vm_effects::{
     SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MemoryStore, Outcome,
-    RunResult, SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
+    BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MemoryStore, Movement,
+    Outcome, RunResult, SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
 };
 
 const FUEL: u64 = 7;
@@ -299,6 +299,138 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
     )
     .unwrap();
     assert_ne!(payer.receipts, elsewhere.receipts);
+}
+
+/// A guest driving whatever it is handed: a delta capability takes
+/// `credit` then `debit`, and a read capability reports what the cell
+/// holds — an absent cell reading as zero, the normalisation every guest
+/// applies.
+fn moving_guest(credit: u128, debit: u128) -> impl Fn(TxHash, KernelSession) -> RunResult + Sync {
+    move |_id, mut session: KernelSession| {
+        let caps: Vec<Capability> = session.capabilities().to_vec();
+        let mut value = None;
+        for (rep, capability) in caps.iter().enumerate() {
+            let rep = u32::try_from(rep).unwrap();
+            match capability {
+                Capability::Delta(_) => {
+                    session.delta_add(rep, &encode_amount(credit)).unwrap();
+                    session.delta_sub(rep, &encode_amount(debit)).unwrap();
+                }
+                Capability::Read(_) => {
+                    let cell = session.read_cell(rep).unwrap();
+                    let amount = if cell.is_empty() {
+                        0
+                    } else {
+                        decode_amount(&cell).unwrap()
+                    };
+                    value = Some(u64::try_from(amount).unwrap());
+                }
+                _ => {}
+            }
+        }
+        RunResult {
+            session,
+            outcome: Outcome::Completed { value },
+            fuel: FUEL,
+        }
+    }
+}
+
+/// One transaction declaring a movement on a remote cell, and a second
+/// declaring only a read of it. Read conflicts with delta, so the two
+/// share a conflict group and the second runs over what the first
+/// threaded.
+fn remote_movement_batch() -> Vec<BatchTx> {
+    let mut read = EffectSet::new();
+    read.insert(Effect {
+        target: EffectTarget::Point(cell(PAYER_BYTE)),
+        mode: Mode::Read,
+    })
+    .unwrap();
+    let mut moved = EffectSet::new();
+    moved
+        .insert(Effect {
+            target: EffectTarget::Point(cell(PAYER_BYTE)),
+            mode: Mode::Delta,
+        })
+        .unwrap();
+    vec![
+        BatchTx::new(
+            TxHash(Hash32([0x51; 32])),
+            moved,
+            env().clock_ms,
+            env().randomness,
+        ),
+        BatchTx::new(
+            TxHash(Hash32([0x52; 32])),
+            read,
+            env().clock_ms,
+            env().randomness,
+        ),
+    ]
+}
+
+#[test]
+fn a_remote_debit_never_reaches_the_next_receipt() {
+    // The recipient's shard holds nothing of the payer's cell, so the
+    // debit cannot fold here — the owning shard folds it, and the
+    // movement is this shard's outbound record. What it must not do is
+    // stay queued: the next member of the conflict group would build its
+    // own movements from it and carry another transaction's debit into
+    // its receipt.
+    let batch = remote_movement_batch();
+    let outcome = execute_batch(
+        Arc::new(MemoryStore::new()),
+        &batch,
+        &moving_guest(0, 100),
+        test_hash,
+        ExecutionMode::Serial,
+        &owned_by(RECIPIENT_BYTE),
+    )
+    .unwrap();
+
+    // The mover records the outbound movement...
+    assert_eq!(
+        outcome.receipts[&batch[0].tx]
+            .delta
+            .movements
+            .get(&cell(PAYER_BYTE)),
+        Some(&Movement {
+            credit: 0,
+            debit: 100,
+        })
+    );
+    // ...and the reader records nothing at all.
+    assert!(
+        outcome.receipts[&batch[1].tx].delta.is_empty(),
+        "the reader inherited {:?}",
+        outcome.receipts[&batch[1].tx].delta
+    );
+}
+
+#[test]
+fn a_remote_credit_never_becomes_a_local_balance() {
+    // The same blindness without any error involved: folding a remote
+    // credit into the group's overlay would hand the next guest a balance
+    // for a cell this shard does not own, and the owning shard's guest a
+    // different one — two receipts for one transaction.
+    let batch = remote_movement_batch();
+    let outcome = execute_batch(
+        Arc::new(MemoryStore::new()),
+        &batch,
+        &moving_guest(50, 0),
+        test_hash,
+        ExecutionMode::Serial,
+        &owned_by(RECIPIENT_BYTE),
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome.receipts[&batch[1].tx].outcome,
+        Outcome::Completed { value: Some(0) }
+    );
+    let mut state = outcome.store;
+    assert_eq!(state.read(cell(PAYER_BYTE)).unwrap(), None);
 }
 
 #[test]

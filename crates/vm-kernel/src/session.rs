@@ -666,25 +666,24 @@ impl KernelSession {
     ) -> Result<(Receipt, OverlayStore), FinishError> {
         // Movements first: the pending deltas, as checked totals.
         let mut movements: BTreeMap<SubstateKey, Movement> = BTreeMap::new();
-        for (key, ops) in self.store.pending_deltas() {
-            let mut movement = Movement::default();
-            for op in ops {
-                match op {
-                    DeltaOp::Add(amount) => {
-                        movement.credit = movement
-                            .credit
-                            .checked_add(amount)
-                            .ok_or(StoreError::Mode(ModeError::DeltaOverflow))?;
-                    }
-                    DeltaOp::Sub(amount) => {
-                        movement.debit = movement
-                            .debit
-                            .checked_add(amount)
-                            .ok_or(StoreError::Mode(ModeError::DeltaOverflow))?;
-                    }
+        let queued: Vec<(SubstateKey, Vec<DeltaOp>)> = self.store.pending_deltas().collect();
+        for (key, ops) in queued {
+            match total_movement(&ops) {
+                Ok(movement) => {
+                    movements.insert(key, movement);
+                }
+                // Totals past `u128` are the guest's own arithmetic — it
+                // queued the operations — so the loss is its own.
+                Err(error) => {
+                    return Ok(abort_with(
+                        self.store,
+                        Outcome::UserError {
+                            reason: error.to_string(),
+                        },
+                        fuel,
+                    ));
                 }
             }
-            movements.insert(key, movement);
         }
         for (key, movement) in &movements {
             if !self.locality.is_local(key.owner) {
@@ -697,12 +696,18 @@ impl KernelSession {
                 .judge_movement(*key, movement.credit, movement.debit)
             {
                 Ok(_) => continue,
-                Err(StoreError::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)) => {
-                    Outcome::Infeasible {
-                        key: *key,
-                        amount: movement.debit,
-                    }
-                }
+                // An uncovered debit, and a cell an exclusive write left
+                // below the reservations still outstanding on it, are the
+                // same deterministic loss: the floor this movement needed
+                // is not there, and the transaction that declared the
+                // movement is the one that loses.
+                Err(
+                    StoreError::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)
+                    | StoreError::HeldExceedsCommitted(_),
+                ) => Outcome::Infeasible {
+                    key: *key,
+                    amount: movement.debit,
+                },
                 Err(defect) => match declaration_defect(&defect) {
                     Some(outcome) => outcome,
                     None => return Err(defect.into()),
@@ -710,10 +715,21 @@ impl KernelSession {
             };
             return Ok(abort_with(self.store, refusal, fuel));
         }
-        if let Err(defect) = self.store.commit_deltas()
-            && let Some(outcome) = declaration_defect(&defect)
-        {
-            return Ok(abort_with(self.store, outcome, fuel));
+        // A movement on a key this shard does not own folds at the owning
+        // shard, never here: the receipt already carries it as the
+        // outbound record, and folding it locally would fabricate a
+        // balance for a cell this shard holds none of.
+        let locality = self.locality.clone();
+        self.store
+            .retain_pending_deltas(&|key: SubstateKey| locality.is_local(key.owner));
+        if let Err(defect) = self.store.commit_deltas() {
+            // Every remaining fold is on an owned cell the movement judge
+            // just cleared, so anything but a declaration defect here is
+            // the kernel's.
+            return match declaration_defect(&defect) {
+                Some(outcome) => Ok(abort_with(self.store, outcome, fuel)),
+                None => Err(defect.into()),
+            };
         }
         let mut settles = BTreeMap::new();
         for capability in &self.table.clone() {
@@ -729,6 +745,21 @@ impl KernelSession {
                 match settled {
                     Ok(amount) => {
                         settles.insert(*key, amount);
+                    }
+                    // An exclusive write earlier in this group drained the
+                    // cell below the reservation it still covers. The
+                    // reserver lost that race, and the refusal left its
+                    // hold standing, so the amount is still readable.
+                    Err(StoreError::HeldExceedsCommitted(_)) => {
+                        let amount = self
+                            .store
+                            .held_reservation(*key, self.tx)
+                            .unwrap_or_default();
+                        return Ok(abort_with(
+                            self.store,
+                            Outcome::Infeasible { key: *key, amount },
+                            fuel,
+                        ));
                     }
                     Err(defect) => match declaration_defect(&defect) {
                         Some(outcome) => return Ok(abort_with(self.store, outcome, fuel)),
@@ -772,6 +803,33 @@ impl KernelSession {
     pub const fn store(&self) -> &OverlayStore {
         &self.store
     }
+}
+
+/// One cell's credit and debit totals over this transaction's queued
+/// deltas.
+///
+/// # Errors
+///
+/// [`ModeError::DeltaOverflow`] if either total leaves `u128`.
+fn total_movement(ops: &[DeltaOp]) -> Result<Movement, ModeError> {
+    let mut movement = Movement::default();
+    for op in ops {
+        match op {
+            DeltaOp::Add(amount) => {
+                movement.credit = movement
+                    .credit
+                    .checked_add(*amount)
+                    .ok_or(ModeError::DeltaOverflow)?;
+            }
+            DeltaOp::Sub(amount) => {
+                movement.debit = movement
+                    .debit
+                    .checked_add(*amount)
+                    .ok_or(ModeError::DeltaOverflow)?;
+            }
+        }
+    }
+    Ok(movement)
 }
 
 /// Abandon everything this transaction did and report the failure as its

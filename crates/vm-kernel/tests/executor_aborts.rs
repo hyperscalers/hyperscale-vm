@@ -577,3 +577,136 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
         other => panic!("expected a user error, found {other:?}"),
     }
 }
+
+#[test]
+fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
+    // A write capability is absolute, so it can lower an amount cell past
+    // a reservation another transaction still holds. Write conflicts with
+    // reserve, so the two share a conflict group and run in canonical
+    // order — and the reserver, whose settle no longer has a floor, loses
+    // that race alone. The batch's other work stands.
+    let vault = cell(0xB);
+    let mut store = MemoryStore::new();
+    store.write(vault, encode_amount(100).to_vec()).unwrap();
+    store.clear_log();
+
+    let scripted = |_id: TxHash, mut session: KernelSession| {
+        let caps: Vec<Capability> = session.capabilities().to_vec();
+        for (rep, capability) in caps.iter().enumerate() {
+            let rep = u32::try_from(rep).unwrap();
+            match capability {
+                Capability::Write(_) => {
+                    session
+                        .write_cell_set(rep, encode_amount(10).to_vec())
+                        .unwrap();
+                }
+                Capability::Reserve(_) => {
+                    session.reserve_amount(rep).unwrap();
+                }
+                _ => {}
+            }
+        }
+        RunResult {
+            session,
+            outcome: Outcome::Completed { value: None },
+            fuel: FUEL,
+        }
+    };
+
+    let outcome = execute_batch(
+        Arc::new(store),
+        &[
+            BatchTx::new(
+                tx(0x01),
+                point(vault, Mode::Write),
+                env().clock_ms,
+                env().randomness,
+            ),
+            BatchTx::new(
+                tx(0x02),
+                point(vault, Mode::Reserve { amount: 100 }),
+                env().clock_ms,
+                env().randomness,
+            ),
+        ],
+        &scripted,
+        test_hash,
+        ExecutionMode::Serial,
+        &Locality::All,
+    )
+    .expect("an unbacked reservation must not fail the batch");
+
+    assert!(matches!(
+        outcome.receipts[&tx(0x01)].outcome,
+        Outcome::Completed { .. }
+    ));
+    assert_eq!(
+        outcome.receipts[&tx(0x02)].outcome,
+        Outcome::Infeasible {
+            key: vault,
+            amount: 100,
+        }
+    );
+    // The write landed, and the reservation it undercut released rather
+    // than settling.
+    assert_eq!(amount_at(&outcome.store, vault), 10);
+    assert_eq!(outcome.store.held_reservation(vault, tx(0x02)), None);
+}
+
+#[test]
+fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
+    // A delta capability queues whatever the guest asks for, so a guest
+    // can credit past `u128` in total. That is its own arithmetic, and
+    // the batch carries on without it.
+    let vault = cell(0xC);
+    let overflowing = |id: TxHash, mut session: KernelSession| {
+        if id == tx(0x01) {
+            let rep = session
+                .capabilities()
+                .iter()
+                .position(|c| matches!(c, Capability::Delta(_)))
+                .map(|rep| u32::try_from(rep).unwrap())
+                .expect("a delta capability");
+            session.delta_add(rep, &encode_amount(u128::MAX)).unwrap();
+            session.delta_add(rep, &encode_amount(u128::MAX)).unwrap();
+        }
+        RunResult {
+            session,
+            outcome: Outcome::Completed { value: None },
+            fuel: FUEL,
+        }
+    };
+
+    let outcome = execute_batch(
+        Arc::new(MemoryStore::new()),
+        &[
+            BatchTx::new(
+                tx(0x01),
+                point(vault, Mode::Delta),
+                env().clock_ms,
+                env().randomness,
+            ),
+            BatchTx::new(
+                tx(0x02),
+                point(cell(0xD), Mode::Read),
+                env().clock_ms,
+                env().randomness,
+            ),
+        ],
+        &overflowing,
+        test_hash,
+        ExecutionMode::Serial,
+        &Locality::All,
+    )
+    .expect("one guest's arithmetic must not fail the batch");
+
+    match &outcome.receipts[&tx(0x01)].outcome {
+        Outcome::UserError { reason } => assert!(reason.contains("overflow"), "{reason}"),
+        other => panic!("expected a user error, found {other:?}"),
+    }
+    assert!(matches!(
+        outcome.receipts[&tx(0x02)].outcome,
+        Outcome::Completed { .. }
+    ));
+    assert_eq!(amount_at(&outcome.store, vault), 0);
+}

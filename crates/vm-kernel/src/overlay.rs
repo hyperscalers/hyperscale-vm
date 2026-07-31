@@ -387,6 +387,21 @@ impl OverlayStore {
         Ok(amount)
     }
 
+    /// Drop every queued delta whose cell `keep` refuses, in both layers.
+    ///
+    /// The cross-shard form: a movement on a key this shard does not own
+    /// is an outbound record the owning shard folds, and folding it here
+    /// would put a balance in the overlay for a cell this shard holds
+    /// none of — which every later member of the conflict group reads.
+    pub fn retain_pending_deltas(&mut self, keep: &dyn Fn(SubstateKey) -> bool) {
+        self.active.pending_deltas.retain(|key, _| keep(*key));
+        if self.committed.pending_deltas.keys().any(|key| !keep(*key)) {
+            Arc::make_mut(&mut self.committed)
+                .pending_deltas
+                .retain(|key, _| keep(*key));
+        }
+    }
+
     /// Fold every queued delta into its cell, atomically: all folds are
     /// computed before any cell changes, so an error leaves both state and
     /// the queue untouched.
