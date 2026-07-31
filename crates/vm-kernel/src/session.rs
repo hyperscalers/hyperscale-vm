@@ -290,6 +290,12 @@ pub struct KernelSession {
     env: EnvInputs,
     hash_fn: fn(&[u8]) -> [u8; 32],
     locality: Locality,
+    /// Materialized interval contents per handle, dropped when a write
+    /// touches the collection. A guest walking an interval asks for its
+    /// length and then each entry in turn; re-scanning per question makes
+    /// that walk quadratic in the interval and floods the access log with
+    /// one record per step.
+    scans: BTreeMap<u32, Vec<(u128, Vec<u8>)>>,
 }
 
 impl KernelSession {
@@ -357,6 +363,7 @@ impl KernelSession {
             env,
             hash_fn,
             locality: Locality::All,
+            scans: BTreeMap::new(),
         })
     }
 
@@ -501,9 +508,33 @@ impl KernelSession {
         }
     }
 
-    fn scan(&mut self, rep: u32) -> Result<Vec<(u128, Vec<u8>)>, SessionTrap> {
+    /// Materialize the interval behind `rep` if it is not already.
+    fn scan(&mut self, rep: u32) -> Result<(), SessionTrap> {
+        if self.scans.contains_key(&rep) {
+            return Ok(());
+        }
         let (owner, collection, lo, hi, cap, _) = self.range_of(rep)?;
-        Ok(self.store.scan(owner, collection, lo, hi, cap)?)
+        let entries = self.store.scan(owner, collection, lo, hi, cap)?;
+        self.scans.insert(rep, entries);
+        Ok(())
+    }
+
+    /// Drop every materialized interval over a collection a write touched.
+    fn invalidate(&mut self, owner: Address, collection: RoleId) {
+        let stale: Vec<u32> = self
+            .scans
+            .keys()
+            .copied()
+            .filter(|rep| {
+                self.range_of(*rep)
+                    .is_ok_and(|(scanned_owner, scanned_collection, ..)| {
+                        scanned_owner == owner && scanned_collection == collection
+                    })
+            })
+            .collect();
+        for rep in stale {
+            self.scans.remove(&rep);
+        }
     }
 
     /// Entries currently visible in the interval.
@@ -512,8 +543,8 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn range_count(&mut self, rep: u32) -> Result<u32, SessionTrap> {
-        let entries = self.scan(rep)?;
-        Ok(u32::try_from(entries.len()).unwrap_or(u32::MAX))
+        self.scan(rep)?;
+        Ok(u32::try_from(self.scans[&rep].len()).unwrap_or(u32::MAX))
     }
 
     /// The order key at `index`, ascending, as a 16-byte cell.
@@ -522,8 +553,8 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn range_order(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, SessionTrap> {
-        let entries = self.scan(rep)?;
-        indexed(&entries, index).map(|(order, _)| encode_amount(*order).to_vec())
+        self.scan(rep)?;
+        indexed(&self.scans[&rep], index).map(|(order, _)| encode_amount(*order).to_vec())
     }
 
     /// The entry value at `index`, ascending.
@@ -532,8 +563,8 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, SessionTrap> {
-        let entries = self.scan(rep)?;
-        indexed(&entries, index).map(|(_, value)| value.clone())
+        self.scan(rep)?;
+        indexed(&self.scans[&rep], index).map(|(_, value)| value.clone())
     }
 
     /// Replace the entry value at `index` through a write interval.
@@ -546,9 +577,11 @@ impl KernelSession {
         if !writable {
             return Err(SessionTrap::WrongMode(rep));
         }
-        let entries = self.scan(rep)?;
-        let (order, _) = indexed(&entries, index)?;
-        Ok(self.store.entry_write(owner, collection, *order, value)?)
+        self.scan(rep)?;
+        let order = *indexed(&self.scans[&rep], index).map(|(order, _)| order)?;
+        self.store.entry_write(owner, collection, order, value)?;
+        self.invalidate(owner, collection);
+        Ok(())
     }
 
     /// Insert or replace the entry at `order`, which must lie inside the
@@ -571,7 +604,9 @@ impl KernelSession {
         if !(lo..=hi).contains(&order) {
             return Err(SessionTrap::OrderOutsideInterval);
         }
-        Ok(self.store.entry_write(owner, collection, order, value)?)
+        self.store.entry_write(owner, collection, order, value)?;
+        self.invalidate(owner, collection);
+        Ok(())
     }
 
     /// Remove the entry at `index` through a write interval.
@@ -584,9 +619,10 @@ impl KernelSession {
         if !writable {
             return Err(SessionTrap::WrongMode(rep));
         }
-        let entries = self.scan(rep)?;
-        let (order, _) = indexed(&entries, index)?;
-        self.store.entry_remove(owner, collection, *order)?;
+        self.scan(rep)?;
+        let order = *indexed(&self.scans[&rep], index).map(|(order, _)| order)?;
+        self.store.entry_remove(owner, collection, order)?;
+        self.invalidate(owner, collection);
         Ok(())
     }
 

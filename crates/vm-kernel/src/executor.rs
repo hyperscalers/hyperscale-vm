@@ -29,9 +29,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::thread;
 
-use hyperscale_vm_effects::{Effect, EffectSet, EffectTarget, Mode, SubstateKey};
+use hyperscale_vm_effects::{
+    Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, SubstateKey, compatible,
+};
 
-use crate::conflict::conflicts;
+use crate::conflict::targets_overlap;
 use crate::modes::{ModeError, TxHash};
 use crate::overlay::OverlayStore;
 use crate::session::{
@@ -189,11 +191,6 @@ fn declared_reservations(declared: &EffectSet) -> Vec<(SubstateKey, u128)> {
         .collect()
 }
 
-fn effect_sets_conflict(a: &EffectSet, b: &EffectSet) -> bool {
-    a.iter()
-        .any(|left| b.iter().any(|right| conflicts(&left, &right)))
-}
-
 fn root(component: &mut [usize], mut index: usize) -> usize {
     while component[index] != index {
         component[index] = component[component[index]];
@@ -202,18 +199,119 @@ fn root(component: &mut [usize], mut index: usize) -> usize {
     index
 }
 
+fn merge(component: &mut [usize], left: usize, right: usize) {
+    let (a, b) = (root(component, left), root(component, right));
+    component[a.max(b)] = a.min(b);
+}
+
+/// One collection's declarations: who declared it, over what interval, in
+/// what mode.
+type CollectionClaims = Vec<(usize, EffectTarget, ModeKind)>;
+
+/// The transactions touching one point key, split by what the mode lattice
+/// does with them.
+///
+/// Snapshots conflict with nothing. Reads are compatible with each other
+/// and with snapshots; the commutative modes likewise. A write conflicts
+/// with everything but a snapshot, itself included.
+#[derive(Default)]
+struct PointClasses {
+    reads: Vec<usize>,
+    commutative: Vec<usize>,
+    writes: Vec<usize>,
+}
+
+impl PointClasses {
+    fn push(&mut self, index: usize, kind: ModeKind) {
+        match kind {
+            ModeKind::Read => self.reads.push(index),
+            ModeKind::Delta | ModeKind::Reserve => self.commutative.push(index),
+            ModeKind::Write => self.writes.push(index),
+            ModeKind::Snapshot => {}
+        }
+    }
+
+    /// Connect this key's component in one pass rather than by pairwise
+    /// comparison.
+    ///
+    /// A write conflicts with every other declaration here, so one write
+    /// makes the whole key a single component. With no write, reads and
+    /// the commutative modes are each internally compatible and conflict
+    /// only across the divide — so they form one component when both are
+    /// present and none when either is absent. Either way an anchor plus
+    /// a linear walk reaches the same components the pairwise relation
+    /// would.
+    fn merge_into(&self, component: &mut [usize]) {
+        let anchor = self.writes.first().or_else(|| {
+            if self.reads.is_empty() || self.commutative.is_empty() {
+                None
+            } else {
+                self.reads.first()
+            }
+        });
+        let Some(&anchor) = anchor else {
+            return;
+        };
+        for &index in self
+            .reads
+            .iter()
+            .chain(&self.commutative)
+            .chain(&self.writes)
+        {
+            merge(component, anchor, index);
+        }
+    }
+}
+
 /// Conflict groups over the batch: connected components of the conflict
 /// relation, each sorted canonically.
+///
+/// Effects bucket by the key space they can alias — point keys by the key
+/// itself, collection targets by `(owner, collection)` — so transactions
+/// that could not possibly conflict are never compared. Point buckets then
+/// resolve in one pass over the mode lattice. Interval targets stay
+/// pairwise inside their own collection, where overlap is arithmetic and
+/// the population is whoever declared that collection.
 fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
     let mut component: Vec<usize> = (0..batch.len()).collect();
-    for i in 0..batch.len() {
-        for j in (i + 1)..batch.len() {
-            if effect_sets_conflict(&batch[i].declared, &batch[j].declared) {
-                let (a, b) = (root(&mut component, i), root(&mut component, j));
-                component[a.max(b)] = a.min(b);
+    let mut points: BTreeMap<SubstateKey, PointClasses> = BTreeMap::new();
+    let mut collections: BTreeMap<(Address, RoleId), CollectionClaims> = BTreeMap::new();
+
+    for (index, entry) in batch.iter().enumerate() {
+        for effect in entry.declared.iter() {
+            let kind = effect.mode.kind();
+            match effect.target {
+                EffectTarget::Point(key) => points.entry(key).or_default().push(index, kind),
+                EffectTarget::Entry {
+                    owner, collection, ..
+                }
+                | EffectTarget::Range {
+                    owner, collection, ..
+                } => collections.entry((owner, collection)).or_default().push((
+                    index,
+                    effect.target,
+                    kind,
+                )),
             }
         }
     }
+
+    for classes in points.values() {
+        classes.merge_into(&mut component);
+    }
+    for touching in collections.values() {
+        for (position, (left, left_target, left_kind)) in touching.iter().enumerate() {
+            for (right, right_target, right_kind) in &touching[position + 1..] {
+                if left != right
+                    && !compatible(*left_kind, *right_kind)
+                    && targets_overlap(left_target, right_target)
+                {
+                    merge(&mut component, *left, *right);
+                }
+            }
+        }
+    }
+
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for index in 0..batch.len() {
         groups
@@ -526,6 +624,7 @@ fn apply_receipts(
     receipts: &mut BTreeMap<TxHash, Receipt>,
     locality: &Locality,
 ) -> Result<(), BatchError> {
+    let entries: BTreeMap<TxHash, &BatchTx> = batch.iter().map(|entry| (entry.tx, entry)).collect();
     let order: Vec<TxHash> = receipts.keys().copied().collect();
     for tx in order {
         let receipt = receipts.get(&tx).expect("walked from keys");
@@ -582,7 +681,7 @@ fn apply_receipts(
             }
             // A completed transaction's remote holds release here: the
             // settlement happened at the owning shard, not in this store.
-            for entry in batch.iter().filter(|entry| entry.tx == tx) {
+            if let Some(entry) = entries.get(&tx) {
                 for (key, _) in declared_reservations(&entry.declared) {
                     if !locality.is_local(key.owner) && store.held_reservation(key, tx).is_some() {
                         store.release(key, tx)?;
@@ -595,7 +694,7 @@ fn apply_receipts(
                 receipts.insert(tx, abort_receipt(Outcome::Infeasible { key, amount }, fuel));
             }
             // Release whatever was held for an aborted transaction.
-            for entry in batch.iter().filter(|entry| entry.tx == tx) {
+            if let Some(entry) = entries.get(&tx) {
                 for (key, _) in declared_reservations(&entry.declared) {
                     if store.held_reservation(key, tx).is_some() {
                         store.release(key, tx)?;
