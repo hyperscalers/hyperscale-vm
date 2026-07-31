@@ -309,14 +309,20 @@ fn main() -> Result<()> {
     for batch_size in [100u32, 1_000] {
         let store = funded_store(batch_size);
         let batch: Vec<BatchTx> = (0..batch_size)
-            .map(|index| BatchTx::new(tx(index), declared(sender(index))))
+            .map(|index| {
+                BatchTx::new(
+                    tx(index),
+                    declared(sender(index)),
+                    env().clock_ms,
+                    env().randomness,
+                )
+            })
             .collect();
         let start = Instant::now();
         let outcome = execute_batch(
             Arc::new(store),
             &batch,
             &bench,
-            env().randomness,
             test_hash,
             ExecutionMode::Serial,
             &Locality::All,

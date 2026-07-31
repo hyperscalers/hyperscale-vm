@@ -82,6 +82,8 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
     let batch = vec![BatchTx::new(
         TxHash(Hash32([0x11; 32])),
         transfer_declared(50),
+        env().clock_ms,
+        env().randomness,
     )];
 
     // The payer's shard: it owns the reserve, judges it, settles it, and
@@ -95,7 +97,6 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
         Arc::new(payer_store),
         &batch,
         &transfer_guest,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &owned_by(PAYER_BYTE),
@@ -109,7 +110,6 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
         Arc::new(MemoryStore::new()),
         &batch,
         &transfer_guest,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &owned_by(RECIPIENT_BYTE),
@@ -178,6 +178,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
         declared,
         nullifiers: vec![signed_nullifier()],
         clock_ms: env().clock_ms,
+        randomness: env().randomness,
     }
 }
 
@@ -195,7 +196,6 @@ fn a_committed_nullifier_reads_the_same_on_both_shards() {
         Arc::new(payer_store),
         &batch,
         &transfer_guest,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &owned_by(PAYER_BYTE),
@@ -206,7 +206,6 @@ fn a_committed_nullifier_reads_the_same_on_both_shards() {
         Arc::new(MemoryStore::new()),
         &batch,
         &transfer_guest,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &owned_by(RECIPIENT_BYTE),
@@ -232,10 +231,83 @@ fn a_committed_nullifier_reads_the_same_on_both_shards() {
 }
 
 #[test]
+fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
+    // The two shards batch this transaction with different neighbours, so
+    // a draw taken from the batch or from the executing block would put
+    // them on different receipts. Anchored to the transaction, it cannot.
+    let draw = [0x5A; 32];
+    let batch = vec![BatchTx::new(
+        TxHash(Hash32([0x44; 32])),
+        transfer_declared(50),
+        env().clock_ms,
+        draw,
+    )];
+    let reading_guest = |_id: TxHash, session: KernelSession| RunResult {
+        outcome: Outcome::Completed {
+            value: Some(u64::from(session.randomness()[0])),
+        },
+        session,
+        fuel: FUEL,
+    };
+
+    let mut payer_store = MemoryStore::new();
+    payer_store
+        .write(cell(PAYER_BYTE), encode_amount(100).to_vec())
+        .unwrap();
+    payer_store.clear_log();
+    let payer = execute_batch(
+        Arc::new(payer_store),
+        &batch,
+        &reading_guest,
+        test_hash,
+        ExecutionMode::Serial,
+        &owned_by(PAYER_BYTE),
+    )
+    .unwrap();
+    let recipient = execute_batch(
+        Arc::new(MemoryStore::new()),
+        &batch,
+        &reading_guest,
+        test_hash,
+        ExecutionMode::Serial,
+        &owned_by(RECIPIENT_BYTE),
+    )
+    .unwrap();
+
+    assert_eq!(payer.receipts, recipient.receipts);
+    assert_eq!(
+        payer.receipts[&batch[0].tx].outcome,
+        Outcome::Completed { value: Some(0x5A) }
+    );
+
+    // And the draw is receipt-affecting, which is what makes carrying it
+    // on the transaction load-bearing rather than tidy: hand one shard a
+    // different one and the two stop agreeing.
+    let divergent = vec![BatchTx::new(
+        batch[0].tx,
+        transfer_declared(50),
+        env().clock_ms,
+        [0x5B; 32],
+    )];
+    let elsewhere = execute_batch(
+        Arc::new(MemoryStore::new()),
+        &divergent,
+        &reading_guest,
+        test_hash,
+        ExecutionMode::Serial,
+        &owned_by(RECIPIENT_BYTE),
+    )
+    .unwrap();
+    assert_ne!(payer.receipts, elsewhere.receipts);
+}
+
+#[test]
 fn only_the_owning_shard_judges_an_uncovered_reserve() {
     let batch = vec![BatchTx::new(
         TxHash(Hash32([0x22; 32])),
         transfer_declared(50),
+        env().clock_ms,
+        env().randomness,
     )];
 
     // The payer's shard sees the shortfall and refuses.
@@ -248,7 +320,6 @@ fn only_the_owning_shard_judges_an_uncovered_reserve() {
         Arc::new(payer_store),
         &batch,
         &transfer_guest,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &owned_by(PAYER_BYTE),
@@ -265,7 +336,6 @@ fn only_the_owning_shard_judges_an_uncovered_reserve() {
         Arc::new(MemoryStore::new()),
         &batch,
         &transfer_guest,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &owned_by(RECIPIENT_BYTE),

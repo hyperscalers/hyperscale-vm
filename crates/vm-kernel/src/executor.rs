@@ -47,18 +47,39 @@ pub struct BatchTx {
     /// batch: every replica executing this transaction must pass the same
     /// value, and one batch may mix transactions with different clocks.
     pub clock_ms: u64,
+    /// The transaction's randomness draw, on the same terms as
+    /// [`BatchTx::clock_ms`]. A guest can read it, so it can reach the
+    /// receipt — and the two shards of a cross-shard transaction execute
+    /// it in different batches of different composition, so anything
+    /// derived from the batch or from the executing block would put them
+    /// on different receipts. The draw anchors to the transaction, and
+    /// every replica of it passes the same one.
+    pub randomness: [u8; 32],
 }
 
 impl BatchTx {
-    /// A transaction with no bound subintents and a zero clock.
+    /// A transaction with no bound subintents.
+    ///
+    /// The environment inputs are arguments rather than defaults: a
+    /// silently zeroed clock or draw is a wrong consensus input that
+    /// nothing would catch.
     #[must_use]
-    pub const fn new(tx: TxHash, declared: EffectSet) -> Self {
+    pub const fn new(tx: TxHash, declared: EffectSet, clock_ms: u64, randomness: [u8; 32]) -> Self {
         Self {
             tx,
             declared,
             nullifiers: Vec::new(),
-            clock_ms: 0,
+            clock_ms,
+            randomness,
         }
+    }
+
+    /// Bind the subintents this transaction commits. Each key must also be
+    /// declared as an exclusive write.
+    #[must_use]
+    pub fn with_nullifiers(mut self, nullifiers: Vec<SubstateKey>) -> Self {
+        self.nullifiers = nullifiers;
+        self
     }
 }
 
@@ -208,7 +229,6 @@ fn run_group<R: GuestRunner>(
     batch: &[&BatchTx],
     group: &[usize],
     runner: &R,
-    randomness: [u8; 32],
     hash_fn: fn(&[u8]) -> [u8; 32],
     locality: &Locality,
 ) -> Result<Vec<(TxHash, Receipt)>, BatchError> {
@@ -241,7 +261,7 @@ fn run_group<R: GuestRunner>(
         let before = store.clone();
         let env = EnvInputs {
             clock_ms: entry.clock_ms,
-            randomness,
+            randomness: entry.randomness,
         };
         let session =
             match KernelSession::materialize(store, &entry.declared, entry.tx, env, hash_fn) {
@@ -364,7 +384,6 @@ pub fn execute_batch<R: GuestRunner>(
     base: Arc<dyn Base>,
     batch: &[BatchTx],
     runner: &R,
-    randomness: [u8; 32],
     hash_fn: fn(&[u8]) -> [u8; 32],
     mode: ExecutionMode,
     locality: &Locality,
@@ -435,11 +454,7 @@ pub fn execute_batch<R: GuestRunner>(
     let executed: Vec<Result<Vec<(TxHash, Receipt)>, BatchError>> = match mode {
         ExecutionMode::Serial => groups
             .iter()
-            .map(|group| {
-                run_group(
-                    &judged, &runnable, group, runner, randomness, hash_fn, locality,
-                )
-            })
+            .map(|group| run_group(&judged, &runnable, group, runner, hash_fn, locality))
             .collect(),
         ExecutionMode::Parallel => thread::scope(|scope| {
             #[allow(clippy::needless_collect)] // spawn every worker before joining any
@@ -449,9 +464,7 @@ pub fn execute_batch<R: GuestRunner>(
                     let judged = &judged;
                     let runnable = &runnable;
                     scope.spawn(move || {
-                        run_group(
-                            judged, runnable, group, runner, randomness, hash_fn, locality,
-                        )
+                        run_group(judged, runnable, group, runner, hash_fn, locality)
                     })
                 })
                 .collect();

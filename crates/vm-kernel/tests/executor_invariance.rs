@@ -129,16 +129,46 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
     let batch = vec![
         // Two transfers into the shared recipient: delta-delta compatible,
         // so they land in different groups and merge by movement.
-        BatchTx::new(tx(0x01), reserve_and_delta(cell(0xA), 40, cell(0xC))),
-        BatchTx::new(tx(0x02), reserve_and_delta(cell(0xB), 25, cell(0xC))),
+        BatchTx::new(
+            tx(0x01),
+            reserve_and_delta(cell(0xA), 40, cell(0xC)),
+            env().clock_ms,
+            env().randomness,
+        ),
+        BatchTx::new(
+            tx(0x02),
+            reserve_and_delta(cell(0xB), 25, cell(0xC)),
+            env().clock_ms,
+            env().randomness,
+        ),
         // Two writers of one cell: write-write conflict, one group,
         // canonical order.
-        BatchTx::new(tx(0x03), point(cell(0xE), Mode::Write)),
-        BatchTx::new(tx(0x04), point(cell(0xE), Mode::Write)),
+        BatchTx::new(
+            tx(0x03),
+            point(cell(0xE), Mode::Write),
+            env().clock_ms,
+            env().randomness,
+        ),
+        BatchTx::new(
+            tx(0x04),
+            point(cell(0xE), Mode::Write),
+            env().clock_ms,
+            env().randomness,
+        ),
         // Infeasible: the sender vault cannot cover it after tx 0x01.
-        BatchTx::new(tx(0x05), reserve_and_delta(cell(0xA), 1_000, cell(0xC))),
+        BatchTx::new(
+            tx(0x05),
+            reserve_and_delta(cell(0xA), 1_000, cell(0xC)),
+            env().clock_ms,
+            env().randomness,
+        ),
         // The doomed writer on its own cell.
-        BatchTx::new(tx(0x66), point(cell(0xF), Mode::Write)),
+        BatchTx::new(
+            tx(0x66),
+            point(cell(0xF), Mode::Write),
+            env().clock_ms,
+            env().randomness,
+        ),
     ];
     (store, batch)
 }
@@ -169,7 +199,6 @@ fn the_batch_semantics_are_exact() {
         Arc::new(store),
         &batch,
         &scripted,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
@@ -220,7 +249,6 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         Arc::new(store.clone()),
         &batch,
         &scripted,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
@@ -230,7 +258,6 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         Arc::new(store.clone()),
         &batch,
         &scripted,
-        env().randomness,
         test_hash,
         ExecutionMode::Parallel,
         &Locality::All,
@@ -248,7 +275,6 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         Arc::new(store),
         &batch,
         &stalled,
-        env().randomness,
         test_hash,
         ExecutionMode::Parallel,
         &Locality::All,
@@ -269,7 +295,6 @@ fn input_order_cannot_influence_any_receipt() {
         Arc::new(store.clone()),
         &batch,
         &scripted,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
@@ -287,7 +312,6 @@ fn input_order_cannot_influence_any_receipt() {
                 Arc::new(store.clone()),
                 &permutation,
                 &scripted,
-                env().randomness,
                 test_hash,
                 mode,
                 &Locality::All,
@@ -309,10 +333,18 @@ fn each_transaction_sees_its_own_clock() {
     store.write(cell(0xF), vec![10]).unwrap();
     store.clear_log();
 
-    let mut early = BatchTx::new(tx(0x01), point(cell(0xE), Mode::Write));
-    early.clock_ms = 1_000;
-    let mut late = BatchTx::new(tx(0x02), point(cell(0xF), Mode::Write));
-    late.clock_ms = 2_000;
+    let early = BatchTx::new(
+        tx(0x01),
+        point(cell(0xE), Mode::Write),
+        1_000,
+        env().randomness,
+    );
+    let late = BatchTx::new(
+        tx(0x02),
+        point(cell(0xF), Mode::Write),
+        2_000,
+        env().randomness,
+    );
 
     let observe = |tx_id: TxHash, session: KernelSession| RunResult {
         outcome: Outcome::Completed {
@@ -325,7 +357,6 @@ fn each_transaction_sees_its_own_clock() {
         Arc::new(store),
         &[early, late],
         &observe,
-        env().randomness,
         test_hash,
         ExecutionMode::Parallel,
         &Locality::All,
@@ -339,5 +370,56 @@ fn each_transaction_sees_its_own_clock() {
     assert_eq!(
         outcome.receipts[&tx(0x02)].outcome,
         Outcome::Completed { value: Some(2_000) }
+    );
+}
+
+#[test]
+fn each_transaction_sees_its_own_draw() {
+    // Randomness is guest-observable, so it reaches the receipt. The two
+    // shards of a cross-shard transaction execute it in different batches
+    // of different composition, which is why the draw anchors to the
+    // transaction and not to the batch.
+    let mut store = MemoryStore::new();
+    store.write(cell(0xE), vec![10]).unwrap();
+    store.write(cell(0xF), vec![10]).unwrap();
+    store.clear_log();
+
+    let first = BatchTx::new(
+        tx(0x01),
+        point(cell(0xE), Mode::Write),
+        env().clock_ms,
+        [7; 32],
+    );
+    let second = BatchTx::new(
+        tx(0x02),
+        point(cell(0xF), Mode::Write),
+        env().clock_ms,
+        [9; 32],
+    );
+
+    let observe = |tx_id: TxHash, session: KernelSession| RunResult {
+        outcome: Outcome::Completed {
+            value: Some(u64::from(session.randomness()[0])),
+        },
+        session,
+        fuel: u64::from(tx_id.0.0[0]),
+    };
+    let outcome = execute_batch(
+        Arc::new(store),
+        &[first, second],
+        &observe,
+        test_hash,
+        ExecutionMode::Parallel,
+        &Locality::All,
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome.receipts[&tx(0x01)].outcome,
+        Outcome::Completed { value: Some(7) }
+    );
+    assert_eq!(
+        outcome.receipts[&tx(0x02)].outcome,
+        Outcome::Completed { value: Some(9) }
     );
 }

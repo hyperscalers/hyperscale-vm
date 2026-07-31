@@ -92,7 +92,12 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
                 mode: Mode::Delta,
             })
             .unwrap();
-        batch.push(BatchTx::new(tx(id), declared));
+        batch.push(BatchTx::new(
+            tx(id),
+            declared,
+            env().clock_ms,
+            env().randomness,
+        ));
         shapes.insert(tx(id), Shape::Transfer { sender, recipient });
     }
     for id in [0x44u8, 0x55] {
@@ -103,7 +108,12 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
                 mode: Mode::Write,
             })
             .unwrap();
-        batch.push(BatchTx::new(tx(id), declared));
+        batch.push(BatchTx::new(
+            tx(id),
+            declared,
+            env().clock_ms,
+            env().randomness,
+        ));
         shapes.insert(tx(id), Shape::Rmw { cell: rmw_cell() });
     }
     (store, batch, shapes)
@@ -295,7 +305,6 @@ fn six_schedules_one_outcome() -> Result<()> {
                     Arc::new(store.clone()),
                     &batch,
                     &blessed,
-                    env().randomness,
                     test_hash,
                     mode,
                     &Locality::All,
@@ -308,7 +317,6 @@ fn six_schedules_one_outcome() -> Result<()> {
                     Arc::new(store.clone()),
                     &batch,
                     &reference,
-                    env().randomness,
                     test_hash,
                     mode,
                     &Locality::All,

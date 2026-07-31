@@ -165,6 +165,7 @@ fn batch_entry(
             .map(|record| record.nullifier)
             .collect(),
         clock_ms: env().clock_ms,
+        randomness: env().randomness,
     };
     Ok((entry, admitted))
 }
@@ -400,7 +401,6 @@ fn run_both(
         Arc::new(store.clone()),
         batch,
         &blessed,
-        env().randomness,
         test_hash,
         ExecutionMode::Parallel,
         &Locality::All,
@@ -410,7 +410,6 @@ fn run_both(
         Arc::new(store.clone()),
         batch,
         &reference,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,

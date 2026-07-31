@@ -103,8 +103,15 @@ fn a_debit_below_a_held_reservation_aborts_only_its_transaction() {
         BatchTx::new(
             tx(0x01),
             with_delta(point(cell(0xA), Mode::Reserve { amount: 50 }), cell(0xC)),
+            env().clock_ms,
+            env().randomness,
         ),
-        BatchTx::new(tx(0x02), point(cell(0xA), Mode::Delta)),
+        BatchTx::new(
+            tx(0x02),
+            point(cell(0xA), Mode::Delta),
+            env().clock_ms,
+            env().randomness,
+        ),
     ];
 
     for mode in [ExecutionMode::Serial, ExecutionMode::Parallel] {
@@ -112,7 +119,6 @@ fn a_debit_below_a_held_reservation_aborts_only_its_transaction() {
             Arc::new(store.clone()),
             &batch,
             &scripted(10),
-            env().randomness,
             test_hash,
             mode,
             &Locality::All,
@@ -145,15 +151,21 @@ fn a_covered_debit_completes_beside_a_reservation() {
         BatchTx::new(
             tx(0x01),
             with_delta(point(cell(0xA), Mode::Reserve { amount: 50 }), cell(0xC)),
+            env().clock_ms,
+            env().randomness,
         ),
-        BatchTx::new(tx(0x02), point(cell(0xA), Mode::Delta)),
+        BatchTx::new(
+            tx(0x02),
+            point(cell(0xA), Mode::Delta),
+            env().clock_ms,
+            env().randomness,
+        ),
     ];
 
     let outcome = execute_batch(
         Arc::new(store),
         &batch,
         &scripted(10),
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
@@ -180,8 +192,18 @@ fn racing_debits_lose_deterministically_in_canonical_order() {
     store.write(cell(0xA), encode_amount(20).to_vec()).unwrap();
     store.clear_log();
     let batch = vec![
-        BatchTx::new(tx(0x01), point(cell(0xA), Mode::Delta)),
-        BatchTx::new(tx(0x02), point(cell(0xA), Mode::Delta)),
+        BatchTx::new(
+            tx(0x01),
+            point(cell(0xA), Mode::Delta),
+            env().clock_ms,
+            env().randomness,
+        ),
+        BatchTx::new(
+            tx(0x02),
+            point(cell(0xA), Mode::Delta),
+            env().clock_ms,
+            env().randomness,
+        ),
     ];
     let mut reversed = batch.clone();
     reversed.reverse();
@@ -192,7 +214,6 @@ fn racing_debits_lose_deterministically_in_canonical_order() {
                 Arc::new(store.clone()),
                 &input,
                 &scripted(15),
-                env().randomness,
                 test_hash,
                 mode,
                 &Locality::All,
@@ -229,14 +250,20 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
         BatchTx::new(
             tx(0x01),
             with_delta(point(cell(0xAB), Mode::Reserve { amount: 10 }), cell(0xC)),
+            env().clock_ms,
+            env().randomness,
         ),
         BatchTx::new(
             tx(0x02),
             with_delta(point(cell(0xAC), Mode::Reserve { amount: 10 }), cell(0xC)),
+            env().clock_ms,
+            env().randomness,
         ),
         BatchTx::new(
             tx(0x03),
             with_delta(point(cell(0xAD), Mode::Reserve { amount: 40 }), cell(0xC)),
+            env().clock_ms,
+            env().randomness,
         ),
     ];
 
@@ -244,7 +271,6 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
         Arc::new(store),
         &batch,
         &scripted(0),
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
@@ -277,7 +303,8 @@ fn nullifier_tx(id: u8) -> BatchTx {
         tx: tx(id),
         declared: point(nullifier(), Mode::Write),
         nullifiers: vec![nullifier()],
-        clock_ms: 0,
+        clock_ms: env().clock_ms,
+        randomness: env().randomness,
     }
 }
 
@@ -296,7 +323,6 @@ fn racing_nullifier_writers_commit_exactly_once() {
         Arc::new(MemoryStore::new()),
         &batch,
         &noop,
-        env().randomness,
         test_hash,
         ExecutionMode::Parallel,
         &Locality::All,
@@ -324,7 +350,6 @@ fn racing_nullifier_writers_commit_exactly_once() {
         Arc::new(outcome.store),
         &[nullifier_tx(0x03)],
         &noop,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
@@ -354,13 +379,13 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         tx: tx(0x01),
         declared: point(nullifier(), Mode::Read),
         nullifiers: vec![nullifier()],
-        clock_ms: 0,
+        clock_ms: env().clock_ms,
+        randomness: env().randomness,
     };
     let refused = execute_batch(
         Arc::new(MemoryStore::new()),
         &[undeclared],
         &noop,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
@@ -394,7 +419,6 @@ fn an_aborted_transaction_spends_no_nullifier() {
         Arc::new(MemoryStore::new()),
         &batch,
         &scripted,
-        env().randomness,
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
