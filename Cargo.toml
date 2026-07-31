@@ -23,12 +23,13 @@ hyperscale-vm-stdlib = { path = "crates/vm-stdlib" }
 anyhow = "1"
 proptest = "1"
 thiserror = "2"
-wasmparser = "0.236"
-wat = "1"
-wit-component = "0.236"
-# The blessed engine, pinned exactly to the current LTS. Upgrades are
+wasmparser = "0.255.0"
+wat = "1.255.0"
+wit-component = "0.255.0"
+# The blessed engine, pinned exactly to the latest stable ahead of the 48 LTS
+# (expected 2026-08-20; the pin moves there when it lands). Upgrades are
 # deliberate protocol events, never dependency drift.
-wasmtime = { version = "=36.0.12", features = ["component-model", "winch", "pulley"] }
+wasmtime = { version = "=47.0.2", features = ["component-model", "winch", "pulley"] }
 
 [workspace.lints.rust]
 missing_docs = "warn"

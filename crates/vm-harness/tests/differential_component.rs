@@ -224,7 +224,7 @@ fn call1<T: 'static>(
 ) -> Result<u64, Error> {
     let f = instance.get_typed_func::<(Resource<T>,), (u64,)>(&mut *store, export)?;
     f.call(&mut *store, (Resource::new_borrow(rep),))
-        .and_then(|(v,)| f.post_return(&mut *store).map(|()| v))
+        .map(|(v,)| v)
 }
 
 fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, u64)> {
@@ -250,12 +250,11 @@ fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, 
                 &mut store,
                 (Resource::new_borrow(*a), Resource::new_borrow(*b)),
             )
-            .and_then(|(v,)| f.post_return(&mut store).map(|()| v))
+            .map(|(v,)| v)
         }
         ("forge", []) => {
             let f = instance.get_typed_func::<(), (u64,)>(&mut store, export)?;
-            f.call(&mut store, ())
-                .and_then(|(v,)| f.post_return(&mut store).map(|()| v))
+            f.call(&mut store, ()).map(|(v,)| v)
         }
         (_, [(rep, kind)]) => match kind {
             ResourceKind::ReadCell => call1::<ReadCell>(&mut store, &instance, export, *rep),

@@ -126,7 +126,6 @@ fn the_wit_bindgen_guest_conforms_and_transfers() -> Result<()> {
             100,
         ),
     )?;
-    run.post_return(&mut store)?;
 
     // The receipt tag folds clock + reserved amount + hash[0] of the
     // randomness draw, computed independently of the guest.

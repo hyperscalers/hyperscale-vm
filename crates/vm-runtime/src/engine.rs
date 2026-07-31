@@ -18,15 +18,23 @@ pub fn blessed_config() -> Config {
     config.consume_fuel(true);
     config.cranelift_nan_canonicalization(true);
     config.wasm_component_model(true);
+    config.wasm_component_model_async(false);
     config.wasm_simd(false);
     config.wasm_relaxed_simd(false);
     config.wasm_threads(false);
     config.wasm_tail_call(false);
     config.wasm_memory64(false);
     config.wasm_gc(false);
+    config.wasm_exceptions(false);
     config.wasm_extended_const(false);
     config.wasm_multi_memory(false);
+    config.wasm_stack_switching(false);
     config.max_wasm_stack(MAX_WASM_STACK_BYTES);
+    // Copy-on-write memory images charge instantiation fuel by the
+    // host-page-rounded image span — a host-platform-dependent number.
+    // Disabling them makes active-data-segment initialization cost one fuel
+    // per byte plus one per segment, identical on every host.
+    config.memory_init_cow(false);
     config
 }
 

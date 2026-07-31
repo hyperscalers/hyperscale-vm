@@ -412,7 +412,7 @@ fn invoke_blessed(
                 )
                 .expect("typed");
             f.call(&mut store, (Resource::new_borrow(rep), amount))
-                .and_then(|(v,)| f.post_return(&mut store).map(|()| vec![v]))
+                .map(|(v,)| vec![v])
         }
         NodeCall::Deposit { vault, bucket } => {
             let rep = rep_of(&store.data().0, &Capability::Delta(*vault));
@@ -420,7 +420,7 @@ fn invoke_blessed(
                 .get_typed_func::<(Resource<DeltaCell>, &[u8]), ()>(&mut store, "deposit")
                 .expect("typed");
             f.call(&mut store, (Resource::new_borrow(rep), bucket))
-                .and_then(|()| f.post_return(&mut store).map(|()| Vec::new()))
+                .map(|()| Vec::new())
         }
         NodeCall::Swap {
             config,
@@ -451,7 +451,7 @@ fn invoke_blessed(
                     min_out,
                 ),
             )
-            .and_then(|(v,)| f.post_return(&mut store).map(|()| vec![v]))
+            .map(|(v,)| vec![v])
         }
         NodeCall::Place {
             escrow,
@@ -476,7 +476,7 @@ fn invoke_blessed(
                     bucket,
                 ),
             )
-            .and_then(|()| f.post_return(&mut store).map(|()| Vec::new()))
+            .map(|()| Vec::new())
         }
         NodeCall::Fill {
             base,
@@ -503,10 +503,7 @@ fn invoke_blessed(
                     budget,
                 ),
             )
-            .and_then(|(both,)| {
-                f.post_return(&mut store)
-                    .map(|()| vec![both[..16].to_vec(), both[16..].to_vec()])
-            })
+            .map(|(both,)| vec![both[..16].to_vec(), both[16..].to_vec()])
         }
     };
 

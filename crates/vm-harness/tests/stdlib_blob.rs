@@ -115,7 +115,6 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
             encode_amount(AMOUNT).as_slice(),
         ),
     )?;
-    withdraw.post_return(&mut store)?;
     assert_eq!(bucket, encode_amount(AMOUNT).to_vec());
     let withdraw_fuel = FUEL - store.get_fuel()?;
     let host = store.into_data();
@@ -127,7 +126,6 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
     let deposit =
         instance.get_typed_func::<(Resource<DeltaCell>, &[u8]), ()>(&mut store, "deposit")?;
     deposit.call(&mut store, (Resource::new_borrow(recipient_rep), &bucket))?;
-    deposit.post_return(&mut store)?;
     let fuel = withdraw_fuel + (FUEL - store.get_fuel()?);
 
     Ok((finish(store.into_data().0, fuel), fuel))

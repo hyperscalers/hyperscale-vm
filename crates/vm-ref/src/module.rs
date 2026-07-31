@@ -168,7 +168,7 @@ impl RefModule {
                     }
                 }
                 Payload::ImportSection(reader) => {
-                    for import in reader {
+                    for import in reader.into_imports() {
                         let import = import.map_err(|e| DecodeError::Malformed(e.to_string()))?;
                         module.imports.entries.push(import_entry(&import)?);
                     }

@@ -245,7 +245,6 @@ fn run_guest(engine: &Engine, substate_len: usize, fuel: u64) -> Result<(u64, u6
         &mut store,
         (Resource::new_borrow(0), Resource::new_borrow(1)),
     )?;
-    run.post_return(&mut store)?;
     let consumed = fuel - store.get_fuel()?;
     let values = std::mem::take(&mut store.data_mut().values);
     Ok((out, consumed, values))

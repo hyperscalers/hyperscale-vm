@@ -96,7 +96,6 @@ fn runs(engine: &Engine, binary: &[u8]) -> Result<u32> {
     let instance = linker.instantiate(&mut store, &component)?;
     let add = instance.get_typed_func::<(u32, u32), (u32,)>(&mut store, "add")?;
     let (sum,) = add.call(&mut store, (2, 3))?;
-    add.post_return(&mut store)?;
     Ok(sum)
 }
 

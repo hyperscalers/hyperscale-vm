@@ -111,6 +111,18 @@ fn rejects_tail_calls() {
 }
 
 #[test]
+fn rejects_exception_tags() {
+    let bytes = component_with_core("(tag (param i32))");
+    assert_rejected(&bytes, "outside the profile feature set");
+}
+
+#[test]
+fn rejects_gc_types() {
+    let bytes = component_with_core("(type (struct (field i32)))");
+    assert_rejected(&bytes, "outside the profile feature set");
+}
+
+#[test]
 fn rejects_imports_outside_the_kernel_world() {
     let bytes = parse_str(r#"(component (import "wasi:io/poll" (instance)))"#).unwrap();
     assert_rejected(&bytes, "import outside the kernel world");

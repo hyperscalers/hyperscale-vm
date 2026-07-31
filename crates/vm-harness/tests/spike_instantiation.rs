@@ -108,7 +108,6 @@ fn one_transaction_pre(engine: &Engine, pre: &InstancePre<Tx>) -> Result<u64> {
         &mut store,
         (Resource::new_borrow(0), Resource::new_borrow(1)),
     )?;
-    run.post_return(&mut store)?;
     Ok(out)
 }
 
@@ -127,7 +126,6 @@ fn one_transaction_linker(
         &mut store,
         (Resource::new_borrow(0), Resource::new_borrow(1)),
     )?;
-    run.post_return(&mut store)?;
     Ok(out)
 }
 

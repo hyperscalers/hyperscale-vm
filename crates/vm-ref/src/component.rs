@@ -247,11 +247,11 @@ impl RefComponent {
                         // world-level `use`) to the type space.
                         match import.ty {
                             ComponentTypeRef::Instance(_) => {
-                                comp.import_names.push(import.name.0.to_string());
+                                comp.import_names.push(import.name.name.to_string());
                             }
                             ComponentTypeRef::Type(_) => {
                                 comp.types.push(
-                                    ResourceKind::from_name(import.name.0)
+                                    ResourceKind::from_name(import.name.name)
                                         .map_or(CTypeEntry::Other, CTypeEntry::Resource),
                                 );
                             }
@@ -289,7 +289,8 @@ impl RefComponent {
                         // index space; later definitions reference past it.
                         match export.kind {
                             ComponentExternalKind::Func => {
-                                comp.exports.insert(export.name.0.to_string(), export.index);
+                                comp.exports
+                                    .insert(export.name.name.to_string(), export.index);
                                 let aliased = comp
                                     .comp_funcs
                                     .get(export.index as usize)

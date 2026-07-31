@@ -13,9 +13,8 @@
 use std::fmt::Write as _;
 use std::time::Instant;
 
-use anyhow::Result;
 use hyperscale_vm_runtime::{profile, validate_component};
-use wasmtime::{Config, Engine, Instance, Module, Store, Strategy};
+use wasmtime::{Config, Engine, Instance, Module, Result, Store, Strategy};
 use wat::parse_str;
 
 /// Sequentially chained blocks at the per-function bound.

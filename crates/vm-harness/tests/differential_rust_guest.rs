@@ -122,7 +122,7 @@ fn blessed(
                 min,
             ),
         )
-        .and_then(|(v,)| run.post_return(&mut store).map(|()| v));
+        .map(|(v,)| v);
     let outcome = match result {
         Ok(v) => LaneOutcome::Value(v),
         Err(e) => {

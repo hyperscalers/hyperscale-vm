@@ -136,7 +136,6 @@ fn declared_handles_reach_per_transaction_state() -> Result<()> {
             &mut store,
             (Resource::new_borrow(0), Resource::new_borrow(1)),
         )?;
-        run.post_return(&mut store)?;
         assert_eq!(out, initial);
         assert_eq!(store.data().values, vec![initial, expected_b]);
         assert_eq!(store.data().log, vec![('r', 0), ('w', 1), ('r', 0)]);

@@ -192,7 +192,6 @@ impl Bench {
                 (Resource::new_borrow(reserve), &encode_amount(AMOUNT)),
             )
             .expect("withdraw");
-        withdraw.post_return(&mut store).expect("post");
         let consumed = FUEL - store.get_fuel().expect("fuel");
         let session = store.into_data().0;
 
@@ -205,7 +204,6 @@ impl Bench {
         deposit
             .call(&mut store, (Resource::new_borrow(delta), &bucket))
             .expect("deposit");
-        deposit.post_return(&mut store).expect("post");
         let consumed = consumed + (FUEL - store.get_fuel().expect("fuel"));
         (store.into_data().0, consumed)
     }

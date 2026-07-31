@@ -99,7 +99,7 @@ pub(crate) struct Store {
     /// Optional instruction budget; `None` is unbounded.
     pub steps_remaining: Option<u64>,
     /// Fuel consumed under the spec schedule ([`fuel_cost`] plus one per
-    /// function entry).
+    /// function entry, plus one per byte moved by `memory.fill`/`memory.copy`).
     pub fuel_consumed: u64,
 }
 
@@ -351,6 +351,8 @@ fn run(
                 let n = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
                 let val = stack.pop().expect("validated").as_i32() as u8;
                 let dest = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
+                // The engine charges the byte count before the bounds check.
+                store.fuel_consumed += n as u64;
                 let mem = memory_mut(store, instance);
                 let end = dest.checked_add(n).ok_or(Trap::MemoryOutOfBounds)?;
                 if end > mem.data.len() {
@@ -362,6 +364,8 @@ fn run(
                 let n = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
                 let src = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
                 let dest = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
+                // The engine charges the byte count before the bounds check.
+                store.fuel_consumed += n as u64;
                 let mem = memory_mut(store, instance);
                 let src_end = src.checked_add(n).ok_or(Trap::MemoryOutOfBounds)?;
                 let dest_end = dest.checked_add(n).ok_or(Trap::MemoryOutOfBounds)?;
@@ -544,8 +548,18 @@ pub(crate) fn instantiate_module(
         imported_memory
     };
 
+    // The engine compiles one init function per module that needs one: any
+    // active data segment forces it, as do element segments applying to an
+    // imported table (a local table's elements are precomputed host-side).
+    // Its entry costs one fuel; each data segment adds one plus one per
+    // byte; element writes are free.
+    let inits_imported_table = module.table.is_none() && !module.elements.is_empty();
+    if !module.datas.is_empty() || inits_imported_table {
+        store.fuel_consumed += 1;
+    }
     if let Some(mem_idx) = memory {
         for seg in &module.datas {
+            store.fuel_consumed += 1 + seg.items.len() as u64;
             let mem = &mut store.memories[mem_idx as usize];
             let start = seg.offset as usize;
             let end = start + seg.items.len();

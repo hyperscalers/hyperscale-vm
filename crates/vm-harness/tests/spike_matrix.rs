@@ -12,9 +12,9 @@
 
 use std::fmt::Write as _;
 
-use anyhow::{Context, Result, anyhow};
 use wasmtime::component::{Component, Linker as ComponentLinker};
-use wasmtime::{Config, Engine, Instance, Module, Store, Strategy, Trap};
+use wasmtime::error::{Context, format_err};
+use wasmtime::{Config, Engine, Instance, Module, Result, Store, Strategy, Trap};
 
 const CORE_WAT: &str = r#"
 (module
@@ -123,6 +123,7 @@ struct Report {
     backend: Backend,
     core_exec: Probe,
     core_fuel: Probe,
+    core_fuel_fill: Probe,
     component_exec: Probe,
     component_fuel: Probe,
     trap_unreachable: Probe,
@@ -151,7 +152,7 @@ fn probe_core_exec(backend: Backend) -> Result<String> {
     let add = instance.get_typed_func::<(i32, i32), i32>(&mut store, "add")?;
     let sum = add.call(&mut store, (2, 3))?;
     if sum != 5 {
-        return Err(anyhow!("add(2, 3) returned {sum}"));
+        return Err(format_err!("add(2, 3) returned {sum}"));
     }
     Ok("ok".to_string())
 }
@@ -162,14 +163,16 @@ fn probe_core_fuel(backend: Backend) -> Result<String> {
     let work = instance.get_typed_func::<i64, i64>(&mut store, "work")?;
     work.call(&mut store, 10_000)?;
     let after_loop = store.get_fuel()?;
+    Ok(format!("loop10k={}", 1_000_000 - after_loop))
+}
+
+fn probe_core_fuel_fill(backend: Backend) -> Result<String> {
+    let engine = backend.configure(true, false)?;
+    let (mut store, instance) = core_instance(&engine, Some(1_000_000))?;
     let fill = instance.get_typed_func::<i32, i32>(&mut store, "fill")?;
     fill.call(&mut store, 60_000)?;
     let after_fill = store.get_fuel()?;
-    Ok(format!(
-        "loop10k={} fill60k={}",
-        1_000_000 - after_loop,
-        after_loop - after_fill
-    ))
+    Ok(format!("fill60k={}", 1_000_000 - after_fill))
 }
 
 fn probe_component(backend: Backend, fuel: bool) -> Result<String> {
@@ -183,9 +186,8 @@ fn probe_component(backend: Backend, fuel: bool) -> Result<String> {
     let instance = linker.instantiate(&mut store, &component)?;
     let add = instance.get_typed_func::<(u32, u32), (u32,)>(&mut store, "add")?;
     let (sum,) = add.call(&mut store, (2, 3))?;
-    add.post_return(&mut store)?;
     if sum != 5 {
-        return Err(anyhow!("component add(2, 3) returned {sum}"));
+        return Err(format_err!("component add(2, 3) returned {sum}"));
     }
     if fuel {
         let consumed = 1_000_000 - store.get_fuel()?;
@@ -206,7 +208,7 @@ fn probe_trap(backend: Backend, export: &'static str, arg: Option<i32>) -> Resul
     };
     let trap = err
         .downcast_ref::<Trap>()
-        .ok_or_else(|| anyhow!("non-trap error: {err:#}"))?;
+        .ok_or_else(|| format_err!("non-trap error: {err:#}"))?;
     Ok(format!("{trap:?}"))
 }
 
@@ -232,6 +234,7 @@ fn run_matrix() -> Vec<Report> {
             backend,
             core_exec: stringify(probe_core_exec(backend)),
             core_fuel: stringify(probe_core_fuel(backend)),
+            core_fuel_fill: stringify(probe_core_fuel_fill(backend)),
             component_exec: stringify(probe_component(backend, false)),
             component_fuel: stringify(probe_component(backend, true)),
             trap_unreachable: stringify(probe_trap(backend, "unreach", None)),
@@ -249,6 +252,7 @@ fn render(reports: &[Report]) -> String {
         for (label, probe) in [
             ("core exec", &r.core_exec),
             ("core fuel", &r.core_fuel),
+            ("core fuel fill", &r.core_fuel_fill),
             ("component exec", &r.component_exec),
             ("component fuel", &r.component_fuel),
             ("trap unreachable", &r.trap_unreachable),
@@ -312,6 +316,26 @@ fn backend_matrix_and_fuel_determinism() {
             }
         }
     }
+
+    // Bulk-op fuel is size-proportional on the Cranelift-compiled paths
+    // (Cranelift and Pulley agree exactly) but Winch charges only the flat
+    // operator cost. The divergence is pinned: if an upstream Winch fix
+    // lands, this assertion trips and the matrix gets re-recorded.
+    let pulley = &reports[2];
+    assert_eq!(pulley.backend, Backend::Pulley);
+    assert_eq!(cranelift.core_fuel_fill, pulley.core_fuel_fill);
+    assert_eq!(
+        cranelift.core_fuel_fill.as_deref(),
+        Ok("fill60k=60007"),
+        "cranelift fill fuel moved off the pinned size-proportional schedule"
+    );
+    let winch = &reports[1];
+    assert_eq!(winch.backend, Backend::Winch);
+    assert_eq!(
+        winch.core_fuel_fill.as_deref(),
+        Ok("fill60k=7"),
+        "winch bulk-op fuel is no longer the flat operator schedule"
+    );
 }
 
 #[test]

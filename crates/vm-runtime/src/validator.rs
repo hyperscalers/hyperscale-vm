@@ -47,26 +47,23 @@ pub enum ProfileError {
     Structural(String),
 }
 
-/// The profile's wasm feature set: wasmparser defaults minus every proposal
-/// the profile disables. Everything admitted here has an executable-spec
-/// witness in vm-ref; bulk memory's table operations are the one
-/// finer-than-a-feature exclusion, rejected in the operator walk.
+/// The profile's wasm feature set, as an explicit allowlist. Everything
+/// admitted here has an executable-spec witness in vm-ref; a proposal a
+/// parser bump turns on by default stays out until deliberately added here.
+/// Bulk memory's table operations are the one finer-than-a-feature
+/// exclusion, rejected in the operator walk.
 fn profile_features() -> WasmFeatures {
-    let mut features = WasmFeatures::default();
-    features.remove(WasmFeatures::FLOATS);
-    features.remove(WasmFeatures::SIMD);
-    features.remove(WasmFeatures::RELAXED_SIMD);
-    features.remove(WasmFeatures::THREADS);
-    features.remove(WasmFeatures::SHARED_EVERYTHING_THREADS);
-    features.remove(WasmFeatures::EXCEPTIONS);
-    features.remove(WasmFeatures::LEGACY_EXCEPTIONS);
-    features.remove(WasmFeatures::TAIL_CALL);
-    features.remove(WasmFeatures::MEMORY64);
-    features.remove(WasmFeatures::GC);
-    features.remove(WasmFeatures::CM_ASYNC);
-    features.remove(WasmFeatures::MULTI_MEMORY);
-    features.remove(WasmFeatures::EXTENDED_CONST);
-    features
+    WasmFeatures::MUTABLE_GLOBAL
+        | WasmFeatures::SATURATING_FLOAT_TO_INT
+        | WasmFeatures::SIGN_EXTENSION
+        | WasmFeatures::MULTI_VALUE
+        | WasmFeatures::REFERENCE_TYPES
+        | WasmFeatures::CALL_INDIRECT_OVERLONG
+        | WasmFeatures::BULK_MEMORY
+        | WasmFeatures::BULK_MEMORY_OPT
+        | WasmFeatures::FUNCTION_REFERENCES
+        | WasmFeatures::GC_TYPES
+        | WasmFeatures::COMPONENT_MODEL
 }
 
 /// Validates a component artifact against the deterministic profile.
@@ -114,7 +111,7 @@ fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
             Payload::ComponentImportSection(reader) => {
                 for import in reader {
                     let import = import.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    let name = import.name.0;
+                    let name = import.name.name;
                     // Type imports confer no capability — they are how a
                     // world-level `use` of a kernel resource type encodes —
                     // so only value-carrying imports are gated.
@@ -147,7 +144,7 @@ fn validate_core_module(bytes: &[u8]) -> Result<(), ProfileError> {
                 check_types(reader, &mut type_param_counts)?;
             }
             Payload::ImportSection(reader) => {
-                for import in reader {
+                for import in reader.into_imports() {
                     let import = import.map_err(|e| ProfileError::Feature(e.to_string()))?;
                     check_import(
                         &import.ty,
@@ -259,7 +256,7 @@ fn check_import(
     globals: &mut usize,
 ) -> Result<(), ProfileError> {
     match ty {
-        TypeRef::Func(_) => *imported_functions += 1,
+        TypeRef::Func(_) | TypeRef::FuncExact(_) => *imported_functions += 1,
         TypeRef::Memory(memory) => {
             *memories += 1;
             bounded_maximum(memory.maximum, profile::MAX_MEMORY_PAGES, "memory pages")?;

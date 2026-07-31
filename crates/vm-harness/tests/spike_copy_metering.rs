@@ -45,7 +45,6 @@ fn fuel_for_call(engine: &Engine, component: &Component, payload: &str) -> Resul
     let take = instance.get_typed_func::<(&str,), (u32,)>(&mut store, "take")?;
     let before = store.get_fuel()?;
     let (len,) = take.call(&mut store, (payload,))?;
-    take.post_return(&mut store)?;
     let consumed = before - store.get_fuel()?;
     Ok((len, consumed))
 }

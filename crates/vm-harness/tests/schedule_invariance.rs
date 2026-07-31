@@ -179,7 +179,7 @@ impl GuestRunner for BlessedRunner {
                             &mut store,
                             (Resource::new_borrow(a), Resource::new_borrow(b)),
                         )
-                        .and_then(|(v,)| f.post_return(&mut store).map(|()| v))
+                        .map(|(v,)| v)
                     })
             }
             Shape::Rmw { cell } => {
@@ -188,7 +188,7 @@ impl GuestRunner for BlessedRunner {
                     .get_typed_func::<(Resource<WriteCell>,), (u64,)>(&mut store, "rmw")
                     .and_then(|f| {
                         f.call(&mut store, (Resource::new_borrow(rep),))
-                            .and_then(|(v,)| f.post_return(&mut store).map(|()| v))
+                            .map(|(v,)| v)
                     })
             }
         };
