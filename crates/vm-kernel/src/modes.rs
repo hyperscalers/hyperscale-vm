@@ -47,6 +47,24 @@ pub const fn encode_amount(amount: u128) -> [u8; AMOUNT_CELL_BYTES] {
     amount.to_le_bytes()
 }
 
+/// The cell form of an amount: a zero balance is an absent cell, not
+/// sixteen zero bytes.
+///
+/// Storage is a refundable per-byte bond, so the leaf has to go when the
+/// balance does — draining is the commonest shrink in the system, and for
+/// a commutative cell it is the only exit, since a delta capability has no
+/// remove. The supply accumulator has always shed zero entries; this is
+/// the cell half of the same rule.
+///
+/// The consequence at the guest boundary is that a drained cell reads as
+/// empty rather than as sixteen zero bytes. Both decode to zero, and
+/// every stdlib guest already treats them alike, but the obligation is
+/// permanent: an amount decoder must accept an empty cell.
+#[must_use]
+pub fn amount_cell(amount: u128) -> Option<[u8; AMOUNT_CELL_BYTES]> {
+    (amount != 0).then(|| encode_amount(amount))
+}
+
 /// Decode an amount cell.
 ///
 /// # Errors

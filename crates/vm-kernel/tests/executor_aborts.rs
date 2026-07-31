@@ -87,9 +87,15 @@ fn scripted(sub: u128) -> impl Fn(TxHash, KernelSession) -> RunResult + Sync {
     }
 }
 
+/// A cell's amount, reading an absent cell as zero — the same
+/// normalisation every guest applies, and what a drained vault now
+/// looks like.
 fn amount_at(store: &OverlayStore, key: SubstateKey) -> u128 {
     let mut store = store.clone();
-    decode_amount(&store.read(key).unwrap().unwrap()).unwrap()
+    store
+        .read(key)
+        .unwrap()
+        .map_or(0, |cell| decode_amount(&cell).unwrap())
 }
 
 #[test]
@@ -361,6 +367,72 @@ fn racing_nullifier_writers_commit_exactly_once() {
             reason: "subintent nullifier spent".into(),
         }
     );
+}
+
+#[test]
+fn a_drained_vault_leaves_no_cell() {
+    // Storage is a refundable per-byte bond, so the leaf has to go when
+    // the balance does. A commutative cell has no other exit: a delta
+    // capability cannot remove, so draining is the only shrink there is.
+    let mut store = MemoryStore::new();
+    store.write(cell(0xA), encode_amount(50).to_vec()).unwrap();
+    store.clear_log();
+
+    // Settling the whole balance away, and moving the whole balance away,
+    // are the two ways a cell reaches zero.
+    let batch = vec![
+        BatchTx::new(
+            tx(0x01),
+            with_delta(point(cell(0xA), Mode::Reserve { amount: 50 }), cell(0xC)),
+            env().clock_ms,
+            env().randomness,
+        ),
+        BatchTx::new(
+            tx(0x02),
+            point(cell(0xD), Mode::Delta),
+            env().clock_ms,
+            env().randomness,
+        ),
+    ];
+    let outcome = execute_batch(
+        Arc::new(store),
+        &batch,
+        &scripted(0),
+        test_hash,
+        ExecutionMode::Serial,
+        &Locality::All,
+    )
+    .unwrap();
+
+    let mut end = outcome.store.clone();
+    assert_eq!(end.read(cell(0xA)).unwrap(), None, "the settled vault");
+    assert_eq!(
+        end.read(cell(0xD)).unwrap(),
+        None,
+        "a cell that only ever held zero is never created"
+    );
+    // The recipient kept its balance, so this is deletion on zero and not
+    // deletion on touch.
+    assert_eq!(amount_at(&outcome.store, cell(0xC)), 50);
+
+    // Crediting a deleted cell brings it back, and the arithmetic never
+    // saw a difference: absent reads as zero throughout.
+    let refilled = execute_batch(
+        Arc::new(outcome.store.collapse()),
+        &[BatchTx::new(
+            tx(0x03),
+            with_delta(point(cell(0xC), Mode::Reserve { amount: 20 }), cell(0xA)),
+            env().clock_ms,
+            env().randomness,
+        )],
+        &scripted(0),
+        test_hash,
+        ExecutionMode::Serial,
+        &Locality::All,
+    )
+    .unwrap();
+    assert_eq!(amount_at(&refilled.store, cell(0xA)), 20);
+    assert_eq!(amount_at(&refilled.store, cell(0xC)), 30);
 }
 
 #[test]

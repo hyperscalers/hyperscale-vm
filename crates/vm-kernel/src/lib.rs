@@ -27,8 +27,8 @@ pub use executor::{
     BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, execute_batch,
 };
 pub use modes::{
-    AMOUNT_CELL_BYTES, DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount,
-    fold_deltas, judge,
+    AMOUNT_CELL_BYTES, DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount,
+    encode_amount, fold_deltas, judge,
 };
 pub use oracle::{covered, permits, target_covers, undeclared_accesses};
 pub use overlay::OverlayStore;

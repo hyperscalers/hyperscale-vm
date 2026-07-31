@@ -173,9 +173,15 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
     (store, batch)
 }
 
+/// A cell's amount, reading an absent cell as zero — the same
+/// normalisation every guest applies, and what a drained vault now
+/// looks like.
 fn amount_at(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
     let mut store = outcome.store.clone();
-    decode_amount(&store.read(key).unwrap().unwrap()).unwrap()
+    store
+        .read(key)
+        .unwrap()
+        .map_or(0, |cell| decode_amount(&cell).unwrap())
 }
 
 /// The end state's full cell map, through the collapsed overlay.

@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use hyperscale_vm_effects::{Address, EffectTarget, ModeKind, RoleId, SubstateKey};
 
 use crate::modes::{
-    DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount, fold_deltas, judge,
+    DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount, fold_deltas, judge,
 };
 
 /// Why a store operation rejected. Deterministic: identical on every
@@ -342,6 +342,18 @@ impl MemoryStore {
         Ok(())
     }
 
+    /// Store an amount, dropping the leaf when it reaches zero.
+    fn write_amount(&mut self, key: SubstateKey, amount: u128) {
+        match amount_cell(amount) {
+            Some(cell) => {
+                self.cells.insert(key, cell.to_vec());
+            }
+            None => {
+                self.cells.remove(&key);
+            }
+        }
+    }
+
     fn committed_amount(&self, key: SubstateKey) -> Result<u128, StoreError> {
         match self.cells.get(&key) {
             Some(cell) => Ok(decode_amount(cell)?),
@@ -417,7 +429,7 @@ impl MemoryStore {
         debit: u128,
     ) -> Result<u128, StoreError> {
         let after = self.judge_movement(key, credit, debit)?;
-        self.cells.insert(key, encode_amount(after).to_vec());
+        self.write_amount(key, after);
         Ok(after)
     }
 
@@ -480,7 +492,7 @@ impl MemoryStore {
         let after = committed
             .checked_sub(amount)
             .ok_or(StoreError::HeldExceedsCommitted(key))?;
-        self.cells.insert(key, encode_amount(after).to_vec());
+        self.write_amount(key, after);
         Ok(amount)
     }
 
@@ -516,8 +528,7 @@ impl MemoryStore {
             });
         }
         for outcome in &applied {
-            self.cells
-                .insert(outcome.key, encode_amount(outcome.after).to_vec());
+            self.write_amount(outcome.key, outcome.after);
         }
         self.pending_deltas.clear();
         Ok(applied)

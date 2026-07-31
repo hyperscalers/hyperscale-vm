@@ -21,7 +21,7 @@ use std::sync::Arc;
 use hyperscale_vm_effects::{Address, EffectTarget, ModeKind, RoleId, SubstateKey};
 
 use crate::modes::{
-    DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount, fold_deltas, judge,
+    DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount, fold_deltas, judge,
 };
 use crate::store::{Access, AppliedDelta, Base, MemoryStore, StoreError, SubstateStore};
 
@@ -367,7 +367,7 @@ impl OverlayStore {
             .ok_or(StoreError::HeldExceedsCommitted(key))?;
         self.active
             .cells
-            .insert(key, Some(encode_amount(after).to_vec()));
+            .insert(key, amount_cell(after).map(|cell| cell.to_vec()));
         Ok(amount)
     }
 
@@ -410,7 +410,7 @@ impl OverlayStore {
         for outcome in &applied {
             self.active
                 .cells
-                .insert(outcome.key, Some(encode_amount(outcome.after).to_vec()));
+                .insert(outcome.key, amount_cell(outcome.after).map(|c| c.to_vec()));
         }
         self.active.pending_deltas.clear();
         if !self.committed.pending_deltas.is_empty() {
@@ -511,7 +511,7 @@ impl OverlayStore {
         let after = self.judge_movement(key, credit, debit)?;
         self.active
             .cells
-            .insert(key, Some(encode_amount(after).to_vec()));
+            .insert(key, amount_cell(after).map(|cell| cell.to_vec()));
         Ok(after)
     }
 
@@ -876,9 +876,15 @@ mod tests {
         overlay.queue_delta(cell, DeltaOp::Sub(100)).unwrap();
         assert!(overlay.commit_deltas().is_err());
         assert_eq!(decode_amount(&overlay.read(cell).unwrap().unwrap()), Ok(15));
+        // Draining the cell drops the leaf: a zero balance is an absent
+        // cell, not sixteen zero bytes.
         overlay.queue_delta(cell, DeltaOp::Add(85)).unwrap();
         assert!(overlay.commit_deltas().is_ok());
-        assert_eq!(decode_amount(&overlay.read(cell).unwrap().unwrap()), Ok(0));
+        assert_eq!(overlay.read(cell).unwrap(), None);
+        // And crediting it again brings the leaf back.
+        overlay.queue_delta(cell, DeltaOp::Add(3)).unwrap();
+        assert!(overlay.commit_deltas().is_ok());
+        assert_eq!(decode_amount(&overlay.read(cell).unwrap().unwrap()), Ok(3));
     }
 
     #[test]
