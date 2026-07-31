@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Formatting wants the pinned nightly: the import grouping in
+      # rustfmt.toml is a nightly option, and a stable `cargo fmt` ignores
+      # it silently rather than enforcing it.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-08
+          components: rustfmt
+      # Everything else builds on the channel rust-toolchain.toml pins.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.96.0"
+          components: clippy
+      - uses: swatinem/rust-cache@v2
+      - name: Cargo Fmt
+        run: cargo +nightly-2026-06-08 fmt --all --check
+      - name: Cargo Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.96.0"
+          targets: wasm32-unknown-unknown
+      # The guest fixtures pin their own toolchain and build with
+      # -Zbuild-std, so the lane needs that channel and rust-src present
+      # before any test that calls build_guest runs.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-08
+          targets: wasm32-unknown-unknown
+          components: rust-src
+      - uses: swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      - name: Cargo Nextest
+        run: cargo nextest run --release
+      # Nextest does not run doctests; the workspace's public surface is
+      # documented, so they run here.
+      - name: Doc Tests
+        run: cargo test --release --doc
