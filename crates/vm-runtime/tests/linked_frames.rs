@@ -82,6 +82,53 @@ fn through_a_shim_table(chain_len: usize, entry: &str) -> Vec<u8> {
     .expect("fixture must parse")
 }
 
+/// The same shim shape, with a lowered import in the table and a realloc
+/// that reaches the trampoline — so the canonical ABI's own callback can
+/// call back out of the component, and lowering the import's result calls
+/// that realloc again.
+///
+/// `reaching` picks whether realloc calls the trampoline. Either way the
+/// call graph is acyclic and two frames deep: the edge that closes the
+/// cycle is a host frame, which the walk terminates on.
+fn through_the_canonical_boundary(reaching: bool) -> Vec<u8> {
+    let reach = if reaching {
+        "i32.const 16 call $stub"
+    } else {
+        ""
+    };
+    parse_str(format!(
+        r#"(component
+             (import "hyperscale:kernel/env" (instance $h
+               (export "randomness" (func (result (list u8))))))
+             (alias export $h "randomness" (func $draw))
+             (core module $shim
+               (type $sig (func (param i32)))
+               (table (export "t") 1 1 funcref)
+               (func (export "stub") (param i32)
+                 local.get 0
+                 i32.const 0
+                 call_indirect (type $sig)))
+             (core instance $is (instantiate $shim))
+             (core module $alloc
+               (import "shim" "stub" (func $stub (param i32)))
+               (memory (export "mem") 1 1)
+               (func (export "realloc") (param i32 i32 i32 i32) (result i32)
+                 {reach}
+                 i32.const 1024))
+             (core instance $a (instantiate $alloc (with "shim" (instance $is))))
+             (core func $draw_l (canon lower (func $draw)
+               (memory $a "mem") (realloc (func $a "realloc"))))
+             (core module $fixups
+               (import "shim" "t" (table $t 1 1 funcref))
+               (import "k" "draw" (func $target (param i32)))
+               (elem (table $t) (i32.const 0) func $target))
+             (core instance (instantiate $fixups
+               (with "shim" (instance $is))
+               (with "k" (instance (export "draw" (func $draw_l)))))))"#
+    ))
+    .expect("fixture must parse")
+}
+
 fn refusal(bytes: &[u8]) -> String {
     validate_component(bytes)
         .expect_err("the linked chain must be refused")
@@ -114,6 +161,22 @@ fn a_table_another_module_fills_carries_the_chain() {
     let quarter = MAX_CALL_CHAIN_FRAMES / 4;
     validate_component(&through_a_shim_table(quarter, "reached"))
         .expect("the shim shape itself is admissible; it is the depth that is not");
+}
+
+#[test]
+fn a_cycle_closed_through_the_canonical_boundary_is_refused() {
+    // The chain bound sees an acyclic graph two frames deep, and it is
+    // right: the cycle runs through a host frame. What makes that frame
+    // continue back into wasm is the canonical ABI calling the guest's
+    // realloc to lower the import's result — so the refusal is about which
+    // guest code the ABI runs as its callback, not about depth.
+    let refusal = refusal(&through_the_canonical_boundary(true));
+    assert!(refusal.contains("realloc"), "{refusal}");
+
+    // The same three modules, the same lowered import in the same table:
+    // only the edge out of realloc is gone, and the artifact is admitted.
+    validate_component(&through_the_canonical_boundary(false))
+        .expect("a realloc that reaches no lowered import is ordinary guest code");
 }
 
 #[test]

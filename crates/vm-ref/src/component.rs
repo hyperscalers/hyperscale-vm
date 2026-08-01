@@ -8,6 +8,13 @@
 //! interfaces' semantics are wired directly against [`RefKernelHost`] — the
 //! world is fixed, so its ABI is implemented explicitly rather than derived
 //! from types.
+//!
+//! The ABI's control rules are modelled alongside its data rules: a borrow
+//! is live only for the call that lowered it, and the instance may not be
+//! left from inside a canonical-ABI callback (`may_leave`). A rule the
+//! blessed engine enforces and this crate does not is a divergence the
+//! differential lanes cannot see, because the spec is what says what the
+//! artifact means.
 
 use std::collections::HashMap;
 
@@ -610,6 +617,17 @@ struct KernelCanon<'c, H> {
     /// Bytes crossing the canonical ABI boundary, mirroring the runtime's
     /// per-byte fuel supplement.
     boundary_bytes: u64,
+    /// Whether guest code may currently leave the component instance.
+    ///
+    /// The canonical ABI runs two pieces of guest code as its own
+    /// callbacks — `realloc`, while it lowers a value, and `post-return`,
+    /// after it has lifted one — and neither may call a lowered import: the
+    /// lowering it would interrupt is mid-flight, and the instance is not
+    /// in a state to be re-entered on the way back. Guest code reached any
+    /// other way leaves freely. Without this rule a call cycle can close
+    /// through the boundary — realloc calling an import whose lowering
+    /// calls realloc — with every edge sound and the recursion unbounded.
+    may_leave: bool,
     host: H,
 }
 
@@ -785,6 +803,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                 resolved_memories: resolved_memories_by_alias,
                 handles: vec![RESERVED_HANDLE],
                 boundary_bytes: 0,
+                may_leave: true,
                 host,
             },
         })
@@ -832,6 +851,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
         self.canon.handles.push(RESERVED_HANDLE);
         let modules: Vec<&RefModule> = self.comp.modules.iter().collect();
         self.store.depth = 0;
+        self.canon.may_leave = true;
         let mem_idx = opts
             .memory
             .and_then(|m| self.canon.resolved_memories.get(m as usize).copied());
@@ -866,6 +886,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                     };
                     let len =
                         i32::try_from(bytes.len()).map_err(|_| DecodeError::ArgumentMismatch)?;
+                    self.canon.may_leave = false;
                     let allocated = call(
                         &modules,
                         &mut self.canon,
@@ -873,6 +894,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                         realloc,
                         vec![Value::I32(0), Value::I32(0), Value::I32(1), Value::I32(len)],
                     );
+                    self.canon.may_leave = true;
                     let ptr = match allocated {
                         Ok(values) => values.first().copied().unwrap_or(Value::I32(0)).as_i32(),
                         Err(e) => return Ok(Err(e)),
@@ -907,9 +929,11 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                             self.canon.resolved_core_funcs.get(index as usize).copied()
                     {
                         let modules: Vec<&RefModule> = self.comp.modules.iter().collect();
-                        if let Err(e) =
-                            call(&modules, &mut self.canon, &mut self.store, addr, values)
-                        {
+                        self.canon.may_leave = false;
+                        let returned =
+                            call(&modules, &mut self.canon, &mut self.store, addr, values);
+                        self.canon.may_leave = true;
+                        if let Err(e) = returned {
                             return Ok(Err(e));
                         }
                     }
@@ -1047,13 +1071,16 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
     ) -> Result<(), ExecError> {
         let len =
             i32::try_from(bytes.len()).map_err(|_| ExecError::Trap(Trap::MemoryOutOfBounds))?;
+        let outer = std::mem::replace(&mut self.may_leave, false);
         let results = call(
             modules,
             self,
             store,
             realloc,
             vec![Value::I32(0), Value::I32(0), Value::I32(1), Value::I32(len)],
-        )?;
+        );
+        self.may_leave = outer;
+        let results = results?;
         let ptr = results.first().copied().unwrap_or(Value::I32(0)).as_i32();
         let mem = &mut store.memories[mem_idx as usize];
         let start = usize::try_from(ptr.cast_unsigned()).expect("32-bit");
@@ -1147,6 +1174,9 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                 }
             }
             CoreFuncDef::Lower { func, .. } => {
+                if !self.may_leave {
+                    return Err(ExecError::Canon(CanonError::CannotLeave));
+                }
                 let CompFunc::Host(host_fn) = self.comp.comp_funcs[func as usize] else {
                     return Err(ExecError::Canon(CanonError::Internal(
                         "lower of non-import",

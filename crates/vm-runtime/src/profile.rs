@@ -79,8 +79,9 @@ pub const HOST_FRAME_RESERVE_BYTES: usize = 64 * 1024;
 ///
 /// Halved because lowering re-enters the guest: a host function calls the
 /// guest's realloc while the original chain is still live, so two chains
-/// can stand at once. Realloc is ordinary guest code and reaches no host
-/// function, so one level of re-entry is the whole of it.
+/// can stand at once. One level of re-entry is the whole of it because the
+/// artifact is judged on it — a realloc or post-return that can reach a
+/// lowered import is refused, so no admitted callback starts a third chain.
 pub const MAX_CALL_CHAIN_BYTES: usize = (MAX_WASM_STACK_BYTES - HOST_FRAME_RESERVE_BYTES) / 2;
 
 /// How many frames one guest call chain may stand at once.

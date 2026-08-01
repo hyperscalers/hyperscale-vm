@@ -60,9 +60,12 @@ pub enum Trap {
     ///
     /// Unreachable for an artifact the profile admits: the deploy-time
     /// frame bound caps the deepest admissible chain at half this counter,
-    /// and a `vm-harness` assertion holds the two in that order. The
-    /// differential lanes treat reaching it as a failure of that bound
-    /// rather than as a divergence to excuse.
+    /// and a `vm-harness` assertion holds the two in that order. Recursion
+    /// through the canonical-ABI boundary is out of reach separately — the
+    /// ABI's re-entrance rule refuses it here, and the profile refuses the
+    /// shape that expresses it. The differential lanes treat reaching this
+    /// counter as a failure of those bounds rather than as a divergence to
+    /// excuse.
     #[error("call depth exhausted")]
     CallDepthExhausted,
     /// The fuel budget ran out. Charged on the spec schedule and tested

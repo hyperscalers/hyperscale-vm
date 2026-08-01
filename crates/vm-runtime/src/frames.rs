@@ -19,6 +19,16 @@
 //! it — so an artifact that passes cannot exhaust the stack in either
 //! runtime, and the divergence has no reachable witness.
 //!
+//! Both budgets bound *one* chain, and both are sized on at most one more
+//! standing at the same time: the canonical ABI calls the guest's realloc
+//! while the chain that entered it is still live. That is why a callback
+//! the ABI runs — a `realloc` or a `post-return` — may not reach a lowered
+//! import. Such a callback closes a call cycle whose closing edge is a host
+//! frame, which this walk terminates on by design, so the graph stays
+//! acyclic and the heaviest chain measures two frames while the recursion
+//! is unbounded. Refusing it is what makes the budgets bound anything at
+//! all.
+//!
 //! The graph spans the whole component, not one core module at a time. A
 //! module's imports are wired to other modules' exports by the component's
 //! core instantiations, and an element segment in one module populates a
@@ -38,9 +48,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use wasmparser::{
-    CanonicalFunction, ComponentAlias, CompositeInnerType, ElementItems, ExternalKind,
-    FuncValidatorAllocations, Instance as InstanceReader, InstantiationArgKind, Operator, Parser,
-    Payload, TypeRef, ValType, ValidPayload, Validator,
+    CanonicalFunction, CanonicalOption, ComponentAlias, CompositeInnerType, ElementItems,
+    ExternalKind, FuncValidatorAllocations, Instance as InstanceReader, InstantiationArgKind,
+    Operator, Parser, Payload, TypeRef, ValType, ValidPayload, Validator,
 };
 
 use crate::profile;
@@ -64,6 +74,9 @@ enum FuncRef {
     /// A canon-defined function: a host frame at the canonical-ABI
     /// boundary, covered by the reserve rather than by this walk.
     Host,
+    /// A lowered import — the one host frame that can continue back into
+    /// wasm, because lowering its result calls the guest's own realloc.
+    Lowered,
     /// A wasm function, by instance and index among its module's own.
     Wasm(usize, usize),
 }
@@ -127,10 +140,18 @@ impl ModuleFacts {
 
 /// A core function as the component's index space names it.
 enum CoreFuncSlot {
-    /// Canon-defined: a host frame.
-    Canon,
+    /// Canon-defined: a host frame, and whether it is a lowered import.
+    Canon { lowered: bool },
     /// An alias of an earlier core instance's export.
     Alias { instance: u32, name: String },
+}
+
+/// A canonical-ABI callback: guest code the ABI runs itself.
+struct Callback {
+    /// The core function index the canon option names.
+    func: u32,
+    /// What to call it in a refusal.
+    kind: &'static str,
 }
 
 /// A core instance before its imports are resolved.
@@ -161,6 +182,14 @@ struct CoreInstance {
     exports: BTreeMap<String, Export>,
 }
 
+/// A component's core modules, the instances that link them, and the
+/// canonical-ABI callbacks its canon definitions name.
+struct Linked {
+    modules: Vec<ModuleFacts>,
+    instances: Vec<CoreInstance>,
+    callbacks: Vec<(FuncRef, &'static str)>,
+}
+
 /// The modelled native frame of a function with `slots` value slots.
 const fn frame_bytes(slots: usize) -> usize {
     profile::STACK_FRAME_OVERHEAD_BYTES + profile::STACK_BYTES_PER_SLOT * slots
@@ -179,7 +208,7 @@ const fn frame_bytes(slots: usize) -> usize {
 pub fn check_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
     let facts = collect(bytes)?;
     let instance = bare_instance(0, &facts, 0, &mut 0);
-    check_linked(&[facts], &[instance])
+    check_linked(&[facts], &[instance], &[])
 }
 
 /// A module judged on its own: every import is a host frame, because there
@@ -208,14 +237,18 @@ fn bare_instance(
 /// # Errors
 ///
 /// Exactly [`check_stack_bounds`]'s, plus a core instantiation outside the
-/// contract shape.
+/// contract shape and a canonical-ABI callback that leaves the component.
 pub fn check_component_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
-    let (modules, instances) = link(bytes)?;
-    check_linked(&modules, &instances)
+    let linked = link(bytes)?;
+    check_linked(&linked.modules, &linked.instances, &linked.callbacks)
 }
 
 /// The stack bound over a linked instance graph.
-fn check_linked(modules: &[ModuleFacts], instances: &[CoreInstance]) -> Result<(), ProfileError> {
+fn check_linked(
+    modules: &[ModuleFacts],
+    instances: &[CoreInstance],
+    callbacks: &[(FuncRef, &'static str)],
+) -> Result<(), ProfileError> {
     for facts in modules {
         for (local, func) in facts.funcs.iter().enumerate() {
             if func.slots > profile::MAX_SLOTS_PER_FRAME {
@@ -229,9 +262,10 @@ fn check_linked(modules: &[ModuleFacts], instances: &[CoreInstance]) -> Result<(
     }
 
     let tables = populate_tables(modules, instances);
-    let (graph, cost) = call_graph(modules, instances, &tables);
+    let graph = call_graph(modules, instances, &tables);
+    check_callbacks(&graph, callbacks)?;
 
-    let heaviest = heaviest_path(&graph, &cost)?;
+    let heaviest = heaviest_path(&graph.edges, &graph.cost)?;
     if heaviest.bytes > profile::MAX_CALL_CHAIN_BYTES {
         return Err(ProfileError::Structural(format!(
             "the heaviest call chain needs {} stack bytes, over the {} the profile \
@@ -290,14 +324,23 @@ fn populate_tables(
     tables
 }
 
-/// The linked call graph and each node's cost.
+/// The linked call graph: the edges, each node's cost, and the nodes that
+/// leave the component through a lowered import.
+struct CallGraph {
+    edges: BTreeMap<Node, BTreeSet<Node>>,
+    cost: BTreeMap<Node, Cost>,
+    leaving: BTreeSet<Node>,
+}
+
+/// The linked call graph over every instance's local functions.
 fn call_graph(
     modules: &[ModuleFacts],
     instances: &[CoreInstance],
     tables: &BTreeMap<TableId, Vec<(FuncSig, FuncRef)>>,
-) -> (BTreeMap<Node, BTreeSet<Node>>, BTreeMap<Node, Cost>) {
+) -> CallGraph {
     let mut graph: BTreeMap<Node, BTreeSet<Node>> = BTreeMap::new();
     let mut cost: BTreeMap<Node, Cost> = BTreeMap::new();
+    let mut leaving: BTreeSet<Node> = BTreeSet::new();
     for (index, instance) in instances.iter().enumerate() {
         let Some(facts) = instance.module.and_then(|module| modules.get(module)) else {
             continue;
@@ -313,8 +356,14 @@ fn call_graph(
             );
             let edges = graph.entry(node).or_default();
             for callee in &func.callees {
-                if let Some(FuncRef::Wasm(target, local)) = instance.funcs.get(*callee as usize) {
-                    edges.insert((*target, *local));
+                match instance.funcs.get(*callee as usize) {
+                    Some(FuncRef::Wasm(target, local)) => {
+                        edges.insert((*target, *local));
+                    }
+                    Some(FuncRef::Lowered) => {
+                        leaving.insert(node);
+                    }
+                    _ => {}
                 }
             }
             for ty in &func.indirect {
@@ -324,16 +373,62 @@ fn call_graph(
                     continue;
                 };
                 for (entry, target) in tables.get(&table).into_iter().flatten() {
-                    if entry == signature
-                        && let FuncRef::Wasm(target, local) = target
-                    {
-                        edges.insert((*target, *local));
+                    if entry != signature {
+                        continue;
+                    }
+                    match target {
+                        FuncRef::Wasm(target, local) => {
+                            edges.insert((*target, *local));
+                        }
+                        FuncRef::Lowered => {
+                            leaving.insert(node);
+                        }
+                        FuncRef::Host => {}
                     }
                 }
             }
         }
     }
-    (graph, cost)
+    CallGraph {
+        edges: graph,
+        cost,
+        leaving,
+    }
+}
+
+/// Refuses a canonical-ABI callback that can reach a lowered import.
+///
+/// `realloc` and `post-return` are guest code the ABI runs as its own
+/// callbacks, and neither may leave the component: the blessed engine
+/// traps, and the profile's byte budget is sized on one level of re-entry
+/// being the whole of it. Neither fact is visible to the chain bound. The
+/// cycle such a callback closes runs through a host frame, which the walk
+/// terminates on by design, so the graph stays acyclic and the heaviest
+/// chain measures two frames while the recursion is unbounded.
+fn check_callbacks(
+    graph: &CallGraph,
+    callbacks: &[(FuncRef, &'static str)],
+) -> Result<(), ProfileError> {
+    for (target, kind) in callbacks {
+        let FuncRef::Wasm(instance, local) = target else {
+            continue;
+        };
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![(*instance, *local)];
+        while let Some(node) = stack.pop() {
+            if !seen.insert(node) {
+                continue;
+            }
+            if graph.leaving.contains(&node) {
+                return Err(ProfileError::Structural(format!(
+                    "a {kind} callback reaches a lowered import, so a call cycle can close \
+                     through the canonical-ABI boundary"
+                )));
+            }
+            stack.extend(graph.edges.get(&node).into_iter().flatten().copied());
+        }
+    }
+    Ok(())
 }
 
 /// What one call chain costs, in the two currencies the profile budgets.
@@ -424,11 +519,12 @@ fn heaviest_path(
 
 /// Reads the component's core modules and the instantiations that wire
 /// them, resolving each instance's imports against the ones before it.
-fn link(bytes: &[u8]) -> Result<(Vec<ModuleFacts>, Vec<CoreInstance>), ProfileError> {
+fn link(bytes: &[u8]) -> Result<Linked, ProfileError> {
     let mut modules: Vec<ModuleFacts> = Vec::new();
     let mut core_funcs: Vec<CoreFuncSlot> = Vec::new();
     let mut core_tables: Vec<(u32, String)> = Vec::new();
     let mut defs: Vec<InstanceDef> = Vec::new();
+    let mut callbacks: Vec<Callback> = Vec::new();
 
     for payload in Parser::new(0).parse_all(bytes) {
         let payload = payload.map_err(|e| ProfileError::Feature(e.to_string()))?;
@@ -446,8 +542,11 @@ fn link(bytes: &[u8]) -> Result<(Vec<ModuleFacts>, Vec<CoreInstance>), ProfileEr
                     // every alias after it.
                     let canon = canon.map_err(|e| ProfileError::Feature(e.to_string()))?;
                     if !matches!(canon, CanonicalFunction::Lift { .. }) {
-                        core_funcs.push(CoreFuncSlot::Canon);
+                        core_funcs.push(CoreFuncSlot::Canon {
+                            lowered: matches!(canon, CanonicalFunction::Lower { .. }),
+                        });
                     }
+                    callbacks.extend(canon_callbacks(&canon));
                 }
             }
             Payload::ComponentAliasSection(reader) => {
@@ -506,7 +605,46 @@ fn link(bytes: &[u8]) -> Result<(Vec<ModuleFacts>, Vec<CoreInstance>), ProfileEr
             resolved.push(instance);
         }
     }
-    Ok((modules, resolved))
+
+    // Callbacks resolve last: a canon option names a core function that may
+    // be aliased out of any instance, including one defined after it.
+    let entries = callbacks
+        .iter()
+        .filter_map(|callback| {
+            let target = core_func(&core_funcs, &resolved, callback.func)?;
+            Some((target, callback.kind))
+        })
+        .collect();
+
+    Ok(Linked {
+        modules,
+        instances: resolved,
+        callbacks: entries,
+    })
+}
+
+/// The canonical-ABI callbacks a canon definition names.
+fn canon_callbacks(canon: &CanonicalFunction) -> Vec<Callback> {
+    let options = match canon {
+        CanonicalFunction::Lower { options, .. } | CanonicalFunction::Lift { options, .. } => {
+            &**options
+        }
+        _ => &[][..],
+    };
+    options
+        .iter()
+        .filter_map(|option| match option {
+            CanonicalOption::Realloc(func) => Some(Callback {
+                func: *func,
+                kind: "realloc",
+            }),
+            CanonicalOption::PostReturn(func) => Some(Callback {
+                func: *func,
+                kind: "post-return",
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 fn instance_def(instance: &InstanceReader<'_>) -> Result<InstanceDef, ProfileError> {
@@ -575,7 +713,8 @@ fn core_func(
     index: u32,
 ) -> Option<FuncRef> {
     match core_funcs.get(index as usize)? {
-        CoreFuncSlot::Canon => Some(FuncRef::Host),
+        CoreFuncSlot::Canon { lowered: true } => Some(FuncRef::Lowered),
+        CoreFuncSlot::Canon { lowered: false } => Some(FuncRef::Host),
         CoreFuncSlot::Alias { instance, name } => {
             match resolved.get(*instance as usize)?.exports.get(name)? {
                 Export::Func(target) => Some(*target),

@@ -48,6 +48,10 @@ pub enum CanonError {
     WrongHandleType,
     /// Borrow handles still live when the export returned.
     BorrowsRemain,
+    /// A lowered import called from a canonical-ABI callback — guest code
+    /// the ABI runs while it is mid-lowering, where the component instance
+    /// is not free to be left.
+    CannotLeave,
     /// A deterministic kernel refusal, carrying the host's message.
     Host(String),
     /// An unresolved canon definition — a decoder or instantiation defect,
