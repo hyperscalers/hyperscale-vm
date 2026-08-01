@@ -445,6 +445,19 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
         output: 0,
     };
     assert_ne!(tree.hash(&TestHasher), rebound_subintent.hash(&TestHasher));
+
+    // Every field of a binding, and the count of them: bindings encode to
+    // fixed-width records concatenated into one hashed part, so a field
+    // the encoding dropped or a list length it did not frame would both
+    // read as the same composition.
+    let mut retargeted = tree.clone();
+    retargeted.root_bindings[0].intent = retargeted.root_bindings[0].intent.wrapping_add(1);
+    assert_ne!(tree.hash(&TestHasher), retargeted.hash(&TestHasher));
+
+    let mut extended = tree.clone();
+    let repeated = extended.root_bindings[0];
+    extended.root_bindings.push(repeated);
+    assert_ne!(tree.hash(&TestHasher), extended.hash(&TestHasher));
 }
 
 proptest! {
