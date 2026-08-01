@@ -29,6 +29,7 @@ pub mod metadata;
 pub mod route;
 pub mod stdlib;
 pub mod types;
+pub mod work;
 
 pub use admission::{AdmissionError, Admitted, MAX_YIELD_PARAMS, admit};
 pub use dsl::{
@@ -60,3 +61,4 @@ pub use types::{
     Address, Effect, EffectSet, EffectTarget, LocalKey, MAX_VALUE_DEPTH, Mode, ModeKind,
     ReserveOverflow, RoleId, ShardId, SubstateKey, Value, Window, child_key, compatible,
 };
+pub use work::{FOOTPRINT_WEIGHT, FUEL_WEIGHT, work_units};

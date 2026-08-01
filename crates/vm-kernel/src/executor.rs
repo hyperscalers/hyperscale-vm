@@ -41,6 +41,7 @@ use crate::session::{
     EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt, StateDelta,
 };
 use crate::store::{Base, StoreError, SubstateStore};
+use crate::work::Work;
 
 /// One transaction of a batch: its identity and its routed effect set.
 #[derive(Clone, Debug)]
@@ -168,15 +169,67 @@ pub enum BatchError {
     Apply(#[from] StoreError),
 }
 
-/// The executed batch: every receipt, canonically ordered, and the end
-/// state.
+/// The executed batch: every receipt, canonically ordered, the work this
+/// shard attests for each, and the end state.
 #[derive(Debug)]
 pub struct BatchOutcome {
     /// Per-transaction receipts, in canonical order.
+    ///
+    /// Identical at every participant of a cross-shard transaction: the
+    /// receipt is the outbound effect record, filtered at apply rather
+    /// than at derivation.
     pub receipts: BTreeMap<TxHash, Receipt>,
+    /// Per-transaction attested work, keyed alongside the receipts and
+    /// covering every one of them, whatever the verdict.
+    ///
+    /// This shard's share, so unlike a receipt it is *expected* to differ
+    /// between the participants of one transaction — see [`Work`].
+    pub work: BTreeMap<TxHash, Work>,
     /// The end state: the given base untouched, with the batch's full
     /// delta in the overlay's committed layer.
     pub store: OverlayStore,
+}
+
+/// Price every receipt the batch produced, in one pass over the finished
+/// map.
+///
+/// Deliberately not threaded through the construction sites. A receipt
+/// leaves this executor by a lot of routes — two refusals before any group
+/// runs, four abort exits inside one, the session's own refusals in
+/// `finish`, the completed path, and the apply-time flip from completed to
+/// infeasible — and a work term missing at any of them would not fail, it
+/// would under-report. Derived once, at the end, from the finished verdict
+/// and the declaration behind it, there is no site left to forget.
+///
+/// Running after `apply_receipts` is what makes the flip free: a completed
+/// transaction that lost its floor is already infeasible here, so it drops
+/// its fuel term without anything having to notice that it changed.
+fn attest_work(
+    batch: &[BatchTx],
+    receipts: &BTreeMap<TxHash, Receipt>,
+    locality: &Locality,
+) -> BTreeMap<TxHash, Work> {
+    let declared: BTreeMap<TxHash, &EffectSet> = batch
+        .iter()
+        .map(|entry| (entry.tx, &entry.declared))
+        .collect();
+    receipts
+        .iter()
+        .map(|(tx, receipt)| {
+            // Every receipt came from a batch entry, so the lookup holds;
+            // a declaration that vanished would be a kernel defect, and
+            // pricing it at zero states that rather than guessing.
+            let footprint = declared.get(tx).map_or(0, |set| locality.footprint(set));
+            (
+                *tx,
+                Work::attest(
+                    matches!(receipt.outcome, Outcome::Completed { .. }),
+                    receipt.fuel,
+                    footprint,
+                ),
+            )
+        })
+        .collect()
 }
 
 fn declared_reservations(declared: &EffectSet) -> Vec<(SubstateKey, u128)> {
@@ -630,7 +683,12 @@ pub fn execute_batch<R: GuestRunner>(
     apply_receipts(&mut store, batch, &mut receipts, locality)?;
     store.merge_active();
 
-    Ok(BatchOutcome { receipts, store })
+    let work = attest_work(batch, &receipts, locality);
+    Ok(BatchOutcome {
+        receipts,
+        work,
+        store,
+    })
 }
 
 /// Canonical-order application, one transaction at a time: each completed

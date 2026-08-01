@@ -315,6 +315,13 @@ pub struct Receipt {
     /// What committed.
     pub delta: StateDelta,
     /// Total fuel consumed: engine schedule plus boundary supplement.
+    ///
+    /// Exact on a completed execution and engine-defined at a core trap,
+    /// where wasmtime's in-register counter never flushes and `vm-ref`
+    /// charges every executed operator. Reported as the engine saw it
+    /// either way; what a consumer needs agreement on is
+    /// [`Work`](crate::Work), which is derived beside the receipt rather
+    /// than on it.
     pub fuel: u64,
 }
 

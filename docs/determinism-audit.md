@@ -103,6 +103,30 @@ class floor, never at fuel consumed, so the unflushed register has no
 consensus reader. What does have one is the out-of-fuel *outcome*, and
 that is exact on both sides.
 
+That is a constraint the crates now have to keep, not merely a fact about
+them. `Work::units` — the quantity `BatchOutcome::work` carries beside every
+receipt — is built to be agreed on across replicas and runtimes, and it is
+derived from fuel. So it takes the fuel term only on `Outcome::Completed`,
+where both runtimes agree exactly; every abort attests its declared
+footprint alone, which the verdict does not move. `Receipt::fuel` still
+reports whatever the engine reported, trap included: it is the diagnostic
+that makes the rule auditable, and keeping it out of the attested scalar is
+what lets it stay honest.
+
+The rule sits in one place, `Work::attest`, and the work map is derived in
+one pass after the batch settles rather than threaded through the seven
+routes a receipt can take out of the executor — a missing term would not
+fail, it would under-report, and the apply-time flip from completed to
+infeasible is exactly the route most likely to be forgotten.
+
+`attested_work` holds the rule by injecting the divergence rather than
+reproducing it: the same aborting outcome is run twice with the two fuel
+readings the runtimes would each give at a trap, and the attested scalar
+must match across them. That is the stronger lane, because `spike_trap_fuel`
+already pins what the engines do and what needs proving here is that the
+kernel is indifferent to it — under whatever the engines do next, not only
+today's pair.
+
 ## What the in-process determinism proptests do not prove
 
 They compare `f(x)` with `f(x)` in one process, which cannot see the

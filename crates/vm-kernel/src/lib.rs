@@ -22,6 +22,7 @@ pub mod ownership;
 pub mod session;
 pub mod store;
 pub mod supply;
+pub mod work;
 
 pub use conflict::{conflicts, targets_overlap};
 pub use executor::{
@@ -41,3 +42,4 @@ pub use session::{
 };
 pub use store::{Access, AppliedDelta, Base, MemoryStore, StoreError, SubstateStore};
 pub use supply::SupplyLedger;
+pub use work::Work;

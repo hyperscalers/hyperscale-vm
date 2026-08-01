@@ -1,4 +1,5 @@
-//! Which keys a shard owns, and the part of a receipt it may apply.
+//! Which keys a shard owns, the part of a receipt it may apply, and the
+//! part of a declaration it is charged for.
 //!
 //! A cross-shard transaction runs at every shard its effects reach, and
 //! each one applies only the part it owns: the rest stays in the receipt as
@@ -17,7 +18,7 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Address, RoleId, SubstateKey};
+use hyperscale_vm_effects::{Address, EffectSet, RoleId, SubstateKey, effect_units};
 
 use crate::session::{Movement, StateDelta};
 
@@ -45,6 +46,33 @@ impl Locality {
             Self::All => true,
             Self::Owned(predicate) => predicate(owner),
         }
+    }
+
+    /// The declared footprint of the part of `declared` this shard owns.
+    ///
+    /// The same filter the delta walks apply, over the declaration rather
+    /// than the outcome — and the reason the work a shard attests can be
+    /// its own share rather than the whole transaction's. A participant is
+    /// handed the transaction's full declaration and scopes it here; it is
+    /// not handed a pre-partitioned slice.
+    ///
+    /// Nothing a price reads is lost on the way through. The filter turns
+    /// on a target's owner and leaves the target itself alone, so a range
+    /// is still charged the interval it named — unlike the delta walks,
+    /// which yield entries rather than the claims they came from.
+    ///
+    /// Routing puts each effect on exactly one shard, and a footprint is a
+    /// per-effect sum, so the participants' shares of one transaction add
+    /// up to the whole declaration's footprint: neither double-counted nor
+    /// dropped between them.
+    #[must_use]
+    pub fn footprint(&self, declared: &EffectSet) -> u64 {
+        declared
+            .iter()
+            .filter(|effect| self.is_local(effect.target.owner()))
+            .fold(0, |total, effect| {
+                total.saturating_add(effect_units(effect))
+            })
     }
 }
 
