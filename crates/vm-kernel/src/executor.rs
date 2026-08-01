@@ -34,10 +34,11 @@ use hyperscale_vm_effects::{
 };
 
 use crate::conflict::targets_overlap;
+use crate::locality::Locality;
 use crate::modes::{ModeError, TxHash};
 use crate::overlay::OverlayStore;
 use crate::session::{
-    EnvInputs, FinishError, KernelSession, Locality, MaterializeError, Outcome, Receipt, StateDelta,
+    EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt, StateDelta,
 };
 use crate::store::{Base, StoreError, SubstateStore};
 
@@ -698,52 +699,41 @@ fn apply_completed(
     tx: TxHash,
     locality: &Locality,
 ) -> Result<Option<(SubstateKey, u128)>, BatchError> {
-    for (key, change) in &receipt.delta.cells {
-        if !locality.is_local(key.owner) {
-            continue;
-        }
+    let owned = receipt.delta.owned(locality);
+    for (key, change) in owned.cells() {
         match change {
-            Some(value) => store.write(*key, value.clone())?,
+            Some(value) => store.write(key, value.clone())?,
             None => {
-                store.remove(*key)?;
+                store.remove(key)?;
             }
         }
     }
-    for ((owner, collection, order), change) in &receipt.delta.entries {
-        if !locality.is_local(*owner) {
-            continue;
-        }
+    for ((owner, collection, order), change) in owned.entries() {
         match change {
-            Some(value) => store.entry_write(*owner, *collection, *order, value.clone())?,
+            Some(value) => store.entry_write(owner, collection, order, value.clone())?,
             None => {
-                store.entry_remove(*owner, *collection, *order)?;
+                store.entry_remove(owner, collection, order)?;
             }
         }
     }
-    for (key, movement) in &receipt.delta.movements {
-        if !locality.is_local(key.owner) {
-            continue;
-        }
-        match store.apply_movement(*key, movement.credit, movement.debit) {
+    for (key, movement) in owned.movements() {
+        match store.apply_movement(key, movement.credit, movement.debit) {
             Ok(_) => {}
             Err(
                 StoreError::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)
                 | StoreError::HeldExceedsCommitted(_),
-            ) => return Ok(Some((*key, movement.debit))),
+            ) => return Ok(Some((key, movement.debit))),
             Err(defect) => return Err(defect.into()),
         }
     }
-    for key in receipt.delta.settles.keys() {
-        if !locality.is_local(key.owner) {
-            continue;
-        }
-        match store.settle(*key, tx) {
+    for (key, _) in owned.settles() {
+        match store.settle(key, tx) {
             Ok(_) => {}
             // The refusal left the hold standing, so the amount the
             // transaction lost is still readable.
             Err(StoreError::HeldExceedsCommitted(_)) => {
-                let amount = store.held_reservation(*key, tx).unwrap_or_default();
-                return Ok(Some((*key, amount)));
+                let amount = store.held_reservation(key, tx).unwrap_or_default();
+                return Ok(Some((key, amount)));
             }
             Err(defect) => return Err(defect.into()),
         }
