@@ -103,6 +103,31 @@ class floor, never at fuel consumed, so the unflushed register has no
 consensus reader. What does have one is the out-of-fuel *outcome*, and
 that is exact on both sides.
 
+## What the in-process determinism proptests do not prove
+
+They compare `f(x)` with `f(x)` in one process, which cannot see the
+divergences that live between processes: hash iteration order under a
+per-process seed, a value derived from an address, a reading of the clock
+or the environment. The proptests are nonetheless sufficient today, and for
+a reason that is a property of the crates rather than of the tests — there
+is no carrier:
+
+- No `SystemTime`, `Instant`, `std::env`, randomness, or pointer
+  formatting anywhere in `vm-effects`, `vm-kernel`, `vm-ref`, or
+  `vm-runtime`. The clock and the randomness a guest observes are host
+  inputs the kernel is handed, never ambient ones it reads.
+- Every consensus-path collection is `BTreeMap`/`BTreeSet`, ordered by key.
+  The `HashMap`s in `vm-ref` are name-keyed lookup tables for decoding, and
+  none of them is iterated into an output: the one iteration copies a
+  module's export map into an instance's, keyed the same way.
+- Floats never enter, so no NaN bit pattern can.
+
+Every item is checkable by reading the crates, and the sufficiency argument
+fails the moment one stops holding. Adding an ambient source, or iterating
+a hash-ordered container into anything a receipt or a hash can see, is
+therefore not a local change: it makes a cross-process differential lane a
+prerequisite rather than an option.
+
 ## The parser is a second copy
 
 The workspace's `wasmparser` is a different copy from the one bundled
