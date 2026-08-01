@@ -632,13 +632,13 @@ pub fn execute_batch<R: GuestRunner>(
     Ok(BatchOutcome { receipts, store })
 }
 
-/// Canonical-order application, one transaction at a time: absolute writes
-/// and entry changes, movements under the reservation floor, settles for
-/// the completed, releases for the rest — all on locally owned keys only;
-/// remote operations stay in the receipt as the outbound effect record. A
-/// completed transaction whose local debit the floor no longer covers —
-/// earlier transactions drained the cell — flips to an infeasible receipt
-/// here, its fuel kept, its state never applied.
+/// Canonical-order application, one transaction at a time: each completed
+/// transaction applies into the active layer, which merges when it lands
+/// whole and is discarded when it does not — the same rollback the session
+/// gives a transaction that loses its floor mid-flight. A completed
+/// transaction whose local debit the floor no longer covers — earlier
+/// transactions drained the cell — flips to an infeasible receipt here, its
+/// fuel kept, its state never applied.
 fn apply_receipts(
     store: &mut OverlayStore,
     batch: &[BatchTx],
@@ -649,83 +649,106 @@ fn apply_receipts(
     let order: Vec<TxHash> = receipts.keys().copied().collect();
     for tx in order {
         let receipt = receipts.get(&tx).expect("walked from keys");
-        let mut refusal = None;
-        if matches!(receipt.outcome, Outcome::Completed { .. }) {
-            for (key, movement) in &receipt.delta.movements {
-                if !locality.is_local(key.owner) {
-                    continue;
-                }
-                match store.judge_movement(*key, movement.credit, movement.debit) {
-                    Ok(_) => {}
-                    Err(StoreError::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)) => {
-                        refusal = Some((*key, movement.debit));
-                        break;
-                    }
-                    Err(defect) => return Err(defect.into()),
-                }
-            }
-        }
-        if matches!(receipt.outcome, Outcome::Completed { .. }) && refusal.is_none() {
-            for (key, change) in &receipt.delta.cells {
-                if !locality.is_local(key.owner) {
-                    continue;
-                }
-                match change {
-                    Some(value) => store.write(*key, value.clone())?,
-                    None => {
-                        store.remove(*key)?;
-                    }
-                }
-            }
-            for ((owner, collection, order), change) in &receipt.delta.entries {
-                if !locality.is_local(*owner) {
-                    continue;
-                }
-                match change {
-                    Some(value) => store.entry_write(*owner, *collection, *order, value.clone())?,
-                    None => {
-                        store.entry_remove(*owner, *collection, *order)?;
-                    }
-                }
-            }
-            for (key, movement) in &receipt.delta.movements {
-                if !locality.is_local(key.owner) {
-                    continue;
-                }
-                store.apply_movement(*key, movement.credit, movement.debit)?;
-            }
-            for key in receipt.delta.settles.keys() {
-                if !locality.is_local(key.owner) {
-                    continue;
-                }
-                store.settle(*key, tx)?;
-            }
-            // A completed transaction's remote holds release here: the
-            // settlement happened at the owning shard, not in this store.
-            if let Some(entry) = entries.get(&tx) {
-                for (key, _) in declared_reservations(&entry.declared) {
-                    if !locality.is_local(key.owner) && store.held_reservation(key, tx).is_some() {
-                        store.release(key, tx)?;
-                    }
-                }
-            }
+        let completed = matches!(receipt.outcome, Outcome::Completed { .. });
+        let fuel = receipt.fuel;
+        let refusal = if completed {
+            apply_completed(store, receipt, tx, locality)?
         } else {
-            if let Some((key, amount)) = refusal {
-                let fuel = receipt.fuel;
-                receipts.insert(tx, abort_receipt(Outcome::Infeasible { key, amount }, fuel));
-            }
-            // Release whatever was held for an aborted transaction.
-            if let Some(entry) = entries.get(&tx) {
-                for (key, _) in declared_reservations(&entry.declared) {
-                    if store.held_reservation(key, tx).is_some() {
-                        store.release(key, tx)?;
-                    }
+            None
+        };
+        if let Some((key, amount)) = refusal {
+            store.discard_active();
+            receipts.insert(tx, abort_receipt(Outcome::Infeasible { key, amount }, fuel));
+        }
+        // A completed transaction settled its local holds and releases its
+        // remote ones, where the settlement happened at the owning shard;
+        // anything else releases every hold it still stands on.
+        let settled_locally = completed && refusal.is_none();
+        if let Some(entry) = entries.get(&tx) {
+            for (key, _) in declared_reservations(&entry.declared) {
+                if (!settled_locally || !locality.is_local(key.owner))
+                    && store.held_reservation(key, tx).is_some()
+                {
+                    store.release(key, tx)?;
                 }
             }
         }
+        store.merge_active();
     }
     store.clear_log();
     Ok(())
+}
+
+/// One completed transaction's canonical application, on locally owned keys
+/// only — remote operations stay in the receipt as the outbound effect
+/// record. Absolute writes and entry changes, then movements under the
+/// reservation floor, then settles.
+///
+/// Returns the key and amount of a deterministic refusal for the caller to
+/// roll back; an error is a kernel defect. The two refusals are the ones
+/// the session judges by the same taxonomy: a debit past the floor, and a
+/// cell an exclusive write left below the reservations still standing on
+/// it. Replay reaches the same verdicts the group overlay did — the same
+/// canonical order over the same base, and the floor is invariant under
+/// settle/movement ordering — so a refusal here is a defense against that
+/// reasoning going stale, not a second judgement.
+fn apply_completed(
+    store: &mut OverlayStore,
+    receipt: &Receipt,
+    tx: TxHash,
+    locality: &Locality,
+) -> Result<Option<(SubstateKey, u128)>, BatchError> {
+    for (key, change) in &receipt.delta.cells {
+        if !locality.is_local(key.owner) {
+            continue;
+        }
+        match change {
+            Some(value) => store.write(*key, value.clone())?,
+            None => {
+                store.remove(*key)?;
+            }
+        }
+    }
+    for ((owner, collection, order), change) in &receipt.delta.entries {
+        if !locality.is_local(*owner) {
+            continue;
+        }
+        match change {
+            Some(value) => store.entry_write(*owner, *collection, *order, value.clone())?,
+            None => {
+                store.entry_remove(*owner, *collection, *order)?;
+            }
+        }
+    }
+    for (key, movement) in &receipt.delta.movements {
+        if !locality.is_local(key.owner) {
+            continue;
+        }
+        match store.apply_movement(*key, movement.credit, movement.debit) {
+            Ok(_) => {}
+            Err(
+                StoreError::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)
+                | StoreError::HeldExceedsCommitted(_),
+            ) => return Ok(Some((*key, movement.debit))),
+            Err(defect) => return Err(defect.into()),
+        }
+    }
+    for key in receipt.delta.settles.keys() {
+        if !locality.is_local(key.owner) {
+            continue;
+        }
+        match store.settle(*key, tx) {
+            Ok(_) => {}
+            // The refusal left the hold standing, so the amount the
+            // transaction lost is still readable.
+            Err(StoreError::HeldExceedsCommitted(_)) => {
+                let amount = store.held_reservation(*key, tx).unwrap_or_default();
+                return Ok(Some((*key, amount)));
+            }
+            Err(defect) => return Err(defect.into()),
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
