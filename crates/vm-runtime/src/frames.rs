@@ -254,6 +254,13 @@ fn check_linked(modules: &[ModuleFacts], instances: &[CoreInstance]) -> Result<(
 /// applied. A segment resolves its function indices in the index space of
 /// the instance that carries it, and writes into whichever table that
 /// instance uses — its own, or one it imported from an earlier instance.
+///
+/// Offsets are dropped: a table holds the union of every segment written
+/// into it, indexed by signature alone. That widens the edge set — a call
+/// site reaches entries no offset would put under it — so it can only
+/// refuse an artifact a precise walk admits, never the reverse, and
+/// resolving offsets would mean modelling every index a `call_indirect`
+/// can compute at run time anyway.
 fn populate_tables(
     modules: &[ModuleFacts],
     instances: &[CoreInstance],
@@ -769,6 +776,11 @@ fn collect_frames(bytes: &[u8], facts: &mut ModuleFacts) -> Result<(), ProfileEr
                     Operator::Call { function_index } => {
                         record.callees.insert(function_index);
                     }
+                    // The table a call site names is dropped along with the
+                    // index it computes: every indirect call is weighed
+                    // against the instance's table, which the profile's
+                    // one-table limit makes exact today and an
+                    // over-approximation if that limit ever rises.
                     Operator::CallIndirect { type_index, .. } => {
                         record.indirect.insert(type_index);
                     }
