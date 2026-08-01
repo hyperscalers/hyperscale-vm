@@ -36,8 +36,8 @@ pub use oracle::{covered, permits, target_covers, undeclared_accesses};
 pub use overlay::OverlayStore;
 pub use ownership::{CreationContext, MoveError, move_object};
 pub use session::{
-    Capability, EnvInputs, FinishError, KernelSession, MaterializeError, Movement, Outcome,
-    Receipt, SessionTrap, StateDelta,
+    Capability, DeltaMap, EnvInputs, FinishError, KernelSession, MaterializeError, Movement,
+    Outcome, Receipt, SessionTrap, StateDelta,
 };
 pub use store::{Access, AppliedDelta, Base, MemoryStore, StoreError, SubstateStore};
 pub use supply::SupplyLedger;

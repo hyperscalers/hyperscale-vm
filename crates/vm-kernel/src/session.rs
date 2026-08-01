@@ -199,13 +199,100 @@ pub struct Movement {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StateDelta {
     /// Cells changed under exclusive write capabilities.
-    pub cells: BTreeMap<SubstateKey, Option<Vec<u8>>>,
+    pub cells: DeltaMap<SubstateKey, Option<Vec<u8>>>,
     /// Changed ordered-collection entries.
-    pub entries: BTreeMap<(Address, RoleId, u128), Option<Vec<u8>>>,
+    pub entries: DeltaMap<(Address, RoleId, u128), Option<Vec<u8>>>,
     /// Delta movements per amount cell.
-    pub movements: BTreeMap<SubstateKey, Movement>,
+    pub movements: DeltaMap<SubstateKey, Movement>,
     /// Settled reservation amounts per cell.
-    pub settles: BTreeMap<SubstateKey, u128>,
+    pub settles: DeltaMap<SubstateKey, u128>,
+}
+
+/// One kind of change a receipt carries, keyed by what it changes.
+///
+/// Lookup is open: asking whether a receipt changed a named key is a
+/// question about that key, and the answer does not depend on who is
+/// asking. Walking is not open, because every walk of a receipt exists to
+/// apply it somewhere, and the shard applying it owns only part of what the
+/// receipt carries — the rest is the outbound record for the shard that
+/// does. So iteration is reachable only through [`StateDelta::owned`], and
+/// a walk that skips the locality check stops being a review question.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeltaMap<K: Ord, V> {
+    entries: BTreeMap<K, V>,
+}
+
+// Derived `Default` would demand it of the key and the value; an empty map
+// needs neither.
+impl<K: Ord, V> Default for DeltaMap<K, V> {
+    fn default() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+        }
+    }
+}
+
+impl<K: Ord, V> DeltaMap<K, V> {
+    /// The change recorded at `key`, if any.
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.entries.get(key)
+    }
+
+    /// Whether a change is recorded at `key`.
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.entries.contains_key(key)
+    }
+
+    /// Whether nothing of this kind changed.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// How many keys changed.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Record a change, replacing any at the same key.
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+        self.entries.insert(key, value)
+    }
+
+    /// Drop the changes `keep` refuses.
+    pub fn retain(&mut self, keep: impl FnMut(&K, &mut V) -> bool) {
+        self.entries.retain(keep);
+    }
+
+    /// The whole map, for the crate that owns the locality rule. Consumers
+    /// reach it through [`StateDelta::owned`].
+    #[allow(clippy::iter_without_into_iter)] // an IntoIterator restores the unfiltered walk
+    pub(crate) fn iter(&self) -> std::collections::btree_map::Iter<'_, K, V> {
+        self.entries.iter()
+    }
+}
+
+impl<K: Ord, V> From<BTreeMap<K, V>> for DeltaMap<K, V> {
+    fn from(entries: BTreeMap<K, V>) -> Self {
+        Self { entries }
+    }
+}
+
+impl<K: Ord + std::borrow::Borrow<Q>, Q: Ord + ?Sized, V> std::ops::Index<&Q> for DeltaMap<K, V> {
+    type Output = V;
+
+    fn index(&self, key: &Q) -> &V {
+        &self.entries[key]
+    }
 }
 
 impl StateDelta {
@@ -741,8 +828,8 @@ impl KernelSession {
         delta
             .cells
             .retain(|key, _| !movements.contains_key(key) && !settles.contains_key(key));
-        delta.movements = movements;
-        delta.settles = settles;
+        delta.movements = movements.into();
+        delta.settles = settles.into();
         self.store.merge_active();
         Ok((
             Receipt {

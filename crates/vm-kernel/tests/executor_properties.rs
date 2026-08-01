@@ -534,7 +534,8 @@ proptest! {
                 .into_iter()
                 .collect::<BTreeMap<_, _>>();
             assert_eq!(
-                outcome.receipts[&entry.tx].delta.movements, expected,
+                outcome.receipts[&entry.tx].delta.movements,
+                expected.into(),
                 "{:?} carries movements it did not queue", entry.tx
             );
         }
@@ -610,7 +611,8 @@ proptest! {
                 BTreeMap::new()
             };
             assert_eq!(
-                receipt.delta.movements, expected,
+                receipt.delta.movements,
+                expected.into(),
                 "{:?} carries movements it did not queue", entry.tx
             );
         }
