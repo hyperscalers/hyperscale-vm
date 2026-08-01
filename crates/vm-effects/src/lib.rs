@@ -21,6 +21,7 @@
 pub mod admission;
 pub mod dsl;
 pub mod envelope;
+pub mod footprint;
 pub mod graph;
 pub mod hash;
 pub mod manifest;
@@ -39,6 +40,10 @@ pub use envelope::{
     AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_ROLE, Subintent,
     SubintentHash, SubintentRecord, YieldBinding, YieldParam, admit_tree, nullifier_key,
     route_tree,
+};
+pub use footprint::{
+    EXCLUSIVITY_FLOOR, TARGET_UNITS, WIDTH_UNITS, effect_units, footprint, mode_weight, order_bits,
+    span_units,
 };
 pub use graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
 pub use hash::{Hash32, Hasher, TestHasher};

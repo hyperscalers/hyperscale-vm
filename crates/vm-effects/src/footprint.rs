@@ -1,0 +1,225 @@
+//! The declared footprint: what a declaration claims, in units a fee
+//! schedule can price.
+//!
+//! Two axes, multiplied. The **span** is how much key space a target names
+//! — one leaf for a point or an entry, and for a range the order-key
+//! magnitude of its interval. The **weight** is how much of the mode
+//! lattice the claim excludes, counted off [`compatible`] itself rather
+//! than tabulated beside it, so a change to the lattice moves the price
+//! with it instead of leaving a table to drift.
+//!
+//! Width is the axis a per-effect price misses, and missing it is not
+//! neutral: conflict on a collection is interval overlap
+//! (`vm-kernel`'s `targets_overlap`), so an interval spanning the whole
+//! order-key space excludes every other declaration on that collection
+//! while costing exactly what a single-entry interval costs. Charging the
+//! span is what stops one effect buying that.
+//!
+//! Nothing here reads state, so a footprint is computable wherever
+//! [`crate::route`]'s output is — which is what lets the fee payer's shard
+//! price a declaration over keys another shard owns, without asking it.
+//!
+//! The unit weights are structure, not calibration: the constants below
+//! carry placeholder values, and what one unit costs in fee terms is set
+//! against measured baselines rather than chosen here.
+
+use crate::types::{Effect, EffectSet, EffectTarget, ModeKind, compatible};
+
+/// Units charged for naming one target at all, before any span.
+///
+/// A declaration costs something even when it excludes nothing: it is a
+/// routing entry, and for a snapshot a proof obligation.
+pub const TARGET_UNITS: u64 = 1;
+
+/// Units charged per order-key bit of a range's span.
+pub const WIDTH_UNITS: u64 = 1;
+
+/// The weight of a mode that excludes nothing — the floor every mode
+/// weight is measured up from.
+pub const EXCLUSIVITY_FLOOR: u64 = 1;
+
+/// Every mode kind, as the exclusion count walks them.
+const KINDS: [ModeKind; 5] = [
+    ModeKind::Read,
+    ModeKind::Snapshot,
+    ModeKind::Delta,
+    ModeKind::Reserve,
+    ModeKind::Write,
+];
+
+/// How much of the lattice `kind` excludes, as a multiplier on span.
+///
+/// Counted from [`compatible`], so the ordering is the lattice's rather
+/// than a judgement: `snapshot` excludes nothing and sits at the floor;
+/// `delta` and `reserve` exclude fresh reads and writes; `read` excludes
+/// both commutative modes as well; `write` excludes everything but
+/// `snapshot`, itself included.
+///
+/// The placement of `read` above the commutative modes is the part worth
+/// stating out loud, because intuition puts reads near the bottom. Two
+/// deltas on one amount cell coexist; a single fresh read on that cell
+/// conflicts with both. Pricing `read` below `reserve` would make the
+/// cheapest declaration on a hot cell the one that serializes the most
+/// traffic across it.
+#[must_use]
+pub const fn mode_weight(kind: ModeKind) -> u64 {
+    let mut excluded = 0;
+    let mut index = 0;
+    while index < KINDS.len() {
+        if !compatible(kind, KINDS[index]) {
+            excluded += 1;
+        }
+        index += 1;
+    }
+    EXCLUSIVITY_FLOOR + excluded
+}
+
+/// The order-key bits a range's interval spans: `0` for an empty or
+/// single-key interval, `128` for the whole space.
+///
+/// Orders of magnitude rather than keys. An order-key space is `u128` and
+/// what occupies any interval of it is state, which a footprint may not
+/// read — so an arithmetic width would be both unusable (a realistic
+/// interval is a vanishing fraction of `u128`) and misleading (a dense
+/// book occupying a narrow interval is fully excluded by a declaration
+/// that width calls negligible). The magnitude claimed is the measure
+/// that stays monotone and finite across both.
+#[must_use]
+pub const fn order_bits(lo: u128, hi: u128) -> u64 {
+    // An inverted interval names nothing; `hi` is inclusive, so an
+    // interval and its span differ by one key.
+    match hi.checked_sub(lo) {
+        None | Some(0) => 0,
+        Some(span) => span.ilog2() as u64 + 1,
+    }
+}
+
+/// The key space `target` claims, before its mode weighs it.
+#[must_use]
+pub const fn span_units(target: &EffectTarget) -> u64 {
+    match target {
+        EffectTarget::Point(_) | EffectTarget::Entry { .. } => TARGET_UNITS,
+        EffectTarget::Range { lo, hi, .. } => {
+            TARGET_UNITS.saturating_add(WIDTH_UNITS.saturating_mul(order_bits(*lo, *hi)))
+        }
+    }
+}
+
+/// One effect's footprint: the key space it claims, weighted by how much
+/// of the lattice the claim excludes.
+#[must_use]
+pub const fn effect_units(effect: Effect) -> u64 {
+    span_units(&effect.target).saturating_mul(mode_weight(effect.mode.kind()))
+}
+
+/// A declaration's total footprint.
+///
+/// Summed per effect rather than over each collection's union, which
+/// prices a fragmented declaration slightly above one interval covering
+/// it. That premium is deliberate coarseness, not an incentive: precision
+/// pays for itself in conflicts avoided, which is a scheduling saving far
+/// larger than the difference here, and a union measure would let one
+/// covering interval hide behind the precision of the ranges it swallows.
+///
+/// Saturating throughout, so the quantity is total for any set under any
+/// calibration. Routing's own bounds ([`crate::MAX_EFFECTS_PER_SIGNATURE`],
+/// [`crate::MAX_MANIFEST_NODES`]) keep an admitted declaration orders of
+/// magnitude below the saturation point at the weights above — but those
+/// weights are placeholders, and a price that wrapped when they moved
+/// would be a fee schedule with a discount at the top.
+#[must_use]
+pub fn footprint(declared: &EffectSet) -> u64 {
+    declared.iter().fold(0, |total, effect| {
+        total.saturating_add(effect_units(effect))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EXCLUSIVITY_FLOOR, effect_units, footprint, mode_weight, order_bits};
+    use crate::types::{
+        Address, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind, RoleId, SubstateKey,
+        Window,
+    };
+
+    const OWNER: Address = Address([7; 16]);
+    const BOOK: RoleId = RoleId(3);
+
+    fn point(byte: u8) -> EffectTarget {
+        EffectTarget::Point(SubstateKey {
+            owner: OWNER,
+            local: LocalKey([byte; 16]),
+        })
+    }
+
+    const fn range(lo: u128, hi: u128) -> EffectTarget {
+        EffectTarget::Range {
+            owner: OWNER,
+            collection: BOOK,
+            lo,
+            hi,
+            cap: 8,
+        }
+    }
+
+    const fn effect(target: EffectTarget, mode: Mode) -> Effect {
+        Effect { target, mode }
+    }
+
+    #[test]
+    fn the_weight_ordering_is_the_lattice_ordering() {
+        // write > read > {delta, reserve} > snapshot, off `compatible`.
+        assert_eq!(mode_weight(ModeKind::Snapshot), EXCLUSIVITY_FLOOR);
+        assert_eq!(mode_weight(ModeKind::Delta), mode_weight(ModeKind::Reserve));
+        assert!(mode_weight(ModeKind::Delta) > mode_weight(ModeKind::Snapshot));
+        assert!(mode_weight(ModeKind::Read) > mode_weight(ModeKind::Delta));
+        assert!(mode_weight(ModeKind::Write) > mode_weight(ModeKind::Read));
+    }
+
+    #[test]
+    fn order_bits_span_the_whole_space() {
+        assert_eq!(order_bits(5, 5), 0, "one key spans nothing");
+        assert_eq!(order_bits(9, 4), 0, "an inverted interval names nothing");
+        assert_eq!(order_bits(0, 1), 1);
+        assert_eq!(order_bits(0, u128::MAX), 128);
+    }
+
+    #[test]
+    fn a_full_space_range_costs_more_than_a_narrow_one() {
+        let narrow = effect_units(effect(range(100, 200), Mode::Write));
+        let full = effect_units(effect(range(0, u128::MAX), Mode::Write));
+        assert!(full > narrow, "{full} should exceed {narrow}");
+    }
+
+    #[test]
+    fn a_degenerate_range_costs_what_its_point_costs() {
+        assert_eq!(
+            effect_units(effect(range(42, 42), Mode::Write)),
+            effect_units(effect(point(1), Mode::Write)),
+        );
+    }
+
+    #[test]
+    fn a_set_totals_its_effects() {
+        let mut declared = EffectSet::new();
+        declared.insert(effect(point(1), Mode::Write)).unwrap();
+        declared
+            .insert(effect(
+                range(0, 1023),
+                Mode::Snapshot {
+                    window: Window::Unbounded,
+                },
+            ))
+            .unwrap();
+        assert_eq!(
+            footprint(&declared),
+            effect_units(effect(point(1), Mode::Write))
+                + effect_units(effect(
+                    range(0, 1023),
+                    Mode::Snapshot {
+                        window: Window::Unbounded,
+                    }
+                )),
+        );
+    }
+}
