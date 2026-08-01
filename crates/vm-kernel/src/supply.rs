@@ -44,7 +44,7 @@ impl SupplyLedger {
             .amount(resource)
             .checked_add(amount)
             .ok_or(ModeError::SupplyOutOfBounds)?;
-        self.by_resource.insert(resource, total);
+        self.set(resource, total);
         Ok(())
     }
 
@@ -59,12 +59,21 @@ impl SupplyLedger {
             .amount(resource)
             .checked_sub(amount)
             .ok_or(ModeError::SupplyOutOfBounds)?;
+        self.set(resource, total);
+        Ok(())
+    }
+
+    /// Records a resource's total in canonical form: a resource this shard
+    /// holds none of is absent, never present at zero. Equality is over the
+    /// map, and it is the reshape-clean property — two shards holding the
+    /// same supply must compare equal however they arrived there, including
+    /// through a zero-amount cross-shard leg.
+    fn set(&mut self, resource: Address, total: u128) {
         if total == 0 {
             self.by_resource.remove(&resource);
         } else {
             self.by_resource.insert(resource, total);
         }
-        Ok(())
     }
 
     /// Compose two ledgers by per-resource addition — the split/merge
@@ -134,5 +143,19 @@ mod tests {
         ledger.credit(resource(3), 10).unwrap();
         ledger.debit(resource(3), 10).unwrap();
         assert_eq!(ledger, SupplyLedger::new());
+    }
+
+    #[test]
+    fn a_zero_credit_leaves_no_residue() {
+        let mut ledger = SupplyLedger::new();
+        ledger.credit(resource(4), 0).unwrap();
+        assert_eq!(ledger.amount(resource(4)), 0);
+        assert_eq!(ledger, SupplyLedger::new());
+
+        // And composing a zero-amount leg is the identity, not a ledger
+        // that merely reads as zero.
+        let mut held = SupplyLedger::new();
+        held.credit(resource(4), 9).unwrap();
+        assert_eq!(held.compose(&ledger).unwrap(), held);
     }
 }
