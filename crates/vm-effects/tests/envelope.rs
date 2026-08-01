@@ -7,8 +7,8 @@ use hyperscale_vm_effects::{
     Address, AdmissionError, AdmittedTree, Constraint, EdgeRef, Effect, EffectTarget, EnvelopeTree,
     GraphArg, GraphNode, Hasher, InstanceMeta, InstanceRegistry, IntentDecl, MAX_SUBINTENTS,
     MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, Mode, NULLIFIER_ROLE, NodeInput,
-    PackageHash, PrefixShardResolver, RoleId, ShardId, Subintent, TestHasher, Value, YieldBinding,
-    YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
+    PackageHash, PrefixShardResolver, RoleId, ShardResolver, Subintent, TestHasher, Value,
+    YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
 use proptest::prelude::{any, proptest};
 
@@ -166,12 +166,19 @@ fn routing_carries_the_nullifier_creation_write() {
     )
     .unwrap();
     let record = admitted.subintents[0];
-    assert!(routing.per_shard[&ShardId(0x20)].contains(&Effect {
+    // Asked of the resolver rather than restated: the claim is that the
+    // write lands at the signer's shard and nowhere else, not what those
+    // shards happen to be called.
+    let resolver = PrefixShardResolver { bits: 8 };
+    let signer = resolver.shard_of(record.signer);
+    let root = resolver.shard_of(ALICE);
+    assert_ne!(signer, root);
+    assert!(routing.per_shard[&signer].contains(&Effect {
         target: EffectTarget::Point(record.nullifier),
         mode: Mode::Write,
     }));
     // The root's shard carries no nullifier write.
-    assert!(!routing.per_shard[&ShardId(0x10)].iter().any(|effect| {
+    assert!(!routing.per_shard[&root].iter().any(|effect| {
         matches!(effect.target, EffectTarget::Point(key) if key == record.nullifier)
     }));
 }

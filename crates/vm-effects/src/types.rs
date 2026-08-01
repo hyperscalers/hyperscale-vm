@@ -48,8 +48,20 @@ pub struct SubstateKey {
 }
 
 /// A shard identity, as resolved from an address prefix.
+///
+/// Opaque here: this crate reads it only as a routing key, and what it
+/// means belongs to whoever implements [`ShardResolver`](crate::route::ShardResolver).
+///
+/// Wide enough for a trie leaf, which is what the embedder's shards are.
+/// A leaf identified by `(depth, path)` flattens to the heap index
+/// `(1 << depth) | path`, and a depth bound of 63 puts that at the top of
+/// `u64`. Narrower would not merely truncate: two leaves at different
+/// depths would collide on one id, and a shard would silently be credited
+/// with another's effects. A cap on the number of *live* shards does not
+/// bound their depth — an unbalanced trie reaches past a narrow id with
+/// far fewer leaves than the cap allows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ShardId(pub u16);
+pub struct ShardId(pub u64);
 
 /// A role tag naming a kernel-addressed slot under an owner.
 ///

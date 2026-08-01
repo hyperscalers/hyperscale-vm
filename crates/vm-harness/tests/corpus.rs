@@ -17,8 +17,8 @@ use hyperscale_vm_effects::stdlib::{
 use hyperscale_vm_effects::{
     Address, Constraint, EdgeRef, Effect, EffectSet, EffectTarget, GraphArg, GraphNode, Hash32,
     Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, NodeInput,
-    PackageHash, PrefixShardResolver, Routing, ShardId, SnapshotObligation, SubstateKey,
-    TestHasher, Value, Window, admit, child_key, fresh_id, route,
+    PackageHash, PrefixShardResolver, Routing, ShardId, ShardResolver, SnapshotObligation,
+    SubstateKey, TestHasher, Value, Window, admit, child_key, fresh_id, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -32,7 +32,7 @@ use hyperscale_vm_runtime::{
     validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
-use wasmtime::error::{Context, bail};
+use wasmtime::error::{Context, bail, ensure};
 use wasmtime::{Engine, Result, Store};
 
 const ALICE: Address = Address([0x10; 16]);
@@ -247,7 +247,14 @@ fn execute_manifest(
         &PrefixShardResolver { bits: 0 },
     )
     .context("routing")?;
-    let declared = &routing.per_shard[&ShardId(0)];
+    // The null resolver puts every effect on one shard, so the whole
+    // declaration is the sole entry — taken as that rather than by naming
+    // an id the resolver is free to choose.
+    ensure!(
+        routing.per_shard.len() == 1,
+        "the null resolver routes to one shard"
+    );
+    let declared = routing.per_shard.values().next().expect("one shard");
     let identity = admitted.identity();
     let manifest = admitted.manifest().clone();
 
@@ -688,8 +695,10 @@ fn set(effects: &[Effect]) -> EffectSet {
     set
 }
 
+/// Where the sharded routing above puts an address — asked rather than
+/// restated, so a change to the resolver cannot leave this behind.
 fn shard_of(address: Address) -> ShardId {
-    ShardId(u16::from(address.0[0]))
+    PrefixShardResolver { bits: 8 }.shard_of(address)
 }
 
 fn sharded_routing(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> Routing {

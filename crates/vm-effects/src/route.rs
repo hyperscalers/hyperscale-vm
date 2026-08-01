@@ -21,20 +21,32 @@ pub trait ShardResolver {
     fn shard_of(&self, owner: Address) -> ShardId;
 }
 
-/// Test-grade resolver: the shard is the address's top `bits` bits. Stands
-/// in for the beacon fold's shard trie.
+/// Test-grade resolver: a uniform trie of depth `bits`, the shard being
+/// the leaf whose path is the address's top `bits` bits. Stands in for the
+/// beacon fold's shard trie.
+///
+/// Emits the leaf's heap index `(1 << depth) | path` rather than the bare
+/// path, which is what a trie leaf's identity actually is: without the
+/// depth marker the root and the all-zero leaf below it — and every
+/// all-zero leaf under that — would share an id. The stand-in models that
+/// so a resolver swapped in behind it cannot find the seam narrower than
+/// its own identities.
 #[derive(Clone, Copy, Debug)]
 pub struct PrefixShardResolver {
-    /// How many leading bits of the prefix name the shard; `0` puts
-    /// everything on shard zero.
+    /// The uniform trie's depth: how many leading bits of the prefix name
+    /// the leaf. `0` is the root, which holds every address; values past
+    /// 63 clamp, matching the depth bound a heap index can carry.
     pub bits: u8,
 }
 
 impl ShardResolver for PrefixShardResolver {
     fn shard_of(&self, owner: Address) -> ShardId {
-        let head = u16::from_be_bytes([owner.0[0], owner.0[1]]);
-        let shift = 16u32.saturating_sub(u32::from(self.bits.min(16)));
-        ShardId(head.checked_shr(shift).unwrap_or(0))
+        let depth = u32::from(self.bits.min(63));
+        let head = u64::from_be_bytes(owner.0[..8].try_into().expect("an address is 16 bytes"));
+        // At depth zero the shift is the full width, which `checked_shr`
+        // reports rather than wrapping: the root's path is empty.
+        let path = head.checked_shr(64 - depth).unwrap_or(0);
+        ShardId((1 << depth) | path)
     }
 }
 
@@ -525,13 +537,21 @@ mod tests {
             &resolver(),
         )
         .unwrap();
+        // Asked of the resolver rather than restated: what a shard is
+        // called is its business, and the claim here is that the two
+        // instances land apart and keep their own effects.
+        let (sender, recipient) = (
+            resolver().shard_of(addr(0x11)),
+            resolver().shard_of(addr(0x22)),
+        );
+        assert_ne!(sender, recipient);
         let shards: Vec<_> = routing.shards().collect();
-        assert_eq!(shards, vec![ShardId(0x11), ShardId(0x22)]);
-        assert!(routing.per_shard[&ShardId(0x11)].contains(&Effect {
+        assert_eq!(shards, vec![sender, recipient]);
+        assert!(routing.per_shard[&sender].contains(&Effect {
             target: point(addr(0x11), RoleId(1)),
             mode: Mode::Delta,
         }));
-        assert!(routing.per_shard[&ShardId(0x22)].contains(&Effect {
+        assert!(routing.per_shard[&recipient].contains(&Effect {
             target: point(addr(0x22), RoleId(2)),
             mode: Mode::Reserve { amount: 9 },
         }));
@@ -624,7 +644,7 @@ mod tests {
             .map(|frame| u128::from(fresh_id(&TestHasher, identity(), 0, frame, 0)))
             .collect();
         assert_ne!(orders[0], orders[1]);
-        let set = &routing.per_shard[&ShardId(0x33)];
+        let set = &routing.per_shard[&resolver().shard_of(ledger)];
         for order in orders {
             assert!(set.contains(&Effect {
                 target: EffectTarget::Entry {
@@ -1133,16 +1153,53 @@ mod tests {
     }
 
     #[test]
-    fn prefix_resolver_takes_top_bits() {
-        let resolver = PrefixShardResolver { bits: 4 };
-        assert_eq!(resolver.shard_of(Address([0xAB; 16])), ShardId(0xA));
+    fn prefix_resolver_names_the_leaf_at_its_depth() {
+        // `(1 << depth) | path`: the depth marker above the prefix bits.
+        assert_eq!(
+            PrefixShardResolver { bits: 4 }.shard_of(Address([0xAB; 16])),
+            ShardId(0x1A)
+        );
         assert_eq!(
             PrefixShardResolver { bits: 0 }.shard_of(Address([0xFF; 16])),
-            ShardId(0)
+            ShardId(1),
+            "the root holds every address, and is a leaf like any other"
         );
         assert_eq!(
             PrefixShardResolver { bits: 16 }.shard_of(Address([0xAB; 16])),
-            ShardId(0xABAB)
+            ShardId(0x1_ABAB)
         );
+    }
+
+    #[test]
+    fn leaves_at_different_depths_never_share_an_id() {
+        // The failure a narrow id makes silent. An all-zero prefix sits in
+        // the leftmost leaf at every depth, so those leaves differ only by
+        // their depth marker — and past depth 15 the marker alone leaves
+        // `u16`. Truncated, every one of them would read as the same
+        // shard, and one shard would be credited with all their effects.
+        let zeros = Address([0; 16]);
+        let ids: Vec<ShardId> = (0..=63)
+            .map(|bits| PrefixShardResolver { bits }.shard_of(zeros))
+            .collect();
+        let unique: BTreeSet<ShardId> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), ids.len(), "two depths collided on one id");
+        assert_eq!(ids[63], ShardId(1 << 63), "the deepest leaf fills `u64`");
+        assert!(
+            ids.iter().filter(|id| id.0 > u64::from(u16::MAX)).count() > 0,
+            "the range past `u16` must actually be reached, or this proves nothing"
+        );
+    }
+
+    #[test]
+    fn a_depth_past_the_bound_clamps_rather_than_wrapping() {
+        // 64 would shift the marker off the top; the resolver pins at the
+        // deepest leaf a heap index can name instead.
+        let deepest = PrefixShardResolver { bits: 63 }.shard_of(Address([0xAB; 16]));
+        for bits in [64, 128, 255] {
+            assert_eq!(
+                PrefixShardResolver { bits }.shard_of(Address([0xAB; 16])),
+                deepest
+            );
+        }
     }
 }

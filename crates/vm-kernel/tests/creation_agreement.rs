@@ -6,7 +6,8 @@
 use hyperscale_vm_effects::{
     Address, Clause, Effect, EffectTarget, Expr, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
     ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
-    PrefixShardResolver, RoleId, ShardId, TargetExpr, TestHasher, Value, admit, fresh_id, route,
+    PrefixShardResolver, RoleId, ShardResolver, TargetExpr, TestHasher, Value, admit, fresh_id,
+    route,
 };
 use hyperscale_vm_kernel::{CreationContext, MemoryStore, SubstateStore};
 
@@ -79,7 +80,9 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
         &PrefixShardResolver { bits: 8 },
     )
     .unwrap();
-    let declared = &routing.per_shard[&ShardId(0x11)];
+    // Asked of the resolver rather than restated: the claim is about the
+    // creator's shard holding the key, not about what it is called.
+    let declared = &routing.per_shard[&PrefixShardResolver { bits: 8 }.shard_of(creator)];
 
     // The kernel executes node 1: its creation context derives from the
     // same transaction identity, node index, and frame.

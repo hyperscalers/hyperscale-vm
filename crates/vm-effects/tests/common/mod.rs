@@ -10,8 +10,8 @@ pub use hyperscale_vm_effects::stdlib::{
 use hyperscale_vm_effects::{
     Address, CallSite, Clause, Effect, EffectSet, Expr, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr, PackageHash,
-    PackageMetadata, ParamType, PrefixShardResolver, RoleId, ShardId, SubstateKey, TargetExpr,
-    TestHasher, Value, child_key,
+    PackageMetadata, ParamType, PrefixShardResolver, RoleId, ShardId, ShardResolver, SubstateKey,
+    TargetExpr, TestHasher, Value, child_key,
 };
 
 pub const ALICE: Address = Address([0x10; 16]);
@@ -83,9 +83,12 @@ pub const fn resolver() -> PrefixShardResolver {
     PrefixShardResolver { bits: 8 }
 }
 
+/// Where [`resolver`] puts an address — asked rather than restated, so a
+/// change to the resolver's own identities cannot leave the expectation
+/// behind.
 #[must_use]
 pub fn shard_of(address: Address) -> ShardId {
-    ShardId(u16::from(address.0[0]))
+    resolver().shard_of(address)
 }
 
 #[must_use]

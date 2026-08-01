@@ -10,8 +10,8 @@ use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
     Address, AdmittedTree, Constraint, EdgeRef, EffectSet, EnvelopeTree, GraphArg, GraphNode,
     Hasher, InstanceMeta, InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, Node,
-    NodeInput, PackageHash, PrefixShardResolver, ShardId, Subintent, SubstateKey, TestHasher,
-    Value, YieldBinding, YieldParam, admit_tree, child_key, route_tree,
+    NodeInput, PackageHash, PrefixShardResolver, Subintent, SubstateKey, TestHasher, Value,
+    YieldBinding, YieldParam, admit_tree, child_key, route_tree,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -25,7 +25,7 @@ use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
-use wasmtime::error::Context;
+use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
 const ALICE: Address = Address([0x10; 16]);
@@ -155,7 +155,19 @@ fn batch_entry(
         &PrefixShardResolver { bits: 0 },
     )
     .context("routing")?;
-    let declared: EffectSet = routing.per_shard[&ShardId(0)].clone();
+    // The null resolver puts every effect on one shard, so the whole
+    // declaration is the sole entry — taken as that rather than by naming
+    // an id the resolver is free to choose.
+    ensure!(
+        routing.per_shard.len() == 1,
+        "the null resolver routes to one shard"
+    );
+    let declared: EffectSet = routing
+        .per_shard
+        .values()
+        .next()
+        .expect("one shard")
+        .clone();
     let entry = BatchTx {
         tx: TxHash(identity.0),
         declared,
