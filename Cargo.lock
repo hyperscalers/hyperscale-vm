@@ -668,6 +668,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperscale-vm-sdk"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-vm-effects",
+ "hyperscale-vm-sdk-macros",
+]
+
+[[package]]
+name = "hyperscale-vm-sdk-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "hyperscale-vm-stdlib"
 version = "0.1.0"
 dependencies = [

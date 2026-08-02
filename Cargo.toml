@@ -6,6 +6,8 @@ members = [
     "crates/vm-kernel",
     "crates/vm-ref",
     "crates/vm-runtime",
+    "crates/vm-sdk",
+    "crates/vm-sdk-macros",
     "crates/vm-stdlib",
 ]
 
@@ -18,9 +20,14 @@ hyperscale-vm-effects = { path = "crates/vm-effects" }
 hyperscale-vm-kernel = { path = "crates/vm-kernel" }
 hyperscale-vm-ref = { path = "crates/vm-ref" }
 hyperscale-vm-runtime = { path = "crates/vm-runtime" }
+hyperscale-vm-sdk = { path = "crates/vm-sdk" }
+hyperscale-vm-sdk-macros = { path = "crates/vm-sdk-macros" }
 hyperscale-vm-stdlib = { path = "crates/vm-stdlib" }
 
+proc-macro2 = "1"
 proptest = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "extra-traits", "visit"] }
 thiserror = "2"
 wasmparser = "0.255.0"
 wat = "1.255.0"

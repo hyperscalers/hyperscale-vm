@@ -1,0 +1,388 @@
+//! What the parity fixtures cannot cover.
+//!
+//! `stdlib_parity` proves the SDK reaches the authored form on four real
+//! packages — but none of them uses `for-each`, none nests, and none of
+//! them can say anything about the handle order a guest bridge needs.
+//! Those are exactly the parts of the design carrying risk, so they are
+//! checked here against the real evaluator rather than against a fixture.
+
+use hyperscale_vm_effects::{
+    Address, Effect, EffectSet, EffectTarget, EvalInputs, Hash32, MAX_FOREACH_ELEMENTS,
+    ManifestHash, MethodSignature, Mode, ModeKind, ParamType, RoleId, SubstateKey, TestHasher,
+    Value, child_key, evaluate_effects,
+};
+use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym};
+use hyperscale_vm_sdk::{Blueprint, TargetShape, Trace};
+
+const BASKET: Address = Address([0x50; 16]);
+const RES_X: Address = Address([0xE1; 16]);
+const RES_Y: Address = Address([0xE2; 16]);
+const RES_Z: Address = Address([0xE3; 16]);
+const VAULT: RoleId = RoleId(1);
+const CONFIG: RoleId = RoleId(3);
+
+fn identity() -> ManifestHash {
+    ManifestHash(Hash32([0x1D; 32]))
+}
+
+fn vault(owner: Address, resource: Address) -> SubstateKey {
+    child_key(
+        &TestHasher,
+        owner,
+        VAULT,
+        &[Value::Address(resource).canonical_bytes()],
+    )
+}
+
+/// Evaluate a traced signature the way routing would.
+fn declared(signature: &MethodSignature, args: &[Value], config: &[Value]) -> EffectSet {
+    let inputs = EvalInputs {
+        self_addr: BASKET,
+        args,
+        config,
+        node_index: 0,
+        frame: 0,
+        identity: identity(),
+    };
+    evaluate_effects(&signature.effects, &inputs, &TestHasher)
+        .expect("the traced signature evaluates")
+}
+
+/// A basket whose `rebalance` touches one vault per configured resource —
+/// the shape `for-each` exists for, and the shape no stdlib fixture has.
+fn basket() -> Blueprint {
+    Blueprint::builder()
+        .method("rebalance", &[], |t: &mut Trace| {
+            let holdings: Sym<Seq> = t.config(0);
+            let owner = t.self_addr();
+
+            t.point(&owner.child(CONFIG, &[])).snapshot_locked();
+            t.for_each(&holdings, |t, resource| {
+                let owner = t.self_addr();
+                t.point(&owner.child(VAULT, &[resource])).write();
+            });
+        })
+        .build()
+}
+
+#[test]
+fn a_for_each_declares_one_effect_per_configured_element() {
+    let blueprint = basket();
+    let signature = blueprint.method("rebalance").unwrap().signature();
+
+    let config = vec![Value::List(vec![
+        Value::Address(RES_X),
+        Value::Address(RES_Y),
+        Value::Address(RES_Z),
+    ])];
+    let set = declared(signature, &[], &config);
+
+    // The locked config leaf, plus one write per holding — at exactly the
+    // keys `child_key` computes, which is what lets another shard name them.
+    assert_eq!(set.len(), 4);
+    for resource in [RES_X, RES_Y, RES_Z] {
+        assert!(
+            set.contains(&Effect {
+                target: EffectTarget::Point(vault(BASKET, resource)),
+                mode: Mode::Write,
+            }),
+            "no write declared on the {resource:?} vault"
+        );
+    }
+}
+
+#[test]
+fn the_same_declaration_scales_with_configuration_alone() {
+    // The point of tracing a signature rather than enumerating effects: one
+    // declaration, and the instance's config decides the width.
+    let blueprint = basket();
+    let signature = blueprint.method("rebalance").unwrap().signature();
+
+    for width in [0_usize, 1, 8, 64] {
+        let holdings: Vec<Value> = (0..width)
+            .map(|i| Value::Address(Address([u8::try_from(i).unwrap(); 16])))
+            .collect();
+        let set = declared(signature, &[], &[Value::List(holdings)]);
+        assert_eq!(set.len(), width + 1, "width {width}");
+    }
+}
+
+#[test]
+fn nested_binders_survive_evaluation() {
+    // The de Bruijn conversion is structural, so the test that matters is
+    // whether both binders reach the evaluator meaning what the author
+    // wrote: the key is built from the inner member and the outer group's
+    // tag, and the two must not be swapped.
+    let blueprint = Blueprint::builder()
+        .method("sweep", &[], |t: &mut Trace| {
+            let groups: Sym<Seq> = t.config(0);
+            t.for_each(&groups, |t, group| {
+                let members: Sym<Seq> = group.clone().field(1).cast();
+                t.for_each(&members, |t, member| {
+                    let owner = t.self_addr();
+                    let tag = group.clone().field(0);
+                    t.point(&owner.child(VAULT, &[member, tag])).delta();
+                });
+            });
+        })
+        .build();
+    let signature = blueprint.method("sweep").unwrap().signature();
+
+    let group = |tag: Address, members: &[Address]| {
+        Value::Tuple(vec![
+            Value::Address(tag),
+            Value::List(members.iter().copied().map(Value::Address).collect()),
+        ])
+    };
+    let config = vec![Value::List(vec![
+        group(RES_X, &[RES_Y, RES_Z]),
+        group(RES_Y, &[RES_Z]),
+    ])];
+    let set = declared(signature, &[], &config);
+
+    // Three (member, tag) pairs, all distinct.
+    assert_eq!(set.len(), 3);
+    let expect = |member: Address, tag: Address| {
+        child_key(
+            &TestHasher,
+            BASKET,
+            VAULT,
+            &[
+                Value::Address(member).canonical_bytes(),
+                Value::Address(tag).canonical_bytes(),
+            ],
+        )
+    };
+    for (member, tag) in [(RES_Y, RES_X), (RES_Z, RES_X), (RES_Z, RES_Y)] {
+        assert!(
+            set.contains(&Effect {
+                target: EffectTarget::Point(expect(member, tag)),
+                mode: Mode::Delta,
+            }),
+            "member {member:?} under tag {tag:?} was not declared — binders may be swapped"
+        );
+    }
+}
+
+#[test]
+fn the_handle_plan_is_declaration_ordered_not_set_ordered() {
+    // The finding this test exists to pin down. `EffectSet` is canonical by
+    // (target, mode) — it is a set — while a guest's parameters are in the
+    // order the author wrote. For the pool those two orders disagree, and
+    // they disagree on a comparison between two child-key hashes, which is
+    // stable but arbitrary and moves with the hasher.
+    //
+    // So a kernel that materialized handles by walking the evaluated set
+    // would hand `swap` its two reserve cells the wrong way round, and
+    // nothing in the metadata would say so. The handle order has to be the
+    // declaration's.
+    let pool = Blueprint::builder()
+        .method(
+            "swap",
+            &[ParamType::Bucket, ParamType::U128],
+            |t: &mut Trace| {
+                let x: Sym<Addr> = t.config(0);
+                let y: Sym<Addr> = t.config(1);
+                let pool = t.self_addr();
+                t.point(&pool.child(CONFIG, &[])).snapshot_locked();
+                t.point(&pool.child(VAULT, &[x.cast()])).write();
+                t.point(&pool.child(VAULT, &[y.cast()])).write();
+            },
+        )
+        .build();
+    let method = pool.method("swap").unwrap();
+
+    let plan = method.handles();
+    assert!(plan.is_static(), "no clause is under a for-each");
+    let modes: Vec<ModeKind> = plan.shapes().iter().map(|s| s.mode).collect();
+    assert_eq!(
+        modes,
+        vec![ModeKind::Snapshot, ModeKind::Write, ModeKind::Write],
+        "the plan follows the author's order"
+    );
+    assert!(plan.shapes().iter().all(|s| s.target == TargetShape::Point));
+
+    // Whether the two orders happen to agree for one particular reserve
+    // pair is a fact about two hashes, so the demonstration searches a
+    // small space rather than asserting on a single draw — the finding is
+    // that agreement is not guaranteed, not that it never occurs.
+    let mut disagreements = 0;
+    for x in 0..8_u8 {
+        for y in 0..8_u8 {
+            if x == y {
+                continue; // a degenerate pair collapses; see the test below
+            }
+            let config = vec![
+                Value::Address(Address([x; 16])),
+                Value::Address(Address([y; 16])),
+            ];
+            let set = declared(method.signature(), &[], &config);
+            let canonical: Vec<ModeKind> = set.iter().map(|e| e.mode.kind()).collect();
+            assert_eq!(
+                canonical.len(),
+                modes.len(),
+                "both orders describe the same accesses"
+            );
+            if canonical != modes {
+                disagreements += 1;
+            }
+        }
+    }
+    assert!(
+        disagreements > 0,
+        "canonical order tracks child-key hashes, so it cannot be the guest's \
+         parameter order — if this ever holds for every pair, it holds by luck"
+    );
+}
+
+#[test]
+fn a_degenerate_config_collapses_the_set_below_the_plan() {
+    // The second finding, and the sharper of the two. `EffectSet` is a set:
+    // two clauses that evaluate to the same (target, mode) become one entry.
+    // A pool configured with the same resource on both sides is nonsense,
+    // but it is nonsense the *declaration* cannot rule out — the resources
+    // are creation-fixed config, and the tracer never sees them.
+    //
+    // So the handle count is not a function of the clause count. A bridge
+    // that lowered "three clauses" to "three parameters" and let the kernel
+    // fill them from the evaluated set would be handed two, and the
+    // mismatch would surface at instantiation of one particular instance
+    // rather than at publish. Either the kernel materializes per clause
+    // rather than per set entry, or instance creation has to reject
+    // configurations that make two clauses coincide.
+    let pool = Blueprint::builder()
+        .method("swap", &[], |t: &mut Trace| {
+            let x: Sym<Addr> = t.config(0);
+            let y: Sym<Addr> = t.config(1);
+            let pool = t.self_addr();
+            t.point(&pool.child(CONFIG, &[])).snapshot_locked();
+            t.point(&pool.child(VAULT, &[x.cast()])).write();
+            t.point(&pool.child(VAULT, &[y.cast()])).write();
+        })
+        .build();
+    let method = pool.method("swap").unwrap();
+    assert_eq!(method.handles().shapes().len(), 3);
+
+    let distinct = vec![Value::Address(RES_X), Value::Address(RES_Y)];
+    assert_eq!(declared(method.signature(), &[], &distinct).len(), 3);
+
+    let degenerate = vec![Value::Address(RES_X), Value::Address(RES_X)];
+    assert_eq!(
+        declared(method.signature(), &[], &degenerate).len(),
+        2,
+        "the two writes fold onto one target"
+    );
+}
+
+#[test]
+fn a_dynamic_plan_reports_itself_as_dynamic() {
+    let blueprint = basket();
+    let plan = blueprint.method("rebalance").unwrap().handles();
+    assert!(
+        !plan.is_static(),
+        "a for-each clause makes the handle count configuration-dependent"
+    );
+    assert_eq!(plan.shapes()[0].repeat_depth, 0, "the config leaf is fixed");
+    assert_eq!(plan.shapes()[1].repeat_depth, 1, "the vault write repeats");
+}
+
+#[test]
+fn the_worst_case_is_reported_where_it_can_exceed_the_bound() {
+    // Two nested for-each clauses reach 1024^2 effects, past the 4096 a
+    // signature may declare. The SDK cannot reject this — whether it happens
+    // is a property of the config an instance is created with, not of the
+    // declaration — but it can refuse to let the author find out from a
+    // production routing failure.
+    let deep = Blueprint::builder()
+        .method("sweep", &[], |t: &mut Trace| {
+            let groups: Sym<Seq> = t.config(0);
+            t.for_each(&groups, |t, group| {
+                let members: Sym<Seq> = group.cast();
+                t.for_each(&members, |t, member| {
+                    let owner = t.self_addr();
+                    t.point(&owner.child(VAULT, &[member])).delta();
+                });
+            });
+        })
+        .build();
+    let method = deep.method("sweep").unwrap();
+    assert_eq!(method.worst_case_effects(), MAX_FOREACH_ELEMENTS.pow(2));
+    assert!(!method.worst_case_fits());
+
+    // The single-level basket is safely inside it.
+    assert!(basket().method("rebalance").unwrap().worst_case_fits());
+}
+
+#[test]
+#[should_panic(expected = "for-each nests")]
+fn nesting_past_the_clause_bound_fails_the_build() {
+    // Five levels, one past MAX_CLAUSE_DEPTH. Better here than at routing
+    // time, where the package is published and every call to the method
+    // fails.
+    fn nest(t: &mut Trace, left: usize) {
+        let list: Sym<Seq> = t.config(0);
+        if left == 0 {
+            let owner = t.self_addr();
+            t.point(&owner.child(VAULT, &[])).write();
+        } else {
+            t.for_each(&list, |t, _| nest(t, left - 1));
+        }
+    }
+    let _ = Blueprint::builder().method("deep", &[], |t: &mut Trace| nest(t, 5));
+}
+
+#[test]
+#[should_panic(expected = "escaped its closure")]
+fn a_smuggled_binder_fails_the_build() {
+    // Rust's ownership does not stop a `for-each` element being captured out
+    // of its closure — that would need an invariant lifetime brand the API
+    // does not carry yet. The tracer catches it instead: a binder used where
+    // fewer binders are in scope than bound it cannot be lowered, and the
+    // build stops rather than emitting a signature with a wild index.
+    let mut escaped: Option<Sym<_>> = None;
+    let _ = Blueprint::builder().method("leak", &[], |t: &mut Trace| {
+        let list: Sym<Seq> = t.config(0);
+        t.for_each(&list, |_, item| escaped = Some(item));
+        let owner = t.self_addr();
+        let key = owner.child(VAULT, &[escaped.take().unwrap()]);
+        t.point(&key).write();
+    });
+}
+
+#[test]
+#[should_panic(expected = "declared bucket but read as u128")]
+fn a_parameter_read_at_the_wrong_kind_fails_the_build() {
+    // The one field of a signature that is independently checkable — params
+    // against the component's own type section — is also the one the tracer
+    // can check the effect expressions against.
+    let _ = Blueprint::builder().method("swap", &[ParamType::Bucket], |t: &mut Trace| {
+        let _: Sym<Amount> = t.arg(0);
+    });
+}
+
+#[test]
+fn an_output_resource_is_a_declaration_not_an_inference() {
+    // `-> Bucket` says an edge comes out, never which resource it carries.
+    // For a wrapper it is a projection of an input; for a pool it is a
+    // config field. Both spellings reach the same `outputs` slot.
+    let wrapper = Blueprint::builder()
+        .method("wrap", &[ParamType::Bucket], |t: &mut Trace| {
+            let funds: Sym<Bucket> = t.arg(0);
+            t.output(&funds.resource());
+        })
+        .build();
+    let pool = Blueprint::builder()
+        .method("swap", &[ParamType::Bucket], |t: &mut Trace| {
+            let other: Sym<Addr> = t.config(1);
+            t.output(&other);
+        })
+        .build();
+
+    assert_eq!(wrapper.method("wrap").unwrap().signature().outputs.len(), 1);
+    assert_eq!(pool.method("swap").unwrap().signature().outputs.len(), 1);
+    assert_ne!(
+        wrapper.method("wrap").unwrap().signature().outputs,
+        pool.method("swap").unwrap().signature().outputs,
+        "the same return type, two different declared resources"
+    );
+}

@@ -1,0 +1,19 @@
+[package]
+name = "hyperscale-vm-sdk"
+version.workspace = true
+edition.workspace = true
+description = "The contract SDK: blueprint declarations traced into package metadata"
+
+[features]
+default = ["macros"]
+# The `#[blueprint]` front end. Separable because the tracer underneath is
+# usable on its own, and a build that only consumes metadata should not
+# compile a proc macro to get it.
+macros = ["dep:hyperscale-vm-sdk-macros"]
+
+[dependencies]
+hyperscale-vm-effects.workspace = true
+hyperscale-vm-sdk-macros = { workspace = true, optional = true }
+
+[lints]
+workspace = true
