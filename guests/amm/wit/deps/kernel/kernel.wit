@@ -91,9 +91,21 @@ interface crypto {
     hash: func(data: list<u8>) -> list<u8>;
 }
 
+/// What a transaction says happened. The emitter is stamped by the kernel
+/// from the invocation, never named by the guest, because attribution
+/// decides which shard stores the event. Emissions survive only a
+/// completed outcome.
+interface events {
+    /// Emit an event of the calling package's `event-type` with an opaque
+    /// payload. Traps past the per-transaction count cap, the per-event
+    /// payload cap, or the event-type ceiling.
+    emit: func(event-type: u32, payload: list<u8>);
+}
+
 /// The world every contract component targets.
 world contract {
     import state;
     import env;
     import crypto;
+    import events;
 }

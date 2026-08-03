@@ -1,8 +1,8 @@
 //! The `hyperscale:kernel` world, host side.
 //!
-//! [`add_kernel_to_linker`] wires the world's three interfaces — `state`,
-//! `env`, `crypto` — against a [`KernelHost`] implementation. The state
-//! interface carries one resource per access mode; the kernel materializes
+//! [`add_kernel_to_linker`] wires the world's four interfaces — `state`,
+//! `env`, `crypto`, `events` — against a [`KernelHost`] implementation. The
+//! state interface carries one resource per access mode; the kernel materializes
 //! handles per transaction ([`wasmtime::component::Resource`] values whose
 //! rep indexes the host's declared-set table), and the world has no handle
 //! constructor, so the declared set is the reachable set and an undeclared
@@ -38,7 +38,8 @@ pub struct RangeWrite;
 /// The kernel's host surface behind the world.
 ///
 /// Implementations hold per-transaction state: the materialized capability
-/// table, the transaction clock, and the randomness draw. Reps are indexes
+/// table, the transaction clock, the randomness draw, and the emission
+/// buffer a completed outcome turns into receipt events. Reps are indexes
 /// the host itself assigned when materializing handles, so lookups are
 /// infallible by construction; fallible operations return a deterministic
 /// refusal message that becomes the trap text on every replica.
@@ -143,6 +144,14 @@ pub trait KernelHost: Send {
 
     /// The protocol hash function.
     fn hash(&self, data: &[u8]) -> [u8; 32];
+
+    /// Emit an event from the executing instance; the host stamps the
+    /// emitter.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal (a cap or the event-type ceiling).
+    fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), String>;
 }
 
 fn host_trap(message: &str) -> Error {
@@ -364,6 +373,18 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             let digest = store.data().hash(&data);
             charge_boundary_bytes(&mut store, data.len() + digest.len())?;
             Ok((digest.to_vec(),))
+        },
+    )?;
+
+    let mut events = linker.instance("hyperscale:kernel/events")?;
+    events.func_wrap(
+        "emit",
+        |mut store: StoreContextMut<'_, T>, (event_type, payload): (u32, Vec<u8>)| {
+            charge_boundary_bytes(&mut store, payload.len())?;
+            store
+                .data_mut()
+                .emit(event_type, payload)
+                .map_err(|m| host_trap(&m))
         },
     )?;
 

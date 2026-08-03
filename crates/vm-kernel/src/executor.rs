@@ -437,6 +437,7 @@ fn abort_receipt(outcome: Outcome, fuel: u64) -> Receipt {
     Receipt {
         outcome,
         delta: StateDelta::default(),
+        events: Vec::new(),
         fuel,
     }
 }

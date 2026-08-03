@@ -132,9 +132,53 @@ pub enum SessionTrap {
     /// unreachable, kept honest.
     #[error("no reservation held")]
     ReservationMissing,
+    /// An emission outside any invocation, so the kernel has no address to
+    /// stamp — unreachable through a runner that enters every node.
+    #[error("emission outside an invocation")]
+    NoInvocation,
+    /// An event type past the per-package ceiling.
+    #[error("event type {0} past the ceiling")]
+    EventTypeOutOfRange(u32),
+    /// More events than a transaction may emit.
+    #[error("event count past the cap of {MAX_EVENTS_PER_TX}")]
+    TooManyEvents,
+    /// An event payload past the per-event byte cap.
+    #[error("event payload of {0} bytes past the cap of {MAX_EVENT_PAYLOAD_BYTES}")]
+    EventPayloadTooLarge(usize),
     /// A store refusal.
     #[error(transparent)]
     Store(#[from] StoreError),
+}
+
+/// Events a transaction may emit.
+pub const MAX_EVENTS_PER_TX: usize = 256;
+
+/// Bytes one event's payload may carry.
+pub const MAX_EVENT_PAYLOAD_BYTES: usize = 4096;
+
+/// Event types one package may declare, and so the ceiling an event's
+/// type index is checked against.
+///
+/// The kernel bounds the index and resolves nothing: a package's event
+/// table is metadata for consumers, and an index past a package's own
+/// table is that package's defect, not a disagreement between replicas.
+pub const MAX_EVENT_TYPES: u32 = 1024;
+
+/// One emitted event: what the transaction said happened.
+///
+/// The emitter is the invoked instance's address, stamped by the kernel
+/// rather than passed by the guest — attribution is what decides which
+/// shard stores the event, so it cannot be a claim. The type is an index
+/// into the emitting package's event table; packages are content-addressed
+/// and immutable, so an index can never come to mean something else.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Event {
+    /// The instance that emitted it.
+    pub emitter: Address,
+    /// The index into the emitting package's event table.
+    pub event_type: u32,
+    /// The event's opaque payload.
+    pub payload: Vec<u8>,
 }
 
 /// The deterministic environment a transaction executes under.
@@ -314,6 +358,14 @@ pub struct Receipt {
     pub outcome: Outcome,
     /// What committed.
     pub delta: StateDelta,
+    /// What the transaction said happened, in emission order.
+    ///
+    /// Carried on every participant of a cross-shard transaction, never
+    /// locality-scoped: locality decides what a receipt *applies*, and two
+    /// committees check each other's copy byte for byte. Which shard
+    /// stores an event is the consumer's rule, read off each event's
+    /// emitter.
+    pub events: Vec<Event>,
     /// Total fuel consumed: engine schedule plus boundary supplement.
     ///
     /// Exact on a completed execution and engine-defined at a core trap,
@@ -354,6 +406,14 @@ pub struct KernelSession {
     /// that walk quadratic in the interval and floods the access log with
     /// one record per step.
     scans: BTreeMap<u32, Vec<(u128, Vec<u8>)>>,
+    /// The instance whose method is executing, set by the runner as it
+    /// enters each manifest node. The capability table is per transaction
+    /// and positional, so the session has no other way to know whose
+    /// invocation an emission belongs to.
+    invocation: Option<Address>,
+    /// Events emitted so far, kept until the outcome is known: an abort
+    /// discards them, so nothing an aborted transaction said survives.
+    events: Vec<Event>,
 }
 
 impl KernelSession {
@@ -439,6 +499,8 @@ impl KernelSession {
             hash_fn,
             locality: Locality::All,
             scans: BTreeMap::new(),
+            invocation: None,
+            events: Vec::new(),
         })
     }
 
@@ -719,6 +781,48 @@ impl KernelSession {
         (self.hash_fn)(data)
     }
 
+    /// Enter an invocation: subsequent emissions are stamped with
+    /// `emitter`, the address of the instance whose method runs next.
+    ///
+    /// The runner calls this as it walks each manifest node, since the
+    /// node names its target and the session does not.
+    pub const fn enter_invocation(&mut self, emitter: Address) {
+        self.invocation = Some(emitter);
+    }
+
+    /// Leave the current invocation. An emission outside one is a runner
+    /// defect and traps rather than guessing an emitter.
+    pub const fn leave_invocation(&mut self) {
+        self.invocation = None;
+    }
+
+    /// Emit an event from the executing instance.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`]: no invocation to attribute it to, a type past
+    /// [`MAX_EVENT_TYPES`], or a count or payload past its cap. The caps
+    /// trap rather than truncate, so what a transaction emitted is either
+    /// entirely in its receipt or the transaction did not complete.
+    pub fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), SessionTrap> {
+        let emitter = self.invocation.ok_or(SessionTrap::NoInvocation)?;
+        if event_type >= MAX_EVENT_TYPES {
+            return Err(SessionTrap::EventTypeOutOfRange(event_type));
+        }
+        if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
+            return Err(SessionTrap::EventPayloadTooLarge(payload.len()));
+        }
+        if self.events.len() >= MAX_EVENTS_PER_TX {
+            return Err(SessionTrap::TooManyEvents);
+        }
+        self.events.push(Event {
+            emitter,
+            event_type,
+            payload,
+        });
+        Ok(())
+    }
+
     /// Close the session: fold queued deltas, settle this transaction's
     /// reservations, run the trace-subset oracle, and produce the receipt
     /// together with the threaded store (the input for the next
@@ -859,6 +963,7 @@ impl KernelSession {
             Receipt {
                 outcome,
                 delta,
+                events: self.events,
                 fuel,
             },
             self.store,
@@ -915,6 +1020,9 @@ fn abort_with(mut store: OverlayStore, outcome: Outcome, fuel: u64) -> (Receipt,
         Receipt {
             outcome,
             delta: StateDelta::default(),
+            // An abort discards its effects, and what it claimed happened
+            // is one of them.
+            events: Vec::new(),
             fuel,
         },
         store,
@@ -1085,7 +1193,10 @@ mod tests {
         Window, child_key,
     };
 
-    use super::{Capability, EnvInputs, KernelSession, MaterializeError, SessionTrap};
+    use super::{
+        Capability, EnvInputs, Event, KernelSession, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
+        MAX_EVENTS_PER_TX, MaterializeError, Outcome, SessionTrap,
+    };
     use crate::modes::{TxHash, encode_amount};
     use crate::overlay::OverlayStore;
     use crate::store::{MemoryStore, StoreError, SubstateStore};
@@ -1450,6 +1561,92 @@ mod tests {
         assert_eq!(session.randomness(), env().randomness);
         assert_eq!(session.hash(&[1, 2, 3])[0], 3);
         assert!(session.capabilities().is_empty());
+    }
+
+    #[test]
+    fn an_emission_is_stamped_with_the_entered_invocation() {
+        // Attribution decides which shard stores an event, so the address
+        // comes from the runner entering a node — never from the guest,
+        // which would make it a claim.
+        let mut session = session_over(MemoryStore::new(), &EffectSet::new());
+        let (first, second) = (Address([0x11; 16]), Address([0x22; 16]));
+
+        session.enter_invocation(first);
+        session.emit(3, b"one".to_vec()).unwrap();
+        session.enter_invocation(second);
+        session.emit(4, b"two".to_vec()).unwrap();
+
+        let (receipt, _) = session
+            .finish(Outcome::Completed { value: None }, 0)
+            .unwrap();
+        assert_eq!(
+            receipt.events,
+            vec![
+                Event {
+                    emitter: first,
+                    event_type: 3,
+                    payload: b"one".to_vec(),
+                },
+                Event {
+                    emitter: second,
+                    event_type: 4,
+                    payload: b"two".to_vec(),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn emission_refuses_outside_an_invocation_and_past_its_caps() {
+        let mut session = session_over(MemoryStore::new(), &EffectSet::new());
+        assert_eq!(session.emit(0, Vec::new()), Err(SessionTrap::NoInvocation));
+
+        session.enter_invocation(Address([7; 16]));
+        assert_eq!(
+            session.emit(MAX_EVENT_TYPES, Vec::new()),
+            Err(SessionTrap::EventTypeOutOfRange(MAX_EVENT_TYPES)),
+        );
+        let oversized = vec![0u8; MAX_EVENT_PAYLOAD_BYTES + 1];
+        assert_eq!(
+            session.emit(0, oversized),
+            Err(SessionTrap::EventPayloadTooLarge(
+                MAX_EVENT_PAYLOAD_BYTES + 1
+            )),
+        );
+        for _ in 0..MAX_EVENTS_PER_TX {
+            session.emit(0, Vec::new()).unwrap();
+        }
+        // The cap traps rather than truncating: what a transaction emitted
+        // is entirely in its receipt, or the transaction did not complete.
+        assert_eq!(session.emit(0, Vec::new()), Err(SessionTrap::TooManyEvents));
+
+        session.leave_invocation();
+        assert_eq!(session.emit(0, Vec::new()), Err(SessionTrap::NoInvocation));
+    }
+
+    #[test]
+    fn an_abort_discards_what_the_transaction_claimed() {
+        // An abort discards its effects, and a claim about what happened
+        // is one of them.
+        let cell = key(0xE1);
+        let set = declared(&[Effect {
+            target: EffectTarget::Point(cell),
+            mode: Mode::Delta,
+        }]);
+        let mut session = session_over(MemoryStore::new(), &set);
+
+        session.enter_invocation(Address([9; 16]));
+        session.emit(1, b"paid".to_vec()).unwrap();
+        session.delta_sub(0, &encode_amount(1)).unwrap();
+
+        let (receipt, _) = session
+            .finish(Outcome::Completed { value: None }, 7)
+            .unwrap();
+        assert!(
+            matches!(receipt.outcome, Outcome::Infeasible { .. }),
+            "a debit past the floor is the transaction's own loss",
+        );
+        assert!(receipt.events.is_empty());
     }
 
     #[test]

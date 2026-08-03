@@ -58,6 +58,7 @@ pub trait RefKernelHost {
     fn randomness(&self) -> [u8; 32];
     /// The protocol hash function.
     fn hash(&self, data: &[u8]) -> [u8; 32];
+    fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), String>;
 }
 
 /// The state interface's resource types: one per access mode.
@@ -133,6 +134,7 @@ enum HostFn {
     Clock,
     Randomness,
     Hash,
+    Emit,
 }
 
 /// A component-level function.
@@ -451,6 +453,7 @@ impl RefComponent {
             ("env", "clock") => Ok(HostFn::Clock),
             ("env", "randomness") => Ok(HostFn::Randomness),
             ("crypto", "hash") => Ok(HostFn::Hash),
+            ("events", "emit") => Ok(HostFn::Emit),
             _ => Err(DecodeError::Unsupported(format!(
                 "kernel import {interface}#{name}"
             ))),
@@ -1142,7 +1145,8 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::RangeReadEntry
                     | HostFn::RangeWriteOrder
                     | HostFn::RangeWriteEntry
-                    | HostFn::Hash,
+                    | HostFn::Hash
+                    | HostFn::Emit,
                 ) => 3,
                 CompFunc::Host(HostFn::RangeWriteSet) => 4,
                 CompFunc::Host(HostFn::RangeWriteInsert) => 5,
@@ -1310,6 +1314,16 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let digest = self.host.hash(&data);
                         self.charge_boundary(store, data.len() + digest.len())?;
                         self.lower_list(modules, store, mem, realloc, &digest, args[2])?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::Emit => {
+                        let mem = self.mem_opt(id)?;
+                        let event_type = args[0].as_i32().cast_unsigned();
+                        let payload = Self::read_guest_bytes(store, mem, args[1], args[2])?;
+                        self.charge_boundary(store, payload.len())?;
+                        self.host
+                            .emit(event_type, payload)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(Vec::new())
                     }
                 }

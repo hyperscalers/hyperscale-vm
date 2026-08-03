@@ -144,6 +144,7 @@ const CLOCK_MS: u64 = 111_222;
 
 struct TestHost {
     values: Vec<Vec<u8>>,
+    emitted: Vec<(u32, Vec<u8>)>,
 }
 
 impl KernelHost for TestHost {
@@ -222,6 +223,11 @@ impl KernelHost for TestHost {
         let sum = data.iter().fold(0u8, |acc, b| acc.wrapping_add(*b));
         [sum; 32]
     }
+
+    fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), String> {
+        self.emitted.push((event_type, payload));
+        Ok(())
+    }
 }
 
 fn run_guest(engine: &Engine, substate_len: usize, fuel: u64) -> Result<(u64, u64, Vec<Vec<u8>>)> {
@@ -235,6 +241,7 @@ fn run_guest(engine: &Engine, substate_len: usize, fuel: u64) -> Result<(u64, u6
         engine,
         TestHost {
             values: vec![vec![3; substate_len], Vec::new()],
+            emitted: Vec::new(),
         },
     );
     store.set_fuel(fuel)?;
