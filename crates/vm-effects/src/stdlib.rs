@@ -103,6 +103,9 @@ pub fn account_metadata() -> PackageMetadata {
             calls: vec![],
         },
     );
+    // Index order is the contract: the guest emits 0 and 1, and these are
+    // what those indexes mean.
+    methods.events = vec!["withdrawn".into(), "deposited".into()];
     methods
 }
 

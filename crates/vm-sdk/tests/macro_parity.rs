@@ -172,7 +172,12 @@ mod book {
 
 #[test]
 fn the_account_body_derives_its_authored_signature() {
-    assert_eq!(account::blueprint().metadata(), account_metadata());
+    // The macro derives signatures from the body; the account's event
+    // table is authored beside them.
+    assert_eq!(
+        account::blueprint().metadata().methods,
+        account_metadata().methods
+    );
 }
 
 #[test]

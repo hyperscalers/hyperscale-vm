@@ -23,7 +23,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, Outcome, OverlayStore, Receipt,
+    Capability, EnvInputs, Event, KernelSession, MemoryStore, Outcome, OverlayStore, Receipt,
     SubstateStore, TxHash, decode_amount, encode_amount,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
@@ -380,12 +380,17 @@ fn execute_manifest(
         };
 
         let guest = guest_for(node.target);
+        // The node names its target, so the walker is what can stamp an
+        // emission with its emitter; the session sees one capability table
+        // for the whole transaction and could not tell whose call it is.
+        session.enter_invocation(node.target);
         let invoked = invoke_node(lane, engines, guest, session, &call);
         let (returned_session, node_outputs, fuel) = match invoked {
             Ok(ok) => ok,
             Err(_trap) => return Ok((TxResult::Trapped, before)),
         };
         session = returned_session;
+        session.leave_invocation();
         fuel_total += fuel;
         outputs.push(node_outputs);
     }
@@ -847,6 +852,37 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
         100
     );
     assert!(receipt.delta.cells.is_empty());
+    // Both nodes emitted, and each event carries the address of the node
+    // that ran rather than anything the guest could have named — the two
+    // legs of a transfer live on different shards, so this is what decides
+    // which receipt each event lands on.
+    assert_eq!(
+        receipt.events,
+        vec![
+            Event {
+                emitter: ALICE,
+                event_type: 0,
+                payload: encode_amount(100).to_vec(),
+            },
+            Event {
+                emitter: BOB,
+                event_type: 1,
+                payload: encode_amount(100).to_vec(),
+            },
+        ],
+    );
+    // Nothing on the execution path resolves an index, so the guest's
+    // constants and the package's table are two halves of one contract
+    // that only a test holds together.
+    let table = account_metadata().events;
+    assert_eq!(table, vec!["withdrawn", "deposited"]);
+    for event in &receipt.events {
+        assert!(
+            table.get(event.event_type as usize).is_some(),
+            "event type {} resolves in its emitter's package",
+            event.event_type,
+        );
+    }
     assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 50);
     assert_eq!(amount_of(&mut final_store, vault(BOB, RES_X)), 100);
     Ok(())

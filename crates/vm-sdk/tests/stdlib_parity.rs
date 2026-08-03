@@ -169,7 +169,12 @@ fn assert_parity(traced: &Blueprint, authored: &PackageMetadata, package: &str) 
             .unwrap_or_else(|| panic!("{package}: the SDK declared no `{name}`"));
         assert_eq!(got, signature, "{package}::{name}");
     }
-    assert_eq!(&traced, authored, "{package}: the method sets differ");
+    // A trace derives signatures, which is the whole of what a blueprint
+    // states; the authored package also names its event table.
+    assert_eq!(
+        traced.methods, authored.methods,
+        "{package}: the method sets differ"
+    );
 }
 
 #[test]

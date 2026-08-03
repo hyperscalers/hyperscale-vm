@@ -244,6 +244,7 @@ impl GuestRunner for BlessedComposed {
         let mut fuel_total = 0;
         for node in &self.manifests[&id] {
             let call = resolve_call(node, &outputs);
+            session.enter_invocation(node.target);
             let mut linker = Linker::<SessionHost>::new(&self.engine);
             add_kernel_to_linker(&mut linker).expect("wiring");
             let mut store = Store::new(&self.engine, SessionHost(session));
@@ -273,6 +274,7 @@ impl GuestRunner for BlessedComposed {
             };
             fuel_total += FUEL - store.get_fuel().expect("fuel");
             session = store.into_data().0;
+            session.leave_invocation();
             match result {
                 Ok(node_outputs) => outputs.push(node_outputs),
                 Err(_trap) => {
@@ -331,12 +333,14 @@ impl GuestRunner for RefComposed {
                     false,
                 ),
             };
+            session.enter_invocation(node.target);
             let mut instance =
                 RefComponentInstance::instantiate(&self.component, SessionHost(session))
                     .expect("instantiate");
             let outcome = instance.invoke(export, &args).expect("invoke");
             fuel_total += instance.fuel_consumed();
             session = instance.into_host().0;
+            session.leave_invocation();
             match outcome {
                 Ok(values) => match (has_output, values.as_slice()) {
                     (false, []) => outputs.push(Vec::new()),

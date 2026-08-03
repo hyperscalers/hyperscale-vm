@@ -10,11 +10,17 @@ wit_bindgen::generate!({
 });
 
 use hyperscale::kernel::env::randomness;
+use hyperscale::kernel::events::emit;
 use hyperscale::kernel::state::{
     delta_cell_add, reserve_cell_amount, snap_cell_get, write_cell_set,
 };
 
 struct Account;
+
+/// The account's event table: the indexes a consumer resolves against
+/// this package's metadata.
+const WITHDRAWN: u32 = 0;
+const DEPOSITED: u32 = 1;
 
 fn amount_of(cell: &[u8]) -> u128 {
     if cell.is_empty() {
@@ -27,11 +33,13 @@ impl Guest for Account {
     fn withdraw(vault: &ReserveCell, amount: Vec<u8>) -> Vec<u8> {
         let reserved = reserve_cell_amount(vault);
         assert!(reserved == amount, "reservation does not match the request");
+        emit(WITHDRAWN, &reserved);
         reserved
     }
 
     fn deposit(vault: &DeltaCell, amount: Vec<u8>) {
         delta_cell_add(vault, &amount);
+        emit(DEPOSITED, &amount);
     }
 
     fn assert_balance(vault: &SnapCell, min: Vec<u8>) {

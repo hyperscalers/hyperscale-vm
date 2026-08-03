@@ -5,6 +5,7 @@ package test:guest;
 world account {
     import hyperscale:kernel/state;
     import hyperscale:kernel/env;
+    import hyperscale:kernel/events;
 
     use hyperscale:kernel/state.{reserve-cell, delta-cell, snap-cell, write-cell};
 

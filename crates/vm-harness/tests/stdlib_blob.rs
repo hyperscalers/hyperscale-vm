@@ -14,8 +14,8 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome, OverlayStore, Receipt,
-    SubstateStore, TxHash, encode_amount,
+    Capability, EnvInputs, Event, KernelSession, MemoryStore, Movement, Outcome, OverlayStore,
+    Receipt, SubstateStore, TxHash, encode_amount,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
@@ -36,16 +36,28 @@ fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
 }
 
+/// The account that withdraws, guards, and stamps.
+const SENDER: Address = Address([1; 16]);
+/// The account that receives.
+const RECIPIENT: Address = Address([2; 16]);
+
 fn keys() -> (SubstateKey, SubstateKey) {
     (
-        child_key(&TestHasher, Address([1; 16]), RoleId(1), &[]),
-        child_key(&TestHasher, Address([2; 16]), RoleId(1), &[]),
+        child_key(&TestHasher, SENDER, RoleId(1), &[]),
+        child_key(&TestHasher, RECIPIENT, RoleId(1), &[]),
     )
+}
+
+/// Enter the account whose method runs next. Emission is stamped from
+/// here, so the caller driving the sequence is what supplies it.
+const fn entering(mut host: SessionHost, who: Address) -> SessionHost {
+    host.0.enter_invocation(who);
+    host
 }
 
 /// The sender's entropy leaf — the stamp's exclusive-write target.
 fn entropy_key() -> SubstateKey {
-    child_key(&TestHasher, Address([1; 16]), RoleId(5), &[])
+    child_key(&TestHasher, SENDER, RoleId(5), &[])
 }
 
 fn session() -> KernelSession {
@@ -123,7 +135,7 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
     let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
 
-    let host = SessionHost(session());
+    let host = entering(SessionHost(session()), SENDER);
     let (sender, recipient) = keys();
     let sender_rep = rep_of(&host.0, &Capability::Reserve(sender));
     let mut store = Store::new(&engine, host);
@@ -140,7 +152,7 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
     )?;
     assert_eq!(bucket, encode_amount(AMOUNT).to_vec());
     let withdraw_fuel = FUEL - store.get_fuel()?;
-    let host = store.into_data();
+    let host = entering(store.into_data(), RECIPIENT);
 
     let recipient_rep = rep_of(&host.0, &Capability::Delta(recipient));
     let mut store = Store::new(&engine, host);
@@ -150,7 +162,7 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
         instance.get_typed_func::<(Resource<DeltaCell>, &[u8]), ()>(&mut store, "deposit")?;
     deposit.call(&mut store, (Resource::new_borrow(recipient_rep), &bucket))?;
     let deposit_fuel = FUEL - store.get_fuel()?;
-    let host = store.into_data();
+    let host = entering(store.into_data(), SENDER);
 
     // The guard reads the batch baseline: the seeded balance, not the
     // reservation-diminished one.
@@ -168,7 +180,7 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
         ),
     )?;
     let guard_fuel = FUEL - store.get_fuel()?;
-    let host = store.into_data();
+    let host = entering(store.into_data(), SENDER);
 
     let entropy_rep = rep_of(&host.0, &Capability::Write(entropy_key()));
     let mut store = Store::new(&engine, host);
@@ -188,7 +200,7 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
     let component = RefComponent::decode(ACCOUNT_COMPONENT)?;
     let (sender, recipient) = keys();
 
-    let host = SessionHost(session());
+    let host = entering(SessionHost(session()), SENDER);
     let sender_rep = rep_of(&host.0, &Capability::Reserve(sender));
     let mut instance = RefComponentInstance::instantiate(&component, host)?;
     let outcome = instance.invoke(
@@ -206,7 +218,7 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
     assert_eq!(*bucket, encode_amount(AMOUNT).to_vec());
     let bucket = bucket.clone();
     let withdraw_fuel = instance.fuel_consumed();
-    let host = instance.into_host();
+    let host = entering(instance.into_host(), RECIPIENT);
 
     let recipient_rep = rep_of(&host.0, &Capability::Delta(recipient));
     let mut instance = RefComponentInstance::instantiate(&component, host)?;
@@ -219,7 +231,7 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
     )?;
     outcome.map_err(|trap| wasmtime::error::format_err!("deposit trapped: {trap:?}"))?;
     let deposit_fuel = instance.fuel_consumed();
-    let host = instance.into_host();
+    let host = entering(instance.into_host(), SENDER);
 
     let snap_rep = rep_of(&host.0, &Capability::Snapshot(sender));
     let mut instance = RefComponentInstance::instantiate(&component, host)?;
@@ -232,7 +244,7 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
     )?;
     outcome.map_err(|trap| wasmtime::error::format_err!("assert-balance trapped: {trap:?}"))?;
     let guard_fuel = instance.fuel_consumed();
-    let host = instance.into_host();
+    let host = entering(instance.into_host(), SENDER);
 
     let entropy_rep = rep_of(&host.0, &Capability::Write(entropy_key()));
     let mut instance = RefComponentInstance::instantiate(&component, host)?;
@@ -265,6 +277,24 @@ fn the_committed_blob_validates_and_transfers_on_both_runtimes() -> Result<()> {
             credit: AMOUNT,
             debit: 0,
         })
+    );
+    // Each leg's event carries the account that ran, not the account the
+    // guest could name — and the two legs of a transfer sit on different
+    // shards, which is what the attribution decides.
+    assert_eq!(
+        blessed_receipt.events,
+        vec![
+            Event {
+                emitter: SENDER,
+                event_type: 0,
+                payload: encode_amount(AMOUNT).to_vec(),
+            },
+            Event {
+                emitter: RECIPIENT,
+                event_type: 1,
+                payload: encode_amount(AMOUNT).to_vec(),
+            },
+        ],
     );
 
     let (reference_receipt, reference_fuel) = reference_transfer()?;

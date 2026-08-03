@@ -99,6 +99,14 @@ pub struct MethodSignature {
 pub struct PackageMetadata {
     /// Effect signatures by method name.
     pub methods: BTreeMap<String, MethodSignature>,
+    /// The package's event names, in the index order a receipt event's
+    /// type refers to.
+    ///
+    /// Nothing on the execution path reads this: an event carries the
+    /// index, and the kernel bounds it without resolving it. The table is
+    /// what lets a consumer name what it read, and it can only mean one
+    /// thing because a package is content-addressed and immutable.
+    pub events: Vec<String>,
 }
 
 /// The content-addressed metadata cache. An entry never invalidates —

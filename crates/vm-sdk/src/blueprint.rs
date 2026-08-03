@@ -169,6 +169,7 @@ impl Blueprint {
                 .iter()
                 .map(|(name, m)| (name.clone(), m.signature.clone()))
                 .collect(),
+            events: Vec::new(),
         }
     }
 }
