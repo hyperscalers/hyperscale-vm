@@ -9,11 +9,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::admission::Admitted;
-use crate::dsl::{EvalError, EvalInputs, evaluate_effects, evaluate_expr};
+use crate::dsl::{Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr};
 use crate::hash::Hasher;
 use crate::manifest::{ManifestHash, NodeInput};
 use crate::metadata::{InstanceRegistry, MetadataCache, PackageHash};
-use crate::types::{Address, EffectSet, EffectTarget, Mode, ShardId, Value, Window};
+use crate::types::{Address, Effect, EffectSet, EffectTarget, Mode, ShardId, Value, Window};
 
 /// Resolves an owner prefix to the shard holding it.
 pub trait ShardResolver {
@@ -96,16 +96,75 @@ pub struct SnapshotObligation {
 pub struct Routing {
     /// The declared effect set of every participating shard.
     pub per_shard: BTreeMap<ShardId, EffectSet>,
+    /// Every evaluated frame's declaration, in preorder.
+    pub frames: Vec<FrameDeclaration>,
+    /// Effects no signature declared: the kernel synthesizes them from the
+    /// envelope rather than from a method body — today, the nullifier write
+    /// of every subintent the transaction commits.
+    ///
+    /// Materialized after every frame, so a frame's handle slice keeps the
+    /// position its signature gives it however many subintents the envelope
+    /// carries.
+    pub kernel_effects: Vec<Effect>,
     /// Every bounded-window snapshot the transaction must prove.
     pub snapshot_obligations: BTreeSet<SnapshotObligation>,
     /// The static call graph.
     pub call_graph: CallGraph,
 }
 
+/// One frame's contribution to the transaction's declaration.
+///
+/// A frame is one signature evaluation: a manifest node, or one of its
+/// transitive callees. Frames appear in [`Routing::frames`] in preorder —
+/// node index, then the node's own frame ordinal — which is the order the
+/// kernel materializes capabilities in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameDeclaration {
+    /// The invoking manifest node.
+    pub node: u32,
+    /// The frame's preorder position in that node's call tree; the node's
+    /// own frame is zero.
+    pub frame: u32,
+    /// The method this frame evaluated.
+    pub method: MethodRef,
+    /// This frame's effects in clause order — one entry per clause the
+    /// evaluation reached, `for-each` bodies expanded in place.
+    ///
+    /// A frame's handles occupy a contiguous run of the capability table,
+    /// so a generated guest's positional parameters are this slice.
+    pub ordered: Vec<Effect>,
+}
+
 impl Routing {
     /// The participating shards, ascending.
     pub fn shards(&self) -> impl Iterator<Item = ShardId> + '_ {
         self.per_shard.keys().copied()
+    }
+
+    /// The transaction's whole declaration, both views.
+    ///
+    /// `ordered` is every frame's clauses concatenated in preorder — the
+    /// order capability materialization builds its table in, and therefore
+    /// the order a guest's handle parameters are in. It is deliberately not
+    /// filtered by shard: the table is shard-invariant so that every
+    /// participant of a cross-shard transaction agrees on which rep is
+    /// which, and locality scopes what is *applied* rather than what is
+    /// materialized.
+    ///
+    /// # Errors
+    ///
+    /// [`RouteError::ReserveOverflow`] if folding two reservations on one
+    /// target exceeds `u128`.
+    pub fn declaration(&self) -> Result<Declaration, RouteError> {
+        let mut set = EffectSet::new();
+        let mut ordered = Vec::new();
+        let frame_effects = self.frames.iter().flat_map(|frame| frame.ordered.iter());
+        for effect in frame_effects.chain(self.kernel_effects.iter()) {
+            set.insert(*effect)
+                .map_err(|_| RouteError::ReserveOverflow)?;
+            ordered.push(*effect);
+        }
+        Ok(Declaration { set, ordered })
     }
 }
 
@@ -223,6 +282,7 @@ pub fn route(
         shards,
         identity,
         per_shard: BTreeMap::new(),
+        frames_log: Vec::new(),
         edges: BTreeSet::new(),
         evaluations: 0,
         frames: 0,
@@ -280,6 +340,8 @@ pub fn route(
 
     Ok(Routing {
         per_shard: fold.per_shard,
+        frames: fold.frames_log,
+        kernel_effects: Vec::new(),
         snapshot_obligations,
         call_graph: CallGraph {
             roots,
@@ -295,6 +357,7 @@ struct Fold<'a> {
     shards: &'a dyn ShardResolver,
     identity: ManifestHash,
     per_shard: BTreeMap<ShardId, EffectSet>,
+    frames_log: Vec<FrameDeclaration>,
     edges: BTreeSet<CallEdge>,
     evaluations: usize,
     // The current node's frame ordinal: preorder over its call tree, reset
@@ -358,9 +421,20 @@ impl Fold<'_> {
             method: method.to_owned(),
             source,
         };
-        let effects =
-            evaluate_effects(&signature.effects, &inputs, self.hasher).map_err(eval_context)?;
-        for effect in effects.iter() {
+        let declaration =
+            evaluate_declaration(&signature.effects, &inputs, self.hasher).map_err(eval_context)?;
+        // Recorded before descending into callees, so the log is preorder
+        // — the order capability materialization walks.
+        self.frames_log.push(FrameDeclaration {
+            node: node_index,
+            frame,
+            method: MethodRef {
+                instance,
+                method: method.to_owned(),
+            },
+            ordered: declaration.ordered,
+        });
+        for effect in declaration.set.iter() {
             let shard = self.shards.shard_of(effect.target.owner());
             self.per_shard
                 .entry(shard)
@@ -423,7 +497,9 @@ mod tests {
         CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
         PackageMetadata,
     };
-    use crate::types::{Address, Effect, EffectTarget, Mode, RoleId, ShardId, Value, child_key};
+    use crate::types::{
+        Address, Effect, EffectSet, EffectTarget, Mode, RoleId, ShardId, Value, child_key,
+    };
 
     fn pkg(name: &str) -> PackageHash {
         PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
@@ -471,8 +547,9 @@ mod tests {
         PrefixShardResolver { bits: 8 }
     }
 
-    #[test]
-    fn transitive_fold_unions_effects_and_records_edges() {
+    /// A payer calling a payee: one manifest node, one transitive callee,
+    /// and the two instances landing on different shards.
+    fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
         let mut cache = MetadataCache::new();
         let mut sender_pkg = PackageMetadata::default();
         sender_pkg.methods.insert(
@@ -528,7 +605,12 @@ mod tests {
                 ],
             }],
         };
+        (cache, instances, manifest)
+    }
 
+    #[test]
+    fn transitive_fold_unions_effects_and_records_edges() {
+        let (cache, instances, manifest) = payer_payee_world();
         let routing = route(
             &admitted(&manifest),
             &cache,
@@ -570,6 +652,59 @@ mod tests {
                 caller: pay_ref,
                 callee: recv_ref,
             }])
+        );
+    }
+
+    #[test]
+    fn frames_carry_the_clause_order_materialization_walks() {
+        let (cache, instances, manifest) = payer_payee_world();
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
+
+        // Preorder: the caller's frame before the callee it reached. This
+        // is the order `KernelSession::materialize` builds its capability
+        // table in, so it is the order a generated guest's handle
+        // parameters are in.
+        assert_eq!(
+            routing
+                .frames
+                .iter()
+                .map(|frame| (frame.node, frame.frame, frame.method.method.clone()))
+                .collect::<Vec<_>>(),
+            vec![(0, 0, "pay".to_owned()), (0, 1, "recv".to_owned())],
+        );
+
+        // The transaction-wide declaration reaches every effect routing
+        // placed on a shard and folds back to exactly that union — the
+        // property a consumer building a kernel batch depends on, and the
+        // one `execute_batch` rechecks before running anything.
+        let declaration = routing.declaration().unwrap();
+        let mut union = EffectSet::new();
+        for set in routing.per_shard.values() {
+            for effect in set.iter() {
+                union.insert(effect).unwrap();
+            }
+        }
+        assert_eq!(declaration.set, union);
+        assert_eq!(
+            declaration.ordered,
+            vec![
+                Effect {
+                    target: point(addr(0x11), RoleId(1)),
+                    mode: Mode::Delta,
+                },
+                Effect {
+                    target: point(addr(0x22), RoleId(2)),
+                    mode: Mode::Reserve { amount: 9 },
+                },
+            ],
+            "the caller's clause first, then its callee's"
         );
     }
 

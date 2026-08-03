@@ -288,15 +288,19 @@ pub fn route_tree(
     let mut routing = route(&tree.admitted, cache, instances, hasher, shards)?;
     for record in &tree.subintents {
         let shard = shards.shard_of(record.signer);
+        let effect = Effect {
+            target: EffectTarget::Point(record.nullifier),
+            mode: Mode::Write,
+        };
         routing
             .per_shard
             .entry(shard)
             .or_default()
-            .insert(Effect {
-                target: EffectTarget::Point(record.nullifier),
-                mode: Mode::Write,
-            })
+            .insert(effect)
             .expect("only reserve amounts fold, and this is a write");
+        // No signature declared this, so it belongs to no frame — see
+        // `Routing::kernel_effects`.
+        routing.kernel_effects.push(effect);
     }
     Ok(routing)
 }

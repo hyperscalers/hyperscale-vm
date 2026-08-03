@@ -54,8 +54,8 @@ pub use metadata::{
     PackageMetadata, ParamType, package_hash,
 };
 pub use route::{
-    CallEdge, CallGraph, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver,
-    RouteError, Routing, ShardResolver, SnapshotObligation, route,
+    CallEdge, CallGraph, FrameDeclaration, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef,
+    PrefixShardResolver, RouteError, Routing, ShardResolver, SnapshotObligation, route,
 };
 pub use types::{
     Address, Effect, EffectSet, EffectTarget, LocalKey, MAX_VALUE_DEPTH, Mode, ModeKind,
