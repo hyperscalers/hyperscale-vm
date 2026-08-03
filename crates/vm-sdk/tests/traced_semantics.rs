@@ -21,7 +21,7 @@ const RES_Z: Address = Address([0xE3; 16]);
 const VAULT: RoleId = RoleId(1);
 const CONFIG: RoleId = RoleId(3);
 
-fn identity() -> ManifestHash {
+const fn identity() -> ManifestHash {
     ManifestHash(Hash32([0x1D; 32]))
 }
 

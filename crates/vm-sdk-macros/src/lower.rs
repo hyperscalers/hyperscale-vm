@@ -102,7 +102,7 @@ pub enum Node {
         /// The nesting depth this binder introduces.
         depth: usize,
         /// The clauses inside.
-        body: Vec<Node>,
+        body: Vec<Self>,
     },
 }
 
@@ -235,7 +235,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn depth(&self) -> usize {
+    const fn depth(&self) -> usize {
         self.scopes.len() - 1
     }
 
@@ -407,12 +407,14 @@ impl<'a> Lowerer<'a> {
             syn::Expr::Try(try_) => {
                 self.expr(&try_.expr);
             }
-            syn::Expr::Macro(_) | syn::Expr::Lit(_) | syn::Expr::Path(_) => {}
+            // Everything else — literals, paths, macro invocations, and
+            // any expression form that cannot contain a state access —
+            // contributes nothing to walk into.
             _ => {}
         }
     }
 
-    fn path(&mut self, path: &syn::ExprPath) -> Val {
+    fn path(&self, path: &syn::ExprPath) -> Val {
         let Some(ident) = path.path.get_ident() else {
             // `u64::MAX` and friends are literals wearing a path. They show
             // up at range boundaries — "every sequence at this price" — so
@@ -445,22 +447,21 @@ impl<'a> Lowerer<'a> {
     }
 
     fn literal(lit: &syn::ExprLit) -> Val {
-        if let syn::Lit::Int(int) = &lit.lit {
-            if let Ok(value) = int.base10_parse::<u64>() {
-                return Val::Term(Term::LitU64(value));
-            }
+        if let syn::Lit::Int(int) = &lit.lit
+            && let Ok(value) = int.base10_parse::<u64>()
+        {
+            return Val::Term(Term::LitU64(value));
         }
         Val::Opaque
     }
 
     fn field(&mut self, field: &syn::ExprField) -> Val {
         // `self.<name>` names a state field rather than a value.
-        if let syn::Expr::Path(path) = &*field.base {
-            if path.path.is_ident("self") {
-                if let syn::Member::Named(name) = &field.member {
-                    return Val::Field(name.to_string());
-                }
-            }
+        if let syn::Expr::Path(path) = &*field.base
+            && path.path.is_ident("self")
+            && let syn::Member::Named(name) = &field.member
+        {
+            return Val::Field(name.to_string());
         }
         let base = self.expr(&field.base);
         match (base, &field.member) {
@@ -492,16 +493,14 @@ impl<'a> Lowerer<'a> {
 
     /// Resolve a configuration field name to its slot index.
     fn config_slot(&mut self, name: &str, field: &syn::ExprField) -> Val {
-        match self.config_fields.iter().position(|f| f == name) {
-            Some(index) => Val::Term(Term::Config(u32::try_from(index).unwrap_or(0))),
-            None => {
-                self.error(
-                    field.span(),
-                    "not a field of the component's configuration struct",
-                );
-                Val::Opaque
-            }
-        }
+        let Some(index) = self.config_fields.iter().position(|f| f == name) else {
+            self.error(
+                field.span(),
+                "not a field of the component's configuration struct",
+            );
+            return Val::Opaque;
+        };
+        Val::Term(Term::Config(u32::try_from(index).unwrap_or(0)))
     }
 
     fn free_call(&mut self, call: &syn::ExprCall) -> Val {
@@ -573,14 +572,12 @@ impl<'a> Lowerer<'a> {
                 // A reservation yields a value edge carrying the vault's
                 // own resource — which the site's key material already
                 // names, so the output needs no separate declaration.
-                if op == Op::Reserve {
-                    if let Some(Target::Point { material, .. }) =
+                if op == Op::Reserve
+                    && let Some(Target::Point { material, .. }) =
                         self.out.sites.get(site).map(|s| &s.target)
-                    {
-                        if let Some(resource) = material.first().cloned() {
-                            return Val::Produced(resource);
-                        }
-                    }
+                    && let Some(resource) = material.first().cloned()
+                {
+                    return Val::Produced(resource);
                 }
                 Val::Opaque
             }
@@ -646,59 +643,65 @@ impl<'a> Lowerer<'a> {
             }
 
             // A family of leaves keyed by an address.
-            (FieldKind::Keyed, "at") => match args.first() {
-                Some(Val::Term(key)) => Val::Handle(self.open(Target::Point {
-                    role,
-                    material: vec![key.clone()],
-                })),
-                _ => {
+            (FieldKind::Keyed, "at") => {
+                if let Some(Val::Term(key)) = args.first() {
+                    Val::Handle(self.open(Target::Point {
+                        role,
+                        material: vec![key.clone()],
+                    }))
+                } else {
                     self.error(
                         call.args.span(),
                         "this key is not derivable from the method's arguments or the \
-                         component's configuration. Routing evaluates a declaration before \
-                         execution and never reads state, so a key computed from a substate \
-                         value cannot be declared — pass it as a parameter instead",
+                     component's configuration. Routing evaluates a declaration before \
+                     execution and never reads state, so a key computed from a substate \
+                     value cannot be declared — pass it as a parameter instead",
                     );
                     Val::Opaque
                 }
-            },
+            }
 
             // One entry of an ordered collection.
-            (FieldKind::Ordered, "at") => match args.first() {
-                Some(Val::Term(order)) => Val::Handle(self.open(Target::Entry {
-                    role,
-                    order: order.clone(),
-                })),
-                _ => {
+            (FieldKind::Ordered, "at") => {
+                if let Some(Val::Term(order)) = args.first() {
+                    Val::Handle(self.open(Target::Entry {
+                        role,
+                        order: order.clone(),
+                    }))
+                } else {
                     self.error(
                         call.args.span(),
                         "this order key is not derivable from the method's arguments or the \
-                         component's configuration",
+                     component's configuration",
                     );
                     Val::Opaque
                 }
-            },
+            }
 
             // A declared interval of an ordered collection.
-            (FieldKind::Ordered, "range") => match (args.first(), args.get(1), args.get(2)) {
-                (Some(Val::Term(lo)), Some(Val::Term(hi)), Some(Val::Term(Term::LitU64(cap)))) => {
+            (FieldKind::Ordered, "range") => {
+                if let (
+                    Some(Val::Term(lo)),
+                    Some(Val::Term(hi)),
+                    Some(Val::Term(Term::LitU64(cap))),
+                ) = (args.first(), args.get(1), args.get(2))
+                {
                     Val::Handle(self.open(Target::Range {
                         role,
                         lo: lo.clone(),
                         hi: hi.clone(),
                         cap: u32::try_from(*cap).unwrap_or(u32::MAX),
                     }))
-                }
-                _ => {
+                } else {
                     self.error(
                         call.args.span(),
                         "a range's bounds must be derivable from the arguments, and its entry \
-                         cap must be a literal — the cap bounds the work execution may do, so \
-                         it is declaration, not data",
+                     cap must be a literal — the cap bounds the work execution may do, so \
+                     it is declaration, not data",
                     );
                     Val::Opaque
                 }
-            },
+            }
 
             // A single leaf: the operation lands directly on it.
             (FieldKind::Cell, _) => {
@@ -721,17 +724,14 @@ impl<'a> Lowerer<'a> {
     }
 
     fn for_loop(&mut self, loop_: &syn::ExprForLoop) {
-        let list = match self.expr(&loop_.expr) {
-            Val::Term(term) => term,
-            _ => {
-                self.error(
-                    loop_.expr.span(),
-                    "a `for` loop in a contract body must range over a configured collection \
-                     — that is what bounds the keys it declares. An iterator over runtime \
-                     values has no declarable key set",
-                );
-                return;
-            }
+        let Val::Term(list) = self.expr(&loop_.expr) else {
+            self.error(
+                loop_.expr.span(),
+                "a `for` loop in a contract body must range over a configured collection \
+                 — that is what bounds the keys it declares. An iterator over runtime \
+                 values has no declarable key set",
+            );
+            return;
         };
 
         let depth = self.depth();

@@ -187,21 +187,16 @@ fn strip(attrs: &mut Vec<syn::Attribute>) {
     });
 }
 
-fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
-    let span = module.span();
-    let Some((_, items)) = &mut module.content else {
-        return Err(syn::Error::new(
-            span,
-            "`#[blueprint]` needs the module's body — it reads the state, the configuration, \
-             and every method together",
-        ));
-    };
-
-    // ---- the component's state -----------------------------------------
+/// The `#[state]` struct: its name, its fields by role and shape, and the
+/// configuration struct its `Locked<_>` field names, if it has one.
+fn parse_state(
+    items: &[syn::Item],
+    span: proc_macro2::Span,
+) -> syn::Result<(syn::Ident, BTreeMap<String, Field>, Option<syn::Ident>)> {
     let mut fields = BTreeMap::new();
     let mut state_name = None;
     let mut config_name = None;
-    for item in items.iter() {
+    for item in items {
         let syn::Item::Struct(item) = item else {
             continue;
         };
@@ -211,18 +206,13 @@ fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
         state_name = Some(item.ident.clone());
         for field in &item.fields {
             let (name, parsed) = parse_field(field)?;
-            if parsed.kind == FieldKind::Locked {
-                if let syn::Type::Path(path) = &field.ty {
-                    if let Some(syn::PathArguments::AngleBracketed(args)) =
-                        path.path.segments.last().map(|s| &s.arguments)
-                    {
-                        if let Some(syn::GenericArgument::Type(syn::Type::Path(inner))) =
-                            args.args.first()
-                        {
-                            config_name = inner.path.get_ident().cloned();
-                        }
-                    }
-                }
+            if parsed.kind == FieldKind::Locked
+                && let syn::Type::Path(path) = &field.ty
+                && let Some(syn::PathArguments::AngleBracketed(args)) =
+                    path.path.segments.last().map(|s| &s.arguments)
+                && let Some(syn::GenericArgument::Type(syn::Type::Path(inner))) = args.args.first()
+            {
+                config_name = inner.path.get_ident().cloned();
             }
             fields.insert(name, parsed);
         }
@@ -234,80 +224,97 @@ fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
              the package sits under",
         )
     })?;
+    Ok((state_name, fields, config_name))
+}
 
-    // ---- the creation-fixed configuration -------------------------------
-    let mut config_fields = Vec::new();
-    if let Some(config_name) = &config_name {
-        for item in items.iter() {
-            let syn::Item::Struct(item) = item else {
-                continue;
-            };
-            if item.ident != *config_name {
-                continue;
-            }
-            for field in &item.fields {
-                if let Some(ident) = &field.ident {
-                    config_fields.push(ident.to_string());
-                }
-            }
-        }
+/// The configuration struct's field names in declaration order — which is
+/// what fixes each one's config slot index.
+fn config_slots(items: &[syn::Item], config_name: Option<&syn::Ident>) -> Vec<String> {
+    let Some(config_name) = config_name else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == *config_name => Some(&item.fields),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|field| field.ident.as_ref().map(ToString::to_string))
+        .collect()
+}
+
+/// One public method's `.method(…)` builder call.
+fn lower_method(
+    method: &syn::ImplItemFn,
+    fields: &BTreeMap<String, Field>,
+    config_fields: &[String],
+) -> syn::Result<TokenStream2> {
+    let published = method_name(method)?;
+    let mut params = Vec::new();
+    let mut kinds = Vec::new();
+    for arg in &method.sig.inputs {
+        let syn::FnArg::Typed(arg) = arg else {
+            continue; // the receiver
+        };
+        let syn::Pat::Ident(ident) = &*arg.pat else {
+            return Err(syn::Error::new(
+                arg.pat.span(),
+                "a contract parameter must be a plain name — the declaration refers \
+                 to arguments positionally, and a pattern has no one position",
+            ));
+        };
+        params.push(ident.ident.to_string());
+        kinds.push(param_type(&arg.ty)?);
     }
 
-    // ---- one declaration per public method ------------------------------
+    let lowered = Lowerer::new(fields, config_fields, &params)
+        .run(&method.block)
+        .map_err(|errors| {
+            errors
+                .into_iter()
+                .reduce(|mut all, error| {
+                    all.combine(error);
+                    all
+                })
+                .unwrap_or_else(|| syn::Error::new(method.span(), "lowering failed"))
+        })?;
+    let closure = emit::declaration(&lowered);
+    Ok(quote!(
+        .method(#published, &[#(#kinds),*], #closure)
+    ))
+}
+
+/// Every public method of the state struct's inherent impls, lowered.
+fn lower_methods(
+    items: &[syn::Item],
+    state_name: &syn::Ident,
+    fields: &BTreeMap<String, Field>,
+    config_fields: &[String],
+) -> syn::Result<Vec<TokenStream2>> {
     let mut declarations = Vec::new();
-    for item in items.iter() {
+    for item in items {
         let syn::Item::Impl(block) = item else {
             continue;
         };
-        if !matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(&state_name)) {
+        if !matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(state_name)) {
             continue;
         }
         for item in &block.items {
             let syn::ImplItem::Fn(method) = item else {
                 continue;
             };
-            if !matches!(method.vis, syn::Visibility::Public(_)) {
-                continue;
+            if matches!(method.vis, syn::Visibility::Public(_)) {
+                declarations.push(lower_method(method, fields, config_fields)?);
             }
-
-            let published = method_name(method)?;
-            let mut params = Vec::new();
-            let mut kinds = Vec::new();
-            for arg in &method.sig.inputs {
-                let syn::FnArg::Typed(arg) = arg else {
-                    continue; // the receiver
-                };
-                let syn::Pat::Ident(ident) = &*arg.pat else {
-                    return Err(syn::Error::new(
-                        arg.pat.span(),
-                        "a contract parameter must be a plain name — the declaration refers \
-                         to arguments positionally, and a pattern has no one position",
-                    ));
-                };
-                params.push(ident.ident.to_string());
-                kinds.push(param_type(&arg.ty)?);
-            }
-
-            let lowered = Lowerer::new(&fields, &config_fields, &params)
-                .run(&method.block)
-                .map_err(|errors| {
-                    errors
-                        .into_iter()
-                        .reduce(|mut all, error| {
-                            all.combine(error);
-                            all
-                        })
-                        .unwrap_or_else(|| syn::Error::new(method.span(), "lowering failed"))
-                })?;
-            let closure = emit::declaration(&lowered);
-            declarations.push(quote!(
-                .method(#published, &[#(#kinds),*], #closure)
-            ));
         }
     }
+    Ok(declarations)
+}
 
-    // ---- the module, with the macro's own attributes removed ------------
-    for item in items.iter_mut() {
+/// Remove the macro's own attributes, so what it emits is ordinary Rust.
+fn strip_macro_attrs(items: &mut [syn::Item]) {
+    for item in items {
         match item {
             syn::Item::Struct(item) => {
                 strip(&mut item.attrs);
@@ -325,7 +332,23 @@ fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
             _ => {}
         }
     }
+}
 
+fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
+    let span = module.span();
+    let Some((_, items)) = &mut module.content else {
+        return Err(syn::Error::new(
+            span,
+            "`#[blueprint]` needs the module's body — it reads the state, the configuration, \
+             and every method together",
+        ));
+    };
+
+    let (state_name, fields, config_name) = parse_state(items, span)?;
+    let config_fields = config_slots(items, config_name.as_ref());
+    let declarations = lower_methods(items, &state_name, &fields, &config_fields)?;
+
+    strip_macro_attrs(items);
     items.push(syn::parse_quote!(
         /// This package's metadata, as routing consumes it.
         ///

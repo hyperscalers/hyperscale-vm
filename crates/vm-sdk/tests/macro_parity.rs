@@ -13,6 +13,18 @@
 //! fixtures are routed under test elsewhere in the workspace, and these
 //! packages are byte-identical to them.
 
+// The contracts below are read by `#[blueprint]`, never called: what these
+// tests exercise is the metadata derived from the bodies, and the derivation
+// runs at expansion time. In a real contract crate the module is public and
+// its methods are the package's exported surface, so nothing is dead there —
+// the appearance is an artifact of a contract living inside a test binary.
+#![allow(dead_code)]
+// `&mut self` is the contract's own statement that a method mutates
+// component state. That the host-side stub handles in `sdk::state` happen to
+// take `&self` is an artifact of their being unimplemented off-guest, not a
+// reason to narrow a contract's signature.
+#![allow(clippy::needless_pass_by_ref_mut)]
+
 use hyperscale_vm_effects::stdlib::{account_metadata, amm_metadata, book_metadata};
 use hyperscale_vm_sdk::blueprint;
 
