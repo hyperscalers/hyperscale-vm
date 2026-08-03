@@ -320,7 +320,74 @@ pub fn evaluate_effects(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
 ) -> Result<EffectSet, EvalError> {
-    let mut set = EffectSet::new();
+    Ok(evaluate_declaration(clauses, inputs, hasher)?.set)
+}
+
+/// A signature evaluation's two views of the same declaration.
+///
+/// They are not interchangeable, and which one a consumer wants is
+/// decided by whether it cares about *what* is accessed or about *the
+/// order the author wrote it in*.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Declaration {
+    /// The declared accesses folded into a set: deduplicated, canonically
+    /// ordered by `(target, mode)`, reserve amounts on one target summed.
+    ///
+    /// This is what routing, conflict grouping, provisioning, and
+    /// footprint pricing read. Folding is load-bearing for all four — two
+    /// reservations on one cell must be judged against their sum, not
+    /// separately.
+    pub set: EffectSet,
+    /// The same accesses in clause-evaluation order, one entry per clause
+    /// the evaluation reached, `for-each` bodies expanded in place.
+    ///
+    /// This is what capability materialization reads, because a handle's
+    /// rep is its index into the materialized table and the guest's
+    /// parameters are positional. Set order cannot serve: it is a
+    /// comparison over hash-derived keys, so it is stable but arbitrary,
+    /// and folding makes its *length* depend on whether two clauses
+    /// happened to evaluate to one target.
+    pub ordered: Vec<Effect>,
+}
+
+impl Declaration {
+    /// Both views from a set alone, taking canonical order as the clause
+    /// order.
+    ///
+    /// For callers that genuinely have no clause order — hand-authored
+    /// fixtures and tests. A production path that evaluates a signature
+    /// has the clause order and must use [`evaluate_declaration`]:
+    /// reconstructing it from the set here would reintroduce exactly the
+    /// two problems the split exists to fix, since folding has already
+    /// discarded both the order and any coincident clauses.
+    #[must_use]
+    pub fn from_set(set: EffectSet) -> Self {
+        let ordered = set.iter().collect();
+        Self { set, ordered }
+    }
+}
+
+impl From<EffectSet> for Declaration {
+    /// See [`Declaration::from_set`] — canonical order stands in for the
+    /// clause order, which is correct only where there was never a
+    /// signature to evaluate.
+    fn from(set: EffectSet) -> Self {
+        Self::from_set(set)
+    }
+}
+
+/// Evaluate a signature to both views of its declaration.
+///
+/// # Errors
+///
+/// Any [`EvalError`]; verdicts are deterministic and identical on every
+/// node.
+pub fn evaluate_declaration(
+    clauses: &[Clause],
+    inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+) -> Result<Declaration, EvalError> {
+    let mut out = Declaration::default();
     let mut bindings = Vec::new();
     let mut budget = Budget::default();
     eval_clauses(
@@ -328,10 +395,10 @@ pub fn evaluate_effects(
         inputs,
         hasher,
         &mut bindings,
-        &mut set,
+        &mut out,
         &mut budget,
     )?;
-    Ok(set)
+    Ok(out)
 }
 
 /// One signature evaluation's structural allowance: how deep the clause
@@ -361,7 +428,7 @@ fn eval_clauses(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &mut Vec<Value>,
-    out: &mut EffectSet,
+    out: &mut Declaration,
     budget: &mut Budget,
 ) -> Result<(), EvalError> {
     if budget.clause_depth > MAX_CLAUSE_DEPTH {
@@ -376,7 +443,9 @@ fn eval_clauses(
                 if budget.declared > MAX_EFFECTS_PER_SIGNATURE {
                     return Err(EvalError::TooManyEffects);
                 }
-                out.insert(Effect { target, mode })?;
+                let effect = Effect { target, mode };
+                out.set.insert(effect)?;
+                out.ordered.push(effect);
             }
             Clause::ForEach { list, body } => {
                 let items = as_list(eval_expr(list, inputs, hasher, bindings, 0)?)?;
@@ -638,8 +707,8 @@ fn as_list(value: Value) -> Result<Vec<Value>, EvalError> {
 mod tests {
     use super::{
         Clause, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
-        MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr, evaluate_effects, evaluate_expr,
-        fresh_id, fresh_local,
+        MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr, evaluate_declaration,
+        evaluate_effects, evaluate_expr, fresh_id, fresh_local,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::manifest::ManifestHash;
@@ -654,6 +723,54 @@ mod tests {
             frame: 0,
             identity: ManifestHash(Hash32([9; 32])),
         }
+    }
+
+    #[test]
+    fn a_declaration_keeps_clause_order_beside_the_folded_set() {
+        // Two views of one evaluation, and neither reconstructs the other:
+        // the set has folded away both the order and the repetition, and
+        // the clause list has no notion of a canonical order at all.
+        let point = |byte: u8| {
+            TargetExpr::Point(Expr::Literal(Value::Key(child_key(
+                &TestHasher,
+                Address([byte; 16]),
+                RoleId(1),
+                &[],
+            ))))
+        };
+        let clauses = vec![
+            Clause::Effect {
+                target: point(0xF0),
+                mode: ModeExpr::Write,
+            },
+            Clause::Effect {
+                target: point(0x0F),
+                mode: ModeExpr::Write,
+            },
+            // The same target as the first clause: a degenerate instance
+            // configuration produces exactly this shape.
+            Clause::Effect {
+                target: point(0xF0),
+                mode: ModeExpr::Write,
+            },
+        ];
+        let ins = inputs(&[], &[]);
+        let declaration = evaluate_declaration(&clauses, &ins, &TestHasher).unwrap();
+
+        assert_eq!(declaration.ordered.len(), 3, "one entry per clause reached");
+        assert_eq!(declaration.set.len(), 2, "the set folds the repeat");
+        assert_eq!(
+            declaration.ordered[0], declaration.ordered[2],
+            "the repeated clause is the same effect twice"
+        );
+        // The clause order is the author's, so it survives regardless of
+        // how the two keys happen to compare.
+        assert_ne!(declaration.ordered[0], declaration.ordered[1]);
+        assert_eq!(
+            evaluate_effects(&clauses, &ins, &TestHasher).unwrap(),
+            declaration.set,
+            "the set-only entry point is the same fold"
+        );
     }
 
     #[test]

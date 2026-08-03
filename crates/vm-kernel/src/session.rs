@@ -376,12 +376,18 @@ impl KernelSession {
     pub fn materialize(
         mut store: OverlayStore,
         declared: &EffectSet,
+        ordered: &[Effect],
         tx: TxHash,
         env: EnvInputs,
         hash_fn: fn(&[u8]) -> [u8; 32],
     ) -> Result<Self, MaterializeError> {
         store.clear_log();
-        let mut table = Vec::with_capacity(declared.len());
+
+        // Reservations are judged off the *set*, where `EffectSet::insert`
+        // has already summed the amounts two clauses claimed on one cell.
+        // Judging the clause list instead would judge each amount
+        // separately against the same balance, so a signature reserving
+        // `n` twice over a cell holding `n` would pass both.
         let mut reservations = Vec::new();
         for effect in declared.iter() {
             if let (EffectTarget::Point(key), Mode::Reserve { amount }) =
@@ -396,7 +402,18 @@ impl KernelSession {
                     None => reservations.push((tx, key, amount)),
                 }
             }
-            table.push(capability_for(&store, effect)?);
+        }
+
+        // The table is the *clause list*, because a handle's rep is its
+        // index here and the guest's parameters are positional. Walking
+        // the set instead would order handles by a comparison over
+        // hash-derived keys, and would silently shorten the table
+        // whenever two clauses evaluated to one target — making a guest's
+        // parameter list a function of instance configuration rather than
+        // of its own signature.
+        let mut table = Vec::with_capacity(ordered.len());
+        for effect in ordered {
+            table.push(capability_for(&store, *effect)?);
         }
         reject_self_conflicts(declared)?;
 
@@ -1068,7 +1085,7 @@ mod tests {
         Window, child_key,
     };
 
-    use super::{EnvInputs, KernelSession, MaterializeError, SessionTrap};
+    use super::{Capability, EnvInputs, KernelSession, MaterializeError, SessionTrap};
     use crate::modes::{TxHash, encode_amount};
     use crate::overlay::OverlayStore;
     use crate::store::{MemoryStore, StoreError, SubstateStore};
@@ -1104,9 +1121,124 @@ mod tests {
         set
     }
 
+    /// Canonical order as the clause order — right for tests that build a
+    /// set directly and have no signature to evaluate.
+    fn ord(set: &EffectSet) -> Vec<Effect> {
+        set.iter().collect()
+    }
+
+    #[test]
+    fn the_table_follows_the_clause_order_not_the_set_order() {
+        // A handle's rep is its index here and a guest's parameters are
+        // positional, so the table must be the order the author wrote —
+        // never the set's, which is a comparison over hash-derived keys.
+        let (first, second) = (key(0xA1), key(0xA2));
+        let write = |k| Effect {
+            target: EffectTarget::Point(k),
+            mode: Mode::Write,
+        };
+        let set = declared(&[write(first), write(second)]);
+
+        // Whichever way canonical order happens to fall, the reverse of it
+        // is a clause order the table has to reproduce exactly.
+        let mut reversed: Vec<Effect> = set.iter().collect();
+        reversed.reverse();
+        let session = KernelSession::materialize(
+            OverlayStore::new(Arc::new(MemoryStore::new())),
+            &set,
+            &reversed,
+            tx(1),
+            env(),
+            hash,
+        )
+        .expect("two ordinary writes materialize");
+
+        let expected: Vec<Capability> = reversed
+            .iter()
+            .map(|effect| match effect.target {
+                EffectTarget::Point(k) => Capability::Write(k),
+                other => panic!("unexpected target {other:?}"),
+            })
+            .collect();
+        assert_eq!(session.capabilities(), expected);
+    }
+
+    #[test]
+    fn coincident_clauses_each_get_a_handle() {
+        // Two clauses that evaluate to one target fold to a single set
+        // entry — a degenerate instance configuration does exactly this.
+        // The guest's parameter list is a function of its signature, not
+        // of that configuration, so the table keeps both slots.
+        let cell = key(0xB4);
+        let write = Effect {
+            target: EffectTarget::Point(cell),
+            mode: Mode::Write,
+        };
+        let set = declared(&[write, write]);
+        assert_eq!(set.len(), 1, "the set folds them");
+
+        let session = KernelSession::materialize(
+            OverlayStore::new(Arc::new(MemoryStore::new())),
+            &set,
+            &[write, write],
+            tx(1),
+            env(),
+            hash,
+        )
+        .expect("a repeated write is not a self-conflict");
+        assert_eq!(
+            session.capabilities(),
+            [Capability::Write(cell), Capability::Write(cell)],
+            "one handle per clause"
+        );
+    }
+
+    #[test]
+    fn repeated_reservations_are_judged_against_their_sum() {
+        // The reason materialization keeps both views. Judging the clause
+        // list would weigh each amount against the same balance
+        // separately, so a signature reserving 60 twice over a cell
+        // holding 100 would pass both and hold 120.
+        let vault = key(0xC7);
+        let mut store = MemoryStore::new();
+        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.clear_log();
+
+        let reserve = Effect {
+            target: EffectTarget::Point(vault),
+            mode: Mode::Reserve { amount: 60 },
+        };
+        let set = declared(&[reserve, reserve]);
+
+        let refused = KernelSession::materialize(
+            OverlayStore::new(Arc::new(store)),
+            &set,
+            &[reserve, reserve],
+            tx(1),
+            env(),
+            hash,
+        )
+        .expect_err("120 reserved against 100 is infeasible");
+        assert_eq!(
+            refused,
+            MaterializeError::Infeasible {
+                key: vault,
+                amount: 120,
+            },
+            "the folded amount is judged, not each clause's"
+        );
+    }
+
     fn session_over(store: MemoryStore, set: &EffectSet) -> KernelSession {
-        KernelSession::materialize(OverlayStore::new(Arc::new(store)), set, tx(1), env(), hash)
-            .expect("materializes")
+        KernelSession::materialize(
+            OverlayStore::new(Arc::new(store)),
+            set,
+            &ord(set),
+            tx(1),
+            env(),
+            hash,
+        )
+        .expect("materializes")
     }
 
     #[test]
@@ -1246,6 +1378,7 @@ mod tests {
             KernelSession::materialize(
                 OverlayStore::new(Arc::new(MemoryStore::new())),
                 &set,
+                &ord(&set),
                 tx(1),
                 env(),
                 hash,
@@ -1272,6 +1405,7 @@ mod tests {
             KernelSession::materialize(
                 OverlayStore::new(Arc::new(store)),
                 &set,
+                &ord(&set),
                 tx(1),
                 env(),
                 hash,
@@ -1300,6 +1434,7 @@ mod tests {
             KernelSession::materialize(
                 OverlayStore::new(Arc::new(MemoryStore::new())),
                 &set,
+                &ord(&set),
                 tx(1),
                 env(),
                 hash,

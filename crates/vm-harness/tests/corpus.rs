@@ -262,6 +262,7 @@ fn execute_manifest(
     let mut session = KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         declared,
+        &declared.iter().collect::<Vec<_>>(),
         tx,
         env(),
         test_hash,

@@ -308,6 +308,7 @@ fn nullifier_tx(id: u8) -> BatchTx {
     BatchTx {
         tx: tx(id),
         declared: point(nullifier(), Mode::Write),
+        ordered: point(nullifier(), Mode::Write).iter().collect(),
         nullifiers: vec![nullifier()],
         clock_ms: env().clock_ms,
         randomness: env().randomness,
@@ -450,6 +451,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
     let undeclared = BatchTx {
         tx: tx(0x01),
         declared: point(nullifier(), Mode::Read),
+        ordered: point(nullifier(), Mode::Read).iter().collect(),
         nullifiers: vec![nullifier()],
         clock_ms: env().clock_ms,
         randomness: env().randomness,
@@ -468,6 +470,43 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
             tx: tx(0x01),
             key: nullifier(),
         })
+    );
+}
+
+#[test]
+fn declaration_views_that_disagree_refuse_the_batch() {
+    // The set and the clause list are one declaration seen two ways, and
+    // different consumers read different views — scheduling and judging
+    // the set, capability materialization the list. A caller building the
+    // struct literally can pair them wrongly, and the consequence would
+    // be a transaction routed against one declaration and handed
+    // capabilities for another. The batch refuses rather than run.
+    let noop = |_id: TxHash, session: KernelSession| RunResult {
+        session,
+        outcome: Outcome::Completed { value: None },
+        fuel: FUEL,
+    };
+    let mismatched = BatchTx {
+        tx: tx(0x01),
+        declared: point(cell(0xA), Mode::Write),
+        // A different cell entirely: folding this does not reproduce
+        // `declared`.
+        ordered: point(cell(0xB), Mode::Write).iter().collect(),
+        nullifiers: vec![],
+        clock_ms: env().clock_ms,
+        randomness: env().randomness,
+    };
+    let refused = execute_batch(
+        Arc::new(MemoryStore::new()),
+        &[mismatched],
+        &noop,
+        test_hash,
+        ExecutionMode::Serial,
+        &Locality::All,
+    );
+    assert_eq!(
+        refused.err(),
+        Some(BatchError::InconsistentDeclaration { tx: tx(0x01) })
     );
 }
 

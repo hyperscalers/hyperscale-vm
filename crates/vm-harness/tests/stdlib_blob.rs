@@ -85,6 +85,7 @@ fn session() -> KernelSession {
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &declared,
+        &declared.iter().collect::<Vec<_>>(),
         TxHash(Hash32([0x77; 32])),
         EnvInputs {
             clock_ms: CLOCK_MS,

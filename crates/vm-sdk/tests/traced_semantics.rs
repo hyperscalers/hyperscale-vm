@@ -7,9 +7,9 @@
 //! checked here against the real evaluator rather than against a fixture.
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, EvalInputs, Hash32, MAX_FOREACH_ELEMENTS,
-    ManifestHash, MethodSignature, Mode, ModeKind, ParamType, RoleId, SubstateKey, TestHasher,
-    Value, child_key, evaluate_effects,
+    Address, Declaration, Effect, EffectSet, EffectTarget, EvalInputs, Hash32,
+    MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature, Mode, ModeKind, ParamType, RoleId,
+    SubstateKey, TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
 };
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym};
 use hyperscale_vm_sdk::{Blueprint, TargetShape, Trace};
@@ -45,6 +45,21 @@ fn declared(signature: &MethodSignature, args: &[Value], config: &[Value]) -> Ef
         identity: identity(),
     };
     evaluate_effects(&signature.effects, &inputs, &TestHasher)
+        .expect("the traced signature evaluates")
+}
+
+/// Both views of a traced signature's evaluation: the folded set that
+/// scheduling reads and the clause order that materialization reads.
+fn evaluated(signature: &MethodSignature, args: &[Value], config: &[Value]) -> Declaration {
+    let inputs = EvalInputs {
+        self_addr: BASKET,
+        args,
+        config,
+        node_index: 0,
+        frame: 0,
+        identity: identity(),
+    };
+    evaluate_declaration(&signature.effects, &inputs, &TestHasher)
         .expect("the traced signature evaluates")
 }
 
@@ -165,17 +180,18 @@ fn nested_binders_survive_evaluation() {
 }
 
 #[test]
-fn the_handle_plan_is_declaration_ordered_not_set_ordered() {
-    // The finding this test exists to pin down. `EffectSet` is canonical by
-    // (target, mode) — it is a set — while a guest's parameters are in the
-    // order the author wrote. For the pool those two orders disagree, and
-    // they disagree on a comparison between two child-key hashes, which is
-    // stable but arbitrary and moves with the hasher.
+fn the_handle_plan_matches_what_the_kernel_materializes() {
+    // The correspondence the whole SDK rests on: the order `HandlePlan`
+    // reports is the order `KernelSession::materialize` builds its table
+    // in, so a generated guest's positional parameters line up with the
+    // handles it is given.
     //
-    // So a kernel that materialized handles by walking the evaluated set
-    // would hand `swap` its two reserve cells the wrong way round, and
-    // nothing in the metadata would say so. The handle order has to be the
-    // declaration's.
+    // The evaluated `EffectSet` cannot serve that role. It is canonical by
+    // (target, mode), which is a comparison over child-key hashes — stable
+    // but arbitrary, and it moves with the hasher. This test asserts the
+    // plan tracks `Declaration::ordered` and, separately, that the set
+    // order genuinely differs, so the correspondence is load-bearing
+    // rather than coincidental.
     let pool = Blueprint::builder()
         .method(
             "swap",
@@ -194,19 +210,15 @@ fn the_handle_plan_is_declaration_ordered_not_set_ordered() {
 
     let plan = method.handles();
     assert!(plan.is_static(), "no clause is under a for-each");
-    let modes: Vec<ModeKind> = plan.shapes().iter().map(|s| s.mode).collect();
+    let planned: Vec<ModeKind> = plan.shapes().iter().map(|s| s.mode).collect();
     assert_eq!(
-        modes,
+        planned,
         vec![ModeKind::Snapshot, ModeKind::Write, ModeKind::Write],
         "the plan follows the author's order"
     );
     assert!(plan.shapes().iter().all(|s| s.target == TargetShape::Point));
 
-    // Whether the two orders happen to agree for one particular reserve
-    // pair is a fact about two hashes, so the demonstration searches a
-    // small space rather than asserting on a single draw — the finding is
-    // that agreement is not guaranteed, not that it never occurs.
-    let mut disagreements = 0;
+    let mut set_order_differed = 0;
     for x in 0..8_u8 {
         for y in 0..8_u8 {
             if x == y {
@@ -216,22 +228,32 @@ fn the_handle_plan_is_declaration_ordered_not_set_ordered() {
                 Value::Address(Address([x; 16])),
                 Value::Address(Address([y; 16])),
             ];
-            let set = declared(method.signature(), &[], &config);
-            let canonical: Vec<ModeKind> = set.iter().map(|e| e.mode.kind()).collect();
+            let declaration = evaluated(method.signature(), &[], &config);
+
+            // What the kernel will materialize, in table order.
+            let materialized: Vec<ModeKind> = declaration
+                .ordered
+                .iter()
+                .map(|effect| effect.mode.kind())
+                .collect();
             assert_eq!(
-                canonical.len(),
-                modes.len(),
-                "both orders describe the same accesses"
+                materialized, planned,
+                "the plan must predict the materialization order for every config"
             );
-            if canonical != modes {
-                disagreements += 1;
+
+            if declaration
+                .set
+                .iter()
+                .map(|e| e.mode.kind())
+                .ne(planned.iter().copied())
+            {
+                set_order_differed += 1;
             }
         }
     }
     assert!(
-        disagreements > 0,
-        "canonical order tracks child-key hashes, so it cannot be the guest's \
-         parameter order — if this ever holds for every pair, it holds by luck"
+        set_order_differed > 0,
+        "if set order always agreed, this correspondence would be untested luck"
     );
 }
 

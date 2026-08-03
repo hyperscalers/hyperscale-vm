@@ -170,6 +170,7 @@ fn batch_entry(
         .clone();
     let entry = BatchTx {
         tx: TxHash(identity.0),
+        ordered: declared.iter().collect(),
         declared,
         nullifiers: admitted
             .subintents

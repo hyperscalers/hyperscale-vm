@@ -141,6 +141,7 @@ fn session(fx: &Fixture) -> KernelSession {
     KernelSession::materialize(
         OverlayStore::new(Arc::new(fx.store.clone())),
         &fx.declared,
+        &fx.declared.iter().collect::<Vec<_>>(),
         tx(),
         env(),
         test_hash,

@@ -33,9 +33,9 @@ pub mod work;
 
 pub use admission::{AdmissionError, Admitted, MAX_YIELD_PARAMS, admit};
 pub use dsl::{
-    Clause, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr, evaluate_effects,
-    evaluate_expr, fresh_id, fresh_local,
+    Clause, Declaration, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr, evaluate_declaration,
+    evaluate_effects, evaluate_expr, fresh_id, fresh_local,
 };
 pub use envelope::{
     AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_ROLE, Subintent,

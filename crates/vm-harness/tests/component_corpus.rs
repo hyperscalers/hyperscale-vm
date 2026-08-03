@@ -328,6 +328,7 @@ fn session() -> KernelSession {
     KernelSession::materialize(
         OverlayStore::new(Arc::new(MemoryStore::new())),
         &EffectSet::new(),
+        &EffectSet::new().iter().collect::<Vec<_>>(),
         TxHash(Hash32([0x55; 32])),
         EnvInputs {
             clock_ms: 424_242,

@@ -175,6 +175,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
         .unwrap();
     BatchTx {
         tx: TxHash(Hash32([id; 32])),
+        ordered: declared.iter().collect(),
         declared,
         nullifiers: vec![signed_nullifier()],
         clock_ms: env().clock_ms,

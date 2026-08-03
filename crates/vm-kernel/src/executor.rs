@@ -30,7 +30,8 @@ use std::sync::Arc;
 use std::thread;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, SubstateKey, compatible,
+    Address, Declaration, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, SubstateKey,
+    compatible,
 };
 
 use crate::conflict::targets_overlap;
@@ -48,8 +49,26 @@ use crate::work::Work;
 pub struct BatchTx {
     /// The transaction's identity: the canonical ordering key.
     pub tx: TxHash,
-    /// The transaction's declared effect set on this shard.
+    /// The transaction's declared effect set on this shard: folded,
+    /// canonically ordered, reserve amounts on one target summed.
+    ///
+    /// What scheduling reads. [`conflict_groups`] groups on it,
+    /// reservation judging judges against it, and the folding is
+    /// load-bearing for both.
     pub declared: EffectSet,
+    /// The same declaration in clause-evaluation order, one entry per
+    /// clause the signature reached.
+    ///
+    /// What capability materialization reads, because a handle's rep is
+    /// its index into the materialized table and a guest's parameters are
+    /// positional. [`BatchTx::declared`] cannot serve: its order is a
+    /// comparison over hash-derived keys, and its *length* shrinks
+    /// whenever two clauses evaluate to one target — which would make a
+    /// guest's parameter list depend on instance configuration rather
+    /// than on its own signature.
+    ///
+    /// Must fold to [`BatchTx::declared`]; [`execute_batch`] checks it.
+    pub ordered: Vec<Effect>,
     /// The nullifier keys of every subintent the transaction commits.
     /// Each must also be declared as an exclusive write in `declared`,
     /// which [`execute_batch`] enforces: the declaration is what puts
@@ -75,14 +94,22 @@ pub struct BatchTx {
 impl BatchTx {
     /// A transaction with no bound subintents.
     ///
-    /// The environment inputs are arguments rather than defaults: a
-    /// silently zeroed clock or draw is a wrong consensus input that
-    /// nothing would catch.
+    /// Takes the whole [`Declaration`] rather than either view, so the two
+    /// cannot be paired wrongly on this path. The environment inputs are
+    /// arguments rather than defaults: a silently zeroed clock or draw is
+    /// a wrong consensus input that nothing would catch.
     #[must_use]
-    pub const fn new(tx: TxHash, declared: EffectSet, clock_ms: u64, randomness: [u8; 32]) -> Self {
+    pub fn new(
+        tx: TxHash,
+        declaration: impl Into<Declaration>,
+        clock_ms: u64,
+        randomness: [u8; 32],
+    ) -> Self {
+        let declaration = declaration.into();
         Self {
             tx,
-            declared,
+            declared: declaration.set,
+            ordered: declaration.ordered,
             nullifiers: Vec::new(),
             clock_ms,
             randomness,
@@ -154,6 +181,19 @@ pub enum BatchError {
         tx: TxHash,
         /// The nullifier key missing from the declaration.
         key: SubstateKey,
+    },
+    /// A transaction's two declaration views disagree: folding
+    /// [`BatchTx::ordered`] does not reproduce [`BatchTx::declared`].
+    ///
+    /// The pair is one declaration seen two ways, and every consumer picks
+    /// the view its job needs — scheduling and judging read the set,
+    /// capability materialization reads the clause list. Letting them
+    /// diverge would let a transaction be routed against one declaration
+    /// and handed capabilities for another.
+    #[error("transaction {tx:?} has inconsistent declaration views")]
+    InconsistentDeclaration {
+        /// The offending transaction.
+        tx: TxHash,
     },
     /// A session refused to finish — an oracle violation or store failure.
     #[error("finishing {tx:?}")]
@@ -443,30 +483,36 @@ fn run_group<R: GuestRunner>(
             clock_ms: entry.clock_ms,
             randomness: entry.randomness,
         };
-        let session =
-            match KernelSession::materialize(store, &entry.declared, entry.tx, env, hash_fn) {
-                Ok(session) => {
-                    // The rollback clone must drop here: it keeps the threaded
-                    // layer's Arc unshared, so finish merges it in place.
-                    drop(before);
-                    session.with_locality(locality.clone())
-                }
-                Err(MaterializeError::Infeasible { key, amount }) => {
-                    // Adoption makes this unreachable for batch-judged
-                    // reservations; kept as an honest per-transaction abort.
-                    receipts.push((
-                        entry.tx,
-                        abort_receipt(Outcome::Infeasible { key, amount }, 0),
-                    ));
-                    store = before;
-                    continue;
-                }
-                Err(defect) => {
-                    receipts.push((entry.tx, abort_receipt(materialize_abort(&defect), 0)));
-                    store = before;
-                    continue;
-                }
-            };
+        let session = match KernelSession::materialize(
+            store,
+            &entry.declared,
+            &entry.ordered,
+            entry.tx,
+            env,
+            hash_fn,
+        ) {
+            Ok(session) => {
+                // The rollback clone must drop here: it keeps the threaded
+                // layer's Arc unshared, so finish merges it in place.
+                drop(before);
+                session.with_locality(locality.clone())
+            }
+            Err(MaterializeError::Infeasible { key, amount }) => {
+                // Adoption makes this unreachable for batch-judged
+                // reservations; kept as an honest per-transaction abort.
+                receipts.push((
+                    entry.tx,
+                    abort_receipt(Outcome::Infeasible { key, amount }, 0),
+                ));
+                store = before;
+                continue;
+            }
+            Err(defect) => {
+                receipts.push((entry.tx, abort_receipt(materialize_abort(&defect), 0)));
+                store = before;
+                continue;
+            }
+        };
         let result = runner.run(entry.tx, session);
         match result.outcome {
             Outcome::Completed { .. } => {
@@ -538,6 +584,47 @@ fn screen_reserve_targets<'batch>(
     sound
 }
 
+/// Batch-level well-formedness, checked before anything is judged or run.
+///
+/// Every failure here is a defect in whoever composed the batch, not a
+/// transaction-level abort — so the batch refuses rather than producing
+/// receipts that would encode the defect.
+fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in batch {
+        if !seen.insert(entry.tx) {
+            return Err(BatchError::DuplicateTx(entry.tx));
+        }
+
+        // The two declaration views are one declaration; a caller building
+        // the struct literally could pair them wrongly, and the
+        // consequence would be a transaction routed against one
+        // declaration and handed capabilities for another.
+        let mut folded = EffectSet::new();
+        for effect in &entry.ordered {
+            folded
+                .insert(*effect)
+                .map_err(|_| BatchError::InconsistentDeclaration { tx: entry.tx })?;
+        }
+        if folded != entry.declared {
+            return Err(BatchError::InconsistentDeclaration { tx: entry.tx });
+        }
+
+        for key in &entry.nullifiers {
+            if !entry.declared.contains(&Effect {
+                target: EffectTarget::Point(*key),
+                mode: Mode::Write,
+            }) {
+                return Err(BatchError::UndeclaredNullifier {
+                    tx: entry.tx,
+                    key: *key,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Execute a batch of transactions over committed state.
 ///
 /// Input order is immaterial: the batch is judged, grouped, executed, and
@@ -577,23 +664,7 @@ pub fn execute_batch<R: GuestRunner>(
     mode: ExecutionMode,
     locality: &Locality,
 ) -> Result<BatchOutcome, BatchError> {
-    let mut seen = std::collections::BTreeSet::new();
-    for entry in batch {
-        if !seen.insert(entry.tx) {
-            return Err(BatchError::DuplicateTx(entry.tx));
-        }
-        for key in &entry.nullifiers {
-            if !entry.declared.contains(&Effect {
-                target: EffectTarget::Point(*key),
-                mode: Mode::Write,
-            }) {
-                return Err(BatchError::UndeclaredNullifier {
-                    tx: entry.tx,
-                    key: *key,
-                });
-            }
-        }
-    }
+    screen_batch(batch)?;
     let mut ordered: Vec<&BatchTx> = batch.iter().collect();
     ordered.sort_by_key(|entry| entry.tx);
     let mut receipts: BTreeMap<TxHash, Receipt> = BTreeMap::new();

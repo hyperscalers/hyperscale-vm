@@ -288,9 +288,15 @@ fn main() -> Result<()> {
         let start = Instant::now();
         for index in 0..senders {
             let from = sender(index);
-            let session =
-                KernelSession::materialize(store, &declared(from), tx(index), env(), test_hash)
-                    .expect("feasible");
+            let session = KernelSession::materialize(
+                store,
+                &declared(from),
+                &declared(from).iter().collect::<Vec<_>>(),
+                tx(index),
+                env(),
+                test_hash,
+            )
+            .expect("feasible");
             let (session, fuel) = bench.run_transfer(from, session);
             let (_receipt, threaded) = session
                 .finish(Outcome::Completed { value: None }, fuel)
@@ -352,6 +358,7 @@ fn main() -> Result<()> {
                 KernelSession::materialize(
                     OverlayStore::new(Arc::clone(&base) as Arc<dyn Base>),
                     &declared(sender(0)),
+                    &declared(sender(0)).iter().collect::<Vec<_>>(),
                     tx(index),
                     env(),
                     test_hash,
@@ -371,9 +378,15 @@ fn main() -> Result<()> {
 
     let fuel_check = {
         let store = OverlayStore::new(Arc::new(funded_store(1)));
-        let session =
-            KernelSession::materialize(store, &declared(sender(0)), tx(0), env(), test_hash)
-                .expect("feasible");
+        let session = KernelSession::materialize(
+            store,
+            &declared(sender(0)),
+            &declared(sender(0)).iter().collect::<Vec<_>>(),
+            tx(0),
+            env(),
+            test_hash,
+        )
+        .expect("feasible");
         bench.run_transfer(sender(0), session).1
     };
     println!("\nfuel per transfer: {fuel_check} (engine schedule + boundary supplement)");
