@@ -115,6 +115,7 @@ impl<T> Cell<T> {
     }
 
     /// An exclusive read-modify-write.
+    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
     pub fn set(&mut self, value: T) {
         let _ = value;
         unimplemented!("{OFF_HOST}")
@@ -151,6 +152,7 @@ impl<T> Slot<T> {
     }
 
     /// An exclusive read-modify-write.
+    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
     pub fn set(&mut self, value: T) {
         let _ = value;
         unimplemented!("{OFF_HOST}")
