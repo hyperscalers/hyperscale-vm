@@ -274,8 +274,9 @@ pub fn expr_depth(expr: &Expr) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{Addr, Bucket, Sym, expr_depth, lit_u64};
     use hyperscale_vm_effects::{Expr, RoleId};
+
+    use super::{Addr, Bucket, Sym, expr_depth, lit_u64};
 
     #[test]
     fn a_leaf_is_depth_one() {

@@ -414,9 +414,10 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_vm_effects::{Clause, Expr, ParamType, RoleId, TargetExpr};
+
     use super::{MAX_FOREACH_ELEMENTS, Trace, absolute, rebind};
     use crate::sym::{Addr, Amount, Key, Opaque, Seq, Sym};
-    use hyperscale_vm_effects::{Clause, Expr, ParamType, RoleId, TargetExpr};
 
     #[test]
     fn a_binder_lowers_to_its_de_bruijn_index() {
