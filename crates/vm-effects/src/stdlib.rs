@@ -6,7 +6,7 @@
 //! phase; what is final here is the signature format they are written in.
 
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
-use crate::metadata::{MethodSignature, PackageMetadata, ParamType};
+use crate::metadata::{AbiParam, MethodSignature, PackageMetadata, ParamType};
 use crate::types::{RoleId, Value};
 
 /// A fungible balance cell under its holder.
@@ -49,6 +49,7 @@ pub fn account_metadata() -> PackageMetadata {
         "withdraw".into(),
         MethodSignature {
             params: vec![ParamType::Address, ParamType::U128],
+            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
             outputs: vec![Expr::Arg(0)],
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(self_child(VAULT, vec![Expr::Arg(0)])),
@@ -61,6 +62,7 @@ pub fn account_metadata() -> PackageMetadata {
         "deposit".into(),
         MethodSignature {
             params: vec![ParamType::Bucket],
+            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             outputs: vec![],
             effects: vec![
                 Clause::Effect {
@@ -85,6 +87,7 @@ pub fn account_metadata() -> PackageMetadata {
         "stamp-entropy".into(),
         MethodSignature {
             params: vec![],
+            abi: vec![AbiParam::Handle(0)],
             outputs: vec![],
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(self_child(ENTROPY, vec![])),
@@ -109,6 +112,13 @@ pub fn amm_metadata() -> PackageMetadata {
         "swap".into(),
         MethodSignature {
             params: vec![ParamType::Bucket, ParamType::U128],
+            abi: vec![
+                AbiParam::Handle(0),
+                AbiParam::Handle(1),
+                AbiParam::Handle(2),
+                AbiParam::Bucket(0),
+                AbiParam::Derived(Expr::Arg(1)),
+            ],
             outputs: vec![Expr::Config(1)],
             effects: vec![
                 Clause::Effect {
@@ -144,6 +154,13 @@ pub fn book_metadata() -> PackageMetadata {
         "place_ask".into(),
         MethodSignature {
             params: vec![ParamType::U64, ParamType::Bucket],
+            abi: vec![
+                AbiParam::Handle(0),
+                AbiParam::Handle(1),
+                AbiParam::Derived(Expr::Arg(0)),
+                AbiParam::Derived(Expr::FreshId { slot: 0 }),
+                AbiParam::Bucket(1),
+            ],
             outputs: vec![],
             effects: vec![
                 Clause::Effect {
@@ -172,6 +189,12 @@ pub fn book_metadata() -> PackageMetadata {
         "fill_asks".into(),
         MethodSignature {
             params: vec![ParamType::U64, ParamType::U64, ParamType::Bucket],
+            abi: vec![
+                AbiParam::Handle(0),
+                AbiParam::Handle(1),
+                AbiParam::Handle(2),
+                AbiParam::Bucket(2),
+            ],
             outputs: vec![Expr::Config(0), Expr::ResourceOf(Box::new(Expr::Arg(2)))],
             effects: vec![
                 Clause::Effect {

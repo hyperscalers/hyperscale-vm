@@ -339,6 +339,22 @@ pub struct Declaration {
     /// and folding makes its *length* depend on whether two clauses
     /// happened to evaluate to one target.
     pub ordered: Vec<Effect>,
+    /// Where each top-level clause's effects sit in [`Declaration::ordered`],
+    /// as `(start, len)` pairs in clause order.
+    ///
+    /// A clause contributes one entry unless it is a `for-each`, which
+    /// expands in place — so the flattened order alone cannot say which
+    /// entry a given clause produced. An ABI binding names a clause, not
+    /// a table position, precisely so a guest's parameter list stays a
+    /// function of its own signature rather than of the instance
+    /// configuration a `for-each` maps over; resolving that name is what
+    /// these spans are for, and it succeeds only where the span is one.
+    ///
+    /// Populated by one signature's evaluation, which is the only scope a
+    /// clause index means anything in. A declaration assembled by
+    /// concatenating frames leaves it empty: the ABI binding is a
+    /// method's, so the walk resolves it against that method's frame.
+    pub clause_spans: Vec<(u32, u32)>,
 }
 
 impl Declaration {
@@ -353,8 +369,15 @@ impl Declaration {
     /// discarded both the order and any coincident clauses.
     #[must_use]
     pub fn from_set(set: EffectSet) -> Self {
-        let ordered = set.iter().collect();
-        Self { set, ordered }
+        let ordered: Vec<Effect> = set.iter().collect();
+        let clause_spans = (0..u32::try_from(ordered.len()).unwrap_or(u32::MAX))
+            .map(|index| (index, 1))
+            .collect();
+        Self {
+            set,
+            ordered,
+            clause_spans,
+        }
     }
 }
 
@@ -381,14 +404,24 @@ pub fn evaluate_declaration(
     let mut out = Declaration::default();
     let mut bindings = Vec::new();
     let mut budget = Budget::default();
-    eval_clauses(
-        clauses,
-        inputs,
-        hasher,
-        &mut bindings,
-        &mut out,
-        &mut budget,
-    )?;
+    // One clause at a time, so each one's contribution to the flattened
+    // order is bracketed as it is produced.
+    for clause in clauses {
+        let start = out.ordered.len();
+        eval_clauses(
+            std::slice::from_ref(clause),
+            inputs,
+            hasher,
+            &mut bindings,
+            &mut out,
+            &mut budget,
+        )?;
+        let len = out.ordered.len() - start;
+        out.clause_spans.push((
+            u32::try_from(start).map_err(|_| EvalError::TooManyEffects)?,
+            u32::try_from(len).map_err(|_| EvalError::TooManyEffects)?,
+        ));
+    }
     Ok(out)
 }
 

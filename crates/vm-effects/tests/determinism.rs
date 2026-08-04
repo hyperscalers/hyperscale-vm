@@ -163,6 +163,7 @@ proptest! {
             "forward".into(),
             MethodSignature {
                 params: vec![ParamType::Address, ParamType::Bucket],
+                abi: Vec::new(),
                 outputs: vec![],
                 effects: vec![],
                 calls: vec![CallSite {

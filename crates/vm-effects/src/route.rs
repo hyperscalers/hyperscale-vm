@@ -151,7 +151,13 @@ impl Routing {
                 .map_err(|_| RouteError::ReserveOverflow)?;
             ordered.push(*effect);
         }
-        Ok(Declaration { set, ordered })
+        Ok(Declaration {
+            set,
+            ordered,
+            // A clause index is a method's; this is every frame's clauses
+            // concatenated, so there is no clause to index.
+            clause_spans: Vec::new(),
+        })
     }
 }
 

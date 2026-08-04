@@ -25,6 +25,7 @@
 // reason to narrow a contract's signature.
 #![allow(clippy::needless_pass_by_ref_mut)]
 
+use hyperscale_vm_effects::PackageMetadata;
 use hyperscale_vm_effects::stdlib::{account_metadata, amm_metadata, book_metadata};
 use hyperscale_vm_sdk::blueprint;
 
@@ -163,22 +164,43 @@ mod book {
     }
 }
 
+/// Compare everything a body determines.
+///
+/// The ABI binding is deliberately excluded: a macro sees the author's
+/// Rust method and the handles its body opens, never the component's
+/// exported parameter list, which is authored beside the WIT. What
+/// validates the binding is the publish check, against the export type in
+/// the artifact itself.
+fn assert_derived(traced: &PackageMetadata, authored: &PackageMetadata, package: &str) {
+    assert_eq!(
+        traced.methods.keys().collect::<Vec<_>>(),
+        authored.methods.keys().collect::<Vec<_>>(),
+        "{package}: the method sets differ"
+    );
+    for (name, signature) in &authored.methods {
+        let got = &traced.methods[name];
+        assert_eq!(got.params, signature.params, "{package}::{name} params");
+        assert_eq!(got.outputs, signature.outputs, "{package}::{name} outputs");
+        assert_eq!(got.effects, signature.effects, "{package}::{name} effects");
+        assert_eq!(got.calls, signature.calls, "{package}::{name} calls");
+    }
+}
+
 #[test]
 fn the_account_body_derives_its_authored_signature() {
-    // The macro derives signatures from the body; the account's event
-    // table is authored beside them.
-    assert_eq!(
-        account::blueprint().metadata().methods,
-        account_metadata().methods
+    assert_derived(
+        &account::blueprint().metadata(),
+        &account_metadata(),
+        "account",
     );
 }
 
 #[test]
 fn the_pool_body_derives_its_authored_signature() {
-    assert_eq!(amm::blueprint().metadata(), amm_metadata());
+    assert_derived(&amm::blueprint().metadata(), &amm_metadata(), "amm");
 }
 
 #[test]
 fn the_book_body_derives_its_authored_signature() {
-    assert_eq!(book::blueprint().metadata(), book_metadata());
+    assert_derived(&book::blueprint().metadata(), &book_metadata(), "book");
 }

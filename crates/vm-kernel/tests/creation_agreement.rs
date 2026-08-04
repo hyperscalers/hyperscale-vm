@@ -20,6 +20,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
         "spawn".into(),
         MethodSignature {
             params: vec![],
+            abi: Vec::new(),
             outputs: vec![],
             effects: vec![
                 Clause::Effect {

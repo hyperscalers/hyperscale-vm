@@ -77,6 +77,35 @@ impl ParamType {
     }
 }
 
+/// How one guest ABI parameter is built at invocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AbiParam {
+    /// The capability materialized for this method's effect clause.
+    ///
+    /// Names a clause rather than a position in the materialized table:
+    /// a `for-each` clause expands over instance configuration, so table
+    /// positions past one would depend on configuration rather than on
+    /// the signature. A clause that does not evaluate to exactly one
+    /// target cannot be a handle parameter, and naming one is a
+    /// deterministic refusal at materialization.
+    Handle(u32),
+    /// The runtime amount of this declared [`ParamType::Bucket`]
+    /// parameter.
+    ///
+    /// The one value a signature cannot derive: a bucket's resource type
+    /// is static but its amount is whatever the producing node actually
+    /// returned, which does not exist until that node runs.
+    Bucket(u32),
+    /// A value evaluated over the method's bound inputs.
+    ///
+    /// The same evaluation the effect clauses run, against the same
+    /// inputs — arguments, instance configuration, and the identity,
+    /// node and frame a fresh id derives from — so an argument the guest
+    /// reads is bounded and deterministic on exactly the terms a declared
+    /// target already is. Everything but a bucket's amount lands here.
+    Derived(Expr),
+}
+
 /// A method's declared access. Its transitive effect set is the fold of its
 /// callees' signatures over the static call graph, which is acyclic — a DAG
 /// fold, never a fixpoint.
@@ -90,6 +119,20 @@ pub struct MethodSignature {
     pub outputs: Vec<Expr>,
     /// The method's own effect clauses.
     pub effects: Vec<Clause>,
+    /// How the guest's ABI parameters are built, one entry per exported
+    /// parameter in the export's own order.
+    ///
+    /// A declared parameter list has no arity relation to the ABI: the
+    /// capability table mediates, so a method declaring one bucket and two
+    /// effects can export two arguments of which one is a handle for the
+    /// first effect's target and the other the bucket's bytes. Nothing
+    /// else in the signature says which, and without saying it a caller
+    /// has to know the method — which is why a dispatch table that knows
+    /// every method by name is the only thing that can call one.
+    ///
+    /// Authored beside the signature and content-addressed with the code,
+    /// so the binding cannot drift from the ABI it describes.
+    pub abi: Vec<AbiParam>,
     /// The method's static call sites.
     pub calls: Vec<CallSite>,
 }

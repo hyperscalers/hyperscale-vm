@@ -208,6 +208,7 @@ impl Builder {
         let method = Method {
             signature: MethodSignature {
                 params: params.to_vec(),
+                abi: Vec::new(),
                 outputs: recorded.outputs,
                 effects: recorded.clauses,
                 calls: recorded.calls,

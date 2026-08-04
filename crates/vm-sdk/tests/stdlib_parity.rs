@@ -154,12 +154,20 @@ fn assert_parity(traced: &Blueprint, authored: &PackageMetadata, package: &str) 
             .methods
             .get(name)
             .unwrap_or_else(|| panic!("{package}: the SDK declared no `{name}`"));
-        assert_eq!(got, signature, "{package}::{name}");
+        // Everything a body determines, compared field by field. The ABI
+        // binding is deliberately not among them: a trace sees which
+        // handles a body opened and in what order, never the component's
+        // exported parameter list, which is authored beside the WIT. What
+        // validates the binding is the publish check, against the export
+        // type in the artifact itself.
+        assert_eq!(got.params, signature.params, "{package}::{name} params");
+        assert_eq!(got.outputs, signature.outputs, "{package}::{name} outputs");
+        assert_eq!(got.effects, signature.effects, "{package}::{name} effects");
+        assert_eq!(got.calls, signature.calls, "{package}::{name} calls");
     }
-    // A trace derives signatures, which is the whole of what a blueprint
-    // states; the authored package also names its event table.
     assert_eq!(
-        traced.methods, authored.methods,
+        traced.methods.keys().collect::<Vec<_>>(),
+        authored.methods.keys().collect::<Vec<_>>(),
         "{package}: the method sets differ"
     );
 }

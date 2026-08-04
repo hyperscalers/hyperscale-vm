@@ -141,6 +141,7 @@ pub fn wide_account_metadata() -> PackageMetadata {
         "withdraw_wide".into(),
         MethodSignature {
             params: vec![ParamType::Address, ParamType::U128],
+            abi: Vec::new(),
             outputs: vec![Expr::Arg(0)],
             effects,
             calls: vec![],
@@ -158,6 +159,7 @@ pub fn router_metadata() -> PackageMetadata {
         "forward".into(),
         MethodSignature {
             params: vec![],
+            abi: Vec::new(),
             outputs: vec![],
             effects: vec![],
             calls: vec![CallSite {
