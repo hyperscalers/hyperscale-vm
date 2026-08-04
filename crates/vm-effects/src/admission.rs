@@ -604,6 +604,7 @@ pub(crate) fn admit_intents(
                     bound.push(Value::Bucket { resource });
                     inputs.push(NodeInput::Edge {
                         source,
+                        output: edge.output,
                         resource,
                         bounds,
                     });
@@ -659,6 +660,7 @@ pub(crate) fn admit_intents(
                     bound.push(Value::Bucket { resource });
                     inputs.push(NodeInput::Edge {
                         source,
+                        output: binding.edge.output,
                         resource,
                         bounds,
                     });

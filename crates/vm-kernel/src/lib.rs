@@ -22,6 +22,7 @@ pub mod ownership;
 pub mod session;
 pub mod store;
 pub mod supply;
+pub mod walk;
 pub mod work;
 
 pub use conflict::{conflicts, targets_overlap};
@@ -43,4 +44,5 @@ pub use session::{
 };
 pub use store::{Access, AppliedDelta, Base, MemoryStore, StoreError, SubstateStore};
 pub use supply::SupplyLedger;
+pub use walk::{CellKind, GuestArg, GuestBackend, GuestCall, InvokeResult, ManifestWalk};
 pub use work::Work;

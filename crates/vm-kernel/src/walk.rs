@@ -1,0 +1,310 @@
+//! The manifest walk: one transaction's lowered invocations performed in
+//! order, each one's arguments assembled from the capability table and
+//! the cells its producers returned.
+//!
+//! This is the whole of what "running a transaction" means, and it lives
+//! here rather than in an embedder because it is manifest semantics: what
+//! a handle argument is, what a returned blob means, when an emitter is
+//! entered and left. What an embedder still owns is the engine —
+//! [`GuestBackend`] takes a call and a session and gives back a session
+//! with either the export's bytes or a trap. An embedder can get engine
+//! embedding wrong; it cannot get manifest semantics wrong.
+
+use hyperscale_vm_effects::{Address, CallArg, EDGE_CELL_BYTES, NodeCall, PackageHash};
+
+use crate::executor::{BatchTx, GuestRunner, RunResult};
+use crate::session::{Capability, KernelSession, Outcome};
+
+/// Which handle type a rep names — the kernel's mode lattice as the
+/// runtimes' resource types.
+///
+/// Derived from the capability itself rather than declared beside it, so
+/// a backend is told what to construct instead of inferring it from the
+/// export it happens to be calling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CellKind {
+    /// `read-cell`.
+    Read,
+    /// `locked-cell`.
+    Locked,
+    /// `write-cell`.
+    Write,
+    /// `delta-cell`.
+    Delta,
+    /// `reserve-cell`.
+    Reserve,
+    /// `range-read`.
+    RangeRead,
+    /// `range-write`.
+    RangeWrite,
+}
+
+impl CellKind {
+    /// The handle type a materialized capability is passed as.
+    #[must_use]
+    pub const fn of(capability: &Capability) -> Self {
+        match capability {
+            Capability::Read(_) => Self::Read,
+            Capability::Locked(_) => Self::Locked,
+            Capability::Write(_) => Self::Write,
+            Capability::Delta(_) => Self::Delta,
+            Capability::Reserve(_) => Self::Reserve,
+            Capability::RangeRead { .. } => Self::RangeRead,
+            Capability::RangeWrite { .. } => Self::RangeWrite,
+        }
+    }
+}
+
+/// One assembled ABI argument.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuestArg<'a> {
+    /// A borrowed capability handle: its rep in the session's table and
+    /// the resource type to construct it as.
+    Handle {
+        /// The table position the session assigned.
+        rep: u32,
+        /// The handle type.
+        kind: CellKind,
+    },
+    /// A 64-bit scalar.
+    U64(u64),
+    /// A `list<u8>` argument.
+    Bytes(&'a [u8]),
+}
+
+/// One export invocation, fully assembled.
+pub struct GuestCall<'a> {
+    /// The package whose code runs; content-addressed, so a backend
+    /// resolves the artifact by this and never by the instance address.
+    pub package: PackageHash,
+    /// The instance invoked — diagnostics only; the emitter the session
+    /// stamps is already entered.
+    pub target: Address,
+    /// The export name.
+    pub export: &'a str,
+    /// The arguments, in the export's own order.
+    pub args: &'a [GuestArg<'a>],
+    /// Whether the export returns bytes. True exactly when the node
+    /// produces value edges.
+    pub returns: bool,
+}
+
+/// What one invocation produced: the session back from the engine, the
+/// fuel consumed, and either the export's output bytes or a trap reason.
+pub struct InvokeResult {
+    /// The session, which always survives for the kernel's rollback.
+    pub session: KernelSession,
+    /// Fuel consumed by this invocation.
+    pub fuel: u64,
+    /// The export's returned bytes, or a deterministic trap reason.
+    pub result: Result<Option<Vec<u8>>, String>,
+}
+
+/// The engine embedding: instantiate the named package and invoke one of
+/// its exports.
+pub trait GuestBackend: Sync {
+    /// Invoke `call` with `session` threaded through the engine's host
+    /// state.
+    fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult;
+}
+
+/// The kernel's [`GuestRunner`]: walk a transaction's lowered
+/// invocations, node by node, over any backend.
+pub struct ManifestWalk<'a, B> {
+    /// The engine behind every invocation.
+    pub backend: &'a B,
+}
+
+/// A node's invocation failed, deterministically. The session comes back
+/// for the executor's rollback; boxed because it is large and this path
+/// is cold.
+type NodeFailure = Box<(KernelSession, Outcome, u64)>;
+
+/// A node's invocation succeeded: the session, the cells it produced, and
+/// the fuel it consumed.
+type NodeSuccess = (KernelSession, Vec<Vec<u8>>, u64);
+
+fn fail(session: KernelSession, outcome: Outcome, fuel: u64) -> NodeFailure {
+    Box::new((session, outcome, fuel))
+}
+
+/// A defect in whoever composed the batch: a lowered call that does not
+/// fit the declaration materialized beside it. Priced to nobody — the
+/// sender did not cause it.
+fn composition_defect(session: KernelSession, reason: String) -> NodeFailure {
+    fail(session, Outcome::ProtocolError { reason }, 0)
+}
+
+impl<B: GuestBackend> ManifestWalk<'_, B> {
+    fn invoke_node(
+        &self,
+        call: &NodeCall,
+        outputs: &[Vec<Vec<u8>>],
+        mut session: KernelSession,
+    ) -> Result<NodeSuccess, NodeFailure> {
+        // The node names its target, and every emission of this frame is
+        // attributed to it — the session holds one capability table for
+        // the whole transaction and cannot tell whose call is running.
+        session.enter_invocation(call.target);
+
+        let mut args = Vec::with_capacity(call.args.len());
+        for (position, arg) in call.args.iter().enumerate() {
+            match arg {
+                CallArg::Handle(rep) => {
+                    let Some(capability) = usize::try_from(*rep)
+                        .ok()
+                        .and_then(|index| session.capabilities().get(index))
+                    else {
+                        return Err(composition_defect(
+                            session,
+                            format!("argument {position} names capability {rep}, past the table"),
+                        ));
+                    };
+                    args.push(GuestArg::Handle {
+                        rep: *rep,
+                        kind: CellKind::of(capability),
+                    });
+                }
+                CallArg::Bucket { source, output } => {
+                    let produced = usize::try_from(*source)
+                        .ok()
+                        .and_then(|index| outputs.get(index))
+                        .and_then(|edges| {
+                            usize::try_from(*output)
+                                .ok()
+                                .and_then(|slot| edges.get(slot))
+                        });
+                    let Some(produced) = produced else {
+                        return Err(composition_defect(
+                            session,
+                            format!(
+                                "argument {position} consumes output {output} of node {source}, \
+                                 which produced no such edge"
+                            ),
+                        ));
+                    };
+                    args.push(GuestArg::Bytes(produced));
+                }
+                CallArg::U64(scalar) => args.push(GuestArg::U64(*scalar)),
+                CallArg::Bytes(bytes) => args.push(GuestArg::Bytes(bytes)),
+            }
+        }
+
+        let invoked = self.backend.invoke(
+            session,
+            &GuestCall {
+                package: call.package,
+                target: call.target,
+                export: &call.export,
+                args: &args,
+                returns: call.outputs > 0,
+            },
+        );
+        let returned = match invoked.result {
+            Ok(returned) => returned,
+            Err(reason) => {
+                return Err(fail(
+                    invoked.session,
+                    Outcome::UserError { reason },
+                    invoked.fuel,
+                ));
+            }
+        };
+        match split_outputs(returned.as_deref(), call.outputs) {
+            Some(cells) => Ok((invoked.session, cells, invoked.fuel)),
+            None => Err(fail(
+                invoked.session,
+                Outcome::UserError {
+                    reason: format!(
+                        "`{}` returned {} bytes for {} output edges",
+                        call.export,
+                        returned.map_or(0, |bytes| bytes.len()),
+                        call.outputs
+                    ),
+                },
+                invoked.fuel,
+            )),
+        }
+    }
+}
+
+/// Split an export's returned blob into one cell per output edge.
+///
+/// A method producing `n` edges returns exactly `n` amount cells
+/// concatenated, and one producing none returns nothing at all — so a
+/// blob of any other length is a package whose code and signature
+/// disagree, which is its author's defect and its caller's trap.
+fn split_outputs(returned: Option<&[u8]>, outputs: u32) -> Option<Vec<Vec<u8>>> {
+    let expected = usize::try_from(outputs)
+        .ok()?
+        .checked_mul(EDGE_CELL_BYTES)?;
+    let bytes = match (returned, expected) {
+        (None, 0) => return Some(Vec::new()),
+        (None, _) | (Some(_), 0) => return None,
+        (Some(bytes), _) => bytes,
+    };
+    if bytes.len() != expected {
+        return None;
+    }
+    Some(
+        bytes
+            .chunks_exact(EDGE_CELL_BYTES)
+            .map(<[u8]>::to_vec)
+            .collect(),
+    )
+}
+
+impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
+    fn run(&self, entry: &BatchTx, mut session: KernelSession) -> RunResult {
+        let mut outputs: Vec<Vec<Vec<u8>>> = Vec::with_capacity(entry.calls.len());
+        let mut fuel = 0u64;
+        for call in &entry.calls {
+            match self.invoke_node(call, &outputs, session) {
+                Ok((returned, produced, consumed)) => {
+                    session = returned;
+                    session.leave_invocation();
+                    fuel = fuel.saturating_add(consumed);
+                    outputs.push(produced);
+                }
+                Err(failure) => {
+                    let (returned, outcome, consumed) = *failure;
+                    return RunResult {
+                        session: returned,
+                        outcome,
+                        fuel: fuel.saturating_add(consumed),
+                    };
+                }
+            }
+        }
+        RunResult {
+            session,
+            outcome: Outcome::Completed { value: None },
+            fuel,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_outputs;
+
+    #[test]
+    fn an_export_returns_one_cell_per_output_edge() {
+        assert_eq!(split_outputs(None, 0), Some(Vec::new()));
+        assert_eq!(split_outputs(Some(&[7; 16]), 1), Some(vec![vec![7; 16]]));
+        assert_eq!(
+            split_outputs(Some(&[9; 32]), 2),
+            Some(vec![vec![9; 16], vec![9; 16]])
+        );
+    }
+
+    #[test]
+    fn any_other_return_shape_is_refused() {
+        // A blob for a method that declared no edges, none for a method
+        // that declared one, and a length between two whole cells.
+        assert_eq!(split_outputs(Some(&[0; 16]), 0), None);
+        assert_eq!(split_outputs(None, 1), None);
+        assert_eq!(split_outputs(Some(&[0; 24]), 1), None);
+        assert_eq!(split_outputs(Some(&[0; 16]), 2), None);
+    }
+}

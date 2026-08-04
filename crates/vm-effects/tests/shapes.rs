@@ -156,7 +156,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
             },
             GraphNode {
                 target: BOOK,
-                method: "place_ask".into(),
+                method: "place-ask".into(),
                 args: vec![GraphArg::Literal(Value::U64(105)), edge(0, 0)],
             },
         ],
@@ -209,7 +209,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
             },
             GraphNode {
                 target: BOOK,
-                method: "fill_asks".into(),
+                method: "fill-asks".into(),
                 args: vec![
                     GraphArg::Literal(Value::U64(100)),
                     GraphArg::Literal(Value::U64(110)),

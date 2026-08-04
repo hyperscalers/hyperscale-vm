@@ -8,23 +8,24 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
-    Address, AdmittedTree, Constraint, EdgeRef, EffectSet, EnvelopeTree, GraphArg, GraphNode,
-    Hasher, InstanceMeta, InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, Node,
-    NodeInput, PackageHash, PrefixShardResolver, Subintent, SubstateKey, TestHasher, Value,
-    YieldBinding, YieldParam, admit_tree, child_key, route_tree,
+    Address, AdmittedTree, Constraint, EdgeRef, EnvelopeTree, GraphArg, GraphNode, Hasher,
+    InstanceMeta, InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash,
+    PrefixShardResolver, Subintent, SubstateKey, TestHasher, Value, YieldBinding, YieldParam,
+    admit_tree, child_key, route_tree,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
-    Locality, MemoryStore, Outcome, RunResult, SubstateStore, TxHash, decode_amount, encode_amount,
-    execute_batch,
+    BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
+    InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, SubstateStore,
+    TxHash, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
-    DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,
+    CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
+    validate_component,
 };
-use wasmtime::component::{Component, Linker, Resource};
+use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
@@ -162,212 +163,124 @@ fn batch_entry(
         routing.per_shard.len() == 1,
         "the null resolver routes to one shard"
     );
-    let declared: EffectSet = routing
-        .per_shard
-        .values()
-        .next()
-        .expect("one shard")
-        .clone();
-    let entry = BatchTx {
-        tx: TxHash(identity.0),
-        ordered: declared.iter().collect(),
-        declared,
-        nullifiers: admitted
+    // The whole declaration, both views, straight from the fold: the
+    // clause order is what a handle's rep indexes into, so taking the
+    // folded set's order instead would hand the guest a table the
+    // lowered calls were not resolved against.
+    let declaration = routing.declaration().context("declaration")?;
+    let entry = BatchTx::new(
+        TxHash(identity.0),
+        declaration,
+        env().clock_ms,
+        env().randomness,
+    )
+    .with_calls(routing.calls)
+    .with_nullifiers(
+        admitted
             .subintents
             .iter()
             .map(|record| record.nullifier)
             .collect(),
-        clock_ms: env().clock_ms,
-        randomness: env().randomness,
-    };
+    );
     Ok((entry, admitted))
 }
 
-/// One node's guest invocation, resolved from the flattened manifest.
-enum NodeCall {
-    Withdraw { vault: SubstateKey, amount: Vec<u8> },
-    Deposit { vault: SubstateKey, bucket: Vec<u8> },
-}
-
-fn resolve_call(node: &Node, outputs: &[Vec<Vec<u8>>]) -> NodeCall {
-    match node.method.as_str() {
-        "withdraw" => {
-            let [
-                NodeInput::Literal(Value::Address(resource)),
-                NodeInput::Literal(Value::U128(amount)),
-            ] = node.inputs.as_slice()
-            else {
-                panic!("withdraw inputs");
-            };
-            NodeCall::Withdraw {
-                vault: vault(node.target, *resource),
-                amount: encode_amount(*amount).to_vec(),
-            }
-        }
-        "deposit" => {
-            let [
-                NodeInput::Edge {
-                    source, resource, ..
-                },
-            ] = node.inputs.as_slice()
-            else {
-                panic!("deposit inputs");
-            };
-            NodeCall::Deposit {
-                vault: vault(node.target, *resource),
-                bucket: outputs[*source as usize][0].clone(),
-            }
-        }
-        other => panic!("unknown composed node {other}"),
-    }
-}
-
-fn rep_of(session: &KernelSession, wanted: &Capability) -> u32 {
-    u32::try_from(
-        session
-            .capabilities()
-            .iter()
-            .position(|c| c == wanted)
-            .expect("capability present"),
-    )
-    .expect("bounded")
-}
-
-/// The blessed-engine runner: walks the flattened manifest node by
-/// node, one instantiation per call, threading bucket cells along the
-/// lowered edges.
+/// The blessed engine behind the walk: one instantiation per call, the
+/// export invoked from the arguments the kernel assembled.
 struct BlessedComposed {
     engine: Engine,
     component: Component,
-    manifests: BTreeMap<TxHash, Vec<Node>>,
 }
 
-impl GuestRunner for BlessedComposed {
-    fn run(&self, id: TxHash, session: KernelSession) -> RunResult {
-        let mut session = session;
-        let mut outputs: Vec<Vec<Vec<u8>>> = Vec::new();
-        let mut fuel_total = 0;
-        for node in &self.manifests[&id] {
-            let call = resolve_call(node, &outputs);
-            session.enter_invocation(node.target);
-            let mut linker = Linker::<SessionHost>::new(&self.engine);
-            add_kernel_to_linker(&mut linker).expect("wiring");
-            let mut store = Store::new(&self.engine, SessionHost(session));
-            store.set_fuel(FUEL).expect("fuel");
-            let instance = linker
-                .instantiate(&mut store, &self.component)
-                .expect("instantiate");
-            let result = match &call {
-                NodeCall::Withdraw { vault, amount } => {
-                    let rep = rep_of(&store.data().0, &Capability::Reserve(*vault));
-                    instance
-                        .get_typed_func::<(Resource<ReserveCell>, &[u8]), (Vec<u8>,)>(
-                            &mut store, "withdraw",
-                        )
-                        .expect("typed")
-                        .call(&mut store, (Resource::new_borrow(rep), amount))
-                        .map(|(bucket,)| vec![bucket])
-                }
-                NodeCall::Deposit { vault, bucket } => {
-                    let rep = rep_of(&store.data().0, &Capability::Delta(*vault));
-                    instance
-                        .get_typed_func::<(Resource<DeltaCell>, &[u8]), ()>(&mut store, "deposit")
-                        .expect("typed")
-                        .call(&mut store, (Resource::new_borrow(rep), bucket))
-                        .map(|()| Vec::new())
-                }
-            };
-            fuel_total += FUEL - store.get_fuel().expect("fuel");
-            session = store.into_data().0;
-            session.leave_invocation();
-            match result {
-                Ok(node_outputs) => outputs.push(node_outputs),
-                Err(_trap) => {
-                    return RunResult {
-                        session,
-                        outcome: Outcome::UserError {
-                            reason: "guest trap".into(),
-                        },
-                        fuel: fuel_total,
-                    };
-                }
-            }
-        }
-        RunResult {
-            session,
-            outcome: Outcome::Completed { value: None },
-            fuel: fuel_total,
+impl GuestBackend for BlessedComposed {
+    fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
+        let mut linker = Linker::<SessionHost>::new(&self.engine);
+        add_kernel_to_linker(&mut linker).expect("wiring");
+        let mut store = Store::new(&self.engine, SessionHost(session));
+        store.set_fuel(FUEL).expect("fuel");
+        let instance = linker
+            .instantiate(&mut store, &self.component)
+            .expect("instantiate");
+        let args: Vec<HostArg<'_>> = call.args.iter().map(host_arg).collect();
+        let result = call_export(&mut store, &instance, call.export, &args, call.returns)
+            .map_err(|trap| format!("{trap:#}"));
+        let fuel = FUEL - store.get_fuel().expect("fuel");
+        InvokeResult {
+            session: store.into_data().0,
+            fuel,
+            result,
         }
     }
 }
 
-/// The reference-interpreter runner, mirroring the blessed walk.
+/// The reference interpreter behind the same walk.
 struct RefComposed {
     component: RefComponent,
-    manifests: BTreeMap<TxHash, Vec<Node>>,
 }
 
-impl GuestRunner for RefComposed {
-    fn run(&self, id: TxHash, session: KernelSession) -> RunResult {
-        let mut session = session;
-        let mut outputs: Vec<Vec<Vec<u8>>> = Vec::new();
-        let mut fuel_total = 0;
-        for node in &self.manifests[&id] {
-            let call = resolve_call(node, &outputs);
-            let (export, args, has_output) = match &call {
-                NodeCall::Withdraw { vault, amount } => (
-                    "withdraw",
-                    vec![
-                        CVal::Borrow(
-                            rep_of(&session, &Capability::Reserve(*vault)),
-                            ResourceKind::ReserveCell,
-                        ),
-                        CVal::Bytes(amount.clone()),
-                    ],
-                    true,
-                ),
-                NodeCall::Deposit { vault, bucket } => (
-                    "deposit",
-                    vec![
-                        CVal::Borrow(
-                            rep_of(&session, &Capability::Delta(*vault)),
-                            ResourceKind::DeltaCell,
-                        ),
-                        CVal::Bytes(bucket.clone()),
-                    ],
-                    false,
-                ),
-            };
-            session.enter_invocation(node.target);
-            let mut instance =
-                RefComponentInstance::instantiate(&self.component, SessionHost(session))
-                    .expect("instantiate");
-            let outcome = instance.invoke(export, &args).expect("invoke");
-            fuel_total += instance.fuel_consumed();
-            session = instance.into_host().0;
-            session.leave_invocation();
-            match outcome {
-                Ok(values) => match (has_output, values.as_slice()) {
-                    (false, []) => outputs.push(Vec::new()),
-                    (true, [CVal::Bytes(bucket)]) => outputs.push(vec![bucket.clone()]),
-                    other => panic!("unexpected result shape {other:?}"),
-                },
-                Err(_trap) => {
-                    return RunResult {
-                        session,
-                        outcome: Outcome::UserError {
-                            reason: "guest trap".into(),
-                        },
-                        fuel: fuel_total,
-                    };
-                }
-            }
+impl GuestBackend for RefComposed {
+    fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
+        let args: Vec<CVal> = call.args.iter().map(ref_arg).collect();
+        let mut instance = RefComponentInstance::instantiate(&self.component, SessionHost(session))
+            .expect("instantiate");
+        let outcome = instance.invoke(call.export, &args).expect("invoke");
+        let fuel = instance.fuel_consumed();
+        let result = match outcome {
+            Ok(values) => match (call.returns, values.as_slice()) {
+                (false, []) => Ok(None),
+                (true, [CVal::Bytes(bytes)]) => Ok(Some(bytes.clone())),
+                other => Err(format!("unexpected result shape {other:?}")),
+            },
+            Err(trap) => Err(format!("{trap:?}")),
+        };
+        InvokeResult {
+            session: instance.into_host().0,
+            fuel,
+            result,
         }
-        RunResult {
-            session,
-            outcome: Outcome::Completed { value: None },
-            fuel: fuel_total,
-        }
+    }
+}
+
+const fn host_kind(kind: CellKind) -> HostCellKind {
+    match kind {
+        CellKind::Read => HostCellKind::Read,
+        CellKind::Locked => HostCellKind::Locked,
+        CellKind::Write => HostCellKind::Write,
+        CellKind::Delta => HostCellKind::Delta,
+        CellKind::Reserve => HostCellKind::Reserve,
+        CellKind::RangeRead => HostCellKind::RangeRead,
+        CellKind::RangeWrite => HostCellKind::RangeWrite,
+    }
+}
+
+const fn ref_kind(kind: CellKind) -> ResourceKind {
+    match kind {
+        CellKind::Read => ResourceKind::ReadCell,
+        CellKind::Locked => ResourceKind::LockedCell,
+        CellKind::Write => ResourceKind::WriteCell,
+        CellKind::Delta => ResourceKind::DeltaCell,
+        CellKind::Reserve => ResourceKind::ReserveCell,
+        CellKind::RangeRead => ResourceKind::RangeRead,
+        CellKind::RangeWrite => ResourceKind::RangeWrite,
+    }
+}
+
+const fn host_arg<'a>(arg: &GuestArg<'a>) -> HostArg<'a> {
+    match arg {
+        GuestArg::Handle { rep, kind } => HostArg::Handle {
+            rep: *rep,
+            kind: host_kind(*kind),
+        },
+        GuestArg::U64(scalar) => HostArg::U64(*scalar),
+        GuestArg::Bytes(bytes) => HostArg::Bytes(bytes),
+    }
+}
+
+fn ref_arg(arg: &GuestArg<'_>) -> CVal {
+    match arg {
+        GuestArg::Handle { rep, kind } => CVal::Borrow(*rep, ref_kind(*kind)),
+        GuestArg::U64(scalar) => CVal::U64(*scalar),
+        GuestArg::Bytes(bytes) => CVal::Bytes(bytes.to_vec()),
     }
 }
 
@@ -402,27 +315,21 @@ fn amount_of(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
 
 /// Execute the batch on both runtimes and assert byte-identical
 /// receipts and end state; returns the blessed outcome.
-fn run_both(
-    store: &MemoryStore,
-    batch: &[BatchTx],
-    manifests: &BTreeMap<TxHash, Vec<Node>>,
-) -> Result<BatchOutcome> {
+fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<BatchOutcome> {
     let bytes = build_guest("account")?;
     validate_component(&bytes).context("profile validation")?;
     let engine = blessed_engine()?;
     let blessed = BlessedComposed {
         component: Component::new(&engine, &bytes)?,
         engine,
-        manifests: manifests.clone(),
     };
     let reference = RefComposed {
         component: RefComponent::decode(&bytes)?,
-        manifests: manifests.clone(),
     };
     let blessed_outcome = execute_batch(
         Arc::new(store.clone()),
         batch,
-        &blessed,
+        &ManifestWalk { backend: &blessed },
         test_hash,
         ExecutionMode::Parallel,
         &Locality::All,
@@ -431,7 +338,9 @@ fn run_both(
     let ref_outcome = execute_batch(
         Arc::new(store.clone()),
         batch,
-        &reference,
+        &ManifestWalk {
+            backend: &reference,
+        },
         test_hash,
         ExecutionMode::Serial,
         &Locality::All,
@@ -454,10 +363,9 @@ fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     let world = world();
     let tree = composed_tree(ALICE, 100);
     let (entry, admitted) = batch_entry(&world, &tree)?;
-    let manifests = BTreeMap::from([(entry.tx, admitted.admitted.manifest().nodes.clone())]);
     let nullifier = admitted.subintents[0].nullifier;
 
-    let outcome = run_both(&seeded_store(), std::slice::from_ref(&entry), &manifests)?;
+    let outcome = run_both(&seeded_store(), std::slice::from_ref(&entry))?;
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
         Outcome::Completed { .. }
@@ -490,20 +398,9 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
         alice_admitted.subintents[0].nullifier,
         carol_admitted.subintents[0].nullifier
     );
-    let manifests = BTreeMap::from([
-        (
-            alice_entry.tx,
-            alice_admitted.admitted.manifest().nodes.clone(),
-        ),
-        (
-            carol_entry.tx,
-            carol_admitted.admitted.manifest().nodes.clone(),
-        ),
-    ]);
-
     let alice_wins = alice_entry.tx < carol_entry.tx;
     let batch = vec![alice_entry.clone(), carol_entry.clone()];
-    let outcome = run_both(&seeded_store(), &batch, &manifests)?;
+    let outcome = run_both(&seeded_store(), &batch)?;
 
     let (winner, loser, pay) = if alice_wins {
         (&alice_entry, &carol_entry, 100)
@@ -543,27 +440,13 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
 #[test]
 fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
     let world = world();
-    let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100))?;
-    let (carol_entry, carol_admitted) = batch_entry(&world, &composed_tree(CAROL, 120))?;
+    let (alice_entry, _) = batch_entry(&world, &composed_tree(ALICE, 100))?;
+    let (carol_entry, _) = batch_entry(&world, &composed_tree(CAROL, 120))?;
 
-    let first = run_both(
-        &seeded_store(),
-        std::slice::from_ref(&alice_entry),
-        &BTreeMap::from([(
-            alice_entry.tx,
-            alice_admitted.admitted.manifest().nodes.clone(),
-        )]),
-    )?;
+    let first = run_both(&seeded_store(), std::slice::from_ref(&alice_entry))?;
     let committed = first.store.collapse();
 
-    let second = run_both(
-        &committed,
-        std::slice::from_ref(&carol_entry),
-        &BTreeMap::from([(
-            carol_entry.tx,
-            carol_admitted.admitted.manifest().nodes.clone(),
-        )]),
-    )?;
+    let second = run_both(&committed, std::slice::from_ref(&carol_entry))?;
     assert_eq!(
         second.receipts[&carol_entry.tx].outcome,
         Outcome::UserError {

@@ -11,8 +11,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::admission::Admitted;
 use crate::dsl::{Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr};
 use crate::hash::Hasher;
+use crate::invoke::{CallArg, NodeCall};
 use crate::manifest::{ManifestHash, NodeInput};
-use crate::metadata::{InstanceRegistry, MetadataCache, PackageHash};
+use crate::metadata::{
+    AbiParam, CallSite, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
+};
 use crate::types::{Address, Effect, EffectSet, ShardId, Value};
 
 /// Resolves an owner prefix to the shard holding it.
@@ -87,6 +90,14 @@ pub struct Routing {
     pub per_shard: BTreeMap<ShardId, EffectSet>,
     /// Every evaluated frame's declaration, in preorder.
     pub frames: Vec<FrameDeclaration>,
+    /// One lowered invocation per manifest node, in node order: the
+    /// export to call and where each of its ABI arguments comes from.
+    ///
+    /// Shard-invariant, like the capability table the handle positions
+    /// index into: every participant of a cross-shard transaction lowers
+    /// the identical call list, and locality scopes what is *applied*
+    /// rather than what is invoked.
+    pub calls: Vec<NodeCall>,
     /// Effects no signature declared: the kernel synthesizes them from the
     /// envelope rather than from a method body — today, the nullifier write
     /// of every subintent the transaction commits.
@@ -231,6 +242,41 @@ pub enum RouteError {
     /// Folding reserve amounts across shards overflowed.
     #[error("declared reserve amounts overflow")]
     ReserveOverflow,
+    /// A handle binding naming a clause that did not evaluate to exactly
+    /// one declared access.
+    ///
+    /// A handle is one capability, and a `for-each` clause expands over
+    /// the target's creation-fixed configuration — so whether a clause
+    /// can back a handle is a property of the instance, not of the
+    /// signature, and cannot be settled when the package publishes.
+    #[error(
+        "node {node}: `{method}` binds ABI parameter {param} to effect clause {clause}, which \
+         declared {effects} accesses rather than one"
+    )]
+    AmbiguousClause {
+        /// The manifest node being routed.
+        node: u32,
+        /// The method whose binding this is.
+        method: String,
+        /// The ABI parameter position.
+        param: u32,
+        /// The effect clause it names.
+        clause: u32,
+        /// How many accesses that clause declared.
+        effects: u32,
+    },
+    /// An ABI argument the node's bound inputs cannot supply.
+    #[error("node {node}: `{method}` cannot bind ABI parameter {param}: {reason}")]
+    UnbindableAbiParam {
+        /// The manifest node being routed.
+        node: u32,
+        /// The method whose binding this is.
+        method: String,
+        /// The ABI parameter position.
+        param: u32,
+        /// What could not be supplied.
+        reason: String,
+    },
     /// Signature evaluation failed.
     #[error("evaluating `{method}` for node {node}")]
     Eval {
@@ -276,6 +322,8 @@ pub fn route(
         identity,
         per_shard: BTreeMap::new(),
         frames_log: Vec::new(),
+        calls: Vec::new(),
+        table_len: 0,
         edges: BTreeSet::new(),
         evaluations: 0,
         frames: 0,
@@ -309,11 +357,14 @@ pub fn route(
         let mut stack = Vec::new();
         fold.frames = 0;
         fold.call(
-            node.target,
-            &node.method,
-            &args,
-            node_index,
-            None,
+            &Frame {
+                instance: node.target,
+                method: &node.method,
+                args: &args,
+                node_index,
+                node_inputs: Some(&node.inputs),
+                caller: None,
+            },
             &mut stack,
         )?;
     }
@@ -321,12 +372,138 @@ pub fn route(
     Ok(Routing {
         per_shard: fold.per_shard,
         frames: fold.frames_log,
+        calls: fold.calls,
         kernel_effects: Vec::new(),
         call_graph: CallGraph {
             roots,
             edges: fold.edges,
         },
     })
+}
+
+/// Lower one node's ABI binding against the inputs bound to it.
+///
+/// Everything a binding names is settled here except a bucket's amount,
+/// which does not exist until its producer runs — that stays an edge for
+/// the walk to read. A handle resolves through the clause it names, which
+/// is why the binding names a clause rather than a table position: a
+/// guest's parameter list is a function of its own signature, and table
+/// positions past the first would depend on the instance configuration a
+/// `for-each` clause maps over.
+/// What lowering one frame's binding needs beyond the frame itself.
+struct Lowering<'a> {
+    package: PackageHash,
+    declaration: &'a Declaration,
+    offset: u32,
+    node_inputs: &'a [NodeInput],
+    inputs: &'a EvalInputs<'a>,
+    hasher: &'a dyn Hasher,
+}
+
+fn lower_call(
+    site: &Frame<'_>,
+    signature: &MethodSignature,
+    lowering: &Lowering<'_>,
+) -> Result<NodeCall, RouteError> {
+    let Frame {
+        instance,
+        method,
+        node_index,
+        ..
+    } = *site;
+    let Lowering {
+        package,
+        declaration,
+        offset,
+        node_inputs,
+        inputs,
+        hasher,
+    } = *lowering;
+    let mut args = Vec::with_capacity(signature.abi.len());
+    for (position, binding) in signature.abi.iter().enumerate() {
+        let param = u32::try_from(position).unwrap_or(u32::MAX);
+        let unbindable = |reason: String| RouteError::UnbindableAbiParam {
+            node: node_index,
+            method: method.to_owned(),
+            param,
+            reason,
+        };
+        args.push(match binding {
+            AbiParam::Handle(clause) => {
+                let span = usize::try_from(*clause)
+                    .ok()
+                    .and_then(|index| declaration.clause_spans.get(index))
+                    .copied()
+                    .ok_or_else(|| {
+                        unbindable(format!("no effect clause {clause} in the signature"))
+                    })?;
+                let (start, len) = span;
+                if len != 1 {
+                    return Err(RouteError::AmbiguousClause {
+                        node: node_index,
+                        method: method.to_owned(),
+                        param,
+                        clause: *clause,
+                        effects: len,
+                    });
+                }
+                CallArg::Handle(
+                    offset
+                        .checked_add(start)
+                        .ok_or_else(|| unbindable("capability table overflows".into()))?,
+                )
+            }
+            AbiParam::Bucket(declared) => {
+                let input = usize::try_from(*declared)
+                    .ok()
+                    .and_then(|index| node_inputs.get(index))
+                    .ok_or_else(|| unbindable(format!("no bound input {declared}")))?;
+                match input {
+                    NodeInput::Edge { source, output, .. } => CallArg::Bucket {
+                        source: *source,
+                        output: *output,
+                    },
+                    NodeInput::Literal(_) => {
+                        return Err(unbindable(format!(
+                            "input {declared} is a literal, not a value edge"
+                        )));
+                    }
+                }
+            }
+            AbiParam::Derived(expr) => {
+                let value =
+                    evaluate_expr(expr, inputs, hasher).map_err(|source| RouteError::Eval {
+                        node: node_index,
+                        method: method.to_owned(),
+                        source,
+                    })?;
+                guest_arg(&value).ok_or_else(|| {
+                    unbindable(format!("a {} has no guest representation", value.kind()))
+                })?
+            }
+        });
+    }
+    Ok(NodeCall {
+        package,
+        target: instance,
+        export: method.to_owned(),
+        args,
+        outputs: u32::try_from(signature.outputs.len()).unwrap_or(u32::MAX),
+    })
+}
+
+/// A derived value's guest form. Amounts and addresses cross as their
+/// canonical fixed-width bytes; the compound kinds have no ABI shape and
+/// refuse rather than picking an encoding the two runtimes would have to
+/// agree on separately.
+fn guest_arg(value: &Value) -> Option<CallArg> {
+    match value {
+        Value::U64(scalar) => Some(CallArg::U64(*scalar)),
+        Value::U128(amount) => Some(CallArg::Bytes(amount.to_le_bytes().to_vec())),
+        Value::Address(address) => Some(CallArg::Bytes(address.0.to_vec())),
+        Value::Bytes(bytes) => Some(CallArg::Bytes(bytes.clone())),
+        Value::Key(_) | Value::Bucket { .. } | Value::Tuple(_) | Value::List(_) => None,
+    }
 }
 
 struct Fold<'a> {
@@ -337,6 +514,11 @@ struct Fold<'a> {
     identity: ManifestHash,
     per_shard: BTreeMap<ShardId, EffectSet>,
     frames_log: Vec<FrameDeclaration>,
+    calls: Vec<NodeCall>,
+    // Effects logged so far across every frame: the offset the next
+    // frame's clause spans are relative to, and therefore the base of
+    // every handle position that frame's binding resolves to.
+    table_len: u32,
     edges: BTreeSet<CallEdge>,
     evaluations: usize,
     // The current node's frame ordinal: preorder over its call tree, reset
@@ -344,16 +526,34 @@ struct Fold<'a> {
     frames: u32,
 }
 
+/// One frame to evaluate: whose method, over what inputs, under which
+/// manifest node.
+struct Frame<'a> {
+    instance: Address,
+    method: &'a str,
+    args: &'a [Value],
+    node_index: u32,
+    /// Present only for a manifest node's own frame: a callee is invoked
+    /// by its caller's code, so there is no lowered invocation for the
+    /// walk to perform.
+    node_inputs: Option<&'a [NodeInput]>,
+    caller: Option<&'a MethodRef>,
+}
+
 impl Fold<'_> {
     fn call(
         &mut self,
-        instance: Address,
-        method: &str,
-        args: &[Value],
-        node_index: u32,
-        caller: Option<&MethodRef>,
+        site: &Frame<'_>,
         stack: &mut Vec<(PackageHash, String)>,
     ) -> Result<(), RouteError> {
+        let Frame {
+            instance,
+            method,
+            args,
+            node_index,
+            node_inputs,
+            caller,
+        } = *site;
         self.evaluations += 1;
         if self.evaluations > MAX_CALL_EVALUATIONS {
             return Err(RouteError::CallBudgetExhausted);
@@ -402,6 +602,23 @@ impl Fold<'_> {
         };
         let declaration =
             evaluate_declaration(&signature.effects, &inputs, self.hasher).map_err(eval_context)?;
+        // The frame's handles occupy the run of the table starting here,
+        // so the offset has to be taken before the frame is logged.
+        let offset = self.table_len;
+        if let Some(node_inputs) = node_inputs {
+            let lowering = Lowering {
+                package: meta.package,
+                declaration: &declaration,
+                offset,
+                node_inputs,
+                inputs: &inputs,
+                hasher: self.hasher,
+            };
+            self.calls.push(lower_call(site, signature, &lowering)?);
+        }
+        self.table_len = offset
+            .checked_add(u32::try_from(declaration.ordered.len()).unwrap_or(u32::MAX))
+            .ok_or(RouteError::CallBudgetExhausted)?;
         // Recorded before descending into callees, so the log is preorder
         // — the order capability materialization walks.
         self.frames_log.push(FrameDeclaration {
@@ -432,8 +649,29 @@ impl Fold<'_> {
                 callee: this_ref.clone(),
             });
         }
-        for site in &signature.calls {
-            let target = evaluate_expr(&site.target, &inputs, self.hasher)
+        self.descend(&signature.calls, &this_ref, &inputs, node_index, stack)?;
+
+        stack.pop();
+        Ok(())
+    }
+
+    /// Fold the frame's static call sites: each callee's target and
+    /// arguments evaluated over this frame's inputs, then recursed into.
+    fn descend(
+        &mut self,
+        sites: &[CallSite],
+        caller: &MethodRef,
+        inputs: &EvalInputs<'_>,
+        node_index: u32,
+        stack: &mut Vec<(PackageHash, String)>,
+    ) -> Result<(), RouteError> {
+        let eval_context = |source| RouteError::Eval {
+            node: node_index,
+            method: caller.method.clone(),
+            source,
+        };
+        for site in sites {
+            let target = evaluate_expr(&site.target, inputs, self.hasher)
                 .map_err(eval_context)
                 .and_then(|value| match value {
                     Value::Address(addr) => Ok(addr),
@@ -444,19 +682,20 @@ impl Fold<'_> {
                 })?;
             let mut call_args = Vec::with_capacity(site.args.len());
             for expr in &site.args {
-                call_args.push(evaluate_expr(expr, &inputs, self.hasher).map_err(eval_context)?);
+                call_args.push(evaluate_expr(expr, inputs, self.hasher).map_err(eval_context)?);
             }
             self.call(
-                target,
-                &site.method,
-                &call_args,
-                node_index,
-                Some(&this_ref),
+                &Frame {
+                    instance: target,
+                    method: &site.method,
+                    args: &call_args,
+                    node_index,
+                    node_inputs: None,
+                    caller: Some(caller),
+                },
                 stack,
             )?;
         }
-
-        stack.pop();
         Ok(())
     }
 }
@@ -466,15 +705,15 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        Admitted, CallEdge, MAX_CALL_DEPTH, MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver,
-        RouteError, ShardResolver, route,
+        AbiParam, Admitted, CallArg, CallEdge, MAX_CALL_DEPTH, MAX_MANIFEST_NODES, MethodRef,
+        PrefixShardResolver, RouteError, ShardResolver, route,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, fresh_id};
     use crate::hash::{Hash32, Hasher, TestHasher};
     use crate::manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
     use crate::metadata::{
         CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
-        PackageMetadata,
+        PackageMetadata, ParamType,
     };
     use crate::types::{
         Address, Effect, EffectSet, EffectTarget, Mode, RoleId, ShardId, Value, child_key,
@@ -946,6 +1185,7 @@ mod tests {
                 method: "m".into(),
                 inputs: vec![NodeInput::Edge {
                     source: 0,
+                    output: 0,
                     resource: addr(9),
                     bounds: Bounds::default(),
                 }],
@@ -1323,5 +1563,179 @@ mod tests {
                 deepest
             );
         }
+    }
+    /// A world whose one method declares `spread` before a point clause
+    /// and binds its ABI handle to the point.
+    fn spreading_world(
+        spread: Vec<Value>,
+        abi: Vec<AbiParam>,
+    ) -> (MetadataCache, InstanceRegistry) {
+        let mut package = PackageMetadata::default();
+        package.methods.insert(
+            "m".into(),
+            MethodSignature {
+                abi,
+                effects: vec![
+                    Clause::ForEach {
+                        list: Expr::Config(0),
+                        body: vec![Clause::Effect {
+                            target: TargetExpr::Point(Expr::ChildKey {
+                                owner: Box::new(Expr::SelfAddr),
+                                role: RoleId(9),
+                                material: vec![Expr::Binding(0)],
+                            }),
+                            mode: ModeExpr::Delta,
+                        }],
+                    },
+                    self_point(RoleId(1), ModeExpr::Write),
+                ],
+                ..MethodSignature::default()
+            },
+        );
+        let mut cache = MetadataCache::new();
+        cache.publish(pkg("spread"), package);
+        let mut instances = InstanceRegistry::new();
+        instances.register(
+            addr(0x11),
+            InstanceMeta {
+                package: pkg("spread"),
+                config: vec![Value::List(spread)],
+            },
+        );
+        (cache, instances)
+    }
+
+    fn one_node() -> Manifest {
+        Manifest {
+            nodes: vec![Node {
+                target: addr(0x11),
+                method: "m".into(),
+                inputs: vec![],
+            }],
+        }
+    }
+
+    #[test]
+    fn a_handle_names_a_clause_rather_than_a_table_position() {
+        // The `for-each` ahead of the point clause expands over the
+        // instance's configuration, so the point's position in the table
+        // moves with it while its clause index does not.
+        for width in 1u64..4 {
+            let spread: Vec<Value> = (0..width).map(Value::U64).collect();
+            let (cache, instances) = spreading_world(spread, vec![AbiParam::Handle(1)]);
+            let routing = route(
+                &admitted(&one_node()),
+                &cache,
+                &instances,
+                &TestHasher,
+                &resolver(),
+            )
+            .expect("routes");
+            let CallArg::Handle(rep) = routing.calls[0].args[0] else {
+                panic!("a handle argument");
+            };
+            let declaration = routing.declaration().expect("one frame folds");
+            assert_eq!(u64::from(rep), width);
+            assert_eq!(
+                declaration.ordered[usize::try_from(rep).unwrap()].mode,
+                Mode::Write,
+                "the bound clause's own effect, whatever the spread's width"
+            );
+        }
+    }
+
+    #[test]
+    fn a_handle_on_a_spreading_clause_is_refused() {
+        // Two elements make clause 0 declare two accesses, and a handle
+        // is one capability — so the binding cannot be honoured, and the
+        // verdict is the same on every node because the configuration it
+        // depends on is creation-fixed.
+        let spread = vec![Value::U64(1), Value::U64(2)];
+        let (cache, instances) = spreading_world(spread, vec![AbiParam::Handle(0)]);
+        let error = route(
+            &admitted(&one_node()),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect_err("a spreading clause cannot back a handle");
+        assert!(
+            matches!(
+                error,
+                RouteError::AmbiguousClause {
+                    clause: 0,
+                    effects: 2,
+                    ..
+                }
+            ),
+            "unexpected refusal: {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_bucket_binding_names_the_edge_its_parameter_carries() {
+        let mut package = PackageMetadata::default();
+        package.methods.insert(
+            "take".into(),
+            MethodSignature {
+                params: vec![ParamType::Bucket],
+                abi: vec![AbiParam::Bucket(0)],
+                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                ..MethodSignature::default()
+            },
+        );
+        package.methods.insert(
+            "make".into(),
+            MethodSignature {
+                outputs: vec![Expr::Literal(Value::Address(addr(0xE1)))],
+                ..MethodSignature::default()
+            },
+        );
+        let mut cache = MetadataCache::new();
+        cache.publish(pkg("edges"), package);
+        let mut instances = InstanceRegistry::new();
+        instances.register(
+            addr(0x11),
+            InstanceMeta {
+                package: pkg("edges"),
+                config: vec![],
+            },
+        );
+        let manifest = Manifest {
+            nodes: vec![
+                Node {
+                    target: addr(0x11),
+                    method: "make".into(),
+                    inputs: vec![],
+                },
+                Node {
+                    target: addr(0x11),
+                    method: "take".into(),
+                    inputs: vec![NodeInput::Edge {
+                        source: 0,
+                        output: 3,
+                        resource: addr(0xE1),
+                        bounds: Bounds::default(),
+                    }],
+                },
+            ],
+        };
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect("routes");
+        assert_eq!(
+            routing.calls[1].args[0],
+            CallArg::Bucket {
+                source: 0,
+                output: 3
+            },
+            "a bucket argument carries the producer's output slot, not just the producer"
+        );
     }
 }

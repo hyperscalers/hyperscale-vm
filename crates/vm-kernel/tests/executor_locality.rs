@@ -52,7 +52,7 @@ fn transfer_declared(amount: u128) -> EffectSet {
 }
 
 /// The transfer guest: move the reserved amount into the delta cell.
-fn transfer_guest(_id: TxHash, mut session: KernelSession) -> RunResult {
+fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
     let caps: Vec<Capability> = session.capabilities().to_vec();
     let reserve = caps.iter().enumerate().find_map(|(rep, c)| match c {
         Capability::Reserve(_) => Some(u32::try_from(rep).unwrap()),
@@ -177,6 +177,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
         tx: TxHash(Hash32([id; 32])),
         ordered: declared.iter().collect(),
         declared,
+        calls: Vec::new(),
         nullifiers: vec![signed_nullifier()],
         clock_ms: env().clock_ms,
         randomness: env().randomness,
@@ -243,7 +244,7 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
         env().clock_ms,
         draw,
     )];
-    let reading_guest = |_id: TxHash, session: KernelSession| RunResult {
+    let reading_guest = |_entry: &BatchTx, session: KernelSession| RunResult {
         outcome: Outcome::Completed {
             value: Some(u64::from(session.randomness()[0])),
         },
@@ -306,8 +307,8 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
 /// `credit` then `debit`, and a read capability reports what the cell
 /// holds — an absent cell reading as zero, the normalisation every guest
 /// applies.
-fn moving_guest(credit: u128, debit: u128) -> impl Fn(TxHash, KernelSession) -> RunResult + Sync {
-    move |_id, mut session: KernelSession| {
+fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
+    move |_entry: &BatchTx, mut session: KernelSession| {
         let caps: Vec<Capability> = session.capabilities().to_vec();
         let mut value = None;
         for (rep, capability) in caps.iter().enumerate() {

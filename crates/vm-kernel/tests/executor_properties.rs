@@ -210,8 +210,9 @@ fn batch_of(specs: &[TxSpec]) -> (Vec<BatchTx>, BTreeSet<TxHash>) {
 
 /// The scripted guest: exercise every capability the session hands over,
 /// deterministically in the transaction's own identity.
-fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(TxHash, KernelSession) -> RunResult + Sync {
-    move |id, mut session: KernelSession| {
+fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
+    move |entry: &BatchTx, mut session: KernelSession| {
+        let id = entry.tx;
         let caps: Vec<Capability> = session.capabilities().to_vec();
         let seed = u128::from(id.0.0[0]);
         for (rep, capability) in caps.iter().enumerate() {
@@ -413,8 +414,9 @@ fn portable_declared(claims: &[PortableClaim]) -> EffectSet {
 /// every cell it moves — an uncovered debit is judged at the owning shard
 /// alone. What it reads reaches the receipt through the return value,
 /// so a pinned read that disagreed between shards would show.
-fn portable_runner() -> impl Fn(TxHash, KernelSession) -> RunResult + Sync {
-    move |id, mut session: KernelSession| {
+fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
+    move |entry: &BatchTx, mut session: KernelSession| {
+        let id = entry.tx;
         let caps: Vec<Capability> = session.capabilities().to_vec();
         let seed = u128::from(id.0.0[0]);
         let mut observed = 0u64;
@@ -458,8 +460,9 @@ const READER: TxHash = tx(0xFF);
 /// finds, so the baseline reaches the receipt.
 fn outbound_runner(
     debits: BTreeMap<TxHash, (SubstateKey, u128)>,
-) -> impl Fn(TxHash, KernelSession) -> RunResult + Sync {
-    move |id, mut session: KernelSession| {
+) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
+    move |entry: &BatchTx, mut session: KernelSession| {
+        let id = entry.tx;
         let caps: Vec<Capability> = session.capabilities().to_vec();
         let mut observed = 0u64;
         for (rep, capability) in caps.iter().enumerate() {

@@ -54,7 +54,7 @@ fn declare(effects: &[(SubstateKey, Mode)]) -> EffectSet {
 
 /// The scripted guest: copies whatever it can snapshot into its write cell,
 /// so the value a snapshot answered is observable in the receipt.
-fn scripted(_tx_id: TxHash, mut session: KernelSession) -> RunResult {
+fn scripted(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
     let caps: Vec<Capability> = session.capabilities().to_vec();
     let find = |wanted: fn(&Capability) -> bool| {
         caps.iter()

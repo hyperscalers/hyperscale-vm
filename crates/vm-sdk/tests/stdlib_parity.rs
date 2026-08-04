@@ -87,7 +87,7 @@ fn amm() -> Blueprint {
 fn book() -> Blueprint {
     Blueprint::builder()
         .method(
-            "place_ask",
+            "place-ask",
             &[ParamType::U64, ParamType::Bucket],
             |t: &mut Trace| {
                 let price: Sym<Num> = t.arg(0);
@@ -105,7 +105,7 @@ fn book() -> Blueprint {
             },
         )
         .method(
-            "fill_asks",
+            "fill-asks",
             &[ParamType::U64, ParamType::U64, ParamType::Bucket],
             |t: &mut Trace| {
                 let from: Sym<Num> = t.arg(0);

@@ -132,6 +132,7 @@ fn a_composed_tree_flattens_deterministically() {
         manifest.nodes[2].inputs,
         vec![NodeInput::Edge {
             source: 1,
+            output: 0,
             resource: RES_Y,
             bounds: Bounds {
                 min: Some(10),
@@ -143,6 +144,7 @@ fn a_composed_tree_flattens_deterministically() {
         manifest.nodes[3].inputs,
         vec![NodeInput::Edge {
             source: 0,
+            output: 0,
             resource: RES_X,
             bounds: Bounds {
                 min: Some(100),

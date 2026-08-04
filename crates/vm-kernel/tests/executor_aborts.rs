@@ -58,7 +58,7 @@ fn with_delta(mut set: EffectSet, key: SubstateKey) -> EffectSet {
 /// The scripted guest: a session with a reserve capability transfers the
 /// reserved amount into its delta cell; a session with only a delta
 /// capability debits `sub` from it.
-fn scripted(sub: u128) -> impl Fn(TxHash, KernelSession) -> RunResult + Sync {
+fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
     move |_tx_id, mut session: KernelSession| {
         let caps: Vec<Capability> = session.capabilities().to_vec();
         let reserve = caps.iter().enumerate().find_map(|(rep, c)| match c {
@@ -309,6 +309,7 @@ fn nullifier_tx(id: u8) -> BatchTx {
         tx: tx(id),
         declared: point(nullifier(), Mode::Write),
         ordered: point(nullifier(), Mode::Write).iter().collect(),
+        calls: Vec::new(),
         nullifiers: vec![nullifier()],
         clock_ms: env().clock_ms,
         randomness: env().randomness,
@@ -320,7 +321,7 @@ fn racing_nullifier_writers_commit_exactly_once() {
     // Two envelopes commit the same signed subintent: both declare the
     // nullifier's exclusive write, so they share a group, and canonical
     // order picks the winner; the loser aborts before running.
-    let noop = |_id: TxHash, session: KernelSession| RunResult {
+    let noop = |_entry: &BatchTx, session: KernelSession| RunResult {
         session,
         outcome: Outcome::Completed { value: None },
         fuel: FUEL,
@@ -442,7 +443,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
     // two committing envelopes fall into different conflict groups, each
     // checks its own isolated store, and both spend the same subintent.
     // The batch refuses rather than run.
-    let noop = |_id: TxHash, session: KernelSession| RunResult {
+    let noop = |_entry: &BatchTx, session: KernelSession| RunResult {
         session,
         outcome: Outcome::Completed { value: None },
         fuel: FUEL,
@@ -452,6 +453,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         tx: tx(0x01),
         declared: point(nullifier(), Mode::Read),
         ordered: point(nullifier(), Mode::Read).iter().collect(),
+        calls: Vec::new(),
         nullifiers: vec![nullifier()],
         clock_ms: env().clock_ms,
         randomness: env().randomness,
@@ -481,7 +483,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
     // struct literally can pair them wrongly, and the consequence would
     // be a transaction routed against one declaration and handed
     // capabilities for another. The batch refuses rather than run.
-    let noop = |_id: TxHash, session: KernelSession| RunResult {
+    let noop = |_entry: &BatchTx, session: KernelSession| RunResult {
         session,
         outcome: Outcome::Completed { value: None },
         fuel: FUEL,
@@ -492,6 +494,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
         // A different cell entirely: folding this does not reproduce
         // `declared`.
         ordered: point(cell(0xB), Mode::Write).iter().collect(),
+        calls: Vec::new(),
         nullifiers: vec![],
         clock_ms: env().clock_ms,
         randomness: env().randomness,
@@ -514,9 +517,9 @@ fn declaration_views_that_disagree_refuse_the_batch() {
 fn an_aborted_transaction_spends_no_nullifier() {
     // The canonical-first envelope traps; the subintent stays unspent
     // and the second envelope commits it.
-    let scripted = |id: TxHash, session: KernelSession| RunResult {
+    let scripted = |entry: &BatchTx, session: KernelSession| RunResult {
         session,
-        outcome: if id == tx(0x01) {
+        outcome: if entry.tx == tx(0x01) {
             Outcome::UserError {
                 reason: "guest trap".into(),
             }
@@ -558,7 +561,7 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
     store.write(poisoned, encode_amount(100).to_vec()).unwrap();
     store.clear_log();
 
-    let writer = |_id: TxHash, mut session: KernelSession| {
+    let writer = |_entry: &BatchTx, mut session: KernelSession| {
         let rep = session
             .capabilities()
             .iter()
@@ -629,7 +632,7 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
     store.write(vault, encode_amount(100).to_vec()).unwrap();
     store.clear_log();
 
-    let scripted = |_id: TxHash, mut session: KernelSession| {
+    let scripted = |_entry: &BatchTx, mut session: KernelSession| {
         let caps: Vec<Capability> = session.capabilities().to_vec();
         for (rep, capability) in caps.iter().enumerate() {
             let rep = u32::try_from(rep).unwrap();
@@ -698,8 +701,8 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
     // can credit past `u128` in total. That is its own arithmetic, and
     // the batch carries on without it.
     let vault = cell(0xC);
-    let overflowing = |id: TxHash, mut session: KernelSession| {
-        if id == tx(0x01) {
+    let overflowing = |entry: &BatchTx, mut session: KernelSession| {
+        if entry.tx == tx(0x01) {
             let rep = session
                 .capabilities()
                 .iter()

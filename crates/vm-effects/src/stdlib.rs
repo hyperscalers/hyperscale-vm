@@ -142,16 +142,16 @@ pub fn amm_metadata() -> PackageMetadata {
 
 /// The order book.
 ///
-/// `place_ask(price, funds)`: insert at the computed entry key — the price
+/// `place-ask(price, funds)`: insert at the computed entry key — the price
 /// packed over a fresh sequence id — and escrow the maker's funds into the
-/// book vault. `fill_asks(from, to, payment)`: an exclusive write over the
+/// book vault. `fill-asks(from, to, payment)`: an exclusive write over the
 /// declared price interval with an entry cap, base outflow from the book's
 /// escrow vault, quote inflow to it.
 #[must_use]
 pub fn book_metadata() -> PackageMetadata {
     let mut methods = PackageMetadata::default();
     methods.methods.insert(
-        "place_ask".into(),
+        "place-ask".into(),
         MethodSignature {
             params: vec![ParamType::U64, ParamType::Bucket],
             abi: vec![
@@ -186,7 +186,7 @@ pub fn book_metadata() -> PackageMetadata {
         },
     );
     methods.methods.insert(
-        "fill_asks".into(),
+        "fill-asks".into(),
         MethodSignature {
             params: vec![ParamType::U64, ParamType::U64, ParamType::Bucket],
             abi: vec![
@@ -241,6 +241,7 @@ pub fn splitter_metadata() -> PackageMetadata {
         "take".into(),
         MethodSignature {
             params: vec![ParamType::Bucket, ParamType::U128],
+            abi: vec![AbiParam::Bucket(0), AbiParam::Derived(Expr::Arg(1))],
             outputs: vec![
                 Expr::ResourceOf(Box::new(Expr::Arg(0))),
                 Expr::ResourceOf(Box::new(Expr::Arg(0))),

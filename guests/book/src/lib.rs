@@ -22,13 +22,13 @@ fn amount(bytes: &[u8]) -> u128 {
 struct Book;
 
 impl Guest for Book {
-    fn place(asks: &RangeWrite, escrow: &DeltaCell, price: u64, seq: u64, amount_cell: Vec<u8>) {
+    fn place_ask(asks: &RangeWrite, escrow: &DeltaCell, price: u64, seq: u64, amount_cell: Vec<u8>) {
         let order = (u128::from(price) << 64) | u128::from(seq);
         range_write_insert(asks, &order.to_le_bytes(), &amount_cell);
         delta_cell_add(escrow, &amount_cell);
     }
 
-    fn fill(
+    fn fill_asks(
         asks: &RangeWrite,
         base_escrow: &DeltaCell,
         quote_escrow: &DeltaCell,

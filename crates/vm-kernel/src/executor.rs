@@ -30,8 +30,8 @@ use std::sync::Arc;
 use std::thread;
 
 use hyperscale_vm_effects::{
-    Address, Declaration, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, SubstateKey,
-    compatible,
+    Address, Declaration, Effect, EffectSet, EffectTarget, Mode, ModeKind, NodeCall, RoleId,
+    SubstateKey, compatible,
 };
 
 use crate::conflict::targets_overlap;
@@ -69,6 +69,14 @@ pub struct BatchTx {
     ///
     /// Must fold to [`BatchTx::declared`]; [`execute_batch`] checks it.
     pub ordered: Vec<Effect>,
+    /// The transaction's lowered invocations, in manifest node order:
+    /// what [`crate::walk::ManifestWalk`] performs.
+    ///
+    /// Shard-invariant, exactly like [`BatchTx::ordered`] and for the
+    /// same reason — every participant of a cross-shard transaction runs
+    /// the identical calls against the identical table, and locality
+    /// scopes what is applied rather than what is invoked.
+    pub calls: Vec<NodeCall>,
     /// The nullifier keys of every subintent the transaction commits.
     /// Each must also be declared as an exclusive write in `declared`,
     /// which [`execute_batch`] enforces: the declaration is what puts
@@ -110,10 +118,18 @@ impl BatchTx {
             tx,
             declared: declaration.set,
             ordered: declaration.ordered,
+            calls: Vec::new(),
             nullifiers: Vec::new(),
             clock_ms,
             randomness,
         }
+    }
+
+    /// Bind the invocations the manifest walk performs.
+    #[must_use]
+    pub fn with_calls(mut self, calls: Vec<NodeCall>) -> Self {
+        self.calls = calls;
+        self
     }
 
     /// Bind the subintents this transaction commits. Each key must also be
@@ -125,21 +141,28 @@ impl BatchTx {
     }
 }
 
-/// The engine seam: runs one transaction's guest against its session.
-/// Implementations wrap an engine (or none at all, for kernel-level
-/// tests); the executor owns everything else.
+/// The seam between the executor's per-transaction bookkeeping and the
+/// guest work a transaction performs.
+///
+/// The implementation every embedder wants is [`crate::walk::ManifestWalk`],
+/// which walks the transaction's own lowered invocations over a
+/// [`crate::walk::GuestBackend`]. The trait stays open because the
+/// executor's own mechanics — reservation adoption, group threading,
+/// rollback, the apply-time floor — are properties of the session and not
+/// of any manifest, and scripting a session directly is how they are
+/// tested.
 pub trait GuestRunner: Sync {
     /// Execute the transaction, returning the session, how it ended, and
     /// the fuel consumed.
-    fn run(&self, tx: TxHash, session: KernelSession) -> RunResult;
+    fn run(&self, entry: &BatchTx, session: KernelSession) -> RunResult;
 }
 
 impl<F> GuestRunner for F
 where
-    F: Fn(TxHash, KernelSession) -> RunResult + Sync,
+    F: Fn(&BatchTx, KernelSession) -> RunResult + Sync,
 {
-    fn run(&self, tx: TxHash, session: KernelSession) -> RunResult {
-        self(tx, session)
+    fn run(&self, entry: &BatchTx, session: KernelSession) -> RunResult {
+        self(entry, session)
     }
 }
 
@@ -514,7 +537,7 @@ fn run_group<R: GuestRunner>(
                 continue;
             }
         };
-        let result = runner.run(entry.tx, session);
+        let result = runner.run(entry, session);
         match result.outcome {
             Outcome::Completed { .. } => {
                 let (mut receipt, mut threaded) = result

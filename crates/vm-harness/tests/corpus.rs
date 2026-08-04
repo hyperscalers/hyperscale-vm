@@ -15,24 +15,26 @@ use hyperscale_vm_effects::stdlib::{
     ASKS, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, Constraint, EdgeRef, Effect, EffectSet, EffectTarget, GraphArg, GraphNode, Hash32,
-    Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, NodeInput,
-    PackageHash, PrefixShardResolver, Routing, ShardId, ShardResolver, SubstateKey, TestHasher,
-    Value, admit, child_key, fresh_id, route,
+    AbiParam, Address, Clause, Constraint, EdgeRef, Effect, EffectSet, EffectTarget, Expr,
+    GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
+    MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata, ParamType,
+    PrefixShardResolver, RoleId, Routing, ShardId, ShardResolver, SubstateKey, TargetExpr,
+    TestHasher, Value, admit, child_key, fresh_id, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, Event, KernelSession, MemoryStore, Outcome, OverlayStore, Receipt,
+    BatchTx, CellKind, EnvInputs, Event, GuestArg, GuestBackend, GuestCall, GuestRunner,
+    InvokeResult, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt,
     SubstateStore, TxHash, decode_amount, encode_amount,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
-    DeltaCell, LockedCell, RangeWrite, ReserveCell, WriteCell, add_kernel_to_linker,
-    blessed_engine, validate_component,
+    CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
+    validate_component,
 };
-use wasmtime::component::{Component, Linker, Resource};
-use wasmtime::error::{Context, bail, ensure};
+use wasmtime::component::{Component, Linker};
+use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
 const ALICE: Address = Address([0x10; 16]);
@@ -42,6 +44,7 @@ const BOOK: Address = Address([0x40; 16]);
 const MAKER: Address = Address([0x50; 16]);
 const TAKER: Address = Address([0x60; 16]);
 const CAROL: Address = Address([0x70; 16]);
+const DANA: Address = Address([0x80; 16]);
 const RES_X: Address = Address([0xE1; 16]);
 const RES_Y: Address = Address([0xE2; 16]);
 const BASE: Address = Address([0xE3; 16]);
@@ -118,11 +121,26 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     (cache, instances)
 }
 
-/// Both runtimes' compiled guests.
+/// Which guest each published package runs.
+///
+/// `mirror` is the same account code under a second content address, so
+/// the corpus can publish a package the authored stdlib table knows
+/// nothing about and call it through the same walk.
+const PACKAGES: &[(&str, &str)] = &[
+    ("account", "account"),
+    ("amm", "amm"),
+    ("book", "book"),
+    ("mirror", "account"),
+];
+
+/// Both runtimes' compiled guests, resolved by content address — which
+/// is how an embedder finds a package's code, an instance's address
+/// being no part of it.
 struct Engines {
     engine: Engine,
     blessed: BTreeMap<&'static str, Component>,
     reference: BTreeMap<&'static str, RefComponent>,
+    guests: BTreeMap<PackageHash, &'static str>,
 }
 
 impl Engines {
@@ -136,19 +154,20 @@ impl Engines {
             blessed.insert(name, Component::new(&engine, &bytes)?);
             reference.insert(name, RefComponent::decode(&bytes)?);
         }
+        let guests = PACKAGES
+            .iter()
+            .map(|(package, guest)| (pkg(package), *guest))
+            .collect();
         Ok(Self {
             engine,
             blessed,
             reference,
+            guests,
         })
     }
-}
 
-const fn guest_for(target: Address) -> &'static str {
-    match target.0[0] {
-        0x30 => "amm",
-        0x40 => "book",
-        _ => "account",
+    fn guest_for(&self, package: PackageHash) -> &'static str {
+        self.guests[&package]
     }
 }
 
@@ -158,59 +177,104 @@ enum Lane {
     Reference,
 }
 
-fn rep_of(session: &KernelSession, wanted: &Capability) -> u32 {
-    u32::try_from(
-        session
-            .capabilities()
-            .iter()
-            .position(|c| c == wanted)
-            .expect("capability present"),
-    )
-    .expect("bounded")
+/// The blessed engine behind the walk: one instantiation per guest call,
+/// the export invoked dynamically from the arguments the kernel built.
+struct BlessedBackend<'a> {
+    engines: &'a Engines,
 }
 
-fn range_rep(session: &KernelSession, one_entry: bool) -> u32 {
-    u32::try_from(
-        session
-            .capabilities()
-            .iter()
-            .position(
-                |c| matches!(c, Capability::RangeWrite { lo, hi, .. } if (lo == hi) == one_entry),
-            )
-            .expect("range capability present"),
-    )
-    .expect("bounded")
+impl GuestBackend for BlessedBackend<'_> {
+    fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
+        let mut linker = Linker::<SessionHost>::new(&self.engines.engine);
+        add_kernel_to_linker(&mut linker).expect("wiring");
+        let mut store = Store::new(&self.engines.engine, SessionHost(session));
+        store.set_fuel(FUEL).expect("fuel");
+        let component = &self.engines.blessed[self.engines.guest_for(call.package)];
+        let instance = linker
+            .instantiate(&mut store, component)
+            .expect("instantiate");
+        let args: Vec<HostArg<'_>> = call.args.iter().map(host_arg).collect();
+        let result = call_export(&mut store, &instance, call.export, &args, call.returns)
+            .map_err(|trap| format!("{trap:#}"));
+        let fuel = FUEL - store.get_fuel().expect("fuel");
+        InvokeResult {
+            session: store.into_data().0,
+            fuel,
+            result,
+        }
+    }
 }
 
-/// One node's guest invocation: the handles it receives (in export
-/// parameter order), its scalar params, and the bucket cells flowing in.
-enum NodeCall {
-    Withdraw {
-        vault: SubstateKey,
-        amount: Vec<u8>,
-    },
-    Deposit {
-        vault: SubstateKey,
-        bucket: Vec<u8>,
-    },
-    Swap {
-        config: SubstateKey,
-        reserve_in: SubstateKey,
-        reserve_out: SubstateKey,
-        input: Vec<u8>,
-        min_out: Vec<u8>,
-    },
-    Place {
-        escrow: SubstateKey,
-        price: u64,
-        seq: u64,
-        bucket: Vec<u8>,
-    },
-    Fill {
-        base: SubstateKey,
-        quote: SubstateKey,
-        budget: Vec<u8>,
-    },
+/// The reference interpreter behind the same walk.
+struct ReferenceBackend<'a> {
+    engines: &'a Engines,
+}
+
+impl GuestBackend for ReferenceBackend<'_> {
+    fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
+        let args: Vec<CVal> = call.args.iter().map(ref_arg).collect();
+        let component = &self.engines.reference[self.engines.guest_for(call.package)];
+        let mut instance = RefComponentInstance::instantiate(component, SessionHost(session))
+            .expect("instantiate");
+        let outcome = instance.invoke(call.export, &args).expect("invoke");
+        let fuel = instance.fuel_consumed();
+        let result = match outcome {
+            Ok(values) => match (call.returns, values.as_slice()) {
+                (false, []) => Ok(None),
+                (true, [CVal::Bytes(bytes)]) => Ok(Some(bytes.clone())),
+                other => Err(format!("unexpected result shape {other:?}")),
+            },
+            Err(trap) => Err(format!("{trap:?}")),
+        };
+        InvokeResult {
+            session: instance.into_host().0,
+            fuel,
+            result,
+        }
+    }
+}
+
+const fn host_kind(kind: CellKind) -> HostCellKind {
+    match kind {
+        CellKind::Read => HostCellKind::Read,
+        CellKind::Locked => HostCellKind::Locked,
+        CellKind::Write => HostCellKind::Write,
+        CellKind::Delta => HostCellKind::Delta,
+        CellKind::Reserve => HostCellKind::Reserve,
+        CellKind::RangeRead => HostCellKind::RangeRead,
+        CellKind::RangeWrite => HostCellKind::RangeWrite,
+    }
+}
+
+const fn ref_kind(kind: CellKind) -> ResourceKind {
+    match kind {
+        CellKind::Read => ResourceKind::ReadCell,
+        CellKind::Locked => ResourceKind::LockedCell,
+        CellKind::Write => ResourceKind::WriteCell,
+        CellKind::Delta => ResourceKind::DeltaCell,
+        CellKind::Reserve => ResourceKind::ReserveCell,
+        CellKind::RangeRead => ResourceKind::RangeRead,
+        CellKind::RangeWrite => ResourceKind::RangeWrite,
+    }
+}
+
+const fn host_arg<'a>(arg: &GuestArg<'a>) -> HostArg<'a> {
+    match arg {
+        GuestArg::Handle { rep, kind } => HostArg::Handle {
+            rep: *rep,
+            kind: host_kind(*kind),
+        },
+        GuestArg::U64(scalar) => HostArg::U64(*scalar),
+        GuestArg::Bytes(bytes) => HostArg::Bytes(bytes),
+    }
+}
+
+fn ref_arg(arg: &GuestArg<'_>) -> CVal {
+    match arg {
+        GuestArg::Handle { rep, kind } => CVal::Borrow(*rep, ref_kind(*kind)),
+        GuestArg::U64(scalar) => CVal::U64(*scalar),
+        GuestArg::Bytes(bytes) => CVal::Bytes(bytes.to_vec()),
+    }
 }
 
 /// How one transaction ended on a lane.
@@ -220,11 +284,15 @@ enum TxResult {
     Trapped,
 }
 
-/// Execute one admitted manifest: walk the graph's nodes in order,
-/// invoking each guest with its capabilities and edge cells, then finish
-/// the session into a receipt. Returns the outcome and, when completed,
-/// the threaded store for the next transaction.
-#[allow(clippy::too_many_lines)] // one dispatch per corpus node shape
+/// Execute one admitted manifest through the kernel's own walk: routing
+/// lowers each node to the invocation its package's ABI binding
+/// describes, the walk performs them in order, and the session finishes
+/// into a receipt with the trace-subset oracle standing over it.
+///
+/// Nothing here names a method or an export. Everything a call needs is
+/// either signed manifest content or content-addressed package metadata,
+/// which is what makes a package published at runtime callable by the
+/// same code path the genesis packages take.
 fn execute_manifest(
     lane: Lane,
     engines: &Engines,
@@ -250,402 +318,39 @@ fn execute_manifest(
         routing.per_shard.len() == 1,
         "the null resolver routes to one shard"
     );
-    let declared = routing.per_shard.values().next().expect("one shard");
-    let identity = admitted.identity();
-    let manifest = admitted.manifest().clone();
+    let declaration = routing.declaration().context("declaration")?;
+    let entry =
+        BatchTx::new(tx, declaration, env().clock_ms, env().randomness).with_calls(routing.calls);
 
     let before = store.clone();
-    let mut session = KernelSession::materialize(
+    let session = KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
-        declared,
-        &declared.iter().collect::<Vec<_>>(),
+        &entry.declared,
+        &entry.ordered,
         tx,
         env(),
         test_hash,
     )
     .expect("corpus manifests are feasible");
 
-    // Per-node outputs: the bucket cells later nodes consume.
-    let mut outputs: Vec<Vec<Vec<u8>>> = Vec::with_capacity(graph.nodes.len());
-    let mut fuel_total = 0u64;
-
-    for (index, node) in graph.nodes.iter().enumerate() {
-        let edge_cell = |edge: &EdgeRef| -> Vec<u8> {
-            outputs[edge.producer as usize][edge.output as usize].clone()
-        };
-        let edge_resource = |edge: &EdgeRef| -> Address {
-            // The lowered manifest carries the admitted edge type.
-            match &manifest.nodes[index].inputs[node
-                .args
-                .iter()
-                .position(|arg| matches!(arg, GraphArg::Edge { edge: e, .. } if e == edge))
-                .expect("edge arg present")]
-            {
-                NodeInput::Edge { resource, .. } => *resource,
-                NodeInput::Literal(_) => unreachable!("edge input"),
-            }
-        };
-
-        let call = match (guest_for(node.target), node.method.as_str()) {
-            ("account", "withdraw") => {
-                let (
-                    GraphArg::Literal(Value::Address(resource)),
-                    GraphArg::Literal(Value::U128(amount)),
-                ) = (&node.args[0], &node.args[1])
-                else {
-                    bail!("withdraw args");
-                };
-                NodeCall::Withdraw {
-                    vault: vault(node.target, *resource),
-                    amount: encode_amount(*amount).to_vec(),
-                }
-            }
-            ("account", "deposit") => {
-                let GraphArg::Edge { edge, .. } = &node.args[0] else {
-                    bail!("deposit args");
-                };
-                NodeCall::Deposit {
-                    vault: vault(node.target, edge_resource(edge)),
-                    bucket: edge_cell(edge),
-                }
-            }
-            ("amm", "swap") => {
-                let (GraphArg::Edge { edge, .. }, GraphArg::Literal(Value::U128(min_out))) =
-                    (&node.args[0], &node.args[1])
-                else {
-                    bail!("swap args");
-                };
-                let input_resource = edge_resource(edge);
-                let output_resource = if input_resource == RES_X {
-                    RES_Y
-                } else {
-                    RES_X
-                };
-                NodeCall::Swap {
-                    config: config_leaf(POOL),
-                    reserve_in: vault(POOL, input_resource),
-                    reserve_out: vault(POOL, output_resource),
-                    input: edge_cell(edge),
-                    min_out: encode_amount(*min_out).to_vec(),
-                }
-            }
-            ("book", "place_ask") => {
-                let (GraphArg::Literal(Value::U64(price)), GraphArg::Edge { edge, .. }) =
-                    (&node.args[0], &node.args[1])
-                else {
-                    bail!("place args");
-                };
-                let seq = fresh_id(
-                    &TestHasher,
-                    identity,
-                    u32::try_from(index).expect("bounded"),
-                    0,
-                    0,
-                );
-                NodeCall::Place {
-                    escrow: vault(BOOK, edge_resource(edge)),
-                    price: *price,
-                    seq,
-                    bucket: edge_cell(edge),
-                }
-            }
-            ("book", "fill_asks") => {
-                let GraphArg::Edge { edge, .. } = &node.args[2] else {
-                    bail!("fill args");
-                };
-                NodeCall::Fill {
-                    base: vault(BOOK, BASE),
-                    quote: vault(BOOK, edge_resource(edge)),
-                    budget: edge_cell(edge),
-                }
-            }
-            other => bail!("unknown corpus node {other:?}"),
-        };
-
-        let guest = guest_for(node.target);
-        // The node names its target, so the walker is what can stamp an
-        // emission with its emitter; the session sees one capability table
-        // for the whole transaction and could not tell whose call it is.
-        session.enter_invocation(node.target);
-        let invoked = invoke_node(lane, engines, guest, session, &call);
-        let (returned_session, node_outputs, fuel) = match invoked {
-            Ok(ok) => ok,
-            Err(_trap) => return Ok((TxResult::Trapped, before)),
-        };
-        session = returned_session;
-        session.leave_invocation();
-        fuel_total += fuel;
-        outputs.push(node_outputs);
-    }
-
-    let (receipt, threaded) = session
-        .finish(Outcome::Completed { value: None }, fuel_total)
-        .expect("the oracle stands on every corpus receipt");
-    Ok((TxResult::Completed(receipt), threaded.collapse()))
-}
-
-type Invoked = (KernelSession, Vec<Vec<u8>>, u64);
-
-/// Invoke one node's export on the chosen lane. An `Err` is a guest trap;
-/// the session is gone with its engine store, and the caller rolls back.
-fn invoke_node(
-    lane: Lane,
-    engines: &Engines,
-    guest: &str,
-    session: KernelSession,
-    call: &NodeCall,
-) -> std::result::Result<Invoked, String> {
-    match lane {
-        Lane::Blessed => invoke_blessed(engines, guest, session, call),
-        Lane::Reference => invoke_reference(engines, guest, session, call),
-    }
-}
-
-#[allow(clippy::too_many_lines)] // one typed invocation per export shape
-fn invoke_blessed(
-    engines: &Engines,
-    guest: &str,
-    session: KernelSession,
-    call: &NodeCall,
-) -> std::result::Result<Invoked, String> {
-    let mut linker = Linker::<SessionHost>::new(&engines.engine);
-    add_kernel_to_linker(&mut linker).expect("wiring");
-    let mut store = Store::new(&engines.engine, SessionHost(session));
-    store.set_fuel(FUEL).expect("fuel");
-    let instance = linker
-        .instantiate(&mut store, &engines.blessed[guest])
-        .expect("instantiate");
-
-    let outputs = match call {
-        NodeCall::Withdraw { vault, amount } => {
-            let rep = rep_of(&store.data().0, &Capability::Reserve(*vault));
-            let f = instance
-                .get_typed_func::<(Resource<ReserveCell>, &[u8]), (Vec<u8>,)>(
-                    &mut store, "withdraw",
-                )
-                .expect("typed");
-            f.call(&mut store, (Resource::new_borrow(rep), amount))
-                .map(|(v,)| vec![v])
+    let blessed = BlessedBackend { engines };
+    let reference = ReferenceBackend { engines };
+    let run = match lane {
+        Lane::Blessed => ManifestWalk { backend: &blessed }.run(&entry, session),
+        Lane::Reference => ManifestWalk {
+            backend: &reference,
         }
-        NodeCall::Deposit { vault, bucket } => {
-            let rep = rep_of(&store.data().0, &Capability::Delta(*vault));
-            let f = instance
-                .get_typed_func::<(Resource<DeltaCell>, &[u8]), ()>(&mut store, "deposit")
-                .expect("typed");
-            f.call(&mut store, (Resource::new_borrow(rep), bucket))
-                .map(|()| Vec::new())
-        }
-        NodeCall::Swap {
-            config,
-            reserve_in,
-            reserve_out,
-            input,
-            min_out,
-        } => {
-            let c = rep_of(&store.data().0, &Capability::Locked(*config));
-            let rin = rep_of(&store.data().0, &Capability::Write(*reserve_in));
-            let rout = rep_of(&store.data().0, &Capability::Write(*reserve_out));
-            let f = instance
-                .get_typed_func::<(
-                    Resource<LockedCell>,
-                    Resource<WriteCell>,
-                    Resource<WriteCell>,
-                    &[u8],
-                    &[u8],
-                ), (Vec<u8>,)>(&mut store, "swap")
-                .expect("typed");
-            f.call(
-                &mut store,
-                (
-                    Resource::new_borrow(c),
-                    Resource::new_borrow(rin),
-                    Resource::new_borrow(rout),
-                    input,
-                    min_out,
-                ),
-            )
-            .map(|(v,)| vec![v])
-        }
-        NodeCall::Place {
-            escrow,
-            price,
-            seq,
-            bucket,
-        } => {
-            let range = range_rep(&store.data().0, true);
-            let vault_rep = rep_of(&store.data().0, &Capability::Delta(*escrow));
-            let f = instance
-                .get_typed_func::<(Resource<RangeWrite>, Resource<DeltaCell>, u64, u64, &[u8]), ()>(
-                    &mut store, "place",
-                )
-                .expect("typed");
-            f.call(
-                &mut store,
-                (
-                    Resource::new_borrow(range),
-                    Resource::new_borrow(vault_rep),
-                    *price,
-                    *seq,
-                    bucket,
-                ),
-            )
-            .map(|()| Vec::new())
-        }
-        NodeCall::Fill {
-            base,
-            quote,
-            budget,
-        } => {
-            let range = range_rep(&store.data().0, false);
-            let base_rep = rep_of(&store.data().0, &Capability::Delta(*base));
-            let quote_rep = rep_of(&store.data().0, &Capability::Delta(*quote));
-            let f = instance
-                .get_typed_func::<(
-                    Resource<RangeWrite>,
-                    Resource<DeltaCell>,
-                    Resource<DeltaCell>,
-                    &[u8],
-                ), (Vec<u8>,)>(&mut store, "fill")
-                .expect("typed");
-            f.call(
-                &mut store,
-                (
-                    Resource::new_borrow(range),
-                    Resource::new_borrow(base_rep),
-                    Resource::new_borrow(quote_rep),
-                    budget,
-                ),
-            )
-            .map(|(both,)| vec![both[..16].to_vec(), both[16..].to_vec()])
-        }
+        .run(&entry, session),
     };
-
-    let fuel = FUEL - store.get_fuel().expect("fuel");
-    match outputs {
-        Ok(outputs) => Ok((store.into_data().0, outputs, fuel)),
-        Err(trap) => Err(format!("{trap:#}")),
-    }
-}
-
-#[allow(clippy::too_many_lines)] // one argument shape per export
-fn invoke_reference(
-    engines: &Engines,
-    guest: &str,
-    session: KernelSession,
-    call: &NodeCall,
-) -> std::result::Result<Invoked, String> {
-    let borrow = |session: &KernelSession, cap: &Capability, kind: ResourceKind| {
-        CVal::Borrow(rep_of(session, cap), kind)
-    };
-    let (export, args, splits) = match call {
-        NodeCall::Withdraw { vault, amount } => (
-            "withdraw",
-            vec![
-                borrow(
-                    &session,
-                    &Capability::Reserve(*vault),
-                    ResourceKind::ReserveCell,
-                ),
-                CVal::Bytes(amount.clone()),
-            ],
-            1,
-        ),
-        NodeCall::Deposit { vault, bucket } => (
-            "deposit",
-            vec![
-                borrow(
-                    &session,
-                    &Capability::Delta(*vault),
-                    ResourceKind::DeltaCell,
-                ),
-                CVal::Bytes(bucket.clone()),
-            ],
-            0,
-        ),
-        NodeCall::Swap {
-            config,
-            reserve_in,
-            reserve_out,
-            input,
-            min_out,
-        } => (
-            "swap",
-            vec![
-                borrow(
-                    &session,
-                    &Capability::Locked(*config),
-                    ResourceKind::LockedCell,
-                ),
-                borrow(
-                    &session,
-                    &Capability::Write(*reserve_in),
-                    ResourceKind::WriteCell,
-                ),
-                borrow(
-                    &session,
-                    &Capability::Write(*reserve_out),
-                    ResourceKind::WriteCell,
-                ),
-                CVal::Bytes(input.clone()),
-                CVal::Bytes(min_out.clone()),
-            ],
-            1,
-        ),
-        NodeCall::Place {
-            escrow,
-            price,
-            seq,
-            bucket,
-        } => (
-            "place",
-            vec![
-                CVal::Borrow(range_rep(&session, true), ResourceKind::RangeWrite),
-                borrow(
-                    &session,
-                    &Capability::Delta(*escrow),
-                    ResourceKind::DeltaCell,
-                ),
-                CVal::U64(*price),
-                CVal::U64(*seq),
-                CVal::Bytes(bucket.clone()),
-            ],
-            0,
-        ),
-        NodeCall::Fill {
-            base,
-            quote,
-            budget,
-        } => (
-            "fill",
-            vec![
-                CVal::Borrow(range_rep(&session, false), ResourceKind::RangeWrite),
-                borrow(&session, &Capability::Delta(*base), ResourceKind::DeltaCell),
-                borrow(
-                    &session,
-                    &Capability::Delta(*quote),
-                    ResourceKind::DeltaCell,
-                ),
-                CVal::Bytes(budget.clone()),
-            ],
-            2,
-        ),
-    };
-    let mut instance =
-        RefComponentInstance::instantiate(&engines.reference[guest], SessionHost(session))
-            .expect("instantiate");
-    let outcome = instance.invoke(export, &args).expect("invoke");
-    let fuel = instance.fuel_consumed();
-    match outcome {
-        Ok(values) => {
-            let outputs = match (splits, values.as_slice()) {
-                (0, []) => Vec::new(),
-                (1, [CVal::Bytes(single)]) => vec![single.clone()],
-                (2, [CVal::Bytes(both)]) => vec![both[..16].to_vec(), both[16..].to_vec()],
-                other => return Err(format!("unexpected result shape {other:?}")),
-            };
-            Ok((instance.into_host().0, outputs, fuel))
+    match run.outcome {
+        Outcome::Completed { .. } => {
+            let (receipt, threaded) = run
+                .session
+                .finish(Outcome::Completed { value: None }, run.fuel)
+                .expect("the oracle stands on every corpus receipt");
+            Ok((TxResult::Completed(receipt), threaded.collapse()))
         }
-        Err(trap) => Err(format!("{trap:?}")),
+        _ => Ok((TxResult::Trapped, before)),
     }
 }
 
@@ -752,6 +457,115 @@ fn transfer_graph() -> ManifestGraph {
             },
         ],
     }
+}
+
+/// A package the authored stdlib table does not describe: the same
+/// account code under its own content address, with metadata written
+/// here and published at runtime.
+///
+/// `deposit` declares its two delta clauses in the opposite order to the
+/// stdlib account's and binds the ABI handle to the second one. Nothing
+/// about the resulting call can come from a table of known method names,
+/// and nothing can come from a convention that a method's first clause is
+/// its first handle: if either were true the credit would land on the
+/// claims cell instead of the vault.
+fn mirror_metadata() -> PackageMetadata {
+    let self_child = |role: RoleId, material: Vec<Expr>| Expr::ChildKey {
+        owner: Box::new(Expr::SelfAddr),
+        role,
+        material,
+    };
+    let resource_of_arg0 = || Expr::ResourceOf(Box::new(Expr::Arg(0)));
+    let mut metadata = PackageMetadata::default();
+    metadata.methods.insert(
+        "deposit".into(),
+        MethodSignature {
+            params: vec![ParamType::Bucket],
+            abi: vec![AbiParam::Handle(1), AbiParam::Bucket(0)],
+            outputs: vec![],
+            effects: vec![
+                Clause::Effect {
+                    target: TargetExpr::Point(self_child(CLAIMS, vec![resource_of_arg0()])),
+                    mode: ModeExpr::Delta,
+                },
+                Clause::Effect {
+                    target: TargetExpr::Point(self_child(VAULT, vec![resource_of_arg0()])),
+                    mode: ModeExpr::Delta,
+                },
+            ],
+            calls: vec![],
+        },
+    );
+    metadata.events = vec!["withdrawn".into(), "deposited".into()];
+    metadata
+}
+
+#[test]
+fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<()> {
+    let (mut cache, mut instances) = world();
+    cache.publish(pkg("mirror"), mirror_metadata());
+    instances.register(
+        DANA,
+        InstanceMeta {
+            package: pkg("mirror"),
+            config: vec![],
+        },
+    );
+    let world = (cache, instances);
+
+    let engines = Engines::build()?;
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    store.clear_log();
+
+    let graph = ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE,
+                method: "withdraw".into(),
+                args: vec![
+                    GraphArg::Literal(Value::Address(RES_X)),
+                    GraphArg::Literal(Value::U128(100)),
+                ],
+            },
+            GraphNode {
+                target: DANA,
+                method: "deposit".into(),
+                args: vec![GraphArg::Edge {
+                    edge: EdgeRef {
+                        producer: 0,
+                        output: 0,
+                    },
+                    constraints: vec![Constraint::ResourceIs(RES_X)],
+                }],
+            },
+        ],
+    };
+    let (results, _) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[(&graph, TxHash(Hash32([0x0D; 32])))],
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("the published package must complete");
+    };
+    assert_eq!(
+        receipt
+            .delta
+            .movements
+            .get(&vault(DANA, RES_X))
+            .map(|movement| movement.credit),
+        Some(100),
+        "the bound clause's cell takes the credit"
+    );
+    assert!(
+        receipt.delta.movements.get(&claims(DANA, RES_X)).is_none(),
+        "the unbound clause is declared and untouched"
+    );
+    Ok(())
 }
 
 #[test]
@@ -1016,7 +830,7 @@ fn place_graph() -> ManifestGraph {
             },
             GraphNode {
                 target: BOOK,
-                method: "place_ask".into(),
+                method: "place-ask".into(),
                 args: vec![
                     GraphArg::Literal(Value::U64(3)),
                     GraphArg::Edge {
@@ -1045,7 +859,7 @@ fn fill_graph() -> ManifestGraph {
             },
             GraphNode {
                 target: BOOK,
-                method: "fill_asks".into(),
+                method: "fill-asks".into(),
                 args: vec![
                     GraphArg::Literal(Value::U64(3)),
                     GraphArg::Literal(Value::U64(5)),

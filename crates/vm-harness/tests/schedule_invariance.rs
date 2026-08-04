@@ -157,7 +157,8 @@ impl BlessedRunner {
 }
 
 impl GuestRunner for BlessedRunner {
-    fn run(&self, id: TxHash, session: KernelSession) -> RunResult {
+    fn run(&self, entry: &BatchTx, session: KernelSession) -> RunResult {
+        let id = entry.tx;
         if self.delay {
             stall(id);
         }
@@ -228,7 +229,8 @@ impl RefRunner {
 }
 
 impl GuestRunner for RefRunner {
-    fn run(&self, id: TxHash, session: KernelSession) -> RunResult {
+    fn run(&self, entry: &BatchTx, session: KernelSession) -> RunResult {
+        let id = entry.tx;
         if self.delay {
             stall(id);
         }

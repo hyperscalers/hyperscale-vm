@@ -70,7 +70,8 @@ fn rep_of(session: &KernelSession, wanted: &Capability) -> u32 {
 /// The scripted guest: transfers move the reserved amount into the delta
 /// cell; writers bump their cell's first byte; the doomed writer mutates
 /// and then fails.
-fn scripted(tx_id: TxHash, mut session: KernelSession) -> RunResult {
+fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
+    let tx_id = entry.tx;
     let caps: Vec<Capability> = session.capabilities().to_vec();
     let reserve = caps
         .iter()
@@ -271,11 +272,12 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
     .unwrap();
     // Adversarial worker timing: later hashes run eagerly, earlier ones
     // stall, inverting any accidental reliance on arrival order.
-    let stalled = |tx_id: TxHash, session: KernelSession| {
+    let stalled = |entry: &BatchTx, session: KernelSession| {
+        let tx_id = entry.tx;
         sleep(Duration::from_millis(u64::from(
             0xFF_u8.wrapping_sub(tx_id.0.0[0]) / 32,
         )));
-        scripted(tx_id, session)
+        scripted(entry, session)
     };
     let permuted = execute_batch(
         Arc::new(store),
@@ -352,12 +354,12 @@ fn each_transaction_sees_its_own_clock() {
         env().randomness,
     );
 
-    let observe = |tx_id: TxHash, session: KernelSession| RunResult {
+    let observe = |entry: &BatchTx, session: KernelSession| RunResult {
         outcome: Outcome::Completed {
             value: Some(session.clock_ms()),
         },
         session,
-        fuel: u64::from(tx_id.0.0[0]),
+        fuel: u64::from(entry.tx.0.0[0]),
     };
     let outcome = execute_batch(
         Arc::new(store),
@@ -403,12 +405,12 @@ fn each_transaction_sees_its_own_draw() {
         [9; 32],
     );
 
-    let observe = |tx_id: TxHash, session: KernelSession| RunResult {
+    let observe = |entry: &BatchTx, session: KernelSession| RunResult {
         outcome: Outcome::Completed {
             value: Some(u64::from(session.randomness()[0])),
         },
         session,
-        fuel: u64::from(tx_id.0.0[0]),
+        fuel: u64::from(entry.tx.0.0[0]),
     };
     let outcome = execute_batch(
         Arc::new(store),

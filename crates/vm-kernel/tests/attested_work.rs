@@ -82,8 +82,8 @@ fn transfer_declared(amount: u128) -> EffectSet {
 }
 
 /// A guest that completes without touching anything, reporting `fuel`.
-fn quiet_guest(fuel: u64) -> impl Fn(TxHash, KernelSession) -> RunResult + Sync {
-    move |_id, session| RunResult {
+fn quiet_guest(fuel: u64) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
+    move |_entry: &BatchTx, session| RunResult {
         session,
         outcome: Outcome::Completed { value: None },
         fuel,
@@ -92,8 +92,8 @@ fn quiet_guest(fuel: u64) -> impl Fn(TxHash, KernelSession) -> RunResult + Sync 
 
 /// A guest that traps, reporting `fuel` — the number the two runtimes
 /// disagree on.
-fn trapping_guest(fuel: u64) -> impl Fn(TxHash, KernelSession) -> RunResult + Sync {
-    move |_id, session| RunResult {
+fn trapping_guest(fuel: u64) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
+    move |_entry: &BatchTx, session| RunResult {
         session,
         outcome: Outcome::UserError {
             reason: "integer divide by zero".into(),
@@ -104,7 +104,7 @@ fn trapping_guest(fuel: u64) -> impl Fn(TxHash, KernelSession) -> RunResult + Sy
 
 /// The transfer guest: moves the reserved amount into the delta cell, so
 /// the transaction actually completes.
-fn transfer_guest(_id: TxHash, mut session: KernelSession) -> RunResult {
+fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
     let caps: Vec<Capability> = session.capabilities().to_vec();
     let reserve = caps.iter().enumerate().find_map(|(rep, c)| match c {
         Capability::Reserve(_) => Some(u32::try_from(rep).unwrap()),
@@ -140,7 +140,7 @@ fn run_batch<R>(
     locality: &Locality,
 ) -> BatchOutcome
 where
-    R: Fn(TxHash, KernelSession) -> RunResult + Sync,
+    R: Fn(&BatchTx, KernelSession) -> RunResult + Sync,
 {
     execute_batch(
         store,
@@ -156,7 +156,7 @@ where
 /// Runs one transaction and returns its receipt and its attested work.
 fn run_one<R>(declared: EffectSet, runner: &R, locality: &Locality) -> (Receipt, Work)
 where
-    R: Fn(TxHash, KernelSession) -> RunResult + Sync,
+    R: Fn(&BatchTx, KernelSession) -> RunResult + Sync,
 {
     let batch = [BatchTx::new(tx(1), declared, 1_000, [1; 32])];
     let outcome = run_batch(funded_store(1_000), &batch, runner, locality);

@@ -13,21 +13,22 @@ use std::time::Instant;
 
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
-    Address, Constraint, EdgeRef, Effect, EffectSet, EffectTarget, GraphArg, GraphNode, Hash32,
-    Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, PackageHash,
-    PrefixShardResolver, SubstateKey, TestHasher, Value, admit, child_key, route,
+    Address, Constraint, Declaration, EdgeRef, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta,
+    InstanceRegistry, ManifestGraph, MetadataCache, NodeCall, PackageHash, PrefixShardResolver,
+    SubstateKey, TestHasher, Value, admit, child_key, route,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Base, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession, Locality,
-    MemoryStore, Outcome, OverlayStore, RunResult, SubstateStore, TxHash, encode_amount,
-    execute_batch,
+    Base, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
+    GuestRunner, InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome,
+    OverlayStore, SubstateStore, TxHash, encode_amount, execute_batch,
 };
 use hyperscale_vm_runtime::{
-    DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,
+    CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
+    validate_component,
 };
-use wasmtime::component::{Component, InstancePre, Linker, Resource};
+use wasmtime::component::{Component, InstancePre, Linker};
 use wasmtime::error::Context;
 use wasmtime::{Engine, Result, Store};
 
@@ -121,19 +122,41 @@ fn transfer_graph(from: Address) -> ManifestGraph {
     }
 }
 
-fn declared(from: Address) -> EffectSet {
-    let mut set = EffectSet::new();
-    set.insert(Effect {
-        target: EffectTarget::Point(vault(from)),
-        mode: Mode::Reserve { amount: AMOUNT },
+/// One transfer as the chain derives it: both views of the declaration
+/// and the lowered invocations the walk performs.
+///
+/// Taken from routing rather than hand-built, because the capability
+/// table a handle's rep indexes into is the clause order routing emits —
+/// a restated set would measure a pipeline nothing runs.
+struct Routed {
+    declaration: Declaration,
+    calls: Vec<NodeCall>,
+}
+
+fn routed(world: &(MetadataCache, InstanceRegistry), from: Address) -> Result<Routed> {
+    let (cache, instances) = world;
+    let admitted = admit(&transfer_graph(from), cache, instances, &TestHasher)?;
+    let routing = route(
+        &admitted,
+        cache,
+        instances,
+        &TestHasher,
+        &PrefixShardResolver { bits: 0 },
+    )?;
+    Ok(Routed {
+        declaration: routing.declaration()?,
+        calls: routing.calls,
     })
-    .unwrap();
-    set.insert(Effect {
-        target: EffectTarget::Point(vault(RECIPIENT)),
-        mode: Mode::Delta,
-    })
-    .unwrap();
-    set
+}
+
+fn entry_for(index: u32, routed: &Routed) -> BatchTx {
+    BatchTx::new(
+        tx(index),
+        routed.declaration.clone(),
+        env().clock_ms,
+        env().randomness,
+    )
+    .with_calls(routed.calls.clone())
 }
 
 fn funded_store(senders: u32) -> MemoryStore {
@@ -145,17 +168,6 @@ fn funded_store(senders: u32) -> MemoryStore {
     }
     store.clear_log();
     store
-}
-
-fn rep_of(session: &KernelSession, wanted: &Capability) -> u32 {
-    u32::try_from(
-        session
-            .capabilities()
-            .iter()
-            .position(|c| c == wanted)
-            .expect("capability present"),
-    )
-    .expect("bounded")
 }
 
 struct Bench {
@@ -174,61 +186,45 @@ impl Bench {
         let pre = linker.instantiate_pre(&component)?;
         Ok(Self { engine, pre })
     }
+}
 
-    /// The execution path of one transfer: two guest invocations against
-    /// the session — withdraw returning the bucket cell, deposit crediting
-    /// it. Returns the session and the fuel consumed.
-    fn run_transfer(&self, from: Address, mut session: KernelSession) -> (KernelSession, u64) {
-        let reserve = rep_of(&session, &Capability::Reserve(vault(from)));
-        let delta = rep_of(&session, &Capability::Delta(vault(RECIPIENT)));
-        // Each call is one node of the transfer graph, and only the runner
-        // knows whose method runs next — the guest emits, the kernel stamps
-        // the emitter from here.
-        session.enter_invocation(from);
+impl GuestBackend for Bench {
+    fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
         let mut store = Store::new(&self.engine, SessionHost(session));
         store.set_fuel(FUEL).expect("fuel");
         let instance = self.pre.instantiate(&mut store).expect("instantiate");
-        let withdraw = instance
-            .get_typed_func::<(Resource<ReserveCell>, &[u8]), (Vec<u8>,)>(&mut store, "withdraw")
-            .expect("typed");
-        let (bucket,) = withdraw
-            .call(
-                &mut store,
-                (Resource::new_borrow(reserve), &encode_amount(AMOUNT)),
-            )
-            .expect("withdraw");
-        let consumed = FUEL - store.get_fuel().expect("fuel");
-        let mut session = store.into_data().0;
-        session.leave_invocation();
-
-        session.enter_invocation(RECIPIENT);
-        let mut store = Store::new(&self.engine, SessionHost(session));
-        store.set_fuel(FUEL).expect("fuel");
-        let instance = self.pre.instantiate(&mut store).expect("instantiate");
-        let deposit = instance
-            .get_typed_func::<(Resource<DeltaCell>, &[u8]), ()>(&mut store, "deposit")
-            .expect("typed");
-        deposit
-            .call(&mut store, (Resource::new_borrow(delta), &bucket))
-            .expect("deposit");
-        let consumed = consumed + (FUEL - store.get_fuel().expect("fuel"));
-        let mut session = store.into_data().0;
-        session.leave_invocation();
-        (session, consumed)
+        let args: Vec<HostArg<'_>> = call
+            .args
+            .iter()
+            .map(|arg| match arg {
+                GuestArg::Handle { rep, kind } => HostArg::Handle {
+                    rep: *rep,
+                    kind: host_kind(*kind),
+                },
+                GuestArg::U64(scalar) => HostArg::U64(*scalar),
+                GuestArg::Bytes(bytes) => HostArg::Bytes(bytes),
+            })
+            .collect();
+        let result = call_export(&mut store, &instance, call.export, &args, call.returns)
+            .map_err(|trap| format!("{trap:#}"));
+        let fuel = FUEL - store.get_fuel().expect("fuel");
+        InvokeResult {
+            session: store.into_data().0,
+            fuel,
+            result,
+        }
     }
 }
 
-impl GuestRunner for Bench {
-    fn run(&self, id: TxHash, session: KernelSession) -> RunResult {
-        let mut index_bytes = [0u8; 4];
-        index_bytes.copy_from_slice(&id.0.0[..4]);
-        let from = sender(u32::from_le_bytes(index_bytes));
-        let (session, fuel) = self.run_transfer(from, session);
-        RunResult {
-            session,
-            outcome: Outcome::Completed { value: None },
-            fuel,
-        }
+const fn host_kind(kind: CellKind) -> HostCellKind {
+    match kind {
+        CellKind::Read => HostCellKind::Read,
+        CellKind::Locked => HostCellKind::Locked,
+        CellKind::Write => HostCellKind::Write,
+        CellKind::Delta => HostCellKind::Delta,
+        CellKind::Reserve => HostCellKind::Reserve,
+        CellKind::RangeRead => HostCellKind::RangeRead,
+        CellKind::RangeWrite => HostCellKind::RangeWrite,
     }
 }
 
@@ -291,24 +287,31 @@ fn main() -> Result<()> {
     // finish — threading one store like a block, at growing store sizes so
     // any state-size scaling in the kernel shows.
     println!();
+    let walk = ManifestWalk { backend: &bench };
     for senders in [100u32, 1_000, 4_000] {
+        let (cache, instances) = world(senders);
+        let entries: Vec<BatchTx> = (0..senders)
+            .map(|index| {
+                Ok(entry_for(
+                    index,
+                    &routed(&(cache.clone(), instances.clone()), sender(index))?,
+                ))
+            })
+            .collect::<Result<_>>()?;
         let mut store = OverlayStore::new(Arc::new(funded_store(senders)));
         let start = Instant::now();
-        for index in 0..senders {
-            let from = sender(index);
+        for entry in &entries {
             let session = KernelSession::materialize(
                 store,
-                &declared(from),
-                &declared(from).iter().collect::<Vec<_>>(),
-                tx(index),
+                &entry.declared,
+                &entry.ordered,
+                entry.tx,
                 env(),
                 test_hash,
             )
             .expect("feasible");
-            let (session, fuel) = bench.run_transfer(from, session);
-            let (_receipt, threaded) = session
-                .finish(Outcome::Completed { value: None }, fuel)
-                .expect("oracle");
+            let run = walk.run(entry, session);
+            let (_receipt, threaded) = run.session.finish(run.outcome, run.fuel).expect("oracle");
             store = threaded;
         }
         println!(
@@ -322,21 +325,15 @@ fn main() -> Result<()> {
     println!();
     for batch_size in [100u32, 1_000] {
         let store = funded_store(batch_size);
+        let world = world(batch_size);
         let batch: Vec<BatchTx> = (0..batch_size)
-            .map(|index| {
-                BatchTx::new(
-                    tx(index),
-                    declared(sender(index)),
-                    env().clock_ms,
-                    env().randomness,
-                )
-            })
-            .collect();
+            .map(|index| Ok(entry_for(index, &routed(&world, sender(index))?)))
+            .collect::<Result<_>>()?;
         let start = Instant::now();
         let outcome = execute_batch(
             Arc::new(store),
             &batch,
-            &bench,
+            &walk,
             test_hash,
             ExecutionMode::Serial,
             &Locality::All,
@@ -361,13 +358,17 @@ fn main() -> Result<()> {
     {
         let count = 2_000u32;
         let base = Arc::new(funded_store(1));
-        let sessions: Vec<KernelSession> = (0..count)
-            .map(|index| {
+        let entries: Vec<BatchTx> = (0..count)
+            .map(|index| Ok(entry_for(index, &routed(&world(1), sender(0))?)))
+            .collect::<Result<_>>()?;
+        let sessions: Vec<KernelSession> = entries
+            .iter()
+            .map(|entry| {
                 KernelSession::materialize(
                     OverlayStore::new(Arc::clone(&base) as Arc<dyn Base>),
-                    &declared(sender(0)),
-                    &declared(sender(0)).iter().collect::<Vec<_>>(),
-                    tx(index),
+                    &entry.declared,
+                    &entry.ordered,
+                    entry.tx,
                     env(),
                     test_hash,
                 )
@@ -375,8 +376,8 @@ fn main() -> Result<()> {
             })
             .collect();
         let start = Instant::now();
-        for session in sessions {
-            std::hint::black_box(bench.run_transfer(sender(0), session));
+        for (entry, session) in entries.iter().zip(sessions) {
+            std::hint::black_box(walk.run(entry, session));
         }
         println!(
             "wasm floor (2 calls + 2 inst)      {}",
@@ -385,17 +386,17 @@ fn main() -> Result<()> {
     }
 
     let fuel_check = {
-        let store = OverlayStore::new(Arc::new(funded_store(1)));
+        let entry = entry_for(0, &routed(&world(1), sender(0))?);
         let session = KernelSession::materialize(
-            store,
-            &declared(sender(0)),
-            &declared(sender(0)).iter().collect::<Vec<_>>(),
-            tx(0),
+            OverlayStore::new(Arc::new(funded_store(1))),
+            &entry.declared,
+            &entry.ordered,
+            entry.tx,
             env(),
             test_hash,
         )
         .expect("feasible");
-        bench.run_transfer(sender(0), session).1
+        walk.run(&entry, session).fuel
     };
     println!("\nfuel per transfer: {fuel_check} (engine schedule + boundary supplement)");
     Ok(())

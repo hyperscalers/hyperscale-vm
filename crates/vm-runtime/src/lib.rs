@@ -16,6 +16,8 @@ pub mod profile;
 pub mod validator;
 
 #[cfg(feature = "engine")]
+pub mod call;
+#[cfg(feature = "engine")]
 pub mod engine;
 #[cfg(feature = "engine")]
 pub mod gas;
@@ -25,6 +27,7 @@ pub mod world;
 pub use validator::{ProfileError, validate_component, validate_core_module};
 #[cfg(feature = "engine")]
 pub use {
+    call::{CellKind, HostArg, call_export},
     engine::{blessed_config, blessed_engine},
     world::{
         DeltaCell, KernelHost, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,

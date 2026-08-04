@@ -14,8 +14,7 @@ pub use hyperscale_vm_effects::stdlib::{
 use hyperscale_vm_effects::{Hasher, PackageHash, package_hash};
 
 /// The componentized account guest: reservation-backed `withdraw`, delta
-/// `deposit`, the pinned balance guard `assert-balance`, and the
-/// randomness stamp `stamp-entropy`.
+/// `deposit`, and the randomness stamp `stamp-entropy`.
 pub const ACCOUNT_COMPONENT: &[u8] = include_bytes!("../blobs/account.component.wasm");
 
 /// The account package's content address under `hasher` — the key its

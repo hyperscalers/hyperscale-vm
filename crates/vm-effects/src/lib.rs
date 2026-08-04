@@ -24,6 +24,7 @@ pub mod envelope;
 pub mod footprint;
 pub mod graph;
 pub mod hash;
+pub mod invoke;
 pub mod manifest;
 pub mod metadata;
 pub mod route;
@@ -48,6 +49,7 @@ pub use footprint::{
 };
 pub use graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
 pub use hash::{Hash32, Hasher, TestHasher};
+pub use invoke::{CallArg, EDGE_CELL_BYTES, NodeCall};
 pub use manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     AbiParam, CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature,

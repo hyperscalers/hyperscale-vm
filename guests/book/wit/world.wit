@@ -9,7 +9,7 @@ world book {
 
     /// Insert an ask at `price` with the caller-provided fresh `seq`,
     /// escrowing the bucket into the book's base vault.
-    export place: func(
+    export place-ask: func(
         asks: borrow<range-write>,
         escrow: borrow<delta-cell>,
         price: u64,
@@ -20,7 +20,7 @@ world book {
     /// Buy base with a quote budget, best price first, within the declared
     /// interval. Returns the bought amount and the unspent change as two
     /// concatenated 16-byte cells.
-    export fill: func(
+    export fill-asks: func(
         asks: borrow<range-write>,
         base-escrow: borrow<delta-cell>,
         quote-escrow: borrow<delta-cell>,

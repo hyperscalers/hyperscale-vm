@@ -127,6 +127,7 @@ mod book {
 
     impl Book {
         /// Insert an ask at `price`, escrowing the maker's funds.
+        #[name("place-ask")]
         pub fn place_ask(&mut self, price: u64, funds: Bucket) {
             // Price over a fresh sequence id: unique without reading the
             // book, which is what lets the entry key be declared.
@@ -135,6 +136,7 @@ mod book {
         }
 
         /// Buy base within the declared price interval, best price first.
+        #[name("fill-asks")]
         pub fn fill_asks(&mut self, from: u64, to: u64, payment: Bucket) -> (Bucket, Bucket) {
             // The whole tiebreaker span at each end, so the interval covers
             // every sequence at the boundary prices.

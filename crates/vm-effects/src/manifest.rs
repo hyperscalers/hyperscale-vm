@@ -47,6 +47,12 @@ pub enum NodeInput {
     Edge {
         /// The producing node's index; must be earlier than the consumer.
         source: u32,
+        /// Which of the producer's outputs this edge carries. A method
+        /// with more than one output edge — the bucket splitter, the
+        /// book's fill — is indistinguishable from a single-output one
+        /// without it, and the walk needs the distinction to hand the
+        /// right cell to the consumer.
+        output: u32,
         /// The resource type the edge carries.
         resource: Address,
         /// The consumer's signed bounds on the amount, folded to their
