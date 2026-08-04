@@ -236,6 +236,19 @@ pub enum Outcome {
         /// What the edge actually carried.
         amount: u128,
     },
+    /// A subintent this transaction commits was already spent.
+    ///
+    /// The composer lost a race it could not have won: canonical order
+    /// picks between two compositions carrying one subintent, an earlier
+    /// block may have committed it, or its signer may have cancelled it
+    /// by spending the nullifier directly. None of those is visible to a
+    /// composer at signing time, so this is priced with
+    /// [`Outcome::Infeasible`] — a conflict tiebreak and a stale
+    /// declaration are the two cases the taxonomy names.
+    NullifierSpent {
+        /// The nullifier cell an earlier committer wrote.
+        key: SubstateKey,
+    },
     /// A kernel or store invariant failure — never the sender's fault, and
     /// never expected to occur.
     ProtocolError {

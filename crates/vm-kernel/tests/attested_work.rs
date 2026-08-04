@@ -348,7 +348,7 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
     let outcome = run_batch(Arc::new(store), &batch, &transfer_guest, &Locality::All);
     let spent = &outcome.receipts[&tx(1)];
     let spent_work = outcome.work[&tx(1)];
-    assert!(matches!(spent.outcome, Outcome::UserError { .. }));
+    assert!(matches!(spent.outcome, Outcome::NullifierSpent { .. }));
     assert_eq!(spent_work.footprint, footprint(&declared));
     assert!(spent_work.units > 0, "a spent subintent still declared");
 }

@@ -342,9 +342,7 @@ fn racing_nullifier_writers_commit_exactly_once() {
     ));
     assert_eq!(
         outcome.receipts[&tx(0x02)].outcome,
-        Outcome::UserError {
-            reason: "subintent nullifier spent".into(),
-        }
+        Outcome::NullifierSpent { key: nullifier() }
     );
     // The cell records the consuming transaction.
     let mut store = outcome.store.clone();
@@ -365,9 +363,7 @@ fn racing_nullifier_writers_commit_exactly_once() {
     .unwrap();
     assert_eq!(
         replay.receipts[&tx(0x03)].outcome,
-        Outcome::UserError {
-            reason: "subintent nullifier spent".into(),
-        }
+        Outcome::NullifierSpent { key: nullifier() }
     );
 }
 

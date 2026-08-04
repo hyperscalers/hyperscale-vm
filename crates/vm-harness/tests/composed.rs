@@ -411,10 +411,12 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
         outcome.receipts[&winner.tx].outcome,
         Outcome::Completed { .. }
     ));
+    // A lost race, not a defect: canonical order picked the winner and
+    // the loser could not have known which it would be.
     assert_eq!(
         outcome.receipts[&loser.tx].outcome,
-        Outcome::UserError {
-            reason: "subintent nullifier spent".into(),
+        Outcome::NullifierSpent {
+            key: alice_admitted.subintents[0].nullifier,
         }
     );
 
@@ -440,8 +442,9 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
 #[test]
 fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
     let world = world();
-    let (alice_entry, _) = batch_entry(&world, &composed_tree(ALICE, 100))?;
+    let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100))?;
     let (carol_entry, _) = batch_entry(&world, &composed_tree(CAROL, 120))?;
+    let nullifier = alice_admitted.subintents[0].nullifier;
 
     let first = run_both(&seeded_store(), std::slice::from_ref(&alice_entry))?;
     let committed = first.store.collapse();
@@ -449,9 +452,7 @@ fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
     let second = run_both(&committed, std::slice::from_ref(&carol_entry))?;
     assert_eq!(
         second.receipts[&carol_entry.tx].outcome,
-        Outcome::UserError {
-            reason: "subintent nullifier spent".into(),
-        }
+        Outcome::NullifierSpent { key: nullifier }
     );
     assert_eq!(amount_of(&second, vault(CAROL, RES_X)), 150);
     assert_eq!(amount_of(&second, vault(BOB, RES_Y)), 20);

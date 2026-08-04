@@ -486,19 +486,14 @@ fn run_group<R: GuestRunner>(
         // own cancellation — already committed the subintent. Only the
         // signer's shard holds the cell; elsewhere the owning shard's
         // verdict arrives through the wave combine.
-        if entry
+        let spent = entry
             .nullifiers
             .iter()
-            .any(|key| locality.is_local(key.owner) && store.cell(*key).is_some())
-        {
+            .find(|key| locality.is_local(key.owner) && store.cell(**key).is_some());
+        if let Some(key) = spent {
             receipts.push((
                 entry.tx,
-                abort_receipt(
-                    Outcome::UserError {
-                        reason: "subintent nullifier spent".into(),
-                    },
-                    0,
-                ),
+                abort_receipt(Outcome::NullifierSpent { key: *key }, 0),
             ));
             continue;
         }
