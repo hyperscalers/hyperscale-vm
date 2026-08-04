@@ -178,9 +178,13 @@ impl Bench {
     /// The execution path of one transfer: two guest invocations against
     /// the session — withdraw returning the bucket cell, deposit crediting
     /// it. Returns the session and the fuel consumed.
-    fn run_transfer(&self, from: Address, session: KernelSession) -> (KernelSession, u64) {
+    fn run_transfer(&self, from: Address, mut session: KernelSession) -> (KernelSession, u64) {
         let reserve = rep_of(&session, &Capability::Reserve(vault(from)));
         let delta = rep_of(&session, &Capability::Delta(vault(RECIPIENT)));
+        // Each call is one node of the transfer graph, and only the runner
+        // knows whose method runs next — the guest emits, the kernel stamps
+        // the emitter from here.
+        session.enter_invocation(from);
         let mut store = Store::new(&self.engine, SessionHost(session));
         store.set_fuel(FUEL).expect("fuel");
         let instance = self.pre.instantiate(&mut store).expect("instantiate");
@@ -194,8 +198,10 @@ impl Bench {
             )
             .expect("withdraw");
         let consumed = FUEL - store.get_fuel().expect("fuel");
-        let session = store.into_data().0;
+        let mut session = store.into_data().0;
+        session.leave_invocation();
 
+        session.enter_invocation(RECIPIENT);
         let mut store = Store::new(&self.engine, SessionHost(session));
         store.set_fuel(FUEL).expect("fuel");
         let instance = self.pre.instantiate(&mut store).expect("instantiate");
@@ -206,7 +212,9 @@ impl Bench {
             .call(&mut store, (Resource::new_borrow(delta), &bucket))
             .expect("deposit");
         let consumed = consumed + (FUEL - store.get_fuel().expect("fuel"));
-        (store.into_data().0, consumed)
+        let mut session = store.into_data().0;
+        session.leave_invocation();
+        (session, consumed)
     }
 }
 
