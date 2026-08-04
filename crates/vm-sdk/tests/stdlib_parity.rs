@@ -51,19 +51,6 @@ fn account() -> Blueprint {
             t.point(&vault).delta();
             t.point(&claims).delta();
         })
-        .method(
-            "assert-balance",
-            &[ParamType::Address, ParamType::U128, ParamType::U64],
-            |t: &mut Trace| {
-                let resource: Sym<Addr> = t.arg(0);
-                let window: Sym<Num> = t.arg(2);
-                let holder = t.self_addr();
-
-                // Touches nothing: a pinned read inside a declared window.
-                let vault = holder.child(VAULT, &[resource.cast()]);
-                t.point(&vault).snapshot_within(&window);
-            },
-        )
         .method("stamp-entropy", &[], |t: &mut Trace| {
             let holder = t.self_addr();
             let leaf = holder.child(ENTROPY, &[]);
@@ -86,7 +73,7 @@ fn amm() -> Blueprint {
                 let pool = t.self_addr();
 
                 let config = pool.child(CONFIG, &[]);
-                t.point(&config).snapshot_locked();
+                t.point(&config).locked();
                 t.point(&pool.child(VAULT, &[x.cast()])).write();
                 t.point(&pool.child(VAULT, &[y.clone().cast()])).write();
 

@@ -21,7 +21,7 @@ use crate::term::{Op, Term, binding_ident};
 /// A mode's parameter is evaluated before the access opens.
 ///
 /// `Access` borrows the tracer mutably for as long as it is alive, and
-/// building a reserve amount or a snapshot window reads the tracer to
+/// building a reserve amount reads the tracer to
 /// resolve arguments. Emitting the parameter into the call site would put
 /// both borrows on one expression; hoisting it is what keeps the generated
 /// code compiling for every declaration rather than only the ones with no
@@ -44,13 +44,7 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     } else if has(Op::Delta).is_some() {
         Some((nothing, quote!(.delta())))
     } else if has(Op::Locked).is_some() {
-        Some((nothing, quote!(.snapshot_locked())))
-    } else if let Some(window) = param(Op::Pinned) {
-        let window = window.emit();
-        Some((
-            quote!(let __param = #window.cast::<::hyperscale_vm_sdk::Num>();),
-            quote!(.snapshot_within(&__param)),
-        ))
+        Some((nothing, quote!(.locked())))
     } else {
         // A handle opened and never used declares nothing. Correct rather
         // than lenient: the body did not touch the substate.

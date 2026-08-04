@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, Window, child_key,
+    TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -20,7 +20,7 @@ use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
 };
 use hyperscale_vm_runtime::{
-    DeltaCell, RangeRead, RangeWrite, ReadCell, ReserveCell, SnapCell, WriteCell,
+    DeltaCell, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
     add_kernel_to_linker, blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
@@ -89,9 +89,7 @@ fn fixture() -> Fixture {
         },
         Effect {
             target: EffectTarget::Point(config),
-            mode: Mode::Snapshot {
-                window: Window::Unbounded,
-            },
+            mode: Mode::Locked,
         },
         Effect {
             target: EffectTarget::Point(rmw),
@@ -158,7 +156,7 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Resour
     let point = |wanted: SubstateKey, kind: ResourceKind| {
         let rep = rep_where(caps, |c| match (kind, c) {
             (ResourceKind::ReadCell, Capability::Read(key))
-            | (ResourceKind::SnapCell, Capability::Snapshot(key))
+            | (ResourceKind::LockedCell, Capability::Locked(key))
             | (ResourceKind::WriteCell, Capability::Write(key))
             | (ResourceKind::DeltaCell, Capability::Delta(key))
             | (ResourceKind::ReserveCell, Capability::Reserve(key)) => *key == wanted,
@@ -181,7 +179,7 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Resour
             point(fx.sender, ResourceKind::ReserveCell),
             point(fx.recipient, ResourceKind::DeltaCell),
         ],
-        "peek" => vec![point(fx.config, ResourceKind::SnapCell)],
+        "peek" => vec![point(fx.config, ResourceKind::LockedCell)],
         "rmw" => vec![point(fx.rmw, ResourceKind::WriteCell)],
         "scan-sum" => vec![range(ResourceKind::RangeRead)],
         "fill" | "place" => vec![range(ResourceKind::RangeWrite)],
@@ -259,7 +257,7 @@ fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, 
         }
         (_, [(rep, kind)]) => match kind {
             ResourceKind::ReadCell => call1::<ReadCell>(&mut store, &instance, export, *rep),
-            ResourceKind::SnapCell => call1::<SnapCell>(&mut store, &instance, export, *rep),
+            ResourceKind::LockedCell => call1::<LockedCell>(&mut store, &instance, export, *rep),
             ResourceKind::WriteCell => call1::<WriteCell>(&mut store, &instance, export, *rep),
             ResourceKind::DeltaCell => call1::<DeltaCell>(&mut store, &instance, export, *rep),
             ResourceKind::ReserveCell => call1::<ReserveCell>(&mut store, &instance, export, *rep),

@@ -31,7 +31,7 @@
 
 use hyperscale_vm_effects::{
     CallSite, Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr,
-    ParamType, RoleId, TargetExpr, WindowExpr,
+    ParamType, RoleId, TargetExpr,
 };
 
 use crate::sym::{Addr, Amount, Key, Kind, Num, Opaque, Seq, Sym, expr_depth};
@@ -320,22 +320,17 @@ impl Access<'_> {
     /// A fresh coherent read of committed state.
     ///
     /// The costliest read: it excludes both commutative modes as well as
-    /// writes. Prefer [`Access::snapshot_locked`] where the substate never
+    /// writes. Prefer [`Access::locked`] where the substate never
     /// changes.
     pub fn read(self) {
         self.declare(ModeExpr::Read);
     }
 
-    /// A read pinned to a permanently locked substate; no proof
-    /// obligation, and it excludes nothing.
-    pub fn snapshot_locked(self) {
-        self.declare(ModeExpr::Snapshot(WindowExpr::Unbounded));
-    }
-
-    /// A read pinned within a declared staleness window, in versions.
-    pub fn snapshot_within(self, window: &Sym<Num>) {
-        let window = self.trace.lower(window.expr().clone());
-        self.declare(ModeExpr::Snapshot(WindowExpr::Bounded(window)));
+    /// A read of a permanently locked substate: no proof obligation, no
+    /// participant, and it excludes nothing. Only a locked target admits
+    /// it; a read of mutable state is [`Access::read`].
+    pub fn locked(self) {
+        self.declare(ModeExpr::Locked);
     }
 
     /// A commutative increment or decrement; the amount is dynamic and

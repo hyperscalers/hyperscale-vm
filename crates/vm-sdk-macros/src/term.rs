@@ -144,10 +144,8 @@ pub enum Slot {
 /// one of these, and each names exactly one point of the lattice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Op {
-    /// `locked()` — a snapshot of a permanently locked substate.
+    /// `locked()` — a read of a permanently locked substate.
     Locked,
-    /// `pinned(window)` — a snapshot within a declared staleness window.
-    Pinned,
     /// `get()` — a fresh coherent read.
     Get,
     /// `add()` / `sub()` — a commutative movement.
@@ -163,7 +161,6 @@ impl Op {
     pub fn from_method(name: &str) -> Option<Self> {
         match name {
             "locked" => Some(Self::Locked),
-            "pinned" => Some(Self::Pinned),
             "get" | "peek" | "count" | "entry" | "order" => Some(Self::Get),
             "add" | "sub" => Some(Self::Delta),
             "reserve" => Some(Self::Reserve),

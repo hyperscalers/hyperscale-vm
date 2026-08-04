@@ -1,13 +1,13 @@
 package test:guest;
 
 /// The minimal account: reservation-backed withdrawal, delta deposit, and
-/// a pinned balance guard.
+/// an entropy stamp.
 world account {
     import hyperscale:kernel/state;
     import hyperscale:kernel/env;
     import hyperscale:kernel/events;
 
-    use hyperscale:kernel/state.{reserve-cell, delta-cell, snap-cell, write-cell};
+    use hyperscale:kernel/state.{reserve-cell, delta-cell, write-cell};
 
     /// Take the reserved amount as a bucket; the requested amount must
     /// equal the reservation.
@@ -15,9 +15,6 @@ world account {
 
     /// Credit a bucket's amount into the vault.
     export deposit: func(vault: borrow<delta-cell>, amount: list<u8>);
-
-    /// Refuse unless the pinned balance covers `min`.
-    export assert-balance: func(vault: borrow<snap-cell>, min: list<u8>);
 
     /// Record the transaction's randomness draw in the account's entropy
     /// leaf — a value no signer chose, fixed by the block that committed

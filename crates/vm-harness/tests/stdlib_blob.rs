@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, Window, child_key,
+    TestHasher, child_key,
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -19,8 +19,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
-    DeltaCell, ReserveCell, SnapCell, WriteCell, add_kernel_to_linker, blessed_engine,
-    validate_component,
+    DeltaCell, ReserveCell, WriteCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
 use wasmtime::component::{Component, Linker, Resource};
@@ -73,14 +72,6 @@ fn session() -> KernelSession {
         .insert(Effect {
             target: EffectTarget::Point(recipient),
             mode: Mode::Delta,
-        })
-        .unwrap();
-    declared
-        .insert(Effect {
-            target: EffectTarget::Point(sender),
-            mode: Mode::Snapshot {
-                window: Window::Bounded(8),
-            },
         })
         .unwrap();
     declared
@@ -164,24 +155,6 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
     let deposit_fuel = FUEL - store.get_fuel()?;
     let host = entering(store.into_data(), SENDER);
 
-    // The guard reads the batch baseline: the seeded balance, not the
-    // reservation-diminished one.
-    let snap_rep = rep_of(&host.0, &Capability::Snapshot(sender));
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &compiled)?;
-    let guard =
-        instance.get_typed_func::<(Resource<SnapCell>, &[u8]), ()>(&mut store, "assert-balance")?;
-    guard.call(
-        &mut store,
-        (
-            Resource::new_borrow(snap_rep),
-            encode_amount(400).as_slice(),
-        ),
-    )?;
-    let guard_fuel = FUEL - store.get_fuel()?;
-    let host = entering(store.into_data(), SENDER);
-
     let entropy_rep = rep_of(&host.0, &Capability::Write(entropy_key()));
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
@@ -189,13 +162,13 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
     let stamp =
         instance.get_typed_func::<(Resource<WriteCell>,), ()>(&mut store, "stamp-entropy")?;
     stamp.call(&mut store, (Resource::new_borrow(entropy_rep),))?;
-    let fuel = withdraw_fuel + deposit_fuel + guard_fuel + (FUEL - store.get_fuel()?);
+    let fuel = withdraw_fuel + deposit_fuel + (FUEL - store.get_fuel()?);
 
     Ok((finish(store.into_data().0, fuel), fuel))
 }
 
-/// The same transfer and guard on the reference interpreter, instantiated
-/// per call with the session threaded through.
+/// The same transfer on the reference interpreter, instantiated per call
+/// with the session threaded through.
 fn reference_transfer() -> Result<(Receipt, u64)> {
     let component = RefComponent::decode(ACCOUNT_COMPONENT)?;
     let (sender, recipient) = keys();
@@ -233,19 +206,6 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
     let deposit_fuel = instance.fuel_consumed();
     let host = entering(instance.into_host(), SENDER);
 
-    let snap_rep = rep_of(&host.0, &Capability::Snapshot(sender));
-    let mut instance = RefComponentInstance::instantiate(&component, host)?;
-    let outcome = instance.invoke(
-        "assert-balance",
-        &[
-            CVal::Borrow(snap_rep, ResourceKind::SnapCell),
-            CVal::Bytes(encode_amount(400).to_vec()),
-        ],
-    )?;
-    outcome.map_err(|trap| wasmtime::error::format_err!("assert-balance trapped: {trap:?}"))?;
-    let guard_fuel = instance.fuel_consumed();
-    let host = entering(instance.into_host(), SENDER);
-
     let entropy_rep = rep_of(&host.0, &Capability::Write(entropy_key()));
     let mut instance = RefComponentInstance::instantiate(&component, host)?;
     let outcome = instance.invoke(
@@ -253,7 +213,7 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
         &[CVal::Borrow(entropy_rep, ResourceKind::WriteCell)],
     )?;
     outcome.map_err(|trap| wasmtime::error::format_err!("stamp-entropy trapped: {trap:?}"))?;
-    let fuel = withdraw_fuel + deposit_fuel + guard_fuel + instance.fuel_consumed();
+    let fuel = withdraw_fuel + deposit_fuel + instance.fuel_consumed();
 
     Ok((finish(instance.into_host().0, fuel), fuel))
 }

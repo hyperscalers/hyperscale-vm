@@ -1,4 +1,4 @@
-//! The routing fold: from a manifest to per-shard effect sets, snapshot
+//! The routing fold: from a manifest to per-shard effect sets, the
 //! proof obligations, and the static call graph.
 //!
 //! Routing is a pure function of the manifest and content-addressed
@@ -13,7 +13,7 @@ use crate::dsl::{Declaration, EvalError, EvalInputs, evaluate_declaration, evalu
 use crate::hash::Hasher;
 use crate::manifest::{ManifestHash, NodeInput};
 use crate::metadata::{InstanceRegistry, MetadataCache, PackageHash};
-use crate::types::{Address, Effect, EffectSet, EffectTarget, Mode, ShardId, Value, Window};
+use crate::types::{Address, Effect, EffectSet, ShardId, Value};
 
 /// Resolves an owner prefix to the shard holding it.
 pub trait ShardResolver {
@@ -79,17 +79,6 @@ pub struct CallGraph {
     pub edges: BTreeSet<CallEdge>,
 }
 
-/// A proof the transaction must carry: a bounded-window snapshot read.
-/// Unbounded-window reads are locked substates — verified once, cached
-/// process-wide — and carry no per-transaction obligation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SnapshotObligation {
-    /// The declared snapshot target.
-    pub target: EffectTarget,
-    /// The declared staleness window, in versions.
-    pub window: u64,
-}
-
 /// A routed transaction: what admission, scheduling, provisioning, and fee
 /// estimation consume.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -106,8 +95,6 @@ pub struct Routing {
     /// position its signature gives it however many subintents the envelope
     /// carries.
     pub kernel_effects: Vec<Effect>,
-    /// Every bounded-window snapshot the transaction must prove.
-    pub snapshot_obligations: BTreeSet<SnapshotObligation>,
     /// The static call graph.
     pub call_graph: CallGraph,
 }
@@ -252,7 +239,7 @@ pub enum RouteError {
 }
 
 /// Route an admitted transaction: evaluate every node's transitive effect
-/// signature and fold the results into per-shard effect sets, snapshot
+/// signature and fold the results into per-shard effect sets, the
 /// obligations, and the static call graph.
 ///
 /// Admission and routing evaluate fresh derivations at one root — the
@@ -323,26 +310,10 @@ pub fn route(
         )?;
     }
 
-    let mut snapshot_obligations = BTreeSet::new();
-    for set in fold.per_shard.values() {
-        for effect in set.iter() {
-            if let Mode::Snapshot {
-                window: Window::Bounded(window),
-            } = effect.mode
-            {
-                snapshot_obligations.insert(SnapshotObligation {
-                    target: effect.target,
-                    window,
-                });
-            }
-        }
-    }
-
     Ok(Routing {
         per_shard: fold.per_shard,
         frames: fold.frames_log,
         kernel_effects: Vec::new(),
-        snapshot_obligations,
         call_graph: CallGraph {
             roots,
             edges: fold.edges,
@@ -488,9 +459,9 @@ mod tests {
 
     use super::{
         Admitted, CallEdge, MAX_CALL_DEPTH, MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver,
-        RouteError, ShardResolver, SnapshotObligation, route,
+        RouteError, ShardResolver, route,
     };
-    use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, WindowExpr, fresh_id};
+    use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, fresh_id};
     use crate::hash::{Hash32, Hasher, TestHasher};
     use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
     use crate::metadata::{
@@ -1040,18 +1011,15 @@ mod tests {
     }
 
     #[test]
-    fn only_bounded_snapshots_carry_obligations() {
+    fn a_locked_read_declares_its_target() {
         let mut cache = MetadataCache::new();
         let mut meta = PackageMetadata::default();
         meta.methods.insert(
             "peek".into(),
             method(
                 vec![
-                    self_point(
-                        RoleId(1),
-                        ModeExpr::Snapshot(WindowExpr::Bounded(Expr::Literal(Value::U64(8)))),
-                    ),
-                    self_point(RoleId(2), ModeExpr::Snapshot(WindowExpr::Unbounded)),
+                    self_point(RoleId(1), ModeExpr::Locked),
+                    self_point(RoleId(2), ModeExpr::Locked),
                 ],
                 vec![],
             ),
@@ -1080,12 +1048,22 @@ mod tests {
             &resolver(),
         )
         .unwrap();
+        // A locked read declares its target like any other mode; whether the
+        // target is actually locked is the kernel's to refuse, since only
+        // the store knows.
         assert_eq!(
-            routing.snapshot_obligations,
-            BTreeSet::from([SnapshotObligation {
+            routing
+                .per_shard
+                .values()
+                .next()
+                .unwrap()
+                .iter()
+                .next()
+                .unwrap(),
+            Effect {
                 target: point(addr(5), RoleId(1)),
-                window: 8,
-            }])
+                mode: Mode::Locked,
+            }
         );
     }
 

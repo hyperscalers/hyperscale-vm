@@ -27,7 +27,7 @@ pub use validator::{ProfileError, validate_component, validate_core_module};
 pub use {
     engine::{blessed_config, blessed_engine},
     world::{
-        DeltaCell, KernelHost, RangeRead, RangeWrite, ReadCell, ReserveCell, SnapCell, WriteCell,
+        DeltaCell, KernelHost, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
         add_kernel_to_linker,
     },
 };

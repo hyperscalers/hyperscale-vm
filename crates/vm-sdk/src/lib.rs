@@ -26,7 +26,7 @@
 //!         let pool = t.self_addr();
 //!
 //!         let config: Sym<_> = pool.child(RoleId(0), &[]);
-//!         t.point(&config).snapshot_locked();
+//!         t.point(&config).locked();
 //!         t.point(&pool.child(VAULT, &[sold.clone().cast()])).write();
 //!         t.point(&pool.child(VAULT, &[bought.clone().cast()])).write();
 //!

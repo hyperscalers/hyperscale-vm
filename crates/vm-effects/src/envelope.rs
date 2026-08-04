@@ -144,7 +144,7 @@ fn encode_bindings(bindings: &[YieldBinding]) -> Vec<u8> {
 impl EnvelopeTree {
     /// The tree's own identity — the fallback for callers that sign
     /// nothing beyond the tree. A protocol envelope signing more (fee
-    /// terms, validity windows, snapshot pins) derives its identity from
+    /// terms, validity windows) derives its identity from
     /// the full signed form and passes that to [`admit_tree`] instead.
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> ManifestHash {

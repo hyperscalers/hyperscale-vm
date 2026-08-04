@@ -11,14 +11,14 @@
 
 use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind, RoleId, SubstateKey,
-    Window, compatible, effect_units, footprint, mode_weight,
+    compatible, effect_units, footprint, mode_weight,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
 
 const KINDS: [ModeKind; 5] = [
     ModeKind::Read,
-    ModeKind::Snapshot,
+    ModeKind::Locked,
     ModeKind::Delta,
     ModeKind::Reserve,
     ModeKind::Write,
@@ -38,9 +38,7 @@ fn arb_mode() -> impl Strategy<Value = Mode> {
         Just(Mode::Delta),
         Just(Mode::Write),
         any::<u128>().prop_map(|amount| Mode::Reserve { amount }),
-        any::<u64>().prop_map(|window| Mode::Snapshot {
-            window: Window::Bounded(window)
-        }),
+        Just(Mode::Locked),
     ]
 }
 

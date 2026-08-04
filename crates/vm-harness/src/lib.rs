@@ -108,7 +108,7 @@ pub mod fixtures {
     /// The kernel-world component guest, exercising the per-mode surface.
     ///
     /// `transfer` moves a reserved amount into a delta cell; `peek` reads a
-    /// snapshot cell; `rmw` bumps a write cell's first byte; `scan-sum`
+    /// locked cell; `rmw` bumps a write cell's first byte; `scan-sum`
     /// folds a read interval's entry and order bytes; `fill` rewrites entry
     /// zero and removes the last entry of a write interval; `place` inserts
     /// order 42; `escape` passes a delta handle to a read-cell function
@@ -119,14 +119,14 @@ pub mod fixtures {
 (component
   (import "hyperscale:kernel/state" (instance $state
     (export "read-cell" (type $rc (sub resource)))
-    (export "snap-cell" (type $sc (sub resource)))
+    (export "locked-cell" (type $sc (sub resource)))
     (export "write-cell" (type $wc (sub resource)))
     (export "delta-cell" (type $dc (sub resource)))
     (export "reserve-cell" (type $vc (sub resource)))
     (export "range-read" (type $rr (sub resource)))
     (export "range-write" (type $rw (sub resource)))
     (export "read-cell-get" (func (param "c" (borrow $rc)) (result (list u8))))
-    (export "snap-cell-get" (func (param "c" (borrow $sc)) (result (list u8))))
+    (export "locked-cell-get" (func (param "c" (borrow $sc)) (result (list u8))))
     (export "write-cell-get" (func (param "c" (borrow $wc)) (result (list u8))))
     (export "write-cell-set" (func (param "c" (borrow $wc)) (param "value" (list u8))))
     (export "delta-cell-add" (func (param "c" (borrow $dc)) (param "amount" (list u8))))
@@ -142,14 +142,14 @@ pub mod fixtures {
     (export "clock" (func (result u64)))))
 
   (alias export $state "read-cell" (type $rcell))
-  (alias export $state "snap-cell" (type $scell))
+  (alias export $state "locked-cell" (type $scell))
   (alias export $state "write-cell" (type $wcell))
   (alias export $state "delta-cell" (type $dcell))
   (alias export $state "reserve-cell" (type $vcell))
   (alias export $state "range-read" (type $rrange))
   (alias export $state "range-write" (type $wrange))
   (alias export $state "read-cell-get" (func $read_get))
-  (alias export $state "snap-cell-get" (func $snap_get))
+  (alias export $state "locked-cell-get" (func $locked_get))
   (alias export $state "write-cell-get" (func $write_get))
   (alias export $state "write-cell-set" (func $write_set))
   (alias export $state "delta-cell-add" (func $delta_add))
@@ -179,7 +179,7 @@ pub mod fixtures {
 
   (core func $read_get_l (canon lower (func $read_get)
     (memory $a "mem") (realloc (func $a "realloc"))))
-  (core func $snap_get_l (canon lower (func $snap_get)
+  (core func $locked_get_l (canon lower (func $locked_get)
     (memory $a "mem") (realloc (func $a "realloc"))))
   (core func $write_get_l (canon lower (func $write_get)
     (memory $a "mem") (realloc (func $a "realloc"))))
@@ -212,7 +212,7 @@ pub mod fixtures {
   (core module $m
     (import "env" "mem" (memory 4 4))
     (import "k" "read-get" (func $read_get (param i32 i32)))
-    (import "k" "snap-get" (func $snap_get (param i32 i32)))
+    (import "k" "locked-get" (func $locked_get (param i32 i32)))
     (import "k" "write-get" (func $write_get (param i32 i32)))
     (import "k" "write-set" (func $write_set (param i32 i32 i32)))
     (import "k" "delta-add" (func $delta_add (param i32 i32 i32)))
@@ -254,7 +254,7 @@ pub mod fixtures {
     (func (export "peek") (param i32) (result i64)
       local.get 0
       i32.const 8
-      call $snap_get
+      call $locked_get
       i32.const 12
       i32.load
       i64.extend_i32_u
@@ -433,7 +433,7 @@ pub mod fixtures {
     (with "env" (instance (export "mem" (memory $a "mem"))))
     (with "k" (instance
       (export "read-get" (func $read_get_l))
-      (export "snap-get" (func $snap_get_l))
+      (export "locked-get" (func $locked_get_l))
       (export "write-get" (func $write_get_l))
       (export "write-set" (func $write_set_l))
       (export "delta-add" (func $delta_add_l))
@@ -583,8 +583,8 @@ pub mod session_host {
                 fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, String> {
                     self.0.read_cell(rep).map_err(|t| t.to_string())
                 }
-                fn snap_cell(&mut self, rep: u32) -> Result<Vec<u8>, String> {
-                    self.0.snap_cell(rep).map_err(|t| t.to_string())
+                fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, String> {
+                    self.0.locked_cell(rep).map_err(|t| t.to_string())
                 }
                 fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, String> {
                     self.0.write_cell_get(rep).map_err(|t| t.to_string())

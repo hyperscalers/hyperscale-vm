@@ -8,7 +8,7 @@
 //! edges, with one kernel session covering the transaction and the
 //! trace-subset oracle standing at every receipt.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{
@@ -17,8 +17,8 @@ use hyperscale_vm_effects::stdlib::{
 use hyperscale_vm_effects::{
     Address, Constraint, EdgeRef, Effect, EffectSet, EffectTarget, GraphArg, GraphNode, Hash32,
     Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, NodeInput,
-    PackageHash, PrefixShardResolver, Routing, ShardId, ShardResolver, SnapshotObligation,
-    SubstateKey, TestHasher, Value, Window, admit, child_key, fresh_id, route,
+    PackageHash, PrefixShardResolver, Routing, ShardId, ShardResolver, SubstateKey, TestHasher,
+    Value, admit, child_key, fresh_id, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -28,8 +28,8 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
-    DeltaCell, RangeWrite, ReserveCell, SnapCell, WriteCell, add_kernel_to_linker, blessed_engine,
-    validate_component,
+    DeltaCell, LockedCell, RangeWrite, ReserveCell, WriteCell, add_kernel_to_linker,
+    blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::error::{Context, bail, ensure};
@@ -193,10 +193,6 @@ enum NodeCall {
         vault: SubstateKey,
         bucket: Vec<u8>,
     },
-    AssertBalance {
-        vault: SubstateKey,
-        min: Vec<u8>,
-    },
     Swap {
         config: SubstateKey,
         reserve_in: SubstateKey,
@@ -311,19 +307,6 @@ fn execute_manifest(
                 NodeCall::Deposit {
                     vault: vault(node.target, edge_resource(edge)),
                     bucket: edge_cell(edge),
-                }
-            }
-            ("account", "assert-balance") => {
-                let (
-                    GraphArg::Literal(Value::Address(resource)),
-                    GraphArg::Literal(Value::U128(min)),
-                ) = (&node.args[0], &node.args[1])
-                else {
-                    bail!("assert-balance args");
-                };
-                NodeCall::AssertBalance {
-                    vault: vault(node.target, *resource),
-                    min: encode_amount(*min).to_vec(),
                 }
             }
             ("amm", "swap") => {
@@ -452,14 +435,6 @@ fn invoke_blessed(
             f.call(&mut store, (Resource::new_borrow(rep), bucket))
                 .map(|()| Vec::new())
         }
-        NodeCall::AssertBalance { vault, min } => {
-            let rep = rep_of(&store.data().0, &Capability::Snapshot(*vault));
-            let f = instance
-                .get_typed_func::<(Resource<SnapCell>, &[u8]), ()>(&mut store, "assert-balance")
-                .expect("typed");
-            f.call(&mut store, (Resource::new_borrow(rep), min))
-                .map(|()| Vec::new())
-        }
         NodeCall::Swap {
             config,
             reserve_in,
@@ -467,12 +442,12 @@ fn invoke_blessed(
             input,
             min_out,
         } => {
-            let c = rep_of(&store.data().0, &Capability::Snapshot(*config));
+            let c = rep_of(&store.data().0, &Capability::Locked(*config));
             let rin = rep_of(&store.data().0, &Capability::Write(*reserve_in));
             let rout = rep_of(&store.data().0, &Capability::Write(*reserve_out));
             let f = instance
                 .get_typed_func::<(
-                    Resource<SnapCell>,
+                    Resource<LockedCell>,
                     Resource<WriteCell>,
                     Resource<WriteCell>,
                     &[u8],
@@ -587,18 +562,6 @@ fn invoke_reference(
             ],
             0,
         ),
-        NodeCall::AssertBalance { vault, min } => (
-            "assert-balance",
-            vec![
-                borrow(
-                    &session,
-                    &Capability::Snapshot(*vault),
-                    ResourceKind::SnapCell,
-                ),
-                CVal::Bytes(min.clone()),
-            ],
-            0,
-        ),
         NodeCall::Swap {
             config,
             reserve_in,
@@ -610,8 +573,8 @@ fn invoke_reference(
             vec![
                 borrow(
                     &session,
-                    &Capability::Snapshot(*config),
-                    ResourceKind::SnapCell,
+                    &Capability::Locked(*config),
+                    ResourceKind::LockedCell,
                 ),
                 borrow(
                     &session,
@@ -888,116 +851,6 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
     Ok(())
 }
 
-/// A transfer gated on a third account's pinned balance: the guard runs
-/// first, so an uncovered balance refuses before anything moves.
-fn guarded_transfer_graph(min: u128) -> ManifestGraph {
-    ManifestGraph {
-        nodes: vec![
-            GraphNode {
-                target: CAROL,
-                method: "assert-balance".into(),
-                args: vec![
-                    GraphArg::Literal(Value::Address(RES_X)),
-                    GraphArg::Literal(Value::U128(min)),
-                    GraphArg::Literal(Value::U64(8)),
-                ],
-            },
-            GraphNode {
-                target: ALICE,
-                method: "withdraw".into(),
-                args: vec![
-                    GraphArg::Literal(Value::Address(RES_X)),
-                    GraphArg::Literal(Value::U128(100)),
-                ],
-            },
-            GraphNode {
-                target: BOB,
-                method: "deposit".into(),
-                args: vec![GraphArg::Edge {
-                    edge: EdgeRef {
-                        producer: 1,
-                        output: 0,
-                    },
-                    constraints: vec![Constraint::ResourceIs(RES_X)],
-                }],
-            },
-        ],
-    }
-}
-
-#[test]
-fn snapshot_guard_profile_is_read_only_and_carries_its_obligation() {
-    let world = world();
-    let routing = sharded_routing(&world, &guarded_transfer_graph(40));
-
-    // The guarded shard holds exactly the pinned read: no lock-taking
-    // mode, nothing to provision, nothing to commit.
-    assert_eq!(
-        routing.per_shard[&shard_of(CAROL)],
-        set(&[point(
-            vault(CAROL, RES_X),
-            Mode::Snapshot {
-                window: Window::Bounded(8)
-            },
-        )])
-    );
-    assert_eq!(
-        routing.snapshot_obligations,
-        BTreeSet::from([SnapshotObligation {
-            target: EffectTarget::Point(vault(CAROL, RES_X)),
-            window: 8,
-        }])
-    );
-    for set in routing.per_shard.values() {
-        assert!(set.provision_targets().is_empty());
-    }
-}
-
-#[test]
-fn the_snapshot_guard_admits_or_refuses_by_the_pinned_balance() -> Result<()> {
-    let world = world();
-    let engines = Engines::build()?;
-    let mut store = MemoryStore::new();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
-        .unwrap();
-    store
-        .write(vault(CAROL, RES_X), encode_amount(50).to_vec())
-        .unwrap();
-    store.clear_log();
-
-    // A covered guard: the transfer settles and the guarded vault leaves
-    // no trace in the receipt — no cell, no movement, no settle.
-    let covered = guarded_transfer_graph(40);
-    let (results, mut final_store) = run_both(
-        &engines,
-        &world,
-        &store,
-        &[(&covered, TxHash(Hash32([0x0A; 32])))],
-    );
-    let TxResult::Completed(receipt) = &results[0] else {
-        panic!("covered guard must complete");
-    };
-    assert!(!receipt.delta.cells.contains_key(&vault(CAROL, RES_X)));
-    assert!(!receipt.delta.movements.contains_key(&vault(CAROL, RES_X)));
-    assert!(!receipt.delta.settles.contains_key(&vault(CAROL, RES_X)));
-    assert_eq!(amount_of(&mut final_store, vault(BOB, RES_X)), 100);
-    assert_eq!(amount_of(&mut final_store, vault(CAROL, RES_X)), 50);
-
-    // An uncovered guard traps deterministically and moves nothing.
-    let uncovered = guarded_transfer_graph(60);
-    let (results, mut final_store) = run_both(
-        &engines,
-        &world,
-        &store,
-        &[(&uncovered, TxHash(Hash32([0x0B; 32])))],
-    );
-    assert_eq!(results[0], TxResult::Trapped);
-    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 150);
-    assert_eq!(amount_of(&mut final_store, vault(BOB, RES_X)), 0);
-    Ok(())
-}
-
 fn swap_graph(min_out: u128) -> ManifestGraph {
     ManifestGraph {
         nodes: vec![
@@ -1066,18 +919,13 @@ fn swap_profile_and_provision_shape_are_exact() {
     assert_eq!(
         *pool_set,
         set(&[
-            point(
-                config_leaf(POOL),
-                Mode::Snapshot {
-                    window: Window::Unbounded,
-                },
-            ),
+            point(config_leaf(POOL), Mode::Locked,),
             point(vault(POOL, RES_X), Mode::Write),
             point(vault(POOL, RES_Y), Mode::Write),
         ])
     );
     // The pool-shard provision carries the two balance cells and nothing
-    // else: the reserves are read-modify-writes, the config snapshot is
+    // else: the reserves are read-modify-writes, the locked config is
     // verified-once and free.
     assert_eq!(
         pool_set.provision_targets(),

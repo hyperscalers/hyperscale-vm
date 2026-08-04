@@ -40,7 +40,7 @@ use crate::ops::Value;
 #[allow(clippy::missing_errors_doc)] // every Err is a deterministic kernel refusal
 pub trait RefKernelHost {
     fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, String>;
-    fn snap_cell(&mut self, rep: u32) -> Result<Vec<u8>, String>;
+    fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, String>;
     fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, String>;
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), String>;
     fn delta_add(&mut self, rep: u32, amount: &[u8]) -> Result<(), String>;
@@ -70,8 +70,8 @@ pub trait RefKernelHost {
 pub enum ResourceKind {
     /// `read-cell`.
     ReadCell,
-    /// `snap-cell`.
-    SnapCell,
+    /// `locked-cell`.
+    LockedCell,
     /// `write-cell`.
     WriteCell,
     /// `delta-cell`.
@@ -88,7 +88,7 @@ impl ResourceKind {
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "read-cell" => Some(Self::ReadCell),
-            "snap-cell" => Some(Self::SnapCell),
+            "locked-cell" => Some(Self::LockedCell),
             "write-cell" => Some(Self::WriteCell),
             "delta-cell" => Some(Self::DeltaCell),
             "reserve-cell" => Some(Self::ReserveCell),
@@ -116,7 +116,7 @@ pub enum CVal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HostFn {
     ReadCellGet,
-    SnapCellGet,
+    LockedCellGet,
     WriteCellGet,
     WriteCellSet,
     DeltaAdd,
@@ -435,7 +435,7 @@ impl RefComponent {
             .map_or(interface.as_str(), |(_, s)| s);
         match (suffix, name) {
             ("state", "read-cell-get") => Ok(HostFn::ReadCellGet),
-            ("state", "snap-cell-get") => Ok(HostFn::SnapCellGet),
+            ("state", "locked-cell-get") => Ok(HostFn::LockedCellGet),
             ("state", "write-cell-get") => Ok(HostFn::WriteCellGet),
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
             ("state", "delta-cell-add") => Ok(HostFn::DeltaAdd),
@@ -1132,7 +1132,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                 ) => 1,
                 CompFunc::Host(
                     HostFn::ReadCellGet
-                    | HostFn::SnapCellGet
+                    | HostFn::LockedCellGet
                     | HostFn::WriteCellGet
                     | HostFn::ReserveAmount
                     | HostFn::RangeWriteRemove,
@@ -1189,19 +1189,19 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                 match host_fn {
                     HostFn::Clock => Ok(vec![Value::I64(self.host.clock_ms().cast_signed())]),
                     HostFn::ReadCellGet
-                    | HostFn::SnapCellGet
+                    | HostFn::LockedCellGet
                     | HostFn::WriteCellGet
                     | HostFn::ReserveAmount => {
                         let expected = match host_fn {
                             HostFn::ReadCellGet => ResourceKind::ReadCell,
-                            HostFn::SnapCellGet => ResourceKind::SnapCell,
+                            HostFn::LockedCellGet => ResourceKind::LockedCell,
                             HostFn::WriteCellGet => ResourceKind::WriteCell,
                             _ => ResourceKind::ReserveCell,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let result = match host_fn {
                             HostFn::ReadCellGet => self.host.read_cell(rep),
-                            HostFn::SnapCellGet => self.host.snap_cell(rep),
+                            HostFn::LockedCellGet => self.host.locked_cell(rep),
                             HostFn::WriteCellGet => self.host.write_cell_get(rep),
                             _ => self.host.reserve_amount(rep),
                         };

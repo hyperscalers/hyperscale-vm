@@ -19,7 +19,7 @@ pub const fn permits(declared: ModeKind, access: ModeKind) -> bool {
         (declared, access),
         (ModeKind::Write, ModeKind::Read | ModeKind::Write)
             | (ModeKind::Read, ModeKind::Read)
-            | (ModeKind::Snapshot, ModeKind::Snapshot)
+            | (ModeKind::Locked, ModeKind::Locked)
             | (ModeKind::Delta, ModeKind::Delta)
             | (ModeKind::Reserve, ModeKind::Reserve)
     )

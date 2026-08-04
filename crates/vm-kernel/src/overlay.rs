@@ -11,7 +11,7 @@
 //! of every store operation is bounded by overlay size, never by state
 //! size.
 //!
-//! Snapshot reads are the exception to layering: they resolve against the
+//! Locked reads are the exception to layering: they resolve against the
 //! base alone, which is the batch baseline — the attested version pinned
 //! reads see regardless of what the group has threaded on top.
 
@@ -81,7 +81,7 @@ impl OverlayStore {
         }
     }
 
-    /// The shared base: the batch baseline snapshot reads resolve against.
+    /// The shared base: the batch baseline locked reads resolve against.
     #[must_use]
     pub const fn base(&self) -> &Arc<dyn Base> {
         &self.base
@@ -563,7 +563,7 @@ impl OverlayStore {
 
     /// Whether either layer carries a cell change.
     ///
-    /// Snapshot reads resolve against the base alone, so the overlay a
+    /// Locked reads resolve against the base alone, so the overlay a
     /// batch forks its groups from must not have written a cell: if it
     /// had, every group's pinned reads would silently resolve against
     /// post-judge state instead of the attested baseline.
@@ -649,8 +649,8 @@ impl SubstateStore for OverlayStore {
         Ok(self.cell_value(key))
     }
 
-    fn snapshot(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
-        self.record(EffectTarget::Point(key), ModeKind::Snapshot);
+    fn locked(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
+        self.record(EffectTarget::Point(key), ModeKind::Locked);
         Ok(self.base.cell(key))
     }
 
@@ -879,7 +879,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_layer_and_snapshots_pin_to_the_base() {
+    fn reads_layer_and_locked_reads_resolve_against_the_base() {
         let mut base = MemoryStore::new();
         let cell = key(1);
         base.write(cell, vec![1]).unwrap();
@@ -891,12 +891,12 @@ mod tests {
         assert_eq!(overlay.read(cell).unwrap(), Some(vec![2]));
         overlay.write(cell, vec![3]).unwrap();
         assert_eq!(overlay.read(cell).unwrap(), Some(vec![3]));
-        // The snapshot resolves against the base, not the layers.
-        assert_eq!(overlay.snapshot(cell).unwrap(), Some(vec![1]));
+        // The locked read resolves against the base, not the layers.
+        assert_eq!(overlay.locked(cell).unwrap(), Some(vec![1]));
 
         overlay.remove(cell).unwrap();
         assert_eq!(overlay.read(cell).unwrap(), None);
-        assert_eq!(overlay.snapshot(cell).unwrap(), Some(vec![1]));
+        assert_eq!(overlay.locked(cell).unwrap(), Some(vec![1]));
     }
 
     #[test]

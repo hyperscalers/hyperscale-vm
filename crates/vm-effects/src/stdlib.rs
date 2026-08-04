@@ -5,7 +5,7 @@
 //! authored, not compiler-inferred — the inference backend is a later
 //! phase; what is final here is the signature format they are written in.
 
-use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, WindowExpr};
+use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::metadata::{MethodSignature, PackageMetadata, ParamType};
 use crate::types::{RoleId, Value};
 
@@ -36,10 +36,12 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 /// `withdraw(resource, amount)`: reserve `amount` on the caller's vault
 /// for `resource`. `deposit(bucket)`: delta on the recipient's vault plus
 /// the claims-area fallback cell, both keyed by the bucket's resource.
-/// `assert-balance(resource, min, window)`: a bounded-window snapshot of
-/// the vault for `resource` — refuses unless the pinned balance covers
-/// `min`, touching nothing. `stamp-entropy()`: an exclusive write of the
-/// transaction's randomness draw into the account's entropy leaf.
+/// `stamp-entropy()`: an exclusive write of the transaction's randomness
+/// draw into the account's entropy leaf.
+///
+/// No method reads another account's balance. A precondition on mutable
+/// state is a fresh [`ModeExpr::Read`], which makes the read's owner a
+/// participant — the account surface has no shape that wants one yet.
 #[must_use]
 pub fn account_metadata() -> PackageMetadata {
     let mut methods = PackageMetadata::default();
@@ -80,18 +82,6 @@ pub fn account_metadata() -> PackageMetadata {
         },
     );
     methods.methods.insert(
-        "assert-balance".into(),
-        MethodSignature {
-            params: vec![ParamType::Address, ParamType::U128, ParamType::U64],
-            outputs: vec![],
-            effects: vec![Clause::Effect {
-                target: TargetExpr::Point(self_child(VAULT, vec![Expr::Arg(0)])),
-                mode: ModeExpr::Snapshot(WindowExpr::Bounded(Expr::Arg(2))),
-            }],
-            calls: vec![],
-        },
-    );
-    methods.methods.insert(
         "stamp-entropy".into(),
         MethodSignature {
             params: vec![],
@@ -109,7 +99,7 @@ pub fn account_metadata() -> PackageMetadata {
     methods
 }
 
-/// `swap(input, min_out)`: an unbounded snapshot of the pool's locked
+/// `swap(input, min_out)`: a locked read of the pool's
 /// configuration and exclusive writes on its two reserve leaves, named by
 /// the creation-fixed resource pair.
 #[must_use]
@@ -123,7 +113,7 @@ pub fn amm_metadata() -> PackageMetadata {
             effects: vec![
                 Clause::Effect {
                     target: TargetExpr::Point(self_child(CONFIG, vec![])),
-                    mode: ModeExpr::Snapshot(WindowExpr::Unbounded),
+                    mode: ModeExpr::Locked,
                 },
                 Clause::Effect {
                     target: TargetExpr::Point(self_child(VAULT, vec![Expr::Config(0)])),

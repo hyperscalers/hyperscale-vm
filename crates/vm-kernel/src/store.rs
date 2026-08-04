@@ -84,7 +84,7 @@ pub trait SubstateStore {
     /// # Errors
     ///
     /// Any [`StoreError`].
-    fn snapshot(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError>;
+    fn locked(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Exclusive write of a point cell.
     ///
@@ -101,7 +101,7 @@ pub trait SubstateStore {
     fn remove(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Permanently lock a substate: creation-fixed configuration. Locked
-    /// substates read as unbounded snapshots and reject every mutation.
+    /// substates read through `Mode::Locked` and reject every mutation.
     /// A kernel operation, not an access — nothing is recorded.
     ///
     /// # Errors
@@ -568,8 +568,8 @@ impl SubstateStore for MemoryStore {
         Ok(self.cells.get(&key).cloned())
     }
 
-    fn snapshot(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
-        self.record(EffectTarget::Point(key), ModeKind::Snapshot);
+    fn locked(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
+        self.record(EffectTarget::Point(key), ModeKind::Locked);
         Ok(self.cells.get(&key).cloned())
     }
 
@@ -743,7 +743,7 @@ mod tests {
     }
 
     #[test]
-    fn locked_substates_reject_every_mutation_and_read_as_snapshots() {
+    fn locked_substates_reject_every_mutation_and_read_back() {
         let mut store = MemoryStore::new();
         let config = key(1);
         store.write(config, vec![7]).unwrap();
@@ -764,12 +764,12 @@ mod tests {
         );
 
         store.clear_log();
-        assert_eq!(store.snapshot(config).unwrap(), Some(vec![7]));
+        assert_eq!(store.locked(config).unwrap(), Some(vec![7]));
         assert_eq!(
             store.access_log(),
             &[Access {
                 target: EffectTarget::Point(config),
-                kind: ModeKind::Snapshot,
+                kind: ModeKind::Locked,
             }]
         );
 

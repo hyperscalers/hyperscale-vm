@@ -5,12 +5,12 @@ package test:guest;
 world amm {
     import hyperscale:kernel/state;
 
-    use hyperscale:kernel/state.{snap-cell, write-cell};
+    use hyperscale:kernel/state.{locked-cell, write-cell};
 
     /// Swap `input` against the pool; aborts unless the output covers
     /// `min-out`. Returns the output amount.
     export swap: func(
-        config: borrow<snap-cell>,
+        config: borrow<locked-cell>,
         reserve-in: borrow<write-cell>,
         reserve-out: borrow<write-cell>,
         input: list<u8>,

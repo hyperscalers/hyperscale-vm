@@ -66,23 +66,17 @@ impl Bucket {
 
 /// A permanently locked configuration leaf.
 ///
-/// Read through [`Locked::locked`], which declares a snapshot that excludes
+/// Read through [`Locked::locked`], which declares a locked read that excludes
 /// nothing and carries no proof obligation. Its fields are the instance's
 /// creation-fixed configuration slots, in declaration order.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Locked<T>(core::marker::PhantomData<fn() -> T>);
 
 impl<T> Locked<T> {
-    /// The configuration, pinned with no staleness bound.
+    /// The configuration. Locked at creation, so every version reads the
+    /// same: no proof obligation, no participant.
     #[must_use]
     pub fn locked(&self) -> &T {
-        unimplemented!("{OFF_HOST}")
-    }
-
-    /// The configuration, pinned within `window` versions.
-    #[must_use]
-    pub fn pinned(&self, window: u64) -> &T {
-        let _ = window;
         unimplemented!("{OFF_HOST}")
     }
 }
@@ -155,14 +149,6 @@ impl<T> Slot<T> {
     #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
     pub fn set(&mut self, value: T) {
         let _ = value;
-        unimplemented!("{OFF_HOST}")
-    }
-
-    /// A read pinned within `window` versions — client-proven, so it
-    /// excludes nothing and never provisions.
-    #[must_use]
-    pub fn pinned(&self, window: u64) -> T {
-        let _ = window;
         unimplemented!("{OFF_HOST}")
     }
 }

@@ -470,7 +470,7 @@ impl<'a> Lowerer<'a> {
             // This declares nothing, and that is the point: configuration
             // is a locked substate, verified once and cached process-wide,
             // so a declaration may consult it without claiming it. Naming
-            // the leaf as a snapshot is a separate, deliberate act
+            // the leaf as a locked read is a separate, deliberate act
             // (`self.config.locked()`) that a method only performs when it
             // wants the whole record pinned.
             (Val::Field(field_name), syn::Member::Named(name))
@@ -559,7 +559,7 @@ impl<'a> Lowerer<'a> {
                     Some(Val::Term(term)) => Some(term.clone()),
                     _ => None,
                 };
-                if matches!(op, Op::Reserve | Op::Pinned) && param.is_none() {
+                if op == Op::Reserve && param.is_none() {
                     self.error(
                         call.span(),
                         "the amount a `reserve` judges and the window a `pinned` read \
@@ -615,30 +615,14 @@ impl<'a> Lowerer<'a> {
     ) -> Val {
         let role = field.role;
         match (field.kind, method) {
-            // The locked configuration: a snapshot that excludes nothing,
+            // The locked configuration: a read that excludes nothing,
             // and the value whose fields are the config slots.
-            (FieldKind::Locked, "locked" | "pinned") => {
+            (FieldKind::Locked, "locked") => {
                 let site = self.open(Target::Point {
                     role,
                     material: vec![],
                 });
-                let op = if method == "locked" {
-                    Op::Locked
-                } else {
-                    Op::Pinned
-                };
-                let window = match args.first() {
-                    Some(Val::Term(term)) => Some(term.clone()),
-                    _ => None,
-                };
-                if op == Op::Pinned && window.is_none() {
-                    self.error(
-                        call.span(),
-                        "a pinned read's staleness window is part of the declaration, so it \
-                         must be derivable from the arguments",
-                    );
-                }
-                self.record(site, op, window);
+                self.record(site, Op::Locked, None);
                 Val::Config
             }
 

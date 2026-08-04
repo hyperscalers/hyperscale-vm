@@ -100,7 +100,7 @@ pub fn conflicts(a: &Effect, b: &Effect) -> bool {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        Address, Effect, EffectTarget, Mode, ModeKind, RoleId, TestHasher, Window, child_key,
+        Address, Effect, EffectTarget, Mode, ModeKind, RoleId, TestHasher, child_key,
     };
 
     use super::{conflicts, targets_overlap};
@@ -134,9 +134,7 @@ mod tests {
     const fn mode_of(kind: ModeKind) -> Mode {
         match kind {
             ModeKind::Read => Mode::Read,
-            ModeKind::Snapshot => Mode::Snapshot {
-                window: Window::Bounded(4),
-            },
+            ModeKind::Locked => Mode::Locked,
             ModeKind::Delta => Mode::Delta,
             ModeKind::Reserve => Mode::Reserve { amount: 1 },
             ModeKind::Write => Mode::Write,
@@ -145,8 +143,8 @@ mod tests {
 
     #[test]
     fn same_key_conflicts_follow_the_compatibility_matrix() {
-        use ModeKind::{Delta, Read, Reserve, Snapshot, Write};
-        let kinds = [Read, Snapshot, Delta, Reserve, Write];
+        use ModeKind::{Delta, Locked, Read, Reserve, Write};
+        let kinds = [Read, Locked, Delta, Reserve, Write];
         // The complement of the lattice's compatibility table.
         let conflict_table = [
             [false, false, true, true, true],
@@ -218,7 +216,7 @@ mod tests {
         assert!(!targets_overlap(&point(1), &entry(10)));
         assert!(!targets_overlap(&point(1), &range(0, u128::MAX)));
 
-        // Overlapping exclusive writes conflict; a snapshot range rides
+        // Overlapping exclusive writes conflict; a locked range rides
         // along with anything.
         let write_range = Effect {
             target: range(5, 15),
@@ -229,12 +227,10 @@ mod tests {
             mode: Mode::Write,
         };
         assert!(conflicts(&write_range, &write_entry));
-        let snapshot_range = Effect {
+        let locked_range = Effect {
             target: range(0, 100),
-            mode: Mode::Snapshot {
-                window: Window::Bounded(4),
-            },
+            mode: Mode::Locked,
         };
-        assert!(!conflicts(&snapshot_range, &write_range));
+        assert!(!conflicts(&locked_range, &write_range));
     }
 }

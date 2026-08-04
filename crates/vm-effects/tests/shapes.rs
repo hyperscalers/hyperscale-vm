@@ -13,7 +13,7 @@ use common::{
 };
 use hyperscale_vm_effects::{
     EdgeRef, Effect, EffectTarget, GraphArg, GraphNode, InstanceMeta, InstanceRegistry,
-    ManifestGraph, MetadataCache, Mode, TestHasher, Value, Window, admit, fresh_id, route,
+    ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit, fresh_id, route,
 };
 
 /// One consumed output edge, unconstrained.
@@ -71,12 +71,11 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
         ),
     ]);
     assert_eq!(routing.per_shard, expected);
-    assert!(routing.snapshot_obligations.is_empty());
     assert!(routing.call_graph.edges.is_empty());
 }
 
 #[test]
-fn swap_writes_both_reserves_and_snapshots_locked_config() {
+fn swap_writes_both_reserves_and_reads_the_locked_config() {
     let (cache, instances) = world();
     let graph = ManifestGraph {
         nodes: vec![
@@ -126,9 +125,7 @@ fn swap_writes_both_reserves_and_snapshots_locked_config() {
             effect_set(&[
                 Effect {
                     target: EffectTarget::Point(config_leaf(POOL)),
-                    mode: Mode::Snapshot {
-                        window: Window::Unbounded,
-                    },
+                    mode: Mode::Locked,
                 },
                 Effect {
                     target: EffectTarget::Point(vault(POOL, RES_X)),
@@ -142,8 +139,6 @@ fn swap_writes_both_reserves_and_snapshots_locked_config() {
         ),
     ]);
     assert_eq!(routing.per_shard, expected);
-    // The locked-config snapshot is unbounded: no proof obligation.
-    assert!(routing.snapshot_obligations.is_empty());
 }
 
 #[test]

@@ -5,7 +5,7 @@
 //! Every generated sequence runs against both stores; a merge point
 //! between the two phases pushes the first phase's effects into the
 //! committed layer, so scans and reads exercise all three layers with
-//! writes and tombstones in each. Snapshot reads are exempt by design —
+//! writes and tombstones in each. Locked reads are exempt by design —
 //! they pin to the base, not to layered state — and are covered by the
 //! overlay's unit tests.
 

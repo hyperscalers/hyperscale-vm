@@ -246,7 +246,7 @@ fn plan(clauses: &[Clause], depth: usize) -> Vec<HandleShape> {
 const fn mode_kind(mode: &ModeExpr) -> ModeKind {
     match mode {
         ModeExpr::Read => ModeKind::Read,
-        ModeExpr::Snapshot(_) => ModeKind::Snapshot,
+        ModeExpr::Locked => ModeKind::Locked,
         ModeExpr::Delta => ModeKind::Delta,
         ModeExpr::Reserve(_) => ModeKind::Reserve,
         ModeExpr::Write => ModeKind::Write,

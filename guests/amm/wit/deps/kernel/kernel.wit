@@ -11,8 +11,8 @@ package hyperscale:kernel;
 interface state {
     /// A declared fresh read of one substate.
     resource read-cell;
-    /// A declared pinned (snapshot) read of one substate.
-    resource snap-cell;
+    /// A read of one permanently locked substate.
+    resource locked-cell;
     /// A declared exclusive read-modify-write of one substate.
     resource write-cell;
     /// A declared commutative movement on one amount cell.
@@ -28,7 +28,7 @@ interface state {
     read-cell-get: func(c: borrow<read-cell>) -> list<u8>;
 
     /// The substate's pinned bytes; empty if absent.
-    snap-cell-get: func(c: borrow<snap-cell>) -> list<u8>;
+    locked-cell-get: func(c: borrow<locked-cell>) -> list<u8>;
 
     /// The substate's current bytes; empty if absent.
     write-cell-get: func(c: borrow<write-cell>) -> list<u8>;

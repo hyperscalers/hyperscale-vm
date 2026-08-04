@@ -8,7 +8,7 @@
 //! independently (each threads its own store, members in canonical order;
 //! whether groups run serially, in parallel, or under adversarial worker
 //! timing cannot influence any receipt, because cross-group interaction is
-//! commutative by construction and snapshots pin to the batch baseline);
+//! commutative by construction and locked reads cannot change);
 //! **apply** every receipt's operations to the committed store, one
 //! transaction at a time in canonical order — absolute writes, movements
 //! floored at outstanding reservations, settlements. An uncovered debit
@@ -305,9 +305,9 @@ type CollectionClaims = Vec<(usize, EffectTarget, ModeKind)>;
 /// The transactions touching one point key, split by what the mode lattice
 /// does with them.
 ///
-/// Snapshots conflict with nothing. Reads are compatible with each other
-/// and with snapshots; the commutative modes likewise. A write conflicts
-/// with everything but a snapshot, itself included.
+/// Locked reads conflict with nothing. Reads are compatible with each
+/// other and with locked reads; the commutative modes likewise. A write
+/// conflicts with everything but a locked read, itself included.
 #[derive(Default)]
 struct PointClasses {
     reads: Vec<usize>,
@@ -321,7 +321,7 @@ impl PointClasses {
             ModeKind::Read => self.reads.push(index),
             ModeKind::Delta | ModeKind::Reserve => self.commutative.push(index),
             ModeKind::Write => self.writes.push(index),
-            ModeKind::Snapshot => {}
+            ModeKind::Locked => {}
         }
     }
 
@@ -656,7 +656,7 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
 ///
 /// Only if a runner panics — the panic propagates from its worker — on the
 /// kernel defect of a group overlay outliving its group, or if judging
-/// wrote a cell and unpinned the batch's snapshots.
+/// wrote a cell and moved the batch's baseline.
 pub fn execute_batch<R: GuestRunner>(
     base: Arc<dyn Base>,
     batch: &[BatchTx],
@@ -709,11 +709,11 @@ pub fn execute_batch<R: GuestRunner>(
     judged.merge_active();
 
     // Group and execute; every group's overlay shares the judged store as
-    // its immutable base. Snapshots resolve against that base, so judging
+    // its immutable base. Locked reads resolve against that base, so judging
     // must not have written a cell — see `has_layered_cells`.
     assert!(
         !judged.has_layered_cells(),
-        "judging wrote a cell, so every group's snapshots would pin to post-judge state"
+        "judging wrote a cell, so every group's locked reads would resolve against post-judge state"
     );
     let judged = Arc::new(judged);
     let groups = conflict_groups(&runnable);
@@ -876,8 +876,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use hyperscale_vm_effects::{
-        Address, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId, TestHasher, Window,
-        child_key,
+        Address, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId, TestHasher, child_key,
     };
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
@@ -894,9 +893,7 @@ mod tests {
     const fn nth_mode(index: u8) -> Mode {
         match index {
             0 => Mode::Read,
-            1 => Mode::Snapshot {
-                window: Window::Bounded(4),
-            },
+            1 => Mode::Locked,
             2 => Mode::Delta,
             3 => Mode::Reserve { amount: 1 },
             _ => Mode::Write,
@@ -966,7 +963,7 @@ mod tests {
         /// The bucketed grouping is an optimisation of the conflict
         /// relation, and its correctness rests on three facts about the
         /// mode lattice: reads are internally compatible, the commutative
-        /// modes are, and a write conflicts with everything but a snapshot.
+        /// modes are, and a write conflicts with everything but a locked read.
         /// Those facts live in the lattice, where the optimisation cannot
         /// see them — so rather than argue the two agree, they are run
         /// against each other.
@@ -1007,7 +1004,7 @@ mod tests {
         let key = child_key(&TestHasher, Address([1; 16]), RoleId(1), &[]);
 
         for sender_fault in [
-            MaterializeError::LockedTarget(key),
+            MaterializeError::MutationOfLocked(key),
             MaterializeError::SelfConflicting(key),
             MaterializeError::Unsupported(Effect {
                 target: EffectTarget::Point(key),

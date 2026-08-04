@@ -228,27 +228,22 @@ impl Value {
     }
 }
 
-/// A snapshot read's staleness window.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Window {
-    /// Pinned to an attested version no older than this many versions; the
-    /// read carries a proof obligation.
-    Bounded(u64),
-    /// A permanently locked substate — verified once, cached process-wide,
-    /// never a proof obligation and never a participant.
-    Unbounded,
-}
-
 /// An access mode with its statically evaluated parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Mode {
     /// Fresh coherent read of committed state.
     Read,
-    /// Read pinned to an attested state version.
-    Snapshot {
-        /// The declared staleness window.
-        window: Window,
-    },
+    /// Read of a locked substate: creation-fixed configuration, identical
+    /// at every version.
+    ///
+    /// Immutability is what the mode buys and what it costs. Because no
+    /// version of the target differs, the read needs no coherence and no
+    /// proof: it carries no obligation, takes no admission key, and makes
+    /// its owner no participant — the one mode a shard can serve without
+    /// joining the transaction. And because it is verified by the target
+    /// being locked rather than by attestation, it says nothing at all
+    /// about mutable state; a read of that is [`Mode::Read`].
+    Locked,
     /// Unconditional commutative increment or decrement; the amount is
     /// dynamic and never part of the declaration.
     Delta,
@@ -268,7 +263,7 @@ impl Mode {
     pub const fn kind(&self) -> ModeKind {
         match self {
             Self::Read => ModeKind::Read,
-            Self::Snapshot { .. } => ModeKind::Snapshot,
+            Self::Locked => ModeKind::Locked,
             Self::Delta => ModeKind::Delta,
             Self::Reserve { .. } => ModeKind::Reserve,
             Self::Write => ModeKind::Write,
@@ -281,8 +276,8 @@ impl Mode {
 pub enum ModeKind {
     /// See [`Mode::Read`].
     Read,
-    /// See [`Mode::Snapshot`].
-    Snapshot,
+    /// See [`Mode::Locked`].
+    Locked,
     /// See [`Mode::Delta`].
     Delta,
     /// See [`Mode::Reserve`].
@@ -294,15 +289,17 @@ pub enum ModeKind {
 /// The scheduling compatibility relation: whether two in-flight
 /// transactions may hold these modes on the same key concurrently.
 ///
-/// Snapshot is compatible with everything; a fresh read excludes every
-/// mutation; delta and reserve commute with each other; write excludes
-/// everything but snapshot. Symmetric by construction.
+/// A locked read is compatible with everything, and no longer by
+/// assertion: its target is locked, and every mutating mode refuses a locked
+/// target, so nothing can hold a conflicting mode on one. A fresh read
+/// excludes every mutation; delta and reserve commute with each other;
+/// write excludes everything but a locked read. Symmetric by construction.
 #[must_use]
 pub const fn compatible(a: ModeKind, b: ModeKind) -> bool {
     matches!(
         (a, b),
-        (ModeKind::Snapshot, _)
-            | (_, ModeKind::Snapshot)
+        (ModeKind::Locked, _)
+            | (_, ModeKind::Locked)
             | (ModeKind::Read, ModeKind::Read)
             | (
                 ModeKind::Delta | ModeKind::Reserve,
@@ -434,7 +431,7 @@ impl EffectSet {
 
     /// The provision requirement of this effect set: the targets whose
     /// committed values a counterpart shard must carry — fresh reads and
-    /// the prior values of read-modify-writes. Snapshot reads are
+    /// the prior values of read-modify-writes. Locked reads are
     /// client-proven, deltas read nothing, and reservation feasibility is
     /// judged at the owning shard, so none of them provision. A
     /// commutative-only leg therefore provisions nothing at all.
@@ -465,15 +462,15 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, Value, Window, child_key,
+        Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, Value, child_key,
         compatible,
     };
     use crate::hash::TestHasher;
 
     #[test]
     fn compatibility_matrix() {
-        use ModeKind::{Delta, Read, Reserve, Snapshot, Write};
-        let kinds = [Read, Snapshot, Delta, Reserve, Write];
+        use ModeKind::{Delta, Locked, Read, Reserve, Write};
+        let kinds = [Read, Locked, Delta, Reserve, Write];
         let table = [
             [true, true, false, false, false],
             [true, true, true, true, true],
@@ -493,7 +490,7 @@ mod tests {
     fn only_read_and_write_targets_provision() {
         // A counterpart shard has to carry what execution reads: fresh
         // reads, and the prior value a read-modify-write folds over.
-        // Snapshots are client-proven, deltas read nothing, and a
+        // A locked target cannot change, deltas read nothing, and a
         // reservation is judged where it lives — so a commutative-only
         // leg provisions nothing at all.
         let owner = Address([1; 16]);
@@ -505,12 +502,7 @@ mod tests {
             (2, Mode::Write),
             (3, Mode::Delta),
             (4, Mode::Reserve { amount: 5 }),
-            (
-                5,
-                Mode::Snapshot {
-                    window: Window::Bounded(8),
-                },
-            ),
+            (5, Mode::Locked),
         ] {
             set.insert(Effect {
                 target: target(byte),

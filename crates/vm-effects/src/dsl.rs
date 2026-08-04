@@ -12,7 +12,7 @@ use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::types::{
     Address, Effect, EffectSet, EffectTarget, LocalKey, Mode, ReserveOverflow, RoleId, SubstateKey,
-    Value, Window, child_key,
+    Value, child_key,
 };
 
 /// The bound on any collection a `for-each` clause maps over. Keeps
@@ -94,22 +94,13 @@ pub enum Expr {
     },
 }
 
-/// A snapshot window expression.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum WindowExpr {
-    /// A declared staleness bound, in versions.
-    Bounded(Expr),
-    /// A permanently locked substate; no proof obligation.
-    Unbounded,
-}
-
 /// A mode with its parameters still unevaluated.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModeExpr {
     /// Fresh coherent read.
     Read,
-    /// Pinned read within a window.
-    Snapshot(WindowExpr),
+    /// Read of a locked substate; no proof obligation, no participant.
+    Locked,
     /// Commutative increment or decrement; no declared amount.
     Delta,
     /// Conditional decrement of the evaluated amount.
@@ -522,15 +513,7 @@ fn eval_mode(
 ) -> Result<Mode, EvalError> {
     match mode {
         ModeExpr::Read => Ok(Mode::Read),
-        ModeExpr::Snapshot(window) => {
-            let window = match window {
-                WindowExpr::Bounded(expr) => {
-                    Window::Bounded(as_u64(eval_expr(expr, inputs, hasher, bindings, 0)?)?)
-                }
-                WindowExpr::Unbounded => Window::Unbounded,
-            };
-            Ok(Mode::Snapshot { window })
-        }
+        ModeExpr::Locked => Ok(Mode::Locked),
         ModeExpr::Delta => Ok(Mode::Delta),
         ModeExpr::Reserve(expr) => {
             let amount = as_u128(eval_expr(expr, inputs, hasher, bindings, 0)?)?;
@@ -707,12 +690,12 @@ fn as_list(value: Value) -> Result<Vec<Value>, EvalError> {
 mod tests {
     use super::{
         Clause, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
-        MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr, evaluate_declaration,
-        evaluate_effects, evaluate_expr, fresh_id, fresh_local,
+        MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, evaluate_declaration, evaluate_effects,
+        evaluate_expr, fresh_id, fresh_local,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::manifest::ManifestHash;
-    use crate::types::{Address, Effect, EffectTarget, Mode, RoleId, Value, Window, child_key};
+    use crate::types::{Address, Effect, EffectTarget, Mode, RoleId, Value, child_key};
 
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
         EvalInputs {
@@ -985,7 +968,7 @@ mod tests {
                     role: RoleId(9),
                     material: vec![],
                 }),
-                mode: ModeExpr::Snapshot(WindowExpr::Bounded(Expr::Arg(2))),
+                mode: ModeExpr::Locked,
             },
         ];
         let set = evaluate_effects(&clauses, &ins, &TestHasher).unwrap();
@@ -1001,9 +984,7 @@ mod tests {
         }));
         assert!(set.contains(&Effect {
             target: EffectTarget::Point(child_key(&TestHasher, ins.self_addr, RoleId(9), &[])),
-            mode: Mode::Snapshot {
-                window: Window::Bounded(8),
-            },
+            mode: Mode::Locked,
         }));
 
         let inverted = [Clause::Effect {

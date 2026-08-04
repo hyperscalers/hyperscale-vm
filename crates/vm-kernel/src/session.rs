@@ -32,7 +32,7 @@ pub enum Capability {
     /// A fresh read of one cell.
     Read(SubstateKey),
     /// A pinned read of one cell.
-    Snapshot(SubstateKey),
+    Locked(SubstateKey),
     /// An exclusive read-modify-write of one cell.
     Write(SubstateKey),
     /// Commutative movement on one amount cell.
@@ -76,7 +76,12 @@ pub enum MaterializeError {
     Unsupported(Effect),
     /// A mutation declared on a permanently locked substate.
     #[error("declared mutation of locked substate {0:?}")]
-    LockedTarget(SubstateKey),
+    MutationOfLocked(SubstateKey),
+    /// A locked read declared on a substate that is not locked. The mode
+    /// reads without coherence and without making a participant, which is
+    /// sound only where no version of the target differs.
+    #[error("declared locked read of unlocked substate {0:?}")]
+    UnlockedTarget(SubstateKey),
     /// A declared reservation the committed balance cannot cover.
     #[error("reservation of {amount} on {key:?} is infeasible")]
     Infeasible {
@@ -422,8 +427,8 @@ impl KernelSession {
     /// adopting reservations a batch judge already holds for this
     /// transaction.
     ///
-    /// The overlay's base is the snapshot source: the attested version
-    /// snapshot reads resolve against, fixed for the whole batch
+    /// The overlay's base is what locked reads resolve against, fixed
+    /// for the whole batch
     /// regardless of what the group threads on top.
     ///
     /// The capability table's order is the effect set's canonical order,
@@ -454,7 +459,7 @@ impl KernelSession {
                 (effect.target, effect.mode)
             {
                 if store.is_locked(key) {
-                    return Err(MaterializeError::LockedTarget(key));
+                    return Err(MaterializeError::MutationOfLocked(key));
                 }
                 match store.held_reservation(key, tx) {
                     Some(held) if held == amount => {}
@@ -537,16 +542,16 @@ impl KernelSession {
         }
     }
 
-    /// A pinned read through a snapshot capability: the value comes from
+    /// A read through a locked capability: the value comes from
     /// the overlay's base — the attested version — never from state
     /// concurrent transactions are changing.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn snap_cell(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
+    pub fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
         match self.capability(rep)? {
-            Capability::Snapshot(key) => Ok(self.store.snapshot(key)?.unwrap_or_default()),
+            Capability::Locked(key) => Ok(self.store.locked(key)?.unwrap_or_default()),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
     }
@@ -1077,14 +1082,27 @@ fn reject_self_conflicts(declared: &EffectSet) -> Result<(), MaterializeError> {
 fn capability_for(store: &OverlayStore, effect: Effect) -> Result<Capability, MaterializeError> {
     let locked_checked = |key: SubstateKey| {
         if store.is_locked(key) {
-            Err(MaterializeError::LockedTarget(key))
+            Err(MaterializeError::MutationOfLocked(key))
         } else {
             Ok(key)
         }
     };
     match (effect.target, effect.mode) {
         (EffectTarget::Point(key), Mode::Read) => Ok(Capability::Read(key)),
-        (EffectTarget::Point(key), Mode::Snapshot { .. }) => Ok(Capability::Snapshot(key)),
+        // The mirror of `locked_checked`, and the reason a locked read needs
+        // no proof: an unlocked target could differ between the shard that
+        // owns it and one that only reads it, and a locked read makes no
+        // participant, so nothing would carry the owner's value to anyone
+        // else. Two participants would read one key and derive two
+        // receipts. A read of mutable state is `Mode::Read`, which
+        // provisions.
+        (EffectTarget::Point(key), Mode::Locked) => {
+            if store.is_locked(key) {
+                Ok(Capability::Locked(key))
+            } else {
+                Err(MaterializeError::UnlockedTarget(key))
+            }
+        }
         (EffectTarget::Point(key), Mode::Write) => Ok(Capability::Write(locked_checked(key)?)),
         (EffectTarget::Point(key), Mode::Delta) => Ok(Capability::Delta(locked_checked(key)?)),
         (EffectTarget::Point(key), Mode::Reserve { .. }) => {
@@ -1190,7 +1208,7 @@ mod tests {
 
     use hyperscale_vm_effects::{
         Address, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId, SubstateKey, TestHasher,
-        Window, child_key,
+        child_key,
     };
 
     use super::{
@@ -1370,9 +1388,9 @@ mod tests {
             mode: Mode::Read,
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
-        // A read handle is not a snapshot, a write, a delta, a reserve, or
+        // A read handle is not a locked read, a write, a delta, a reserve, or
         // an interval.
-        assert_eq!(session.snap_cell(0), Err(SessionTrap::WrongMode(0)));
+        assert_eq!(session.locked_cell(0), Err(SessionTrap::WrongMode(0)));
         assert_eq!(session.write_cell_get(0), Err(SessionTrap::WrongMode(0)));
         assert_eq!(
             session.write_cell_set(0, vec![1]),
@@ -1528,7 +1546,7 @@ mod tests {
 
     #[test]
     fn a_mode_the_world_cannot_hand_out_refuses_at_materialization() {
-        // A snapshot of a collection interval has no capability form.
+        // A locked read of a collection interval has no capability form.
         let set = declared(&[Effect {
             target: EffectTarget::Range {
                 owner: Address([9; 16]),
@@ -1537,9 +1555,7 @@ mod tests {
                 hi: 1,
                 cap: 1,
             },
-            mode: Mode::Snapshot {
-                window: Window::Bounded(4),
-            },
+            mode: Mode::Locked,
         }]);
         assert!(matches!(
             KernelSession::materialize(

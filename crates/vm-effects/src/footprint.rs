@@ -28,7 +28,7 @@ use crate::types::{Effect, EffectSet, EffectTarget, ModeKind, compatible};
 /// Units charged for naming one target at all, before any span.
 ///
 /// A declaration costs something even when it excludes nothing: it is a
-/// routing entry, and for a snapshot a proof obligation.
+/// routing entry.
 pub const TARGET_UNITS: u64 = 1;
 
 /// Units charged per order-key bit of a range's span.
@@ -41,7 +41,7 @@ pub const EXCLUSIVITY_FLOOR: u64 = 1;
 /// Every mode kind, as the exclusion count walks them.
 const KINDS: [ModeKind; 5] = [
     ModeKind::Read,
-    ModeKind::Snapshot,
+    ModeKind::Locked,
     ModeKind::Delta,
     ModeKind::Reserve,
     ModeKind::Write,
@@ -50,10 +50,10 @@ const KINDS: [ModeKind; 5] = [
 /// How much of the lattice `kind` excludes, as a multiplier on span.
 ///
 /// Counted from [`compatible`], so the ordering is the lattice's rather
-/// than a judgement: `snapshot` excludes nothing and sits at the floor;
+/// than a judgement: `locked` excludes nothing and sits at the floor;
 /// `delta` and `reserve` exclude fresh reads and writes; `read` excludes
 /// both commutative modes as well; `write` excludes everything but
-/// `snapshot`, itself included.
+/// `locked`, itself included.
 ///
 /// The placement of `read` above the commutative modes is the part worth
 /// stating out loud, because intuition puts reads near the bottom. Two
@@ -139,7 +139,6 @@ mod tests {
     use super::{EXCLUSIVITY_FLOOR, effect_units, footprint, mode_weight, order_bits};
     use crate::types::{
         Address, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind, RoleId, SubstateKey,
-        Window,
     };
 
     const OWNER: Address = Address([7; 16]);
@@ -168,10 +167,10 @@ mod tests {
 
     #[test]
     fn the_weight_ordering_is_the_lattice_ordering() {
-        // write > read > {delta, reserve} > snapshot, off `compatible`.
-        assert_eq!(mode_weight(ModeKind::Snapshot), EXCLUSIVITY_FLOOR);
+        // write > read > {delta, reserve} > locked, off `compatible`.
+        assert_eq!(mode_weight(ModeKind::Locked), EXCLUSIVITY_FLOOR);
         assert_eq!(mode_weight(ModeKind::Delta), mode_weight(ModeKind::Reserve));
-        assert!(mode_weight(ModeKind::Delta) > mode_weight(ModeKind::Snapshot));
+        assert!(mode_weight(ModeKind::Delta) > mode_weight(ModeKind::Locked));
         assert!(mode_weight(ModeKind::Read) > mode_weight(ModeKind::Delta));
         assert!(mode_weight(ModeKind::Write) > mode_weight(ModeKind::Read));
     }
@@ -204,22 +203,12 @@ mod tests {
         let mut declared = EffectSet::new();
         declared.insert(effect(point(1), Mode::Write)).unwrap();
         declared
-            .insert(effect(
-                range(0, 1023),
-                Mode::Snapshot {
-                    window: Window::Unbounded,
-                },
-            ))
+            .insert(effect(range(0, 1023), Mode::Locked))
             .unwrap();
         assert_eq!(
             footprint(&declared),
             effect_units(effect(point(1), Mode::Write))
-                + effect_units(effect(
-                    range(0, 1023),
-                    Mode::Snapshot {
-                        window: Window::Unbounded,
-                    }
-                )),
+                + effect_units(effect(range(0, 1023), Mode::Locked)),
         );
     }
 }

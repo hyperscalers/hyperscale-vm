@@ -55,13 +55,6 @@ mod account {
             self.claims.at(funds.resource()).add(0);
         }
 
-        /// Refuse unless the pinned balance covers `min`, touching nothing.
-        #[name("assert-balance")]
-        pub fn assert_balance(&mut self, resource: Address, min: u128, window: u64) {
-            let balance = self.vaults.at(resource).pinned(window);
-            assert!(balance >= min, "balance below the declared floor");
-        }
-
         /// Stamp the transaction's randomness draw into the entropy leaf.
         #[name("stamp-entropy")]
         pub fn stamp_entropy(&mut self) {

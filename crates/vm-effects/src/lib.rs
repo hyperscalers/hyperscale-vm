@@ -10,7 +10,7 @@
 //! nothing else.
 //!
 //! [`route`] folds signature evaluation over a manifest's nodes and returns
-//! the transaction's routing: per-shard effect sets, snapshot proof
+//! the transaction's routing: per-shard effect sets, the
 //! obligations, and the static call graph, whose acyclicity makes the
 //! transitive effect fold a DAG fold.
 //!
@@ -34,7 +34,7 @@ pub mod work;
 pub use admission::{AdmissionError, Admitted, MAX_YIELD_PARAMS, admit};
 pub use dsl::{
     Clause, Declaration, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, WindowExpr, evaluate_declaration,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, evaluate_declaration,
     evaluate_effects, evaluate_expr, fresh_id, fresh_local,
 };
 pub use envelope::{
@@ -55,10 +55,10 @@ pub use metadata::{
 };
 pub use route::{
     CallEdge, CallGraph, FrameDeclaration, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef,
-    PrefixShardResolver, RouteError, Routing, ShardResolver, SnapshotObligation, route,
+    PrefixShardResolver, RouteError, Routing, ShardResolver, route,
 };
 pub use types::{
     Address, Effect, EffectSet, EffectTarget, LocalKey, MAX_VALUE_DEPTH, Mode, ModeKind,
-    ReserveOverflow, RoleId, ShardId, SubstateKey, Value, Window, child_key, compatible,
+    ReserveOverflow, RoleId, ShardId, SubstateKey, Value, child_key, compatible,
 };
 pub use work::{FOOTPRINT_WEIGHT, FUEL_WEIGHT, work_units};

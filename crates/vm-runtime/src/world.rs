@@ -22,8 +22,8 @@ use crate::gas::charge_boundary_bytes;
 
 /// Host-side marker for the `read-cell` resource.
 pub struct ReadCell;
-/// Host-side marker for the `snap-cell` resource.
-pub struct SnapCell;
+/// Host-side marker for the `locked-cell` resource.
+pub struct LockedCell;
 /// Host-side marker for the `write-cell` resource.
 pub struct WriteCell;
 /// Host-side marker for the `delta-cell` resource.
@@ -56,7 +56,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn snap_cell(&mut self, rep: u32) -> Result<Vec<u8>, String>;
+    fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, String>;
 
     /// The cell's current bytes under a write capability; empty if absent.
     ///
@@ -168,7 +168,9 @@ fn host_trap(message: &str) -> Error {
 pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> Result<()> {
     let mut state = linker.instance("hyperscale:kernel/state")?;
     state.resource("read-cell", ResourceType::host::<ReadCell>(), |_, _| Ok(()))?;
-    state.resource("snap-cell", ResourceType::host::<SnapCell>(), |_, _| Ok(()))?;
+    state.resource("locked-cell", ResourceType::host::<LockedCell>(), |_, _| {
+        Ok(())
+    })?;
     state.resource("write-cell", ResourceType::host::<WriteCell>(), |_, _| {
         Ok(())
     })?;
@@ -199,11 +201,11 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         },
     )?;
     state.func_wrap(
-        "snap-cell-get",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<SnapCell>,)| {
+        "locked-cell-get",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<LockedCell>,)| {
             let value = store
                 .data_mut()
-                .snap_cell(r.rep())
+                .locked_cell(r.rep())
                 .map_err(|m| host_trap(&m))?;
             charge_boundary_bytes(&mut store, value.len())?;
             Ok((value,))

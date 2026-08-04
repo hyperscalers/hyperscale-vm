@@ -71,7 +71,7 @@ fn basket() -> Blueprint {
             let holdings: Sym<Seq> = t.config(0);
             let owner = t.self_addr();
 
-            t.point(&owner.child(CONFIG, &[])).snapshot_locked();
+            t.point(&owner.child(CONFIG, &[])).locked();
             t.for_each(&holdings, |t, resource| {
                 let owner = t.self_addr();
                 t.point(&owner.child(VAULT, &[resource])).write();
@@ -200,7 +200,7 @@ fn the_handle_plan_matches_what_the_kernel_materializes() {
                 let x: Sym<Addr> = t.config(0);
                 let y: Sym<Addr> = t.config(1);
                 let pool = t.self_addr();
-                t.point(&pool.child(CONFIG, &[])).snapshot_locked();
+                t.point(&pool.child(CONFIG, &[])).locked();
                 t.point(&pool.child(VAULT, &[x.cast()])).write();
                 t.point(&pool.child(VAULT, &[y.cast()])).write();
             },
@@ -213,7 +213,7 @@ fn the_handle_plan_matches_what_the_kernel_materializes() {
     let planned: Vec<ModeKind> = plan.shapes().iter().map(|s| s.mode).collect();
     assert_eq!(
         planned,
-        vec![ModeKind::Snapshot, ModeKind::Write, ModeKind::Write],
+        vec![ModeKind::Locked, ModeKind::Write, ModeKind::Write],
         "the plan follows the author's order"
     );
     assert!(plan.shapes().iter().all(|s| s.target == TargetShape::Point));
@@ -277,7 +277,7 @@ fn a_degenerate_config_collapses_the_set_below_the_plan() {
             let x: Sym<Addr> = t.config(0);
             let y: Sym<Addr> = t.config(1);
             let pool = t.self_addr();
-            t.point(&pool.child(CONFIG, &[])).snapshot_locked();
+            t.point(&pool.child(CONFIG, &[])).locked();
             t.point(&pool.child(VAULT, &[x.cast()])).write();
             t.point(&pool.child(VAULT, &[y.cast()])).write();
         })
