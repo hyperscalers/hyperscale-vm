@@ -1,5 +1,6 @@
 //! The minimal stdlib's authored effect signatures: the fungible account,
-//! the constant-product pool, the order book, and the bucket splitter.
+//! the constant-product pool, the order book, the bucket splitter, and the
+//! stake pool.
 //!
 //! These are the signatures the corpus guests execute under. They are
 //! authored, not compiler-inferred — the inference backend is a later
@@ -19,6 +20,9 @@ pub const CONFIG: RoleId = RoleId(3);
 pub const ASKS: RoleId = RoleId(4);
 /// An account's entropy leaf: the transaction draw a stamp records.
 pub const ENTROPY: RoleId = RoleId(5);
+/// A stake pool's total awaiting release to the delegators who returned
+/// their units.
+pub const UNBONDING: RoleId = RoleId(6);
 
 /// The entry cap the book's fill range declares.
 pub const FILL_CAP: u32 = 64;
@@ -99,6 +103,72 @@ pub fn account_metadata() -> PackageMetadata {
     // Index order is the contract: the guest emits 0 and 1, and these are
     // what those indexes mean.
     methods.events = vec!["withdrawn".into(), "deposited".into()];
+    methods
+}
+
+/// The stake pool.
+///
+/// `stake(funds)`: the delegation lands in the pool's vault for the
+/// resource it is denominated in, and the call returns a bucket of the
+/// pool's own stake-unit resource — the delegator's position, held as an
+/// ordinary fungible balance in their own account rather than as a record
+/// only the pool can read. `unstake(units)`: the returned units are
+/// consumed and the pool's unbonding total grows by what they represent.
+///
+/// Both are `delta`, and that is the whole contention story: a delegation
+/// commutes with every other delegation, so a pool's popularity costs its
+/// shard throughput and never serialization. Nothing reads a pool
+/// aggregate. The beacon accumulates per-pool totals from the events these
+/// methods emit and spends them on its own capacity tests, so a total kept
+/// here would be a second copy of a number consensus already holds, on a
+/// cell every delegator would have to take a turn on.
+///
+/// Two creation-fixed fields configure an instance: the resource it stakes
+/// and the resource it issues. There is deliberately no third naming the
+/// pool, because a pool that named itself could name a different one: the
+/// kernel stamps an event's emitter, so the instance is the subject and
+/// nothing about it is the guest's to choose.
+#[must_use]
+pub fn staking_metadata() -> PackageMetadata {
+    /// The staked resource — what a delegation is denominated in.
+    const STAKED_RESOURCE: u32 = 0;
+    /// The resource this pool issues against delegations.
+    const UNIT_RESOURCE: u32 = 1;
+
+    let mut methods = PackageMetadata::default();
+    methods.methods.insert(
+        "stake".into(),
+        MethodSignature {
+            params: vec![ParamType::Bucket],
+            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
+            outputs: vec![Expr::Config(UNIT_RESOURCE)],
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(self_child(VAULT, vec![Expr::Config(STAKED_RESOURCE)])),
+                mode: ModeExpr::Delta,
+            }],
+            calls: vec![],
+        },
+    );
+    methods.methods.insert(
+        "unstake".into(),
+        MethodSignature {
+            params: vec![ParamType::Bucket],
+            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
+            outputs: vec![],
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(self_child(
+                    UNBONDING,
+                    vec![Expr::Config(STAKED_RESOURCE)],
+                )),
+                mode: ModeExpr::Delta,
+            }],
+            calls: vec![],
+        },
+    );
+    // Index order is the contract: the guest emits 0 and 1, and the
+    // beacon's witness lift resolves exactly these two against this
+    // package's metadata.
+    methods.events = vec!["staked".into(), "unstaked".into()];
     methods
 }
 
