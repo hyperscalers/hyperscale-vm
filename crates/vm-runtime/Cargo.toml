@@ -4,10 +4,18 @@ version.workspace = true
 edition.workspace = true
 description = "Component Model host: blessed engine embedding, profile validator, kernel world, metering"
 
+[features]
+default = ["engine"]
+# The wasmtime embedding: the blessed engine, the kernel world, and the
+# metering layer. Off, the crate is the profile validator alone — bytes in,
+# a deploy verdict out — which is all an embedder needs when its runtime
+# interprets components rather than compiling them.
+engine = ["dep:wasmtime"]
+
 [dependencies]
 thiserror.workspace = true
 wasmparser.workspace = true
-wasmtime.workspace = true
+wasmtime = { workspace = true, optional = true }
 
 [dev-dependencies]
 wat.workspace = true
