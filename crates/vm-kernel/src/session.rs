@@ -220,6 +220,22 @@ pub enum Outcome {
         /// The uncovered amount.
         amount: u128,
     },
+    /// A signed edge bound the produced amount did not meet.
+    ///
+    /// The manifest's own guarantee, asserted independently of the callee:
+    /// a producer returning less than the consumer declared fails the
+    /// transaction whatever the producer's own code checked. Priced with
+    /// [`Outcome::Infeasible`] rather than as a defect — the sender
+    /// declared a bound and the world moved between signing and
+    /// execution, which is a lost race.
+    ConstraintUnmet {
+        /// The consuming node.
+        node: u32,
+        /// The consumed parameter's position on that node.
+        param: u32,
+        /// What the edge actually carried.
+        amount: u128,
+    },
     /// A kernel or store invariant failure — never the sender's fault, and
     /// never expected to occur.
     ProtocolError {

@@ -48,7 +48,7 @@ pub use footprint::{
 };
 pub use graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
 pub use hash::{Hash32, Hasher, TestHasher};
-pub use manifest::{Manifest, ManifestHash, Node, NodeInput};
+pub use manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
     PackageMetadata, ParamType, package_hash,

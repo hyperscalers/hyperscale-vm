@@ -205,7 +205,12 @@ fn resolve_call(node: &Node, outputs: &[Vec<Vec<u8>>]) -> NodeCall {
             }
         }
         "deposit" => {
-            let [NodeInput::Edge { source, resource }] = node.inputs.as_slice() else {
+            let [
+                NodeInput::Edge {
+                    source, resource, ..
+                },
+            ] = node.inputs.as_slice()
+            else {
                 panic!("deposit inputs");
             };
             NodeCall::Deposit {

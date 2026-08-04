@@ -281,7 +281,9 @@ pub fn route(
         for input in &node.inputs {
             match input {
                 NodeInput::Literal(value) => args.push(value.clone()),
-                NodeInput::Edge { source, resource } => {
+                NodeInput::Edge {
+                    source, resource, ..
+                } => {
                     if *source >= node_index {
                         return Err(RouteError::EdgeOrder {
                             node: node_index,
@@ -463,7 +465,7 @@ mod tests {
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, fresh_id};
     use crate::hash::{Hash32, Hasher, TestHasher};
-    use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
+    use crate::manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
     use crate::metadata::{
         CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
         PackageMetadata,
@@ -939,6 +941,7 @@ mod tests {
                 inputs: vec![NodeInput::Edge {
                     source: 0,
                     resource: addr(9),
+                    bounds: Bounds::default(),
                 }],
             }],
         };

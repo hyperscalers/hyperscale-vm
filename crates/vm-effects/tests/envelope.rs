@@ -4,11 +4,12 @@
 
 use hyperscale_vm_effects::stdlib::account_metadata;
 use hyperscale_vm_effects::{
-    Address, AdmissionError, AdmittedTree, Constraint, EdgeRef, Effect, EffectTarget, EnvelopeTree,
-    GraphArg, GraphNode, Hasher, InstanceMeta, InstanceRegistry, IntentDecl, MAX_SUBINTENTS,
-    MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, Mode, NULLIFIER_ROLE, NodeInput,
-    PackageHash, PrefixShardResolver, RoleId, ShardResolver, Subintent, TestHasher, Value,
-    YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
+    Address, AdmissionError, AdmittedTree, Bounds, Constraint, EdgeRef, Effect, EffectTarget,
+    EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceMeta, InstanceRegistry, IntentDecl,
+    MAX_SUBINTENTS, MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, Mode,
+    NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver, RoleId, ShardResolver, Subintent,
+    TestHasher, Value, YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key,
+    route_tree,
 };
 use proptest::prelude::{any, proptest};
 
@@ -132,6 +133,10 @@ fn a_composed_tree_flattens_deterministically() {
         vec![NodeInput::Edge {
             source: 1,
             resource: RES_Y,
+            bounds: Bounds {
+                min: Some(10),
+                max: None,
+            },
         }]
     );
     assert_eq!(
@@ -139,6 +144,10 @@ fn a_composed_tree_flattens_deterministically() {
         vec![NodeInput::Edge {
             source: 0,
             resource: RES_X,
+            bounds: Bounds {
+                min: Some(100),
+                max: None,
+            },
         }]
     );
 

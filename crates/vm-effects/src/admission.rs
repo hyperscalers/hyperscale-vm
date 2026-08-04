@@ -18,7 +18,7 @@ use crate::dsl::{EvalError, EvalInputs, evaluate_expr};
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, GraphArg, ManifestGraph};
 use crate::hash::Hasher;
-use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
+use crate::manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{InstanceRegistry, MetadataCache, PackageHash, ParamType};
 use crate::route::MAX_MANIFEST_NODES;
 use crate::types::{Address, MAX_VALUE_DEPTH, Value};
@@ -336,17 +336,21 @@ pub fn admit(
     Ok(Admitted::new(manifest, identity))
 }
 
-/// Check an edge's constraints against its static resource type.
+/// Check an edge's constraints against its static resource type and fold
+/// them for execution.
 ///
 /// Repeated bounds fold to their conjunction — the greatest lower bound
-/// and the least upper bound — because execution enforces every
-/// constraint in the list, not the last of each kind.
+/// and the least upper bound — because every constraint in the list
+/// binds, not the last of each kind. Admission can only judge the bounds
+/// against each other: the amount does not exist until the producer runs,
+/// so the conjunction rides the lowered edge and the manifest walk
+/// enforces it against what the producer actually returned.
 pub(crate) fn check_constraints(
     constraints: &[Constraint],
     resource: Address,
     node: u32,
     param: u32,
-) -> Result<(), AdmissionError> {
+) -> Result<Bounds, AdmissionError> {
     let mut min: Option<u128> = None;
     let mut max: Option<u128> = None;
     for constraint in constraints {
@@ -369,7 +373,7 @@ pub(crate) fn check_constraints(
     {
         return Err(AdmissionError::UnsatisfiableConstraint { node, param });
     }
-    Ok(())
+    Ok(Bounds { min, max })
 }
 
 /// One intent as the shared admission checker consumes it.
@@ -596,9 +600,13 @@ pub(crate) fn admit_intents(
                             output: edge.output,
                         });
                     }
-                    check_constraints(constraints, resource, node_index, param_index)?;
+                    let bounds = check_constraints(constraints, resource, node_index, param_index)?;
                     bound.push(Value::Bucket { resource });
-                    inputs.push(NodeInput::Edge { source, resource });
+                    inputs.push(NodeInput::Edge {
+                        source,
+                        resource,
+                        bounds,
+                    });
                 }
                 GraphArg::Param(reference) => {
                     let Some((decl, binding)) =
@@ -646,9 +654,14 @@ pub(crate) fn admit_intents(
                             output: binding.edge.output,
                         });
                     }
-                    check_constraints(&decl.constraints, resource, node_index, param_index)?;
+                    let bounds =
+                        check_constraints(&decl.constraints, resource, node_index, param_index)?;
                     bound.push(Value::Bucket { resource });
-                    inputs.push(NodeInput::Edge { source, resource });
+                    inputs.push(NodeInput::Edge {
+                        source,
+                        resource,
+                        bounds,
+                    });
                 }
             }
         }

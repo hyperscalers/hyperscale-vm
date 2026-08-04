@@ -106,7 +106,7 @@ fn a_well_formed_graph_lowers_and_routes() {
 }
 
 #[test]
-fn constraint_changes_change_the_fresh_id_root() {
+fn constraint_changes_reach_lowering_and_the_fresh_id_root() {
     let (cache, instances) = setup();
     let mut loosened = valid_graph();
     let GraphArg::Edge { constraints, .. } = &mut loosened.nodes[2].args[0] else {
@@ -116,10 +116,11 @@ fn constraint_changes_change_the_fresh_id_root() {
 
     let strict = admit(&valid_graph(), &cache, &instances, &TestHasher).expect("admits");
     let loose = admit(&loosened, &cache, &instances, &TestHasher).expect("admits");
-    // Lowering erases constraints, so the manifests coincide — but the
-    // identity is the signed graph's hash, so two distinct signed
+    // A bound is execution-relevant, so lowering carries it: the two
+    // manifests differ where the constraint does. The identity differs
+    // too — it is the signed graph's hash, so two distinct signed
     // transactions never share a fresh-ID root.
-    assert_eq!(strict.manifest(), loose.manifest());
+    assert_ne!(strict.manifest(), loose.manifest());
     assert_ne!(strict.identity(), loose.identity());
     assert_ne!(
         fresh_id(&TestHasher, strict.identity(), 1, 0, 0),

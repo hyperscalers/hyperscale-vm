@@ -10,6 +10,33 @@
 use crate::hash::Hash32;
 use crate::types::{Address, Value};
 
+/// A consumer's signed amount bounds on an edge, folded to their
+/// conjunction: the greatest declared lower bound and the least declared
+/// upper bound.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Bounds {
+    /// The greatest declared lower bound, if any.
+    pub min: Option<u128>,
+    /// The least declared upper bound, if any.
+    pub max: Option<u128>,
+}
+
+impl Bounds {
+    /// Whether `amount` satisfies both bounds.
+    #[must_use]
+    pub const fn admits(&self, amount: u128) -> bool {
+        let over_min = match self.min {
+            Some(min) => amount >= min,
+            None => true,
+        };
+        let under_max = match self.max {
+            Some(max) => amount <= max,
+            None => true,
+        };
+        over_min && under_max
+    }
+}
+
 /// One bound argument of an invocation node.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeInput {
@@ -22,6 +49,16 @@ pub enum NodeInput {
         source: u32,
         /// The resource type the edge carries.
         resource: Address,
+        /// The consumer's signed bounds on the amount, folded to their
+        /// conjunction at admission.
+        ///
+        /// These are the manifest's own guarantee, asserted independently
+        /// of the callee: a producer that returns less than `min` fails
+        /// the transaction whatever its own code checked. Carrying them
+        /// into the lowered form is what makes them enforceable —
+        /// admission can only judge them against each other, since the
+        /// amount does not exist until the producer runs.
+        bounds: Bounds,
     },
 }
 
