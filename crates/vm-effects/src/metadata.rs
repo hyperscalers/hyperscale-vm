@@ -137,6 +137,140 @@ pub struct MethodSignature {
     pub calls: Vec<CallSite>,
 }
 
+/// Why a signature's ABI binding cannot be honoured.
+///
+/// Every clause is a pure function of the metadata, so the verdict is the
+/// same wherever it is reached: at publish, where it refuses the artifact,
+/// and at routing, where it refuses a call to a package that reached the
+/// cache without one.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum AbiError {
+    /// A handle binding naming an effect clause the signature does not
+    /// declare.
+    #[error("ABI parameter {position} names effect clause {clause}, past the {declared} declared")]
+    NoSuchClause {
+        /// The ABI parameter position.
+        position: u32,
+        /// The clause it names.
+        clause: u32,
+        /// How many clauses the signature declares.
+        declared: u32,
+    },
+    /// A bucket binding naming a parameter the signature does not declare.
+    #[error("ABI parameter {position} names parameter {param}, past the {declared} declared")]
+    NoSuchParam {
+        /// The ABI parameter position.
+        position: u32,
+        /// The parameter it names.
+        param: u32,
+        /// How many parameters the signature declares.
+        declared: u32,
+    },
+    /// A bucket binding naming a parameter that is not a bucket.
+    ///
+    /// A bucket's amount is the one value a signature cannot derive,
+    /// which is the whole reason the variant exists; naming any other
+    /// parameter through it asks for bytes that are already static.
+    #[error("ABI parameter {position} takes the amount of parameter {param}, which is {kind}")]
+    NotABucket {
+        /// The ABI parameter position.
+        position: u32,
+        /// The parameter it names.
+        param: u32,
+        /// What that parameter actually is.
+        kind: &'static str,
+    },
+    /// One bucket parameter carried by more than one ABI parameter.
+    ///
+    /// A bucket carried by *none* is well-formed: a method that forwards
+    /// its funds to a callee never reads the amount itself, so nothing in
+    /// its own ABI carries it. Carrying it twice has no such reading —
+    /// the guest would receive one edge's bytes under two names.
+    #[error("parameter {param} is a bucket carried by {carried} ABI parameters")]
+    BucketCarriedTwice {
+        /// The declared parameter.
+        param: u32,
+        /// How many ABI parameters name it.
+        carried: u32,
+    },
+}
+
+/// Judge a signature's ABI binding against the declaration it is a
+/// binding for.
+///
+/// A binding says where each of the guest's arguments comes from, and a
+/// caller that cannot resolve one cannot invoke the method at all — so an
+/// unresolvable binding is a package that publishes and then traps for
+/// everyone.
+///
+/// What this cannot judge is the binding against the component's real
+/// ABI: that needs the artifact, and it belongs with whoever holds one.
+///
+/// # Errors
+///
+/// Any [`AbiError`]; verdicts are deterministic and identical on every
+/// node.
+pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
+    let bound = |count: usize| u32::try_from(count).unwrap_or(u32::MAX);
+    let mut carried = vec![0u32; signature.params.len()];
+    for (index, binding) in signature.abi.iter().enumerate() {
+        let position = bound(index);
+        match binding {
+            AbiParam::Handle(clause) => {
+                let declared = usize::try_from(*clause)
+                    .ok()
+                    .and_then(|index| signature.effects.get(index));
+                if declared.is_none() {
+                    return Err(AbiError::NoSuchClause {
+                        position,
+                        clause: *clause,
+                        declared: bound(signature.effects.len()),
+                    });
+                }
+            }
+            AbiParam::Bucket(param) => {
+                let slot = usize::try_from(*param).map_err(|_| AbiError::NoSuchParam {
+                    position,
+                    param: *param,
+                    declared: bound(signature.params.len()),
+                })?;
+                match signature.params.get(slot) {
+                    Some(ParamType::Bucket) => carried[slot] += 1,
+                    Some(other) => {
+                        return Err(AbiError::NotABucket {
+                            position,
+                            param: *param,
+                            kind: other.name(),
+                        });
+                    }
+                    None => {
+                        return Err(AbiError::NoSuchParam {
+                            position,
+                            param: *param,
+                            declared: bound(signature.params.len()),
+                        });
+                    }
+                }
+            }
+            // A derived binding is an expression over the same inputs the
+            // effect clauses read, so its argument and configuration
+            // references are bounded by the same evaluation every node
+            // runs at routing. Repeating that walk here would be a second
+            // opinion on it.
+            AbiParam::Derived(_) => {}
+        }
+    }
+    for (param, count) in carried.iter().enumerate() {
+        if *count > 1 {
+            return Err(AbiError::BucketCarriedTwice {
+                param: bound(param),
+                carried: *count,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Everything routing reads about a published package.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PackageMetadata {
@@ -223,8 +357,29 @@ impl InstanceRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::{MetadataCache, MethodSignature, PackageHash, PackageMetadata};
+    use super::{
+        AbiError, AbiParam, MetadataCache, MethodSignature, PackageHash, PackageMetadata,
+        ParamType, check_abi,
+    };
+    use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::hash::Hash32;
+    use crate::stdlib::{account_metadata, amm_metadata, book_metadata, splitter_metadata};
+
+    fn clause() -> Clause {
+        Clause::Effect {
+            target: TargetExpr::Point(Expr::SelfAddr),
+            mode: ModeExpr::Delta,
+        }
+    }
+
+    fn signature(params: Vec<ParamType>, abi: Vec<AbiParam>) -> MethodSignature {
+        MethodSignature {
+            params,
+            abi,
+            effects: vec![clause()],
+            ..MethodSignature::default()
+        }
+    }
 
     #[test]
     fn publish_is_first_write_wins() {
@@ -235,5 +390,78 @@ mod tests {
         cache.publish(hash, first.clone());
         cache.publish(hash, PackageMetadata::default());
         assert_eq!(cache.get(hash), Some(&first));
+    }
+
+    #[test]
+    fn a_binding_resolves_against_its_own_signature() {
+        assert_eq!(
+            check_abi(&signature(
+                vec![ParamType::Bucket],
+                vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
+            )),
+            Ok(())
+        );
+        assert!(matches!(
+            check_abi(&signature(vec![], vec![AbiParam::Handle(1)])),
+            Err(AbiError::NoSuchClause { clause: 1, .. })
+        ));
+        assert!(matches!(
+            check_abi(&signature(vec![ParamType::U64], vec![AbiParam::Bucket(0)])),
+            Err(AbiError::NotABucket { param: 0, .. })
+        ));
+        assert!(matches!(
+            check_abi(&signature(vec![], vec![AbiParam::Bucket(3)])),
+            Err(AbiError::NoSuchParam { param: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn a_bucket_is_carried_at_most_once() {
+        // A guest receiving one edge's bytes under two names.
+        assert!(matches!(
+            check_abi(&signature(
+                vec![ParamType::Bucket],
+                vec![AbiParam::Bucket(0), AbiParam::Bucket(0)],
+            )),
+            Err(AbiError::BucketCarriedTwice {
+                param: 0,
+                carried: 2
+            })
+        ));
+        // Two buckets, each carried once, in either order.
+        assert_eq!(
+            check_abi(&signature(
+                vec![ParamType::Bucket, ParamType::U128, ParamType::Bucket],
+                vec![AbiParam::Bucket(2), AbiParam::Bucket(0)],
+            )),
+            Ok(())
+        );
+        // A bucket the declaring method forwards to a callee: its own
+        // guest never reads the amount, so its own ABI carries nothing.
+        // The edge's signed bound is still checked where the edge
+        // resolves, which is a property of the node and not of the ABI.
+        assert_eq!(
+            check_abi(&signature(
+                vec![ParamType::Bucket],
+                vec![AbiParam::Handle(0)]
+            )),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn every_authored_signature_is_well_formed() {
+        // The stdlib is the corpus's whole surface, so a rule it breaks
+        // is a rule nothing else could be held to.
+        for package in [
+            account_metadata(),
+            amm_metadata(),
+            book_metadata(),
+            splitter_metadata(),
+        ] {
+            for (name, signature) in &package.methods {
+                assert_eq!(check_abi(signature), Ok(()), "{name}");
+            }
+        }
     }
 }

@@ -11,10 +11,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::admission::Admitted;
 use crate::dsl::{Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr};
 use crate::hash::Hasher;
-use crate::invoke::{CallArg, NodeCall};
+use crate::invoke::{CallArg, EdgeBound, NodeCall};
 use crate::manifest::{ManifestHash, NodeInput};
 use crate::metadata::{
-    AbiParam, CallSite, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
+    AbiError, AbiParam, CallSite, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
+    check_abi,
 };
 use crate::types::{Address, Effect, EffectSet, ShardId, Value};
 
@@ -265,6 +266,18 @@ pub enum RouteError {
         /// How many accesses that clause declared.
         effects: u32,
     },
+    /// A signature whose ABI binding is not well-formed against its own
+    /// declaration.
+    #[error("node {node}: `{method}` has a malformed ABI binding")]
+    MalformedAbi {
+        /// The manifest node being routed.
+        node: u32,
+        /// The method whose binding this is.
+        method: String,
+        /// What is wrong with it.
+        #[source]
+        source: AbiError,
+    },
     /// An ABI argument the node's bound inputs cannot supply.
     #[error("node {node}: `{method}` cannot bind ABI parameter {param}: {reason}")]
     UnbindableAbiParam {
@@ -419,6 +432,16 @@ fn lower_call(
         inputs,
         hasher,
     } = *lowering;
+    // The publish gate judges this first, from the artifact's bytes
+    // alone. Judging it again here is what makes it hold for a package
+    // that reached the cache without one — a genesis static, a
+    // hand-authored fixture — so no arrangement of metadata leaves a
+    // consumed edge with no bucket argument to carry its bounds.
+    check_abi(signature).map_err(|source| RouteError::MalformedAbi {
+        node: node_index,
+        method: method.to_owned(),
+        source,
+    })?;
     let mut args = Vec::with_capacity(signature.abi.len());
     for (position, binding) in signature.abi.iter().enumerate() {
         let param = u32::try_from(position).unwrap_or(u32::MAX);
@@ -488,8 +511,36 @@ fn lower_call(
         target: instance,
         export: method.to_owned(),
         args,
+        edges: edge_bounds(node_inputs),
         outputs: u32::try_from(signature.outputs.len()).unwrap_or(u32::MAX),
     })
+}
+
+/// Every value edge a node consumes, with the bound its consumer signed.
+///
+/// Taken from the node's bound inputs rather than from its ABI binding,
+/// because the two are not the same set: a method that forwards its
+/// funds to a callee reads no amount, so nothing in its own ABI carries
+/// the edge — and the signed bound is owed a check all the same.
+fn edge_bounds(node_inputs: &[NodeInput]) -> Vec<EdgeBound> {
+    node_inputs
+        .iter()
+        .enumerate()
+        .filter_map(|(position, input)| match input {
+            NodeInput::Edge {
+                source,
+                output,
+                bounds,
+                ..
+            } => Some(EdgeBound {
+                source: *source,
+                output: *output,
+                param: u32::try_from(position).unwrap_or(u32::MAX),
+                bounds: *bounds,
+            }),
+            NodeInput::Literal(_) => None,
+        })
+        .collect()
 }
 
 /// A derived value's guest form. Amounts and addresses cross as their
@@ -705,8 +756,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        AbiParam, Admitted, CallArg, CallEdge, MAX_CALL_DEPTH, MAX_MANIFEST_NODES, MethodRef,
-        PrefixShardResolver, RouteError, ShardResolver, route,
+        AbiParam, Admitted, CallArg, CallEdge, EdgeBound, MAX_CALL_DEPTH, MAX_MANIFEST_NODES,
+        MethodRef, PrefixShardResolver, RouteError, ShardResolver, route,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, fresh_id};
     use crate::hash::{Hash32, Hasher, TestHasher};
@@ -1716,7 +1767,10 @@ mod tests {
                         source: 0,
                         output: 3,
                         resource: addr(0xE1),
-                        bounds: Bounds::default(),
+                        bounds: Bounds {
+                            min: Some(7),
+                            max: None,
+                        },
                     }],
                 },
             ],
@@ -1736,6 +1790,201 @@ mod tests {
                 output: 3
             },
             "a bucket argument carries the producer's output slot, not just the producer"
+        );
+        assert_eq!(
+            routing.calls[1].edges,
+            vec![EdgeBound {
+                source: 0,
+                output: 3,
+                param: 0,
+                bounds: Bounds {
+                    min: Some(7),
+                    max: None,
+                },
+            }],
+            "the consumed edge carries its signed bound to the walk"
+        );
+    }
+    /// A world whose `forward` hands its bucket to a callee rather than
+    /// reading the amount itself, plus a producer to feed it.
+    fn forwarding_world() -> (MetadataCache, InstanceRegistry, Manifest) {
+        let mut router = PackageMetadata::default();
+        router.methods.insert(
+            "forward".into(),
+            MethodSignature {
+                params: vec![ParamType::Bucket],
+                // Nothing carries the bucket: the callee reads it.
+                abi: vec![AbiParam::Handle(0)],
+                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                calls: vec![CallSite {
+                    target: Expr::Literal(Value::Address(addr(0x22))),
+                    method: "take".into(),
+                    args: vec![Expr::Arg(0)],
+                }],
+                ..MethodSignature::default()
+            },
+        );
+        router.methods.insert(
+            "make".into(),
+            MethodSignature {
+                outputs: vec![Expr::Literal(Value::Address(addr(0xE1)))],
+                ..MethodSignature::default()
+            },
+        );
+        let mut callee = PackageMetadata::default();
+        callee.methods.insert(
+            "take".into(),
+            MethodSignature {
+                params: vec![ParamType::Bucket],
+                abi: vec![AbiParam::Bucket(0)],
+                effects: vec![self_point(RoleId(2), ModeExpr::Delta)],
+                ..MethodSignature::default()
+            },
+        );
+        let mut cache = MetadataCache::new();
+        cache.publish(pkg("router"), router);
+        cache.publish(pkg("callee"), callee);
+        let mut instances = InstanceRegistry::new();
+        instances.register(
+            addr(0x11),
+            InstanceMeta {
+                package: pkg("router"),
+                config: vec![],
+            },
+        );
+        instances.register(
+            addr(0x22),
+            InstanceMeta {
+                package: pkg("callee"),
+                config: vec![],
+            },
+        );
+        let manifest = Manifest {
+            nodes: vec![
+                Node {
+                    target: addr(0x11),
+                    method: "make".into(),
+                    inputs: vec![],
+                },
+                Node {
+                    target: addr(0x11),
+                    method: "forward".into(),
+                    inputs: vec![NodeInput::Edge {
+                        source: 0,
+                        output: 0,
+                        resource: addr(0xE1),
+                        bounds: Bounds {
+                            min: Some(42),
+                            max: None,
+                        },
+                    }],
+                },
+            ],
+        };
+        (cache, instances, manifest)
+    }
+
+    #[test]
+    fn a_forwarded_bucket_still_carries_its_edge_bound() {
+        // The bound belongs to the edge, not to the argument list. A
+        // method that hands its funds to a callee reads no amount, so
+        // nothing in its own ABI carries the edge — and the signer's
+        // bound is owed a check all the same, at the node where the edge
+        // resolves.
+        let (cache, instances, manifest) = forwarding_world();
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect("routes");
+        let call = &routing.calls[1];
+        assert!(
+            !call
+                .args
+                .iter()
+                .any(|arg| matches!(arg, CallArg::Bucket { .. })),
+            "the forwarding method's own ABI carries no bucket"
+        );
+        assert_eq!(
+            call.edges,
+            vec![EdgeBound {
+                source: 0,
+                output: 0,
+                param: 0,
+                bounds: Bounds {
+                    min: Some(42),
+                    max: None,
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn a_malformed_binding_refuses_at_routing() {
+        // Publish is the gate that should have caught this. Routing
+        // judges it again, so a package that reached the cache without
+        // one — a genesis static, a hand-authored fixture — cannot be
+        // called on a binding nothing can honour.
+        let mut package = PackageMetadata::default();
+        package.methods.insert(
+            "m".into(),
+            MethodSignature {
+                params: vec![ParamType::Bucket],
+                abi: vec![AbiParam::Bucket(0), AbiParam::Bucket(0)],
+                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                ..MethodSignature::default()
+            },
+        );
+        package.methods.insert(
+            "make".into(),
+            MethodSignature {
+                outputs: vec![Expr::Literal(Value::Address(addr(0xE1)))],
+                ..MethodSignature::default()
+            },
+        );
+        let mut cache = MetadataCache::new();
+        cache.publish(pkg("bad"), package);
+        let mut instances = InstanceRegistry::new();
+        instances.register(
+            addr(0x11),
+            InstanceMeta {
+                package: pkg("bad"),
+                config: vec![],
+            },
+        );
+        let manifest = Manifest {
+            nodes: vec![
+                Node {
+                    target: addr(0x11),
+                    method: "make".into(),
+                    inputs: vec![],
+                },
+                Node {
+                    target: addr(0x11),
+                    method: "m".into(),
+                    inputs: vec![NodeInput::Edge {
+                        source: 0,
+                        output: 0,
+                        resource: addr(0xE1),
+                        bounds: Bounds::default(),
+                    }],
+                },
+            ],
+        };
+        let error = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect_err("a malformed binding cannot be called");
+        assert!(
+            matches!(error, RouteError::MalformedAbi { node: 1, .. }),
+            "unexpected refusal: {error:?}"
         );
     }
 }

@@ -49,11 +49,11 @@ pub use footprint::{
 };
 pub use graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
 pub use hash::{Hash32, Hasher, TestHasher};
-pub use invoke::{CallArg, EDGE_CELL_BYTES, NodeCall};
+pub use invoke::{CallArg, EDGE_CELL_BYTES, EdgeBound, NodeCall};
 pub use manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
-    AbiParam, CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature,
-    PackageHash, PackageMetadata, ParamType, package_hash,
+    AbiError, AbiParam, CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature,
+    PackageHash, PackageMetadata, ParamType, check_abi, package_hash,
 };
 pub use route::{
     CallEdge, CallGraph, FrameDeclaration, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef,

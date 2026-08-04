@@ -13,6 +13,7 @@
 use hyperscale_vm_effects::{Address, CallArg, EDGE_CELL_BYTES, NodeCall, PackageHash};
 
 use crate::executor::{BatchTx, GuestRunner, RunResult};
+use crate::modes::decode_amount;
 use crate::session::{Capability, KernelSession, Outcome};
 
 /// Which handle type a rep names — the kernel's mode lattice as the
@@ -138,6 +139,7 @@ fn composition_defect(session: KernelSession, reason: String) -> NodeFailure {
 impl<B: GuestBackend> ManifestWalk<'_, B> {
     fn invoke_node(
         &self,
+        node: u32,
         call: &NodeCall,
         outputs: &[Vec<Vec<u8>>],
         mut session: KernelSession,
@@ -146,6 +148,41 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
         // attributed to it — the session holds one capability table for
         // the whole transaction and cannot tell whose call is running.
         session.enter_invocation(call.target);
+
+        // Every signed edge bound this node consumes, before anything
+        // runs. The check is the node's, not the callee's: a producer
+        // returning less than the consumer declared fails the
+        // transaction whatever the producer's own code checked, and a
+        // node that forwards its funds onward never sees the amount its
+        // signer bounded.
+        for edge in &call.edges {
+            let Some(carried) = edge_cell(outputs, edge.source, edge.output) else {
+                return Err(composition_defect(
+                    session,
+                    format!(
+                        "parameter {} consumes output {} of node {}, which produced no such edge",
+                        edge.param, edge.output, edge.source
+                    ),
+                ));
+            };
+            let Ok(amount) = decode_amount(carried) else {
+                return Err(composition_defect(
+                    session,
+                    format!("parameter {} carries a malformed amount cell", edge.param),
+                ));
+            };
+            if !edge.bounds.admits(amount) {
+                return Err(fail(
+                    session,
+                    Outcome::ConstraintUnmet {
+                        node,
+                        param: edge.param,
+                        amount,
+                    },
+                    0,
+                ));
+            }
+        }
 
         let mut args = Vec::with_capacity(call.args.len());
         for (position, arg) in call.args.iter().enumerate() {
@@ -166,15 +203,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                     });
                 }
                 CallArg::Bucket { source, output } => {
-                    let produced = usize::try_from(*source)
-                        .ok()
-                        .and_then(|index| outputs.get(index))
-                        .and_then(|edges| {
-                            usize::try_from(*output)
-                                .ok()
-                                .and_then(|slot| edges.get(slot))
-                        });
-                    let Some(produced) = produced else {
+                    let Some(produced) = edge_cell(outputs, *source, *output) else {
                         return Err(composition_defect(
                             session,
                             format!(
@@ -228,6 +257,15 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
     }
 }
 
+/// The cell a producer left on one of its output edges.
+fn edge_cell(outputs: &[Vec<Vec<u8>>], source: u32, output: u32) -> Option<&[u8]> {
+    let produced = usize::try_from(source).ok().and_then(|i| outputs.get(i))?;
+    usize::try_from(output)
+        .ok()
+        .and_then(|slot| produced.get(slot))
+        .map(Vec::as_slice)
+}
+
 /// Split an export's returned blob into one cell per output edge.
 ///
 /// A method producing `n` edges returns exactly `n` amount cells
@@ -258,8 +296,9 @@ impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
     fn run(&self, entry: &BatchTx, mut session: KernelSession) -> RunResult {
         let mut outputs: Vec<Vec<Vec<u8>>> = Vec::with_capacity(entry.calls.len());
         let mut fuel = 0u64;
-        for call in &entry.calls {
-            match self.invoke_node(call, &outputs, session) {
+        for (index, call) in entry.calls.iter().enumerate() {
+            let node = u32::try_from(index).unwrap_or(u32::MAX);
+            match self.invoke_node(node, call, &outputs, session) {
                 Ok((returned, produced, consumed)) => {
                     session = returned;
                     session.leave_invocation();

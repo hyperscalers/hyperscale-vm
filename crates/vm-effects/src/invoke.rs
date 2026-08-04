@@ -13,6 +13,7 @@
 //! actually returned. So a lowered argument is either a settled value, a
 //! table position, or an edge to read once its producer has run.
 
+use crate::manifest::Bounds;
 use crate::metadata::PackageHash;
 use crate::types::Address;
 
@@ -44,6 +45,33 @@ pub enum CallArg {
     Bytes(Vec<u8>),
 }
 
+/// One edge a node consumes, with the bound its consumer signed.
+///
+/// Separate from the argument list, because the two are not the same
+/// set. A method that forwards its funds to a callee never reads the
+/// amount, so nothing in its own ABI carries the edge — and the bound is
+/// still the signer's, still owed a check. What owes the check is the
+/// node where the edge resolves, whatever the node's guest then does
+/// with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EdgeBound {
+    /// The producing node's index in the flattened manifest.
+    pub source: u32,
+    /// Which of the producer's outputs the edge carries.
+    pub output: u32,
+    /// The consuming node's declared parameter the edge is bound to —
+    /// what a refusal names, since the signer wrote the bound against a
+    /// parameter and not against an ABI position.
+    pub param: u32,
+    /// The consumer's signed bounds on the amount, folded to their
+    /// conjunction at admission.
+    ///
+    /// Asserted independently of the callee, which is the manifest's own
+    /// guarantee: a producer returning less than the consumer declared
+    /// fails the transaction whatever the producer's code checked.
+    pub bounds: Bounds,
+}
+
 /// One manifest node lowered to the invocation it performs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeCall {
@@ -59,6 +87,10 @@ pub struct NodeCall {
     pub export: String,
     /// One entry per exported parameter, in the export's own order.
     pub args: Vec<CallArg>,
+    /// Every value edge the node consumes, in its declared parameter
+    /// order, each with the bound its consumer signed. Checked before
+    /// the invocation.
+    pub edges: Vec<EdgeBound>,
     /// How many value edges the node produces. An export returns bytes
     /// exactly when this is non-zero, and then exactly
     /// `outputs * EDGE_CELL_BYTES` of them.

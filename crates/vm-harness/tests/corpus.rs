@@ -281,7 +281,12 @@ fn ref_arg(arg: &GuestArg<'_>) -> CVal {
 #[derive(Debug, PartialEq, Eq)]
 enum TxResult {
     Completed(Receipt),
+    /// The guest trapped. Compared as the bare fact: the reason is the
+    /// engine's own text, and the two runtimes word theirs differently.
     Trapped,
+    /// The kernel refused, before or around the call. Its verdicts carry
+    /// no engine text, so the lanes are compared whole.
+    Refused(Outcome),
 }
 
 /// Execute one admitted manifest through the kernel's own walk: routing
@@ -350,7 +355,8 @@ fn execute_manifest(
                 .expect("the oracle stands on every corpus receipt");
             Ok((TxResult::Completed(receipt), threaded.collapse()))
         }
-        _ => Ok((TxResult::Trapped, before)),
+        Outcome::UserError { .. } => Ok((TxResult::Trapped, before)),
+        refused => Ok((TxResult::Refused(refused), before)),
     }
 }
 
@@ -565,6 +571,96 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
         receipt.delta.movements.get(&claims(DANA, RES_X)).is_none(),
         "the unbound clause is declared and untouched"
     );
+    Ok(())
+}
+
+/// A transfer whose recipient signs a bound the sender's withdrawal
+/// cannot meet.
+fn bounded_transfer_graph(constraint: Constraint) -> ManifestGraph {
+    ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE,
+                method: "withdraw".into(),
+                args: vec![
+                    GraphArg::Literal(Value::Address(RES_X)),
+                    GraphArg::Literal(Value::U128(100)),
+                ],
+            },
+            GraphNode {
+                target: BOB,
+                method: "deposit".into(),
+                args: vec![GraphArg::Edge {
+                    edge: EdgeRef {
+                        producer: 0,
+                        output: 0,
+                    },
+                    constraints: vec![Constraint::ResourceIs(RES_X), constraint],
+                }],
+            },
+        ],
+    }
+}
+
+#[test]
+fn a_missed_edge_bound_aborts_identically_on_both_runtimes() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(500).to_vec())
+        .unwrap();
+    store.clear_log();
+
+    // The withdrawal is feasible and the guest is honest — it returns
+    // exactly the 100 it reserved. What fails is the manifest's own
+    // guarantee, asserted independently of the callee, so neither the
+    // producer's code nor the consumer's had to check anything.
+    for (constraint, name) in [
+        (Constraint::MinAmount(150), "under the floor"),
+        (Constraint::MaxAmount(50), "over the ceiling"),
+    ] {
+        let graph = bounded_transfer_graph(constraint);
+        let (results, after) = run_both(
+            &engines,
+            &world,
+            &store,
+            &[(&graph, TxHash(Hash32([0x0E; 32])))],
+        );
+        assert_eq!(
+            results[0],
+            TxResult::Refused(Outcome::ConstraintUnmet {
+                node: 1,
+                param: 0,
+                amount: 100,
+            }),
+            "{name}"
+        );
+        // The abort is the whole of it: nothing the sender declared
+        // applied, so the reservation never settled.
+        assert_eq!(
+            after
+                .cells()
+                .map(|(key, value)| (key, value.to_vec()))
+                .collect::<BTreeMap<_, _>>(),
+            store
+                .cells()
+                .map(|(key, value)| (key, value.to_vec()))
+                .collect::<BTreeMap<_, _>>(),
+            "{name}"
+        );
+    }
+
+    // The same manifest inside the bound completes, so the refusal is
+    // the bound and not the shape.
+    let graph = bounded_transfer_graph(Constraint::MinAmount(100));
+    let (results, _) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[(&graph, TxHash(Hash32([0x0F; 32])))],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
     Ok(())
 }
 
