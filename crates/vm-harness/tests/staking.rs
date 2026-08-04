@@ -10,6 +10,10 @@
 //! The assertion that matters for the beacon is the emitted event: its
 //! payload is what the witness lift decodes into a stake-deposit, so the
 //! bytes are pinned here at the boundary that produces them.
+//!
+//! Both packages run from their committed blobs rather than a rebuild,
+//! so this is also the stake pool's conformance lane: what a consumer
+//! embeds is what these assertions hold for.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -20,7 +24,6 @@ use hyperscale_vm_effects::{
     InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
     SubstateKey, TestHasher, Value, admit_tree, child_key, route_tree,
 };
-use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
@@ -32,6 +35,7 @@ use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
     validate_component,
 };
+use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
@@ -352,15 +356,17 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<BatchOutcome> {
     let mut reference = RefPackages {
         components: BTreeMap::new(),
     };
-    for (package, guest) in [(account_pkg(), "account"), (staking_pkg(), "staking")] {
-        let bytes = build_guest(guest)?;
-        validate_component(&bytes).context("profile validation")?;
+    for (package, bytes) in [
+        (account_pkg(), ACCOUNT_COMPONENT),
+        (staking_pkg(), STAKING_COMPONENT),
+    ] {
+        validate_component(bytes).context("profile validation")?;
         blessed
             .components
-            .insert(package, Component::new(&blessed.engine, &bytes)?);
+            .insert(package, Component::new(&blessed.engine, bytes)?);
         reference
             .components
-            .insert(package, RefComponent::decode(&bytes)?);
+            .insert(package, RefComponent::decode(bytes)?);
     }
 
     let blessed_outcome = execute_batch(
