@@ -47,6 +47,32 @@ pub struct SubstateKey {
     pub local: LocalKey,
 }
 
+impl SubstateKey {
+    /// The key as its 32 leaf bytes: owner prefix, then local half. The
+    /// same bytes the wire encoding carries and the state tree keys its
+    /// leaf by — the key *is* its placement.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        bytes[..16].copy_from_slice(&self.owner.0);
+        bytes[16..].copy_from_slice(&self.local.0);
+        bytes
+    }
+
+    /// Rebuild a key from its 32 leaf bytes.
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        let mut owner = [0u8; 16];
+        let mut local = [0u8; 16];
+        owner.copy_from_slice(&bytes[..16]);
+        local.copy_from_slice(&bytes[16..]);
+        Self {
+            owner: Address(owner),
+            local: LocalKey(local),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::{assert_canonical, to_vec};
@@ -62,5 +88,19 @@ mod tests {
         };
         assert_eq!(to_vec(&key).unwrap().len(), 32);
         assert_canonical(&key);
+    }
+
+    #[test]
+    fn a_key_and_its_leaf_bytes_round_trip() {
+        let key = SubstateKey {
+            owner: Address([1; 16]),
+            local: LocalKey([2; 16]),
+        };
+        let bytes = key.to_bytes();
+        assert_eq!(&bytes[..16], &[1; 16]);
+        assert_eq!(&bytes[16..], &[2; 16]);
+        assert_eq!(SubstateKey::from_bytes(bytes), key);
+        // The leaf bytes are the wire encoding: one layout, not two.
+        assert_eq!(to_vec(&key).unwrap(), bytes);
     }
 }

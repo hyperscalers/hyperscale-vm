@@ -18,8 +18,9 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Address, EffectSet, RoleId, SubstateKey, effect_units};
+use hyperscale_vm_effects::{Address, EffectSet, RoleId, StateWrites, SubstateKey, effect_units};
 
+use crate::modes::{amount_cell, decode_amount};
 use crate::session::{Movement, StateDelta};
 
 /// Which keys the executing shard owns.
@@ -98,6 +99,74 @@ impl StateDelta {
             locality,
         }
     }
+
+    /// Fold the owned part of this delta into absolute cell outcomes.
+    ///
+    /// The canonical application order: exclusive cells, then movements,
+    /// then settles — each folding over whichever value stands when it
+    /// applies, this receipt's own earlier write first and `prior`
+    /// otherwise. `prior` is the committed value a cell has before this
+    /// receipt: the embedder threads its own batch's earlier receipts
+    /// through it, and an absent cell reads as zero. A drained amount
+    /// cell flattens to a removal — the absent-cell rule the overlay
+    /// applies.
+    ///
+    /// # Panics
+    ///
+    /// Panics on arithmetic or a cell the kernel's apply phase already
+    /// vetted — a defect in the delta or in `prior`'s view of committed
+    /// state, never a legitimate input.
+    #[must_use]
+    pub fn flatten(
+        &self,
+        locality: &Locality,
+        prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>,
+    ) -> StateWrites {
+        assert!(
+            self.entries.is_empty(),
+            "an ordered-collection entry has no flattened form"
+        );
+        let owned = self.owned(locality);
+        let mut writes = StateWrites::default();
+        for (key, change) in owned.cells() {
+            writes.cells.insert(key, change.clone());
+        }
+        for (key, movement) in owned.movements() {
+            let before = amount_at(&writes, prior, key);
+            let after = before
+                .checked_add(movement.credit)
+                .and_then(|credited| credited.checked_sub(movement.debit))
+                .expect("a movement the apply phase accepted stays within its cell");
+            writes
+                .cells
+                .insert(key, amount_cell(after).map(|cell| cell.to_vec()));
+        }
+        for (key, settled) in owned.settles() {
+            let before = amount_at(&writes, prior, key);
+            let after = before
+                .checked_sub(settled)
+                .expect("a settlement the apply phase accepted stays within its cell");
+            writes
+                .cells
+                .insert(key, amount_cell(after).map(|cell| cell.to_vec()));
+        }
+        writes
+    }
+}
+
+/// The amount standing at `key` while a flatten is in progress: the
+/// receipt's own write when it made one, the committed value otherwise.
+fn amount_at(
+    writes: &StateWrites,
+    prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>,
+    key: SubstateKey,
+) -> u128 {
+    let cell = match writes.cells.get(&key) {
+        Some(change) => change.clone(),
+        None => prior(key),
+    };
+    cell.map_or(Ok(0), |bytes| decode_amount(&bytes))
+        .expect("an amount cell the apply phase accepted decodes")
 }
 
 /// One delta as one shard sees it: four walks, each already filtered.
@@ -145,5 +214,153 @@ impl<'a> OwnedDelta<'a> {
             .iter()
             .filter(|(key, _)| self.locality.is_local(key.owner))
             .map(|(key, amount)| (*key, *amount))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use hyperscale_vm_effects::{Address, Hash32, LocalKey, SubstateKey, TxHash};
+
+    use super::Locality;
+    use crate::modes::encode_amount;
+    use crate::overlay::OverlayStore;
+    use crate::session::{Movement, StateDelta};
+    use crate::store::{MemoryStore, SubstateStore};
+
+    fn key(owner: u8, local: u8) -> SubstateKey {
+        SubstateKey {
+            owner: Address([owner; 16]),
+            local: LocalKey([local; 16]),
+        }
+    }
+
+    /// The differential guard on the flatten: the overlay applying the
+    /// same operations, collapsed to plain cells, is the authority the
+    /// flattened writes must reproduce key for key.
+    #[test]
+    fn flatten_matches_the_overlay_application() {
+        let vault = key(1, 1); // 100, movement +30 −10 → 120
+        let drained = key(1, 2); // 40, movement −40 → absent
+        let fresh = key(1, 3); // absent, movement +5 → 5
+        let reserved = key(1, 4); // 100, settle 40 → 60
+        let emptied = key(1, 5); // 25, settle 25 → absent
+        let written = key(1, 6); // exclusive write
+        let removed = key(1, 7); // exclusive removal
+        let tx = TxHash(Hash32([9; 32]));
+
+        let mut base = MemoryStore::new();
+        base.cells.insert(vault, encode_amount(100).to_vec());
+        base.cells.insert(drained, encode_amount(40).to_vec());
+        base.cells.insert(reserved, encode_amount(100).to_vec());
+        base.cells.insert(emptied, encode_amount(25).to_vec());
+        base.cells.insert(removed, vec![1, 2, 3]);
+
+        let mut delta = StateDelta::default();
+        delta.cells.insert(written, Some(vec![7]));
+        delta.cells.insert(removed, None);
+        let movements = [
+            (
+                vault,
+                Movement {
+                    credit: 30,
+                    debit: 10,
+                },
+            ),
+            (
+                drained,
+                Movement {
+                    credit: 0,
+                    debit: 40,
+                },
+            ),
+            (
+                fresh,
+                Movement {
+                    credit: 5,
+                    debit: 0,
+                },
+            ),
+        ];
+        for (cell, movement) in movements {
+            delta.movements.insert(cell, movement);
+        }
+        delta.settles.insert(reserved, 40);
+        delta.settles.insert(emptied, 25);
+
+        let mut overlay = OverlayStore::new(Arc::new(base.clone()));
+        overlay.write(written, vec![7]).unwrap();
+        overlay.remove(removed).unwrap();
+        for (cell, movement) in movements {
+            overlay
+                .apply_movement(cell, movement.credit, movement.debit)
+                .unwrap();
+        }
+        for (cell, amount) in [(reserved, 40), (emptied, 25)] {
+            overlay.hold_unjudged(cell, tx, amount);
+            overlay.settle(cell, tx).unwrap();
+        }
+        let expected = overlay.collapse();
+
+        let writes = delta.flatten(&Locality::All, &mut |cell| base.cells.get(&cell).cloned());
+        let mut folded: BTreeMap<_, _> = base.cells.clone();
+        for (cell, change) in &writes.cells {
+            match change {
+                Some(value) => {
+                    folded.insert(*cell, value.clone());
+                }
+                None => {
+                    folded.remove(cell);
+                }
+            }
+        }
+        assert_eq!(folded, expected.cells);
+        // The drains flatten to removals, not to encoded zeros.
+        assert_eq!(writes.cells[&drained], None);
+        assert_eq!(writes.cells[&emptied], None);
+    }
+
+    /// A movement folds over this receipt's own exclusive write before it
+    /// consults committed state.
+    #[test]
+    fn a_movement_folds_over_the_receipts_own_write() {
+        let cell = key(1, 1);
+        let mut delta = StateDelta::default();
+        delta.cells.insert(cell, Some(encode_amount(50).to_vec()));
+        delta.movements.insert(
+            cell,
+            Movement {
+                credit: 0,
+                debit: 20,
+            },
+        );
+        let writes = delta.flatten(&Locality::All, &mut |_| {
+            panic!("the receipt's own write answers this read")
+        });
+        assert_eq!(writes.cells[&cell], Some(encode_amount(30).to_vec()));
+    }
+
+    /// Remote keys stay in the receipt as the outbound record; the
+    /// flattened writes carry owned keys only.
+    #[test]
+    fn flatten_folds_only_owned_keys() {
+        let local = key(1, 1);
+        let remote = key(2, 1);
+        let mut delta = StateDelta::default();
+        for cell in [local, remote] {
+            delta.movements.insert(
+                cell,
+                Movement {
+                    credit: 5,
+                    debit: 0,
+                },
+            );
+        }
+        let locality = Locality::Owned(Arc::new(|owner: Address| owner == Address([1; 16])));
+        let writes = delta.flatten(&locality, &mut |_| None);
+        assert_eq!(writes.cells.len(), 1);
+        assert_eq!(writes.cells[&local], Some(encode_amount(5).to_vec()));
     }
 }

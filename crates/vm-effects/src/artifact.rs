@@ -174,7 +174,7 @@ fn read_uleb128(bytes: &[u8], pos: &mut usize) -> Result<usize, ArtifactError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{attach_metadata, extract_metadata, ArtifactError, METADATA_SECTION};
+    use super::{ArtifactError, METADATA_SECTION, attach_metadata, extract_metadata};
     use crate::metadata::PackageMetadata;
 
     fn empty_component() -> Vec<u8> {
@@ -190,9 +190,11 @@ mod tests {
 
         let published = attach_metadata(&empty_component(), &metadata).unwrap();
         assert_eq!(extract_metadata(&published).unwrap(), Some(metadata));
-        assert!(published
-            .windows(METADATA_SECTION.len())
-            .any(|window| window == METADATA_SECTION.as_bytes()));
+        assert!(
+            published
+                .windows(METADATA_SECTION.len())
+                .any(|window| window == METADATA_SECTION.as_bytes())
+        );
     }
 
     #[test]

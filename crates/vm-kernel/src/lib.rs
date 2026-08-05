@@ -29,6 +29,7 @@ pub use conflict::{conflicts, targets_overlap};
 pub use executor::{
     BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, execute_batch,
 };
+pub use hyperscale_vm_effects::StateWrites;
 pub use locality::{Locality, OwnedDelta};
 pub use modes::{
     AMOUNT_CELL_BYTES, DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount,
