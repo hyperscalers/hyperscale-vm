@@ -34,7 +34,10 @@
 //! - `#[hbor(max = N)]` — the largest length this field may carry, checked
 //!   against the claimed length before the collection is built, and again on
 //!   encode. The field must be written as a `Vec`, `String`, `BTreeSet`, or
-//!   `BTreeMap`; resolution is syntactic, so an alias cannot host a cap.
+//!   `BTreeMap` — bare, one level under an `Arc`, `Box`, or `Option` (the
+//!   cap applies to the payload when present), or as the single field of a
+//!   `transparent` wrapper, whose bound is then its own. Resolution is
+//!   syntactic, so an alias cannot host a cap.
 //! - `#[hbor(unsigned)]` — held out of the signing preimage. The field still
 //!   rides the wire; a signature and the key that verifies it are
 //!   transmitted, they just cannot be part of what they cover. A field added

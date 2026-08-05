@@ -12,6 +12,7 @@
 //! hand-written ones.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use hyperscale_hbor::{
     DEFAULT_MAX_DEPTH, DecodeError, Decoder, EncodeError, Encoder, Hbor, HborDecode, HborEncode,
@@ -578,4 +579,210 @@ fn the_derive_agrees_with_the_reference_at_a_shared_depth() {
     };
     let bytes = to_vec_with_depth(&block, DEFAULT_MAX_DEPTH).unwrap();
     assert!(from_slice_with_depth::<Block>(&bytes, DEFAULT_MAX_DEPTH).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// Caps through containers
+// ---------------------------------------------------------------------------
+
+const MAX_WRAPPED: usize = 3;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+#[allow(clippy::box_collection)] // the cap reaching through the box is the point
+struct WrappedCapped {
+    #[hbor(max = MAX_WRAPPED)]
+    shared: Arc<Vec<u64>>,
+    #[hbor(max = MAX_WRAPPED)]
+    boxed: Box<Vec<u8>>,
+    #[hbor(max = MAX_WRAPPED)]
+    maybe_bytes: Option<Vec<u8>>,
+    #[hbor(max = MAX_WRAPPED)]
+    maybe_label: Option<String>,
+    #[hbor(max = MAX_WRAPPED)]
+    maybe_peers: Option<Vec<u64>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+#[allow(clippy::box_collection)] // the cap reaching through the box is the point
+struct WrappedUncapped {
+    shared: Arc<Vec<u64>>,
+    boxed: Box<Vec<u8>>,
+    maybe_bytes: Option<Vec<u8>>,
+    maybe_label: Option<String>,
+    maybe_peers: Option<Vec<u64>>,
+}
+
+fn sample_wrapped() -> WrappedCapped {
+    WrappedCapped {
+        shared: Arc::new(vec![7, 8]),
+        boxed: Box::new(vec![1, 2]),
+        maybe_bytes: Some(vec![3]),
+        maybe_label: Some("ok".to_owned()),
+        maybe_peers: None,
+    }
+}
+
+fn uncapped_twin(value: &WrappedCapped) -> WrappedUncapped {
+    WrappedUncapped {
+        shared: value.shared.clone(),
+        boxed: value.boxed.clone(),
+        maybe_bytes: value.maybe_bytes.clone(),
+        maybe_label: value.maybe_label.clone(),
+        maybe_peers: value.maybe_peers.clone(),
+    }
+}
+
+/// A cap reaching through an `Arc`, `Box`, or `Option` changes what is
+/// accepted, never what is written: the two spellings are byte-identical,
+/// present or absent payload alike.
+#[test]
+fn a_cap_reaches_through_containers_without_touching_the_wire() {
+    let capped = sample_wrapped();
+    assert_eq!(
+        to_vec(&capped).unwrap(),
+        to_vec(&uncapped_twin(&capped)).unwrap()
+    );
+    assert_canonical(&capped);
+
+    let absent = WrappedCapped {
+        maybe_bytes: None,
+        maybe_label: None,
+        ..sample_wrapped()
+    };
+    assert_eq!(
+        to_vec(&absent).unwrap(),
+        to_vec(&uncapped_twin(&absent)).unwrap()
+    );
+    assert_canonical(&absent);
+}
+
+/// The cap fires through each container, on decode and on encode.
+#[test]
+fn a_claim_past_a_cap_rejects_through_containers() {
+    let expect_rejects = |uncapped: &WrappedUncapped, capped: &WrappedCapped, field: &str| {
+        let bytes = to_vec(uncapped).unwrap();
+        assert_eq!(
+            from_slice::<WrappedCapped>(&bytes),
+            Err(DecodeError::BoundExceeded {
+                max: MAX_WRAPPED,
+                actual: MAX_WRAPPED + 1,
+            }),
+            "decode: {field}"
+        );
+        assert_eq!(
+            to_vec(capped),
+            Err(EncodeError::BoundExceeded {
+                field: field.to_owned().leak(),
+                actual: MAX_WRAPPED + 1,
+                max: MAX_WRAPPED,
+            }),
+            "encode: {field}"
+        );
+    };
+
+    let mut over = sample_wrapped();
+    over.shared = Arc::new(vec![0; MAX_WRAPPED + 1]);
+    expect_rejects(&uncapped_twin(&over), &over, "shared");
+
+    let mut over = sample_wrapped();
+    *over.boxed = vec![0; MAX_WRAPPED + 1];
+    expect_rejects(&uncapped_twin(&over), &over, "boxed");
+
+    let mut over = sample_wrapped();
+    over.maybe_bytes = Some(vec![0; MAX_WRAPPED + 1]);
+    expect_rejects(&uncapped_twin(&over), &over, "maybe_bytes");
+
+    let mut over = sample_wrapped();
+    over.maybe_label = Some("x".repeat(MAX_WRAPPED + 1));
+    expect_rejects(&uncapped_twin(&over), &over, "maybe_label");
+
+    let mut over = sample_wrapped();
+    over.maybe_peers = Some(vec![0; MAX_WRAPPED + 1]);
+    expect_rejects(&uncapped_twin(&over), &over, "maybe_peers");
+}
+
+/// Capped and uncapped spellings of every container agree at every depth
+/// cap, absent and present payloads alike.
+#[test]
+fn depth_charge_is_independent_of_caps_through_containers() {
+    for capped in [
+        sample_wrapped(),
+        WrappedCapped {
+            maybe_bytes: None,
+            maybe_label: None,
+            maybe_peers: Some(vec![1]),
+            ..sample_wrapped()
+        },
+    ] {
+        let uncapped = uncapped_twin(&capped);
+        let bytes = to_vec(&capped).unwrap();
+        for cap in 0..6 {
+            assert_eq!(
+                from_slice_with_depth::<WrappedCapped>(&bytes, cap).is_ok(),
+                from_slice_with_depth::<WrappedUncapped>(&bytes, cap).is_ok(),
+                "decode at cap {cap}"
+            );
+            assert_eq!(
+                to_vec_with_depth(&capped, cap).is_ok(),
+                to_vec_with_depth(&uncapped, cap).is_ok(),
+                "encode at cap {cap}"
+            );
+        }
+    }
+}
+
+const MAX_OWN_BOUND: usize = 4;
+
+/// A transparent wrapper whose single field is capped carries its own
+/// bound: bytes identical to the bare collection, the cap enforced both
+/// ways, no depth of its own.
+#[test]
+fn a_transparent_wrapper_carries_its_own_cap() {
+    #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+    #[hbor(transparent)]
+    struct Blob(#[hbor(max = MAX_OWN_BOUND)] Vec<u8>);
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+    #[hbor(transparent)]
+    struct Roster(#[hbor(max = MAX_OWN_BOUND)] Vec<u32>);
+
+    let blob = Blob(vec![1, 2, 3]);
+    let roster = Roster(vec![9, 10]);
+    assert_eq!(to_vec(&blob).unwrap(), to_vec(&blob.0).unwrap());
+    assert_eq!(to_vec(&roster).unwrap(), to_vec(&roster.0).unwrap());
+    assert_canonical(&blob);
+    assert_canonical(&roster);
+
+    let over_bytes = to_vec(&vec![0u8; MAX_OWN_BOUND + 1]).unwrap();
+    assert_eq!(
+        from_slice::<Blob>(&over_bytes),
+        Err(DecodeError::BoundExceeded {
+            max: MAX_OWN_BOUND,
+            actual: MAX_OWN_BOUND + 1,
+        })
+    );
+    assert_eq!(
+        to_vec(&Blob(vec![0; MAX_OWN_BOUND + 1])),
+        Err(EncodeError::BoundExceeded {
+            field: "0",
+            actual: MAX_OWN_BOUND + 1,
+            max: MAX_OWN_BOUND,
+        })
+    );
+
+    // Same depth charge as the bare collection at every cap: transparent
+    // is a name, not a level, capped or not.
+    let bytes = to_vec(&blob).unwrap();
+    for cap in 0..4 {
+        assert_eq!(
+            from_slice_with_depth::<Blob>(&bytes, cap).is_ok(),
+            from_slice_with_depth::<Vec<u8>>(&bytes, cap).is_ok(),
+            "decode at cap {cap}"
+        );
+        assert_eq!(
+            to_vec_with_depth(&blob, cap).is_ok(),
+            to_vec_with_depth(&blob.0, cap).is_ok(),
+            "encode at cap {cap}"
+        );
+    }
 }

@@ -183,6 +183,49 @@ pub fn shape(ty: &Type) -> Shape {
     }
 }
 
+/// Where a capped field's collection sits relative to the written type.
+///
+/// `max` reaches through the containers that add nothing of their own to
+/// the wire: an `Arc` or `Box` is pure forwarding, and an `Option`'s
+/// payload is the collection when present. Resolution stays syntactic —
+/// exactly one named container layer, never a type-system walk — so an
+/// alias still reads as opaque.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CapSite {
+    /// The field is the collection itself.
+    Direct(Shape),
+    /// `Arc<C>` — rebuilt with `Arc::new` on decode.
+    Shared(Shape),
+    /// `Box<C>` — rebuilt with `Box::new` on decode.
+    Boxed(Shape),
+    /// `Option<C>` — the cap applies to the payload when present.
+    Optional(Shape),
+}
+
+/// Resolve where a cap on `ty` lands, or `None` when no collection is
+/// written where the emitter can see one.
+#[must_use]
+pub fn cap_site(ty: &Type) -> Option<CapSite> {
+    let direct = shape(ty);
+    if direct != Shape::Opaque {
+        return Some(CapSite::Direct(direct));
+    }
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    let inner = first_type_argument(&segment.arguments).map(shape)?;
+    if inner == Shape::Opaque {
+        return None;
+    }
+    match segment.ident.to_string().as_str() {
+        "Arc" => Some(CapSite::Shared(inner)),
+        "Box" => Some(CapSite::Boxed(inner)),
+        "Option" => Some(CapSite::Optional(inner)),
+        _ => None,
+    }
+}
+
 /// Reject the types that have no canonical encoding, with the reason.
 ///
 /// Catching these here rather than letting the trait system do it turns a
