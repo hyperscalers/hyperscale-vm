@@ -25,6 +25,8 @@ pub const ENTROPY: RoleId = RoleId(5);
 pub const UNBONDING: RoleId = RoleId(6);
 /// A stake pool's record of one validator it operates.
 pub const VALIDATORS: RoleId = RoleId(7);
+/// A stake pool's one active network-parameter vote.
+pub const VOTE: RoleId = RoleId(8);
 
 /// The entry cap the book's fill range declares.
 pub const FILL_CAP: u32 = 64;
@@ -146,6 +148,16 @@ pub fn account_metadata() -> PackageMetadata {
 /// owning its emitter, and a method declaring no access would leave the
 /// pool's shard out of the transaction that emitted from it.
 ///
+/// The governance surface — `cast-param-vote`, `clear-param-vote` — is
+/// the same actor again, on the pool's single vote leaf. Its arguments
+/// are the network parameters themselves rather than an opaque
+/// encoding: the set is three numbers, so carrying them positionally
+/// costs nothing and lets a malformed vote fail its transaction instead
+/// of succeeding and being dropped where nobody sees it. It does weld
+/// this package to the parameter set, which is the right coupling —
+/// adding a governed parameter is a protocol change, and the package
+/// that votes on them is versioned with them.
+///
 /// Three creation-fixed fields configure an instance: the resource it
 /// stakes, the resource it issues, and the operator its validator surface
 /// admits. There is deliberately no fourth naming the pool, because a pool
@@ -161,14 +173,33 @@ pub fn account_metadata() -> PackageMetadata {
 /// configuration carries.
 #[must_use]
 pub fn staking_metadata() -> PackageMetadata {
-    /// The staked resource — what a delegation is denominated in.
-    const STAKED_RESOURCE: u32 = 0;
-    /// The resource this pool issues against delegations.
-    const UNIT_RESOURCE: u32 = 1;
-    /// The principal whose signature the operator surface admits.
-    const OPERATOR: u32 = 2;
-
     let mut methods = PackageMetadata::default();
+    delegation_methods(&mut methods);
+    validator_methods(&mut methods);
+    governance_methods(&mut methods);
+    // Index order is the contract: the guest emits these indexes, and the
+    // beacon's witness lift resolves them against this package's metadata.
+    methods.events = vec![
+        "staked".into(),
+        "unstaked".into(),
+        "validator-registered".into(),
+        "validator-deactivated".into(),
+        "validator-unjailed".into(),
+        "param-vote-cast".into(),
+        "param-vote-cleared".into(),
+    ];
+    methods
+}
+
+/// The staked resource — what a delegation is denominated in.
+const STAKED_RESOURCE: u32 = 0;
+/// The resource this pool issues against delegations.
+const UNIT_RESOURCE: u32 = 1;
+/// The principal whose signature the operator surface admits.
+const OPERATOR: u32 = 2;
+
+/// `stake` and `unstake`: what anyone holding funds may do to a pool.
+fn delegation_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "stake".into(),
         MethodSignature {
@@ -200,10 +231,13 @@ pub fn staking_metadata() -> PackageMetadata {
             calls: vec![],
         },
     );
-    // The operator surface. Each names the validator it concerns and
-    // writes that validator's own leaf, so the pool holds a record it can
-    // read back — which is what lets a re-registration be refused here
-    // rather than only where the beacon happens to refuse it.
+}
+
+/// The validator surface: each method names the validator it concerns and
+/// writes that validator's own leaf, so the pool holds a record it can
+/// read back — which is what lets a re-registration be refused here
+/// rather than only where the beacon happens to refuse it.
+fn validator_methods(methods: &mut PackageMetadata) {
     let validator = || {
         vec![Clause::Effect {
             target: TargetExpr::Point(self_child(VALIDATORS, vec![Expr::Arg(0)])),
@@ -248,16 +282,45 @@ pub fn staking_metadata() -> PackageMetadata {
             calls: vec![],
         },
     );
-    // Index order is the contract: the guest emits these indexes, and the
-    // beacon's witness lift resolves them against this package's metadata.
-    methods.events = vec![
-        "staked".into(),
-        "unstaked".into(),
-        "validator-registered".into(),
-        "validator-deactivated".into(),
-        "validator-unjailed".into(),
-    ];
-    methods
+}
+
+/// The governance surface: the pool's one vote, on one leaf. A pool holds
+/// a single active vote and the network counts it once, so serializing a
+/// pool's own votes against each other is the shape rather than a cost.
+fn governance_methods(methods: &mut PackageMetadata) {
+    let vote = || {
+        vec![Clause::Effect {
+            target: TargetExpr::Point(self_child(VOTE, vec![])),
+            mode: ModeExpr::Write,
+        }]
+    };
+    methods.methods.insert(
+        "cast-param-vote".into(),
+        MethodSignature {
+            accessibility: Accessibility::RequiresConfiguredAuth(OPERATOR),
+            params: vec![ParamType::U64, ParamType::U64, ParamType::U64],
+            abi: vec![
+                AbiParam::Handle(0),
+                AbiParam::Derived(Expr::Arg(0)),
+                AbiParam::Derived(Expr::Arg(1)),
+                AbiParam::Derived(Expr::Arg(2)),
+            ],
+            outputs: vec![],
+            effects: vote(),
+            calls: vec![],
+        },
+    );
+    methods.methods.insert(
+        "clear-param-vote".into(),
+        MethodSignature {
+            accessibility: Accessibility::RequiresConfiguredAuth(OPERATOR),
+            params: vec![],
+            abi: vec![AbiParam::Handle(0)],
+            outputs: vec![],
+            effects: vote(),
+            calls: vec![],
+        },
+    );
 }
 
 /// `swap(input, min_out)`: a locked read of the pool's

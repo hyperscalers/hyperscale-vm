@@ -23,6 +23,10 @@
 //! never cleared, which is the beacon's own rule for a validator id —
 //! once a record exists the id is spent for the life of the chain — held
 //! here so the pool cannot speak about a validator it never took on.
+//!
+//! The vote leaf is the opposite shape and for the opposite reason: a
+//! pool holds one vote, the network counts it once, so one leaf holding
+//! the current vote is what a pool's governance position *is*.
 
 wit_bindgen::generate!({
     path: "wit",
@@ -44,6 +48,8 @@ const UNSTAKED: u32 = 1;
 const VALIDATOR_REGISTERED: u32 = 2;
 const VALIDATOR_DEACTIVATED: u32 = 3;
 const VALIDATOR_UNJAILED: u32 = 4;
+const PARAM_VOTE_CAST: u32 = 5;
+const PARAM_VOTE_CLEARED: u32 = 6;
 
 /// The consensus scheme's key and signature widths.
 ///
@@ -110,6 +116,22 @@ impl Guest for Staking {
             "this pool does not operate this validator"
         );
         emit(VALIDATOR_UNJAILED, &validator_id.to_le_bytes());
+    }
+
+    fn cast_param_vote(leaf: &WriteCell, split_bytes: u64, impound_epochs: u64, activate_at: u64) {
+        // The pool holds one vote, so a cast replaces rather than adds.
+        // What it keeps is what it voted for, which is the only copy the
+        // pool itself can read back.
+        let mut payload = split_bytes.to_le_bytes().to_vec();
+        payload.extend_from_slice(&impound_epochs.to_le_bytes());
+        payload.extend_from_slice(&activate_at.to_le_bytes());
+        write_cell_set(leaf, &payload);
+        emit(PARAM_VOTE_CAST, &payload);
+    }
+
+    fn clear_param_vote(leaf: &WriteCell) {
+        write_cell_set(leaf, &[]);
+        emit(PARAM_VOTE_CLEARED, &[]);
     }
 }
 

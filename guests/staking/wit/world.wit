@@ -47,4 +47,17 @@ world staking {
 
     /// Ask that a jail on a validator this pool operates be lifted.
     export unjail: func(leaf: borrow<write-cell>, validator-id: u64);
+
+    /// Back a network-parameter change, replacing whatever this pool
+    /// backed before.
+    ///
+    /// The parameters travel as themselves rather than as an encoded
+    /// blob, so a vote nobody can decode fails here instead of arriving
+    /// somewhere it is quietly dropped. `activate-at` is the epoch the
+    /// change installs at if it still holds a majority then, which makes
+    /// it the timelock as well as the target.
+    export cast-param-vote: func(leaf: borrow<write-cell>, split-bytes: u64, impound-epochs: u64, activate-at: u64);
+
+    /// Withdraw this pool's vote, backing nothing.
+    export clear-param-vote: func(leaf: borrow<write-cell>);
 }

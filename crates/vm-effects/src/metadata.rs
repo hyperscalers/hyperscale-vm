@@ -533,6 +533,16 @@ mod tests {
             ("splitter", "take", Accessibility::Public),
             (
                 "staking",
+                "cast-param-vote",
+                Accessibility::RequiresConfiguredAuth(2),
+            ),
+            (
+                "staking",
+                "clear-param-vote",
+                Accessibility::RequiresConfiguredAuth(2),
+            ),
+            (
+                "staking",
                 "deactivate-validator",
                 Accessibility::RequiresConfiguredAuth(2),
             ),

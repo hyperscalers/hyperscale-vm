@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{
-    UNBONDING, VALIDATORS, VAULT, account_metadata, staking_metadata,
+    UNBONDING, VALIDATORS, VAULT, VOTE, account_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
     Address, Constraint, EdgeRef, EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceMeta,
@@ -700,5 +700,100 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
         cells.get(&validator_leaf(POOL, VALIDATOR + 1)),
         Some(&PUBKEY.to_vec()),
     );
+    Ok(())
+}
+
+/// The pool's vote leaf: one per pool, holding whatever it currently
+/// backs.
+fn vote_leaf(pool: Address) -> SubstateKey {
+    child_key(&TestHasher, pool, VOTE, &[])
+}
+
+/// The parameters a cast carries, in the order the guest lays them out.
+const SPLIT_BYTES: u64 = 9_000;
+const IMPOUND_EPOCHS: u64 = 30;
+const ACTIVATE_AT: u64 = 12;
+
+fn cast_payload() -> Vec<u8> {
+    let mut payload = SPLIT_BYTES.to_le_bytes().to_vec();
+    payload.extend_from_slice(&IMPOUND_EPOCHS.to_le_bytes());
+    payload.extend_from_slice(&ACTIVATE_AT.to_le_bytes());
+    payload
+}
+
+fn cast_graph() -> ManifestGraph {
+    ManifestGraph {
+        nodes: vec![GraphNode {
+            target: POOL,
+            method: "cast-param-vote".into(),
+            args: vec![
+                GraphArg::Literal(Value::U64(SPLIT_BYTES)),
+                GraphArg::Literal(Value::U64(IMPOUND_EPOCHS)),
+                GraphArg::Literal(Value::U64(ACTIVATE_AT)),
+            ],
+        }],
+    }
+}
+
+#[test]
+fn a_cast_vote_is_held_on_the_pools_own_leaf_and_reported() -> Result<()> {
+    let world = world();
+    let entry = batch_entry(&world, &single_intent(cast_graph()))?;
+    let outcome = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
+    assert!(matches!(
+        outcome.receipts[&entry.tx].outcome,
+        Outcome::Completed { .. }
+    ));
+
+    // The parameters travel as themselves: what the pool holds and what
+    // it reports are the same bytes, laid out in the declared order.
+    assert_eq!(cells(&outcome).get(&vote_leaf(POOL)), Some(&cast_payload()));
+    assert_eq!(pool_event(&outcome, &entry), (5, cast_payload()));
+    Ok(())
+}
+
+#[test]
+fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
+    let world = world();
+    let mut store = MemoryStore::new();
+    store.write(vote_leaf(POOL), cast_payload())?;
+    store.clear_log();
+
+    let graph = ManifestGraph {
+        nodes: vec![GraphNode {
+            target: POOL,
+            method: "clear-param-vote".into(),
+            args: Vec::new(),
+        }],
+    };
+    let entry = batch_entry(&world, &single_intent(graph))?;
+    let outcome = run_both(&store, std::slice::from_ref(&entry))?;
+    assert!(matches!(
+        outcome.receipts[&entry.tx].outcome,
+        Outcome::Completed { .. }
+    ));
+
+    // A pool backing nothing holds nothing, and the fact carries no
+    // parameters because there are none to carry.
+    assert_eq!(
+        cells(&outcome).get(&vote_leaf(POOL)).map(Vec::as_slice),
+        Some(&[][..]),
+    );
+    assert_eq!(pool_event(&outcome, &entry), (6, Vec::new()));
+    Ok(())
+}
+
+#[test]
+fn a_second_cast_replaces_the_first() -> Result<()> {
+    // One pool, one vote: the network counts it once, so the leaf holds
+    // the latest rather than accumulating.
+    let world = world();
+    let mut store = MemoryStore::new();
+    store.write(vote_leaf(POOL), vec![0xAA; 24])?;
+    store.clear_log();
+
+    let entry = batch_entry(&world, &single_intent(cast_graph()))?;
+    let outcome = run_both(&store, std::slice::from_ref(&entry))?;
+    assert_eq!(cells(&outcome).get(&vote_leaf(POOL)), Some(&cast_payload()));
     Ok(())
 }
