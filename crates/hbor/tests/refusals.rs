@@ -31,6 +31,10 @@ fn the_derive_refuses_a_preimage_that_would_mislead() {
     refuse.compile_fail("tests/refusals/empty_signing_domain.rs");
 }
 
+// The zero-width sequence refusal is pinned by `compile_fail` doctests on
+// `HborWidth` rather than here: it is a const-evaluation error at codegen,
+// which trybuild's `cargo check` never reaches.
+
 /// A tree whose leaves do not partition the value is not a tree over the
 /// value, whatever it roots to.
 #[test]

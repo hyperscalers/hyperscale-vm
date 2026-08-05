@@ -23,10 +23,20 @@
 //!
 //! A collection's length is validated against the input that remains before
 //! anything is allocated: a sequence of `T` cannot be longer than the
-//! remaining bytes divided by [`HborDecode::MIN_ENCODED_LEN`]. Decoding `n`
-//! bytes therefore allocates `O(n)`, whatever the payload claims, with no
-//! per-field annotation. Protocol caps are a separate concern layered above
-//! this one.
+//! remaining bytes divided by [`HborWidth::MIN_ENCODED_LEN`], and the
+//! reservation hint is capped by the bytes that remain besides, so an input
+//! that will be rejected never holds a reservation larger than itself.
+//! Decoding `n` bytes performs `O(n)` work and reserves `O(n)` bytes ahead
+//! of element validation, with no per-field annotation.
+//!
+//! An accepted value's footprint is the value's own, and that can exceed its
+//! encoding by a per-type constant — half a million one-byte empty vectors
+//! decode into megabytes of `Vec` headers. The wire cannot bound that
+//! constant; message-size limits and `#[hbor(max = N)]` caps are what do.
+//!
+//! Sequences over zero-width elements — `Vec<()>`, a set of unit markers —
+//! are refused at compile time: their length is a count no input can pay
+//! for, and the honest encoding of a count is the count.
 //!
 //! # Shape
 //!
@@ -70,8 +80,38 @@ pub use varint::MAX_LENGTH;
 /// happen at decode rather than in a pass afterwards.
 pub const DEFAULT_MAX_DEPTH: usize = 64;
 
+/// A type with a fixed lower bound on its encoded size.
+///
+/// The bound is a property of the wire form, shared by both directions:
+/// containers divide the remaining input by an element's minimum to bound a
+/// claimed length before allocating, and refuse element types with no
+/// minimum at all — which is why the encoder needs the constant too, so a
+/// sequence its own decoder cannot admit is unwritable rather than merely
+/// unreadable.
+pub trait HborWidth {
+    /// The fewest bytes any value of this type can occupy.
+    ///
+    /// An understated value weakens the length bound; an overstated one
+    /// rejects payloads that are in fact valid. For a fixed-width type it is
+    /// the width; for anything carrying a length field it is the encoding of
+    /// the empty value. Zero is truthful for `()` and unit structs, which
+    /// compose freely at fixed arity — only a variable-length collection
+    /// refuses them as elements, when the codec is instantiated:
+    ///
+    /// ```compile_fail
+    /// // A sequence over zero-width elements is a count in disguise.
+    /// let _ = hyperscale_hbor::to_vec(&vec![(), ()]);
+    /// ```
+    ///
+    /// ```compile_fail
+    /// // The decoder refuses the same instantiation.
+    /// let _ = hyperscale_hbor::from_slice::<Vec<()>>(&[0]);
+    /// ```
+    const MIN_ENCODED_LEN: usize;
+}
+
 /// A type with a canonical byte form.
-pub trait HborEncode {
+pub trait HborEncode: HborWidth {
     /// Write this value's payload.
     ///
     /// Implementations write content only — the caller has already placed
@@ -85,16 +125,7 @@ pub trait HborEncode {
 }
 
 /// A type reconstructible from its canonical byte form.
-pub trait HborDecode: Sized {
-    /// The fewest bytes any value of this type can occupy.
-    ///
-    /// Containers divide the remaining input by this to bound a claimed
-    /// length before allocating, so an understated value weakens that bound
-    /// and an overstated one rejects payloads that are in fact valid. For a
-    /// fixed-width type it is the width; for anything carrying a length
-    /// field it is the encoding of the empty value.
-    const MIN_ENCODED_LEN: usize;
-
+pub trait HborDecode: HborWidth + Sized {
     /// Read one value, rejecting any byte string that is not its canonical
     /// form.
     ///

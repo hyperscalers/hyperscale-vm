@@ -6,18 +6,22 @@
 //! disagree about where the check happens.
 //!
 //! Every cap here is checked against the claimed length *before* the
-//! collection is built. That is a protocol bound, not the safety bound —
-//! [`Decoder::read_len`] already rejects a length the remaining input cannot
-//! satisfy, so allocation is bounded by input size whether or not a field
-//! declares a cap.
+//! collection is built. That is a protocol bound layered over the wire-level
+//! one — [`Decoder::read_len`] already rejects a length the remaining input
+//! cannot satisfy, and the reservation hint is capped by the bytes that
+//! remain, whether or not a field declares a cap. What only the cap can
+//! bound is an accepted value's footprint, which exceeds its encoding by a
+//! per-type constant the wire never sees.
 //!
 //! Each function is called through [`Decoder::descend`], by the derive or by
-//! hand, so a capped field charges the same nesting depth as an uncapped one
-//! of the same type.
+//! hand, and every variable-length body charges one further level for its
+//! elements, present or not — so a capped field, an uncapped field, and
+//! either spelling of a byte sequence all charge the same nesting depth.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::HborDecode;
+use crate::collection::refuse_zero_width_elements;
 use crate::decode::Decoder;
 use crate::encode::Encoder;
 use crate::error::{DecodeError, EncodeError};
@@ -28,19 +32,28 @@ use crate::error::{DecodeError, EncodeError};
 ///
 /// # Errors
 ///
-/// [`EncodeError::LengthTooLarge`] for an inexpressible length.
+/// [`EncodeError::LengthTooLarge`] for an inexpressible length, or
+/// [`EncodeError::DepthExceeded`] at the cap.
 pub fn encode_bytes(encoder: &mut Encoder<'_>, bytes: &[u8]) -> Result<(), EncodeError> {
-    encoder.write_sized(bytes)
+    encoder.write_len(bytes.len())?;
+    // The element level, charged around one copy instead of per byte: the
+    // fast path is a speed choice, and both spellings of the same bytes
+    // must succeed or fail together at every cap.
+    encoder.descend(|encoder| {
+        encoder.write_fixed(bytes);
+        Ok(())
+    })
 }
 
 /// Read a byte sequence in one copy.
 ///
 /// # Errors
 ///
-/// [`DecodeError`] for a malformed or unsatisfiable length.
+/// [`DecodeError`] for a malformed or unsatisfiable length, or a payload
+/// past the depth cap.
 pub fn decode_bytes(decoder: &mut Decoder<'_>) -> Result<Vec<u8>, DecodeError> {
     let len = decoder.read_len(1)?;
-    Ok(decoder.read_slice(len)?.to_vec())
+    decoder.descend(|decoder| Ok(decoder.read_slice(len)?.to_vec()))
 }
 
 /// Read a byte sequence of at most `max` bytes.
@@ -50,7 +63,7 @@ pub fn decode_bytes(decoder: &mut Decoder<'_>) -> Result<Vec<u8>, DecodeError> {
 /// [`DecodeError::BoundExceeded`] past `max`, before anything is allocated.
 pub fn decode_bounded_bytes(decoder: &mut Decoder<'_>, max: usize) -> Result<Vec<u8>, DecodeError> {
     let len = check(decoder.read_len(1)?, max)?;
-    Ok(decoder.read_slice(len)?.to_vec())
+    decoder.descend(|decoder| Ok(decoder.read_slice(len)?.to_vec()))
 }
 
 /// Read a sequence of at most `max` elements.
@@ -62,11 +75,15 @@ pub fn decode_bounded_vec<T: HborDecode>(
     decoder: &mut Decoder<'_>,
     max: usize,
 ) -> Result<Vec<T>, DecodeError> {
+    refuse_zero_width_elements!(T::MIN_ENCODED_LEN);
     let len = check(decoder.read_len(T::MIN_ENCODED_LEN)?, max)?;
-    let mut out = Vec::with_capacity(len);
-    for _ in 0..len {
-        out.push(decoder.nested()?);
-    }
+    let mut out = Vec::with_capacity(decoder.reserve_hint::<T>(len));
+    decoder.descend(|decoder| {
+        for _ in 0..len {
+            out.push(T::decode(decoder)?);
+        }
+        Ok(())
+    })?;
     Ok(out)
 }
 
@@ -97,15 +114,19 @@ pub fn decode_bounded_btree_set<T: HborDecode + Ord>(
     decoder: &mut Decoder<'_>,
     max: usize,
 ) -> Result<BTreeSet<T>, DecodeError> {
+    refuse_zero_width_elements!(T::MIN_ENCODED_LEN);
     let len = check(decoder.read_len(T::MIN_ENCODED_LEN)?, max)?;
     let mut out = BTreeSet::new();
-    for _ in 0..len {
-        let element: T = decoder.nested()?;
-        if out.last().is_some_and(|last| &element <= last) {
-            return Err(DecodeError::UnsortedKeys);
+    decoder.descend(|decoder| {
+        for _ in 0..len {
+            let element = T::decode(decoder)?;
+            if out.last().is_some_and(|last| &element <= last) {
+                return Err(DecodeError::UnsortedKeys);
+            }
+            out.insert(element);
         }
-        out.insert(element);
-    }
+        Ok(())
+    })?;
     Ok(out)
 }
 
@@ -119,19 +140,23 @@ pub fn decode_bounded_btree_map<K: HborDecode + Ord, V: HborDecode>(
     decoder: &mut Decoder<'_>,
     max: usize,
 ) -> Result<BTreeMap<K, V>, DecodeError> {
+    refuse_zero_width_elements!(K::MIN_ENCODED_LEN + V::MIN_ENCODED_LEN);
     let len = check(
         decoder.read_len(K::MIN_ENCODED_LEN + V::MIN_ENCODED_LEN)?,
         max,
     )?;
     let mut out = BTreeMap::new();
-    for _ in 0..len {
-        let key: K = decoder.nested()?;
-        let value: V = decoder.nested()?;
-        if out.last_key_value().is_some_and(|(last, _)| &key <= last) {
-            return Err(DecodeError::UnsortedKeys);
+    decoder.descend(|decoder| {
+        for _ in 0..len {
+            let key = K::decode(decoder)?;
+            let value = V::decode(decoder)?;
+            if out.last_key_value().is_some_and(|(last, _)| &key <= last) {
+                return Err(DecodeError::UnsortedKeys);
+            }
+            out.insert(key, value);
         }
-        out.insert(key, value);
-    }
+        Ok(())
+    })?;
     Ok(out)
 }
 
@@ -166,12 +191,14 @@ const fn check(claimed: usize, max: usize) -> Result<usize, DecodeError> {
 }
 
 /// A `Vec<u8>` written by [`encode_bytes`] is byte-identical to one written
-/// element by element, so the fast path is a speed choice and never a wire
-/// choice.
+/// element by element and charges the same depth, so the fast path is a
+/// speed choice — never a wire choice, and never a depth choice.
 #[cfg(test)]
 mod tests {
     use super::{decode_bytes, encode_bytes};
-    use crate::{DEFAULT_MAX_DEPTH, Decoder, Encoder, to_vec};
+    use crate::{
+        DEFAULT_MAX_DEPTH, Decoder, Encoder, from_slice_with_depth, to_vec, to_vec_with_depth,
+    };
 
     #[test]
     fn the_byte_fast_path_matches_the_generic_encoding() {
@@ -183,6 +210,27 @@ mod tests {
 
             let mut decoder = Decoder::new(&buf, DEFAULT_MAX_DEPTH);
             assert_eq!(decode_bytes(&mut decoder).unwrap(), case);
+        }
+    }
+
+    /// Both spellings must accept and refuse at the same caps, or a
+    /// payload's fate would depend on how the type reading it was written.
+    #[test]
+    fn the_byte_fast_path_charges_the_generic_depth() {
+        let case = vec![7u8; 4];
+        let bytes = to_vec(&case).unwrap();
+        for cap in 0..3 {
+            let generic = from_slice_with_depth::<Vec<u8>>(&bytes, cap).is_ok();
+
+            let mut decoder = Decoder::new(&bytes, cap);
+            let fast = decode_bytes(&mut decoder).is_ok();
+            assert_eq!(generic, fast, "decode at cap {cap}");
+
+            let generic = to_vec_with_depth(&case, cap).is_ok();
+            let mut buf = Vec::new();
+            let mut encoder = Encoder::new(&mut buf, cap);
+            let fast = encode_bytes(&mut encoder, &case).is_ok();
+            assert_eq!(generic, fast, "encode at cap {cap}");
         }
     }
 }

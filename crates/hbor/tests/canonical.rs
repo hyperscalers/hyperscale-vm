@@ -124,6 +124,23 @@ fn empty_values_are_canonical() {
     assert_canonical(&[0u8; 0]);
 }
 
+/// Zero-width values compose at fixed arity — a unit field costs nothing and
+/// breaks nothing. Only a variable-length collection refuses them, at
+/// compile time, because there a length would count things no input pays
+/// for.
+#[test]
+fn zero_width_values_compose_at_fixed_arity() {
+    #[derive(Debug, Clone, PartialEq, Eq, hyperscale_hbor::Hbor)]
+    struct Marker;
+
+    assert_canonical(&Marker);
+    assert_canonical(&((), ()));
+    assert_canonical(&Some(()));
+    assert_canonical(&(Marker, 7u8));
+    // `Option<()>` is one byte wide, so sequences of it are fine.
+    assert_canonical(&vec![None::<()>, Some(()), None]);
+}
+
 /// Extremes of each integer width, where a sign bit or a carry would show.
 #[test]
 fn integer_extremes_are_canonical() {

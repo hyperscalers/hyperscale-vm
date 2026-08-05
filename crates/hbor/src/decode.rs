@@ -87,13 +87,17 @@ impl<'a> Decoder<'a> {
     /// satisfy.
     ///
     /// `min_element_len` is the smallest number of bytes one element can
-    /// occupy. A sequence longer than `remaining / min_element_len` cannot
-    /// exist in the bytes that are left, so rejecting here bounds every
-    /// allocation by the input size — without the field having to declare a
-    /// cap of its own.
+    /// occupy, and must be nonzero. A sequence longer than
+    /// `remaining / min_element_len` cannot exist in the bytes that are
+    /// left, so rejecting here bounds every claimed length by the input —
+    /// without the field having to declare a cap of its own.
     ///
-    /// A `min_element_len` of zero admits any length the input can reach,
-    /// since a zero-width element places no constraint.
+    /// # Panics
+    ///
+    /// A zero `min_element_len` is a caller bug, not an input condition:
+    /// zero-width sequence elements are refused at the type level, so no
+    /// element width reaching this call is zero. Deterministic, so safe to
+    /// assert.
     ///
     /// # Errors
     ///
@@ -101,12 +105,13 @@ impl<'a> Decoder<'a> {
     /// [`DecodeError::LengthTooLarge`] past four bytes, and
     /// [`DecodeError::LengthExceedsInput`] for an unsatisfiable claim.
     pub fn read_len(&mut self, min_element_len: usize) -> Result<usize, DecodeError> {
+        assert!(
+            min_element_len > 0,
+            "zero-width sequence elements are refused at the type level"
+        );
         let (value, consumed) = varint::read(&self.input[self.cursor..])?;
         self.cursor += consumed;
-        let capacity = self
-            .remaining()
-            .checked_div(min_element_len)
-            .unwrap_or_else(|| self.remaining());
+        let capacity = self.remaining() / min_element_len;
         if value > capacity {
             return Err(DecodeError::LengthExceedsInput {
                 claimed: value,
@@ -114,6 +119,19 @@ impl<'a> Decoder<'a> {
             });
         }
         Ok(value)
+    }
+
+    /// A capacity hint bounded by the bytes that remain.
+    ///
+    /// A claimed length that passes [`Self::read_len`] measures input, but a
+    /// reservation of `len` elements costs `len * size_of::<T>()` — a
+    /// constant the wire type chooses, not the input. Capping the hint at
+    /// what the remaining bytes could pay for keeps a rejected input from
+    /// ever holding a reservation larger than itself; an accepted sequence
+    /// grows to its real size through ordinary doubling.
+    #[must_use]
+    pub fn reserve_hint<T>(&self, claimed: usize) -> usize {
+        claimed.min(self.remaining() / size_of::<T>().max(1))
     }
 
     /// Run `read` one level down, refusing to descend past the cap.

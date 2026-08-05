@@ -14,10 +14,14 @@ use core::mem::size_of;
 use crate::decode::Decoder;
 use crate::encode::Encoder;
 use crate::error::{DecodeError, EncodeError};
-use crate::{HborDecode, HborEncode};
+use crate::{HborDecode, HborEncode, HborWidth};
 
 macro_rules! fixed_width_integer {
     ($($ty:ty),* $(,)?) => { $(
+        impl HborWidth for $ty {
+            const MIN_ENCODED_LEN: usize = size_of::<$ty>();
+        }
+
         impl HborEncode for $ty {
             fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
                 encoder.write_fixed(&self.to_le_bytes());
@@ -26,8 +30,6 @@ macro_rules! fixed_width_integer {
         }
 
         impl HborDecode for $ty {
-            const MIN_ENCODED_LEN: usize = size_of::<$ty>();
-
             fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
                 Ok(Self::from_le_bytes(decoder.read_array()?))
             }
@@ -37,6 +39,10 @@ macro_rules! fixed_width_integer {
 
 fixed_width_integer!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
 
+impl HborWidth for bool {
+    const MIN_ENCODED_LEN: usize = 1;
+}
+
 impl HborEncode for bool {
     fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
         encoder.write_u8(u8::from(*self));
@@ -45,8 +51,6 @@ impl HborEncode for bool {
 }
 
 impl HborDecode for bool {
-    const MIN_ENCODED_LEN: usize = 1;
-
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         // Every byte outside {0, 1} is a rejection, not a truthy value:
         // folding them onto `true` would give one value 255 encodings.
@@ -58,6 +62,12 @@ impl HborDecode for bool {
     }
 }
 
+// Zero width is truthful for unit: at fixed arity it contributes nothing
+// and costs nothing. Sequence positions refuse it, in `collection`.
+impl HborWidth for () {
+    const MIN_ENCODED_LEN: usize = 0;
+}
+
 impl HborEncode for () {
     fn encode(&self, _encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
         Ok(())
@@ -65,11 +75,13 @@ impl HborEncode for () {
 }
 
 impl HborDecode for () {
-    const MIN_ENCODED_LEN: usize = 0;
-
     fn decode(_decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         Ok(())
     }
+}
+
+impl<T> HborWidth for Option<T> {
+    const MIN_ENCODED_LEN: usize = 1;
 }
 
 impl<T: HborEncode> HborEncode for Option<T> {
@@ -88,8 +100,6 @@ impl<T: HborEncode> HborEncode for Option<T> {
 }
 
 impl<T: HborDecode> HborDecode for Option<T> {
-    const MIN_ENCODED_LEN: usize = 1;
-
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         match decoder.read_u8()? {
             0 => Ok(None),
@@ -104,6 +114,10 @@ impl<T: HborDecode> HborDecode for Option<T> {
 // would have to build each value through a heap collection to stay safe —
 // paying an allocation on the hottest decode path in the system to serve a
 // case that does not occur. A generic impl is additive if one ever does.
+impl<const N: usize> HborWidth for [u8; N] {
+    const MIN_ENCODED_LEN: usize = N;
+}
+
 impl<const N: usize> HborEncode for [u8; N] {
     fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
         encoder.write_fixed(self);
@@ -112,8 +126,6 @@ impl<const N: usize> HborEncode for [u8; N] {
 }
 
 impl<const N: usize> HborDecode for [u8; N] {
-    const MIN_ENCODED_LEN: usize = N;
-
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         decoder.read_array()
     }
@@ -121,6 +133,10 @@ impl<const N: usize> HborDecode for [u8; N] {
 
 macro_rules! tuple {
     ($($name:ident),+) => {
+        impl<$($name: HborWidth),+> HborWidth for ($($name,)+) {
+            const MIN_ENCODED_LEN: usize = 0 $(+ $name::MIN_ENCODED_LEN)+;
+        }
+
         impl<$($name: HborEncode),+> HborEncode for ($($name,)+) {
             fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
                 #[allow(non_snake_case)] // bindings mirror the type parameters
@@ -131,8 +147,6 @@ macro_rules! tuple {
         }
 
         impl<$($name: HborDecode),+> HborDecode for ($($name,)+) {
-            const MIN_ENCODED_LEN: usize = 0 $(+ $name::MIN_ENCODED_LEN)+;
-
             fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
                 Ok(($(decoder.nested::<$name>()?,)+))
             }

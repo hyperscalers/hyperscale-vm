@@ -19,6 +19,7 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
 
+    let width_bounds = bounds(input, &quote!(::hyperscale_hbor::HborWidth));
     let encode_bounds = bounds(input, &quote!(::hyperscale_hbor::HborEncode));
     let decode_bounds = bounds(input, &quote!(::hyperscale_hbor::HborDecode));
 
@@ -59,6 +60,12 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         #[automatically_derived]
+        impl #impl_generics ::hyperscale_hbor::HborWidth for #name #type_generics
+        #where_clause #width_bounds {
+            const MIN_ENCODED_LEN: usize = #min_len;
+        }
+
+        #[automatically_derived]
         impl #impl_generics ::hyperscale_hbor::HborEncode for #name #type_generics
         #where_clause #encode_bounds {
             fn encode(
@@ -73,8 +80,6 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
         #[automatically_derived]
         impl #impl_generics ::hyperscale_hbor::HborDecode for #name #type_generics
         #where_clause #decode_bounds {
-            const MIN_ENCODED_LEN: usize = #min_len;
-
             fn decode(
                 decoder: &mut ::hyperscale_hbor::Decoder<'_>,
             ) -> ::core::result::Result<Self, ::hyperscale_hbor::DecodeError> {
@@ -229,7 +234,7 @@ fn capped_opaque(ty: &Type) -> Error {
 fn min_encoded_len(fields: &Fields) -> TokenStream {
     let terms = fields.iter().map(|field| {
         let ty = &field.ty;
-        quote!(<#ty as ::hyperscale_hbor::HborDecode>::MIN_ENCODED_LEN)
+        quote!(<#ty as ::hyperscale_hbor::HborWidth>::MIN_ENCODED_LEN)
     });
     quote!(0 #(+ #terms)*)
 }
@@ -261,7 +266,7 @@ fn transparent(fields: &Fields) -> Result<(TokenStream, TokenStream, TokenStream
         || quote!(Self(#inner)),
         |name| quote!(Self { #name: #inner }),
     );
-    let min = quote!(<#ty as ::hyperscale_hbor::HborDecode>::MIN_ENCODED_LEN);
+    let min = quote!(<#ty as ::hyperscale_hbor::HborWidth>::MIN_ENCODED_LEN);
     Ok((encode, decode, min))
 }
 

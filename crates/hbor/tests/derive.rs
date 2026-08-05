@@ -15,7 +15,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{
     DEFAULT_MAX_DEPTH, DecodeError, Decoder, EncodeError, Encoder, Hbor, HborDecode, HborEncode,
-    assert_canonical, bounded, from_slice, from_slice_with_depth, to_vec, to_vec_with_depth,
+    HborWidth, assert_canonical, bounded, from_slice, from_slice_with_depth, to_vec,
+    to_vec_with_depth,
 };
 
 // ---------------------------------------------------------------------------
@@ -45,9 +46,11 @@ impl HborEncode for HeaderByHand {
     }
 }
 
-impl HborDecode for HeaderByHand {
+impl HborWidth for HeaderByHand {
     const MIN_ENCODED_LEN: usize = 8 + 4 + 2 + 32 + 1;
+}
 
+impl HborDecode for HeaderByHand {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         Ok(Self(Header {
             height: decoder.nested()?,
@@ -81,8 +84,8 @@ fn a_record_matches_its_hand_written_impl() {
     assert_eq!(from_slice::<HeaderByHand>(&derived).unwrap().0, value);
 
     assert_eq!(
-        <Header as HborDecode>::MIN_ENCODED_LEN,
-        <HeaderByHand as HborDecode>::MIN_ENCODED_LEN
+        <Header as HborWidth>::MIN_ENCODED_LEN,
+        <HeaderByHand as HborWidth>::MIN_ENCODED_LEN
     );
     assert_eq!(derived.len(), 47, "scalars carry no framing of their own");
 }
@@ -118,9 +121,11 @@ impl HborEncode for BodyByHand {
     }
 }
 
-impl HborDecode for BodyByHand {
+impl HborWidth for BodyByHand {
     const MIN_ENCODED_LEN: usize = 1;
+}
 
+impl HborDecode for BodyByHand {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         let body = match decoder.read_u8()? {
             0 => Body::Empty,
@@ -151,8 +156,8 @@ fn an_enum_matches_its_hand_written_impl() {
     }
 
     assert_eq!(
-        <Body as HborDecode>::MIN_ENCODED_LEN,
-        <BodyByHand as HborDecode>::MIN_ENCODED_LEN,
+        <Body as HborWidth>::MIN_ENCODED_LEN,
+        <BodyByHand as HborWidth>::MIN_ENCODED_LEN,
         "the discriminant plus the lightest variant, which is the unit one"
     );
 }
@@ -209,8 +214,8 @@ fn a_transparent_wrapper_is_its_inner_type_on_the_wire() {
     assert_eq!(to_vec(&ValidatorId(9)).unwrap(), to_vec(&9u64).unwrap());
     assert_eq!(to_vec(&Digest { inner: [4; 32] }).unwrap(), vec![4u8; 32]);
     assert_eq!(
-        <ValidatorId as HborDecode>::MIN_ENCODED_LEN,
-        <u64 as HborDecode>::MIN_ENCODED_LEN
+        <ValidatorId as HborWidth>::MIN_ENCODED_LEN,
+        <u64 as HborWidth>::MIN_ENCODED_LEN
     );
     assert_canonical(&ValidatorId(9));
     assert_canonical(&Digest { inner: [4; 32] });
@@ -419,7 +424,7 @@ fn generic_positional_and_nested_shapes_round_trip() {
 #[test]
 fn a_unit_struct_occupies_no_bytes() {
     assert_eq!(to_vec(&Marker).unwrap(), Vec::<u8>::new());
-    assert_eq!(<Marker as HborDecode>::MIN_ENCODED_LEN, 0);
+    assert_eq!(<Marker as HborWidth>::MIN_ENCODED_LEN, 0);
 }
 
 /// A container divides the remaining input by its element's minimum to bound
@@ -427,14 +432,79 @@ fn a_unit_struct_occupies_no_bytes() {
 /// an understated one would weaken the bound.
 #[test]
 fn a_derived_minimum_is_the_sum_of_its_fields() {
-    assert_eq!(<Position as HborDecode>::MIN_ENCODED_LEN, 8);
+    assert_eq!(<Position as HborWidth>::MIN_ENCODED_LEN, 8);
     assert_eq!(
-        <Bundle as HborDecode>::MIN_ENCODED_LEN,
+        <Bundle as HborWidth>::MIN_ENCODED_LEN,
         2 + 1,
         "a count plus an empty sequence's length byte"
     );
     let shortest = to_vec(&Position(0, 0)).unwrap();
-    assert_eq!(shortest.len(), <Position as HborDecode>::MIN_ENCODED_LEN);
+    assert_eq!(shortest.len(), <Position as HborWidth>::MIN_ENCODED_LEN);
+}
+
+/// The audit case: identical wire bytes, one field written as `Vec<u8>` and
+/// one as an alias of it. The alias declines the fast path, so this is the
+/// cross-spelling pair — both must accept and refuse at every cap.
+#[test]
+fn depth_charge_is_independent_of_spelling() {
+    type AliasedBytes = Vec<u8>;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+    struct Literal {
+        data: Vec<u8>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+    struct Aliased {
+        data: AliasedBytes,
+    }
+
+    for data in [vec![], vec![1u8, 2, 3]] {
+        let literal = Literal { data: data.clone() };
+        let aliased = Aliased { data };
+        let bytes = to_vec(&literal).unwrap();
+        assert_eq!(bytes, to_vec(&aliased).unwrap());
+
+        for cap in 0..4 {
+            assert_eq!(
+                from_slice_with_depth::<Literal>(&bytes, cap).is_ok(),
+                from_slice_with_depth::<Aliased>(&bytes, cap).is_ok(),
+                "decode at cap {cap}"
+            );
+            assert_eq!(
+                to_vec_with_depth(&literal, cap).is_ok(),
+                to_vec_with_depth(&aliased, cap).is_ok(),
+                "encode at cap {cap}"
+            );
+        }
+    }
+}
+
+/// A cap changes what a field accepts, never what depth it charges: capped
+/// and uncapped twins of every collection shape agree at every cap.
+#[test]
+fn depth_charge_is_independent_of_caps() {
+    let capped = sample_capped();
+    let uncapped = Uncapped {
+        message: capped.message.clone(),
+        peers: capped.peers.clone(),
+        label: capped.label.clone(),
+        seen: capped.seen.clone(),
+        stakes: capped.stakes.clone(),
+    };
+    let bytes = to_vec(&capped).unwrap();
+    for cap in 0..5 {
+        assert_eq!(
+            from_slice_with_depth::<Capped>(&bytes, cap).is_ok(),
+            from_slice_with_depth::<Uncapped>(&bytes, cap).is_ok(),
+            "decode at cap {cap}"
+        );
+        assert_eq!(
+            to_vec_with_depth(&capped, cap).is_ok(),
+            to_vec_with_depth(&uncapped, cap).is_ok(),
+            "encode at cap {cap}"
+        );
+    }
 }
 
 #[test]
