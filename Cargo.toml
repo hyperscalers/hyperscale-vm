@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/hbor",
     "crates/vm-effects",
     "crates/vm-harness",
     "crates/vm-kernel",
@@ -16,6 +17,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
+hyperscale-hbor = { path = "crates/hbor" }
 hyperscale-vm-effects = { path = "crates/vm-effects" }
 hyperscale-vm-kernel = { path = "crates/vm-kernel" }
 hyperscale-vm-ref = { path = "crates/vm-ref" }

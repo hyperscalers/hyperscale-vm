@@ -1,0 +1,14 @@
+[package]
+name = "hyperscale-hbor"
+version.workspace = true
+edition.workspace = true
+description = "The canonical binary encoding: schema-external, one byte string per value"
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
