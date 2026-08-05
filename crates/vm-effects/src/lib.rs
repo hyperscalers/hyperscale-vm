@@ -59,7 +59,8 @@ pub use invoke::{CallArg, EDGE_CELL_BYTES, EdgeBound, NodeCall};
 pub use manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     AbiError, AbiParam, Accessibility, CallSite, InstanceMeta, InstanceRegistry, MetadataCache,
-    MethodSignature, PackageHash, PackageMetadata, ParamType, check_abi, package_hash,
+    MethodSignature, PACKAGE_ROLE, PackageHash, PackageMetadata, ParamType, check_abi,
+    package_hash, package_key,
 };
 pub use route::{
     CallEdge, CallGraph, FrameDeclaration, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef,

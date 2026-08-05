@@ -7,7 +7,7 @@ use hyperscale_hbor::Hbor;
 
 use crate::dsl::{Clause, Expr};
 use crate::hash::{Hash32, Hasher};
-use crate::types::{Address, Value};
+use crate::types::{Address, RoleId, SubstateKey, Value, child_key};
 
 /// A published package's identity: the hash of its artifact, which covers
 /// the metadata section, so metadata is immutable with the package.
@@ -22,6 +22,23 @@ const DOMAIN_PACKAGE: &[u8] = b"hyperscale-vm/package";
 #[must_use]
 pub fn package_hash(hasher: &dyn Hasher, artifact: &[u8]) -> PackageHash {
     PackageHash(hasher.hash(DOMAIN_PACKAGE, &[artifact]))
+}
+
+/// The reserved role a publisher's package cells key under.
+///
+/// Outside the blueprint-reachable role space — blueprint signatures name
+/// vault, claims, config and entropy — so the cell is reachable by the
+/// publish path and by nothing else.
+pub const PACKAGE_ROLE: RoleId = RoleId(0xFFFE);
+
+/// Where `publisher`'s copy of the package addressed by `package` lives.
+///
+/// Keyed by content address under the publisher, so republishing the
+/// same artifact is the same cell — which is what makes publishing
+/// idempotent rather than a conflict.
+#[must_use]
+pub fn package_key(hasher: &dyn Hasher, publisher: Address, package: PackageHash) -> SubstateKey {
+    child_key(hasher, publisher, PACKAGE_ROLE, &[package.0.0.to_vec()])
 }
 
 /// A static call site: the callee named by an input-derived address, its

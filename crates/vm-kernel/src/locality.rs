@@ -161,11 +161,11 @@ fn amount_at(
     prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>,
     key: SubstateKey,
 ) -> u128 {
-    let cell = match writes.cells.get(&key) {
-        Some(change) => change.clone(),
-        None => prior(key),
-    };
-    cell.map_or(Ok(0), |bytes| decode_amount(&bytes))
+    writes
+        .cells
+        .get(&key)
+        .map_or_else(|| prior(key), Clone::clone)
+        .map_or(Ok(0), |bytes| decode_amount(&bytes))
         .expect("an amount cell the apply phase accepted decodes")
 }
 

@@ -37,6 +37,11 @@ impl StateWrites {
 
     /// The canonical commitment to these writes: `hash_fn` over the
     /// canonical encoding.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the encoding exceeds the encoder's bounds, which no
+    /// writes map within the decode caps can.
     #[must_use]
     pub fn root(&self, hash_fn: fn(&[u8]) -> [u8; 32]) -> Hash32 {
         Hash32(hash_fn(
