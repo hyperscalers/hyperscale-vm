@@ -42,4 +42,6 @@ fn the_derive_refuses_a_tree_with_nothing_to_cover() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/merkle_unit_struct.rs");
     refuse.compile_fail("tests/refusals/merkle_transparent.rs");
+    refuse.compile_fail("tests/refusals/merkle_without_domain.rs");
+    refuse.compile_fail("tests/refusals/merkle_empty_domain.rs");
 }

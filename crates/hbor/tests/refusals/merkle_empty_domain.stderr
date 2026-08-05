@@ -1,0 +1,5 @@
+error: a merkle domain must not be empty; it is what keeps a proof gathered against one type from verifying against another
+ --> tests/refusals/merkle_empty_domain.rs:4:24
+  |
+4 | #[hbor(merkle_domain = "")]
+  |                        ^^

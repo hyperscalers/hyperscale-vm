@@ -77,6 +77,14 @@ pub fn hbor(input: TokenStream) -> TokenStream {
 /// separately alongside would be a second hash for one value, which is what
 /// this encoding exists to avoid.
 ///
+/// Requires `#[hbor(merkle_domain = "...")]`. The domain is mixed into the
+/// root, so two types whose fields encode to identical bytes still root
+/// differently — the same substitution a signing domain prevents, one seam
+/// over. No two types may share a domain. The attribute lives in the shared
+/// `hbor(...)` namespace, so a `merkle_domain` on a type that derives only
+/// `Hbor` is accepted and inert: derives expand independently, and neither
+/// can see whether the other is present.
+///
 /// An enum's discriminant is its own leaf, so which variant a value is can be
 /// proven without revealing the variant's content.
 #[proc_macro_derive(HborMerkle, attributes(hbor))]

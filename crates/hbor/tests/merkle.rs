@@ -5,13 +5,14 @@
 //! its root can be shown one field, and only that field.
 
 use hyperscale_hbor::hash::TestHasher;
-use hyperscale_hbor::merkle::{Chunked, verify};
+use hyperscale_hbor::merkle::{Chunked, prove, root_of, sequence_chunks, verify};
 use hyperscale_hbor::{Hbor, HborMerkle, to_vec};
 
 const MAX_TREE: usize = 4096;
 const MAX_MESSAGE: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hbor, HborMerkle)]
+#[hbor(merkle_domain = "test-body-v1")]
 enum Body {
     Call(#[hbor(max = MAX_TREE)] Vec<u8>),
     Publish(#[hbor(max = MAX_TREE)] Vec<u8>),
@@ -24,6 +25,7 @@ struct SubintentSig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hbor, HborMerkle)]
+#[hbor(merkle_domain = "test-envelope-v1")]
 struct Envelope {
     body: Body,
     subintent_sigs: Vec<SubintentSig>,
@@ -95,7 +97,7 @@ fn every_field_proves_against_the_root() {
     for (index, leaf) in leaves.iter().enumerate() {
         let proof = envelope.prove(&hasher, index).unwrap().expect("a field");
         assert!(
-            verify(&hasher, root, leaf, &proof),
+            verify(&hasher, Envelope::MERKLE_DOMAIN, root, leaf, &proof),
             "field {index} failed to verify"
         );
     }
@@ -111,7 +113,13 @@ fn a_proof_carries_one_field_and_a_path() {
 
     let proof = envelope.prove(&hasher, MAX_FEE).unwrap().unwrap();
     let claimed = to_vec(&envelope.max_fee).unwrap();
-    assert!(verify(&hasher, root, &claimed, &proof));
+    assert!(verify(
+        &hasher,
+        Envelope::MERKLE_DOMAIN,
+        root,
+        &claimed,
+        &proof
+    ));
 
     // Four levels for ten leaves, and nothing else.
     assert_eq!(proof.siblings.len(), 4);
@@ -127,12 +135,14 @@ fn an_altered_field_fails_against_the_root() {
 
     assert!(verify(
         &hasher,
+        Envelope::MERKLE_DOMAIN,
         root,
         &to_vec(&envelope.gas_limit).unwrap(),
         &proof
     ));
     assert!(!verify(
         &hasher,
+        Envelope::MERKLE_DOMAIN,
         root,
         &to_vec(&(envelope.gas_limit + 1)).unwrap(),
         &proof
@@ -208,11 +218,18 @@ fn a_proof_does_not_transfer_between_fields() {
 
     let proof = envelope.prove(&hasher, FEE_PAYER).unwrap().unwrap();
     let other = to_vec(&envelope.message).unwrap();
-    assert!(!verify(&hasher, root, &other, &proof));
+    assert!(!verify(
+        &hasher,
+        Envelope::MERKLE_DOMAIN,
+        root,
+        &other,
+        &proof
+    ));
 
     let message_proof = envelope.prove(&hasher, MESSAGE).unwrap().unwrap();
     assert!(!verify(
         &hasher,
+        Envelope::MERKLE_DOMAIN,
         root,
         &to_vec(&envelope.fee_payer).unwrap(),
         &message_proof
@@ -241,7 +258,13 @@ fn a_variant_proves_without_its_content() {
     assert_eq!(leaves.len(), 2, "a discriminant leaf and one field");
 
     let tag_proof = body.prove(&hasher, 0).unwrap().unwrap();
-    assert!(verify(&hasher, root, &leaves[0], &tag_proof));
+    assert!(verify(
+        &hasher,
+        Body::MERKLE_DOMAIN,
+        root,
+        &leaves[0],
+        &tag_proof
+    ));
     assert_eq!(
         leaves[0],
         to_vec(&1u8).unwrap(),
@@ -267,21 +290,38 @@ fn variants_with_the_same_content_differ_at_the_root() {
 // ---------------------------------------------------------------------------
 
 /// The shape receipt trees and settled-wave roots want: a root over a list,
-/// with a proof per element.
+/// with a proof per element. A sequence has no domain of its own, so the
+/// caller names one at the root — which is what keeps a receipt list and a
+/// witness list of identical hashes apart.
+const RECEIPTS: &[u8] = b"test-receipts-v1";
+
 #[test]
 fn a_sequence_proves_per_element() {
     let hasher = TestHasher;
     let receipts: Vec<[u8; 32]> = (0..7).map(|i| [i; 32]).collect();
-    let root = receipts.merkle_root(&hasher).unwrap();
+    let leaves = sequence_chunks(&receipts).unwrap();
+    let root = root_of(&hasher, RECEIPTS, &leaves);
 
     for (index, receipt) in receipts.iter().enumerate() {
-        let proof = receipts.prove(&hasher, index).unwrap().unwrap();
-        assert!(verify(&hasher, root, &to_vec(receipt).unwrap(), &proof));
+        let proof = prove(&hasher, &leaves, index).unwrap();
+        assert!(verify(
+            &hasher,
+            RECEIPTS,
+            root,
+            &to_vec(receipt).unwrap(),
+            &proof
+        ));
     }
 
     let stranger = [0xFFu8; 32];
-    let proof = receipts.prove(&hasher, 3).unwrap().unwrap();
-    assert!(!verify(&hasher, root, &to_vec(&stranger).unwrap(), &proof));
+    let proof = prove(&hasher, &leaves, 3).unwrap();
+    assert!(!verify(
+        &hasher,
+        RECEIPTS,
+        root,
+        &to_vec(&stranger).unwrap(),
+        &proof
+    ));
 }
 
 /// A shorter list must not share a root with a longer one, whatever the
@@ -292,7 +332,7 @@ fn sequences_of_different_lengths_differ_at_the_root() {
     let roots: Vec<_> = (0..=8)
         .map(|n| {
             let list: Vec<u8> = (0..n).collect();
-            list.merkle_root(&hasher).unwrap()
+            root_of(&hasher, RECEIPTS, &sequence_chunks(&list).unwrap())
         })
         .collect();
     for (i, a) in roots.iter().enumerate() {
@@ -300,4 +340,76 @@ fn sequences_of_different_lengths_differ_at_the_root() {
             assert!(i == j || a != b, "lists of {i} and {j} share a root");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Type binding
+// ---------------------------------------------------------------------------
+
+/// The audit case, inverted: two types whose fields encode to identical
+/// bytes, and a sequence of the same arity, must all root differently — and
+/// a field proof gathered against one must not verify against another.
+#[test]
+fn identical_bytes_under_different_types_do_not_share_a_root() {
+    #[derive(Debug, Clone, PartialEq, Eq, Hbor, HborMerkle)]
+    #[hbor(merkle_domain = "test-transfer-v1")]
+    struct Transfer {
+        from: [u8; 32],
+        to: [u8; 32],
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hbor, HborMerkle)]
+    #[hbor(merkle_domain = "test-approval-v1")]
+    struct Approval {
+        owner: [u8; 32],
+        spender: [u8; 32],
+    }
+
+    let hasher = TestHasher;
+    let transfer = Transfer {
+        from: [1; 32],
+        to: [2; 32],
+    };
+    let approval = Approval {
+        owner: [1; 32],
+        spender: [2; 32],
+    };
+    let list = vec![[1u8; 32], [2u8; 32]];
+
+    assert_eq!(transfer.chunks().unwrap(), approval.chunks().unwrap());
+
+    let transfer_root = transfer.merkle_root(&hasher).unwrap();
+    let approval_root = approval.merkle_root(&hasher).unwrap();
+    let list_root = root_of(&hasher, RECEIPTS, &sequence_chunks(&list).unwrap());
+    assert_ne!(transfer_root, approval_root);
+    assert_ne!(transfer_root, list_root);
+    assert_ne!(approval_root, list_root);
+
+    // The substitution the domain exists to stop: a `Transfer` root
+    // presented where an `Approval` root is expected. The trees are
+    // structurally identical, so without the domain in the root this would
+    // verify.
+    let proof = transfer.prove(&hasher, 0).unwrap().unwrap();
+    let bytes = to_vec(&transfer.from).unwrap();
+    assert!(verify(
+        &hasher,
+        Transfer::MERKLE_DOMAIN,
+        transfer_root,
+        &bytes,
+        &proof
+    ));
+    assert!(!verify(
+        &hasher,
+        Approval::MERKLE_DOMAIN,
+        transfer_root,
+        &bytes,
+        &proof
+    ));
+    assert!(!verify(
+        &hasher,
+        Transfer::MERKLE_DOMAIN,
+        approval_root,
+        &bytes,
+        &proof
+    ));
 }

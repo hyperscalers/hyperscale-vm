@@ -1,0 +1,5 @@
+error: a merkle root binds a type through its domain; declare `#[hbor(merkle_domain = "...")]` so two types over identical bytes cannot share a root
+ --> tests/refusals/merkle_without_domain.rs:4:8
+  |
+4 | struct Transfer {
+  |        ^^^^^^^^

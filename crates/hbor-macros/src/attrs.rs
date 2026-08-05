@@ -17,6 +17,9 @@ pub struct TypeAttrs {
     /// What this type's signatures are for. Its presence is what asks for a
     /// preimage at all.
     pub signing_domain: Option<LitStr>,
+    /// What this type's merkle roots are for. Required by `HborMerkle`;
+    /// inert under `Hbor` alone, which cannot know its sibling derive.
+    pub merkle_domain: Option<LitStr>,
 }
 
 /// What `#[hbor(...)]` says about a variant.
@@ -87,9 +90,13 @@ impl TypeAttrs {
                     out.signing_domain = Some(meta.value()?.parse()?);
                     return Ok(());
                 }
+                if meta.path.is_ident("merkle_domain") {
+                    out.merkle_domain = Some(meta.value()?.parse()?);
+                    return Ok(());
+                }
                 Err(meta.error(
                     "unknown hbor attribute; a type takes `transparent`, `validate = path`, \
-                     or `signing_domain = \"...\"`",
+                     `signing_domain = \"...\"`, or `merkle_domain = \"...\"`",
                 ))
             })?;
         }

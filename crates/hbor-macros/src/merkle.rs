@@ -33,6 +33,22 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
         }
     };
 
+    let Some(domain) = attrs.merkle_domain.as_ref() else {
+        return Err(Error::new(
+            input.ident.span(),
+            "a merkle root binds a type through its domain; declare \
+             `#[hbor(merkle_domain = \"...\")]` so two types over identical bytes cannot \
+             share a root",
+        ));
+    };
+    if domain.value().is_empty() {
+        return Err(Error::new(
+            domain.span(),
+            "a merkle domain must not be empty; it is what keeps a proof gathered against one \
+             type from verifying against another",
+        ));
+    }
+
     let name = &input.ident;
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
     let encode_bounds = bounds(input, &quote!(::hyperscale_hbor::HborEncode));
@@ -41,6 +57,8 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
         #[automatically_derived]
         impl #impl_generics ::hyperscale_hbor::merkle::Chunked for #name #type_generics
         #where_clause #encode_bounds {
+            const MERKLE_DOMAIN: &'static [u8] = #domain.as_bytes();
+
             fn chunks(
                 &self,
             ) -> ::core::result::Result<
