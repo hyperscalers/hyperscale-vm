@@ -21,8 +21,10 @@
 
 use std::collections::BTreeSet;
 
+use hyperscale_hbor::{Hbor, to_vec};
+
 use crate::admission::{AdmissionError, Admitted, IntentView, admit_intents, check_value_depth};
-use crate::graph::{Constraint, EdgeRef, ManifestGraph, encode_constraints};
+use crate::graph::{Constraint, EdgeRef, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::metadata::{InstanceRegistry, MetadataCache};
@@ -40,7 +42,7 @@ pub const NULLIFIER_ROLE: RoleId = RoleId(0xFFFF);
 /// A typed inbound yield edge an intent declares: the composition must
 /// bind an edge carrying exactly this resource, under the declaring
 /// intent's own constraints.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct YieldParam {
     /// The resource the yielded edge must carry.
     pub resource: Address,
@@ -56,7 +58,7 @@ pub struct YieldParam {
 /// identity whatever composition later carries it. Outputs the graph
 /// does not consume internally are the intent's yields — the composition
 /// must consume every one.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct IntentDecl {
     /// The intent's invocation graph; arguments may reference the
     /// declared parameters via [`GraphArg::Param`].
@@ -67,7 +69,8 @@ pub struct IntentDecl {
 }
 
 /// A signed subintent's identity: the hash of its declaration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[hbor(transparent)]
 pub struct SubintentHash(pub Hash32);
 
 const DOMAIN_SUBINTENT: &[u8] = b"hyperscale-vm/subintent";
@@ -75,16 +78,21 @@ const DOMAIN_ENVELOPE_TREE: &[u8] = b"hyperscale-vm/envelope-tree";
 
 impl IntentDecl {
     /// The declaration's identity through the hasher seam: the graph
-    /// hash plus every declared parameter with its constraints.
+    /// hash plus every declared parameter with its constraints, each
+    /// parameter one part carrying its canonical encoding.
+    ///
+    /// # Panics
+    ///
+    /// Hashed declarations pass the depth gate first, as
+    /// [`Value::canonical_bytes`](crate::types::Value::canonical_bytes)
+    /// requires of the literals the graph hash feeds on.
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> SubintentHash {
         let graph = self.graph.hash(hasher);
         let mut parts: Vec<Vec<u8>> = Vec::with_capacity(1 + self.params.len());
         parts.push(graph.0.0.to_vec());
         for param in &self.params {
-            let mut bytes = param.resource.0.to_vec();
-            encode_constraints(&mut bytes, &param.constraints);
-            parts.push(bytes);
+            parts.push(to_vec(param).expect("a yield parameter is shallow"));
         }
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
         SubintentHash(hasher.hash(DOMAIN_SUBINTENT, &refs))
@@ -94,7 +102,7 @@ impl IntentDecl {
 /// One typed yield edge: the `output`-th edge of node `producer` inside
 /// intent `intent`, bound to a declared parameter of the consuming
 /// intent.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub struct YieldBinding {
     /// The producing intent: `0` names the root, `i + 1` names
     /// subintent `i`.
@@ -109,7 +117,7 @@ pub struct YieldBinding {
 /// yield binding per declared parameter. The bindings are the
 /// composer's choice and are covered by the envelope identity, never by
 /// the subintent's own hash.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct Subintent {
     /// What the subintent's signer signed.
     pub decl: IntentDecl,
@@ -121,7 +129,7 @@ pub struct Subintent {
 
 /// The bound envelope tree admission runs over: the composer's root
 /// intent plus every bound subintent.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct EnvelopeTree {
     /// The composer's own intent.
     pub root: IntentDecl,
@@ -131,30 +139,26 @@ pub struct EnvelopeTree {
     pub subintents: Vec<Subintent>,
 }
 
-fn encode_bindings(bindings: &[YieldBinding]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(bindings.len() * 12);
-    for binding in bindings {
-        out.extend(binding.intent.to_le_bytes());
-        out.extend(binding.edge.producer.to_le_bytes());
-        out.extend(binding.edge.output.to_le_bytes());
-    }
-    out
-}
-
 impl EnvelopeTree {
     /// The tree's own identity — the fallback for callers that sign
     /// nothing beyond the tree. A protocol envelope signing more (fee
     /// terms, validity windows) derives its identity from
     /// the full signed form and passes that to [`admit_tree`] instead.
+    ///
+    /// # Panics
+    ///
+    /// Hashed trees pass the depth gate first, as
+    /// [`Value::canonical_bytes`](crate::types::Value::canonical_bytes)
+    /// requires of the literals the graph hashes feed on.
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> ManifestHash {
         let mut parts: Vec<Vec<u8>> = Vec::with_capacity(2 + 3 * self.subintents.len());
         parts.push(self.root.hash(hasher).0.0.to_vec());
-        parts.push(encode_bindings(&self.root_bindings));
+        parts.push(to_vec(&self.root_bindings).expect("bindings are flat"));
         for subintent in &self.subintents {
             parts.push(subintent.decl.hash(hasher).0.0.to_vec());
             parts.push(subintent.signer.0.to_vec());
-            parts.push(encode_bindings(&subintent.bindings));
+            parts.push(to_vec(&subintent.bindings).expect("bindings are flat"));
         }
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
         ManifestHash(hasher.hash(DOMAIN_ENVELOPE_TREE, &refs))

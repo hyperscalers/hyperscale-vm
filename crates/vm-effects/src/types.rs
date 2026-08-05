@@ -4,6 +4,8 @@
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
+use hyperscale_hbor::{Hbor, to_vec};
+
 use crate::hash::Hasher;
 
 /// A global object's address: its 16-byte owner prefix in the JMT key space.
@@ -11,7 +13,8 @@ use crate::hash::Hasher;
 /// Every substate an object owns lives under this prefix, and a shard
 /// boundary never cuts through a prefix, so an address resolves to exactly
 /// one shard.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[hbor(transparent)]
 pub struct Address(pub [u8; 16]);
 
 impl fmt::Debug for Address {
@@ -25,7 +28,8 @@ impl fmt::Debug for Address {
 }
 
 /// The local half of a substate key, assigned within an owner's prefix.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[hbor(transparent)]
 pub struct LocalKey(pub [u8; 16]);
 
 impl fmt::Debug for LocalKey {
@@ -39,7 +43,7 @@ impl fmt::Debug for LocalKey {
 }
 
 /// A full JMT leaf key: owner prefix followed by the local half.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 pub struct SubstateKey {
     /// The owning object's address; fixes the key's shard.
     pub owner: Address,
@@ -68,7 +72,8 @@ pub struct ShardId(pub u64);
 /// The role says which child — a vault, a claims cell, a field group, an
 /// ordered collection — a canonical address refers to. Role values are
 /// package conventions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[hbor(transparent)]
 pub struct RoleId(pub u16);
 
 const DOMAIN_CHILD: &[u8] = b"hyperscale-vm/child-key";
@@ -113,10 +118,24 @@ pub fn child_key(
 /// deterministic rejection rather than a divergence.
 pub const MAX_VALUE_DEPTH: usize = 16;
 
+/// The decoder nesting cap that admits exactly the values within
+/// [`MAX_VALUE_DEPTH`].
+///
+/// One value level costs at most two decoder levels — the variant's
+/// collection field and its hoisted element body — and adding a level costs
+/// at least one more than a scalar leaf, so `2 * MAX_VALUE_DEPTH` admits
+/// every value of admissible depth and refuses every deeper one. The
+/// relation is pinned by test at both boundaries; a wire decoder for
+/// literals passes this cap and gets [`check_value_depth`] as a decode-time
+/// consequence rather than a pass afterwards.
+///
+/// [`check_value_depth`]: crate::admission
+pub const MAX_VALUE_WIRE_DEPTH: usize = 2 * MAX_VALUE_DEPTH;
+
 /// A typed value the DSL evaluates over: manifest literals, edge
 /// projections, instance configuration fields, and everything derivable
 /// from them.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 pub enum Value {
     /// An unsigned 64-bit integer.
     U64(u64),
@@ -157,58 +176,25 @@ impl Value {
     }
 
     /// A canonical, unambiguous byte form: the hashing feed for
-    /// child-address material and manifest identity. Deliberately not a
-    /// wire format.
+    /// child-address material and manifest identity — the value's HBOR
+    /// encoding, so the hashed form and the wire form are one byte string.
     ///
-    /// The encoding walks an explicit stack rather than the native one, so
-    /// hashing a value of any nesting depth is a bounded computation — the
-    /// manifest hash is taken before admission has judged anything, and an
-    /// abort there would be a verdict no replica could reproduce.
+    /// Total for every value the protocol hashes: [`check_value_depth`]
+    /// gates admission before any hash is taken, an admissible value costs
+    /// at most [`MAX_VALUE_WIRE_DEPTH`] encoder levels, and the default
+    /// encoder cap leaves that margin twice over. A value nested past the
+    /// cap fails to encode deterministically; the panic here names the
+    /// broken precondition instead of hashing bytes no decoder would admit.
+    ///
+    /// # Panics
+    ///
+    /// On a value nested past the encoder's cap — a value no admission
+    /// path can have admitted.
+    ///
+    /// [`check_value_depth`]: crate::admission
     #[must_use]
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut stack: Vec<&Self> = vec![self];
-        while let Some(value) = stack.pop() {
-            match value {
-                Self::U64(v) => {
-                    out.push(1);
-                    out.extend(v.to_le_bytes());
-                }
-                Self::U128(v) => {
-                    out.push(2);
-                    out.extend(v.to_le_bytes());
-                }
-                Self::Bytes(bytes) => {
-                    out.push(3);
-                    out.extend((bytes.len() as u64).to_le_bytes());
-                    out.extend(bytes);
-                }
-                Self::Address(addr) => {
-                    out.push(4);
-                    out.extend(addr.0);
-                }
-                Self::Key(key) => {
-                    out.push(5);
-                    out.extend(key.owner.0);
-                    out.extend(key.local.0);
-                }
-                Self::Bucket { resource } => {
-                    out.push(6);
-                    out.extend(resource.0);
-                }
-                Self::Tuple(values) => {
-                    out.push(7);
-                    out.extend((values.len() as u64).to_le_bytes());
-                    stack.extend(values.iter().rev());
-                }
-                Self::List(values) => {
-                    out.push(8);
-                    out.extend((values.len() as u64).to_le_bytes());
-                    stack.extend(values.iter().rev());
-                }
-            }
-        }
-        out
+        to_vec(self).expect("hashed values pass the depth gate first")
     }
 
     /// The value's nesting depth: a scalar is one, a tuple or list one more
@@ -461,9 +447,11 @@ impl EffectSet {
 mod tests {
     use std::collections::BTreeSet;
 
+    use hyperscale_hbor::{assert_canonical, from_slice_with_depth};
+
     use super::{
-        Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, Value, child_key,
-        compatible,
+        Address, Effect, EffectSet, EffectTarget, LocalKey, MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH,
+        Mode, ModeKind, RoleId, SubstateKey, Value, child_key, compatible, to_vec,
     };
     use crate::hash::TestHasher;
 
@@ -535,35 +523,54 @@ mod tests {
         assert!(EffectSet::new().provision_targets().is_empty());
     }
 
+    /// The hashing feed and the wire form are one byte string, and the
+    /// vocabulary is canonical on the same terms as any wire type.
     #[test]
-    fn canonical_encoding_walks_an_explicit_stack() {
-        /// A depth the native stack would not survive.
-        const DEEP: usize = 100_000;
+    fn canonical_bytes_is_the_wire_encoding() {
+        let value = Value::Tuple(vec![
+            Value::U64(1),
+            Value::List(vec![Value::U64(2)]),
+            Value::Bytes(vec![3, 4]),
+            Value::Key(SubstateKey {
+                owner: Address([5; 16]),
+                local: LocalKey([6; 16]),
+            }),
+        ]);
+        assert_eq!(value.canonical_bytes(), to_vec(&value).unwrap());
+        assert_canonical(&value);
+        assert_canonical(&Value::Bucket {
+            resource: Address([7; 16]),
+        });
+    }
 
-        // Preorder, unchanged by the walk: tag, element count, then the
-        // elements in order.
-        let value = Value::Tuple(vec![Value::U64(1), Value::List(vec![Value::U64(2)])]);
-        let mut expected = vec![7u8];
-        expected.extend(2u64.to_le_bytes());
-        expected.push(1);
-        expected.extend(1u64.to_le_bytes());
-        expected.push(8);
-        expected.extend(1u64.to_le_bytes());
-        expected.push(1);
-        expected.extend(2u64.to_le_bytes());
-        assert_eq!(value.canonical_bytes(), expected);
+    /// The wire cap admits exactly the admissible depths, at both
+    /// boundaries and for the widest leaf: one value level costs at most
+    /// two decoder levels, so the relation is a constant, not a heuristic.
+    #[test]
+    fn the_wire_depth_cap_matches_the_value_depth_gate() {
+        let nest = |mut value: Value, levels: usize| {
+            for _ in 0..levels {
+                value = Value::Tuple(vec![value]);
+            }
+            value
+        };
 
-        // Hashing happens before admission has judged anything, so it
-        // must not abort here. The value is leaked rather than dropped:
-        // `Drop` is derived and does recurse, which is the residual
-        // MAX_VALUE_DEPTH keeps out of the crate in the first place.
-        let mut deep = Value::U64(0);
-        for _ in 0..DEEP {
-            deep = Value::Tuple(vec![deep]);
-        }
-        assert_eq!(deep.depth(), DEEP + 1);
-        assert_eq!(deep.canonical_bytes().len(), DEEP * 9 + 9);
-        std::mem::forget(deep);
+        // Depth MAX with the costliest leaf decodes at the wire cap.
+        let widest = nest(Value::Bytes(vec![1]), MAX_VALUE_DEPTH - 1);
+        assert_eq!(widest.depth(), MAX_VALUE_DEPTH);
+        let bytes = to_vec(&widest).unwrap();
+        assert!(from_slice_with_depth::<Value>(&bytes, MAX_VALUE_WIRE_DEPTH).is_ok());
+
+        // Depth MAX + 1 with the cheapest leaf does not.
+        let deeper = nest(Value::U64(1), MAX_VALUE_DEPTH);
+        assert_eq!(deeper.depth(), MAX_VALUE_DEPTH + 1);
+        let bytes = to_vec(&deeper).unwrap();
+        assert!(from_slice_with_depth::<Value>(&bytes, MAX_VALUE_WIRE_DEPTH).is_err());
+
+        // A value past the encoder's own cap refuses to encode
+        // deterministically instead of exhausting the native stack.
+        let unhashable = nest(Value::U64(1), 70);
+        assert!(to_vec(&unhashable).is_err());
     }
 
     #[test]

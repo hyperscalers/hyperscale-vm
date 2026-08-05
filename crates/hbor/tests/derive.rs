@@ -421,6 +421,30 @@ fn generic_positional_and_nested_shapes_round_trip() {
     assert_canonical(&block);
 }
 
+/// A recursive enum closes its cycle through a `Box`, and its minimum is
+/// decided by its non-recursive variants alone: a self-recursive variant
+/// carries a whole `Self` beside its discriminant, so it can never be the
+/// smallest — which is also what keeps the constant from being a cycle.
+#[test]
+fn a_recursive_enum_derives_and_bounds_itself() {
+    #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+    enum Tree {
+        Leaf(u16),
+        Pair(Box<Self>, Box<Self>),
+    }
+
+    assert_eq!(
+        <Tree as HborWidth>::MIN_ENCODED_LEN,
+        3,
+        "a discriminant and the smallest non-recursive variant"
+    );
+    assert_canonical(&Tree::Leaf(7));
+    assert_canonical(&Tree::Pair(
+        Box::new(Tree::Leaf(1)),
+        Box::new(Tree::Pair(Box::new(Tree::Leaf(2)), Box::new(Tree::Leaf(3)))),
+    ));
+}
+
 #[test]
 fn a_unit_struct_occupies_no_bytes() {
     assert_eq!(to_vec(&Marker).unwrap(), Vec::<u8>::new());

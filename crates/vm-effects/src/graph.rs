@@ -11,12 +11,14 @@
 //! [`crate::admission`]'s job, and admission is the only path from a graph
 //! to the routing view.
 
+use hyperscale_hbor::{Hbor, to_vec};
+
 use crate::hash::Hasher;
 use crate::manifest::ManifestHash;
 use crate::types::{Address, Value};
 
 /// One produced value edge: the `output`-th edge of the `producer` node.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub struct EdgeRef {
     /// The producing node's index.
     pub producer: u32,
@@ -27,7 +29,7 @@ pub struct EdgeRef {
 /// A declarative edge annotation, checked at admission where static and at
 /// execution otherwise. The same constraint language binds subintent
 /// yields.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum Constraint {
     /// The edge must carry at least this amount at execution.
     MinAmount(u128),
@@ -39,7 +41,7 @@ pub enum Constraint {
 }
 
 /// One bound argument of a graph node.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum GraphArg {
     /// A literal from the signed envelope.
     Literal(Value),
@@ -58,7 +60,7 @@ pub enum GraphArg {
 }
 
 /// A method invocation node.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct GraphNode {
     /// The target instance, named in the manifest.
     pub target: Address,
@@ -69,7 +71,7 @@ pub struct GraphNode {
 }
 
 /// The typed dataflow DAG a transaction signs.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct ManifestGraph {
     /// Invocation nodes; every edge's producer index is smaller than its
     /// consumer's.
@@ -79,30 +81,20 @@ pub struct ManifestGraph {
 const DOMAIN_GRAPH_NODE: &[u8] = b"hyperscale-vm/graph-node";
 const DOMAIN_GRAPH: &[u8] = b"hyperscale-vm/graph";
 
-/// The canonical byte form of a constraint list, shared by the graph hash
-/// and the subintent declaration hash.
-pub(crate) fn encode_constraints(out: &mut Vec<u8>, constraints: &[Constraint]) {
-    for constraint in constraints {
-        match constraint {
-            Constraint::MinAmount(amount) => {
-                out.push(2);
-                out.extend(amount.to_le_bytes());
-            }
-            Constraint::MaxAmount(amount) => {
-                out.push(3);
-                out.extend(amount.to_le_bytes());
-            }
-            Constraint::ResourceIs(address) => {
-                out.push(4);
-                out.extend(address.0);
-            }
-        }
-    }
-}
-
 impl ManifestGraph {
     /// The graph's identity through the hasher seam; the evaluation root
     /// for output-type expressions at admission.
+    ///
+    /// Each node hashes as its target, its method, and one part per
+    /// argument — the argument's canonical encoding, so the hashed form
+    /// and the wire form are one byte string, and a constraint or an edge
+    /// reference cannot mean one thing to the hash and another to a
+    /// decoder.
+    ///
+    /// # Panics
+    ///
+    /// Hashed graphs pass the depth gate first, as
+    /// [`Value::canonical_bytes`] requires of the literals this feeds on.
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> ManifestHash {
         let mut node_hashes = Vec::with_capacity(self.nodes.len());
@@ -111,24 +103,7 @@ impl ManifestGraph {
             parts.push(node.target.0.to_vec());
             parts.push(node.method.as_bytes().to_vec());
             for arg in &node.args {
-                let mut bytes = Vec::new();
-                match arg {
-                    GraphArg::Literal(value) => {
-                        bytes.push(0);
-                        bytes.extend(value.canonical_bytes());
-                    }
-                    GraphArg::Edge { edge, constraints } => {
-                        bytes.push(1);
-                        bytes.extend(edge.producer.to_le_bytes());
-                        bytes.extend(edge.output.to_le_bytes());
-                        encode_constraints(&mut bytes, constraints);
-                    }
-                    GraphArg::Param(param) => {
-                        bytes.push(5);
-                        bytes.extend(param.to_le_bytes());
-                    }
-                }
-                parts.push(bytes);
+                parts.push(to_vec(arg).expect("hashed graphs pass the depth gate first"));
             }
             let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
             node_hashes.push(hasher.hash(DOMAIN_GRAPH_NODE, &refs));

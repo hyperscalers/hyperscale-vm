@@ -3,13 +3,16 @@
 
 use std::collections::BTreeMap;
 
+use hyperscale_hbor::Hbor;
+
 use crate::dsl::{Clause, Expr};
 use crate::hash::{Hash32, Hasher};
 use crate::types::{Address, Value};
 
 /// A published package's identity: the hash of its artifact, which covers
 /// the metadata section, so metadata is immutable with the package.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[hbor(transparent)]
 pub struct PackageHash(pub Hash32);
 
 const DOMAIN_PACKAGE: &[u8] = b"hyperscale-vm/package";
@@ -24,7 +27,7 @@ pub fn package_hash(hasher: &dyn Hasher, artifact: &[u8]) -> PackageHash {
 /// A static call site: the callee named by an input-derived address, its
 /// method, and the callee's arguments as expressions over the caller's
 /// inputs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct CallSite {
     /// The callee instance; must evaluate to an address.
     pub target: Expr,
@@ -36,7 +39,7 @@ pub struct CallSite {
 
 /// A method parameter's admitted kind. Bucket parameters consume a value
 /// edge; every other kind binds a literal or envelope input.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum ParamType {
     /// An unsigned 64-bit integer.
     U64,
@@ -78,7 +81,7 @@ impl ParamType {
 }
 
 /// How one guest ABI parameter is built at invocation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum AbiParam {
     /// The capability materialized for this method's effect clause.
     ///
@@ -118,7 +121,7 @@ pub enum AbiParam {
 /// length — `Public` is the absent requirement, and each of the others
 /// requires one virtual signature badge — so a value substitutes rather
 /// than being extended into.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hbor)]
 pub enum Accessibility {
     /// Anyone may name this method on this target. What the caller
     /// supplies is the caller's own, gated wherever it was obtained.
@@ -144,7 +147,7 @@ pub enum Accessibility {
 /// A method's declared access. Its transitive effect set is the fold of its
 /// callees' signatures over the static call graph, which is acyclic — a DAG
 /// fold, never a fixpoint.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct MethodSignature {
     /// Whose authority naming this method on this target requires.
     pub accessibility: Accessibility,
@@ -309,7 +312,7 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
 }
 
 /// Everything routing reads about a published package.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct PackageMetadata {
     /// Effect signatures by method name.
     pub methods: BTreeMap<String, MethodSignature>,

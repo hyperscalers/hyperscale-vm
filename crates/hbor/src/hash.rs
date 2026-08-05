@@ -10,9 +10,31 @@
 
 use core::fmt;
 
+use crate::decode::Decoder;
+use crate::encode::Encoder;
+use crate::error::{DecodeError, EncodeError};
+use crate::{HborDecode, HborEncode, HborWidth};
+
 /// A 32-byte hash value.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Hash32(pub [u8; 32]);
+
+impl HborWidth for Hash32 {
+    const MIN_ENCODED_LEN: usize = 32;
+}
+
+impl HborEncode for Hash32 {
+    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+        encoder.write_fixed(&self.0);
+        Ok(())
+    }
+}
+
+impl HborDecode for Hash32 {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        Ok(Self(decoder.read_array()?))
+    }
+}
 
 impl fmt::Debug for Hash32 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -77,7 +99,8 @@ const fn mix(mut z: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Hasher, TestHasher};
+    use super::{Hash32, Hasher, TestHasher};
+    use crate::{assert_canonical, to_vec};
 
     #[test]
     fn deterministic_and_framed() {
@@ -88,5 +111,11 @@ mod tests {
         assert_ne!(a, TestHasher.hash(b"d", &[b"abc"]));
         // Domains separate.
         assert_ne!(a, TestHasher.hash(b"e", &[b"ab", b"c"]));
+    }
+
+    #[test]
+    fn a_hash_is_its_bytes_on_the_wire() {
+        assert_eq!(to_vec(&Hash32([9; 32])).unwrap(), vec![9u8; 32]);
+        assert_canonical(&Hash32([0xAB; 32]));
     }
 }

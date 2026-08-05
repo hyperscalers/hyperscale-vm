@@ -8,6 +8,8 @@
 //! and a hasher, and nothing else, so evaluation is pure by construction
 //! and identical on every node.
 
+use hyperscale_hbor::Hbor;
+
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::types::{
@@ -35,7 +37,7 @@ pub const MAX_CLAUSE_DEPTH: usize = 4;
 pub const MAX_EFFECTS_PER_SIGNATURE: usize = 4096;
 
 /// An expression over a method's inputs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum Expr {
     /// A literal value.
     Literal(Value),
@@ -95,7 +97,7 @@ pub enum Expr {
 }
 
 /// A mode with its parameters still unevaluated.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum ModeExpr {
     /// Fresh coherent read.
     Read,
@@ -110,7 +112,7 @@ pub enum ModeExpr {
 }
 
 /// An access target expression.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum TargetExpr {
     /// A single substate leaf; the expression must evaluate to a key.
     Point(Expr),
@@ -139,7 +141,7 @@ pub enum TargetExpr {
 }
 
 /// One clause of an effect signature.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum Clause {
     /// A single declared access.
     Effect {

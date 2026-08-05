@@ -260,7 +260,7 @@ mod golden {
             )
             .local
             .0),
-            "03b4df06252365e90d8d6cc4c37fb3a5"
+            "4782c1162063269780e8873647320029"
         );
     }
 
@@ -289,15 +289,15 @@ mod golden {
         let identity = graph.hash(&TestHasher);
         assert_eq!(
             hex(&identity.0.0),
-            "6f1a6c09f6cfa6b220d01c8322d8dcea8dc1049be40cf1ae4ee238d5e72c2aac"
+            "b067c053eef49015efb51d436eb971c2ca1d8d7d1287cd4718ceee3c00892b4d"
         );
         assert_eq!(
             format!("{:016x}", fresh_id(&TestHasher, identity, 1, 0, 0)),
-            "feaaf691e78beadb"
+            "f41c89b7499d51af"
         );
         assert_eq!(
             hex(&fresh_local(&TestHasher, identity, 1, 0, 0).0),
-            "dbea8be791f6aafe46ac2f6357f32aa3"
+            "af519d49b7891cf42042f5654a5e771e"
         );
     }
 }

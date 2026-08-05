@@ -645,6 +645,7 @@ dependencies = [
 name = "hyperscale-vm-effects"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-hbor",
  "proptest",
  "thiserror 2.0.19",
 ]

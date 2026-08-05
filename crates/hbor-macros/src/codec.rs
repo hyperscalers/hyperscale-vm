@@ -3,7 +3,10 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::spanned::Spanned;
-use syn::{Data, DataEnum, DeriveInput, Error, Expr, Fields, Ident, Index, Result, Type};
+use syn::{
+    Data, DataEnum, DeriveInput, Error, Expr, Fields, GenericArgument, Ident, Index, PathArguments,
+    Result, Type,
+};
 
 use crate::attrs::{FieldAttrs, Shape, TypeAttrs, VariantAttrs, reject_unencodable, shape};
 use crate::signing;
@@ -231,6 +234,37 @@ fn capped_opaque(ty: &Type) -> Error {
     )
 }
 
+/// Whether `ty`'s minimum width references `this` type's own.
+///
+/// The width formula recurses through exactly two shapes: a `Box`, which
+/// forwards its contents' width, and a tuple, which sums its components'.
+/// `Vec`, `Option`, maps, and sets have constant minimums whatever they
+/// hold, so `Vec<Self>` recurses in memory but not in the constant.
+/// Anything unrecognized is treated as non-recursive: a false negative is
+/// a loud const-evaluation cycle at compile time, never a wrong constant.
+fn width_reaches(ty: &Type, this: &Ident) -> bool {
+    match ty {
+        Type::Path(path) => {
+            let Some(segment) = path.path.segments.last() else {
+                return false;
+            };
+            if segment.ident == *this || segment.ident == "Self" {
+                return true;
+            }
+            if segment.ident == "Box"
+                && let PathArguments::AngleBracketed(bracketed) = &segment.arguments
+            {
+                return bracketed.args.iter().any(
+                    |arg| matches!(arg, GenericArgument::Type(inner) if width_reaches(inner, this)),
+                );
+            }
+            false
+        }
+        Type::Tuple(tuple) => tuple.elems.iter().any(|elem| width_reaches(elem, this)),
+        _ => false,
+    }
+}
+
 fn min_encoded_len(fields: &Fields) -> TokenStream {
     let terms = fields.iter().map(|field| {
         let ty = &field.ty;
@@ -334,7 +368,17 @@ fn enumeration(name: &Ident, data: &DataEnum) -> Result<(TokenStream, TokenStrea
 
         let reads = decode_fields(&variant.fields, &quote!(#name::#variant_name))?;
         branches.extend(quote! { #tag => #reads, });
-        candidates.push(min_encoded_len(&variant.fields));
+        // A self-recursive variant embeds a whole `Self` beside its
+        // discriminant, so it is strictly wider than the enum's minimum:
+        // leaving it out of the candidates changes the answer not at all
+        // and breaks the const cycle its width would otherwise be.
+        if !variant
+            .fields
+            .iter()
+            .any(|field| width_reaches(&field.ty, name))
+        {
+            candidates.push(min_encoded_len(&variant.fields));
+        }
     }
 
     let encode = quote! {

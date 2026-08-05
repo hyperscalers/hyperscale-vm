@@ -5,6 +5,7 @@ edition.workspace = true
 description = "Effect signatures, the access DSL evaluator, and the routing fold"
 
 [dependencies]
+hyperscale-hbor.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

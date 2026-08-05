@@ -109,6 +109,25 @@ impl<T: HborDecode> HborDecode for Option<T> {
     }
 }
 
+// A box is a name for a place, not a layer: it encodes as its contents,
+// charges no depth of its own, and exists so recursive types can close
+// their cycle in memory without that choice leaking onto the wire.
+impl<T: HborWidth + ?Sized> HborWidth for Box<T> {
+    const MIN_ENCODED_LEN: usize = T::MIN_ENCODED_LEN;
+}
+
+impl<T: HborEncode + ?Sized> HborEncode for Box<T> {
+    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+        (**self).encode(encoder)
+    }
+}
+
+impl<T: HborDecode> HborDecode for Box<T> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        Ok(Self::new(T::decode(decoder)?))
+    }
+}
+
 // Byte arrays only. Hashes, keys, signatures, and addresses are the whole
 // population of fixed-size arrays in this protocol, and a generic `[T; N]`
 // would have to build each value through a heap collection to stay safe —
@@ -193,6 +212,12 @@ mod tests {
             from_slice::<Option<u8>>(&[2, 0]),
             Err(DecodeError::InvalidDiscriminant(2))
         );
+    }
+
+    #[test]
+    fn a_box_is_its_contents_on_the_wire() {
+        assert_eq!(to_vec(&Box::new(7u32)).unwrap(), to_vec(&7u32).unwrap());
+        assert_canonical(&Box::new(vec![1u8, 2]));
     }
 
     #[test]
