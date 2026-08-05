@@ -14,8 +14,8 @@
 use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{
-    Clause, MAX_EFFECTS_PER_SIGNATURE, MethodSignature, ModeExpr, ModeKind, PackageMetadata,
-    ParamType, TargetExpr,
+    Accessibility, Clause, MAX_EFFECTS_PER_SIGNATURE, MethodSignature, ModeExpr, ModeKind,
+    PackageMetadata, ParamType, TargetExpr,
 };
 
 use crate::trace::Trace;
@@ -207,6 +207,12 @@ impl Builder {
         };
         let method = Method {
             signature: MethodSignature {
+                // Neither the accessibility nor the ABI binding is
+                // something a trace can see: one is a claim about who may
+                // call the method, the other about the export's parameter
+                // list, and a body determines neither. Both are authored
+                // beside the WIT and land on the signature there.
+                accessibility: Accessibility::default(),
                 params: params.to_vec(),
                 abi: Vec::new(),
                 outputs: recorded.outputs,

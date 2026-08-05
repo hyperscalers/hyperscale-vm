@@ -144,7 +144,7 @@ pub fn wide_account_metadata() -> PackageMetadata {
             abi: Vec::new(),
             outputs: vec![Expr::Arg(0)],
             effects,
-            calls: vec![],
+            ..MethodSignature::default()
         },
     );
     methods
@@ -158,15 +158,12 @@ pub fn router_metadata() -> PackageMetadata {
     methods.methods.insert(
         "forward".into(),
         MethodSignature {
-            params: vec![],
-            abi: Vec::new(),
-            outputs: vec![],
-            effects: vec![],
             calls: vec![CallSite {
                 target: Expr::Arg(0),
                 method: "deposit".into(),
                 args: vec![Expr::Arg(1)],
             }],
+            ..MethodSignature::default()
         },
     );
     methods

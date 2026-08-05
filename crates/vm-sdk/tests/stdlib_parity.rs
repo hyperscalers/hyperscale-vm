@@ -155,9 +155,10 @@ fn assert_parity(traced: &Blueprint, authored: &PackageMetadata, package: &str) 
             .get(name)
             .unwrap_or_else(|| panic!("{package}: the SDK declared no `{name}`"));
         // Everything a body determines, compared field by field. The ABI
-        // binding is deliberately not among them: a trace sees which
-        // handles a body opened and in what order, never the component's
-        // exported parameter list, which is authored beside the WIT. What
+        // binding and the accessibility are deliberately not among them:
+        // a trace sees which handles a body opened and in what order,
+        // never the component's exported parameter list and never a claim
+        // about who may call it. Both are authored beside the WIT. What
         // validates the binding is the publish check, against the export
         // type in the artifact itself.
         assert_eq!(got.params, signature.params, "{package}::{name} params");

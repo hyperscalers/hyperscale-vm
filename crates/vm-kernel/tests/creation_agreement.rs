@@ -19,9 +19,6 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     package.methods.insert(
         "spawn".into(),
         MethodSignature {
-            params: vec![],
-            abi: Vec::new(),
-            outputs: vec![],
             effects: vec![
                 Clause::Effect {
                     target: TargetExpr::Point(Expr::FreshKey { slot: 0 }),
@@ -39,7 +36,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
                     mode: ModeExpr::Write,
                 },
             ],
-            calls: vec![],
+            ..MethodSignature::default()
         },
     );
     let creator = Address([0x11; 16]);

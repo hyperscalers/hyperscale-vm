@@ -488,7 +488,6 @@ fn mirror_metadata() -> PackageMetadata {
         MethodSignature {
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(1), AbiParam::Bucket(0)],
-            outputs: vec![],
             effects: vec![
                 Clause::Effect {
                     target: TargetExpr::Point(self_child(CLAIMS, vec![resource_of_arg0()])),
@@ -499,7 +498,7 @@ fn mirror_metadata() -> PackageMetadata {
                     mode: ModeExpr::Delta,
                 },
             ],
-            calls: vec![],
+            ..MethodSignature::default()
         },
     );
     metadata.events = vec!["withdrawn".into(), "deposited".into()];

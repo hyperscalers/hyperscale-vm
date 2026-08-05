@@ -106,11 +106,30 @@ pub enum AbiParam {
     Derived(Expr),
 }
 
+/// Whose authority a method's target admits.
+///
+/// A package declares this beside the code it describes, because an
+/// address is a hash and nothing about a target can be read off it: only
+/// the package knows whether a method spends the target's funds, writes
+/// its leaves, or merely offers something to whoever asks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Accessibility {
+    /// Anyone may name this method on this target. What the caller
+    /// supplies is the caller's own, gated wherever it was obtained.
+    #[default]
+    Public,
+    /// Only an envelope carrying the target's own authority may name it.
+    /// The satisfier is a signature the target's address derives from.
+    RequiresTargetAuth,
+}
+
 /// A method's declared access. Its transitive effect set is the fold of its
 /// callees' signatures over the static call graph, which is acyclic — a DAG
 /// fold, never a fixpoint.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MethodSignature {
+    /// Whose authority naming this method on this target requires.
+    pub accessibility: Accessibility,
     /// The method's parameter kinds, in order; admission types every node
     /// against them.
     pub params: Vec<ParamType>,
@@ -358,12 +377,25 @@ impl InstanceRegistry {
 #[cfg(test)]
 mod tests {
     use super::{
-        AbiError, AbiParam, MetadataCache, MethodSignature, PackageHash, PackageMetadata,
-        ParamType, check_abi,
+        AbiError, AbiParam, Accessibility, MetadataCache, MethodSignature, PackageHash,
+        PackageMetadata, ParamType, check_abi,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::hash::Hash32;
-    use crate::stdlib::{account_metadata, amm_metadata, book_metadata, splitter_metadata};
+    use crate::stdlib::{
+        account_metadata, amm_metadata, book_metadata, splitter_metadata, staking_metadata,
+    };
+
+    /// Every stdlib package, in the order the exhaustive tests read them.
+    fn stdlib() -> Vec<(&'static str, PackageMetadata)> {
+        vec![
+            ("account", account_metadata()),
+            ("amm", amm_metadata()),
+            ("book", book_metadata()),
+            ("splitter", splitter_metadata()),
+            ("staking", staking_metadata()),
+        ]
+    }
 
     fn clause() -> Clause {
         Clause::Effect {
@@ -453,15 +485,46 @@ mod tests {
     fn every_authored_signature_is_well_formed() {
         // The stdlib is the corpus's whole surface, so a rule it breaks
         // is a rule nothing else could be held to.
-        for package in [
-            account_metadata(),
-            amm_metadata(),
-            book_metadata(),
-            splitter_metadata(),
-        ] {
-            for (name, signature) in &package.methods {
-                assert_eq!(check_abi(signature), Ok(()), "{name}");
+        for (package, metadata) in stdlib() {
+            for (name, signature) in &metadata.methods {
+                assert_eq!(check_abi(signature), Ok(()), "{package}::{name}");
             }
         }
+    }
+
+    #[test]
+    fn every_stdlib_method_declares_who_may_call_it() {
+        // Exhaustive on purpose. `Public` is the default, so a method
+        // added without a thought about its callers gets the permissive
+        // value silently — and the shape that is easiest to miss moves no
+        // funds at all: `stamp-entropy` writes a leaf under its target's
+        // prefix and consumes nothing, which is the same class as any
+        // later per-account module. Adding a method breaks this list,
+        // which is the point.
+        let expected = [
+            ("account", "deposit", Accessibility::Public),
+            (
+                "account",
+                "stamp-entropy",
+                Accessibility::RequiresTargetAuth,
+            ),
+            ("account", "withdraw", Accessibility::RequiresTargetAuth),
+            ("amm", "swap", Accessibility::Public),
+            ("book", "fill-asks", Accessibility::Public),
+            ("book", "place-ask", Accessibility::Public),
+            ("splitter", "take", Accessibility::Public),
+            ("staking", "stake", Accessibility::Public),
+            ("staking", "unstake", Accessibility::Public),
+        ];
+        let packages = stdlib();
+        let declared: Vec<_> = packages
+            .iter()
+            .flat_map(|(package, metadata)| {
+                metadata.methods.iter().map(move |(name, signature)| {
+                    (*package, name.as_str(), signature.accessibility)
+                })
+            })
+            .collect();
+        assert_eq!(declared, expected);
     }
 }

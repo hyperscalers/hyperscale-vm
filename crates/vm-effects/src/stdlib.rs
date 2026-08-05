@@ -7,7 +7,7 @@
 //! phase; what is final here is the signature format they are written in.
 
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
-use crate::metadata::{AbiParam, MethodSignature, PackageMetadata, ParamType};
+use crate::metadata::{AbiParam, Accessibility, MethodSignature, PackageMetadata, ParamType};
 use crate::types::{RoleId, Value};
 
 /// A fungible balance cell under its holder.
@@ -43,6 +43,14 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 /// `stamp-entropy()`: an exclusive write of the transaction's randomness
 /// draw into the account's entropy leaf.
 ///
+/// Spending and writing require the account's own authority; being paid
+/// does not. Anyone may credit you, and a transfer therefore still
+/// composes under the sender's single signature — the recipient is not
+/// asked for one, because nothing about a deposit is theirs to refuse.
+/// The stamp is gated for the same reason the withdrawal is, though it
+/// moves nothing: it writes a leaf under the target's prefix, and every
+/// later method that does the same belongs on this side of the split.
+///
 /// No method reads another account's balance. A precondition on mutable
 /// state is a fresh [`ModeExpr::Read`], which makes the read's owner a
 /// participant — the account surface has no shape that wants one yet.
@@ -52,6 +60,7 @@ pub fn account_metadata() -> PackageMetadata {
     methods.methods.insert(
         "withdraw".into(),
         MethodSignature {
+            accessibility: Accessibility::RequiresTargetAuth,
             params: vec![ParamType::Address, ParamType::U128],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
             outputs: vec![Expr::Arg(0)],
@@ -65,6 +74,7 @@ pub fn account_metadata() -> PackageMetadata {
     methods.methods.insert(
         "deposit".into(),
         MethodSignature {
+            accessibility: Accessibility::Public,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             outputs: vec![],
@@ -90,6 +100,7 @@ pub fn account_metadata() -> PackageMetadata {
     methods.methods.insert(
         "stamp-entropy".into(),
         MethodSignature {
+            accessibility: Accessibility::RequiresTargetAuth,
             params: vec![],
             abi: vec![AbiParam::Handle(0)],
             outputs: vec![],
@@ -128,6 +139,11 @@ pub fn account_metadata() -> PackageMetadata {
 /// pool, because a pool that named itself could name a different one: the
 /// kernel stamps an event's emitter, so the instance is the subject and
 /// nothing about it is the guest's to choose.
+///
+/// Both methods are public, and that is not an oversight. A pool instance
+/// is owned by nobody; the authority behind a delegation is the funds the
+/// caller supplies, and those were gated upstream at the withdrawal that
+/// produced them.
 #[must_use]
 pub fn staking_metadata() -> PackageMetadata {
     /// The staked resource — what a delegation is denominated in.
@@ -139,6 +155,7 @@ pub fn staking_metadata() -> PackageMetadata {
     methods.methods.insert(
         "stake".into(),
         MethodSignature {
+            accessibility: Accessibility::Public,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             outputs: vec![Expr::Config(UNIT_RESOURCE)],
@@ -152,6 +169,7 @@ pub fn staking_metadata() -> PackageMetadata {
     methods.methods.insert(
         "unstake".into(),
         MethodSignature {
+            accessibility: Accessibility::Public,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             outputs: vec![],
@@ -181,6 +199,7 @@ pub fn amm_metadata() -> PackageMetadata {
     methods.methods.insert(
         "swap".into(),
         MethodSignature {
+            accessibility: Accessibility::Public,
             params: vec![ParamType::Bucket, ParamType::U128],
             abi: vec![
                 AbiParam::Handle(0),
@@ -223,6 +242,7 @@ pub fn book_metadata() -> PackageMetadata {
     methods.methods.insert(
         "place-ask".into(),
         MethodSignature {
+            accessibility: Accessibility::Public,
             params: vec![ParamType::U64, ParamType::Bucket],
             abi: vec![
                 AbiParam::Handle(0),
@@ -258,6 +278,7 @@ pub fn book_metadata() -> PackageMetadata {
     methods.methods.insert(
         "fill-asks".into(),
         MethodSignature {
+            accessibility: Accessibility::Public,
             params: vec![ParamType::U64, ParamType::U64, ParamType::Bucket],
             abi: vec![
                 AbiParam::Handle(0),
