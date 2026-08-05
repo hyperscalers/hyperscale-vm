@@ -4,6 +4,7 @@ members = [
     "crates/hbor",
     "crates/hbor-macros",
     "crates/vm-effects",
+    "crates/vm-types",
     "crates/vm-harness",
     "crates/vm-kernel",
     "crates/vm-ref",
@@ -21,6 +22,7 @@ edition = "2024"
 hyperscale-hbor = { path = "crates/hbor" }
 hyperscale-hbor-macros = { path = "crates/hbor-macros" }
 hyperscale-vm-effects = { path = "crates/vm-effects" }
+hyperscale-vm-types = { path = "crates/vm-types" }
 hyperscale-vm-kernel = { path = "crates/vm-kernel" }
 hyperscale-vm-ref = { path = "crates/vm-ref" }
 hyperscale-vm-runtime = { path = "crates/vm-runtime" }

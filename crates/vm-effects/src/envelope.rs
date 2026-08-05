@@ -22,17 +22,17 @@
 use std::collections::BTreeSet;
 
 use hyperscale_hbor::{Hbor, to_vec};
+pub use hyperscale_vm_types::MAX_SUBINTENTS;
 
-use crate::admission::{AdmissionError, Admitted, IntentView, admit_intents, check_value_depth};
+use crate::admission::{
+    AdmissionError, Admitted, IntentView, MAX_YIELD_PARAMS, admit_intents, check_value_depth,
+};
 use crate::graph::{Constraint, EdgeRef, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::metadata::{InstanceRegistry, MetadataCache};
 use crate::route::{RouteError, Routing, ShardResolver, route};
 use crate::types::{Address, Effect, EffectTarget, Mode, RoleId, SubstateKey, child_key};
-
-/// The bound on subintents one envelope may compose.
-pub const MAX_SUBINTENTS: usize = 32;
 
 /// The kernel-reserved role of subintent nullifier substates under a
 /// signer's prefix. Stdlib roles count up from one; the top of the role
@@ -65,6 +65,7 @@ pub struct IntentDecl {
     pub graph: ManifestGraph,
     /// The declared yield parameters, each consumed by exactly one node
     /// argument.
+    #[hbor(max = MAX_YIELD_PARAMS)]
     pub params: Vec<YieldParam>,
 }
 
@@ -124,6 +125,7 @@ pub struct Subintent {
     /// The signer's account prefix — the owner of the nullifier.
     pub signer: Address,
     /// The composition's binding for each declared parameter.
+    #[hbor(max = MAX_YIELD_PARAMS)]
     pub bindings: Vec<YieldBinding>,
 }
 
@@ -134,8 +136,10 @@ pub struct EnvelopeTree {
     /// The composer's own intent.
     pub root: IntentDecl,
     /// The composition's binding for each root parameter.
+    #[hbor(max = MAX_YIELD_PARAMS)]
     pub root_bindings: Vec<YieldBinding>,
     /// The bound subintents, in envelope order.
+    #[hbor(max = MAX_SUBINTENTS)]
     pub subintents: Vec<Subintent>,
 }
 

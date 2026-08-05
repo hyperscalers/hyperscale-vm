@@ -1,0 +1,12 @@
+[package]
+name = "hyperscale-vm-types"
+version.workspace = true
+edition.workspace = true
+description = "The wire vocabulary both workspaces speak: addresses, the signed envelope, the execution record"
+
+[dependencies]
+hyperscale-hbor.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

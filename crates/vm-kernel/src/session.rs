@@ -155,36 +155,12 @@ pub enum SessionTrap {
     Store(#[from] StoreError),
 }
 
-/// Events a transaction may emit.
-pub const MAX_EVENTS_PER_TX: usize = 256;
-
-/// Bytes one event's payload may carry.
-pub const MAX_EVENT_PAYLOAD_BYTES: usize = 4096;
-
-/// Event types one package may declare, and so the ceiling an event's
-/// type index is checked against.
-///
-/// The kernel bounds the index and resolves nothing: a package's event
-/// table is metadata for consumers, and an index past a package's own
-/// table is that package's defect, not a disagreement between replicas.
-pub const MAX_EVENT_TYPES: u32 = 1024;
-
-/// One emitted event: what the transaction said happened.
-///
-/// The emitter is the invoked instance's address, stamped by the kernel
-/// rather than passed by the guest — attribution is what decides which
-/// shard stores the event, so it cannot be a claim. The type is an index
-/// into the emitting package's event table; packages are content-addressed
-/// and immutable, so an index can never come to mean something else.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Event {
-    /// The instance that emitted it.
-    pub emitter: Address,
-    /// The index into the emitting package's event table.
-    pub event_type: u32,
-    /// The event's opaque payload.
-    pub payload: Vec<u8>,
-}
+// The emission caps and the event record are the shared vocabulary: the
+// same constants bound the kernel's emission here and the wire's decode in
+// the consensus workspace, so the two cannot drift.
+pub use hyperscale_vm_effects::{
+    Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
+};
 
 /// The deterministic environment a transaction executes under.
 #[derive(Clone, Copy, Debug)]
@@ -195,67 +171,9 @@ pub struct EnvInputs {
     pub randomness: [u8; 32],
 }
 
-/// How execution ended: the abort taxonomy as the receipt records it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Outcome {
-    /// The export returned; its scalar result if it had one.
-    Completed {
-        /// The export's return value, when the signature has one.
-        value: Option<u64>,
-    },
-    /// A guest defect: a trap, a panic, a kernel refusal of bad guest
-    /// arguments, a declaration defect. The sender's fault; priced at the
-    /// sender.
-    UserError {
-        /// The deterministic reason class.
-        reason: String,
-    },
-    /// A lost deterministic race: a declared reservation the committed
-    /// balance could not cover — aborted before any execution — or an
-    /// unconditional debit past the floor of committed minus outstanding
-    /// reservations, aborted at commit with its fuel charged.
-    Infeasible {
-        /// The cell that could not cover it.
-        key: SubstateKey,
-        /// The uncovered amount.
-        amount: u128,
-    },
-    /// A signed edge bound the produced amount did not meet.
-    ///
-    /// The manifest's own guarantee, asserted independently of the callee:
-    /// a producer returning less than the consumer declared fails the
-    /// transaction whatever the producer's own code checked. Priced with
-    /// [`Outcome::Infeasible`] rather than as a defect — the sender
-    /// declared a bound and the world moved between signing and
-    /// execution, which is a lost race.
-    ConstraintUnmet {
-        /// The consuming node.
-        node: u32,
-        /// The consumed parameter's position on that node.
-        param: u32,
-        /// What the edge actually carried.
-        amount: u128,
-    },
-    /// A subintent this transaction commits was already spent.
-    ///
-    /// The composer lost a race it could not have won: canonical order
-    /// picks between two compositions carrying one subintent, an earlier
-    /// block may have committed it, or its signer may have cancelled it
-    /// by spending the nullifier directly. None of those is visible to a
-    /// composer at signing time, so this is priced with
-    /// [`Outcome::Infeasible`] — a conflict tiebreak and a stale
-    /// declaration are the two cases the taxonomy names.
-    NullifierSpent {
-        /// The nullifier cell an earlier committer wrote.
-        key: SubstateKey,
-    },
-    /// A kernel or store invariant failure — never the sender's fault, and
-    /// never expected to occur.
-    ProtocolError {
-        /// The deterministic reason class.
-        reason: String,
-    },
-}
+/// How execution ended — the shared abort taxonomy, whose docs live with
+/// the type.
+pub use hyperscale_vm_effects::Outcome;
 
 /// This transaction's commutative movement on one amount cell: checked
 /// credit and debit totals.

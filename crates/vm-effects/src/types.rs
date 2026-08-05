@@ -1,55 +1,12 @@
 //! Keys, values, modes, and effect targets — the vocabulary shared by the
 //! DSL evaluator, the router, and the kernel.
 
-use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{Hbor, to_vec};
+pub use hyperscale_vm_types::{Address, LocalKey, SubstateKey};
 
 use crate::hash::Hasher;
-
-/// A global object's address: its 16-byte owner prefix in the JMT key space.
-///
-/// Every substate an object owns lives under this prefix, and a shard
-/// boundary never cuts through a prefix, so an address resolves to exactly
-/// one shard.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
-#[hbor(transparent)]
-pub struct Address(pub [u8; 16]);
-
-impl fmt::Debug for Address {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Address(")?;
-        for byte in &self.0 {
-            write!(f, "{byte:02x}")?;
-        }
-        write!(f, ")")
-    }
-}
-
-/// The local half of a substate key, assigned within an owner's prefix.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
-#[hbor(transparent)]
-pub struct LocalKey(pub [u8; 16]);
-
-impl fmt::Debug for LocalKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "LocalKey(")?;
-        for byte in &self.0 {
-            write!(f, "{byte:02x}")?;
-        }
-        write!(f, ")")
-    }
-}
-
-/// A full JMT leaf key: owner prefix followed by the local half.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
-pub struct SubstateKey {
-    /// The owning object's address; fixes the key's shard.
-    pub owner: Address,
-    /// The slot within the owner's prefix.
-    pub local: LocalKey,
-}
 
 /// A shard identity, as resolved from an address prefix.
 ///

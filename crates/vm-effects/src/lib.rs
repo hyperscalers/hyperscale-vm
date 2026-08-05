@@ -19,6 +19,7 @@
 //! the runtime or the protocol workspace.
 
 pub mod admission;
+pub mod artifact;
 pub mod dsl;
 pub mod envelope;
 pub mod footprint;
@@ -33,6 +34,7 @@ pub mod types;
 pub mod work;
 
 pub use admission::{AdmissionError, Admitted, MAX_YIELD_PARAMS, admit};
+pub use artifact::{ArtifactError, METADATA_SECTION, attach_metadata, extract_metadata};
 pub use dsl::{
     Clause, Declaration, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, evaluate_declaration,
@@ -49,6 +51,9 @@ pub use footprint::{
 };
 pub use graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
 pub use hash::{Hash32, Hasher, TestHasher};
+pub use hyperscale_vm_types::{
+    Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome,
+};
 pub use invoke::{CallArg, EDGE_CELL_BYTES, EdgeBound, NodeCall};
 pub use manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{

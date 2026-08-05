@@ -646,6 +646,7 @@ name = "hyperscale-vm-effects"
 version = "0.1.0"
 dependencies = [
  "hyperscale-hbor",
+ "hyperscale-vm-types",
  "proptest",
  "thiserror 2.0.19",
 ]
@@ -715,6 +716,14 @@ name = "hyperscale-vm-stdlib"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-effects",
+]
+
+[[package]]
+name = "hyperscale-vm-types"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-hbor",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

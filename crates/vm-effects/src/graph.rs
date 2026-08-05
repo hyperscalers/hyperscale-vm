@@ -15,6 +15,7 @@ use hyperscale_hbor::{Hbor, to_vec};
 
 use crate::hash::Hasher;
 use crate::manifest::ManifestHash;
+use crate::route::MAX_MANIFEST_NODES;
 use crate::types::{Address, Value};
 
 /// One produced value edge: the `output`-th edge of the `producer` node.
@@ -75,6 +76,7 @@ pub struct GraphNode {
 pub struct ManifestGraph {
     /// Invocation nodes; every edge's producer index is smaller than its
     /// consumer's.
+    #[hbor(max = MAX_MANIFEST_NODES)]
     pub nodes: Vec<GraphNode>,
 }
 
