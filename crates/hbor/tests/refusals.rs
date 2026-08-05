@@ -30,3 +30,12 @@ fn the_derive_refuses_a_preimage_that_would_mislead() {
     refuse.compile_fail("tests/refusals/signing_domain_on_enum.rs");
     refuse.compile_fail("tests/refusals/empty_signing_domain.rs");
 }
+
+/// A tree whose leaves do not partition the value is not a tree over the
+/// value, whatever it roots to.
+#[test]
+fn the_derive_refuses_a_tree_with_nothing_to_cover() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/merkle_unit_struct.rs");
+    refuse.compile_fail("tests/refusals/merkle_transparent.rs");
+}

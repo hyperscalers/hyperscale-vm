@@ -1,0 +1,7 @@
+error: a type with no fields has no leaves, and its root would be shared by every value
+ --> tests/refusals/merkle_unit_struct.rs:3:16
+  |
+3 | #[derive(Hbor, HborMerkle)]
+  |                ^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `HborMerkle` (in Nightly builds, run with -Z macro-backtrace for more info)

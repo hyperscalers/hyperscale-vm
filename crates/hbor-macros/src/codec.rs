@@ -265,12 +265,17 @@ fn transparent(fields: &Fields) -> Result<(TokenStream, TokenStream, TokenStream
     Ok((encode, decode, min))
 }
 
-fn enumeration(name: &Ident, data: &DataEnum) -> Result<(TokenStream, TokenStream, TokenStream)> {
+/// The wire byte of every variant, in declaration order.
+///
+/// The single place discriminants are resolved: the codec and the merkle
+/// chunking both read from here, so a variant cannot carry one tag on the
+/// wire and another in its tree.
+///
+/// # Errors
+///
+/// On a duplicate discriminant, or an enum too large to index by byte.
+pub fn variant_tags(data: &DataEnum) -> Result<Vec<u8>> {
     let mut seen: Vec<(u8, Span)> = Vec::new();
-    let mut arms = TokenStream::new();
-    let mut branches = TokenStream::new();
-    let mut candidates = Vec::new();
-
     for (index, variant) in data.variants.iter().enumerate() {
         let attrs = VariantAttrs::parse(&variant.attrs)?;
         let tag = match attrs.discriminant {
@@ -291,7 +296,16 @@ fn enumeration(name: &Ident, data: &DataEnum) -> Result<(TokenStream, TokenStrea
             return Err(error);
         }
         seen.push((tag, variant.ident.span()));
+    }
+    Ok(seen.into_iter().map(|(tag, _)| tag).collect())
+}
 
+fn enumeration(name: &Ident, data: &DataEnum) -> Result<(TokenStream, TokenStream, TokenStream)> {
+    let mut arms = TokenStream::new();
+    let mut branches = TokenStream::new();
+    let mut candidates = Vec::new();
+
+    for (variant, tag) in data.variants.iter().zip(variant_tags(data)?) {
         let variant_name = &variant.ident;
         let bindings = variant.fields.iter().enumerate().map(|(position, field)| {
             let name = binding(position, field.ident.as_ref());

@@ -46,6 +46,8 @@ pub mod encode;
 pub mod error;
 pub mod varint;
 
+pub mod hash;
+pub mod merkle;
 pub mod signing;
 
 mod collection;
@@ -55,7 +57,9 @@ pub use canonical::{assert_canonical, assert_canonical_at_depth};
 pub use decode::Decoder;
 pub use encode::Encoder;
 pub use error::{DecodeError, EncodeError};
-pub use hyperscale_hbor_macros::Hbor;
+pub use hash::{Hash32, Hasher};
+pub use hyperscale_hbor_macros::{Hbor, HborMerkle};
+pub use merkle::Chunked;
 pub use signing::HborSigned;
 pub use varint::MAX_LENGTH;
 

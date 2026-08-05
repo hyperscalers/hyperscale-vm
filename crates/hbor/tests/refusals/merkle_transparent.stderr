@@ -1,0 +1,5 @@
+error: a transparent wrapper is its inner type on the wire; chunk the inner type
+ --> tests/refusals/merkle_transparent.rs:5:8
+  |
+5 | struct ValidatorId(u64);
+  |        ^^^^^^^^^^^

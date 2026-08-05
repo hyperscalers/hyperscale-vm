@@ -54,6 +54,7 @@
 
 mod attrs;
 mod codec;
+mod merkle;
 mod signing;
 
 use proc_macro::TokenStream;
@@ -68,4 +69,18 @@ use syn::{DeriveInput, parse_macro_input};
 pub fn hbor(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     codec::derive(&input).map_or_else(|error| error.to_compile_error().into(), Into::into)
+}
+
+/// Derive `Chunked`: one merkle leaf per field, in declaration order.
+///
+/// A type deriving this has its root as its identity. Hashing its encoding
+/// separately alongside would be a second hash for one value, which is what
+/// this encoding exists to avoid.
+///
+/// An enum's discriminant is its own leaf, so which variant a value is can be
+/// proven without revealing the variant's content.
+#[proc_macro_derive(HborMerkle, attributes(hbor))]
+pub fn hbor_merkle(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    merkle::derive(&input).map_or_else(|error| error.to_compile_error().into(), Into::into)
 }
