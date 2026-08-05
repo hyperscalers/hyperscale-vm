@@ -112,6 +112,12 @@ pub enum AbiParam {
 /// address is a hash and nothing about a target can be read off it: only
 /// the package knows whether a method spends the target's funds, writes
 /// its leaves, or merely offers something to whoever asks.
+///
+/// Every value is a whole rule rather than a fragment of a language. The
+/// expression language that replaces them says the same things at more
+/// length — `Public` is the absent requirement, and each of the others
+/// requires one virtual signature badge — so a value substitutes rather
+/// than being extended into.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Accessibility {
     /// Anyone may name this method on this target. What the caller
@@ -121,6 +127,18 @@ pub enum Accessibility {
     /// Only an envelope carrying the target's own authority may name it.
     /// The satisfier is a signature the target's address derives from.
     RequiresTargetAuth,
+    /// Only an envelope carrying the authority of the principal named at
+    /// this slot of the target's creation-fixed configuration may name
+    /// it. The satisfier is a signature that principal's address derives
+    /// from.
+    ///
+    /// This is how an object nobody owns admits somebody: a pool
+    /// instance's address derives from no key, so its own authority is
+    /// unsatisfiable, while a configuration field can name a principal
+    /// whose is not. Fixed at creation like the rest of an instance's
+    /// configuration, which is what keeps the check a pure function of
+    /// signed content and immutable metadata.
+    RequiresConfiguredAuth(u32),
 }
 
 /// A method's declared access. Its transitive effect set is the fold of its
@@ -513,7 +531,22 @@ mod tests {
             ("book", "fill-asks", Accessibility::Public),
             ("book", "place-ask", Accessibility::Public),
             ("splitter", "take", Accessibility::Public),
+            (
+                "staking",
+                "deactivate-validator",
+                Accessibility::RequiresConfiguredAuth(2),
+            ),
+            (
+                "staking",
+                "register-validator",
+                Accessibility::RequiresConfiguredAuth(2),
+            ),
             ("staking", "stake", Accessibility::Public),
+            (
+                "staking",
+                "unjail",
+                Accessibility::RequiresConfiguredAuth(2),
+            ),
             ("staking", "unstake", Accessibility::Public),
         ];
         let packages = stdlib();

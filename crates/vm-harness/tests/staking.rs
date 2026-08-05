@@ -18,7 +18,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use hyperscale_vm_effects::stdlib::{UNBONDING, VAULT, account_metadata, staking_metadata};
+use hyperscale_vm_effects::stdlib::{
+    UNBONDING, VALIDATORS, VAULT, account_metadata, staking_metadata,
+};
 use hyperscale_vm_effects::{
     Address, Constraint, EdgeRef, EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceMeta,
     InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
@@ -27,8 +29,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
-    InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, SubstateStore,
-    TxHash, decode_amount, encode_amount, execute_batch,
+    InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, Receipt,
+    SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
@@ -48,7 +50,18 @@ const POOL: Address = Address([0x50; 16]);
 const XRD: Address = Address([0xE1; 16]);
 /// The resource this pool issues against delegations.
 const UNIT: Address = Address([0xE2; 16]);
+/// The principal this pool's validator surface admits. Nothing here
+/// enforces that — the check is at admission, against the envelope's
+/// signatures — so what these tests exercise is the surface's behaviour
+/// once a call reaches it.
+const OPERATOR: Address = Address([0x0B; 16]);
 const FUEL: u64 = 1_000_000_000;
+
+/// A validator the pool operates, and the consensus material a
+/// registration carries for it.
+const VALIDATOR: u64 = 42;
+const PUBKEY: [u8; 48] = [0xC1; 48];
+const POSSESSION_PROOF: [u8; 96] = [0xC2; 96];
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
@@ -70,8 +83,9 @@ fn staking_pkg() -> PackageHash {
 }
 
 /// Two packages, two kinds of instance: the account, and the pool with its
-/// creation-fixed configuration — the resource it stakes and the one it
-/// issues. Nothing configures which pool it is; the emitter answers that.
+/// creation-fixed configuration — the resource it stakes, the one it
+/// issues, and the operator its validator surface admits. Nothing
+/// configures which pool it is; the emitter answers that.
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
     cache.publish(account_pkg(), account_metadata());
@@ -88,7 +102,11 @@ fn world() -> (MetadataCache, InstanceRegistry) {
         POOL,
         InstanceMeta {
             package: staking_pkg(),
-            config: vec![Value::Address(XRD), Value::Address(UNIT)],
+            config: vec![
+                Value::Address(XRD),
+                Value::Address(UNIT),
+                Value::Address(OPERATOR),
+            ],
         },
     );
     (cache, instances)
@@ -166,6 +184,39 @@ fn unstake_graph(amount: u128) -> ManifestGraph {
                 args: vec![from_edge(0, UNIT)],
             },
         ],
+    }
+}
+
+/// The pool's own record of one validator it operates.
+fn validator_leaf(pool: Address, validator: u64) -> SubstateKey {
+    child_key(
+        &TestHasher,
+        pool,
+        VALIDATORS,
+        &[Value::U64(validator).canonical_bytes()],
+    )
+}
+
+fn operator_node(method: &str, validator: u64, extra: Vec<GraphArg>) -> GraphNode {
+    let mut args = vec![GraphArg::Literal(Value::U64(validator))];
+    args.extend(extra);
+    GraphNode {
+        target: POOL,
+        method: method.into(),
+        args,
+    }
+}
+
+fn register_graph(validator: u64) -> ManifestGraph {
+    ManifestGraph {
+        nodes: vec![operator_node(
+            "register-validator",
+            validator,
+            vec![
+                GraphArg::Literal(Value::Bytes(PUBKEY.to_vec())),
+                GraphArg::Literal(Value::Bytes(POSSESSION_PROOF.to_vec())),
+            ],
+        )],
     }
 }
 
@@ -345,7 +396,31 @@ fn amount_of(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
         .map_or(0, |cell| decode_amount(cell).unwrap())
 }
 
-/// Execute on both runtimes over both packages and assert byte-identical
+/// One outcome's receipts with each guest defect reduced to the bare fact
+/// that one happened.
+///
+/// Everything else compares whole. A [`Outcome::UserError`] reason is the
+/// engine's own text and the two runtimes word theirs differently — the
+/// blessed engine names the export and the trapping instruction, the
+/// reference interpreter names the trap — so the reason is the one field
+/// they are not expected to agree on. It reaches no consensus artifact:
+/// a failed transaction commits `ConsensusReceipt::Failed`, which carries
+/// no reason at all.
+fn comparable(outcome: &BatchOutcome) -> BTreeMap<TxHash, Receipt> {
+    outcome
+        .receipts
+        .iter()
+        .map(|(tx, receipt)| {
+            let mut receipt = receipt.clone();
+            if let Outcome::UserError { reason } = &mut receipt.outcome {
+                reason.clear();
+            }
+            (*tx, receipt)
+        })
+        .collect()
+}
+
+/// Execute on both runtimes over both packages and assert identical
 /// receipts and end state; returns the blessed outcome.
 fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<BatchOutcome> {
     let engine = blessed_engine()?;
@@ -390,7 +465,8 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<BatchOutcome> {
     )
     .unwrap();
     assert_eq!(
-        blessed_outcome.receipts, ref_outcome.receipts,
+        comparable(&blessed_outcome),
+        comparable(&ref_outcome),
         "lanes diverged"
     );
     assert_eq!(
@@ -477,6 +553,152 @@ fn the_emitter_names_the_pool_and_the_guest_cannot() -> Result<()> {
     assert!(
         events.iter().any(|e| e.emitter == ALICE),
         "the account emitted under its own address",
+    );
+    Ok(())
+}
+
+/// The registration payload the beacon's witness lift decodes, pinned at
+/// the boundary that produces it.
+fn registration_payload(validator: u64) -> Vec<u8> {
+    let mut payload = validator.to_le_bytes().to_vec();
+    payload.extend_from_slice(&PUBKEY);
+    payload.extend_from_slice(&POSSESSION_PROOF);
+    payload
+}
+
+/// The single event a pool emitted in `outcome` for `entry`.
+fn pool_event(outcome: &BatchOutcome, entry: &BatchTx) -> (u32, Vec<u8>) {
+    let events = &outcome.receipts[&entry.tx].events;
+    let from_pool: Vec<_> = events.iter().filter(|e| e.emitter == POOL).collect();
+    assert_eq!(from_pool.len(), 1, "the pool spoke once");
+    (from_pool[0].event_type, from_pool[0].payload.clone())
+}
+
+#[test]
+fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
+    let world = world();
+    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)))?;
+    let outcome = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
+    assert!(matches!(
+        outcome.receipts[&entry.tx].outcome,
+        Outcome::Completed { .. }
+    ));
+
+    // The pool keeps the key it registered — the whole of its claim on
+    // this validator, and what makes a second registration refusable.
+    assert_eq!(
+        cells(&outcome).get(&validator_leaf(POOL, VALIDATOR)),
+        Some(&PUBKEY.to_vec()),
+    );
+    assert_eq!(
+        pool_event(&outcome, &entry),
+        (2, registration_payload(VALIDATOR)),
+    );
+    Ok(())
+}
+
+#[test]
+fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
+    let world = world();
+    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)))?;
+
+    // The leaf already holds a key, which is the state a first
+    // registration leaves behind.
+    let mut store = MemoryStore::new();
+    store.write(validator_leaf(POOL, VALIDATOR), PUBKEY.to_vec())?;
+    store.clear_log();
+
+    let outcome = run_both(&store, std::slice::from_ref(&entry))?;
+    assert!(
+        !matches!(
+            outcome.receipts[&entry.tx].outcome,
+            Outcome::Completed { .. }
+        ),
+        "a validator id this pool already took on is spent",
+    );
+    Ok(())
+}
+
+#[test]
+fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
+    // The local half of the rule that a fact's subject is its emitter:
+    // the beacon refuses a witness naming another pool's validator, and
+    // the pool refuses to produce one in the first place.
+    let world = world();
+    for method in ["deactivate-validator", "unjail"] {
+        let graph = ManifestGraph {
+            nodes: vec![operator_node(method, VALIDATOR, Vec::new())],
+        };
+        let entry = batch_entry(&world, &single_intent(graph))?;
+        let outcome = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
+        assert!(
+            !matches!(
+                outcome.receipts[&entry.tx].outcome,
+                Outcome::Completed { .. }
+            ),
+            "{method} spoke about a validator with no record",
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
+    let world = world();
+    let mut store = MemoryStore::new();
+    store.write(validator_leaf(POOL, VALIDATOR), PUBKEY.to_vec())?;
+    store.clear_log();
+
+    for (method, event_type) in [("deactivate-validator", 3), ("unjail", 4)] {
+        let graph = ManifestGraph {
+            nodes: vec![operator_node(method, VALIDATOR, Vec::new())],
+        };
+        let entry = batch_entry(&world, &single_intent(graph))?;
+        let outcome = run_both(&store, std::slice::from_ref(&entry))?;
+        assert!(matches!(
+            outcome.receipts[&entry.tx].outcome,
+            Outcome::Completed { .. }
+        ));
+        assert_eq!(
+            pool_event(&outcome, &entry),
+            (event_type, VALIDATOR.to_le_bytes().to_vec()),
+            "{method}",
+        );
+        // The record outlives the retirement: a validator id this pool
+        // took on is spent for the life of the chain, which is the
+        // beacon's own rule held locally.
+        assert_eq!(
+            cells(&outcome).get(&validator_leaf(POOL, VALIDATOR)),
+            Some(&PUBKEY.to_vec()),
+            "{method}",
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn two_validators_registrations_touch_different_leaves() -> Result<()> {
+    // Per validator rather than per pool, so two operator actions on two
+    // validators commute rather than taking turns.
+    let world = world();
+    let first = batch_entry(&world, &single_intent(register_graph(VALIDATOR)))?;
+    let second = batch_entry(&world, &single_intent(register_graph(VALIDATOR + 1)))?;
+    let outcome = run_both(&MemoryStore::new(), &[first.clone(), second.clone()])?;
+
+    for entry in [&first, &second] {
+        assert!(matches!(
+            outcome.receipts[&entry.tx].outcome,
+            Outcome::Completed { .. }
+        ));
+    }
+    let cells = cells(&outcome);
+    assert_eq!(
+        cells.get(&validator_leaf(POOL, VALIDATOR)),
+        Some(&PUBKEY.to_vec()),
+    );
+    assert_eq!(
+        cells.get(&validator_leaf(POOL, VALIDATOR + 1)),
+        Some(&PUBKEY.to_vec()),
     );
     Ok(())
 }

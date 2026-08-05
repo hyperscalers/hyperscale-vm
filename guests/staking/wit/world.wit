@@ -1,23 +1,26 @@
 package test:guest;
 
 /// The stake pool: delegation in exchange for a fungible stake unit, and
-/// the two lifecycle facts the beacon's control plane consumes.
+/// the lifecycle facts the beacon's control plane consumes.
 ///
-/// A fact rather than a request: the delegation has already moved by the
-/// time the event exists, emission survives only a completed outcome, and
-/// the warrant is that this package's code produced it. The beacon reads a
-/// record; it is not being asked for anything.
+/// Facts rather than requests: what a method reports has already happened
+/// by the time the event exists, emission survives only a completed
+/// outcome, and the warrant is that this package's code produced it. The
+/// beacon reads a record; it is not being asked for anything. The one
+/// method that reads as a request is `unjail`, and even there the fact is
+/// that the operator asked — whether the jail lifts is consensus state's
+/// to decide.
 ///
-/// Neither method names the pool it concerns. The kernel stamps an event's
+/// No method names the pool it concerns. The kernel stamps an event's
 /// emitter from the invocation it is running, so the pool a fact is about
 /// is the instance that emitted it — a subject no guest can choose, and
 /// therefore one no instance can claim for another. What a payload carries
-/// is only what the emitter cannot already say: the amount.
+/// is only what the emitter cannot already say.
 world staking {
     import hyperscale:kernel/state;
     import hyperscale:kernel/events;
 
-    use hyperscale:kernel/state.{delta-cell};
+    use hyperscale:kernel/state.{delta-cell, write-cell};
 
     /// Take a delegation into the pool's vault and return the stake units
     /// it mints for it.
@@ -29,4 +32,19 @@ world staking {
     /// they represent; releasing the staked resource to the delegator is a
     /// later leg this pool does not yet have.
     export unstake: func(unbonding: borrow<delta-cell>, amount: list<u8>);
+
+    /// Take on a validator: record it against this pool and say so.
+    ///
+    /// The record is the pool's own leaf for this validator, which is what
+    /// makes a second registration of the same one refusable here. The
+    /// possession proof is carried, not checked: it proves the registrant
+    /// holds the consensus key it registers, and the only party able to
+    /// judge that is the one that will aggregate under it.
+    export register-validator: func(leaf: borrow<write-cell>, validator-id: u64, pubkey: list<u8>, possession-proof: list<u8>);
+
+    /// Retire a validator this pool operates.
+    export deactivate-validator: func(leaf: borrow<write-cell>, validator-id: u64);
+
+    /// Ask that a jail on a validator this pool operates be lifted.
+    export unjail: func(leaf: borrow<write-cell>, validator-id: u64);
 }
