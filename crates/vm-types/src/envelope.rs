@@ -14,7 +14,9 @@
 //! cryptography — what this type defines is the signed *content*, through
 //! its derived preimage.
 
-use hyperscale_hbor::Hbor;
+use core::fmt;
+
+use hyperscale_hbor::{Hash32, Hbor};
 
 use crate::address::Address;
 
@@ -35,6 +37,24 @@ pub const MAX_SUBINTENTS: usize = 32;
 /// shape is that an abort is bounded strictly below the ceiling a
 /// success may burn.
 const ABORT_FLOOR_DIVISOR: u128 = 10;
+
+/// A transaction's identity: the hash of its envelope's canonical bytes.
+///
+/// One value with two jobs that must never diverge: the kernel's canonical
+/// ordering key for every commutative-mode decision, and the name every
+/// consensus artifact — receipt, certificate, provision — attaches to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[hbor(transparent)]
+pub struct TxHash(pub Hash32);
+
+impl fmt::Display for TxHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.0.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
 
 /// One bound subintent's signature: the signer's key and their ed25519
 /// signature over the subintent's declaration hash, in tree order.

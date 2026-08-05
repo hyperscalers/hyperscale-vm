@@ -21,6 +21,6 @@ pub mod execution;
 pub use address::{Address, LocalKey, SubstateKey};
 pub use envelope::{
     MAX_MESSAGE_LEN, MAX_SUBINTENTS, MAX_TX_BYTES_LEN, SubintentSig, TransactionBody,
-    TransactionEnvelope,
+    TransactionEnvelope, TxHash,
 };
 pub use execution::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome};

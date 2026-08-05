@@ -10,12 +10,7 @@
 //! same order against committed balance minus prior reservations, never
 //! counting in-flight deltas.
 
-use hyperscale_vm_effects::Hash32;
-
-/// A transaction's identity: the canonical ordering key for every
-/// commutative-mode decision.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TxHash(pub Hash32);
+pub use hyperscale_vm_effects::TxHash;
 
 /// The width of a fungible-amount cell.
 pub const AMOUNT_CELL_BYTES: usize = 16;

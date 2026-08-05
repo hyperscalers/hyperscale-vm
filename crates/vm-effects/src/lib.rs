@@ -52,7 +52,7 @@ pub use footprint::{
 pub use graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
-    Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome,
+    Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, TxHash,
 };
 pub use invoke::{CallArg, EDGE_CELL_BYTES, EdgeBound, NodeCall};
 pub use manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
