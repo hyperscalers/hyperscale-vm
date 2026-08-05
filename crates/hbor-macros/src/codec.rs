@@ -4,8 +4,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 use syn::{
-    Data, DataEnum, DeriveInput, Error, Expr, Fields, GenericArgument, Ident, Index, PathArguments,
-    Result, Type,
+    Data, DataEnum, DeriveInput, Error, Expr, Field, Fields, GenericArgument, Ident, Index,
+    PathArguments, Result, Type,
 };
 
 use crate::attrs::{FieldAttrs, Shape, TypeAttrs, VariantAttrs, reject_unencodable, shape};
@@ -146,8 +146,12 @@ pub fn encode_fields(
 ) -> Result<TokenStream> {
     let mut out = TokenStream::new();
     for (index, field) in fields.iter().enumerate() {
-        reject_unencodable(&field.ty)?;
         let attrs = FieldAttrs::parse(&field.attrs)?;
+        if attrs.skip {
+            refuse_skip_combinations(field, &attrs)?;
+            continue;
+        }
+        reject_unencodable(&field.ty)?;
         if include == Include::Signed && attrs.unsigned {
             continue;
         }
@@ -184,10 +188,18 @@ fn decode_fields(fields: &Fields, constructor: &TokenStream) -> Result<TokenStre
     let mut names = Vec::new();
 
     for (index, field) in fields.iter().enumerate() {
-        reject_unencodable(&field.ty)?;
         let attrs = FieldAttrs::parse(&field.attrs)?;
         let name = binding(index, field.ident.as_ref());
         let ty = &field.ty;
+        if attrs.skip {
+            refuse_skip_combinations(field, &attrs)?;
+            // Off the wire entirely: nothing is read, and the value is
+            // whatever an absent field means to the type.
+            reads.extend(quote! { let #name: #ty = ::core::default::Default::default(); });
+            names.push(name);
+            continue;
+        }
+        reject_unencodable(&field.ty)?;
         let read = read_expression(ty, attrs.max.as_ref())?;
         reads.extend(quote! { let #name: #ty = #read; });
         names.push(name);
@@ -266,11 +278,28 @@ fn width_reaches(ty: &Type, this: &Ident) -> bool {
 }
 
 fn min_encoded_len(fields: &Fields) -> TokenStream {
-    let terms = fields.iter().map(|field| {
+    let terms = fields.iter().filter_map(|field| {
+        let attrs = FieldAttrs::parse(&field.attrs).ok()?;
+        if attrs.skip {
+            return None;
+        }
         let ty = &field.ty;
-        quote!(<#ty as ::hyperscale_hbor::HborWidth>::MIN_ENCODED_LEN)
+        Some(quote!(<#ty as ::hyperscale_hbor::HborWidth>::MIN_ENCODED_LEN))
     });
     quote!(0 #(+ #terms)*)
+}
+
+/// `skip` composes with nothing: a field that is not on the wire can carry
+/// no wire bound and no preimage marking.
+fn refuse_skip_combinations(field: &Field, attrs: &FieldAttrs) -> Result<()> {
+    if attrs.max.is_some() || attrs.unsigned {
+        return Err(Error::new(
+            field.span(),
+            "`skip` takes a field off the wire entirely; `max` and `unsigned` describe wire \
+             behaviour it cannot have",
+        ));
+    }
+    Ok(())
 }
 
 fn transparent(fields: &Fields) -> Result<(TokenStream, TokenStream, TokenStream)> {

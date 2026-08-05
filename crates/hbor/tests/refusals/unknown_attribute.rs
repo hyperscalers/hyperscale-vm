@@ -2,7 +2,7 @@ use hyperscale_hbor::Hbor;
 
 #[derive(Hbor)]
 struct Header {
-    #[hbor(skip)]
+    #[hbor(flatten)]
     height: u64,
 }
 

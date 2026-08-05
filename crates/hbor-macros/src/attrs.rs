@@ -44,6 +44,9 @@ pub struct FieldAttrs {
     /// a signature and the key that verifies it are transmitted, they just
     /// cannot be part of what they cover.
     pub unsigned: bool,
+    /// Not on the wire at all: encode writes nothing, decode fills
+    /// `Default::default()`. For in-memory caches riding a wire type.
+    pub skip: bool,
 }
 
 /// The collection shape of a field's type, as written.
@@ -143,7 +146,13 @@ impl FieldAttrs {
                     out.unsigned = true;
                     return Ok(());
                 }
-                Err(meta.error("unknown hbor attribute; a field takes `max = N` or `unsigned`"))
+                if meta.path.is_ident("skip") {
+                    out.skip = true;
+                    return Ok(());
+                }
+                Err(meta.error(
+                    "unknown hbor attribute; a field takes `max = N`, `unsigned`, or `skip`",
+                ))
             })?;
         }
         Ok(out)

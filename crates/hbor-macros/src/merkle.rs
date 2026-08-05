@@ -4,7 +4,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{Data, DataEnum, DeriveInput, Error, Fields, Index, Result};
 
-use crate::attrs::{TypeAttrs, reject_unencodable};
+use crate::attrs::{FieldAttrs, TypeAttrs, reject_unencodable};
 use crate::codec::{bounds, variant_tags};
 
 /// Emit `Chunked` for `input`: one leaf per field, in declaration order.
@@ -82,6 +82,9 @@ fn struct_chunks(fields: &Fields) -> Result<TokenStream> {
     }
     let mut out = TokenStream::new();
     for (index, field) in fields.iter().enumerate() {
+        if FieldAttrs::parse(&field.attrs)?.skip {
+            continue;
+        }
         reject_unencodable(&field.ty)?;
         let access = field.ident.as_ref().map_or_else(
             || {

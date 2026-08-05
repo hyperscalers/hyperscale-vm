@@ -128,6 +128,26 @@ impl<T: HborDecode> HborDecode for Box<T> {
     }
 }
 
+// An `Arc` is shared ownership, not a wire concept — the same argument as
+// `Box`, plus one consequence worth stating: decoding always allocates a
+// fresh, unshared value, so sharing never survives a round trip and two
+// decodes of one byte string never alias.
+impl<T: HborWidth + ?Sized> HborWidth for std::sync::Arc<T> {
+    const MIN_ENCODED_LEN: usize = T::MIN_ENCODED_LEN;
+}
+
+impl<T: HborEncode + ?Sized> HborEncode for std::sync::Arc<T> {
+    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+        (**self).encode(encoder)
+    }
+}
+
+impl<T: HborDecode> HborDecode for std::sync::Arc<T> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        Ok(Self::new(T::decode(decoder)?))
+    }
+}
+
 // Byte arrays only. Hashes, keys, signatures, and addresses are the whole
 // population of fixed-size arrays in this protocol, and a generic `[T; N]`
 // would have to build each value through a heap collection to stay safe —

@@ -421,6 +421,43 @@ fn generic_positional_and_nested_shapes_round_trip() {
     assert_canonical(&block);
 }
 
+/// A skipped field is not on the wire in any direction: encoding two values
+/// differing only there produces one byte string, and decoding fills the
+/// field with its default. The type's identity is its wire content.
+#[test]
+fn a_skipped_field_is_invisible_to_the_wire() {
+    #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+    struct Cached {
+        height: u64,
+        #[hbor(skip)]
+        memo: Option<String>,
+    }
+
+    let cold = Cached {
+        height: 9,
+        memo: None,
+    };
+    let warm = Cached {
+        height: 9,
+        memo: Some("cached".to_owned()),
+    };
+    let bytes = to_vec(&warm).unwrap();
+    assert_eq!(bytes, to_vec(&cold).unwrap());
+    assert_eq!(bytes.len(), 8, "only the height is wire content");
+    assert_eq!(from_slice::<Cached>(&bytes).unwrap(), cold);
+    assert_eq!(<Cached as HborWidth>::MIN_ENCODED_LEN, 8);
+    assert_canonical(&cold);
+}
+
+/// An `Arc` decodes to a fresh, unshared value — sharing is a memory fact,
+/// not a wire one.
+#[test]
+fn an_arc_is_its_contents_on_the_wire() {
+    use std::sync::Arc;
+    assert_eq!(to_vec(&Arc::new(7u32)).unwrap(), to_vec(&7u32).unwrap());
+    assert_canonical(&Arc::new(vec![1u8, 2]));
+}
+
 /// A recursive enum closes its cycle through a `Box`, and its minimum is
 /// decided by its non-recursive variants alone: a self-recursive variant
 /// carries a whole `Self` beside its discriminant, so it can never be the
