@@ -5,10 +5,12 @@ edition.workspace = true
 description = "The canonical binary encoding: schema-external, one byte string per value"
 
 [dependencies]
+hyperscale-hbor-macros.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+trybuild.workspace = true
 
 [lints]
 workspace = true

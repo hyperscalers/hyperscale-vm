@@ -1,0 +1,5 @@
+error: a float has no encoding every node agrees on
+ --> tests/refusals/float_field.rs:5:13
+  |
+5 |     amount: f64,
+  |             ^^^

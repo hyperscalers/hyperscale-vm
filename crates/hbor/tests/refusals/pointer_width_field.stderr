@@ -1,0 +1,5 @@
+error: a pointer-width integer would encode differently per host; name a width
+ --> tests/refusals/pointer_width_field.rs:5:19
+  |
+5 |     signer_count: usize,
+  |                   ^^^^^

@@ -116,6 +116,16 @@ pub enum DecodeError {
     #[error("string field is not valid UTF-8")]
     InvalidUtf8,
 
+    /// The type's own predicate rejected the decoded value.
+    ///
+    /// Cross-field invariants — a length that must match a count, a hash
+    /// that must match what it covers — are checked here, at the wire
+    /// boundary, once every field is in hand. The string names which
+    /// predicate failed and is a fixed part of the type, so the verdict
+    /// stays a deterministic function of the input.
+    #[error("value rejected by its type's predicate: {0}")]
+    FailedValidation(&'static str),
+
     /// Map or set entries arrived out of ascending key order.
     ///
     /// Ordered collections encode sorted, so unsorted input is a second

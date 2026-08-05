@@ -116,21 +116,38 @@ impl<'a> Decoder<'a> {
         Ok(value)
     }
 
-    /// Decode a nested value, one level down.
+    /// Run `read` one level down, refusing to descend past the cap.
+    ///
+    /// Every nested value goes through here, whether it is read by its own
+    /// [`HborDecode`] impl or by a bounded helper. Two spellings of the same
+    /// wire format must charge the same depth, or a payload's acceptance
+    /// would depend on how the type that reads it was written.
     ///
     /// # Errors
     ///
-    /// [`DecodeError::DepthExceeded`] at the cap, or whatever `T` returns.
-    pub fn nested<T: HborDecode>(&mut self) -> Result<T, DecodeError> {
+    /// [`DecodeError::DepthExceeded`] at the cap, or whatever `read` returns.
+    pub fn descend<T>(
+        &mut self,
+        read: impl FnOnce(&mut Self) -> Result<T, DecodeError>,
+    ) -> Result<T, DecodeError> {
         if self.depth >= self.max_depth {
             return Err(DecodeError::DepthExceeded {
                 max: self.max_depth,
             });
         }
         self.depth += 1;
-        let result = T::decode(self);
+        let result = read(self);
         self.depth -= 1;
         result
+    }
+
+    /// Decode a nested value, one level down.
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError::DepthExceeded`] at the cap, or whatever `T` returns.
+    pub fn nested<T: HborDecode>(&mut self) -> Result<T, DecodeError> {
+        self.descend(T::decode)
     }
 
     /// Assert the input is exhausted.

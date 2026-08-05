@@ -1,0 +1,5 @@
+error: hash-ordered collections have no canonical order; use BTreeMap or BTreeSet
+ --> tests/refusals/hash_collection_field.rs:7:19
+  |
+7 |     by_validator: HashMap<u64, u64>,
+  |                   ^^^^^^^

@@ -39,6 +39,7 @@
 //! Self-description, where a consumer needs it, is an envelope around a
 //! payload — a schema hash beside the bytes — never a tag inside one.
 
+pub mod bounded;
 pub mod canonical;
 pub mod decode;
 pub mod encode;
@@ -52,6 +53,7 @@ pub use canonical::{assert_canonical, assert_canonical_at_depth};
 pub use decode::Decoder;
 pub use encode::Encoder;
 pub use error::{DecodeError, EncodeError};
+pub use hyperscale_hbor_macros::Hbor;
 pub use varint::MAX_LENGTH;
 
 /// The nesting cap [`to_vec`] and [`from_slice`] apply.

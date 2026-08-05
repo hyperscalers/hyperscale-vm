@@ -1,0 +1,9 @@
+error: `transparent` needs exactly one field
+ --> tests/refusals/transparent_two_fields.rs:5:13
+  |
+5 |   struct Pair {
+  |  _____________^
+6 | |     left: u64,
+7 | |     right: u64,
+8 | | }
+  | |_^

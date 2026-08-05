@@ -60,6 +60,32 @@ impl<'a> Encoder<'a> {
         Ok(())
     }
 
+    /// Run `write` one level down, refusing to descend past the cap.
+    ///
+    /// The encoder's mirror of [`Decoder::descend`](crate::Decoder::descend):
+    /// a value written through a direct helper charges the same depth as one
+    /// written through its own impl, so the encoder cannot produce bytes its
+    /// decoder would reject.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError::DepthExceeded`] at the cap, or whatever `write`
+    /// returns.
+    pub fn descend(
+        &mut self,
+        write: impl FnOnce(&mut Self) -> Result<(), EncodeError>,
+    ) -> Result<(), EncodeError> {
+        if self.depth >= self.max_depth {
+            return Err(EncodeError::DepthExceeded {
+                max: self.max_depth,
+            });
+        }
+        self.depth += 1;
+        let result = write(self);
+        self.depth -= 1;
+        result
+    }
+
     /// Encode a nested value, one level down.
     ///
     /// # Errors
@@ -67,15 +93,7 @@ impl<'a> Encoder<'a> {
     /// [`EncodeError::DepthExceeded`] at the cap, or whatever `value`
     /// returns.
     pub fn nested<T: super::HborEncode + ?Sized>(&mut self, value: &T) -> Result<(), EncodeError> {
-        if self.depth >= self.max_depth {
-            return Err(EncodeError::DepthExceeded {
-                max: self.max_depth,
-            });
-        }
-        self.depth += 1;
-        let result = value.encode(self);
-        self.depth -= 1;
-        result
+        self.descend(|encoder| value.encode(encoder))
     }
 
     /// Bytes written so far.

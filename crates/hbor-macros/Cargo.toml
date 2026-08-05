@@ -1,0 +1,16 @@
+[package]
+name = "hyperscale-hbor-macros"
+version.workspace = true
+edition.workspace = true
+description = "The `#[derive(Hbor)]` macro: canonical codecs from a type's declaration"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+
+[lints]
+workspace = true

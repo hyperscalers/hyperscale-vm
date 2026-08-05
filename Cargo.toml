@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/hbor",
+    "crates/hbor-macros",
     "crates/vm-effects",
     "crates/vm-harness",
     "crates/vm-kernel",
@@ -18,6 +19,7 @@ edition = "2024"
 
 [workspace.dependencies]
 hyperscale-hbor = { path = "crates/hbor" }
+hyperscale-hbor-macros = { path = "crates/hbor-macros" }
 hyperscale-vm-effects = { path = "crates/vm-effects" }
 hyperscale-vm-kernel = { path = "crates/vm-kernel" }
 hyperscale-vm-ref = { path = "crates/vm-ref" }
@@ -31,6 +33,7 @@ proptest = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits", "visit"] }
 thiserror = "2"
+trybuild = "1"
 wasmparser = "0.255.0"
 wat = "1.255.0"
 wit-component = "0.255.0"

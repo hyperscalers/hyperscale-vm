@@ -1,0 +1,5 @@
+error: `max` needs a field written as Vec, String, BTreeSet, or BTreeMap; a type that hides one behind an alias or a newtype carries its own bound instead
+ --> tests/refusals/cap_on_opaque_field.rs:8:12
+  |
+8 |     peers: Peers,
+  |            ^^^^^
