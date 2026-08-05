@@ -8,7 +8,7 @@
 //! downstream hash change.
 //!
 //! Every derived type also goes through the canonicity harness, so the
-//! generated decoders are held to INV-HBOR-1 on the same terms as the
+//! generated decoders are held to canonicity on the same terms as the
 //! hand-written ones.
 
 use std::collections::{BTreeMap, BTreeSet};

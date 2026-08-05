@@ -1,0 +1,5 @@
+error: every field is `unsigned`, so the preimage would cover no content and every value of this type would share one signature
+ --> tests/refusals/every_field_unsigned.rs:5:8
+  |
+5 | struct Vote {
+  |        ^^^^

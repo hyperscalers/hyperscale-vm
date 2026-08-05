@@ -16,6 +16,12 @@
 //!   escapes the decoder. This is where a cross-field invariant lives: a
 //!   length that must match a count, a hash that must match what it covers.
 //!   It runs on decode only; construction is the encode-side gate.
+//! - `#[hbor(signing_domain = "...")]` — this type's signatures cover a
+//!   framed domain then its signed fields, canonically encoded. Structs
+//!   only: an enum's variants would each cover different content under one
+//!   domain. The domain must not be empty, and no two message types may
+//!   share one.
+//!
 //!
 //! On a variant:
 //!
@@ -29,6 +35,11 @@
 //!   against the claimed length before the collection is built, and again on
 //!   encode. The field must be written as a `Vec`, `String`, `BTreeSet`, or
 //!   `BTreeMap`; resolution is syntactic, so an alias cannot host a cap.
+//! - `#[hbor(unsigned)]` — held out of the signing preimage. The field still
+//!   rides the wire; a signature and the key that verifies it are
+//!   transmitted, they just cannot be part of what they cover. A field added
+//!   later is signed unless it says otherwise, so widening a message cannot
+//!   quietly leave the new content unauthenticated.
 //!
 //! A cap is a protocol bound, not a safety one — decoding already refuses a
 //! length the remaining input cannot satisfy, whether or not a field declares
@@ -43,6 +54,7 @@
 
 mod attrs;
 mod codec;
+mod signing;
 
 use proc_macro::TokenStream;
 use syn::{DeriveInput, parse_macro_input};

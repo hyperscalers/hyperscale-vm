@@ -46,6 +46,8 @@ pub mod encode;
 pub mod error;
 pub mod varint;
 
+pub mod signing;
+
 mod collection;
 mod primitive;
 
@@ -54,6 +56,7 @@ pub use decode::Decoder;
 pub use encode::Encoder;
 pub use error::{DecodeError, EncodeError};
 pub use hyperscale_hbor_macros::Hbor;
+pub use signing::HborSigned;
 pub use varint::MAX_LENGTH;
 
 /// The nesting cap [`to_vec`] and [`from_slice`] apply.

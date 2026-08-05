@@ -1,0 +1,5 @@
+error: a signing domain must not be empty; it is what stops a signature for one message from verifying against another
+ --> tests/refusals/empty_signing_domain.rs:4:25
+  |
+4 | #[hbor(signing_domain = "")]
+  |                         ^^

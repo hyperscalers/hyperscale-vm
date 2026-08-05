@@ -1,6 +1,6 @@
 //! The canonicity harness.
 //!
-//! INV-HBOR-1 says that if `decode(b)` succeeds then `encode(decode(b))` is
+//! Canonicity says that if `decode(b)` succeeds then `encode(decode(b))` is
 //! `b` again — one byte string per value, one value per byte string. That is
 //! a claim about every byte string, not about the ones an encoder happens to
 //! produce, so it cannot be checked by round-tripping alone.
@@ -26,7 +26,7 @@ use crate::{DEFAULT_MAX_DEPTH, HborDecode, HborEncode, from_slice_with_depth, to
 /// continuation; all-ones lands well outside every valid narrow range.
 const MUTATIONS: [u8; 3] = [0x01, 0x80, 0xFF];
 
-/// Assert INV-HBOR-1 around `value`'s encoding.
+/// Assert canonicity around `value`'s encoding.
 ///
 /// # Panics
 ///

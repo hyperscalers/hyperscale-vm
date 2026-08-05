@@ -6,6 +6,7 @@ use syn::spanned::Spanned;
 use syn::{Data, DataEnum, DeriveInput, Error, Expr, Fields, Ident, Index, Result, Type};
 
 use crate::attrs::{FieldAttrs, Shape, TypeAttrs, VariantAttrs, reject_unencodable, shape};
+use crate::signing;
 
 /// Emit both impls for `input`.
 ///
@@ -26,7 +27,7 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
             if attrs.transparent {
                 transparent(&data.fields)?
             } else {
-                let encode = encode_fields(&data.fields, &SelfAccess)?;
+                let encode = encode_fields(&data.fields, &SelfAccess, Include::All)?;
                 let decode = decode_fields(&data.fields, &quote!(Self))?;
                 let min = min_encoded_len(&data.fields);
                 (encode, decode, min)
@@ -49,11 +50,12 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
         }
     };
 
-    let validate = attrs.validate.map(|path| {
+    let validate = attrs.validate.as_ref().map(|path| {
         quote! {
             #path(&value).map_err(::hyperscale_hbor::DecodeError::FailedValidation)?;
         }
     });
+    let signed = signing::derive(input, &attrs)?;
 
     Ok(quote! {
         #[automatically_derived]
@@ -81,16 +83,18 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
                 ::core::result::Result::Ok(value)
             }
         }
+
+        #signed
     })
 }
 
 /// How a field is reached in the encode body.
-trait Access {
+pub trait Access {
     fn get(&self, index: usize, name: Option<&Ident>) -> TokenStream;
 }
 
 /// Fields of the value itself: `&self.name` or `&self.0`.
-struct SelfAccess;
+pub struct SelfAccess;
 
 impl Access for SelfAccess {
     fn get(&self, index: usize, name: Option<&Ident>) -> TokenStream {
@@ -118,11 +122,27 @@ fn binding(index: usize, name: Option<&Ident>) -> Ident {
     name.map_or_else(|| format_ident!("field_{index}"), Clone::clone)
 }
 
-fn encode_fields(fields: &Fields, access: &dyn Access) -> Result<TokenStream> {
+/// Which fields an encode body covers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Include {
+    /// Every field — the wire form.
+    All,
+    /// Every field but those held out of what a signature covers.
+    Signed,
+}
+
+pub fn encode_fields(
+    fields: &Fields,
+    access: &dyn Access,
+    include: Include,
+) -> Result<TokenStream> {
     let mut out = TokenStream::new();
     for (index, field) in fields.iter().enumerate() {
         reject_unencodable(&field.ty)?;
         let attrs = FieldAttrs::parse(&field.attrs)?;
+        if include == Include::Signed && attrs.unsigned {
+            continue;
+        }
         let value = access.get(index, field.ident.as_ref());
         let label = field
             .ident
@@ -285,7 +305,7 @@ fn enumeration(name: &Ident, data: &DataEnum) -> Result<(TokenStream, TokenStrea
             Fields::Unnamed(_) => quote!(Self::#variant_name ( #(#bindings),* )),
             Fields::Unit => quote!(Self::#variant_name),
         };
-        let writes = encode_fields(&variant.fields, &BindingAccess)?;
+        let writes = encode_fields(&variant.fields, &BindingAccess, Include::All)?;
         arms.extend(quote! {
             #pattern => {
                 encoder.write_u8(#tag);
@@ -333,7 +353,7 @@ fn enumeration(name: &Ident, data: &DataEnum) -> Result<(TokenStream, TokenStrea
     Ok((encode, decode, min))
 }
 
-fn bounds(input: &DeriveInput, bound: &TokenStream) -> TokenStream {
+pub fn bounds(input: &DeriveInput, bound: &TokenStream) -> TokenStream {
     let parameters: Vec<_> = input.generics.type_params().map(|p| &p.ident).collect();
     if parameters.is_empty() {
         return TokenStream::new();

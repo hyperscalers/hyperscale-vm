@@ -1,0 +1,5 @@
+error: `unsigned` holds a field out of a signing preimage, and this type declares no `signing_domain`, so it would do nothing
+ --> tests/refusals/unsigned_without_domain.rs:6:5
+  |
+6 |     #[hbor(unsigned)]
+  |     ^

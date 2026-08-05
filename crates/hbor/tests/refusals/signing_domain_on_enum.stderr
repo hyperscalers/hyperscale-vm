@@ -1,0 +1,5 @@
+error: `signing_domain` needs a struct; an enum's variants would each cover different content under one domain
+ --> tests/refusals/signing_domain_on_enum.rs:5:6
+  |
+5 | enum Body {
+  |      ^^^^

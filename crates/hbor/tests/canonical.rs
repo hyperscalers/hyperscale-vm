@@ -1,4 +1,4 @@
-//! INV-HBOR-1 over a generated corpus.
+//! Canonicity over a generated corpus.
 //!
 //! The unit tests beside each impl pin the interesting hand-picked values.
 //! This runs the same harness — round trip, trailing byte, every truncation,

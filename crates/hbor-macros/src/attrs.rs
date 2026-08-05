@@ -2,7 +2,8 @@
 
 use syn::spanned::Spanned;
 use syn::{
-    Attribute, Error, Expr, ExprLit, GenericArgument, Lit, Path, PathArguments, Result, Type,
+    Attribute, Error, Expr, ExprLit, GenericArgument, Lit, LitStr, Path, PathArguments, Result,
+    Type,
 };
 
 /// What `#[hbor(...)]` says about a type.
@@ -13,6 +14,9 @@ pub struct TypeAttrs {
     pub transparent: bool,
     /// A predicate run on the decoded value before it escapes the decoder.
     pub validate: Option<Path>,
+    /// What this type's signatures are for. Its presence is what asks for a
+    /// preimage at all.
+    pub signing_domain: Option<LitStr>,
 }
 
 /// What `#[hbor(...)]` says about a variant.
@@ -33,6 +37,10 @@ pub struct FieldAttrs {
     /// expression. Protocol caps are named constants, so a literal-only
     /// attribute would force the number to be written twice.
     pub max: Option<Expr>,
+    /// Held out of the signing preimage. The field still rides the wire —
+    /// a signature and the key that verifies it are transmitted, they just
+    /// cannot be part of what they cover.
+    pub unsigned: bool,
 }
 
 /// The collection shape of a field's type, as written.
@@ -75,8 +83,13 @@ impl TypeAttrs {
                     out.validate = Some(meta.value()?.parse()?);
                     return Ok(());
                 }
+                if meta.path.is_ident("signing_domain") {
+                    out.signing_domain = Some(meta.value()?.parse()?);
+                    return Ok(());
+                }
                 Err(meta.error(
-                    "unknown hbor attribute; a type takes `transparent` or `validate = path`",
+                    "unknown hbor attribute; a type takes `transparent`, `validate = path`, \
+                     or `signing_domain = \"...\"`",
                 ))
             })?;
         }
@@ -119,7 +132,11 @@ impl FieldAttrs {
                     out.max = Some(meta.value()?.parse()?);
                     return Ok(());
                 }
-                Err(meta.error("unknown hbor attribute; a field takes `max = N`"))
+                if meta.path.is_ident("unsigned") {
+                    out.unsigned = true;
+                    return Ok(());
+                }
+                Err(meta.error("unknown hbor attribute; a field takes `max = N` or `unsigned`"))
             })?;
         }
         Ok(out)

@@ -18,3 +18,15 @@ fn the_derive_refuses_what_has_no_canonical_form() {
     refuse.compile_fail("tests/refusals/transparent_two_fields.rs");
     refuse.compile_fail("tests/refusals/unknown_attribute.rs");
 }
+
+/// A preimage that does not mean what its declaration looks like is worse
+/// than none: a marking that silently does nothing, a domain that separates
+/// nothing, a signature covering nothing.
+#[test]
+fn the_derive_refuses_a_preimage_that_would_mislead() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/unsigned_without_domain.rs");
+    refuse.compile_fail("tests/refusals/every_field_unsigned.rs");
+    refuse.compile_fail("tests/refusals/signing_domain_on_enum.rs");
+    refuse.compile_fail("tests/refusals/empty_signing_domain.rs");
+}
