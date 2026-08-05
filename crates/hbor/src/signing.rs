@@ -52,6 +52,12 @@ pub trait HborSigned {
     /// domain, then the canonical encoding of every signed field in
     /// declaration order.
     ///
+    /// The preimage is encoded at the default nesting cap, whatever cap the
+    /// consumer's decoder uses. That is not a compatibility surface: depth
+    /// charges write no bytes, so any two parties that can produce a
+    /// value's preimage produce the same bytes — the cap decides only
+    /// whether a value nested past it has a preimage at all.
+    ///
     /// # Errors
     ///
     /// [`EncodeError`], as encoding the signed fields.

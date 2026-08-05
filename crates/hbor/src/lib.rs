@@ -48,6 +48,10 @@
 //!
 //! Self-description, where a consumer needs it, is an envelope around a
 //! payload — a schema hash beside the bytes — never a tag inside one.
+//! Schema *derivation* — a describable shape a tool could walk — is
+//! deliberately absent, not forgotten: the type is the schema, nothing on
+//! the codec path depends on one, and an opt-in derive can land later
+//! without touching what a payload means.
 
 pub mod bounded;
 pub mod canonical;

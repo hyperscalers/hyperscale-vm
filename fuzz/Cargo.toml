@@ -13,12 +13,20 @@ cargo-fuzz = true
 arbitrary = "1"
 libfuzzer-sys = "0.4"
 wasm-smith = "0.236"
+hyperscale-hbor = { path = "../crates/hbor" }
 hyperscale-vm-ref = { path = "../crates/vm-ref" }
 hyperscale-vm-runtime = { path = "../crates/vm-runtime" }
 
 [[bin]]
 name = "admitted_is_executable"
 path = "fuzz_targets/admitted_is_executable.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hbor_decode"
+path = "fuzz_targets/hbor_decode.rs"
 test = false
 doc = false
 bench = false

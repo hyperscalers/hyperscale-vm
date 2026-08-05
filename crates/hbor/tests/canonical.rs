@@ -12,7 +12,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_hbor::assert_canonical;
+use hyperscale_hbor::{HborDecode, HborEncode, assert_canonical, from_slice, to_vec};
 use proptest::collection::{btree_map, btree_set, vec};
 use proptest::option;
 use proptest::prelude::{Strategy, any, proptest};
@@ -94,6 +94,23 @@ proptest! {
         assert_canonical(&seq_of_opt);
         assert_canonical(&map_of_seq);
         assert_canonical(&set_of_pair);
+    }
+
+    /// The fuzz lane's assertion, sampled in CI: an arbitrary byte string
+    /// either rejects or decodes to a value that re-encodes to exactly
+    /// itself. The dedicated `hbor_decode` fuzz target runs this unsampled
+    /// on the workstation lane.
+    #[test]
+    fn arbitrary_bytes_reject_or_reencode(bytes in vec(any::<u8>(), 0..64)) {
+        fn check<T: HborEncode + HborDecode>(bytes: &[u8]) {
+            if let Ok(value) = from_slice::<T>(bytes) {
+                assert_eq!(to_vec(&value).unwrap(), bytes);
+            }
+        }
+        check::<Vec<Option<u16>>>(&bytes);
+        check::<BTreeMap<u8, Vec<u8>>>(&bytes);
+        check::<(bool, String)>(&bytes);
+        check::<Vec<Vec<u8>>>(&bytes);
     }
 
     /// Every container stacked at once — a sequence of pairs whose second

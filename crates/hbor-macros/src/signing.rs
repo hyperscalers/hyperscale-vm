@@ -77,6 +77,10 @@ pub fn derive(input: &DeriveInput, attrs: &TypeAttrs) -> Result<TokenStream> {
                 &self,
             ) -> ::core::result::Result<::std::vec::Vec<u8>, ::hyperscale_hbor::EncodeError> {
                 let mut buffer = ::std::vec::Vec::new();
+                // The default cap, whatever the consumer's decoder uses:
+                // depth charges write no bytes, so the cap decides only
+                // whether a too-deep value has a preimage at all — never
+                // which bytes it has.
                 let mut encoder = ::hyperscale_hbor::Encoder::new(
                     &mut buffer,
                     ::hyperscale_hbor::DEFAULT_MAX_DEPTH,
