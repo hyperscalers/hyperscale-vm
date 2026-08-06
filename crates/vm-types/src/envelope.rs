@@ -43,9 +43,33 @@ const ABORT_FLOOR_DIVISOR: u128 = 10;
 /// One value with two jobs that must never diverge: the kernel's canonical
 /// ordering key for every commutative-mode decision, and the name every
 /// consensus artifact — receipt, certificate, provision — attaches to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
 pub struct TxHash(pub Hash32);
+
+impl TxHash {
+    /// The all-zero transaction hash: a placeholder, never an identity.
+    pub const ZERO: Self = Self(Hash32([0u8; 32]));
+
+    /// The raw 32 bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0.0
+    }
+
+    /// Whether this is the all-zero placeholder.
+    #[must_use]
+    pub fn is_zero(&self) -> bool {
+        self.0.0.iter().all(|&byte| byte == 0)
+    }
+}
+
+impl fmt::Debug for TxHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let hex = self.to_string();
+        write!(f, "TxHash({}..{})", &hex[..8], &hex[56..])
+    }
+}
 
 impl fmt::Display for TxHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
