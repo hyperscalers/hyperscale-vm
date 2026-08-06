@@ -1,0 +1,15 @@
+[package]
+name = "hyperscale-vm-manifest-builder"
+version.workspace = true
+edition.workspace = true
+description = "Fluent client-side construction of manifest graphs"
+
+[dependencies]
+hyperscale-vm-effects.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

@@ -8,10 +8,10 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
-    Address, AdmittedTree, Constraint, EdgeRef, EnvelopeTree, GraphArg, GraphNode, Hasher,
-    InstanceMeta, InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash,
-    PrefixShardResolver, Subintent, SubstateKey, TestHasher, Value, YieldBinding, YieldParam,
-    admit_tree, child_key, route_tree,
+    Address, AdmittedTree, Constraint, EdgeRef, EnvelopeTree, Hasher, InstanceMeta,
+    InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
+    Subintent, SubstateKey, TestHasher, Value, YieldBinding, YieldParam, admit_tree, child_key,
+    route_tree,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -20,6 +20,7 @@ use hyperscale_vm_kernel::{
     InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, SubstateStore,
     TxHash, decode_amount, encode_amount, execute_batch,
 };
+use hyperscale_vm_manifest_builder::{GraphBuilder, Param};
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
@@ -77,33 +78,25 @@ fn vault(owner: Address, resource: Address) -> SubstateKey {
     )
 }
 
-fn withdraw(target: Address, resource: Address, amount: u128) -> GraphNode {
-    GraphNode {
-        target,
-        method: "withdraw".into(),
-        args: vec![
-            GraphArg::Literal(Value::Address(resource)),
-            GraphArg::Literal(Value::U128(amount)),
-        ],
-    }
-}
-
-fn deposit_param(target: Address, param: u32) -> GraphNode {
-    GraphNode {
-        target,
-        method: "deposit".into(),
-        args: vec![GraphArg::Param(param)],
-    }
+/// One side's leg: withdraw the paid resource and export it as the yield;
+/// deposit whatever the enclosing envelope binds to parameter 0.
+fn leg(owner: Address, resource: Address, amount: u128) -> (ManifestGraph, EdgeRef) {
+    let mut b = GraphBuilder::new();
+    let [funds] = b.call(owner, "withdraw", (resource, amount));
+    let yielded = b.export(funds);
+    let [] = b.call(owner, "deposit", (Param(0),));
+    let graph = b.build().expect("every output is consumed or exported");
+    (graph, yielded)
 }
 
 /// The composition: the composer pays `pay` of X for the subintent's 10
 /// Y — each side withdraws its leg and deposits the other's yield.
 fn composed_tree(composer: Address, pay: u128) -> EnvelopeTree {
+    let (root_graph, root_yield) = leg(composer, RES_X, pay);
+    let (sub_graph, sub_yield) = leg(BOB, RES_Y, 10);
     EnvelopeTree {
         root: IntentDecl {
-            graph: ManifestGraph {
-                nodes: vec![withdraw(composer, RES_X, pay), deposit_param(composer, 0)],
-            },
+            graph: root_graph,
             params: vec![YieldParam {
                 resource: RES_Y,
                 constraints: vec![Constraint::MinAmount(10)],
@@ -111,16 +104,11 @@ fn composed_tree(composer: Address, pay: u128) -> EnvelopeTree {
         },
         root_bindings: vec![YieldBinding {
             intent: 1,
-            edge: EdgeRef {
-                producer: 0,
-                output: 0,
-            },
+            edge: root_yield,
         }],
         subintents: vec![Subintent {
             decl: IntentDecl {
-                graph: ManifestGraph {
-                    nodes: vec![withdraw(BOB, RES_Y, 10), deposit_param(BOB, 0)],
-                },
+                graph: sub_graph,
                 params: vec![YieldParam {
                     resource: RES_X,
                     constraints: vec![Constraint::MinAmount(100)],
@@ -129,10 +117,7 @@ fn composed_tree(composer: Address, pay: u128) -> EnvelopeTree {
             signer: BOB,
             bindings: vec![YieldBinding {
                 intent: 0,
-                edge: EdgeRef {
-                    producer: 0,
-                    output: 0,
-                },
+                edge: sub_yield,
             }],
         }],
     }

@@ -13,12 +13,13 @@ use std::time::Instant;
 
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
-    Address, Constraint, Declaration, EdgeRef, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta,
-    InstanceRegistry, ManifestGraph, MetadataCache, NodeCall, PackageHash, PrefixShardResolver,
-    SubstateKey, TestHasher, Value, admit, child_key, route,
+    Address, Declaration, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
+    MetadataCache, NodeCall, PackageHash, PrefixShardResolver, SubstateKey, TestHasher, Value,
+    admit, child_key, route,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
+use hyperscale_vm_manifest_builder::GraphBuilder;
 use hyperscale_vm_kernel::{
     Base, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
     GuestRunner, InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome,
@@ -97,29 +98,10 @@ fn world(senders: u32) -> (MetadataCache, InstanceRegistry) {
 }
 
 fn transfer_graph(from: Address) -> ManifestGraph {
-    ManifestGraph {
-        nodes: vec![
-            GraphNode {
-                target: from,
-                method: "withdraw".into(),
-                args: vec![
-                    GraphArg::Literal(Value::Address(RES)),
-                    GraphArg::Literal(Value::U128(AMOUNT)),
-                ],
-            },
-            GraphNode {
-                target: RECIPIENT,
-                method: "deposit".into(),
-                args: vec![GraphArg::Edge {
-                    edge: EdgeRef {
-                        producer: 0,
-                        output: 0,
-                    },
-                    constraints: vec![Constraint::ResourceIs(RES)],
-                }],
-            },
-        ],
-    }
+    let mut b = GraphBuilder::new();
+    let [funds] = b.call(from, "withdraw", (RES, AMOUNT));
+    let [] = b.call(RECIPIENT, "deposit", (funds.resource_is(RES),));
+    b.build().expect("every output is consumed")
 }
 
 /// One transfer as the chain derives it: both views of the declaration

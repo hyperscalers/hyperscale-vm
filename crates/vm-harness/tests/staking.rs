@@ -22,9 +22,9 @@ use hyperscale_vm_effects::stdlib::{
     UNBONDING, VALIDATORS, VAULT, VOTE, account_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, Constraint, EdgeRef, EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceMeta,
-    InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
-    SubstateKey, TestHasher, Value, admit_tree, child_key, route_tree,
+    Address, EnvelopeTree, Hasher, InstanceMeta, InstanceRegistry, IntentDecl, ManifestGraph,
+    MetadataCache, PackageHash, PrefixShardResolver, SubstateKey, TestHasher, Value, admit_tree,
+    child_key, route_tree,
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -32,6 +32,7 @@ use hyperscale_vm_kernel::{
     InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, Receipt,
     SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
 };
+use hyperscale_vm_manifest_builder::GraphBuilder;
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
@@ -130,61 +131,24 @@ fn unbonding(pool: Address, resource: Address) -> SubstateKey {
     )
 }
 
-fn withdraw(target: Address, resource: Address, amount: u128) -> GraphNode {
-    GraphNode {
-        target,
-        method: "withdraw".into(),
-        args: vec![
-            GraphArg::Literal(Value::Address(resource)),
-            GraphArg::Literal(Value::U128(amount)),
-        ],
-    }
-}
-
-fn from_edge(producer: u32, resource: Address) -> GraphArg {
-    GraphArg::Edge {
-        edge: EdgeRef {
-            producer,
-            output: 0,
-        },
-        constraints: vec![Constraint::ResourceIs(resource)],
-    }
-}
-
 /// `alice.withdraw(XRD) -> pool.stake -> alice.deposit(units)`: the
 /// delegation goes in and the position comes back as an ordinary balance.
 fn stake_graph(amount: u128) -> ManifestGraph {
-    ManifestGraph {
-        nodes: vec![
-            withdraw(ALICE, XRD, amount),
-            GraphNode {
-                target: POOL,
-                method: "stake".into(),
-                args: vec![from_edge(0, XRD)],
-            },
-            GraphNode {
-                target: ALICE,
-                method: "deposit".into(),
-                args: vec![from_edge(1, UNIT)],
-            },
-        ],
-    }
+    let mut b = GraphBuilder::new();
+    let [funds] = b.call(ALICE, "withdraw", (XRD, amount));
+    let [units] = b.call(POOL, "stake", (funds.resource_is(XRD),));
+    let [] = b.call(ALICE, "deposit", (units.resource_is(UNIT),));
+    b.build().expect("every output is consumed")
 }
 
 /// `alice.withdraw(UNIT) -> pool.unstake`: the units are consumed and the
 /// pool's unbonding total grows. Nothing comes back — the release leg is
 /// not built.
 fn unstake_graph(amount: u128) -> ManifestGraph {
-    ManifestGraph {
-        nodes: vec![
-            withdraw(ALICE, UNIT, amount),
-            GraphNode {
-                target: POOL,
-                method: "unstake".into(),
-                args: vec![from_edge(0, UNIT)],
-            },
-        ],
-    }
+    let mut b = GraphBuilder::new();
+    let [units] = b.call(ALICE, "withdraw", (UNIT, amount));
+    let [] = b.call(POOL, "unstake", (units.resource_is(UNIT),));
+    b.build().expect("every output is consumed")
 }
 
 /// The pool's own record of one validator it operates.
@@ -197,27 +161,21 @@ fn validator_leaf(pool: Address, validator: u64) -> SubstateKey {
     )
 }
 
-fn operator_node(method: &str, validator: u64, extra: Vec<GraphArg>) -> GraphNode {
-    let mut args = vec![GraphArg::Literal(Value::U64(validator))];
-    args.extend(extra);
-    GraphNode {
-        target: POOL,
-        method: method.into(),
-        args,
-    }
+/// A one-node graph naming a validator on the pool's operator surface.
+fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
+    let mut b = GraphBuilder::new();
+    let [] = b.call(POOL, method, (validator,));
+    b.build().expect("every output is consumed")
 }
 
 fn register_graph(validator: u64) -> ManifestGraph {
-    ManifestGraph {
-        nodes: vec![operator_node(
-            "register-validator",
-            validator,
-            vec![
-                GraphArg::Literal(Value::Bytes(PUBKEY.to_vec())),
-                GraphArg::Literal(Value::Bytes(POSSESSION_PROOF.to_vec())),
-            ],
-        )],
-    }
+    let mut b = GraphBuilder::new();
+    let [] = b.call(
+        POOL,
+        "register-validator",
+        (validator, PUBKEY.to_vec(), POSSESSION_PROOF.to_vec()),
+    );
+    b.build().expect("every output is consumed")
 }
 
 const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
@@ -626,9 +584,7 @@ fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
     // the pool refuses to produce one in the first place.
     let world = world();
     for method in ["deactivate-validator", "unjail"] {
-        let graph = ManifestGraph {
-            nodes: vec![operator_node(method, VALIDATOR, Vec::new())],
-        };
+        let graph = operator_graph(method, VALIDATOR);
         let entry = batch_entry(&world, &single_intent(graph))?;
         let outcome = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
         assert!(
@@ -650,9 +606,7 @@ fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
     store.clear_log();
 
     for (method, event_type) in [("deactivate-validator", 3), ("unjail", 4)] {
-        let graph = ManifestGraph {
-            nodes: vec![operator_node(method, VALIDATOR, Vec::new())],
-        };
+        let graph = operator_graph(method, VALIDATOR);
         let entry = batch_entry(&world, &single_intent(graph))?;
         let outcome = run_both(&store, std::slice::from_ref(&entry))?;
         assert!(matches!(
@@ -722,17 +676,13 @@ fn cast_payload() -> Vec<u8> {
 }
 
 fn cast_graph() -> ManifestGraph {
-    ManifestGraph {
-        nodes: vec![GraphNode {
-            target: POOL,
-            method: "cast-param-vote".into(),
-            args: vec![
-                GraphArg::Literal(Value::U64(SPLIT_BYTES)),
-                GraphArg::Literal(Value::U64(IMPOUND_EPOCHS)),
-                GraphArg::Literal(Value::U64(ACTIVATE_AT)),
-            ],
-        }],
-    }
+    let mut b = GraphBuilder::new();
+    let [] = b.call(
+        POOL,
+        "cast-param-vote",
+        (SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT),
+    );
+    b.build().expect("every output is consumed")
 }
 
 #[test]
@@ -759,12 +709,10 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     store.write(vote_leaf(POOL), cast_payload())?;
     store.clear_log();
 
-    let graph = ManifestGraph {
-        nodes: vec![GraphNode {
-            target: POOL,
-            method: "clear-param-vote".into(),
-            args: Vec::new(),
-        }],
+    let graph = {
+        let mut b = GraphBuilder::new();
+        let [] = b.call(POOL, "clear-param-vote", ());
+        b.build().expect("every output is consumed")
     };
     let entry = batch_entry(&world, &single_intent(graph))?;
     let outcome = run_both(&store, std::slice::from_ref(&entry))?;

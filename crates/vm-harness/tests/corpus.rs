@@ -15,8 +15,8 @@ use hyperscale_vm_effects::stdlib::{
     ASKS, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
 };
 use hyperscale_vm_effects::{
-    AbiParam, Address, Clause, Constraint, EdgeRef, Effect, EffectSet, EffectTarget, Expr,
-    GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
+    AbiParam, Address, Clause, Constraint, Effect, EffectSet, EffectTarget, Expr, Hash32, Hasher,
+    InstanceMeta, InstanceRegistry, ManifestGraph,
     MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata, ParamType,
     PrefixShardResolver, RoleId, Routing, ShardId, ShardResolver, SubstateKey, TargetExpr,
     TestHasher, Value, admit, child_key, fresh_id, route,
@@ -28,6 +28,7 @@ use hyperscale_vm_kernel::{
     InvokeResult, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt,
     SubstateStore, TxHash, decode_amount, encode_amount,
 };
+use hyperscale_vm_manifest_builder::GraphBuilder;
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
@@ -440,29 +441,10 @@ fn amount_of(store: &mut MemoryStore, key: SubstateKey) -> u128 {
 }
 
 fn transfer_graph() -> ManifestGraph {
-    ManifestGraph {
-        nodes: vec![
-            GraphNode {
-                target: ALICE,
-                method: "withdraw".into(),
-                args: vec![
-                    GraphArg::Literal(Value::Address(RES_X)),
-                    GraphArg::Literal(Value::U128(100)),
-                ],
-            },
-            GraphNode {
-                target: BOB,
-                method: "deposit".into(),
-                args: vec![GraphArg::Edge {
-                    edge: EdgeRef {
-                        producer: 0,
-                        output: 0,
-                    },
-                    constraints: vec![Constraint::ResourceIs(RES_X)],
-                }],
-            },
-        ],
-    }
+    let mut b = GraphBuilder::new();
+    let [funds] = b.call(ALICE, "withdraw", (RES_X, 100u128));
+    let [] = b.call(BOB, "deposit", (funds.resource_is(RES_X),));
+    b.build().expect("every output is consumed")
 }
 
 /// A package the authored stdlib table does not describe: the same
@@ -525,28 +507,11 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
         .unwrap();
     store.clear_log();
 
-    let graph = ManifestGraph {
-        nodes: vec![
-            GraphNode {
-                target: ALICE,
-                method: "withdraw".into(),
-                args: vec![
-                    GraphArg::Literal(Value::Address(RES_X)),
-                    GraphArg::Literal(Value::U128(100)),
-                ],
-            },
-            GraphNode {
-                target: DANA,
-                method: "deposit".into(),
-                args: vec![GraphArg::Edge {
-                    edge: EdgeRef {
-                        producer: 0,
-                        output: 0,
-                    },
-                    constraints: vec![Constraint::ResourceIs(RES_X)],
-                }],
-            },
-        ],
+    let graph = {
+        let mut b = GraphBuilder::new();
+        let [funds] = b.call(ALICE, "withdraw", (RES_X, 100u128));
+        let [] = b.call(DANA, "deposit", (funds.resource_is(RES_X),));
+        b.build().expect("every output is consumed")
     };
     let (results, _) = run_both(
         &engines,
@@ -576,29 +541,11 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
 /// A transfer whose recipient signs a bound the sender's withdrawal
 /// cannot meet.
 fn bounded_transfer_graph(constraint: Constraint) -> ManifestGraph {
-    ManifestGraph {
-        nodes: vec![
-            GraphNode {
-                target: ALICE,
-                method: "withdraw".into(),
-                args: vec![
-                    GraphArg::Literal(Value::Address(RES_X)),
-                    GraphArg::Literal(Value::U128(100)),
-                ],
-            },
-            GraphNode {
-                target: BOB,
-                method: "deposit".into(),
-                args: vec![GraphArg::Edge {
-                    edge: EdgeRef {
-                        producer: 0,
-                        output: 0,
-                    },
-                    constraints: vec![Constraint::ResourceIs(RES_X), constraint],
-                }],
-            },
-        ],
-    }
+    let mut b = GraphBuilder::new();
+    let [funds] = b.call(ALICE, "withdraw", (RES_X, 100u128));
+    let funds = funds.resource_is(RES_X).constrain(constraint);
+    let [] = b.call(BOB, "deposit", (funds,));
+    b.build().expect("every output is consumed")
 }
 
 #[test]
@@ -761,43 +708,11 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
 }
 
 fn swap_graph(min_out: u128) -> ManifestGraph {
-    ManifestGraph {
-        nodes: vec![
-            GraphNode {
-                target: ALICE,
-                method: "withdraw".into(),
-                args: vec![
-                    GraphArg::Literal(Value::Address(RES_X)),
-                    GraphArg::Literal(Value::U128(500)),
-                ],
-            },
-            GraphNode {
-                target: POOL,
-                method: "swap".into(),
-                args: vec![
-                    GraphArg::Edge {
-                        edge: EdgeRef {
-                            producer: 0,
-                            output: 0,
-                        },
-                        constraints: vec![],
-                    },
-                    GraphArg::Literal(Value::U128(min_out)),
-                ],
-            },
-            GraphNode {
-                target: ALICE,
-                method: "deposit".into(),
-                args: vec![GraphArg::Edge {
-                    edge: EdgeRef {
-                        producer: 1,
-                        output: 0,
-                    },
-                    constraints: vec![Constraint::ResourceIs(RES_Y)],
-                }],
-            },
-        ],
-    }
+    let mut b = GraphBuilder::new();
+    let [funds] = b.call(ALICE, "withdraw", (RES_X, 500u128));
+    let [out] = b.call(POOL, "swap", (funds, min_out));
+    let [] = b.call(ALICE, "deposit", (out.resource_is(RES_Y),));
+    b.build().expect("every output is consumed")
 }
 
 fn swap_store() -> MemoryStore {
@@ -913,84 +828,19 @@ fn a_violated_output_floor_traps_identically() -> Result<()> {
 }
 
 fn place_graph() -> ManifestGraph {
-    ManifestGraph {
-        nodes: vec![
-            GraphNode {
-                target: MAKER,
-                method: "withdraw".into(),
-                args: vec![
-                    GraphArg::Literal(Value::Address(BASE)),
-                    GraphArg::Literal(Value::U128(50)),
-                ],
-            },
-            GraphNode {
-                target: BOOK,
-                method: "place-ask".into(),
-                args: vec![
-                    GraphArg::Literal(Value::U64(3)),
-                    GraphArg::Edge {
-                        edge: EdgeRef {
-                            producer: 0,
-                            output: 0,
-                        },
-                        constraints: vec![],
-                    },
-                ],
-            },
-        ],
-    }
+    let mut b = GraphBuilder::new();
+    let [funds] = b.call(MAKER, "withdraw", (BASE, 50u128));
+    let [] = b.call(BOOK, "place-ask", (3u64, funds));
+    b.build().expect("every output is consumed")
 }
 
 fn fill_graph() -> ManifestGraph {
-    ManifestGraph {
-        nodes: vec![
-            GraphNode {
-                target: TAKER,
-                method: "withdraw".into(),
-                args: vec![
-                    GraphArg::Literal(Value::Address(QUOTE)),
-                    GraphArg::Literal(Value::U128(100)),
-                ],
-            },
-            GraphNode {
-                target: BOOK,
-                method: "fill-asks".into(),
-                args: vec![
-                    GraphArg::Literal(Value::U64(3)),
-                    GraphArg::Literal(Value::U64(5)),
-                    GraphArg::Edge {
-                        edge: EdgeRef {
-                            producer: 0,
-                            output: 0,
-                        },
-                        constraints: vec![],
-                    },
-                ],
-            },
-            GraphNode {
-                target: TAKER,
-                method: "deposit".into(),
-                args: vec![GraphArg::Edge {
-                    edge: EdgeRef {
-                        producer: 1,
-                        output: 0,
-                    },
-                    constraints: vec![Constraint::ResourceIs(BASE)],
-                }],
-            },
-            GraphNode {
-                target: TAKER,
-                method: "deposit".into(),
-                args: vec![GraphArg::Edge {
-                    edge: EdgeRef {
-                        producer: 1,
-                        output: 1,
-                    },
-                    constraints: vec![Constraint::ResourceIs(QUOTE)],
-                }],
-            },
-        ],
-    }
+    let mut b = GraphBuilder::new();
+    let [payment] = b.call(TAKER, "withdraw", (QUOTE, 100u128));
+    let [base, refund] = b.call(BOOK, "fill-asks", (3u64, 5u64, payment));
+    let [] = b.call(TAKER, "deposit", (base.resource_is(BASE),));
+    let [] = b.call(TAKER, "deposit", (refund.resource_is(QUOTE),));
+    b.build().expect("every output is consumed")
 }
 
 #[test]
