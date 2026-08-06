@@ -415,8 +415,18 @@ fn check_callbacks(
     callbacks: &[(FuncRef, &'static str)],
 ) -> Result<(), ProfileError> {
     for (target, kind) in callbacks {
-        let FuncRef::Wasm(instance, local) = target else {
-            continue;
+        let (instance, local) = match target {
+            FuncRef::Wasm(instance, local) => (instance, local),
+            // A canon builtin *as* the callback is the degenerate case of
+            // reaching one: the first use traps in both runtimes, so the
+            // artifact is refused where the equivalent one-hop shape is.
+            FuncRef::Canon => {
+                return Err(ProfileError::Structural(format!(
+                    "a {kind} callback is itself a canon builtin, which may not be \
+                     called from inside the canonical ABI"
+                )));
+            }
+            FuncRef::Host => continue,
         };
         let mut seen = BTreeSet::new();
         let mut stack = vec![(*instance, *local)];
@@ -611,13 +621,19 @@ fn link(bytes: &[u8]) -> Result<Linked, ProfileError> {
 
     // Callbacks resolve last: a canon option names a core function that may
     // be aliased out of any instance, including one defined after it.
-    let entries = callbacks
-        .iter()
-        .filter_map(|callback| {
-            let target = core_func(&core_funcs, &resolved, callback.func)?;
-            Some((target, callback.kind))
-        })
-        .collect();
+    // Component validation should leave nothing unresolvable here, but an
+    // unresolvable callback is one the walk cannot judge, so it fails the
+    // artifact rather than falling out of the callback set.
+    let mut entries = Vec::with_capacity(callbacks.len());
+    for callback in &callbacks {
+        let Some(target) = core_func(&core_funcs, &resolved, callback.func) else {
+            return Err(ProfileError::Structural(format!(
+                "a {} callback names a core function the linked graph cannot resolve",
+                callback.kind
+            )));
+        };
+        entries.push((target, callback.kind));
+    }
 
     Ok(Linked {
         modules,

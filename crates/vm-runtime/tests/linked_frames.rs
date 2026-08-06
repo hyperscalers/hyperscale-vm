@@ -188,3 +188,37 @@ fn a_cycle_closed_through_another_modules_table_is_refused() {
     let refusal = refusal(&through_a_shim_table(4, "entry"));
     assert!(refusal.contains("cyclic"), "{refusal}");
 }
+
+#[test]
+fn a_callback_that_is_itself_a_builtin_is_refused() {
+    // The degenerate case of a callback reaching a canon builtin: the
+    // canon option names the builtin *as* the callback, with no guest code
+    // between the callback position and the boundary, so a walk that only
+    // judges wasm callbacks skips it entirely — while both runtimes trap
+    // the first time the ABI runs it. `resource.drop` is the builtin that
+    // makes the shape constructible: its `(param i32)` signature is
+    // exactly the post-return signature of a lift returning one `i32`.
+    // (A lowered import as the *realloc* is refused upstream — no import
+    // in the world lowers to realloc's signature.)
+    let bytes = parse_str(
+        r#"(component
+             (import "hyperscale:kernel/state" (instance $state
+               (export "read-cell" (type $rc (sub resource)))))
+             (alias export $state "read-cell" (type $rcell))
+
+             (core func $drop (canon resource.drop $rcell))
+
+             (core module $main
+               (func (export "run") (result i32) i32.const 7))
+             (core instance $m (instantiate $main))
+
+             (func (export "run") (result u32)
+               (canon lift (core func $m "run") (post-return (func $drop)))))"#,
+    )
+    .expect("fixture must parse");
+    let refusal = refusal(&bytes);
+    assert!(
+        refusal.contains("post-return callback is itself a canon builtin"),
+        "{refusal}"
+    );
+}
