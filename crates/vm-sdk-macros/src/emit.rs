@@ -17,7 +17,8 @@ use crate::term::{Op, Term, binding_ident};
 ///
 /// Read off the lattice rather than tabulated: a cell a body both reads and
 /// writes is an exclusive read-modify-write, because `Write` subsumes
-/// `Read`. Everything else names its own point.
+/// `Read`. Every other mix was refused when the operation was recorded, so
+/// by the time a site reaches emission its operations name one mode.
 /// A mode's parameter is evaluated before the access opens.
 ///
 /// `Access` borrows the tracer mutably for as long as it is alive, and

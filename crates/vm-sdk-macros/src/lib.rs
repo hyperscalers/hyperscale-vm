@@ -32,15 +32,26 @@
 //!
 //! Routing evaluates a declaration before execution and never reads state,
 //! so a key the body computes from a substate value arrives too late to
-//! route on. That is not a limitation the macro could engineer away, and it
-//! is the one case where the macro stops with an error on the offending
-//! line rather than guessing. The same applies to a loop whose trip count
-//! is not a configured collection, and to a range whose entry cap is not a
-//! literal.
+//! route on. That is not a limitation the macro could engineer away, and
+//! the macro stops with an error on the offending line rather than
+//! guessing. The same applies to a loop whose trip count is not a
+//! configured collection, and to a range whose entry cap is not a literal.
 //!
-//! Conditionals are fine: both arms are declared, giving a superset of what
-//! any one execution touches. The VM prices that superset through
-//! `footprint` rather than rejecting it.
+//! The walk is exhaustive: an expression form the lowering does not model
+//! is a compile error, never a skip, because a skipped form is a
+//! declaration missing whatever the body did inside it. Concretely that
+//! refuses closures, macros outside the assert and panic family (whose
+//! arguments are walked like any expression), calls that pass the
+//! component on — including `self.other_method(…)` — and an early `return`
+//! carrying a produced value edge, which the tail's exact output list
+//! cannot absorb. Reassigning a local forgets what it held, so a key used
+//! after a conditional reassignment is refused at the use site. One handle
+//! declares one mode: a read beside a movement, or a second reservation,
+//! is refused where it is recorded.
+//!
+//! Conditionals — `if` and `match` alike — are fine: every arm is
+//! declared, giving a superset of what any one execution touches. The VM
+//! prices that superset through `footprint` rather than rejecting it.
 //!
 //! # What it does not do
 //!

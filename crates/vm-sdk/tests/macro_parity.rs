@@ -206,3 +206,66 @@ fn the_pool_body_derives_its_authored_signature() {
 fn the_book_body_derives_its_authored_signature() {
     assert_derived(&book::blueprint().metadata(), &book_metadata(), "book");
 }
+
+/// Control-flow spellings of one access set, each beside its straight-line
+/// equivalent. A conditional access is declared on every arm, so whichever
+/// spelling the author reaches for, the declaration is the same superset.
+#[blueprint]
+mod shapes {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Amount, Keyed};
+
+    #[state]
+    struct Shapes {
+        #[role(1)]
+        vaults: Keyed<Amount>,
+    }
+
+    impl Shapes {
+        pub fn branched(&mut self, flag: u64, a: Address, b: Address) {
+            match flag {
+                0 => self.vaults.at(a).add(0),
+                _ => self.vaults.at(b).add(0),
+            }
+        }
+
+        pub fn straight(&mut self, _flag: u64, a: Address, b: Address) {
+            self.vaults.at(a).add(0);
+            self.vaults.at(b).add(0);
+        }
+
+        pub fn asserted(&mut self, a: Address) {
+            assert_eq!(self.vaults.at(a).get(), 0);
+        }
+
+        #[allow(clippy::equatable_if_let)] // the spelling under test is the if-let itself
+        pub fn scrutinised(&mut self, a: Address) {
+            if let 0 = self.vaults.at(a).get() {}
+        }
+
+        pub fn read(&mut self, a: Address) {
+            let _ = self.vaults.at(a).get();
+        }
+
+        pub fn guarded(&mut self, flag: u64, a: Address) {
+            let 0 = flag else {
+                self.vaults.at(a).add(0);
+                return;
+            };
+        }
+
+        pub fn plain(&mut self, _flag: u64, a: Address) {
+            self.vaults.at(a).add(0);
+        }
+    }
+}
+
+#[test]
+fn every_spelling_of_a_conditional_declares_the_same_accesses() {
+    let metadata = shapes::blueprint().metadata();
+    let effects = |name: &str| &metadata.methods[name].effects;
+    assert_eq!(effects("branched"), effects("straight"), "match arms");
+    assert_eq!(effects("asserted"), effects("read"), "assert argument");
+    assert_eq!(effects("scrutinised"), effects("read"), "if-let scrutinee");
+    assert_eq!(effects("guarded"), effects("plain"), "let-else diverge");
+}

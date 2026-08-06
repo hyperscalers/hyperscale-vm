@@ -1,0 +1,5 @@
+error: a produced value edge must leave through the method's tail expression — the declared outputs are exact, so an early return's edges cannot be reconciled with the tail's
+  --> tests/refusals/early_return_output.rs:17:17
+   |
+17 |                 return Bucket::of(a, 1);
+   |                 ^^^^^^

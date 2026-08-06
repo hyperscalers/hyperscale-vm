@@ -2,10 +2,13 @@
 //!
 //! A syntactic dataflow pass, not an interpreter. It walks statements in
 //! order, tracks what each local holds as a [`Slot`], and records every
-//! site where the body opens a handle on component state. What it cannot
-//! model becomes [`Slot::Opaque`] and is carried along harmlessly until
-//! something tries to use it as a key — which is the one place the macro
-//! stops and points at the line.
+//! site where the body opens a handle on component state. A *value* it
+//! cannot express becomes [`Slot::Opaque`] and is carried along harmlessly
+//! until something tries to use it as a key — which is where the macro
+//! stops and points at the line. An *expression form* it does not model is
+//! refused outright: walking past one would drop whatever accesses it
+//! contains, and a silently smaller declaration is the one failure mode
+//! the derivation must not have.
 //!
 //! Two properties make this sound rather than a heuristic:
 //!
@@ -160,6 +163,36 @@ fn split_tail(block: &syn::Block) -> (&[syn::Stmt], Option<&syn::Expr>) {
     }
 }
 
+/// Strip a type ascription off a pattern: `let x: u64 = …` binds `x`.
+fn unwrap_pat(pat: &syn::Pat) -> &syn::Pat {
+    match pat {
+        syn::Pat::Type(typed) => unwrap_pat(&typed.pat),
+        other => other,
+    }
+}
+
+/// Whether a binary operator writes its left operand (`+=` and family).
+const fn binary_op_assigns(op: syn::BinOp) -> bool {
+    matches!(
+        op,
+        syn::BinOp::AddAssign(_)
+            | syn::BinOp::SubAssign(_)
+            | syn::BinOp::MulAssign(_)
+            | syn::BinOp::DivAssign(_)
+            | syn::BinOp::RemAssign(_)
+            | syn::BinOp::BitXorAssign(_)
+            | syn::BinOp::BitAndAssign(_)
+            | syn::BinOp::BitOrAssign(_)
+            | syn::BinOp::ShlAssign(_)
+            | syn::BinOp::ShrAssign(_)
+    )
+}
+
+/// Whether an expression is the bare `self` path.
+fn is_self(expr: &syn::Expr) -> bool {
+    matches!(expr, syn::Expr::Path(path) if path.path.is_ident("self"))
+}
+
 /// The lowering pass over one method body.
 pub struct Lowerer<'a> {
     fields: &'a BTreeMap<String, Field>,
@@ -272,9 +305,37 @@ impl<'a> Lowerer<'a> {
         index
     }
 
-    fn record(&mut self, site: usize, op: Op, param: Option<Term>) {
-        if let Some(entry) = self.out.sites.get_mut(site) {
+    /// Record an operation against a site, holding the site to one mode.
+    ///
+    /// A read beside a write folds to `Write` because the lattice says so;
+    /// nothing else folds. A read beside a movement, a movement beside a
+    /// reservation, or a second reservation has no single point on the
+    /// lattice, so recording one is refused where it happens rather than
+    /// silently resolved by priority at emission.
+    fn record(&mut self, site: usize, op: Op, param: Option<Term>, span: Span) {
+        let Some(entry) = self.out.sites.get_mut(site) else {
+            return;
+        };
+        let compatible = match op {
+            Op::Get | Op::Set => entry
+                .ops
+                .iter()
+                .all(|(prior, _)| matches!(prior, Op::Get | Op::Set)),
+            Op::Delta => entry
+                .ops
+                .iter()
+                .all(|(prior, _)| matches!(prior, Op::Delta)),
+            Op::Reserve | Op::Locked => entry.ops.is_empty(),
+        };
+        if compatible {
             entry.ops.push((op, param));
+        } else {
+            self.error(
+                span,
+                "one handle declares one access mode — a read beside a movement, or a \
+                 second reservation, folds to no single mode. Open a separate access \
+                 for each mode instead",
+            );
         }
     }
 
@@ -295,6 +356,11 @@ impl<'a> Lowerer<'a> {
                     .init
                     .as_ref()
                     .map_or(Val::Opaque, |init| self.expr(&init.expr));
+                if let Some(init) = &local.init
+                    && let Some((_, diverge)) = &init.diverge
+                {
+                    self.expr(diverge);
+                }
                 let slot = match value {
                     Val::Term(term) => Slot::Value(term),
                     Val::Handle(index) => Slot::Handle(index),
@@ -304,14 +370,102 @@ impl<'a> Lowerer<'a> {
                     Val::Config => Slot::Config,
                     Val::Field(_) | Val::Opaque => Slot::Opaque,
                 };
-                if let syn::Pat::Ident(ident) = &local.pat {
-                    self.bind(ident.ident.to_string(), slot);
+                // A plain name takes the slot; any other pattern binds its
+                // names opaquely, so a destructured piece used as a key is
+                // refused at the use site rather than resolved to whatever
+                // an outer scope happened to call by the same name.
+                match unwrap_pat(&local.pat) {
+                    syn::Pat::Ident(ident) => self.bind(ident.ident.to_string(), slot),
+                    other => self.bind_pattern(other),
                 }
             }
             syn::Stmt::Expr(expr, _) => {
                 self.expr(expr);
             }
-            syn::Stmt::Item(_) | syn::Stmt::Macro(_) => {}
+            syn::Stmt::Macro(mac) => self.macro_call(&mac.mac),
+            // A nested item cannot capture the component, so it can hold no
+            // state access.
+            syn::Stmt::Item(_) => {}
+        }
+    }
+
+    /// Walk a macro invocation's arguments for accesses, or refuse it.
+    ///
+    /// The assert and panic family take ordinary expressions, so an access
+    /// inside one declares like an access outside it. Any other macro is
+    /// opaque tokens — walking past it would silently drop whatever it
+    /// contains, so it is refused instead.
+    fn macro_call(&mut self, mac: &syn::Macro) {
+        let known = ["assert", "assert_eq", "assert_ne", "panic"]
+            .iter()
+            .any(|name| mac.path.is_ident(name));
+        if !known {
+            self.error(
+                mac.span(),
+                "`#[blueprint]` cannot see into this macro, so an access inside it would \
+                 be silently dropped from the declaration — only the assert and panic \
+                 family are admitted",
+            );
+            return;
+        }
+        let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+        match mac.parse_body_with(parser) {
+            Ok(args) => {
+                for arg in &args {
+                    self.expr(arg);
+                }
+            }
+            Err(_) => self.error(
+                mac.span(),
+                "these macro arguments do not parse as expressions, so they cannot be \
+                 checked for state accesses",
+            ),
+        }
+    }
+
+    /// Bind every name a pattern introduces as opaque, in the current scope.
+    ///
+    /// Sound both ways: a pattern-bound name used as a key is refused where
+    /// it is used, and it can no longer shadow an outer binding into a
+    /// declaration it has nothing to do with.
+    fn bind_pattern(&mut self, pat: &syn::Pat) {
+        match pat {
+            syn::Pat::Ident(ident) => {
+                self.bind(ident.ident.to_string(), Slot::Opaque);
+                if let Some((_, sub)) = &ident.subpat {
+                    self.bind_pattern(sub);
+                }
+            }
+            syn::Pat::Tuple(tuple) => {
+                for elem in &tuple.elems {
+                    self.bind_pattern(elem);
+                }
+            }
+            syn::Pat::TupleStruct(tuple) => {
+                for elem in &tuple.elems {
+                    self.bind_pattern(elem);
+                }
+            }
+            syn::Pat::Struct(strct) => {
+                for field in &strct.fields {
+                    self.bind_pattern(&field.pat);
+                }
+            }
+            syn::Pat::Slice(slice) => {
+                for elem in &slice.elems {
+                    self.bind_pattern(elem);
+                }
+            }
+            syn::Pat::Or(or) => {
+                for case in &or.cases {
+                    self.bind_pattern(case);
+                }
+            }
+            syn::Pat::Paren(paren) => self.bind_pattern(&paren.pat),
+            syn::Pat::Reference(reference) => self.bind_pattern(&reference.pat),
+            syn::Pat::Type(typed) => self.bind_pattern(&typed.pat),
+            // Wildcards, literals, paths, rests, and ranges bind nothing.
+            _ => {}
         }
     }
 
@@ -331,12 +485,28 @@ impl<'a> Lowerer<'a> {
 
             // Control flow: both arms are declared, so the result is a
             // superset of any one execution. Legal, and priced as the
-            // superset it is.
+            // superset it is. An `if let` scrutinee is walked and its
+            // pattern's names are bound opaquely for the taken branch.
             syn::Expr::If(branch) => {
-                self.expr(&branch.cond);
+                self.locals.push(BTreeMap::new());
+                self.condition(&branch.cond);
                 self.block(&branch.then_branch);
+                self.locals.pop();
                 if let Some(otherwise) = &branch.else_branch {
                     self.expr(&otherwise.1);
+                }
+                Val::Opaque
+            }
+            syn::Expr::Match(match_) => {
+                self.expr(&match_.expr);
+                for arm in &match_.arms {
+                    self.locals.push(BTreeMap::new());
+                    self.bind_pattern(&arm.pat);
+                    if let Some((_, guard)) = &arm.guard {
+                        self.expr(guard);
+                    }
+                    self.expr(&arm.body);
+                    self.locals.pop();
                 }
                 Val::Opaque
             }
@@ -350,7 +520,15 @@ impl<'a> Lowerer<'a> {
             }
             syn::Expr::Return(ret) => {
                 if let Some(value) = &ret.expr {
-                    self.expr(value);
+                    let produced = self.returned(value);
+                    if !produced.is_empty() {
+                        self.error(
+                            ret.span(),
+                            "a produced value edge must leave through the method's tail \
+                             expression — the declared outputs are exact, so an early \
+                             return's edges cannot be reconciled with the tail's",
+                        );
+                    }
                 }
                 Val::Opaque
             }
@@ -363,54 +541,160 @@ impl<'a> Lowerer<'a> {
             // range is the common case and is entirely legitimate — the
             // range clause covered them before the loop started.
             syn::Expr::While(loop_) => {
-                self.expr(&loop_.cond);
+                self.locals.push(BTreeMap::new());
+                self.condition(&loop_.cond);
                 self.block(&loop_.body);
+                self.locals.pop();
                 Val::Opaque
             }
             syn::Expr::Loop(loop_) => {
                 self.block(&loop_.body);
                 Val::Opaque
             }
-
-            // Everything else is arithmetic, comparison, or a call the
-            // macro does not model. Harmless until used as a key.
-            other => {
-                self.walk_opaque(other);
+            syn::Expr::Let(let_) => {
+                self.expr(&let_.expr);
+                self.bind_pattern(&let_.pat);
                 Val::Opaque
             }
-        }
-    }
 
-    /// Descend into an unmodelled expression purely to find accesses inside
-    /// it — a `.set()` buried in an `if` condition still declares.
-    fn walk_opaque(&mut self, expr: &syn::Expr) {
-        match expr {
+            // Assignment forgets the target's slot: after a conditional
+            // reassignment the static value is not knowable, so a later
+            // use as a key must be refused where it is used rather than
+            // declare the stale key.
+            syn::Expr::Assign(assign) => {
+                self.expr(&assign.right);
+                self.assign_target(&assign.left);
+                Val::Opaque
+            }
             syn::Expr::Binary(binary) => {
                 self.expr(&binary.left);
                 self.expr(&binary.right);
+                if binary_op_assigns(binary.op) {
+                    self.assign_target(&binary.left);
+                }
+                Val::Opaque
             }
+
+            // Forms that carry no access semantics of their own but can
+            // contain accesses: walked exhaustively, evaluated to nothing.
             syn::Expr::Unary(unary) => {
                 self.expr(&unary.expr);
-            }
-            syn::Expr::Assign(assign) => {
-                self.expr(&assign.left);
-                self.expr(&assign.right);
+                Val::Opaque
             }
             syn::Expr::Tuple(tuple) => {
                 for element in &tuple.elems {
                     self.expr(element);
                 }
+                Val::Opaque
             }
+            // A cast can truncate, so the result is not the term it was
+            // cast from.
             syn::Expr::Cast(cast) => {
                 self.expr(&cast.expr);
+                Val::Opaque
             }
             syn::Expr::Try(try_) => {
                 self.expr(&try_.expr);
+                Val::Opaque
             }
-            // Everything else — literals, paths, macro invocations, and
-            // any expression form that cannot contain a state access —
-            // contributes nothing to walk into.
-            _ => {}
+            syn::Expr::Index(index) => {
+                self.expr(&index.expr);
+                self.expr(&index.index);
+                Val::Opaque
+            }
+            syn::Expr::Array(array) => {
+                for element in &array.elems {
+                    self.expr(element);
+                }
+                Val::Opaque
+            }
+            syn::Expr::Repeat(repeat) => {
+                self.expr(&repeat.expr);
+                self.expr(&repeat.len);
+                Val::Opaque
+            }
+            syn::Expr::Struct(strct) => {
+                for field in &strct.fields {
+                    self.expr(&field.expr);
+                }
+                if let Some(rest) = &strct.rest {
+                    self.expr(rest);
+                }
+                Val::Opaque
+            }
+            syn::Expr::Range(range) => {
+                if let Some(start) = &range.start {
+                    self.expr(start);
+                }
+                if let Some(end) = &range.end {
+                    self.expr(end);
+                }
+                Val::Opaque
+            }
+            syn::Expr::Break(brk) => {
+                if let Some(value) = &brk.expr {
+                    self.expr(value);
+                }
+                Val::Opaque
+            }
+            syn::Expr::Continue(_) => Val::Opaque,
+            syn::Expr::Macro(mac) => {
+                self.macro_call(&mac.mac);
+                Val::Opaque
+            }
+
+            // A closure could capture the component and carry accesses the
+            // walk cannot attribute to any declaration site.
+            syn::Expr::Closure(closure) => {
+                self.error(
+                    closure.span(),
+                    "`#[blueprint]` does not model closures — an access inside one \
+                     cannot be attributed to a declaration",
+                );
+                Val::Opaque
+            }
+
+            // Anything not modelled above would be walked past silently,
+            // and a silent skip is a declaration missing whatever the body
+            // did inside it. Refusing is what makes over-declaration the
+            // only failure mode the derivation has.
+            other => {
+                self.error(
+                    other.span(),
+                    "`#[blueprint]` does not model this expression, so it cannot see \
+                     the accesses inside it — rewrite the body with the forms the \
+                     macro admits (see the crate docs)",
+                );
+                Val::Opaque
+            }
+        }
+    }
+
+    /// Walk an `if`/`while` condition, binding an `if let` pattern's names
+    /// opaquely into the scope the caller pushed.
+    fn condition(&mut self, cond: &syn::Expr) {
+        if let syn::Expr::Let(let_) = cond {
+            self.expr(&let_.expr);
+            self.bind_pattern(&let_.pat);
+        } else {
+            self.expr(cond);
+        }
+    }
+
+    /// Forget the slot an assignment target held, wherever it is bound.
+    fn assign_target(&mut self, left: &syn::Expr) {
+        if let syn::Expr::Path(path) = left
+            && let Some(ident) = path.path.get_ident()
+        {
+            let name = ident.to_string();
+            for scope in self.locals.iter_mut().rev() {
+                if let Some(slot) = scope.get_mut(&name) {
+                    *slot = Slot::Opaque;
+                    return;
+                }
+            }
+        } else {
+            self.expr(left);
         }
     }
 
@@ -504,6 +788,15 @@ impl<'a> Lowerer<'a> {
     }
 
     fn free_call(&mut self, call: &syn::ExprCall) -> Val {
+        for arg in &call.args {
+            if is_self(arg) {
+                self.error(
+                    arg.span(),
+                    "the component reference cannot be passed on — a callee's accesses \
+                     would be invisible to this method's declaration",
+                );
+            }
+        }
         let syn::Expr::Path(path) = &*call.func else {
             for arg in &call.args {
                 self.expr(arg);
@@ -533,6 +826,29 @@ impl<'a> Lowerer<'a> {
 
     #[allow(clippy::too_many_lines)]
     fn method_call(&mut self, call: &syn::ExprMethodCall) -> Val {
+        // `self.other_method(…)` reaches state this body never names, so
+        // its accesses cannot land in this declaration.
+        if is_self(&call.receiver) {
+            self.error(
+                call.span(),
+                "a contract method cannot call another method of the component — each \
+                 method declares only its own body's accesses. Inline the access, or \
+                 lift the shared value to a parameter",
+            );
+            for arg in &call.args {
+                self.expr(arg);
+            }
+            return Val::Opaque;
+        }
+        for arg in &call.args {
+            if is_self(arg) {
+                self.error(
+                    arg.span(),
+                    "the component reference cannot be passed on — a callee's accesses \
+                     would be invisible to this method's declaration",
+                );
+            }
+        }
         let receiver = self.expr(&call.receiver);
         let method = call.method.to_string();
         let args: Vec<Val> = call.args.iter().map(|a| self.expr(a)).collect();
@@ -567,7 +883,7 @@ impl<'a> Lowerer<'a> {
                          derivable from the arguments",
                     );
                 }
-                self.record(site, op, param);
+                self.record(site, op, param, call.span());
 
                 // A reservation yields a value edge carrying the vault's
                 // own resource — which the site's key material already
@@ -622,7 +938,7 @@ impl<'a> Lowerer<'a> {
                     role,
                     material: vec![],
                 });
-                self.record(site, Op::Locked, None);
+                self.record(site, Op::Locked, None, call.span());
                 Val::Config
             }
 
@@ -698,7 +1014,7 @@ impl<'a> Lowerer<'a> {
                         Some(Val::Term(term)) => Some(term.clone()),
                         _ => None,
                     };
-                    self.record(site, op, param);
+                    self.record(site, op, param, call.span());
                 }
                 Val::Opaque
             }
@@ -721,8 +1037,11 @@ impl<'a> Lowerer<'a> {
         let depth = self.depth();
         self.scopes.push(Vec::new());
         self.locals.push(BTreeMap::new());
-        if let syn::Pat::Ident(ident) = &*loop_.pat {
-            self.bind(ident.ident.to_string(), Slot::Value(Term::Binding(depth)));
+        match unwrap_pat(&loop_.pat) {
+            syn::Pat::Ident(ident) => {
+                self.bind(ident.ident.to_string(), Slot::Value(Term::Binding(depth)));
+            }
+            other => self.bind_pattern(other),
         }
         for stmt in &loop_.body.stmts {
             self.stmt(stmt);

@@ -15,5 +15,8 @@ macros = ["dep:hyperscale-vm-sdk-macros"]
 hyperscale-vm-effects.workspace = true
 hyperscale-vm-sdk-macros = { workspace = true, optional = true }
 
+[dev-dependencies]
+trybuild.workspace = true
+
 [lints]
 workspace = true

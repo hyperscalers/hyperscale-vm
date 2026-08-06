@@ -1,0 +1,5 @@
+error: one handle declares one access mode — a read beside a movement, or a second reservation, folds to no single mode. Open a separate access for each mode instead
+  --> tests/refusals/mode_mix.rs:18:13
+   |
+18 |             vault.reserve(amount);
+   |             ^^^^^
