@@ -82,6 +82,12 @@ pub enum MaterializeError {
     /// sound only where no version of the target differs.
     #[error("declared locked read of unlocked substate {0:?}")]
     UnlockedTarget(SubstateKey),
+    /// A locked read declared on a substate whose lock was created in
+    /// this batch. The read serves from the batch baseline, where the
+    /// lock — and possibly the value — does not exist yet; the substate
+    /// is readable from the next batch.
+    #[error("declared locked read of {0:?}, whose lock is not at the baseline yet")]
+    LockedThisBatch(SubstateKey),
     /// A declared reservation the committed balance cannot cover.
     #[error("reservation of {amount} on {key:?} is infeasible")]
     Infeasible {
@@ -1044,8 +1050,16 @@ fn capability_for(store: &OverlayStore, effect: Effect) -> Result<Capability, Ma
         // receipts. A read of mutable state is `Mode::Read`, which
         // provisions.
         (EffectTarget::Point(key), Mode::Locked) => {
-            if store.is_locked(key) {
+            // Judged at the baseline the read will land on, not at the
+            // layers: a lock born in this batch is real for every
+            // mutation gate, but the read behind this capability serves
+            // the baseline, and passing the gate on the layers would
+            // hand out a read of whatever the cell held before the
+            // batch — empty, or worse, the stale unlocked value.
+            if store.is_locked_at_baseline(key) {
                 Ok(Capability::Locked(key))
+            } else if store.is_locked(key) {
+                Err(MaterializeError::LockedThisBatch(key))
             } else {
                 Err(MaterializeError::UnlockedTarget(key))
             }

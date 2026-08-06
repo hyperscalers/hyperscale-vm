@@ -18,8 +18,9 @@ use hyperscale_vm_effects::{
     TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore, Outcome, RunResult,
-    SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
+    BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MaterializeError,
+    MemoryStore, Outcome, OverlayStore, RunResult, SubstateStore, TxHash, decode_amount,
+    encode_amount, execute_batch,
 };
 
 const CONFIG: u128 = 7;
@@ -168,4 +169,46 @@ fn a_fresh_read_of_the_same_cell_is_admitted() {
         matches!(outcome, Outcome::Completed { .. }),
         "mutable state is read with `Read`: {outcome:?}"
     );
+}
+
+/// A lock born in this batch refuses the read that would miss it.
+///
+/// The lock is real — every mutation gate sees it — but a locked read
+/// serves from the batch baseline, where the lock and possibly the value
+/// do not exist yet. Materializing that capability would hand the guest
+/// the pre-batch bytes: empty for a fresh cell, or the stale unlocked
+/// value for a rewritten one. It is refused instead, in both layers a
+/// batch can hold the lock in, and the substate reads from the next
+/// batch onward.
+#[test]
+fn a_lock_created_this_batch_refuses_its_own_read() {
+    for merged in [false, true] {
+        let mut store = OverlayStore::new(Arc::new(MemoryStore::new()));
+        store
+            .write(cell(LOCKED), encode_amount(CONFIG).to_vec())
+            .unwrap();
+        store.lock(cell(LOCKED)).unwrap();
+        if merged {
+            store.merge_active();
+        }
+
+        let declared = declare(&[(cell(LOCKED), Mode::Locked)]);
+        let ordered: Vec<_> = declared.iter().collect();
+        let refusal = KernelSession::materialize(
+            store,
+            &declared,
+            &ordered,
+            tx(0x01),
+            EnvInputs {
+                clock_ms: 0,
+                randomness: [0; 32],
+            },
+            test_hash,
+        )
+        .expect_err("a fresh lock must not serve a baseline read");
+        assert!(
+            matches!(refusal, MaterializeError::LockedThisBatch(key) if key == cell(LOCKED)),
+            "merged={merged}: the refusal must name the fresh lock: {refusal:?}"
+        );
+    }
 }

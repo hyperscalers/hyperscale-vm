@@ -110,6 +110,19 @@ impl OverlayStore {
             || self.base.is_locked(key)
     }
 
+    /// Whether a substate is locked at the batch baseline — the layer a
+    /// locked read serves from.
+    ///
+    /// The two lockedness questions part ways over a lock born in this
+    /// batch: every mutation gate must see it (a fresh lock rejects
+    /// writes like an old one), and no locked read may pass on it,
+    /// because [`SubstateStore::locked`] reads the baseline and would
+    /// come back with whatever the cell held before the batch.
+    #[must_use]
+    pub fn is_locked_at_baseline(&self, key: SubstateKey) -> bool {
+        self.base.is_locked(key)
+    }
+
     fn reject_locked(&self, key: SubstateKey) -> Result<(), StoreError> {
         if self.is_locked(key) {
             return Err(StoreError::Locked(key));
@@ -651,6 +664,9 @@ impl SubstateStore for OverlayStore {
 
     fn locked(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
         self.record(EffectTarget::Point(key), ModeKind::Locked);
+        // The baseline, deliberately: a locked read is pinned like every
+        // snapshot, and materialization refuses a lock born in this
+        // batch, so the layers can hold nothing this read should see.
         Ok(self.base.cell(key))
     }
 
