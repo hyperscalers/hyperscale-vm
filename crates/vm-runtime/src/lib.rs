@@ -11,6 +11,7 @@
 //! whose runtime interprets components rather than compiling them needs
 //! the verdict just as much, and needs nothing else from here to get it.
 
+pub mod exports;
 pub mod frames;
 pub mod profile;
 pub mod validator;
@@ -24,6 +25,7 @@ pub mod gas;
 #[cfg(feature = "engine")]
 pub mod world;
 
+pub use exports::{ExportParam, component_export_params};
 pub use validator::{ProfileError, validate_component, validate_core_module};
 #[cfg(feature = "engine")]
 pub use {
