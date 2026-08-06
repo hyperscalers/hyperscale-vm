@@ -476,6 +476,10 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
     let repeated = extended.root_bindings[0];
     extended.root_bindings.push(repeated);
     assert_ne!(tree.hash(&TestHasher), extended.hash(&TestHasher));
+
+    let mut resliced = tree.clone();
+    resliced.root_bindings[0].edge.output += 1;
+    assert_ne!(tree.hash(&TestHasher), resliced.hash(&TestHasher));
 }
 
 proptest! {
