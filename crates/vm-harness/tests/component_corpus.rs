@@ -67,6 +67,15 @@ enum Wiring {
     /// A post-return that calls the lowered import directly — it can,
     /// because the module carrying it is instantiated after the lower.
     PostReturnCycle,
+    /// `canon resource.drop` in ordinary body position: admitted, and both
+    /// runtimes must agree on what dropping an unknown handle does.
+    BodyDrop,
+    /// A realloc that calls `canon resource.drop` — a builtin that leaves
+    /// the instance without re-entering it, so no cycle closes and only
+    /// the may-leave rule stands between the callback and the host.
+    ReallocDrop,
+    /// The same drop from the lift's post-return.
+    PostReturnDrop,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -171,6 +180,9 @@ impl Spec {
                     Wiring::Shim,
                     Wiring::ReallocCycle,
                     Wiring::PostReturnCycle,
+                    Wiring::BodyDrop,
+                    Wiring::ReallocDrop,
+                    Wiring::PostReturnDrop,
                 ] {
                     specs.push(Self {
                         import,
@@ -187,6 +199,14 @@ impl Spec {
         matches!(self.wiring, Wiring::Shim | Wiring::ReallocCycle)
     }
 
+    /// Whether the wiring names `canon resource.drop` anywhere.
+    const fn uses_drop(self) -> bool {
+        matches!(
+            self.wiring,
+            Wiring::BodyDrop | Wiring::ReallocDrop | Wiring::PostReturnDrop
+        )
+    }
+
     /// A name for a failure message.
     fn label(self) -> String {
         format!("{:?}/{:?}/{:?}", self.import, self.options, self.wiring)
@@ -197,6 +217,20 @@ impl Spec {
         let core_type = self.import.core_type();
         let mut out = String::new();
         let _ = writeln!(out, "(component {}", self.import.declaration());
+
+        // The drop builtin needs a resource type in scope, and — unlike a
+        // lower, whose options tie it to the allocator's instance — it can
+        // be defined before any core instance, so a module can import and
+        // call it directly.
+        if self.uses_drop() {
+            let _ = writeln!(
+                out,
+                r#"(import "hyperscale:kernel/state" (instance $state
+                     (export "read-cell" (type $rc (sub resource)))))
+                   (alias export $state "read-cell" (type $rcell))
+                   (core func $dropf (canon resource.drop $rcell))"#
+            );
+        }
 
         // The trampoline, and the allocator that calls it. A realloc can
         // only reach a lowered import through a table: the import is
@@ -215,22 +249,27 @@ impl Spec {
                 forward = self.import.forward(),
             );
         }
-        let (shim_import, reach) = if self.wiring == Wiring::ReallocCycle {
-            (
+        let (alloc_import, reach, alloc_arg) = match self.wiring {
+            Wiring::ReallocCycle => (
                 format!(r#"(import "shim" "stub" (func $stub {core_type}))"#),
                 format!(
                     "{} call $stub {}",
                     self.import.args(),
                     self.import.discard()
                 ),
-            )
-        } else {
-            (String::new(), String::new())
+                r#"(with "shim" (instance $is))"#,
+            ),
+            Wiring::ReallocDrop => (
+                r#"(import "kd" "drop" (func $dropi (param i32)))"#.to_string(),
+                "i32.const 0 call $dropi".to_string(),
+                r#"(with "kd" (instance (export "drop" (func $dropf))))"#,
+            ),
+            _ => (String::new(), String::new(), ""),
         };
         let _ = writeln!(
             out,
             r#"(core module $alloc
-                 {shim_import}
+                 {alloc_import}
                  (memory (export "mem") 1 1)
                  (global $next (mut i32) (i32.const 1024))
                  (func (export "realloc") (param i32 i32 i32 i32) (result i32)
@@ -243,12 +282,7 @@ impl Spec {
                    global.set $next
                    {reach}
                    local.get $ret))
-               (core instance $a (instantiate $alloc {shim_arg}))"#,
-            shim_arg = if self.wiring == Wiring::ReallocCycle {
-                r#"(with "shim" (instance $is))"#
-            } else {
-                ""
-            },
+               (core instance $a (instantiate $alloc {alloc_arg}))"#,
         );
 
         let _ = writeln!(
@@ -259,33 +293,54 @@ impl Spec {
 
         // The guest: it calls the import, and carries the two functions the
         // wiring may point at — a benign table entry, and a post-return.
-        let post_return_body = if self.wiring == Wiring::PostReturnCycle {
-            format!("{} call $imp {}", self.import.args(), self.import.discard())
-        } else {
-            String::new()
+        let post_return_body = match self.wiring {
+            Wiring::PostReturnCycle => {
+                format!("{} call $imp {}", self.import.args(), self.import.discard())
+            }
+            Wiring::PostReturnDrop => "i32.const 0 call $dropc".to_string(),
+            _ => String::new(),
         };
+        let main_uses_drop = matches!(self.wiring, Wiring::BodyDrop | Wiring::PostReturnDrop);
         let _ = writeln!(
             out,
             r#"(core module $main
                  (import "env" "mem" (memory 1 1))
                  (import "k" "imp" (func $imp {core_type}))
+                 {drop_import}
                  (func (export "noop") {core_type}
                    {noop_body})
                  (func (export "post-return") (param i64)
                    {post_return_body})
                  (func (export "run") (result i64)
+                   {body_drop}
                    {args}
                    call $imp
                    {result}))
                (core instance $m (instantiate $main
                  (with "env" (instance $a))
-                 (with "k" (instance (export "imp" (func $imp_l))))))"#,
+                 (with "k" (instance (export "imp" (func $imp_l))))
+                 {drop_arg}))"#,
+            drop_import = if main_uses_drop {
+                r#"(import "kd" "drop" (func $dropc (param i32)))"#
+            } else {
+                ""
+            },
             noop_body = match self.import {
                 Import::Clock => "i64.const 0",
                 _ => "",
             },
+            body_drop = if self.wiring == Wiring::BodyDrop {
+                "i32.const 0 call $dropc"
+            } else {
+                ""
+            },
             args = self.import.args(),
             result = self.import.result(),
+            drop_arg = if main_uses_drop {
+                r#"(with "kd" (instance (export "drop" (func $dropf))))"#
+            } else {
+                ""
+            },
         );
 
         if self.has_shim() {
@@ -306,7 +361,10 @@ impl Spec {
             );
         }
 
-        let post_return = if self.wiring == Wiring::PostReturnCycle {
+        let post_return = if matches!(
+            self.wiring,
+            Wiring::PostReturnCycle | Wiring::PostReturnDrop
+        ) {
             r#"(post-return (func $m "post-return"))"#
         } else {
             ""
@@ -392,6 +450,8 @@ fn every_generated_wiring_is_admitted_and_agreed_or_refused_by_both() -> Result<
     let mut admitted = 0usize;
     let mut refused = 0usize;
     let mut cycles = 0usize;
+    let mut drop_callbacks = 0usize;
+    let mut dropped = 0usize;
     let mut lists = false;
 
     for spec in Spec::corpus() {
@@ -401,17 +461,36 @@ fn every_generated_wiring_is_admitted_and_agreed_or_refused_by_both() -> Result<
 
         if let Err(refusal) = validate_component(&bytes) {
             refused += 1;
-            if refusal.to_string().contains("lowered import") {
+            if refusal.to_string().contains("canon builtin") {
                 cycles += 1;
                 assert!(
-                    matches!(spec.wiring, Wiring::ReallocCycle | Wiring::PostReturnCycle),
-                    "{label}: refused as a callback cycle, and it is not one"
+                    matches!(
+                        spec.wiring,
+                        Wiring::ReallocCycle
+                            | Wiring::PostReturnCycle
+                            | Wiring::ReallocDrop
+                            | Wiring::PostReturnDrop
+                    ),
+                    "{label}: refused as a callback violation, and it is not one"
                 );
+                if spec.uses_drop() {
+                    drop_callbacks += 1;
+                }
             }
             continue;
         }
 
+        // A post-return is always a callback; a realloc only when a canon
+        // option names it. Everything else carrying a drop is ordinary
+        // guest code.
+        assert!(
+            !(spec.wiring == Wiring::PostReturnDrop
+                || spec.wiring == Wiring::ReallocDrop && spec.options == Options::Both),
+            "{label}: a callback that drops a resource was admitted"
+        );
+
         admitted += 1;
+        dropped += usize::from(spec.wiring == Wiring::BodyDrop);
         lists |= spec.import.moves_a_list();
         RefComponent::decode(&bytes).unwrap_or_else(|e| {
             panic!("{label}: the profile admits what the spec cannot decode: {e}")
@@ -425,12 +504,24 @@ fn every_generated_wiring_is_admitted_and_agreed_or_refused_by_both() -> Result<
         assert_eq!(blessed_fuel, ref_fuel, "{label}: fuel diverged");
     }
 
-    println!("component corpus: {admitted} admitted, {refused} refused, {cycles} callback cycles");
+    println!(
+        "component corpus: {admitted} admitted, {refused} refused, {cycles} callback \
+         violations ({drop_callbacks} through resource.drop), {dropped} drops executed"
+    );
     assert!(admitted >= 8, "corpus yield too low to be evidence");
     assert!(
         lists,
         "no admitted artifact moves a list, so nothing exercised the realloc path"
     );
     assert!(cycles >= 4, "the callback cycles are not being generated");
+    assert!(
+        drop_callbacks >= 2,
+        "no callback reaching resource.drop was generated and refused"
+    );
+    assert!(
+        dropped >= 3,
+        "no admitted artifact executes resource.drop, so the runtimes' drop \
+         behaviour is not being compared"
+    );
     Ok(())
 }

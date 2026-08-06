@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{EffectSet, Hash32, Hasher, TestHasher};
-use hyperscale_vm_harness::fixtures::REENTRANT_REALLOC_WAT;
+use hyperscale_vm_harness::fixtures::{REENTRANT_DROP_WAT, REENTRANT_REALLOC_WAT};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash};
 use hyperscale_vm_ref::{CanonError, ExecError, RefComponent, RefComponentInstance};
@@ -85,6 +85,32 @@ fn the_profile_refuses_the_shape_before_either_runtime_sees_it() {
     let bytes = parse_str(REENTRANT_REALLOC_WAT).expect("fixture must parse");
     let refusal = validate_component(&bytes)
         .expect_err("a realloc that reaches a lowered import must not deploy")
+        .to_string();
+    assert!(refusal.contains("realloc"), "{refusal}");
+}
+
+#[test]
+fn a_resource_drop_called_from_realloc_is_refused_by_both_runtimes() -> Result<()> {
+    let bytes = parse_str(REENTRANT_DROP_WAT)?;
+
+    let blessed = format!("{:#}", run_blessed(&bytes)?);
+    assert!(
+        blessed.contains("cannot leave component instance"),
+        "the blessed engine's may-leave verdict changed shape: {blessed}"
+    );
+    assert_eq!(
+        run_ref(&bytes)?,
+        ExecError::Canon(CanonError::CannotLeave),
+        "the spec must refuse to leave, not judge the drop on its own terms"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_profile_refuses_the_drop_shape_before_either_runtime_sees_it() {
+    let bytes = parse_str(REENTRANT_DROP_WAT).expect("fixture must parse");
+    let refusal = validate_component(&bytes)
+        .expect_err("a realloc that reaches a canon builtin must not deploy")
         .to_string();
     assert!(refusal.contains("realloc"), "{refusal}");
 }

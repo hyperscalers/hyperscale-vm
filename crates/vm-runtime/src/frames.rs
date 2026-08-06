@@ -22,12 +22,13 @@
 //! Both budgets bound *one* chain, and both are sized on at most one more
 //! standing at the same time: the canonical ABI calls the guest's realloc
 //! while the chain that entered it is still live. That is why a callback
-//! the ABI runs — a `realloc` or a `post-return` — may not reach a lowered
-//! import. Such a callback closes a call cycle whose closing edge is a host
-//! frame, which this walk terminates on by design, so the graph stays
+//! the ABI runs — a `realloc` or a `post-return` — may not reach a canon
+//! builtin: a lowered import closes a call cycle whose closing edge is a
+//! host frame, which this walk terminates on by design, so the graph stays
 //! acyclic and the heaviest chain measures two frames while the recursion
-//! is unbounded. Refusing it is what makes the budgets bound anything at
-//! all.
+//! is unbounded, and every other builtin equally leaves the instance,
+//! which the ABI forbids mid-callback. Refusing the set is what makes the
+//! budgets bound anything at all.
 //!
 //! The graph spans the whole component, not one core module at a time. A
 //! module's imports are wired to other modules' exports by the component's
@@ -71,12 +72,14 @@ type Node = (usize, usize);
 /// Where a call lands.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum FuncRef {
-    /// A canon-defined function: a host frame at the canonical-ABI
-    /// boundary, covered by the reserve rather than by this walk.
+    /// A host frame that cannot continue anywhere: an import the wiring
+    /// does not satisfy, covered by the reserve rather than by this walk.
     Host,
-    /// A lowered import — the one host frame that can continue back into
-    /// wasm, because lowering its result calls the guest's own realloc.
-    Lowered,
+    /// A canon builtin — a lowered import, `resource.drop`, or any other
+    /// canon-defined core function. Calling one leaves the instance, which
+    /// the canonical ABI forbids from inside a callback, so the walk treats
+    /// the whole set alike rather than enumerating its members.
+    Canon,
     /// A wasm function, by instance and index among its module's own.
     Wasm(usize, usize),
 }
@@ -140,8 +143,8 @@ impl ModuleFacts {
 
 /// A core function as the component's index space names it.
 enum CoreFuncSlot {
-    /// Canon-defined: a host frame, and whether it is a lowered import.
-    Canon { lowered: bool },
+    /// Canon-defined: a host frame that leaves the instance when called.
+    Canon,
     /// An alias of an earlier core instance's export.
     Alias { instance: u32, name: String },
 }
@@ -325,7 +328,7 @@ fn populate_tables(
 }
 
 /// The linked call graph: the edges, each node's cost, and the nodes that
-/// leave the component through a lowered import.
+/// leave the instance through a canon builtin.
 struct CallGraph {
     edges: BTreeMap<Node, BTreeSet<Node>>,
     cost: BTreeMap<Node, Cost>,
@@ -360,7 +363,7 @@ fn call_graph(
                     Some(FuncRef::Wasm(target, local)) => {
                         edges.insert((*target, *local));
                     }
-                    Some(FuncRef::Lowered) => {
+                    Some(FuncRef::Canon) => {
                         leaving.insert(node);
                     }
                     _ => {}
@@ -380,7 +383,7 @@ fn call_graph(
                         FuncRef::Wasm(target, local) => {
                             edges.insert((*target, *local));
                         }
-                        FuncRef::Lowered => {
+                        FuncRef::Canon => {
                             leaving.insert(node);
                         }
                         FuncRef::Host => {}
@@ -396,15 +399,17 @@ fn call_graph(
     }
 }
 
-/// Refuses a canonical-ABI callback that can reach a lowered import.
+/// Refuses a canonical-ABI callback that can reach a canon builtin.
 ///
 /// `realloc` and `post-return` are guest code the ABI runs as its own
-/// callbacks, and neither may leave the component: the blessed engine
-/// traps, and the profile's byte budget is sized on one level of re-entry
-/// being the whole of it. Neither fact is visible to the chain bound. The
-/// cycle such a callback closes runs through a host frame, which the walk
-/// terminates on by design, so the graph stays acyclic and the heaviest
-/// chain measures two frames while the recursion is unbounded.
+/// callbacks, and neither may leave the instance — through a lowered
+/// import, a `resource.drop`, or any other canon builtin: the blessed
+/// engine traps, and the profile's byte budget is sized on one level of
+/// re-entry being the whole of it. Neither fact is visible to the chain
+/// bound. The cycle a lowered import closes runs through a host frame,
+/// which the walk terminates on by design, so the graph stays acyclic and
+/// the heaviest chain measures two frames while the recursion is
+/// unbounded.
 fn check_callbacks(
     graph: &CallGraph,
     callbacks: &[(FuncRef, &'static str)],
@@ -421,8 +426,8 @@ fn check_callbacks(
             }
             if graph.leaving.contains(&node) {
                 return Err(ProfileError::Structural(format!(
-                    "a {kind} callback reaches a lowered import, so a call cycle can close \
-                     through the canonical-ABI boundary"
+                    "a {kind} callback reaches a canon builtin, which may not be called \
+                     from inside the canonical ABI"
                 )));
             }
             stack.extend(graph.edges.get(&node).into_iter().flatten().copied());
@@ -542,9 +547,7 @@ fn link(bytes: &[u8]) -> Result<Linked, ProfileError> {
                     // every alias after it.
                     let canon = canon.map_err(|e| ProfileError::Feature(e.to_string()))?;
                     if !matches!(canon, CanonicalFunction::Lift { .. }) {
-                        core_funcs.push(CoreFuncSlot::Canon {
-                            lowered: matches!(canon, CanonicalFunction::Lower { .. }),
-                        });
+                        core_funcs.push(CoreFuncSlot::Canon);
                     }
                     callbacks.extend(canon_callbacks(&canon));
                 }
@@ -713,8 +716,7 @@ fn core_func(
     index: u32,
 ) -> Option<FuncRef> {
     match core_funcs.get(index as usize)? {
-        CoreFuncSlot::Canon { lowered: true } => Some(FuncRef::Lowered),
-        CoreFuncSlot::Canon { lowered: false } => Some(FuncRef::Host),
+        CoreFuncSlot::Canon => Some(FuncRef::Canon),
         CoreFuncSlot::Alias { instance, name } => {
             match resolved.get(*instance as usize)?.exports.get(name)? {
                 Export::Func(target) => Some(*target),

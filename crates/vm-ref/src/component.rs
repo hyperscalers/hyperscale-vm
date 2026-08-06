@@ -1164,6 +1164,12 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
         id: u32,
         args: Vec<Value>,
     ) -> Result<Vec<Value>, ExecError> {
+        // Every canon builtin dispatched here leaves the instance —
+        // `resource.drop` no less than a lowered import — so the may-leave
+        // rule is checked for the set, not per arm.
+        if !self.may_leave {
+            return Err(ExecError::Canon(CanonError::CannotLeave));
+        }
         let def = self.comp.core_funcs[id as usize].clone();
         match def {
             CoreFuncDef::ResourceDrop { kind } => {
@@ -1178,9 +1184,6 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                 }
             }
             CoreFuncDef::Lower { func, .. } => {
-                if !self.may_leave {
-                    return Err(ExecError::Canon(CanonError::CannotLeave));
-                }
                 let CompFunc::Host(host_fn) = self.comp.comp_funcs[func as usize] else {
                     return Err(ExecError::Canon(CanonError::Internal(
                         "lower of non-import",
