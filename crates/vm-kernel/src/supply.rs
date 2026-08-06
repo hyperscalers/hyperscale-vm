@@ -6,6 +6,33 @@
 //! it by construction. Composition is per-resource addition, so splitting
 //! and merging shards composes accumulators exactly — the reshape-clean
 //! property the design demands of every stdlib accumulator.
+//!
+//! Supply is per-shard for auditability first and throughput second. A
+//! global supply cell would not even contend — supply updates are
+//! commutative, and the delta mode exists — but it would constrain
+//! nothing: a shard fabricating balances for a resource homed elsewhere
+//! never touches it, and the discrepancy is invisible without a global
+//! scan. A per-shard accumulator's trajectory is bounded by public facts
+//! — genesis, the shard's own authority-evidenced mints and burns, and
+//! the attested supply delta on every cross-shard leg — so an external
+//! verifier can audit how much value a shard is supposed to hold from
+//! certificates alone. Fabricated value is loud instead of silent, and
+//! the total is a fold that reshape preserves rather than a number
+//! nobody can check.
+//!
+//! Nothing on the execution path moves the ledger, and nothing on it can:
+//! every operation here takes a *resource address*, and the session's
+//! floor has none to give. A queued delta lands on a cell whose key is a
+//! hash — which resource it moved lives in the key material the manifest
+//! layer chose and in the walk's typed edges, both above this crate — so
+//! wiring conservation into `finish` is not a missing call, it is
+//! inexpressible below the layer that knows resource identity. The ledger
+//! moves with the operations that carry an address by construction: mint
+//! and burn under resource authority, and cross-shard settlement, whose
+//! attestation carries each leg's supply delta. Until those operations
+//! exist, conservation is unenforced — a guest returning a bucket it
+//! never debited mints from nothing — and what this module holds correct,
+//! under the conservation suite, is the substrate they will land on.
 
 use std::collections::BTreeMap;
 

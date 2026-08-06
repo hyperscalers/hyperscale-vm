@@ -792,6 +792,11 @@ impl KernelSession {
     /// [`Outcome::Infeasible`] receipt over the untouched store, never as
     /// an error.
     ///
+    /// Supply accumulators do not move here, and cannot: a movement lands
+    /// on a hashed key, so the resource it moved is unknowable at this
+    /// layer — see [`SupplyLedger`](crate::SupplyLedger) for where the
+    /// accumulator does move.
+    ///
     /// # Errors
     ///
     /// [`FinishError::Undeclared`] if any recorded access escaped the
