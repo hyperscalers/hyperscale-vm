@@ -1,0 +1,5 @@
+error: `signing_context` names what a preimage mixes in, and this type declares no `signing_domain`, so there is no preimage to mix it into
+ --> tests/refusals/signing_context_without_domain.rs:4:26
+  |
+4 | #[hbor(signing_context = u8)]
+  |                          ^^

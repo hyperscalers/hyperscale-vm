@@ -74,7 +74,7 @@ pub use error::{DecodeError, EncodeError};
 pub use hash::{Hash32, Hasher};
 pub use hyperscale_hbor_macros::{Hbor, HborMerkle};
 pub use merkle::Chunked;
-pub use signing::HborSigned;
+pub use signing::{HborSigned, HborSignedWith};
 pub use varint::MAX_LENGTH;
 
 /// The nesting cap [`to_vec`] and [`from_slice`] apply.

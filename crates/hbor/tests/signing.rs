@@ -11,7 +11,8 @@
 //! canonical encoding of a value is injective because the encoding is.
 
 use hyperscale_hbor::{
-    DEFAULT_MAX_DEPTH, EncodeError, Encoder, Hbor, HborSigned, assert_canonical, bounded, to_vec,
+    DEFAULT_MAX_DEPTH, EncodeError, Encoder, Hbor, HborSigned, HborSignedWith, assert_canonical,
+    bounded, to_vec,
 };
 
 /// A named change to one field, for the coverage sweep below.
@@ -266,4 +267,87 @@ fn a_preimage_starts_with_its_framed_domain() {
     let domain = Envelope::SIGNING_DOMAIN;
     let framed = to_vec(&domain.to_vec()).unwrap();
     assert!(bytes.starts_with(&framed));
+}
+
+// ---------------------------------------------------------------------------
+// Context
+// ---------------------------------------------------------------------------
+
+/// Session state both sides hold: which network the session is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hbor)]
+struct NetworkTag(u8);
+
+/// A vote whose preimage mixes in the session's network ahead of its own
+/// fields, so the network never has to be a struct field.
+#[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+#[hbor(signing_domain = "ctx-vote-v1", signing_context = NetworkTag)]
+struct CtxVote {
+    height: u64,
+    #[hbor(max = MAX_MESSAGE)]
+    payload: Vec<u8>,
+    #[hbor(unsigned)]
+    signature: [u8; 64],
+}
+
+/// The same message with the context spelled as a leading field, under the
+/// same domain — the spelling the context replaces, and the definition of
+/// what its preimage must be.
+#[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+#[hbor(signing_domain = "ctx-vote-v1")]
+struct LeadingFieldVote {
+    network: NetworkTag,
+    height: u64,
+    #[hbor(max = MAX_MESSAGE)]
+    payload: Vec<u8>,
+    #[hbor(unsigned)]
+    signature: [u8; 64],
+}
+
+fn ctx_sample() -> CtxVote {
+    CtxVote {
+        height: 42,
+        payload: b"payload".to_vec(),
+        signature: [0x66; 64],
+    }
+}
+
+/// The context is a fixed type encoded after the framed domain, so the
+/// preimage is byte-equal to the twin that carries it as a leading field —
+/// which is what lets injectivity carry over without a new argument.
+#[test]
+fn a_context_preimage_equals_its_leading_field_spelling() {
+    let vote = ctx_sample();
+    let twin = LeadingFieldVote {
+        network: NetworkTag(7),
+        height: vote.height,
+        payload: vote.payload.clone(),
+        signature: vote.signature,
+    };
+    assert_eq!(
+        vote.signing_bytes(&NetworkTag(7)).unwrap(),
+        twin.signing_bytes().unwrap()
+    );
+}
+
+/// The context is covered: the same value signed in two sessions commits to
+/// two byte strings, which is what makes a cross-session replay fail.
+#[test]
+fn the_context_moves_the_preimage() {
+    let vote = ctx_sample();
+    assert_ne!(
+        vote.signing_bytes(&NetworkTag(1)).unwrap(),
+        vote.signing_bytes(&NetworkTag(2)).unwrap()
+    );
+}
+
+/// `unsigned` composes with a context exactly as without one.
+#[test]
+fn unsigned_fields_leave_a_context_preimage() {
+    let vote = ctx_sample();
+    let mut resigned = vote.clone();
+    resigned.signature = [0x99; 64];
+    assert_eq!(
+        vote.signing_bytes(&NetworkTag(7)).unwrap(),
+        resigned.signing_bytes(&NetworkTag(7)).unwrap()
+    );
 }

@@ -26,6 +26,7 @@ fn the_derive_refuses_what_has_no_canonical_form() {
 fn the_derive_refuses_a_preimage_that_would_mislead() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/unsigned_without_domain.rs");
+    refuse.compile_fail("tests/refusals/signing_context_without_domain.rs");
     refuse.compile_fail("tests/refusals/every_field_unsigned.rs");
     refuse.compile_fail("tests/refusals/signing_domain_on_enum.rs");
     refuse.compile_fail("tests/refusals/empty_signing_domain.rs");

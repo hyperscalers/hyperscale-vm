@@ -28,7 +28,7 @@
 //! encoding exists to prevent. The domain is in the preimage; hash the
 //! preimage.
 
-use crate::EncodeError;
+use crate::{EncodeError, HborEncode};
 
 /// A type whose signature covers a subset of its fields.
 ///
@@ -62,4 +62,44 @@ pub trait HborSigned {
     ///
     /// [`EncodeError`], as encoding the signed fields.
     fn signing_bytes(&self) -> Result<Vec<u8>, EncodeError>;
+}
+
+/// A type whose signature covers its signed fields together with context
+/// the wire form never carries.
+///
+/// Derived by `#[hbor(signing_domain = "...", signing_context = Ty)]`. The
+/// context is session state both the signer and the verifier already hold —
+/// a network identity is the canonical case. It enters the preimage
+/// directly after the framed domain and rides on no wire, so a message
+/// cannot be replayed into a session with different context, and no struct
+/// field has to impersonate the session to say so.
+///
+/// The context is a fixed type named in the attribute, so its canonical
+/// encoding after the framed domain parses unambiguously: the preimage
+/// equals that of a twin message carrying the context as leading fields,
+/// and injectivity is inherited exactly as for [`HborSigned`].
+pub trait HborSignedWith {
+    /// What a preimage mixes in ahead of the signed fields.
+    type Context: HborEncode;
+
+    /// What this type's signatures are for.
+    ///
+    /// Two types, or two versions of one type, must not share a domain: it
+    /// is what stops a signature gathered for one message from verifying
+    /// against another.
+    const SIGNING_DOMAIN: &'static [u8];
+
+    /// The byte string a signature over this value covers: the framed
+    /// domain, the canonical encoding of the context, then every signed
+    /// field in declaration order.
+    ///
+    /// The preimage is encoded at the default nesting cap, whatever cap the
+    /// consumer's decoder uses; the context charges one level like a
+    /// leading field. Depth charges write no bytes, so the cap decides only
+    /// whether a value nested past it has a preimage at all.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError`], as encoding the context and the signed fields.
+    fn signing_bytes(&self, context: &Self::Context) -> Result<Vec<u8>, EncodeError>;
 }
