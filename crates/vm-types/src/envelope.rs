@@ -3,9 +3,9 @@
 //! The envelope carries the bound tree — the composer's root graph plus
 //! every signed subintent — as canonical bytes, beside the signing-time
 //! choices no node can derive: the fee payer, the fee ceiling and gas
-//! limit, the validity window, and a capped optional message. The composer
-//! signs the whole envelope, so distinct submissions differ in signed
-//! content.
+//! limit, the validity window, a capped optional message, and the
+//! network the composer means it for. The composer signs the whole
+//! envelope, so distinct submissions differ in signed content.
 //!
 //! The tree stays opaque here: its vocabulary and codec live with the
 //! effect machinery, and treating it as signed bytes is what keeps this
@@ -80,6 +80,17 @@ impl fmt::Display for TxHash {
     }
 }
 
+/// The network an artifact is signed for — one byte, distinct per
+/// network.
+///
+/// On the envelope it is a signed field, so a transaction composed for
+/// one network never verifies under another's admission: the session
+/// checks the named network before the signature, and renaming it
+/// breaks the signature. Consensus signing reuses the same type as the
+/// ambient context its preimages mix in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hbor)]
+pub struct NetworkId(pub u8);
+
 /// One bound subintent's signature: the signer's key and their ed25519
 /// signature over the subintent's declaration hash, in tree order.
 #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
@@ -140,6 +151,10 @@ pub struct TransactionEnvelope {
     /// An optional message, capped at [`MAX_MESSAGE_LEN`].
     #[hbor(max = MAX_MESSAGE_LEN)]
     pub message: Vec<u8>,
+    /// The network this envelope is composed for. Signed like every
+    /// other field, so the transaction can neither be replayed onto a
+    /// network its composer never named nor re-targeted after signing.
+    pub network: NetworkId,
     /// The composer's ed25519 public key.
     #[hbor(unsigned)]
     pub signer: [u8; 32],
@@ -182,7 +197,7 @@ impl TransactionEnvelope {
 mod tests {
     use hyperscale_hbor::{HborSigned, assert_canonical, to_vec};
 
-    use super::{Address, SubintentSig, TransactionBody, TransactionEnvelope};
+    use super::{Address, NetworkId, SubintentSig, TransactionBody, TransactionEnvelope};
 
     fn sample() -> TransactionEnvelope {
         TransactionEnvelope {
@@ -197,6 +212,7 @@ mod tests {
             validity_start_ms: 1_700_000_000_000,
             validity_end_ms: 1_700_000_060_000,
             message: b"hello".to_vec(),
+            network: NetworkId(242),
             signer: [0x44; 32],
             signature: [0x55; 64],
         }
@@ -226,6 +242,19 @@ mod tests {
         assert_ne!(
             repriced.signing_bytes().unwrap(),
             resigned.signing_bytes().unwrap()
+        );
+    }
+
+    /// The named network is signed content: renaming it is a different
+    /// preimage, so a re-targeted envelope cannot keep its signature.
+    #[test]
+    fn the_network_is_signed() {
+        let signed = sample();
+        let mut retargeted = sample();
+        retargeted.network = NetworkId(1);
+        assert_ne!(
+            signed.signing_bytes().unwrap(),
+            retargeted.signing_bytes().unwrap()
         );
     }
 
