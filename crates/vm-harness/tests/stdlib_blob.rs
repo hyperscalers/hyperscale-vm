@@ -1,10 +1,13 @@
 //! The committed stdlib artifact's conformance lane.
 //!
-//! `hyperscale-vm-stdlib` ships the account component as committed bytes
-//! that CI never rebuilds, so this lane runs those exact bytes: profile
-//! validation, then a withdraw+deposit transfer with a pinned balance
-//! guard and an entropy stamp on the blessed engine and the reference
-//! interpreter, receipts and fuel byte-identical.
+//! `hyperscale-vm-stdlib` ships each guest as committed bytes, and the
+//! committed bytes — not a rebuild — are the protocol artifact, so this
+//! lane runs those exact bytes: profile validation, then a
+//! withdraw+deposit transfer with a pinned balance guard and an entropy
+//! stamp on the blessed engine and the reference interpreter, receipts
+//! and fuel byte-identical. A separate digest test proves the committed
+//! bytes are what the sources build, which is what makes the sources
+//! trustworthy as documentation of the blobs.
 
 use std::sync::Arc;
 
@@ -12,6 +15,7 @@ use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
     TestHasher, child_key,
 };
+use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, Event, KernelSession, MemoryStore, Movement, Outcome, OverlayStore,
@@ -21,7 +25,7 @@ use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, WriteCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
-use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
+use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::error::Context;
 use wasmtime::{Result, Store};
@@ -266,5 +270,32 @@ fn the_committed_blob_validates_and_transfers_on_both_runtimes() -> Result<()> {
         blessed_fuel, reference_fuel,
         "fuel must be identical across runtimes"
     );
+    Ok(())
+}
+
+/// The committed blobs are what their sources build.
+///
+/// The blob is the protocol artifact and the source is the thing people
+/// edit; without this equality an edited guest passes every behavioural
+/// test — those run the committed bytes — while the committed bytes
+/// quietly stop being what the repository says they are. The build is
+/// reproducible by construction: pinned toolchain, `immediate-abort`
+/// panics (no location strings), and no host paths reach the artifact.
+#[test]
+fn the_committed_blobs_are_what_their_sources_build() -> Result<()> {
+    for (name, committed) in [
+        ("account", ACCOUNT_COMPONENT),
+        ("staking", STAKING_COMPONENT),
+    ] {
+        let built = build_guest(name)?;
+        assert!(
+            built == committed,
+            "{name}: the committed blob ({} bytes) is not what the source builds \
+             ({} bytes) — if the change is deliberate, run the regenerate_stdlib \
+             example and commit the result",
+            committed.len(),
+            built.len(),
+        );
+    }
     Ok(())
 }
