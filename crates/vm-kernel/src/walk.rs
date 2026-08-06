@@ -49,7 +49,7 @@ impl CellKind {
             Capability::Locked(_) => Self::Locked,
             Capability::Write(_) => Self::Write,
             Capability::Delta(_) => Self::Delta,
-            Capability::Reserve(_) => Self::Reserve,
+            Capability::Reserve { .. } => Self::Reserve,
             Capability::RangeRead { .. } => Self::RangeRead,
             Capability::RangeWrite { .. } => Self::RangeWrite,
         }

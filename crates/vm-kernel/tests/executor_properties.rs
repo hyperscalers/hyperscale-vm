@@ -233,7 +233,7 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                     let _ = session.delta_add(rep, &encode_amount(seed % 40));
                     let _ = session.delta_sub(rep, &encode_amount(seed % 17));
                 }
-                Capability::Reserve(_) => {
+                Capability::Reserve { key: _, .. } => {
                     let _ = session.reserve_amount(rep);
                 }
                 Capability::RangeWrite { lo, hi, .. } => {
@@ -432,7 +432,7 @@ fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
                     let _ = session.delta_add(rep, &encode_amount(seed % 40 + 17));
                     let _ = session.delta_sub(rep, &encode_amount(seed % 17));
                 }
-                Capability::Reserve(_) => {
+                Capability::Reserve { key: _, .. } => {
                     let amount = session.reserve_amount(rep).unwrap_or_default();
                     observed = observed
                         .wrapping_add(u64::from(amount.first().copied().unwrap_or_default()));

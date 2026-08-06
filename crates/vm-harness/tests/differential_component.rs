@@ -159,7 +159,7 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Resour
             | (ResourceKind::LockedCell, Capability::Locked(key))
             | (ResourceKind::WriteCell, Capability::Write(key))
             | (ResourceKind::DeltaCell, Capability::Delta(key))
-            | (ResourceKind::ReserveCell, Capability::Reserve(key)) => *key == wanted,
+            | (ResourceKind::ReserveCell, Capability::Reserve { key, .. }) => *key == wanted,
             _ => false,
         });
         (rep, kind)

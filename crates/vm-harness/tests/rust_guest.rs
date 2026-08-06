@@ -85,10 +85,15 @@ fn handle_reps(session: &KernelSession) -> (u32, u32) {
         )
         .expect("bounded")
     };
-    (
-        position(Capability::Reserve(sender)),
-        position(Capability::Delta(recipient)),
+    let reserve = u32::try_from(
+        session
+            .capabilities()
+            .iter()
+            .position(|c| matches!(c, Capability::Reserve { key, .. } if *key == sender))
+            .expect("capability present"),
     )
+    .expect("bounded");
+    (reserve, position(Capability::Delta(recipient)))
 }
 
 #[test]

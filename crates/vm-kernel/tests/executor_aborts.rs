@@ -62,7 +62,7 @@ fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
     move |_tx_id, mut session: KernelSession| {
         let caps: Vec<Capability> = session.capabilities().to_vec();
         let reserve = caps.iter().enumerate().find_map(|(rep, c)| match c {
-            Capability::Reserve(_) => Some(u32::try_from(rep).unwrap()),
+            Capability::Reserve { .. } => Some(u32::try_from(rep).unwrap()),
             _ => None,
         });
         let delta = caps.iter().enumerate().find_map(|(rep, c)| match c {
@@ -638,7 +638,7 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
                         .write_cell_set(rep, encode_amount(10).to_vec())
                         .unwrap();
                 }
-                Capability::Reserve(_) => {
+                Capability::Reserve { key: _, .. } => {
                     session.reserve_amount(rep).unwrap();
                 }
                 _ => {}

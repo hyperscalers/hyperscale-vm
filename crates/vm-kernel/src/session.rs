@@ -37,8 +37,16 @@ pub enum Capability {
     Write(SubstateKey),
     /// Commutative movement on one amount cell.
     Delta(SubstateKey),
-    /// A held reservation on one amount cell.
-    Reserve(SubstateKey),
+    /// A held reservation on one amount cell, at this clause's own
+    /// declared amount. The store's hold is the per-transaction fold
+    /// over every reservation on the cell, so the clause's share rides
+    /// the capability — the one place it still exists after the fold.
+    Reserve {
+        /// The reserved cell.
+        key: SubstateKey,
+        /// What this clause declared, not the folded hold.
+        amount: u128,
+    },
     /// A read interval of an ordered collection.
     RangeRead {
         /// The collection's owner.
@@ -574,10 +582,15 @@ impl KernelSession {
     /// Any [`SessionTrap`].
     pub fn reserve_amount(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
         match self.capability(rep)? {
-            Capability::Reserve(key) => self
+            // The clause's own declared amount, not the folded hold: two
+            // reservations on one cell share a single held total, and a
+            // guest asking about its grant means its own share of it.
+            // The hold is still consulted — a capability whose hold never
+            // materialized is a defect whatever amount it declared.
+            Capability::Reserve { key, amount } => self
                 .store
                 .held_reservation(key, self.tx)
-                .map(|amount| encode_amount(amount).to_vec())
+                .map(|_| encode_amount(amount).to_vec())
                 .ok_or(SessionTrap::ReservationMissing),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
@@ -781,6 +794,58 @@ impl KernelSession {
         Ok(())
     }
 
+    /// Settle every reservation the table holds: an owned cell's settle
+    /// releases the hold and folds the debit, a remote one releases with
+    /// the amount kept as the outbound record. The store's hold is the
+    /// per-transaction fold, so a cell reserved by several clauses
+    /// settles once, whole — a second settle of the same hold would find
+    /// it already gone.
+    ///
+    /// The outer error is a kernel defect; the inner `Err` is the
+    /// refusal the caller aborts the transaction with.
+    #[allow(clippy::type_complexity)] // verdict-or-defect, both fallible
+    fn settle_reservations(
+        &mut self,
+    ) -> Result<Result<BTreeMap<SubstateKey, u128>, Outcome>, FinishError> {
+        let mut settles = BTreeMap::new();
+        for capability in &self.table.clone() {
+            if let Capability::Reserve { key, .. } = capability {
+                if settles.contains_key(key) {
+                    continue;
+                }
+                // A remote reservation settles at its owning shard; here
+                // the hold releases and the receipt keeps the amount as
+                // the outbound record.
+                let settled = if self.locality.is_local(key.owner) {
+                    self.store.settle(*key, self.tx)
+                } else {
+                    self.store.release(*key, self.tx)
+                };
+                match settled {
+                    Ok(amount) => {
+                        settles.insert(*key, amount);
+                    }
+                    // An exclusive write earlier in this group drained the
+                    // cell below the reservation it still covers. The
+                    // reserver lost that race, and the refusal left its
+                    // hold standing, so the amount is still readable.
+                    Err(StoreError::HeldExceedsCommitted(_)) => {
+                        let amount = self
+                            .store
+                            .held_reservation(*key, self.tx)
+                            .unwrap_or_default();
+                        return Ok(Err(Outcome::Infeasible { key: *key, amount }));
+                    }
+                    Err(defect) => match declaration_defect(&defect) {
+                        Some(outcome) => return Ok(Err(outcome)),
+                        None => return Err(defect.into()),
+                    },
+                }
+            }
+        }
+        Ok(Ok(settles))
+    }
+
     /// Close the session: fold queued deltas, settle this transaction's
     /// reservations, run the trace-subset oracle, and produce the receipt
     /// together with the threaded store (the input for the next
@@ -873,43 +938,10 @@ impl KernelSession {
                 None => Err(defect.into()),
             };
         }
-        let mut settles = BTreeMap::new();
-        for capability in &self.table.clone() {
-            if let Capability::Reserve(key) = capability {
-                // A remote reservation settles at its owning shard; here
-                // the hold releases and the receipt keeps the amount as
-                // the outbound record.
-                let settled = if self.locality.is_local(key.owner) {
-                    self.store.settle(*key, self.tx)
-                } else {
-                    self.store.release(*key, self.tx)
-                };
-                match settled {
-                    Ok(amount) => {
-                        settles.insert(*key, amount);
-                    }
-                    // An exclusive write earlier in this group drained the
-                    // cell below the reservation it still covers. The
-                    // reserver lost that race, and the refusal left its
-                    // hold standing, so the amount is still readable.
-                    Err(StoreError::HeldExceedsCommitted(_)) => {
-                        let amount = self
-                            .store
-                            .held_reservation(*key, self.tx)
-                            .unwrap_or_default();
-                        return Ok(abort_with(
-                            self.store,
-                            Outcome::Infeasible { key: *key, amount },
-                            fuel,
-                        ));
-                    }
-                    Err(defect) => match declaration_defect(&defect) {
-                        Some(outcome) => return Ok(abort_with(self.store, outcome, fuel)),
-                        None => return Err(defect.into()),
-                    },
-                }
-            }
-        }
+        let settles = match self.settle_reservations()? {
+            Ok(settles) => settles,
+            Err(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
+        };
         let escaped = undeclared_accesses(self.store.access_log(), &self.declared);
         if !escaped.is_empty() {
             return Err(FinishError::Undeclared(escaped));
@@ -1071,9 +1103,10 @@ fn capability_for(store: &OverlayStore, effect: Effect) -> Result<Capability, Ma
         }
         (EffectTarget::Point(key), Mode::Write) => Ok(Capability::Write(locked_checked(key)?)),
         (EffectTarget::Point(key), Mode::Delta) => Ok(Capability::Delta(locked_checked(key)?)),
-        (EffectTarget::Point(key), Mode::Reserve { .. }) => {
-            Ok(Capability::Reserve(locked_checked(key)?))
-        }
+        (EffectTarget::Point(key), Mode::Reserve { amount }) => Ok(Capability::Reserve {
+            key: locked_checked(key)?,
+            amount,
+        }),
         (
             EffectTarget::Entry {
                 owner,
@@ -1322,6 +1355,36 @@ mod tests {
             },
             "the folded amount is judged, not each clause's"
         );
+    }
+
+    #[test]
+    fn repeated_reservations_grant_each_clause_its_own_amount() {
+        // The folded hold covers the sum, but each clause's grant is its
+        // own declared share — a guest moving exactly what its clause
+        // asked for checks against that share, not the fold. Handing
+        // every clause the folded total would trap the second withdraw
+        // of any fan-out.
+        let vault = key(0xC8);
+        let mut store = MemoryStore::new();
+        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.clear_log();
+
+        let reserve = |amount| Effect {
+            target: EffectTarget::Point(vault),
+            mode: Mode::Reserve { amount },
+        };
+        let mut session = KernelSession::materialize(
+            OverlayStore::new(Arc::new(store)),
+            &declared(&[reserve(5), reserve(6)]),
+            &[reserve(5), reserve(6)],
+            tx(1),
+            env(),
+            hash,
+        )
+        .expect("11 reserved against 100 is feasible");
+
+        assert_eq!(session.reserve_amount(0), Ok(encode_amount(5).to_vec()));
+        assert_eq!(session.reserve_amount(1), Ok(encode_amount(6).to_vec()));
     }
 
     fn session_over(store: MemoryStore, set: &EffectSet) -> KernelSession {

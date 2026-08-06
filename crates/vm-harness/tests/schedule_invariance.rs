@@ -172,7 +172,18 @@ impl GuestRunner for BlessedRunner {
             .expect("instantiate");
         let result = match shape {
             Shape::Transfer { sender, recipient } => {
-                let a = rep_of(&store.data().0, &Capability::Reserve(sender));
+                let a = u32::try_from(
+                    store
+                        .data()
+                        .0
+                        .capabilities()
+                        .iter()
+                        .position(
+                            |c| matches!(c, Capability::Reserve { key, .. } if *key == sender),
+                        )
+                        .expect("capability present"),
+                )
+                .expect("bounded");
                 let b = rep_of(&store.data().0, &Capability::Delta(recipient));
                 instance
                     .get_typed_func::<(Resource<ReserveCell>, Resource<DeltaCell>), (u64,)>(
@@ -240,7 +251,16 @@ impl GuestRunner for RefRunner {
                 "transfer",
                 vec![
                     CVal::Borrow(
-                        rep_of(&session, &Capability::Reserve(sender)),
+                        u32::try_from(
+                    session
+                        .capabilities()
+                        .iter()
+                        .position(
+                            |c| matches!(c, Capability::Reserve { key, .. } if *key == sender),
+                        )
+                        .expect("capability present"),
+                )
+                .expect("bounded"),
                         ResourceKind::ReserveCell,
                     ),
                     CVal::Borrow(

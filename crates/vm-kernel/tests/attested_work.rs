@@ -107,7 +107,7 @@ fn trapping_guest(fuel: u64) -> impl Fn(&BatchTx, KernelSession) -> RunResult + 
 fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
     let caps: Vec<Capability> = session.capabilities().to_vec();
     let reserve = caps.iter().enumerate().find_map(|(rep, c)| match c {
-        Capability::Reserve(_) => Some(u32::try_from(rep).unwrap()),
+        Capability::Reserve { .. } => Some(u32::try_from(rep).unwrap()),
         _ => None,
     });
     let delta = caps.iter().enumerate().find_map(|(rep, c)| match c {

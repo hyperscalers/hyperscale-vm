@@ -73,13 +73,10 @@ fn rep_of(session: &KernelSession, wanted: &Capability) -> u32 {
 fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
     let tx_id = entry.tx;
     let caps: Vec<Capability> = session.capabilities().to_vec();
-    let reserve = caps
-        .iter()
-        .find_map(|c| match c {
-            Capability::Reserve(key) => Some(*key),
-            _ => None,
-        })
-        .map(|key| rep_of(&session, &Capability::Reserve(key)));
+    let reserve = caps.iter().find_map(|c| match c {
+        Capability::Reserve { .. } => Some(rep_of(&session, c)),
+        _ => None,
+    });
     let delta = caps.iter().find_map(|c| match c {
         Capability::Delta(key) => Some(rep_of(&session, &Capability::Delta(*key))),
         _ => None,

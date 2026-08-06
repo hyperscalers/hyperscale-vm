@@ -132,7 +132,13 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
 
     let host = entering(SessionHost(session()), SENDER);
     let (sender, recipient) = keys();
-    let sender_rep = rep_of(&host.0, &Capability::Reserve(sender));
+    let sender_rep = rep_of(
+        &host.0,
+        &Capability::Reserve {
+            key: sender,
+            amount: AMOUNT,
+        },
+    );
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &compiled)?;
@@ -178,7 +184,13 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
     let (sender, recipient) = keys();
 
     let host = entering(SessionHost(session()), SENDER);
-    let sender_rep = rep_of(&host.0, &Capability::Reserve(sender));
+    let sender_rep = rep_of(
+        &host.0,
+        &Capability::Reserve {
+            key: sender,
+            amount: AMOUNT,
+        },
+    );
     let mut instance = RefComponentInstance::instantiate(&component, host)?;
     let outcome = instance.invoke(
         "withdraw",
