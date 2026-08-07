@@ -3,8 +3,11 @@
 //! Builds each stdlib guest with the repository toolchain, componentizes
 //! and profile-validates it, and overwrites the artifact
 //! `hyperscale-vm-stdlib` embeds. The committed bytes are the protocol
-//! artifact — run this only to deliberately roll the stdlib, and commit
-//! the result.
+//! artifact and are canonically Linux-built — toolchains emit the same
+//! code in different function order per host OS — so roll the stdlib
+//! through `scripts/regenerate-stdlib.sh`, which runs this example in
+//! the canonical container, and commit the result, not a local build
+//! from another OS.
 
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_runtime::validate_component;

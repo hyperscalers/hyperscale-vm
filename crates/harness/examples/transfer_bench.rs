@@ -19,12 +19,12 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
-use hyperscale_vm_manifest_builder::GraphBuilder;
 use hyperscale_vm_kernel::{
     Base, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
     GuestRunner, InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome,
     OverlayStore, SubstateStore, TxHash, encode_amount, execute_batch,
 };
+use hyperscale_vm_manifest_builder::GraphBuilder;
 use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
     validate_component,

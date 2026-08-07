@@ -1,0 +1,13 @@
+#!/bin/sh
+# The import grouping in rustfmt.toml is a nightly rustfmt option;
+# stable rustfmt warns, ignores it, and reports success, so only the
+# pinned nightly check catches drift before CI does.
+if ! cargo +nightly-2026-06-08 fmt --all --check; then
+    echo >&2 "pre-commit: unformatted code — run: cargo +nightly-2026-06-08 fmt --all"
+    exit 1
+fi
+
+if ! cargo clippy --no-deps --all-targets -- -D warnings; then
+    echo >&2 "pre-commit: clippy warnings — fix them before committing"
+    exit 1
+fi

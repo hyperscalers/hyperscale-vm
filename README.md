@@ -33,6 +33,6 @@ Rust implementation of the Hyperscale VM: an execution engine built for a sharde
 | [`stdlib`](crates/stdlib) | The system-tier components: resources, principals, badges, the restructuring idioms |
 | [`types`](crates/types) | The transaction envelope, addresses, and the wire vocabulary shared with the host |
 
-`guests/` holds the pinned-toolchain guest fixtures: the transfer fixture plus the minimal stdlib — account, constant-product pool, and order book — that the pattern corpus executes on both runtimes.
+`guests/` holds the pinned-toolchain guest fixtures: the transfer fixture plus the minimal stdlib — account, constant-product pool, and order book — that the pattern corpus executes on both runtimes. The committed stdlib blobs are canonically Linux-built: roll them with `scripts/regenerate-stdlib.sh` (Docker, the same x86-64 Linux CI verifies on) and commit the result, not a local build from another OS.
 
 Nothing here depends on the protocol workspace; hyperscale-rs consumes these crates as path dependencies through its `vm/` submodule.

@@ -5,7 +5,8 @@
 //! lane runs those exact bytes: profile validation, then a
 //! withdraw+deposit transfer with a pinned balance guard and an entropy
 //! stamp on the blessed engine and the reference interpreter, receipts
-//! and fuel byte-identical. A separate digest test proves the committed
+//! and fuel byte-identical. A separate digest test — Linux-only, since
+//! Linux is the canonical builder of the committed bytes — proves those
 //! bytes are what the sources build, which is what makes the sources
 //! trustworthy as documentation of the blobs.
 
@@ -15,6 +16,7 @@ use hyperscale_vm_effects::{
     Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
     TestHasher, child_key,
 };
+#[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -25,7 +27,9 @@ use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, WriteCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
+use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
+#[cfg(target_os = "linux")]
+use hyperscale_vm_stdlib::STAKING_COMPONENT;
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::error::Context;
 use wasmtime::{Result, Store};
@@ -285,15 +289,21 @@ fn the_committed_blob_validates_and_transfers_on_both_runtimes() -> Result<()> {
     Ok(())
 }
 
-/// The committed blobs are what their sources build.
+/// The committed blobs are what their sources build on the canonical
+/// builder platform.
 ///
 /// The blob is the protocol artifact and the source is the thing people
 /// edit; without this equality an edited guest passes every behavioural
 /// test — those run the committed bytes — while the committed bytes
-/// quietly stop being what the repository says they are. The build is
-/// reproducible by construction: pinned toolchain, `immediate-abort`
-/// panics (no location strings), and no host paths reach the artifact.
+/// quietly stop being what the repository says they are. The guest
+/// build is reproducible per platform (pinned toolchain,
+/// `immediate-abort` panics, no host paths in the artifact) but not
+/// across platforms: toolchains emit the same code in different
+/// function order per host OS. Linux owns the bytes —
+/// `scripts/regenerate-stdlib.sh` produces them in a pinned container —
+/// so the equality check runs only where the canonical builder lives.
 #[test]
+#[cfg(target_os = "linux")]
 fn the_committed_blobs_are_what_their_sources_build() -> Result<()> {
     for (name, committed) in [
         ("account", ACCOUNT_COMPONENT),
@@ -303,11 +313,60 @@ fn the_committed_blobs_are_what_their_sources_build() -> Result<()> {
         assert!(
             built == committed,
             "{name}: the committed blob ({} bytes) is not what the source builds \
-             ({} bytes) — if the change is deliberate, run the regenerate_stdlib \
-             example and commit the result",
+             ({} bytes) — if the change is deliberate, run \
+             scripts/regenerate-stdlib.sh and commit the result\n{}",
+            committed.len(),
+            built.len(),
+            diff_report(committed, &built),
+        );
+    }
+    Ok(())
+}
+
+/// Hex context around the first differing byte ranges, so a mismatch on
+/// a machine whose artifact we cannot fetch (CI) still shows what its
+/// build produced where it diverges.
+#[cfg(target_os = "linux")]
+fn diff_report(committed: &[u8], built: &[u8]) -> String {
+    use std::fmt::Write;
+    const MAX_RANGES: usize = 8;
+    const CONTEXT: usize = 8;
+    let n = committed.len().min(built.len());
+    let mut out = String::new();
+    let mut i = 0;
+    let mut shown = 0;
+    while i < n && shown < MAX_RANGES {
+        if committed[i] == built[i] {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && committed[i] != built[i] {
+            i += 1;
+        }
+        let lo = start.saturating_sub(CONTEXT);
+        let hi = (i + CONTEXT).min(n);
+        let hex = |b: &[u8]| {
+            b.iter().fold(String::new(), |mut s, x| {
+                let _ = write!(s, "{x:02x}");
+                s
+            })
+        };
+        let _ = writeln!(
+            out,
+            "  diff at {start}..{i}:\n    committed[{lo}..{hi}] = {}\n    built    [{lo}..{hi}] = {}",
+            hex(&committed[lo..hi]),
+            hex(&built[lo..hi]),
+        );
+        shown += 1;
+    }
+    if committed.len() != built.len() {
+        let _ = writeln!(
+            out,
+            "  lengths differ: committed {} vs built {}",
             committed.len(),
             built.len(),
         );
     }
-    Ok(())
+    out
 }
