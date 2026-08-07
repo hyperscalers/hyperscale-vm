@@ -2,6 +2,7 @@
 name = "hyperscale-vm-manifest-builder"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Fluent client-side construction of manifest graphs"
 
 [dependencies]

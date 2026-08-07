@@ -2,6 +2,7 @@
 name = "hyperscale-vm-sdk"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "The contract SDK: blueprint declarations traced into package metadata"
 
 [features]

@@ -2,6 +2,7 @@
 name = "hyperscale-hbor-macros"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "The `#[derive(Hbor)]` macro: canonical codecs from a type's declaration"
 
 [lib]

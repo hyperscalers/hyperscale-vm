@@ -2,6 +2,7 @@
 name = "hyperscale-vm-sdk-macros"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "The `#[blueprint]` macro: contract bodies lowered to effect declarations"
 
 [lib]

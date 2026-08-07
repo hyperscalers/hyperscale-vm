@@ -2,6 +2,7 @@
 name = "hyperscale-hbor"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "The canonical binary encoding: schema-external, one byte string per value"
 
 [dependencies]

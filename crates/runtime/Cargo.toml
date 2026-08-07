@@ -2,6 +2,7 @@
 name = "hyperscale-vm-runtime"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Component Model host: blessed engine embedding, profile validator, kernel world, metering"
 
 [features]
