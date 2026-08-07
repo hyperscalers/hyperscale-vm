@@ -617,6 +617,11 @@ struct KernelCanon<'c, H> {
     resolved_core_funcs: Vec<FuncAddr>,
     resolved_memories: Vec<u32>,
     handles: Vec<Option<Handle>>,
+    /// Freed handle slots, reused most recent first. The table lives as
+    /// long as the instance and its numbering is guest-observable, so
+    /// both the persistence and the reuse order have to match the blessed
+    /// engine's table exactly.
+    free: Vec<u32>,
     /// Bytes crossing the canonical ABI boundary, mirroring the runtime's
     /// per-byte fuel supplement.
     boundary_bytes: u64,
@@ -805,6 +810,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                 resolved_core_funcs,
                 resolved_memories: resolved_memories_by_alias,
                 handles: vec![RESERVED_HANDLE],
+                free: Vec::new(),
                 boundary_bytes: 0,
                 may_leave: true,
                 host,
@@ -850,8 +856,6 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
             return Err(DecodeError::ArgumentMismatch);
         }
 
-        self.canon.handles.clear();
-        self.canon.handles.push(RESERVED_HANDLE);
         let modules: Vec<&RefModule> = self.comp.modules.iter().collect();
         self.store.depth = 0;
         self.canon.may_leave = true;
@@ -868,12 +872,19 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                 (CVal::U32(v), CTy::U32) => flat.push(Value::I32(v.cast_signed())),
                 (CVal::U64(v), CTy::U64) => flat.push(Value::I64(v.cast_signed())),
                 (CVal::Borrow(rep, kind), CTy::Borrow) => {
-                    let idx = u32::try_from(self.canon.handles.len()).expect("bounded");
-                    self.canon.handles.push(Some(Handle {
+                    let handle = Some(Handle {
                         rep: *rep,
                         kind: *kind,
                         live: true,
-                    }));
+                    });
+                    let idx = if let Some(slot) = self.canon.free.pop() {
+                        self.canon.handles[slot as usize] = handle;
+                        slot
+                    } else {
+                        let idx = u32::try_from(self.canon.handles.len()).expect("bounded");
+                        self.canon.handles.push(handle);
+                        idx
+                    };
                     flat.push(Value::I32(idx.cast_signed()));
                 }
                 (CVal::Bytes(bytes), CTy::List8) => {
@@ -1174,9 +1185,10 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
         match def {
             CoreFuncDef::ResourceDrop { kind } => {
                 let idx = args[0].as_i32().cast_unsigned() as usize;
-                match self.handles.get_mut(idx) {
+                match self.handles.get(idx) {
                     Some(Some(h)) if h.live && kind.is_none_or(|k| k == h.kind) => {
-                        h.live = false;
+                        self.handles[idx] = None;
+                        self.free.push(u32::try_from(idx).expect("bounded"));
                         Ok(Vec::new())
                     }
                     Some(Some(h)) if h.live => Err(ExecError::Canon(CanonError::WrongHandleType)),

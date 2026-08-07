@@ -438,6 +438,67 @@ fn handle_values_agree_and_index_zero_is_never_allocatable() -> Result<()> {
 }
 
 #[test]
+fn freed_handle_slots_reuse_most_recent_first_across_invokes() -> Result<()> {
+    // Promoted from the session_trace_is_declared fuzz lane. The handle
+    // table lives as long as the instance and a guest can observe its
+    // indices, so numbering across calls is consensus behaviour: transfer
+    // lowers borrows 1 and 2 and the guest drops both, and the next
+    // lowered borrow must take the most recently freed slot — 2 — on both
+    // runtimes.
+    let fx = fixture();
+    let bytes = parse_str(KERNEL_GUEST_WAT)?;
+
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<SessionHost>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let host = SessionHost(session(&fx));
+    let transfer_args = args_for(&fx, host.0.capabilities(), "transfer");
+    let value_args = args_for(&fx, host.0.capabilities(), "handle-value");
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+    instance
+        .get_typed_func::<(Resource<ReserveCell>, Resource<DeltaCell>), (u64,)>(
+            &mut store, "transfer",
+        )?
+        .call(
+            &mut store,
+            (
+                Resource::new_borrow(transfer_args[0].0),
+                Resource::new_borrow(transfer_args[1].0),
+            ),
+        )?;
+    let (blessed_value,) = instance
+        .get_typed_func::<(Resource<ReadCell>,), (u64,)>(&mut store, "handle-value")?
+        .call(&mut store, (Resource::new_borrow(value_args[0].0),))?;
+
+    let comp = RefComponent::decode(&bytes)?;
+    let host = SessionHost(session(&fx));
+    let to_cvals = |args: &[(u32, ResourceKind)]| -> Vec<CVal> {
+        args.iter()
+            .map(|(rep, kind)| CVal::Borrow(*rep, *kind))
+            .collect()
+    };
+    let mut instance = RefComponentInstance::instantiate(&comp, host)?;
+    instance
+        .invoke("transfer", &to_cvals(&transfer_args))?
+        .map_err(|e| format_err!("ref transfer failed: {e:?}"))?;
+    let ref_value = match instance
+        .invoke("handle-value", &to_cvals(&value_args))?
+        .map_err(|e| format_err!("ref handle-value failed: {e:?}"))?
+        .as_slice()
+    {
+        [CVal::U64(v)] => *v,
+        other => return Err(format_err!("unexpected values {other:?}")),
+    };
+
+    assert_eq!(blessed_value, ref_value, "handle numbering diverged");
+    assert_eq!(blessed_value, 2, "the most recently freed slot is reused");
+    Ok(())
+}
+
+#[test]
 fn kernel_refusals_carry_identical_messages() -> Result<()> {
     let fx = fixture();
     let (outcome, ..) = both(&fx, "bad-amount")?;
