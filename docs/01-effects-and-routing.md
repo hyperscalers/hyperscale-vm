@@ -1,0 +1,89 @@
+# Effects and routing: static access, modes, and enforcement
+
+Every callable method carries an **effect signature**: a total function from `(component, typed args)` to a set of `(substate key, mode)` pairs. The signature is expressed in a restricted access DSL — field projections, keyed lookups over argument values, canonical-address computation ([03-objects-and-state.md](03-objects-and-state.md)), tuple and list mapping over bounded argument collections. No loops, no recursion, no reads of state. Evaluating a signature is O(manifest size) and requires no engine.
+
+Signature inputs are manifest arguments, bound yield parameters ([02-manifests-and-intents.md](02-manifests-and-intents.md) §3), and the target instance's immutable creation-fixed configuration. Argument constraints extend past structural typing: a reference argument can require its target's package and blueprint, checked at admission.
+
+Signatures are compiler-inferred where possible and compiler-**verified** to over-approximate the method body in all cases. Under-declaration is impossible by construction; residual looseness is a contention and fee cost, never a correctness event. Signatures are fixed at publish and immutable with their package ([06-stdlib-and-upgrades.md](06-stdlib-and-upgrades.md)), so the global metadata cache is content-addressed and never invalidates. A method's *transitive* effect set is the fold of its callees' signatures over the static call graph, which is checked acyclic at admission — composition is a DAG fold, not a fixpoint.
+
+## 1. Total static access
+
+Access is a pure function of the signed transaction plus immutable metadata. Consequences, each load-bearing:
+
+- **Call targets are manifest-visible.** Every call edge names its target component in the manifest, directly or as an argument. Dynamic dispatch through state-stored addresses does not exist; delegate-style proxies are inexpressible.
+- **Level-1 derefs are computation, not state reads.** Canonical child addresses make "the vault for resource R under account A" a computed key. The DSL's keyed lookups never touch state.
+- **State-dependent choice is restructured, not supported.** The idioms — argument lifting, commit/claim, pagination cranks, deterministic fresh-object IDs — are stdlib patterns ([06-stdlib-and-upgrades.md](06-stdlib-and-upgrades.md)). The staleness risk of choosing at signing time is the application's, bounded by the enforcement gate: a stale declaration aborts and retries, on the sender's fee.
+- **State verifies; the manifest dispatches.** A component may check what the manifest carries against stored state — an approval hash, a constraint, a quota — and gate a transient authorization edge on the match; it may never *choose* a target or key from state. Every governance-execution pattern walks this line: verification of carried content is ordinary declared reading, dispatch from state is inexpressible.
+
+## 2. The mode lattice
+
+| Mode | Semantics |
+|---|---|
+| `read` | Fresh coherent read of committed state |
+| `locked` | Read of a permanently locked substate — the target cannot change |
+| `delta` | Unconditional commutative increment/decrement; the amount is runtime-determined, never declared |
+| `reserve(n)` | Conditional decrement, feasible iff committed balance minus prior reservations covers `n` |
+| `write` | Exclusive read-modify-write |
+
+Scheduling compatibility (two in-flight transactions touching the same key):
+
+| | `read` | `locked` | `delta` | `reserve` | `write` |
+|---|---|---|---|---|---|
+| `read` | ✓ | ✓ | ✗ | ✗ | ✗ |
+| `locked` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `delta` | ✗ | ✓ | ✓ | ✓ | ✗ |
+| `reserve` | ✗ | ✓ | ✓ | ✓ | ✗ |
+| `write` | ✗ | ✓ | ✗ | ✗ | ✗ |
+
+`locked`'s row is a consequence rather than a stipulation: every mutating mode refuses a locked target, so no transaction can hold a conflicting mode on one.
+
+Determinism rules for the commutative modes: `delta` application order is canonical (transaction hash) and outcome-invariant; `reserve` feasibility is judged against committed balance minus reservations already held, ordered by transaction hash, and never counts in-flight deltas — so feasibility verdicts are identical on every replica regardless of scheduling. Reservation settle and release happen at wave finalization with the same ordering.
+
+**The debit floor.** A `delta` decrement is unconditional in declaration — no feasibility precondition, nothing provisioned — but bounded at commit: each transaction's net movement per cell is judged in canonical order against committed balance plus its own credits minus every outstanding reservation, so a debit can never consume value a held reservation still covers. A debit past that floor aborts *its* transaction as an infeasibility-class loss ([04-execution-semantics.md](04-execution-semantics.md) §4) with fuel charged, and never a batch-level failure. Credits are unconditional. The floor is a *cell* property, not a mode's: an exclusive `write` can lower an amount cell below a reservation another transaction in the same conflict group still holds, and that reserver's settle then takes the identical infeasibility-class loss an uncovered debit takes. A cell that no longer covers its outstanding reservations is a lost race, never a ledger-invariant violation to escalate.
+
+**A movement folds only where its cell lives.** A shard that does not own a key judges no movement on it, folds none into its own state, and settles no reservation against it — the owning shard does all three. What a non-owning shard keeps is the receipt entry: the movement is its outbound record, byte-identical to the one the owner derives. Folding a remote movement locally would fabricate a balance for a cell the shard holds nothing of, and would let a queued movement survive into a later transaction's receipt — both are cross-shard receipt divergence, and scoping the fold to ownership is what forecloses them.
+
+## 3. Modes reshape provisioning
+
+A provision needs to carry only what a counterpart must *read*: fresh-`read` values and the prior values of read-modify-`write` keys. A `delta` reads nothing; a `reserve`'s feasibility is judged at the owning shard; a blind `write` needs no prior value. Cross-shard legs composed of commutative effects therefore provision nothing, their dependency sets shrink or empty, and a leg with no dependencies dispatches immediately — coupling reduction that falls out of the lattice alone ([07-host-integration.md](07-host-integration.md) §1).
+
+## 4. Locked reads
+
+A `locked` effect reads a substate the kernel has permanently locked: package code, creation-fixed instance configuration (a resource's divisibility and feature set), locked metadata, non-fungible field-mutability sets. Because no version of the target differs, the read needs no coherence and no proof: it takes no lock, defers nothing, conflicts with nothing, and makes its owner no participant — the one mode a shard can serve without joining the transaction (INV-VM-3). Verification is by content address, so any node resolves a locked read from any peer with no consensus round. This is what keeps inner-object hot paths shard-local: a vault's checks against its resource's immutable configuration add no shard to a transfer.
+
+A read of *mutable* state is `read`: fresh, coherent, provisioned, its owner a participant. There is no third option — no mode reads mutable state without its owner in the transaction.
+
+**Deferred: a staleness-windowed read of mutable state.** A version-pinned snapshot read carried as a client-supplied proof would let a transaction read a remote mutable cell — an oracle price — without making its owner a participant. It is deferred, not dropped: binding a signer-chosen value to a real attested root is a distributed problem in its own right, the window vocabulary (versions versus time) wants a real consumer to decide it, and the lattice already dissolves reader-versus-reader contention on hot cells. Its named consumer is the oracle feed; it returns with its root binding built and its window expressed in weighted time.
+
+## 5. Range effects
+
+Ordered collections ([03-objects-and-state.md](03-objects-and-state.md) §2) are accessed by **declared key interval**: a range over a collection's canonical key space is a static effect target like any point key, carrying a mode and an entry cap. Conflict checking is interval overlap, against both point and range effects. Scans, drains, paginated sweeps, and by-order queries — order books, leaderboards, non-fungible vault enumeration — become declarable: the returned *entries* depend on state, but the touched *key space* does not, which is all total-static access requires. Unbounded iteration stays restructured (the pagination-crank idiom); a range effect always carries its cap.
+
+Ranges are also **access-stable**: the declared interval stays valid whatever entries enter or leave it between signing and execution, so range-shaped patterns — order-book fills above all — do not pay the staleness tax that point-key patterns (liquidation races, routing) do. The tax lands on point-key races, not on books.
+
+## 6. Enforcement
+
+The kernel does not check accesses against a declared list; it **only materializes handles for the declared set**. The component's world imports state-access capabilities per declared key and mode; an undeclared access has no handle to call and traps. Traps, infeasible reservations, and a `locked` read of an unlocked target all land in the abort taxonomy of [04-execution-semantics.md](04-execution-semantics.md) — deterministic, identical on every replica. This is constructive enforcement with the trust inverted: nothing about safety depends on declarations being right (INV-VM-1). The compiler owes tightness, a contention and fee property; the gate owes soundness.
+
+Test builds keep the claim honest continuously: the kernel's trace-subset oracle (`crates/kernel`) records every substate access and asserts `trace ⊆ declared` on every scenario and differential workload. A violation is a design-falsifying event, not a bug.
+
+## 7. The routing function
+
+One pure function, evaluable by any node — validator, RPC, wallet, gossip relay — with no state, as a fold over the manifest's nodes:
+
+```
+route(tx, metadata_cache) -> { participating shards,
+                               per-shard (key, mode) sets,
+                               static call graph }
+```
+
+Consumed at gossip admission, mempool analysis, proposal selection, provision-set assembly, and fee estimation. Shard resolution (prefix → live shard) comes from the host's topology state, never from a peer. A wrong `route` output is impossible while metadata is immutable (INV-VM-2); a *loose* one costs the sender fees.
+
+## 8. The transaction envelope
+
+Wire-format decisions the effect model fixes:
+
+- **The effect set is recomputed, never carried.** `route` is O(manifest) over immutable metadata, so every node derives the effect set itself; carrying it would add a carried-versus-computed mismatch class for no benefit. The envelope carries only the signing-time choices no node can derive: the signed `max_fee` and gas limit, and the fee payer.
+- **Validity windows anchor on weighted time**, like everything consensus-visible.
+- **A capped attachment.** The envelope carries an optional message — plaintext or encrypted to named recipients, size-capped — signed with the intent, priced as retention bytes ([04-execution-semantics.md](04-execution-semantics.md) §5).
+- **No account nonces.** Replay protection is transaction-hash dedup with terminal tombstones, bounded by the weighted-time validity window. A nonce is an exclusive write on an account substate: it would serialize every account's transactions and forfeit exactly the concurrency `reserve` buys — multiple independent in-flight transactions per account, compatible because reservations commute.
