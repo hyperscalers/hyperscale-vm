@@ -173,7 +173,7 @@ impl Bench {
 impl GuestBackend for Bench {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
         let mut store = Store::new(&self.engine, SessionHost(session));
-        store.set_fuel(FUEL).expect("fuel");
+        store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
         let instance = self.pre.instantiate(&mut store).expect("instantiate");
         let args: Vec<HostArg<'_>> = call
             .args
@@ -189,11 +189,13 @@ impl GuestBackend for Bench {
             .collect();
         let result = call_export(&mut store, &instance, call.export, &args, call.returns)
             .map_err(|trap| format!("{trap:#}"));
-        let fuel = FUEL - store.get_fuel().expect("fuel");
+        let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
+        let exhausted = store.get_fuel().expect("fuel") == 0 && result.is_err();
         InvokeResult {
             session: store.into_data().0,
             fuel,
             result,
+            exhausted,
         }
     }
 }

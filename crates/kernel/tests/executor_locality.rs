@@ -181,6 +181,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
         nullifiers: vec![signed_nullifier()],
         clock_ms: env().clock_ms,
         randomness: env().randomness,
+        gas_limit: u64::MAX,
     }
 }
 

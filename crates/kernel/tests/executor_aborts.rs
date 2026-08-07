@@ -313,6 +313,7 @@ fn nullifier_tx(id: u8) -> BatchTx {
         nullifiers: vec![nullifier()],
         clock_ms: env().clock_ms,
         randomness: env().randomness,
+        gas_limit: u64::MAX,
     }
 }
 
@@ -453,6 +454,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         nullifiers: vec![nullifier()],
         clock_ms: env().clock_ms,
         randomness: env().randomness,
+        gas_limit: u64::MAX,
     };
     let refused = execute_batch(
         Arc::new(MemoryStore::new()),
@@ -494,6 +496,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
         nullifiers: vec![],
         clock_ms: env().clock_ms,
         randomness: env().randomness,
+        gas_limit: u64::MAX,
     };
     let refused = execute_batch(
         Arc::new(MemoryStore::new()),

@@ -17,11 +17,13 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
-    InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, SubstateStore,
-    TxHash, decode_amount, encode_amount, execute_batch,
+    InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, OUT_OF_GAS, Outcome,
+    SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::{GraphBuilder, Param};
-use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
+use hyperscale_vm_ref::{
+    CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
+};
 use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
     validate_component,
@@ -182,18 +184,20 @@ impl GuestBackend for BlessedComposed {
         let mut linker = Linker::<SessionHost>::new(&self.engine);
         add_kernel_to_linker(&mut linker).expect("wiring");
         let mut store = Store::new(&self.engine, SessionHost(session));
-        store.set_fuel(FUEL).expect("fuel");
+        store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
         let instance = linker
             .instantiate(&mut store, &self.component)
             .expect("instantiate");
         let args: Vec<HostArg<'_>> = call.args.iter().map(host_arg).collect();
         let result = call_export(&mut store, &instance, call.export, &args, call.returns)
             .map_err(|trap| format!("{trap:#}"));
-        let fuel = FUEL - store.get_fuel().expect("fuel");
+        let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
+        let exhausted = store.get_fuel().expect("fuel") == 0 && result.is_err();
         InvokeResult {
             session: store.into_data().0,
             fuel,
             result,
+            exhausted,
         }
     }
 }
@@ -208,8 +212,10 @@ impl GuestBackend for RefComposed {
         let args: Vec<CVal> = call.args.iter().map(ref_arg).collect();
         let mut instance = RefComponentInstance::instantiate(&self.component, SessionHost(session))
             .expect("instantiate");
+        instance.set_fuel_limit(call.fuel_budget.min(FUEL));
         let outcome = instance.invoke(call.export, &args).expect("invoke");
         let fuel = instance.fuel_consumed();
+        let exhausted = matches!(outcome, Err(ExecError::Trap(RefTrap::OutOfFuel)));
         let result = match outcome {
             Ok(values) => match (call.returns, values.as_slice()) {
                 (false, []) => Ok(None),
@@ -222,6 +228,7 @@ impl GuestBackend for RefComposed {
             session: instance.into_host().0,
             fuel,
             result,
+            exhausted,
         }
     }
 }
@@ -441,5 +448,33 @@ fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
     );
     assert_eq!(amount_of(&second, vault(CAROL, RES_X)), 150);
     assert_eq!(amount_of(&second, vault(BOB, RES_Y)), 20);
+    Ok(())
+}
+
+/// A transaction that spends its signed ceiling aborts the same way on
+/// both runtimes, and applies nothing.
+///
+/// The budget is per transaction, not per invocation: a manifest's nodes
+/// draw from one allowance, so what the sender declared bounds the whole
+/// transaction rather than each of its calls. Exhaustion is the sender's
+/// own defect and prices as one — and the reason is fixed here rather
+/// than taken from the trap, because each engine words its own and the
+/// classification is consensus content.
+#[test]
+fn a_transaction_that_spends_its_gas_limit_aborts_on_both_runtimes() -> Result<()> {
+    let world = world();
+    let (entry, _) = batch_entry(&world, &composed_tree(ALICE, 100))?;
+
+    // Enough to enter the guest and nowhere near enough to leave it.
+    let starved = entry.with_gas_limit(64);
+    let outcome = run_both(&seeded_store(), std::slice::from_ref(&starved))?;
+
+    match &outcome.receipts[&starved.tx].outcome {
+        Outcome::UserError { reason } => assert_eq!(reason, OUT_OF_GAS),
+        other => panic!("expected the gas ceiling to abort it, got {other:?}"),
+    }
+    // Nothing moved: the seeded balances stand.
+    assert_eq!(amount_of(&outcome, vault(ALICE, RES_X)), 150);
+    assert_eq!(amount_of(&outcome, vault(BOB, RES_X)), 0);
     Ok(())
 }

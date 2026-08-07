@@ -88,6 +88,10 @@ pub struct GuestCall<'a> {
     /// Whether the export returns bytes. True exactly when the node
     /// produces value edges.
     pub returns: bool,
+    /// What is left of the transaction's signed ceiling. The backend
+    /// meters this invocation against it, so a manifest's nodes share one
+    /// budget rather than each getting the whole of it.
+    pub fuel_budget: u64,
 }
 
 /// What one invocation produced: the session back from the engine, the
@@ -99,6 +103,12 @@ pub struct InvokeResult {
     pub fuel: u64,
     /// The export's returned bytes, or a deterministic trap reason.
     pub result: Result<Option<Vec<u8>>, String>,
+    /// Whether the invocation ended by exhausting its fuel budget.
+    ///
+    /// Reported as a flag rather than read out of the reason text: each
+    /// engine words its own trap, and the classification is consensus
+    /// content that has to be identical on both.
+    pub exhausted: bool,
 }
 
 /// The engine embedding: instantiate the named package and invoke one of
@@ -114,6 +124,34 @@ pub trait GuestBackend: Sync {
 pub struct ManifestWalk<'a, B> {
     /// The engine behind every invocation.
     pub backend: &'a B,
+}
+
+/// The reason a transaction that spent its signed ceiling reports.
+///
+/// Consensus content: both engines classify exhaustion as this, and the
+/// charge is the declared limit rather than the fuel standing at the trap
+/// — that number is engine-defined and no consensus reader may see it.
+pub const OUT_OF_GAS: &str = "out of gas";
+
+/// How a trapped invocation reads: its outcome and what it spent.
+///
+/// One reason and one figure for exhaustion, whichever engine reported
+/// it. The trap text is engine-defined and so is the counter standing at
+/// a trap — one flushes an in-register total, the other charges every
+/// operator — so a node that spent its allowance reports the allowance.
+/// It could not have consumed more, and both engines agree on that by
+/// construction rather than by happening to count the same.
+fn trapped(exhausted: bool, reason: String, budget: u64, spent: u64) -> (Outcome, u64) {
+    if exhausted {
+        (
+            Outcome::UserError {
+                reason: OUT_OF_GAS.to_string(),
+            },
+            budget,
+        )
+    } else {
+        (Outcome::UserError { reason }, spent)
+    }
 }
 
 /// A node's invocation failed, deterministically. The session comes back
@@ -142,6 +180,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
         node: u32,
         call: &NodeCall,
         outputs: &[Vec<Vec<u8>>],
+        fuel_budget: u64,
         mut session: KernelSession,
     ) -> Result<NodeSuccess, NodeFailure> {
         // The node names its target, and every emission of this frame is
@@ -227,16 +266,15 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                 export: &call.export,
                 args: &args,
                 returns: call.outputs > 0,
+                fuel_budget,
             },
         );
         let returned = match invoked.result {
             Ok(returned) => returned,
             Err(reason) => {
-                return Err(fail(
-                    invoked.session,
-                    Outcome::UserError { reason },
-                    invoked.fuel,
-                ));
+                let (outcome, spent) =
+                    trapped(invoked.exhausted, reason, fuel_budget, invoked.fuel);
+                return Err(fail(invoked.session, outcome, spent));
             }
         };
         match split_outputs(returned.as_deref(), call.outputs) {
@@ -298,7 +336,10 @@ impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
         let mut fuel = 0u64;
         for (index, call) in entry.calls.iter().enumerate() {
             let node = u32::try_from(index).unwrap_or(u32::MAX);
-            match self.invoke_node(node, call, &outputs, session) {
+            // One budget across the manifest: each node is metered
+            // against what its predecessors left.
+            let remaining = entry.gas_limit.saturating_sub(fuel);
+            match self.invoke_node(node, call, &outputs, remaining, session) {
                 Ok((returned, produced, consumed)) => {
                     session = returned;
                     session.leave_invocation();

@@ -97,6 +97,13 @@ pub struct BatchTx {
     /// on different receipts. The draw anchors to the transaction, and
     /// every replica of it passes the same one.
     pub randomness: [u8; 32],
+    /// The signed execution ceiling, in fuel.
+    ///
+    /// Per transaction, not per invocation: a manifest's nodes draw from
+    /// one budget, so what the sender declared bounds what the whole
+    /// transaction can consume rather than what each of its calls can.
+    /// Exhaustion is the sender's own defect and prices as one.
+    pub gas_limit: u64,
 }
 
 impl BatchTx {
@@ -122,7 +129,17 @@ impl BatchTx {
             nullifiers: Vec::new(),
             clock_ms,
             randomness,
+            gas_limit: u64::MAX,
         }
+    }
+
+    /// Bind the signed execution ceiling. Unset means unbounded, which is
+    /// what an in-crate fixture wants and what no embedder should leave
+    /// it at: the envelope always carries one.
+    #[must_use]
+    pub const fn with_gas_limit(mut self, gas_limit: u64) -> Self {
+        self.gas_limit = gas_limit;
+        self
     }
 
     /// Bind the invocations the manifest walk performs.

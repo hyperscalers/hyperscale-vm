@@ -45,5 +45,7 @@ pub use session::{
 };
 pub use store::{Access, AppliedDelta, Base, MemoryStore, StoreError, SubstateStore};
 pub use supply::SupplyLedger;
-pub use walk::{CellKind, GuestArg, GuestBackend, GuestCall, InvokeResult, ManifestWalk};
+pub use walk::{
+    CellKind, GuestArg, GuestBackend, GuestCall, InvokeResult, ManifestWalk, OUT_OF_GAS,
+};
 pub use work::Work;
