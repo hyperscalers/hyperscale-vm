@@ -958,7 +958,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
 
 #[test]
 fn every_guest_builds_against_the_canonical_world() -> Result<()> {
-    let canonical = std::fs::read(repo_root().join("crates/vm-runtime/wit/kernel.wit"))?;
+    let canonical = std::fs::read(repo_root().join("crates/runtime/wit/kernel.wit"))?;
     for guest in ["transfer", "account", "amm", "book"] {
         let copy =
             std::fs::read(repo_root().join(format!("guests/{guest}/wit/deps/kernel/kernel.wit")))?;

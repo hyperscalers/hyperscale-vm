@@ -17,7 +17,7 @@ fn main() -> Result<()> {
         validate_component(&artifact)
             .with_context(|| format!("{guest} component failed profile validation"))?;
         let path = repo_root()
-            .join("crates/vm-stdlib/blobs")
+            .join("crates/stdlib/blobs")
             .join(format!("{guest}.component.wasm"));
         std::fs::write(&path, &artifact).with_context(|| format!("write {}", path.display()))?;
         println!("wrote {} ({} bytes)", path.display(), artifact.len());

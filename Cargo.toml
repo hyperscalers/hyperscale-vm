@@ -3,16 +3,16 @@ resolver = "2"
 members = [
     "crates/hbor",
     "crates/hbor-macros",
-    "crates/vm-effects",
-    "crates/vm-types",
-    "crates/vm-harness",
-    "crates/vm-kernel",
-    "crates/vm-manifest-builder",
-    "crates/vm-ref",
-    "crates/vm-runtime",
-    "crates/vm-sdk",
-    "crates/vm-sdk-macros",
-    "crates/vm-stdlib",
+    "crates/effects",
+    "crates/types",
+    "crates/harness",
+    "crates/kernel",
+    "crates/manifest-builder",
+    "crates/ref",
+    "crates/runtime",
+    "crates/sdk",
+    "crates/sdk-macros",
+    "crates/stdlib",
 ]
 
 [workspace.package]
@@ -22,15 +22,15 @@ edition = "2024"
 [workspace.dependencies]
 hyperscale-hbor = { path = "crates/hbor" }
 hyperscale-hbor-macros = { path = "crates/hbor-macros" }
-hyperscale-vm-effects = { path = "crates/vm-effects" }
-hyperscale-vm-types = { path = "crates/vm-types" }
-hyperscale-vm-kernel = { path = "crates/vm-kernel" }
-hyperscale-vm-manifest-builder = { path = "crates/vm-manifest-builder" }
-hyperscale-vm-ref = { path = "crates/vm-ref" }
-hyperscale-vm-runtime = { path = "crates/vm-runtime" }
-hyperscale-vm-sdk = { path = "crates/vm-sdk" }
-hyperscale-vm-sdk-macros = { path = "crates/vm-sdk-macros" }
-hyperscale-vm-stdlib = { path = "crates/vm-stdlib" }
+hyperscale-vm-effects = { path = "crates/effects" }
+hyperscale-vm-types = { path = "crates/types" }
+hyperscale-vm-kernel = { path = "crates/kernel" }
+hyperscale-vm-manifest-builder = { path = "crates/manifest-builder" }
+hyperscale-vm-ref = { path = "crates/ref" }
+hyperscale-vm-runtime = { path = "crates/runtime" }
+hyperscale-vm-sdk = { path = "crates/sdk" }
+hyperscale-vm-sdk-macros = { path = "crates/sdk-macros" }
+hyperscale-vm-stdlib = { path = "crates/stdlib" }
 
 proc-macro2 = "1"
 proptest = "1"

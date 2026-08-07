@@ -100,7 +100,7 @@ fn handle_reps(session: &KernelSession) -> (u32, u32) {
 fn the_wit_bindgen_guest_conforms_and_transfers() -> Result<()> {
     // The kernel.wit copy the guest builds against must match the canonical
     // definition in vm-runtime.
-    let canonical = std::fs::read(repo_root().join("crates/vm-runtime/wit/kernel.wit"))?;
+    let canonical = std::fs::read(repo_root().join("crates/runtime/wit/kernel.wit"))?;
     let copy = std::fs::read(repo_root().join("guests/transfer/wit/deps/kernel/kernel.wit"))?;
     assert_eq!(canonical, copy, "guest kernel.wit drifted from canonical");
 

@@ -14,8 +14,8 @@ arbitrary = "1"
 libfuzzer-sys = "0.4"
 wasm-smith = "0.236"
 hyperscale-hbor = { path = "../crates/hbor" }
-hyperscale-vm-ref = { path = "../crates/vm-ref" }
-hyperscale-vm-runtime = { path = "../crates/vm-runtime" }
+hyperscale-vm-ref = { path = "../crates/ref" }
+hyperscale-vm-runtime = { path = "../crates/runtime" }
 
 [[bin]]
 name = "admitted_is_executable"

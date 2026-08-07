@@ -50,7 +50,7 @@ pub mod fixtures {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(|p| p.parent())
-            .expect("crates/vm-harness has a repo root")
+            .expect("crates/harness has a repo root")
             .to_path_buf()
     }
 
