@@ -31,6 +31,7 @@ const fn map_trap(trap: Trap) -> Option<RefTrap> {
         Trap::TableOutOfBounds => Some(RefTrap::TableOutOfBounds),
         Trap::IndirectCallToNull => Some(RefTrap::IndirectCallToNull),
         Trap::BadSignature => Some(RefTrap::BadSignature),
+        Trap::OutOfFuel => Some(RefTrap::OutOfFuel),
         _ => None,
     }
 }
@@ -94,7 +95,11 @@ fn wasmtime_outcome(
 }
 
 fn ref_outcome(module: &RefModule, export: &str, args: &[Value]) -> (Outcome, Option<u64>) {
-    let mut instance = match RefInstance::instantiate(module) {
+    // The same budget the blessed store gets: with the engine charging
+    // bulk-op bytes before the bounds check, an over-long fill or copy
+    // exhausts fuel rather than trapping out of bounds, and an unbounded
+    // reference side would mask exactly that verdict.
+    let mut instance = match RefInstance::instantiate_with_fuel(module, FUEL) {
         Ok(i) => i,
         Err(t) => return (Outcome::Trap(t), None),
     };

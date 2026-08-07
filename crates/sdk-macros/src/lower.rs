@@ -464,6 +464,13 @@ impl<'a> Lowerer<'a> {
             syn::Pat::Paren(paren) => self.bind_pattern(&paren.pat),
             syn::Pat::Reference(reference) => self.bind_pattern(&reference.pat),
             syn::Pat::Type(typed) => self.bind_pattern(&typed.pat),
+            // A guard is an expression walked with the pattern's names
+            // already bound; nesting puts it on match arms and anywhere
+            // else a pattern sits.
+            syn::Pat::Guard(guard) => {
+                self.bind_pattern(&guard.pat);
+                self.expr(&guard.guard);
+            }
             // Wildcards, literals, paths, rests, and ranges bind nothing.
             _ => {}
         }
@@ -502,9 +509,6 @@ impl<'a> Lowerer<'a> {
                 for arm in &match_.arms {
                     self.locals.push(BTreeMap::new());
                     self.bind_pattern(&arm.pat);
-                    if let Some((_, guard)) = &arm.guard {
-                        self.expr(guard);
-                    }
                     self.expr(&arm.body);
                     self.locals.pop();
                 }

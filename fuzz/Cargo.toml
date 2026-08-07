@@ -9,18 +9,20 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
+# Its own workspace, so versions cannot inherit from the main manifest;
+# they are kept explicitly in step with it.
 [dependencies]
-arbitrary = "1"
+arbitrary = "1.4.2"
 hyperscale-hbor = { path = "../crates/hbor" }
 hyperscale-vm-effects = { path = "../crates/effects" }
 hyperscale-vm-harness = { path = "../crates/harness" }
 hyperscale-vm-kernel = { path = "../crates/kernel" }
 hyperscale-vm-ref = { path = "../crates/ref" }
 hyperscale-vm-runtime = { path = "../crates/runtime" }
-libfuzzer-sys = "0.4"
-wasm-smith = "0.236"
-wasmtime = "47"
-wat = "1"
+libfuzzer-sys = "0.4.13"
+wasm-smith = "0.255.0"
+wasmtime = "=47.0.3"
+wat = "1.255.0"
 
 [[bin]]
 name = "admitted_is_executable"

@@ -13,10 +13,10 @@ wasmtime.workspace = true
 wit-component.workspace = true
 
 [dev-dependencies]
-arbitrary = "1"
+arbitrary.workspace = true
 hyperscale-vm-manifest-builder.workspace = true
 hyperscale-vm-stdlib.workspace = true
-wasm-smith = "0.236"
+wasm-smith.workspace = true
 wat.workspace = true
 
 [lints]
