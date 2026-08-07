@@ -249,7 +249,7 @@ mod golden {
         let owner = Address([0x11; 16]);
         assert_eq!(
             hex(&child_key(&TestHasher, owner, RoleId(1), &[]).local.0),
-            "5409bdf194b8510995d6534a516309fc"
+            "dc6c13eb2baa09f63abaf0e2e156be74"
         );
         assert_eq!(
             hex(&child_key(
@@ -260,7 +260,7 @@ mod golden {
             )
             .local
             .0),
-            "4782c1162063269780e8873647320029"
+            "006e45ea9b3867ba7cfbf76bc53429cc"
         );
     }
 

@@ -37,15 +37,17 @@ const DOMAIN_CHILD: &[u8] = b"hyperscale-vm/child-key";
 
 /// The canonical child key for role-bound state under `owner`.
 ///
-/// The local half is the hash of the role and the material, truncated to 16
-/// bytes — which is what makes level-one access ("the vault for resource R
-/// under account A") pure computation, never a state read.
+/// The local half is the hash of the owner, the role, and the material,
+/// truncated to 16 bytes — which is what makes level-one access ("the vault
+/// for resource R under account A") pure computation, never a state read.
 ///
 /// Sixteen bytes is a deliberate choice, not a leftover: it puts the local
-/// half at a 64-bit birthday bound against collisions, and the collision
-/// domain is one owner's own children, which the owner also chooses the
-/// material for. The leaf key is the owner prefix plus this half, so a
-/// collision cannot cross a prefix and cannot cross a shard.
+/// half at a 64-bit birthday bound against collisions. The owner salted
+/// into the digest is what keeps that domain per-owner — material can be
+/// chosen by a third party (an attacker-minted resource names a vault
+/// local), and without the salt one ground collision would reproduce under
+/// every owner at once. The leaf key is the owner prefix plus this half,
+/// so a collision cannot cross a prefix and cannot cross a shard.
 #[must_use]
 pub fn child_key(
     hasher: &dyn Hasher,
@@ -54,7 +56,8 @@ pub fn child_key(
     material: &[Vec<u8>],
 ) -> SubstateKey {
     let role_bytes = role.0.to_le_bytes();
-    let mut parts: Vec<&[u8]> = Vec::with_capacity(1 + material.len());
+    let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
+    parts.push(&owner.0);
     parts.push(&role_bytes);
     parts.extend(material.iter().map(Vec::as_slice));
     let digest = hasher.hash(DOMAIN_CHILD, &parts);
@@ -539,6 +542,13 @@ mod tests {
         assert_ne!(a, child_key(&TestHasher, owner, RoleId(1), &[vec![8]]));
         assert_ne!(a, child_key(&TestHasher, owner, RoleId(1), &[]));
         assert_eq!(a.owner, owner);
+    }
+
+    #[test]
+    fn child_key_locals_separate_by_owner() {
+        let a = child_key(&TestHasher, Address([1; 16]), RoleId(1), &[vec![9]]);
+        let b = child_key(&TestHasher, Address([2; 16]), RoleId(1), &[vec![9]]);
+        assert_ne!(a.local, b.local);
     }
 
     #[test]

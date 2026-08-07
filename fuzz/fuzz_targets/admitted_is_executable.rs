@@ -2,7 +2,7 @@
 //!
 //! `differential_admission` asserts it over a seeded corpus, which is what
 //! CI can afford; this is the workstation lane the promotion policy in
-//! `docs/determinism-audit.md` presumes. A finding here is promoted by
+//! `upgrades.md` presumes. A finding here is promoted by
 //! checking its module into the seeded lane before the fix merges.
 
 #![no_main]
