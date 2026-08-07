@@ -11,15 +11,27 @@ cargo-fuzz = true
 
 [dependencies]
 arbitrary = "1"
-libfuzzer-sys = "0.4"
-wasm-smith = "0.236"
 hyperscale-hbor = { path = "../crates/hbor" }
+hyperscale-vm-effects = { path = "../crates/effects" }
+hyperscale-vm-harness = { path = "../crates/harness" }
+hyperscale-vm-kernel = { path = "../crates/kernel" }
 hyperscale-vm-ref = { path = "../crates/ref" }
 hyperscale-vm-runtime = { path = "../crates/runtime" }
+libfuzzer-sys = "0.4"
+wasm-smith = "0.236"
+wasmtime = "47"
+wat = "1"
 
 [[bin]]
 name = "admitted_is_executable"
 path = "fuzz_targets/admitted_is_executable.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session_trace_is_declared"
+path = "fuzz_targets/session_trace_is_declared.rs"
 test = false
 doc = false
 bench = false

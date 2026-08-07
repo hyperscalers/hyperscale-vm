@@ -65,7 +65,7 @@ Ranges are also **access-stable**: the declared interval stays valid whatever en
 
 The kernel does not check accesses against a declared list; it **only materializes handles for the declared set**. The component's world imports state-access capabilities per declared key and mode; an undeclared access has no handle to call and traps. Traps, infeasible reservations, and a `locked` read of an unlocked target all land in the abort taxonomy of [04-execution-semantics.md](04-execution-semantics.md) — deterministic, identical on every replica. This is constructive enforcement with the trust inverted: nothing about safety depends on declarations being right (INV-VM-1). The compiler owes tightness, a contention and fee property; the gate owes soundness.
 
-Test builds keep the claim honest continuously: the kernel's trace-subset oracle (`crates/kernel`) records every substate access and asserts `trace ⊆ declared` on every scenario and differential workload. A violation is a design-falsifying event, not a bug.
+Test builds keep the claim honest continuously: the kernel's trace-subset oracle (`crates/kernel`) records every substate access and asserts `trace ⊆ declared` on every scenario, differential, and fuzz workload. A violation is a design-falsifying event, not a bug.
 
 ## 7. The routing function
 

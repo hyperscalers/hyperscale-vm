@@ -46,7 +46,7 @@ The deploy-time bound converts a function's slot count into native bytes, which 
 - Outcome or state divergence between the blessed engine and `vm-ref`: release blocker; whichever implementation is wrong gets fixed, and the case joins the corpus.
 - Fuel divergence: same, with one extra rule — the spec schedule (`vm-ref`'s `fuel_cost` plus the boundary supplement) is the consensus definition; the engine matching it is what the pin guarantees.
 - Exhaustion is part of that: both runtimes test the budget at the three points the engine does — function entry, loop header, and the bulk-op byte charge — so out-of-fuel is a shared verdict, swept across the boundary by `differential_fuel`.
-- A workstation fuzz finding is promoted by checking its seed into the relevant lane before the fix merges. `fuzz/` holds the workstation lane (`cargo fuzz run admitted_is_executable`); it is its own workspace, so an ordinary build never touches it.
+- A workstation fuzz finding is promoted by checking its seed into the relevant lane before the fix merges. `fuzz/` holds the workstation lanes — `cargo fuzz run` with `admitted_is_executable` (admission implies executability), `session_trace_is_declared` (fuzzed call sequences through a kernel session on both runtimes, oracle asserted at finish), or `hbor_decode` — in its own workspace, so an ordinary build never touches it.
 
 ## Fuel at a trap is not a fee input
 
