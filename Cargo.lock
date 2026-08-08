@@ -673,6 +673,7 @@ name = "hyperscale-vm-kernel"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-effects",
+ "hyperscale-vm-types",
  "proptest",
  "thiserror 2.0.19",
 ]

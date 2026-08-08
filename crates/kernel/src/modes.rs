@@ -11,9 +11,8 @@
 //! counting in-flight deltas.
 
 pub use hyperscale_vm_effects::TxHash;
-
-/// The width of a fungible-amount cell.
-pub const AMOUNT_CELL_BYTES: usize = 16;
+use hyperscale_vm_types::read_amount;
+pub use hyperscale_vm_types::{AMOUNT_CELL_BYTES, amount_cell, encode_amount};
 
 /// Why a mode-semantics computation rejected its inputs. Deterministic:
 /// the same inputs fail identically on every replica.
@@ -36,30 +35,6 @@ pub enum ModeError {
     SupplyOutOfBounds,
 }
 
-/// Encode an amount into its cell representation: little-endian `u128`.
-#[must_use]
-pub const fn encode_amount(amount: u128) -> [u8; AMOUNT_CELL_BYTES] {
-    amount.to_le_bytes()
-}
-
-/// The cell form of an amount: a zero balance is an absent cell, not
-/// sixteen zero bytes.
-///
-/// Storage is a refundable per-byte bond, so the leaf has to go when the
-/// balance does — draining is the commonest shrink in the system, and for
-/// a commutative cell it is the only exit, since a delta capability has no
-/// remove. The supply accumulator has always shed zero entries; this is
-/// the cell half of the same rule.
-///
-/// The consequence at the guest boundary is that a drained cell reads as
-/// empty rather than as sixteen zero bytes. Both decode to zero, and
-/// every stdlib guest already treats them alike, but the obligation is
-/// permanent: an amount decoder must accept an empty cell.
-#[must_use]
-pub fn amount_cell(amount: u128) -> Option<[u8; AMOUNT_CELL_BYTES]> {
-    (amount != 0).then(|| encode_amount(amount))
-}
-
 /// Decode an amount cell.
 ///
 /// # Errors
@@ -67,10 +42,7 @@ pub fn amount_cell(amount: u128) -> Option<[u8; AMOUNT_CELL_BYTES]> {
 /// [`ModeError::BadAmountCell`] unless the value is exactly
 /// [`AMOUNT_CELL_BYTES`] long.
 pub fn decode_amount(bytes: &[u8]) -> Result<u128, ModeError> {
-    let cell: [u8; AMOUNT_CELL_BYTES] = bytes
-        .try_into()
-        .map_err(|_| ModeError::BadAmountCell(bytes.len()))?;
-    Ok(u128::from_le_bytes(cell))
+    read_amount(bytes).ok_or(ModeError::BadAmountCell(bytes.len()))
 }
 
 /// One unconditional commutative movement on an amount cell.

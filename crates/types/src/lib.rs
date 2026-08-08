@@ -15,12 +15,14 @@
 //! plain milliseconds: judging them against a clock is consensus's side.
 
 pub mod address;
+pub mod amount;
 pub mod envelope;
 pub mod execution;
 pub mod mode;
 pub mod writes;
 
 pub use address::{Address, LocalKey, SubstateKey};
+pub use amount::{AMOUNT_CELL_BYTES, amount_cell, encode_amount, read_amount};
 pub use envelope::{
     MAX_MESSAGE_LEN, MAX_SUBINTENTS, MAX_TX_BYTES_LEN, NetworkId, SubintentSig, TransactionBody,
     TransactionEnvelope, TxHash,
