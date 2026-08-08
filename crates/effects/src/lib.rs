@@ -31,7 +31,6 @@ pub mod metadata;
 pub mod route;
 pub mod stdlib;
 pub mod types;
-pub mod work;
 
 pub use admission::{AdmissionError, Admitted, MAX_YIELD_PARAMS, admit};
 pub use artifact::{ArtifactError, METADATA_SECTION, attach_metadata, extract_metadata};
@@ -52,8 +51,9 @@ pub use footprint::{
 pub use graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
-    Event, MAX_CELL_VALUE_LEN, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
-    Outcome, SettledWrites, StateWrites, TxHash,
+    Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT, MAX_CELL_VALUE_LEN, MAX_EVENT_PAYLOAD_BYTES,
+    MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, SettledWrites, StateWrites, TX_UNITS, TxHash,
+    declared_work, work_units,
 };
 pub use invoke::{CallArg, EDGE_CELL_BYTES, EdgeBound, NodeCall};
 pub use manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
@@ -70,4 +70,3 @@ pub use types::{
     Address, Effect, EffectSet, EffectTarget, LocalKey, MAX_VALUE_DEPTH, Mode, ModeKind,
     ReserveOverflow, RoleId, ShardId, SubstateKey, Value, child_key, compatible,
 };
-pub use work::{FOOTPRINT_WEIGHT, FUEL_WEIGHT, work_units};
