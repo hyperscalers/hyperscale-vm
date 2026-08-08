@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{Address, EffectSet, RoleId, StateWrites, SubstateKey, effect_units};
 
-use crate::modes::{amount_cell, decode_amount};
+use crate::modes::decode_amount;
 use crate::session::{Movement, StateDelta};
 
 /// Which keys the executing shard owns.
@@ -100,6 +100,52 @@ impl StateDelta {
         }
     }
 
+    /// The owned part of this delta in the form a receipt carries it:
+    /// exclusive writes as the absolutes they are, commutative accesses
+    /// as the movements they are.
+    ///
+    /// Nothing is folded, because folding needs a prior value and the
+    /// prior value is not known here. A receipt outlives the baseline it
+    /// executed against — it is settled later, possibly after a sibling
+    /// the baseline excluded — so the value a movement produces is a
+    /// question for the moment it applies. [`StateWrites::resolve`] is
+    /// where it gets answered, and [`Self::flatten`] is this followed
+    /// immediately by that, for the one caller whose prior really is at
+    /// hand: the batch's own running fold, where a later transaction must
+    /// read what an earlier one in the same tick left.
+    ///
+    /// A settled reservation is a debit like any other. The distinction
+    /// the delta draws between the two is about what authorized the
+    /// change, and that question is closed by the time a receipt exists.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an ordered-collection entry, which has no cell form.
+    #[must_use]
+    pub fn project(&self, locality: &Locality) -> StateWrites {
+        assert!(
+            self.entries.is_empty(),
+            "an ordered-collection entry has no cell form"
+        );
+        let owned = self.owned(locality);
+        let mut writes = StateWrites::default();
+        for (key, change) in owned.cells() {
+            writes.cells.insert(key, change.clone());
+        }
+        for (key, movement) in owned.movements() {
+            let entry = writes.movements.entry(key).or_default();
+            *entry = entry.then(movement);
+        }
+        for (key, settled) in owned.settles() {
+            let entry = writes.movements.entry(key).or_default();
+            *entry = entry.then(Movement {
+                credit: 0,
+                debit: settled,
+            });
+        }
+        writes
+    }
+
     /// Fold the owned part of this delta into absolute cell outcomes.
     ///
     /// The canonical application order: exclusive cells, then movements,
@@ -122,40 +168,13 @@ impl StateDelta {
         locality: &Locality,
         prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>,
     ) -> StateWrites {
-        assert!(
-            self.entries.is_empty(),
-            "an ordered-collection entry has no flattened form"
-        );
-        let owned = self.owned(locality);
-        let mut writes = StateWrites::default();
-        for (key, change) in owned.cells() {
-            writes.cells.insert(key, change.clone());
-        }
-        for (key, movement) in owned.movements() {
-            let before = amount_at(&writes, prior, key);
-            let after = before
-                .checked_add(movement.credit)
-                .and_then(|credited| credited.checked_sub(movement.debit))
-                .expect("a movement the apply phase accepted stays within its cell");
-            writes
-                .cells
-                .insert(key, amount_cell(after).map(|cell| cell.to_vec()));
-        }
-        for (key, settled) in owned.settles() {
-            let before = amount_at(&writes, prior, key);
-            let after = before
-                .checked_sub(settled)
-                .expect("a settlement the apply phase accepted stays within its cell");
-            writes
-                .cells
-                .insert(key, amount_cell(after).map(|cell| cell.to_vec()));
-        }
-        writes
+        self.project(locality).resolve(prior)
     }
 }
 
 /// The amount standing at `key` while a flatten is in progress: the
 /// receipt's own write when it made one, the committed value otherwise.
+#[allow(dead_code)] // retained by the tests below as the independent reference
 fn amount_at(
     writes: &StateWrites,
     prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>,
@@ -225,7 +244,7 @@ mod tests {
     use hyperscale_vm_effects::{Address, Hash32, LocalKey, SubstateKey, TxHash};
 
     use super::Locality;
-    use crate::modes::encode_amount;
+    use crate::modes::{decode_amount, encode_amount};
     use crate::overlay::OverlayStore;
     use crate::session::{Movement, StateDelta};
     use crate::store::{MemoryStore, SubstateStore};
@@ -320,6 +339,38 @@ mod tests {
         // The drains flatten to removals, not to encoded zeros.
         assert_eq!(writes.cells[&drained], None);
         assert_eq!(writes.cells[&emptied], None);
+    }
+
+    /// A projected receipt does not depend on the baseline it executed
+    /// against — which is the point of projecting rather than flattening.
+    /// The same projection resolves correctly against whatever state it
+    /// eventually lands on, so a sibling that settles first is composed
+    /// with rather than overwritten.
+    #[test]
+    fn a_projection_resolves_against_whatever_it_lands_on() {
+        let vault = key(2, 1);
+        let mut delta = StateDelta::default();
+        delta.movements.insert(
+            vault,
+            Movement {
+                credit: 0,
+                debit: 30,
+            },
+        );
+        let projected = delta.project(&Locality::All);
+        assert!(
+            projected.cells.is_empty(),
+            "a movement is not an absolute yet"
+        );
+
+        // The same receipt, landing on two different priors, debits both.
+        for (before, after) in [(100u128, 70u128), (60, 30)] {
+            let resolved = projected.resolve(&mut |_| Some(encode_amount(before).to_vec()));
+            assert_eq!(
+                decode_amount(resolved.cells[&vault].as_ref().unwrap()).unwrap(),
+                after,
+            );
+        }
     }
 
     /// A movement folds over this receipt's own exclusive write before it

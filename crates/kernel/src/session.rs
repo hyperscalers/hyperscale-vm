@@ -188,20 +188,7 @@ pub struct EnvInputs {
 /// How execution ended — the shared abort taxonomy, whose docs live with
 /// the type.
 pub use hyperscale_vm_effects::Outcome;
-
-/// This transaction's commutative movement on one amount cell: checked
-/// credit and debit totals.
-///
-/// Recording movements rather than absolute cell values is what makes
-/// receipts schedule-invariant — another transaction's compatible deltas
-/// on the same cell cannot leak into this receipt.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Movement {
-    /// Total credited.
-    pub credit: u128,
-    /// Total debited.
-    pub debit: u128,
-}
+pub use hyperscale_vm_types::Movement;
 
 /// The committed state change, keyed canonically: `None` is a removal.
 /// Exclusive accesses report absolute outcomes; commutative accesses
