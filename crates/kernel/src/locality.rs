@@ -18,7 +18,9 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Address, EffectSet, RoleId, StateWrites, SubstateKey, effect_units};
+use hyperscale_vm_effects::{
+    Address, EffectSet, RoleId, SettledWrites, StateWrites, SubstateKey, effect_units,
+};
 
 use crate::modes::decode_amount;
 use crate::session::{Movement, StateDelta};
@@ -167,7 +169,7 @@ impl StateDelta {
         &self,
         locality: &Locality,
         prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>,
-    ) -> StateWrites {
+    ) -> SettledWrites {
         self.project(locality).resolve(prior)
     }
 }
@@ -325,7 +327,7 @@ mod tests {
 
         let writes = delta.flatten(&Locality::All, &mut |cell| base.cells.get(&cell).cloned());
         let mut folded: BTreeMap<_, _> = base.cells.clone();
-        for (cell, change) in &writes.cells {
+        for (cell, change) in writes.cells() {
             match change {
                 Some(value) => {
                     folded.insert(*cell, value.clone());
@@ -337,8 +339,8 @@ mod tests {
         }
         assert_eq!(folded, expected.cells);
         // The drains flatten to removals, not to encoded zeros.
-        assert_eq!(writes.cells[&drained], None);
-        assert_eq!(writes.cells[&emptied], None);
+        assert_eq!(writes.cells()[&drained], None);
+        assert_eq!(writes.cells()[&emptied], None);
     }
 
     /// A projected receipt does not depend on the baseline it executed
@@ -367,7 +369,7 @@ mod tests {
         for (before, after) in [(100u128, 70u128), (60, 30)] {
             let resolved = projected.resolve(&mut |_| Some(encode_amount(before).to_vec()));
             assert_eq!(
-                decode_amount(resolved.cells[&vault].as_ref().unwrap()).unwrap(),
+                decode_amount(resolved.cells()[&vault].as_ref().unwrap()).unwrap(),
                 after,
             );
         }
@@ -390,7 +392,7 @@ mod tests {
         let writes = delta.flatten(&Locality::All, &mut |_| {
             panic!("the receipt's own write answers this read")
         });
-        assert_eq!(writes.cells[&cell], Some(encode_amount(30).to_vec()));
+        assert_eq!(writes.cells()[&cell], Some(encode_amount(30).to_vec()));
     }
 
     /// Remote keys stay in the receipt as the outbound record; the
@@ -411,7 +413,7 @@ mod tests {
         }
         let locality = Locality::Owned(Arc::new(|owner: Address| owner == Address([1; 16])));
         let writes = delta.flatten(&locality, &mut |_| None);
-        assert_eq!(writes.cells.len(), 1);
-        assert_eq!(writes.cells[&local], Some(encode_amount(5).to_vec()));
+        assert_eq!(writes.cells().len(), 1);
+        assert_eq!(writes.cells()[&local], Some(encode_amount(5).to_vec()));
     }
 }

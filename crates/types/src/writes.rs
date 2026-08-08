@@ -100,25 +100,18 @@ impl StateWrites {
     /// recording the movement — so it saturates rather than raising an
     /// error no caller could act on at settlement time.
     #[must_use]
-    pub fn resolve(&self, prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>) -> Self {
-        if self.movements.is_empty() {
-            return self.clone();
-        }
-        let mut resolved = self.clone();
+    pub fn resolve(&self, prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>) -> SettledWrites {
+        let mut cells = self.cells.clone();
         for (key, movement) in &self.movements {
-            let before = resolved
-                .cells
+            let before = cells
                 .get(key)
                 .map_or_else(|| prior(*key), Clone::clone)
                 .and_then(|bytes| read_amount(&bytes))
                 .unwrap_or(0);
             let after = movement.apply(before).unwrap_or(0);
-            resolved
-                .cells
-                .insert(*key, amount_cell(after).map(|cell| cell.to_vec()));
+            cells.insert(*key, amount_cell(after).map(|cell| cell.to_vec()));
         }
-        resolved.movements.clear();
-        resolved
+        SettledWrites { cells }
     }
 
     /// Whether nothing changed.
@@ -139,6 +132,58 @@ impl StateWrites {
         Hash32(hash_fn(
             &to_vec(self).expect("state writes stay within the encoder's bounds"),
         ))
+    }
+}
+
+/// Cell values an embedder may commit: absolutes and nothing else.
+///
+/// Reachable only through [`StateWrites::resolve`] and
+/// [`Self::from_absolutes`], so a movement cannot arrive somewhere that
+/// stores values without someone having said what it moved from. That
+/// matters more than it sounds: every consumer that commits state used
+/// to walk `cells` and would have dropped a movement silently, attesting
+/// a root missing the change rather than failing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SettledWrites {
+    cells: BTreeMap<SubstateKey, Option<Vec<u8>>>,
+}
+
+impl SettledWrites {
+    /// Writes that are already values — genesis, a provision, a store's
+    /// own snapshot. Nothing here moved, so nothing needs resolving.
+    #[must_use]
+    pub const fn from_absolutes(cells: BTreeMap<SubstateKey, Option<Vec<u8>>>) -> Self {
+        Self { cells }
+    }
+
+    /// The committed value per changed cell, or `None` for a removal.
+    #[must_use]
+    pub const fn cells(&self) -> &BTreeMap<SubstateKey, Option<Vec<u8>>> {
+        &self.cells
+    }
+
+    /// Whether nothing changed.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    /// Take the cells, for a consumer that owns them from here.
+    #[must_use]
+    pub fn into_cells(self) -> BTreeMap<SubstateKey, Option<Vec<u8>>> {
+        self.cells
+    }
+}
+
+impl From<SettledWrites> for StateWrites {
+    /// Values are a receipt payload like any other — they are the half
+    /// of one that never moved. The reverse needs a prior and so is
+    /// [`StateWrites::resolve`], not a conversion.
+    fn from(settled: SettledWrites) -> Self {
+        Self {
+            cells: settled.into_cells(),
+            movements: BTreeMap::new(),
+        }
     }
 }
 
@@ -238,15 +283,15 @@ mod tests {
         let first_then_second = {
             let after_first = debit(300).resolve(&mut |_| start.clone());
             debit(400)
-                .resolve(&mut |k| after_first.cells.get(&k).cloned().flatten())
-                .cells[&vault]
+                .resolve(&mut |k| after_first.cells().get(&k).cloned().flatten())
+                .cells()[&vault]
                 .clone()
         };
         let second_then_first = {
             let after_second = debit(400).resolve(&mut |_| start.clone());
             debit(300)
-                .resolve(&mut |k| after_second.cells.get(&k).cloned().flatten())
-                .cells[&vault]
+                .resolve(&mut |k| after_second.cells().get(&k).cloned().flatten())
+                .cells()[&vault]
                 .clone()
         };
         assert_eq!(first_then_second, second_then_first);
@@ -267,11 +312,7 @@ mod tests {
             },
         );
         let resolved = writes.resolve(&mut |_| amount_cell(500).map(|cell| cell.to_vec()));
-        assert_eq!(resolved.cells[&vault], None, "a drained cell is absent");
-        assert!(
-            resolved.movements.is_empty(),
-            "resolution leaves nothing relative behind"
-        );
+        assert_eq!(resolved.cells()[&vault], None, "a drained cell is absent");
     }
 
     /// An exclusive write in the same receipt is what the movement folds

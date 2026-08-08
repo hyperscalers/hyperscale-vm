@@ -29,4 +29,4 @@ pub use envelope::{
 };
 pub use execution::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome};
 pub use mode::{Mode, ModeKind, compatible};
-pub use writes::{MAX_CELL_VALUE_LEN, Movement, StateWrites};
+pub use writes::{MAX_CELL_VALUE_LEN, Movement, SettledWrites, StateWrites};
