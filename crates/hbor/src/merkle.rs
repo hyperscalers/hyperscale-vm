@@ -2,7 +2,7 @@
 //!
 //! A hash over a whole encoding proves the whole value or nothing. A tree
 //! over the fields proves one field to someone holding only the root — which
-//! is what receipt trees, settled-wave roots, and witness roots are all
+//! is what receipt trees, settled-transaction roots, and witness roots are all
 //! building by hand, each in its own shape, beside an encoding that could
 //! have defined it.
 //!

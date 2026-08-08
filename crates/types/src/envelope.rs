@@ -108,7 +108,7 @@ pub struct SubintentSig {
 /// Wholly one or the other. Every other field of the envelope — the fee
 /// terms, the window, the message, the composer's signature — means the
 /// same thing for both, which is why publishing rides this envelope
-/// rather than a body of its own: fee assurance, engagement, and wave
+/// rather than a body of its own: fee assurance, engagement, and tick
 /// settlement are the same machinery either way.
 #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
 pub enum TransactionBody {

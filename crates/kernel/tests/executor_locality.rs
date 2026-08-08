@@ -466,7 +466,7 @@ fn only_the_owning_shard_judges_an_uncovered_reserve() {
     ));
 
     // The counterpart executes optimistically; the owning shard's
-    // verdict reaches it through the wave combine, not this batch.
+    // verdict reaches it through the tick combine, not this batch.
     let recipient = execute_batch(
         Arc::new(MemoryStore::new()),
         &batch,

@@ -502,7 +502,7 @@ fn run_group<R: GuestRunner>(
         // transaction — this group, an earlier batch, or the signer's
         // own cancellation — already committed the subintent. Only the
         // signer's shard holds the cell; elsewhere the owning shard's
-        // verdict arrives through the wave combine.
+        // verdict arrives through the tick combine.
         let spent = entry
             .nullifiers
             .iter()

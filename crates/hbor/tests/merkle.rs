@@ -289,7 +289,7 @@ fn variants_with_the_same_content_differ_at_the_root() {
 // Sequences
 // ---------------------------------------------------------------------------
 
-/// The shape receipt trees and settled-wave roots want: a root over a list,
+/// The shape receipt trees and settled-transaction roots want: a root over a list,
 /// with a proof per element. A sequence has no domain of its own, so the
 /// caller names one at the root — which is what keeps a receipt list and a
 /// witness list of identical hashes apart.

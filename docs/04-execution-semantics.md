@@ -14,7 +14,7 @@ The schedule's soundness rests on one closure property: the only order-sensitive
 
 ## 3. The transaction clock and randomness
 
-Replicated execution forces a single clock value per transaction: every participant computes the same receipt, so a component can never read "its own shard's" time. The clock is **the canonical weighted-time anchor of the payer-shard block that committed the transaction** — available at exactly the right moment on both sides: locally the anchor exists at the instant of commit, and remotely it rides the commit proof every non-payer participant already requires before engaging ([07-host-integration.md](07-host-integration.md) §2). Single-shard transactions degenerate cleanly, and application-visible time is coherent with the wave deadline, which anchors on the same instant.
+Replicated execution forces a single clock value per transaction: every participant computes the same receipt, so a component can never read "its own shard's" time. The clock is **the canonical weighted-time anchor of the payer-shard block that committed the transaction** — available at exactly the right moment on both sides: locally the anchor exists at the instant of commit, and remotely it rides the commit proof every non-payer participant already requires before engaging ([07-host-integration.md](07-host-integration.md) §2). Single-shard transactions degenerate cleanly, and application-visible time is coherent with the finalization deadline, which anchors on the same instant.
 
 The monotonicity contract is explicit: exact along one payer chain, approximate globally — successive transactions at one component may carry clocks from different payer chains, with regression bounded by the Byzantine skew envelope plus commit lag. Stdlib time arithmetic saturates ([06-stdlib-and-upgrades.md](06-stdlib-and-upgrades.md)), so applications never see negative elapsed time.
 
@@ -28,7 +28,7 @@ Aborts are load-bearing in a deterministic cross-shard protocol — deadline all
 |---|---|---|
 | **User error** | Gate trap (undeclared access), auth failure, guest panic, fuel exhaustion | Full freight: the declared gas limit and every other quantity in full, all shards — settled from declarations, never from trap-time fuel, which is engine-defined |
 | **Infeasibility** | Lost a deterministic race: reservation infeasible, debit or settle past the floor an earlier transaction in the group left, stale declaration | Floor fee covering consumed scheduling and provisioning work |
-| **Protocol** | Wave deadline, reshape fence, recovery fence — no counterparty at fault | Floor fee; never punitive, the sender did nothing wrong |
+| **Protocol** | Finalization deadline, reshape fence, recovery fence — no counterparty at fault | Floor fee; never punitive, the sender did nothing wrong |
 
 Griefing accounting: a transaction engineered to abort still held locks and burned remote work; user-error pricing makes that a paid attack with linear cost.
 

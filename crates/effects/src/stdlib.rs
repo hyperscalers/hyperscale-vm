@@ -143,7 +143,7 @@ pub fn account_metadata() -> PackageMetadata {
 /// stake, and it has an actor a delegation does not. Each writes the
 /// pool's own leaf for the validator it names, keyed by that validator, so
 /// two operators of two validators never take turns and the pool's shard
-/// is a participant in the wave that carries the fact. That participation
+/// is a participant in the tick that carries the fact. That participation
 /// is the reason the leaf exists at all: an event is kept by the shard
 /// owning its emitter, and a method declaring no access would leave the
 /// pool's shard out of the transaction that emitted from it.

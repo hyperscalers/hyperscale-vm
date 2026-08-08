@@ -30,7 +30,7 @@ use crate::session::{Movement, StateDelta};
 /// A single-shard batch owns everything. A cross-shard participant
 /// settles and judges only the keys it owns: a remote reservation is
 /// held at its declared amount without judging (the owning shard
-/// judges, and the wave combine carries its verdict), its settle
+/// judges, and the tick combine carries its verdict), its settle
 /// releases the hold and keeps the amount in the receipt as the
 /// outbound record, and remote movements skip the local floor check.
 #[derive(Clone)]
