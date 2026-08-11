@@ -8,7 +8,10 @@
 
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::metadata::{AbiParam, Accessibility, MethodSignature, PackageMetadata, ParamType};
-use crate::types::{RoleId, Value};
+use crate::types::{NativeRole, RoleId, Value};
+
+/// The native fee and transfer resource.
+pub const XRD: NativeRole = NativeRole(1);
 
 /// A fungible balance cell under its holder.
 pub const VAULT: RoleId = RoleId(1);

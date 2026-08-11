@@ -31,6 +31,7 @@ pub mod metadata;
 pub mod route;
 pub mod stdlib;
 pub mod types;
+pub mod vectors;
 
 pub use admission::{AdmissionError, Admitted, MAX_YIELD_PARAMS, admit};
 pub use artifact::{ArtifactError, METADATA_SECTION, attach_metadata, extract_metadata};
@@ -67,6 +68,9 @@ pub use route::{
     PrefixShardResolver, RouteError, Routing, ShardResolver, route,
 };
 pub use types::{
-    Address, Effect, EffectSet, EffectTarget, LocalKey, MAX_VALUE_DEPTH, Mode, ModeKind,
-    ReserveOverflow, RoleId, ShardId, SubstateKey, Value, child_key, compatible,
+    Address, AddressClass, ComponentAddr, Effect, EffectSet, EffectTarget, GlobalAddress,
+    InvalidAddress, LocalKey, MAX_VALUE_DEPTH, Mode, ModeKind, NativeAddr, NativeRole, PackageAddr,
+    PrincipalAddr, ReserveOverflow, ResourceAddr, RoleId, SchemeId, ShardId, SubstateKey, Value,
+    WrongClass, child_key, compatible, component_address, config_hash, native_address,
+    package_address, principal_address, resource_address,
 };

@@ -22,7 +22,10 @@ pub mod mode;
 pub mod work;
 pub mod writes;
 
-pub use address::{Address, LocalKey, SubstateKey};
+pub use address::{
+    Address, AddressClass, ComponentAddr, GlobalAddress, InvalidAddress, LocalKey, NativeAddr,
+    PackageAddr, PrincipalAddr, ResourceAddr, SchemeId, SubstateKey, WrongClass,
+};
 pub use amount::{AMOUNT_CELL_BYTES, amount_cell, encode_amount, read_amount};
 pub use envelope::{
     MAX_MESSAGE_LEN, MAX_SUBINTENTS, MAX_TX_BYTES_LEN, NetworkId, SubintentSig, TransactionBody,
