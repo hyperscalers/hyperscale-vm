@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
-    Address, AddressClass, AdmittedTree, Constraint, EdgeRef, EnvelopeTree, Hasher, InstanceMeta,
+    Address, AddressClass, AdmittedTree, Constraint, EdgeRef, EnvelopeTree, Hasher,
     InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
     Subintent, SubstateKey, TestHasher, Value, YieldBinding, YieldParam, admit_tree, child_key,
     route_tree,
@@ -32,9 +32,9 @@ use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
-const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
-const BOB: Address = Address::new([0x20; 31], AddressClass::Component);
-const CAROL: Address = Address::new([0x30; 31], AddressClass::Component);
+const ALICE: Address = Address::new([0x10; 31], AddressClass::Principal);
+const BOB: Address = Address::new([0x20; 31], AddressClass::Principal);
+const CAROL: Address = Address::new([0x30; 31], AddressClass::Principal);
 const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
 const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
 
@@ -59,15 +59,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
     cache.publish(pkg(), account_metadata());
     let mut instances = InstanceRegistry::new();
-    for account in [ALICE, BOB, CAROL] {
-        instances.register(
-            account,
-            InstanceMeta {
-                package: pkg(),
-                config: vec![],
-            },
-        );
-    }
+    instances.serve_principals(pkg());
     (cache, instances)
 }
 

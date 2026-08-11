@@ -791,6 +791,21 @@ mod tests {
         Address::new([byte; 31], AddressClass::Component)
     }
 
+    /// The record a fixture's instance of `package` carries.
+    fn meta_of(package: &str) -> InstanceMeta {
+        InstanceMeta {
+            package: pkg(package),
+            config: vec![],
+            salt: Hash32([0; 32]),
+        }
+    }
+
+    /// The address that record derives — what the fixture names, and
+    /// where creation puts it, without either being told the other.
+    fn instance_of(package: &str) -> Address {
+        meta_of(package).address(&TestHasher)
+    }
+
     fn point(owner: Address, role: RoleId) -> EffectTarget {
         EffectTarget::Point(child_key(&TestHasher, owner, role, &[]))
     }
@@ -852,26 +867,14 @@ mod tests {
         cache.publish(pkg("payer"), sender_pkg);
         cache.publish(pkg("payee"), receiver_pkg);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(0x11),
-            InstanceMeta {
-                package: pkg("payer"),
-                config: vec![],
-            },
-        );
-        instances.register(
-            addr(0x22),
-            InstanceMeta {
-                package: pkg("payee"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, meta_of("payer"));
+        instances.create(&TestHasher, meta_of("payee"));
         let manifest = Manifest {
             nodes: vec![Node {
-                target: addr(0x11),
+                target: instance_of("payer"),
                 method: "pay".into(),
                 inputs: vec![
-                    NodeInput::Literal(Value::Address(addr(0x22))),
+                    NodeInput::Literal(Value::Address(instance_of("payee"))),
                     NodeInput::Literal(Value::U128(9)),
                 ],
             }],
@@ -894,26 +897,28 @@ mod tests {
         // called is its business, and the claim here is that the two
         // instances land apart and keep their own effects.
         let (sender, recipient) = (
-            resolver().shard_of(addr(0x11)),
-            resolver().shard_of(addr(0x22)),
+            resolver().shard_of(instance_of("payer")),
+            resolver().shard_of(instance_of("payee")),
         );
         assert_ne!(sender, recipient);
-        let shards: Vec<_> = routing.shards().collect();
-        assert_eq!(shards, vec![sender, recipient]);
+        // `shards()` is ascending, so the claim is the participating set
+        // rather than the order two derived addresses happen to sort in.
+        let shards: BTreeSet<_> = routing.shards().collect();
+        assert_eq!(shards, BTreeSet::from([sender, recipient]));
         assert!(routing.per_shard[&sender].contains(&Effect {
-            target: point(addr(0x11), RoleId(1)),
+            target: point(instance_of("payer"), RoleId(1)),
             mode: Mode::Delta,
         }));
         assert!(routing.per_shard[&recipient].contains(&Effect {
-            target: point(addr(0x22), RoleId(2)),
+            target: point(instance_of("payee"), RoleId(2)),
             mode: Mode::Reserve { amount: 9 },
         }));
         let pay_ref = MethodRef {
-            instance: addr(0x11),
+            instance: instance_of("payer"),
             method: "pay".into(),
         };
         let recv_ref = MethodRef {
-            instance: addr(0x22),
+            instance: instance_of("payee"),
             method: "recv".into(),
         };
         assert_eq!(routing.call_graph.roots, BTreeSet::from([pay_ref.clone()]));
@@ -967,11 +972,11 @@ mod tests {
             declaration.ordered,
             vec![
                 Effect {
-                    target: point(addr(0x11), RoleId(1)),
+                    target: point(instance_of("payer"), RoleId(1)),
                     mode: Mode::Delta,
                 },
                 Effect {
-                    target: point(addr(0x22), RoleId(2)),
+                    target: point(instance_of("payee"), RoleId(2)),
                     mode: Mode::Reserve { amount: 9 },
                 },
             ],
@@ -997,13 +1002,21 @@ mod tests {
             mode: ModeExpr::Write,
         };
         let mut cache = MetadataCache::new();
+        // An address is a function of the record, so a package can name
+        // an instance created after it.
+        let helper_meta = InstanceMeta {
+            package: pkg("helper"),
+            config: vec![],
+            salt: Hash32([4; 32]),
+        };
+        let a_2 = helper_meta.address(&TestHasher);
         let mut maker = PackageMetadata::default();
         maker.methods.insert(
             "make".into(),
             method(
                 vec![fresh_entry()],
                 vec![CallSite {
-                    target: Expr::Literal(Value::Address(addr(2))),
+                    target: Expr::Literal(Value::Address(a_2)),
                     method: "assist".into(),
                     args: vec![],
                 }],
@@ -1016,23 +1029,11 @@ mod tests {
         cache.publish(pkg("maker"), maker);
         cache.publish(pkg("helper"), helper);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(1),
-            InstanceMeta {
-                package: pkg("maker"),
-                config: vec![],
-            },
-        );
-        instances.register(
-            addr(2),
-            InstanceMeta {
-                package: pkg("helper"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, meta_of("maker"));
+        assert_eq!(instances.create(&TestHasher, helper_meta), a_2);
         let manifest = Manifest {
             nodes: vec![Node {
-                target: addr(1),
+                target: instance_of("maker"),
                 method: "make".into(),
                 inputs: vec![],
             }],
@@ -1080,16 +1081,10 @@ mod tests {
         );
         cache.publish(pkg("loop"), meta);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(1),
-            InstanceMeta {
-                package: pkg("loop"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, meta_of("loop"));
         let manifest = Manifest {
             nodes: vec![Node {
-                target: addr(1),
+                target: instance_of("loop"),
                 method: "m".into(),
                 inputs: vec![],
             }],
@@ -1112,13 +1107,28 @@ mod tests {
     #[test]
     fn mutual_recursion_is_a_cycle() {
         let mut cache = MetadataCache::new();
+        // Two instances naming each other: the addresses derive from the
+        // records, which name no address, so there is no cycle to break
+        // — only an order to respect.
+        let first_meta = InstanceMeta {
+            package: pkg("first"),
+            config: vec![],
+            salt: Hash32([6; 32]),
+        };
+        let second_meta = InstanceMeta {
+            package: pkg("second"),
+            config: vec![],
+            salt: Hash32([7; 32]),
+        };
+        let a_1_3 = first_meta.address(&TestHasher);
+        let a_2_2 = second_meta.address(&TestHasher);
         let mut first = PackageMetadata::default();
         first.methods.insert(
             "m".into(),
             method(
                 vec![],
                 vec![CallSite {
-                    target: Expr::Literal(Value::Address(addr(2))),
+                    target: Expr::Literal(Value::Address(a_2_2)),
                     method: "n".into(),
                     args: vec![],
                 }],
@@ -1130,7 +1140,7 @@ mod tests {
             method(
                 vec![],
                 vec![CallSite {
-                    target: Expr::Literal(Value::Address(addr(1))),
+                    target: Expr::Literal(Value::Address(a_1_3)),
                     method: "m".into(),
                     args: vec![],
                 }],
@@ -1139,23 +1149,11 @@ mod tests {
         cache.publish(pkg("first"), first);
         cache.publish(pkg("second"), second);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(1),
-            InstanceMeta {
-                package: pkg("first"),
-                config: vec![],
-            },
-        );
-        instances.register(
-            addr(2),
-            InstanceMeta {
-                package: pkg("second"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, first_meta);
+        instances.create(&TestHasher, second_meta);
         let manifest = Manifest {
             nodes: vec![Node {
-                target: addr(1),
+                target: a_1_3,
                 method: "m".into(),
                 inputs: vec![],
             }],
@@ -1178,21 +1176,23 @@ mod tests {
     #[test]
     fn a_diamond_is_not_a_cycle() {
         let mut cache = MetadataCache::new();
-        let call = |target: u8, name: &str| CallSite {
-            target: Expr::Literal(Value::Address(addr(target))),
+        let call = |target: &str, name: &str| CallSite {
+            target: Expr::Literal(Value::Address(instance_of(target))),
             method: name.into(),
             args: vec![],
         };
         let mut root = PackageMetadata::default();
-        root.methods
-            .insert("r".into(), method(vec![], vec![call(2, "p"), call(3, "q")]));
+        root.methods.insert(
+            "r".into(),
+            method(vec![], vec![call("left", "p"), call("right", "q")]),
+        );
         let mut left = PackageMetadata::default();
         left.methods
-            .insert("p".into(), method(vec![], vec![call(4, "h")]));
+            .insert("p".into(), method(vec![], vec![call("shared", "h")]));
         let mut right = PackageMetadata::default();
         right
             .methods
-            .insert("q".into(), method(vec![], vec![call(4, "h")]));
+            .insert("q".into(), method(vec![], vec![call("shared", "h")]));
         let mut shared = PackageMetadata::default();
         shared.methods.insert(
             "h".into(),
@@ -1203,18 +1203,12 @@ mod tests {
         cache.publish(pkg("right"), right);
         cache.publish(pkg("shared"), shared);
         let mut instances = InstanceRegistry::new();
-        for (byte, name) in [(1, "root"), (2, "left"), (3, "right"), (4, "shared")] {
-            instances.register(
-                addr(byte),
-                InstanceMeta {
-                    package: pkg(name),
-                    config: vec![],
-                },
-            );
+        for name in ["root", "left", "right", "shared"] {
+            instances.create(&TestHasher, meta_of(name));
         }
         let manifest = Manifest {
             nodes: vec![Node {
-                target: addr(1),
+                target: instance_of("root"),
                 method: "r".into(),
                 inputs: vec![],
             }],
@@ -1261,9 +1255,15 @@ mod tests {
 
     #[test]
     fn unknown_lookups_are_distinct_errors() {
+        let ghost_meta = InstanceMeta {
+            package: pkg("ghost"),
+            config: vec![],
+            salt: Hash32([8; 32]),
+        };
+        let a_1_4 = ghost_meta.address(&TestHasher);
         let manifest = Manifest {
             nodes: vec![Node {
-                target: addr(1),
+                target: a_1_4,
                 method: "m".into(),
                 inputs: vec![],
             }],
@@ -1275,16 +1275,10 @@ mod tests {
             &TestHasher,
             &resolver(),
         );
-        assert_eq!(empty, Err(RouteError::UnknownInstance(addr(1))));
+        assert_eq!(empty, Err(RouteError::UnknownInstance(a_1_4)));
 
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(1),
-            InstanceMeta {
-                package: pkg("ghost"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, ghost_meta);
         let missing_pkg = route(
             &admitted(&manifest),
             &MetadataCache::new(),
@@ -1328,16 +1322,10 @@ mod tests {
         );
         cache.publish(pkg("oracle"), meta);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(5),
-            InstanceMeta {
-                package: pkg("oracle"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, meta_of("oracle"));
         let manifest = Manifest {
             nodes: vec![Node {
-                target: addr(5),
+                target: instance_of("oracle"),
                 method: "peek".into(),
                 inputs: vec![],
             }],
@@ -1357,7 +1345,7 @@ mod tests {
         assert_eq!(declared.iter().count(), 2);
         for role in [RoleId(1), RoleId(2)] {
             assert!(declared.contains(&Effect {
-                target: point(addr(5), role),
+                target: point(instance_of("oracle"), role),
                 mode: Mode::Locked,
             }));
         }
@@ -1398,16 +1386,10 @@ mod tests {
         let mut cache = MetadataCache::new();
         cache.publish(pkg("wide"), meta);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(1),
-            InstanceMeta {
-                package: pkg("wide"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, meta_of("wide"));
         let manifest = Manifest {
             nodes: vec![Node {
-                target: addr(1),
+                target: instance_of("wide"),
                 method: "root".into(),
                 inputs: vec![],
             }],
@@ -1439,16 +1421,10 @@ mod tests {
         let mut cache = MetadataCache::new();
         cache.publish(pkg("chain"), meta);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(1),
-            InstanceMeta {
-                package: pkg("chain"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, meta_of("chain"));
         let manifest = Manifest {
             nodes: vec![Node {
-                target: addr(1),
+                target: instance_of("chain"),
                 method: "m0".into(),
                 inputs: vec![],
             }],
@@ -1476,17 +1452,11 @@ mod tests {
         meta.methods.insert("m".into(), method(vec![], vec![]));
         cache.publish(pkg("wide"), meta);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(1),
-            InstanceMeta {
-                package: pkg("wide"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, meta_of("wide"));
         let nodes = |count: usize| Manifest {
             nodes: (0..count)
                 .map(|_| Node {
-                    target: addr(1),
+                    target: instance_of("wide"),
                     method: "m".into(),
                     inputs: vec![],
                 })
@@ -1535,15 +1505,9 @@ mod tests {
         );
         cache.publish(pkg("vault"), meta);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(1),
-            InstanceMeta {
-                package: pkg("vault"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, meta_of("vault"));
         let node = || Node {
-            target: addr(1),
+            target: instance_of("vault"),
             method: "take".into(),
             inputs: vec![NodeInput::Literal(Value::U128(u128::MAX))],
         };
@@ -1621,7 +1585,7 @@ mod tests {
     fn spreading_world(
         spread: Vec<Value>,
         abi: Vec<AbiParam>,
-    ) -> (MetadataCache, InstanceRegistry) {
+    ) -> (MetadataCache, InstanceRegistry, Manifest) {
         let mut package = PackageMetadata::default();
         package.methods.insert(
             "m".into(),
@@ -1647,20 +1611,21 @@ mod tests {
         let mut cache = MetadataCache::new();
         cache.publish(pkg("spread"), package);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(0x11),
+        let spreader = instances.create(
+            &TestHasher,
             InstanceMeta {
                 package: pkg("spread"),
                 config: vec![Value::List(spread)],
+                salt: Hash32([15; 32]),
             },
         );
-        (cache, instances)
+        (cache, instances, one_node(spreader))
     }
 
-    fn one_node() -> Manifest {
+    fn one_node(target: Address) -> Manifest {
         Manifest {
             nodes: vec![Node {
-                target: addr(0x11),
+                target,
                 method: "m".into(),
                 inputs: vec![],
             }],
@@ -1674,9 +1639,9 @@ mod tests {
         // moves with it while its clause index does not.
         for width in 1u64..4 {
             let spread: Vec<Value> = (0..width).map(Value::U64).collect();
-            let (cache, instances) = spreading_world(spread, vec![AbiParam::Handle(1)]);
+            let (cache, instances, manifest) = spreading_world(spread, vec![AbiParam::Handle(1)]);
             let routing = route(
-                &admitted(&one_node()),
+                &admitted(&manifest),
                 &cache,
                 &instances,
                 &TestHasher,
@@ -1703,9 +1668,9 @@ mod tests {
         // verdict is the same on every node because the configuration it
         // depends on is creation-fixed.
         let spread = vec![Value::U64(1), Value::U64(2)];
-        let (cache, instances) = spreading_world(spread, vec![AbiParam::Handle(0)]);
+        let (cache, instances, manifest) = spreading_world(spread, vec![AbiParam::Handle(0)]);
         let error = route(
-            &admitted(&one_node()),
+            &admitted(&manifest),
             &cache,
             &instances,
             &TestHasher,
@@ -1747,22 +1712,16 @@ mod tests {
         let mut cache = MetadataCache::new();
         cache.publish(pkg("edges"), package);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(0x11),
-            InstanceMeta {
-                package: pkg("edges"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, meta_of("edges"));
         let manifest = Manifest {
             nodes: vec![
                 Node {
-                    target: addr(0x11),
+                    target: instance_of("edges"),
                     method: "make".into(),
                     inputs: vec![],
                 },
                 Node {
-                    target: addr(0x11),
+                    target: instance_of("edges"),
                     method: "take".into(),
                     inputs: vec![NodeInput::Edge {
                         source: 0,
@@ -1818,7 +1777,7 @@ mod tests {
                 abi: vec![AbiParam::Handle(0)],
                 effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
                 calls: vec![CallSite {
-                    target: Expr::Literal(Value::Address(addr(0x22))),
+                    target: Expr::Literal(Value::Address(instance_of("callee"))),
                     method: "take".into(),
                     args: vec![Expr::Arg(0)],
                 }],
@@ -1846,29 +1805,17 @@ mod tests {
         cache.publish(pkg("router"), router);
         cache.publish(pkg("callee"), callee);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(0x11),
-            InstanceMeta {
-                package: pkg("router"),
-                config: vec![],
-            },
-        );
-        instances.register(
-            addr(0x22),
-            InstanceMeta {
-                package: pkg("callee"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, meta_of("router"));
+        instances.create(&TestHasher, meta_of("callee"));
         let manifest = Manifest {
             nodes: vec![
                 Node {
-                    target: addr(0x11),
+                    target: instance_of("router"),
                     method: "make".into(),
                     inputs: vec![],
                 },
                 Node {
-                    target: addr(0x11),
+                    target: instance_of("router"),
                     method: "forward".into(),
                     inputs: vec![NodeInput::Edge {
                         source: 0,
@@ -1949,22 +1896,16 @@ mod tests {
         let mut cache = MetadataCache::new();
         cache.publish(pkg("bad"), package);
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            addr(0x11),
-            InstanceMeta {
-                package: pkg("bad"),
-                config: vec![],
-            },
-        );
+        instances.create(&TestHasher, meta_of("bad"));
         let manifest = Manifest {
             nodes: vec![
                 Node {
-                    target: addr(0x11),
+                    target: instance_of("bad"),
                     method: "make".into(),
                     inputs: vec![],
                 },
                 Node {
-                    target: addr(0x11),
+                    target: instance_of("bad"),
                     method: "m".into(),
                     inputs: vec![NodeInput::Edge {
                         source: 0,

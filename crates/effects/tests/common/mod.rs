@@ -14,10 +14,11 @@ use hyperscale_vm_effects::{
     TargetExpr, TestHasher, Value, child_key,
 };
 
-pub const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
-pub const BOB: Address = Address::new([0x20; 31], AddressClass::Component);
-pub const POOL: Address = Address::new([0x30; 31], AddressClass::Component);
-pub const BOOK: Address = Address::new([0x40; 31], AddressClass::Component);
+/// Accounts are principals: their class is what resolves them to the
+/// protocol's account blueprint, so a fixture names one without anything
+/// having to be registered for it.
+pub const ALICE: Address = Address::new([0x10; 31], AddressClass::Principal);
+pub const BOB: Address = Address::new([0x20; 31], AddressClass::Principal);
 pub const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
 pub const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
 pub const BASE: Address = Address::new([0xE3; 31], AddressClass::Component);
@@ -52,30 +53,42 @@ pub fn world() -> (MetadataCache, InstanceRegistry) {
     cache.publish(pkg("book"), book_metadata());
 
     let mut instances = InstanceRegistry::new();
-    for account in [ALICE, BOB] {
-        instances.register(
-            account,
-            InstanceMeta {
-                package: pkg("account"),
-                config: vec![],
-            },
-        );
-    }
-    instances.register(
-        POOL,
-        InstanceMeta {
-            package: pkg("amm"),
-            config: vec![Value::Address(RES_X), Value::Address(RES_Y)],
-        },
-    );
-    instances.register(
-        BOOK,
-        InstanceMeta {
-            package: pkg("book"),
-            config: vec![Value::Address(BASE), Value::Address(QUOTE)],
-        },
-    );
+    instances.serve_principals(pkg("account"));
+    instances.create(&TestHasher, pool_meta());
+    instances.create(&TestHasher, book_meta());
     (cache, instances)
+}
+
+/// The constant-product pool's record, and the address it derives.
+#[must_use]
+pub fn pool_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("amm"),
+        config: vec![Value::Address(RES_X), Value::Address(RES_Y)],
+        salt: Hash32([2; 32]),
+    }
+}
+
+/// The pool instance every shape test names.
+#[must_use]
+pub fn pool() -> Address {
+    pool_meta().address(&TestHasher)
+}
+
+/// The order book's record.
+#[must_use]
+pub fn book_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("book"),
+        config: vec![Value::Address(BASE), Value::Address(QUOTE)],
+        salt: Hash32([3; 32]),
+    }
+}
+
+/// The book instance every shape test names.
+#[must_use]
+pub fn book() -> Address {
+    book_meta().address(&TestHasher)
 }
 
 #[must_use]

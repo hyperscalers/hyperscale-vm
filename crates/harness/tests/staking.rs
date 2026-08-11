@@ -22,9 +22,9 @@ use hyperscale_vm_effects::stdlib::{
     UNBONDING, VALIDATORS, VAULT, VOTE, account_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, AddressClass, EnvelopeTree, Hasher, InstanceMeta, InstanceRegistry, IntentDecl,
-    ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, SubstateKey, TestHasher, Value,
-    admit_tree, child_key, resource_address, route_tree,
+    Address, AddressClass, EnvelopeTree, Hash32, Hasher, InstanceMeta, InstanceRegistry,
+    IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, SubstateKey,
+    TestHasher, Value, admit_tree, child_key, resource_address, route_tree,
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -45,17 +45,14 @@ use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
-const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
-/// The pool instance: an address like any other, distinguished only by the
-/// package its registry entry names.
-const POOL: Address = Address::new([0x50; 31], AddressClass::Component);
+const ALICE: Address = Address::new([0x10; 31], AddressClass::Principal);
 /// The resource a delegation is denominated in.
 const XRD: Address = Address::new([0xE1; 31], AddressClass::Component);
 /// The resource this pool issues against delegations — derived from the
 /// pool, not configured, which is what the signature's `SelfResource`
 /// evaluates to.
 fn unit() -> Address {
-    resource_address(&TestHasher, POOL, &[])
+    resource_address(&TestHasher, pool(), &[])
 }
 /// The principal this pool's validator surface admits. Nothing here
 /// enforces that — the check is at admission, against the envelope's
@@ -98,21 +95,25 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     cache.publish(account_pkg(), account_metadata());
     cache.publish(staking_pkg(), staking_metadata());
     let mut instances = InstanceRegistry::new();
-    instances.register(
-        ALICE,
-        InstanceMeta {
-            package: account_pkg(),
-            config: vec![],
-        },
-    );
-    instances.register(
-        POOL,
-        InstanceMeta {
-            package: staking_pkg(),
-            config: vec![Value::Address(XRD), Value::Address(OPERATOR)],
-        },
-    );
+    instances.serve_principals(account_pkg());
+    instances.create(&TestHasher, pool_meta());
     (cache, instances)
+}
+
+/// The pool's record: what it stakes and whose signature its operator
+/// surface admits. The resource it *issues* is derived from the pool, so
+/// it is deliberately not here.
+fn pool_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: staking_pkg(),
+        config: vec![Value::Address(XRD), Value::Address(OPERATOR)],
+        salt: Hash32([2; 32]),
+    }
+}
+
+/// The pool instance, at the address its record derives.
+fn pool() -> Address {
+    pool_meta().address(&TestHasher)
 }
 
 fn vault(owner: Address, resource: Address) -> SubstateKey {
@@ -138,7 +139,7 @@ fn unbonding(pool: Address, resource: Address) -> SubstateKey {
 fn stake_graph(amount: u128) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(ALICE, "withdraw", (XRD, amount));
-    let [units] = b.call(POOL, "stake", (funds.resource_is(XRD),));
+    let [units] = b.call(pool(), "stake", (funds.resource_is(XRD),));
     let [] = b.call(ALICE, "deposit", (units.resource_is(unit()),));
     b.build().expect("every output is consumed")
 }
@@ -149,7 +150,7 @@ fn stake_graph(amount: u128) -> ManifestGraph {
 fn unstake_graph(amount: u128) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [units] = b.call(ALICE, "withdraw", (unit(), amount));
-    let [] = b.call(POOL, "unstake", (units.resource_is(unit()),));
+    let [] = b.call(pool(), "unstake", (units.resource_is(unit()),));
     b.build().expect("every output is consumed")
 }
 
@@ -166,14 +167,14 @@ fn validator_leaf(pool: Address, validator: u64) -> SubstateKey {
 /// A one-node graph naming a validator on the pool's operator surface.
 fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
     let mut b = GraphBuilder::new();
-    let [] = b.call(POOL, method, (validator,));
+    let [] = b.call(pool(), method, (validator,));
     b.build().expect("every output is consumed")
 }
 
 fn register_graph(validator: u64) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [] = b.call(
-        POOL,
+        pool(),
         "register-validator",
         (validator, PUBKEY.to_vec(), POSSESSION_PROOF.to_vec()),
     );
@@ -453,7 +454,7 @@ fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
 
     // The delegation left the delegator and reached the pool.
     assert_eq!(amount_of(&outcome, vault(ALICE, XRD)), 50);
-    assert_eq!(amount_of(&outcome, vault(POOL, XRD)), 100);
+    assert_eq!(amount_of(&outcome, vault(pool(), XRD)), 100);
     // The position came back as an ordinary balance, at par.
     assert_eq!(amount_of(&outcome, vault(ALICE, unit())), 100);
 
@@ -462,7 +463,7 @@ fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
     let staked = receipt
         .events
         .iter()
-        .find(|event| event.emitter == POOL)
+        .find(|event| event.emitter == pool())
         .expect("the pool emitted its event");
     assert_eq!(staked.event_type, 0);
     assert_eq!(staked.payload, encode_amount(100));
@@ -479,16 +480,16 @@ fn returned_units_are_consumed_and_recorded_as_unbonding() -> Result<()> {
     assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
 
     assert_eq!(amount_of(&outcome, vault(ALICE, unit())), 60);
-    assert_eq!(amount_of(&outcome, unbonding(POOL, XRD)), 40);
+    assert_eq!(amount_of(&outcome, unbonding(pool(), XRD)), 40);
     // Nothing came back: the release leg is a later method, so the units
     // are gone and the delegator holds no claim on the pool's vault yet.
     assert_eq!(amount_of(&outcome, vault(ALICE, XRD)), 0);
-    assert_eq!(amount_of(&outcome, vault(POOL, XRD)), 0);
+    assert_eq!(amount_of(&outcome, vault(pool(), XRD)), 0);
 
     let unstaked = receipt
         .events
         .iter()
-        .find(|event| event.emitter == POOL)
+        .find(|event| event.emitter == pool())
         .expect("the pool emitted its event");
     assert_eq!(unstaked.event_type, 1);
     assert_eq!(unstaked.payload, encode_amount(40));
@@ -507,7 +508,7 @@ fn the_emitter_names_the_pool_and_the_guest_cannot() -> Result<()> {
     let outcome = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry))?;
 
     let events = &outcome.receipts[&entry.tx].events;
-    let from_pool: Vec<_> = events.iter().filter(|e| e.emitter == POOL).collect();
+    let from_pool: Vec<_> = events.iter().filter(|e| e.emitter == pool()).collect();
     assert_eq!(from_pool.len(), 1, "the pool spoke once");
     // The payload is the amount and nothing else: there is no field in it a
     // guest could have put the wrong pool into.
@@ -534,7 +535,7 @@ fn registration_payload(validator: u64) -> Vec<u8> {
 /// The single event a pool emitted in `outcome` for `entry`.
 fn pool_event(outcome: &BatchOutcome, entry: &BatchTx) -> (u32, Vec<u8>) {
     let events = &outcome.receipts[&entry.tx].events;
-    let from_pool: Vec<_> = events.iter().filter(|e| e.emitter == POOL).collect();
+    let from_pool: Vec<_> = events.iter().filter(|e| e.emitter == pool()).collect();
     assert_eq!(from_pool.len(), 1, "the pool spoke once");
     (from_pool[0].event_type, from_pool[0].payload.clone())
 }
@@ -552,7 +553,7 @@ fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
     // The pool keeps the key it registered — the whole of its claim on
     // this validator, and what makes a second registration refusable.
     assert_eq!(
-        cells(&outcome).get(&validator_leaf(POOL, VALIDATOR)),
+        cells(&outcome).get(&validator_leaf(pool(), VALIDATOR)),
         Some(&PUBKEY.to_vec()),
     );
     assert_eq!(
@@ -570,7 +571,7 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
     // The leaf already holds a key, which is the state a first
     // registration leaves behind.
     let mut store = MemoryStore::new();
-    store.write(validator_leaf(POOL, VALIDATOR), PUBKEY.to_vec())?;
+    store.write(validator_leaf(pool(), VALIDATOR), PUBKEY.to_vec())?;
     store.clear_log();
 
     let outcome = run_both(&store, std::slice::from_ref(&entry))?;
@@ -609,7 +610,7 @@ fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
 fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
     let world = world();
     let mut store = MemoryStore::new();
-    store.write(validator_leaf(POOL, VALIDATOR), PUBKEY.to_vec())?;
+    store.write(validator_leaf(pool(), VALIDATOR), PUBKEY.to_vec())?;
     store.clear_log();
 
     for (method, event_type) in [("deactivate-validator", 3), ("unjail", 4)] {
@@ -629,7 +630,7 @@ fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
         // took on is spent for the life of the chain, which is the
         // beacon's own rule held locally.
         assert_eq!(
-            cells(&outcome).get(&validator_leaf(POOL, VALIDATOR)),
+            cells(&outcome).get(&validator_leaf(pool(), VALIDATOR)),
             Some(&PUBKEY.to_vec()),
             "{method}",
         );
@@ -654,11 +655,11 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
     }
     let cells = cells(&outcome);
     assert_eq!(
-        cells.get(&validator_leaf(POOL, VALIDATOR)),
+        cells.get(&validator_leaf(pool(), VALIDATOR)),
         Some(&PUBKEY.to_vec()),
     );
     assert_eq!(
-        cells.get(&validator_leaf(POOL, VALIDATOR + 1)),
+        cells.get(&validator_leaf(pool(), VALIDATOR + 1)),
         Some(&PUBKEY.to_vec()),
     );
     Ok(())
@@ -685,7 +686,7 @@ fn cast_payload() -> Vec<u8> {
 fn cast_graph() -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [] = b.call(
-        POOL,
+        pool(),
         "cast-param-vote",
         (SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT),
     );
@@ -704,7 +705,10 @@ fn a_cast_vote_is_held_on_the_pools_own_leaf_and_reported() -> Result<()> {
 
     // The parameters travel as themselves: what the pool holds and what
     // it reports are the same bytes, laid out in the declared order.
-    assert_eq!(cells(&outcome).get(&vote_leaf(POOL)), Some(&cast_payload()));
+    assert_eq!(
+        cells(&outcome).get(&vote_leaf(pool())),
+        Some(&cast_payload())
+    );
     assert_eq!(pool_event(&outcome, &entry), (5, cast_payload()));
     Ok(())
 }
@@ -713,12 +717,12 @@ fn a_cast_vote_is_held_on_the_pools_own_leaf_and_reported() -> Result<()> {
 fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     let world = world();
     let mut store = MemoryStore::new();
-    store.write(vote_leaf(POOL), cast_payload())?;
+    store.write(vote_leaf(pool()), cast_payload())?;
     store.clear_log();
 
     let graph = {
         let mut b = GraphBuilder::new();
-        let [] = b.call(POOL, "clear-param-vote", ());
+        let [] = b.call(pool(), "clear-param-vote", ());
         b.build().expect("every output is consumed")
     };
     let entry = batch_entry(&world, &single_intent(graph))?;
@@ -731,7 +735,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     // A pool backing nothing holds nothing, and the fact carries no
     // parameters because there are none to carry.
     assert_eq!(
-        cells(&outcome).get(&vote_leaf(POOL)).map(Vec::as_slice),
+        cells(&outcome).get(&vote_leaf(pool())).map(Vec::as_slice),
         Some(&[][..]),
     );
     assert_eq!(pool_event(&outcome, &entry), (6, Vec::new()));
@@ -744,11 +748,14 @@ fn a_second_cast_replaces_the_first() -> Result<()> {
     // the latest rather than accumulating.
     let world = world();
     let mut store = MemoryStore::new();
-    store.write(vote_leaf(POOL), vec![0xAA; 24])?;
+    store.write(vote_leaf(pool()), vec![0xAA; 24])?;
     store.clear_log();
 
     let entry = batch_entry(&world, &single_intent(cast_graph()))?;
     let outcome = run_both(&store, std::slice::from_ref(&entry))?;
-    assert_eq!(cells(&outcome).get(&vote_leaf(POOL)), Some(&cast_payload()));
+    assert_eq!(
+        cells(&outcome).get(&vote_leaf(pool())),
+        Some(&cast_payload())
+    );
     Ok(())
 }

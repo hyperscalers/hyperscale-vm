@@ -14,16 +14,25 @@ use hyperscale_vm_effects::{
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
 
-/// An address whose body counts, so no repeated-byte body a generator
-/// produces can equal it. `variant` separates two such addresses.
-fn counting_address(variant: u8) -> Address {
-    let mut body = [0u8; 31];
-    for (index, byte) in body.iter_mut().enumerate() {
-        *byte = u8::try_from(index)
-            .expect("a body is 31 bytes")
-            .wrapping_add(variant.wrapping_mul(31));
-    }
-    Address::new(body, AddressClass::Component)
+/// A creation salt in a named lane, so two instances of one package can
+/// never collide however a generator picks their seeds.
+const fn salt(lane: u8, seed: u8) -> Hash32 {
+    let mut bytes = [0u8; 32];
+    bytes[0] = lane;
+    bytes[1] = seed;
+    Hash32(bytes)
+}
+
+/// An instance of `package`, at the address its record derives.
+fn instance(instances: &mut InstanceRegistry, package: &str, lane: u8, seed: u8) -> Address {
+    instances.create(
+        &TestHasher,
+        InstanceMeta {
+            package: pkg(package),
+            config: vec![],
+            salt: salt(lane, seed),
+        },
+    )
 }
 
 fn arb_value() -> impl Strategy<Value = Value> {
@@ -110,18 +119,12 @@ proptest! {
         recipient_byte in any::<u8>(),
         resource_byte in any::<u8>(),
     ) {
-        let sender = Address::new([sender_byte; 31], AddressClass::Component);
-        let recipient = Address::new([recipient_byte; 31], AddressClass::Component);
         let resource = Address::new([resource_byte; 31], AddressClass::Component);
         let mut cache = MetadataCache::new();
         cache.publish(pkg("account"), account_metadata());
         let mut instances = InstanceRegistry::new();
-        for account in [sender, recipient] {
-            instances.register(
-                account,
-                InstanceMeta { package: pkg("account"), config: vec![] },
-            );
-        }
+        let sender = instance(&mut instances, "account", 0, sender_byte);
+        let recipient = instance(&mut instances, "account", 1, recipient_byte);
         let graph = ManifestGraph {
             nodes: vec![
                 GraphNode {
@@ -164,10 +167,6 @@ proptest! {
         recipient_byte in any::<u8>(),
         resource_byte in any::<u8>(),
     ) {
-        // Non-uniform bytes: no repeated-byte address the generator can
-        // produce collides with the router's.
-        let router = counting_address(0);
-        let recipient = Address::new([recipient_byte; 31], AddressClass::Component);
         let resource = Address::new([resource_byte; 31], AddressClass::Component);
         let mut cache = MetadataCache::new();
         cache.publish(pkg("account"), account_metadata());
@@ -185,22 +184,13 @@ proptest! {
             },
         );
         cache.publish(pkg("router"), forward);
+        // Each instance sits at the address its own record derives, so
+        // distinct salt lanes are what keep the router, the sender and
+        // any generated recipient apart — no address is picked.
         let mut instances = InstanceRegistry::new();
-        instances.register(
-            router,
-            InstanceMeta { package: pkg("router"), config: vec![] },
-        );
-        instances.register(
-            recipient,
-            InstanceMeta { package: pkg("account"), config: vec![] },
-        );
-        // The funding account is non-uniform too, so no generated
-        // recipient collides with it.
-        let sender = counting_address(1);
-        instances.register(
-            sender,
-            InstanceMeta { package: pkg("account"), config: vec![] },
-        );
+        let router = instance(&mut instances, "router", 0, 0);
+        let recipient = instance(&mut instances, "account", 1, recipient_byte);
+        let sender = instance(&mut instances, "account", 0, 0);
         let graph = ManifestGraph {
             nodes: vec![
                 GraphNode {

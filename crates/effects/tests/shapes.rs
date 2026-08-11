@@ -8,11 +8,11 @@ mod common;
 use std::collections::BTreeMap;
 
 use common::{
-    ALICE, ASKS, BASE, BOB, BOOK, FILL_CAP, POOL, QUOTE, RES_X, RES_Y, claims, config_leaf,
-    effect_set, pkg, resolver, shard_of, vault, wide_account_metadata, world,
+    ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, book, claims, config_leaf, effect_set,
+    pkg, pool, resolver, shard_of, vault, wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
-    EdgeRef, Effect, EffectTarget, GraphArg, GraphNode, InstanceMeta, InstanceRegistry,
+    EdgeRef, Effect, EffectTarget, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
     ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit, fresh_id, route,
 };
 
@@ -88,7 +88,7 @@ fn swap_writes_both_reserves_and_reads_the_locked_config() {
                 ],
             },
             GraphNode {
-                target: POOL,
+                target: pool(),
                 method: "swap".into(),
                 args: vec![edge(0, 0), GraphArg::Literal(Value::U128(50))],
             },
@@ -121,18 +121,18 @@ fn swap_writes_both_reserves_and_reads_the_locked_config() {
             ]),
         ),
         (
-            shard_of(POOL),
+            shard_of(pool()),
             effect_set(&[
                 Effect {
-                    target: EffectTarget::Point(config_leaf(POOL)),
+                    target: EffectTarget::Point(config_leaf(pool())),
                     mode: Mode::Locked,
                 },
                 Effect {
-                    target: EffectTarget::Point(vault(POOL, RES_X)),
+                    target: EffectTarget::Point(vault(pool(), RES_X)),
                     mode: Mode::Write,
                 },
                 Effect {
-                    target: EffectTarget::Point(vault(POOL, RES_Y)),
+                    target: EffectTarget::Point(vault(pool(), RES_Y)),
                     mode: Mode::Write,
                 },
             ]),
@@ -155,7 +155,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
                 ],
             },
             GraphNode {
-                target: BOOK,
+                target: book(),
                 method: "place-ask".into(),
                 args: vec![GraphArg::Literal(Value::U64(105)), edge(0, 0)],
             },
@@ -174,18 +174,18 @@ fn order_book_place_inserts_at_a_computed_entry() {
             }]),
         ),
         (
-            shard_of(BOOK),
+            shard_of(book()),
             effect_set(&[
                 Effect {
                     target: EffectTarget::Entry {
-                        owner: BOOK,
+                        owner: book(),
                         collection: ASKS,
                         order: (u128::from(105u64) << 64) | u128::from(seq),
                     },
                     mode: Mode::Write,
                 },
                 Effect {
-                    target: EffectTarget::Point(vault(BOOK, BASE)),
+                    target: EffectTarget::Point(vault(book(), BASE)),
                     mode: Mode::Delta,
                 },
             ]),
@@ -208,7 +208,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 ],
             },
             GraphNode {
-                target: BOOK,
+                target: book(),
                 method: "fill-asks".into(),
                 args: vec![
                     GraphArg::Literal(Value::U64(100)),
@@ -262,11 +262,11 @@ fn order_book_fill_declares_a_capped_price_interval() {
             ]),
         ),
         (
-            shard_of(BOOK),
+            shard_of(book()),
             effect_set(&[
                 Effect {
                     target: EffectTarget::Range {
-                        owner: BOOK,
+                        owner: book(),
                         collection: ASKS,
                         lo: u128::from(100u64) << 64,
                         hi: (u128::from(110u64) << 64) | u128::from(u64::MAX),
@@ -275,11 +275,11 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     mode: Mode::Write,
                 },
                 Effect {
-                    target: EffectTarget::Point(vault(BOOK, BASE)),
+                    target: EffectTarget::Point(vault(book(), BASE)),
                     mode: Mode::Delta,
                 },
                 Effect {
-                    target: EffectTarget::Point(vault(BOOK, QUOTE)),
+                    target: EffectTarget::Point(vault(book(), QUOTE)),
                     mode: Mode::Delta,
                 },
             ]),
@@ -293,17 +293,18 @@ fn a_declared_superset_evaluates_without_error() {
     let mut cache = MetadataCache::new();
     cache.publish(pkg("wide"), wide_account_metadata());
     let mut instances = InstanceRegistry::new();
-    instances.register(
-        ALICE,
+    let alice = instances.create(
+        &TestHasher,
         InstanceMeta {
             package: pkg("wide"),
             config: vec![],
+            salt: Hash32([1; 32]),
         },
     );
     let graph = ManifestGraph {
         nodes: vec![
             GraphNode {
-                target: ALICE,
+                target: alice,
                 method: "withdraw_wide".into(),
                 args: vec![
                     GraphArg::Literal(Value::Address(RES_X)),
@@ -311,7 +312,7 @@ fn a_declared_superset_evaluates_without_error() {
                 ],
             },
             GraphNode {
-                target: ALICE,
+                target: alice,
                 method: "deposit".into(),
                 args: vec![edge(0, 0)],
             },
@@ -319,11 +320,11 @@ fn a_declared_superset_evaluates_without_error() {
     };
     let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
     let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
-    let set = &routing.per_shard[&shard_of(ALICE)];
+    let set = &routing.per_shard[&shard_of(alice)];
     // The exact effect and the never-touched superset both routed; the
     // remaining two are the deposit that consumes the withdrawal.
     assert!(set.contains(&Effect {
-        target: EffectTarget::Point(vault(ALICE, RES_X)),
+        target: EffectTarget::Point(vault(alice, RES_X)),
         mode: Mode::Reserve { amount: 1 },
     }));
     assert_eq!(set.len(), 4);

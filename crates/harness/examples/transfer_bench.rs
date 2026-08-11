@@ -13,9 +13,9 @@ use std::time::Instant;
 
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
-    Address, AddressClass, Declaration, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    ManifestGraph, MetadataCache, NodeCall, PackageHash, PrefixShardResolver, SubstateKey,
-    TestHasher, Value, admit, child_key, route,
+    Address, AddressClass, Declaration, Hash32, Hasher, InstanceRegistry, ManifestGraph,
+    MetadataCache, NodeCall, PackageHash, PrefixShardResolver, SubstateKey, TestHasher, Value,
+    admit, child_key, route,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -34,7 +34,7 @@ use wasmtime::error::Context;
 use wasmtime::{Engine, Result, Store};
 
 const RES: Address = Address::new([0xE1; 31], AddressClass::Component);
-const RECIPIENT: Address = Address::new([0xFE; 31], AddressClass::Component);
+const RECIPIENT: Address = Address::new([0xFE; 31], AddressClass::Principal);
 const AMOUNT: u128 = 100;
 const FUEL: u64 = 10_000_000;
 
@@ -74,26 +74,13 @@ fn pkg() -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[b"account"]))
 }
 
-fn world(senders: u32) -> (MetadataCache, InstanceRegistry) {
+fn world(_senders: u32) -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
     cache.publish(pkg(), account_metadata());
     let mut instances = InstanceRegistry::new();
-    for index in 0..senders {
-        instances.register(
-            sender(index),
-            InstanceMeta {
-                package: pkg(),
-                config: vec![],
-            },
-        );
-    }
-    instances.register(
-        RECIPIENT,
-        InstanceMeta {
-            package: pkg(),
-            config: vec![],
-        },
-    );
+    // Senders and the recipient are principals: one record serves every
+    // account, so the bench's population costs the registry nothing.
+    instances.serve_principals(pkg());
     (cache, instances)
 }
 

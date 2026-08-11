@@ -5,16 +5,16 @@
 use hyperscale_vm_effects::stdlib::account_metadata;
 use hyperscale_vm_effects::{
     Address, AddressClass, AdmissionError, AdmittedTree, Bounds, Constraint, EdgeRef, Effect,
-    EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceMeta, InstanceRegistry,
-    IntentDecl, MAX_SUBINTENTS, MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, Mode,
+    EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceRegistry, IntentDecl,
+    MAX_SUBINTENTS, MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, Mode,
     NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver, RoleId, ShardResolver, Subintent,
     TestHasher, Value, YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key,
     route_tree,
 };
 use proptest::prelude::{any, proptest};
 
-const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
-const BOB: Address = Address::new([0x20; 31], AddressClass::Component);
+const ALICE: Address = Address::new([0x10; 31], AddressClass::Principal);
+const BOB: Address = Address::new([0x20; 31], AddressClass::Principal);
 const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
 const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
 
@@ -26,15 +26,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
     cache.publish(pkg(), account_metadata());
     let mut instances = InstanceRegistry::new();
-    for account in [ALICE, BOB] {
-        instances.register(
-            account,
-            InstanceMeta {
-                package: pkg(),
-                config: vec![],
-            },
-        );
-    }
+    instances.serve_principals(pkg());
     (cache, instances)
 }
 
@@ -304,19 +296,13 @@ fn bindings_must_cover_the_declared_params() {
 #[test]
 fn two_bindings_cannot_consume_one_output() {
     // A second subintent binds the same root output the first consumes.
+    let (cache, instances) = world();
+    let second_signer = Address::new([0x21; 31], AddressClass::Principal);
     let mut tree = composed_tree(100);
     let mut second = tree.subintents[0].clone();
-    second.signer = Address::new([0x21; 31], AddressClass::Component);
+    second.signer = second_signer;
     second.decl.graph.nodes[0] = withdraw(BOB, RES_Y, 11);
     tree.subintents.push(second);
-    let (cache, mut instances) = world();
-    instances.register(
-        Address::new([0x21; 31], AddressClass::Component),
-        InstanceMeta {
-            package: pkg(),
-            config: vec![],
-        },
-    );
     let identity = tree.hash(&TestHasher);
     let result = admit_tree(&tree, identity, &cache, &instances, &TestHasher);
     assert_eq!(

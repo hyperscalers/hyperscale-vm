@@ -7,25 +7,30 @@ mod common;
 
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
 use hyperscale_vm_effects::{
-    Address, AddressClass, AdmissionError, Constraint, EdgeRef, Effect, EffectTarget, GraphArg,
-    GraphNode, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, Mode,
+    Address, AdmissionError, Constraint, EdgeRef, Effect, EffectTarget, GraphArg, GraphNode,
+    Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, Mode,
     TestHasher, Value, admit, fresh_id, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
 
-const SPLITTER: Address = Address::new([0x77; 31], AddressClass::Component);
+fn splitter_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("splitter"),
+        config: vec![],
+        salt: Hash32([1; 32]),
+    }
+}
+
+/// The splitter instance, at the address its record derives.
+fn splitter() -> Address {
+    splitter_meta().address(&TestHasher)
+}
 
 fn setup() -> (MetadataCache, InstanceRegistry) {
     let (mut cache, mut instances) = world();
     cache.publish(pkg("splitter"), splitter_metadata());
-    instances.register(
-        SPLITTER,
-        InstanceMeta {
-            package: pkg("splitter"),
-            config: vec![],
-        },
-    );
+    instances.create(&TestHasher, splitter_meta());
     (cache, instances)
 }
 
@@ -43,7 +48,7 @@ fn valid_graph() -> ManifestGraph {
                 ],
             },
             GraphNode {
-                target: SPLITTER,
+                target: splitter(),
                 method: "take".into(),
                 args: vec![
                     GraphArg::Edge {

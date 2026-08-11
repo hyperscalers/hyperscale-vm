@@ -40,14 +40,10 @@ use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
-const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
-const BOB: Address = Address::new([0x20; 31], AddressClass::Component);
-const POOL: Address = Address::new([0x30; 31], AddressClass::Component);
-const BOOK: Address = Address::new([0x40; 31], AddressClass::Component);
-const MAKER: Address = Address::new([0x50; 31], AddressClass::Component);
-const TAKER: Address = Address::new([0x60; 31], AddressClass::Component);
-const CAROL: Address = Address::new([0x70; 31], AddressClass::Component);
-const DANA: Address = Address::new([0x80; 31], AddressClass::Component);
+const ALICE: Address = Address::new([0x10; 31], AddressClass::Principal);
+const BOB: Address = Address::new([0x20; 31], AddressClass::Principal);
+const MAKER: Address = Address::new([0x50; 31], AddressClass::Principal);
+const TAKER: Address = Address::new([0x60; 31], AddressClass::Principal);
 const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
 const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
 const BASE: Address = Address::new([0xE3; 31], AddressClass::Component);
@@ -98,30 +94,44 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     cache.publish(pkg("amm"), amm_metadata());
     cache.publish(pkg("book"), book_metadata());
     let mut instances = InstanceRegistry::new();
-    for account in [ALICE, BOB, MAKER, TAKER, CAROL] {
-        instances.register(
-            account,
-            InstanceMeta {
-                package: pkg("account"),
-                config: vec![],
-            },
-        );
-    }
-    instances.register(
-        POOL,
-        InstanceMeta {
-            package: pkg("amm"),
-            config: vec![Value::Address(RES_X), Value::Address(RES_Y)],
-        },
-    );
-    instances.register(
-        BOOK,
-        InstanceMeta {
-            package: pkg("book"),
-            config: vec![Value::Address(BASE), Value::Address(QUOTE)],
-        },
-    );
+    instances.serve_principals(pkg("account"));
+    instances.create(&TestHasher, pool_meta());
+    instances.create(&TestHasher, book_meta());
     (cache, instances)
+}
+
+fn pool_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("amm"),
+        config: vec![Value::Address(RES_X), Value::Address(RES_Y)],
+        salt: Hash32([2; 32]),
+    }
+}
+
+/// The pool instance, at the address its record derives.
+fn pool() -> Address {
+    pool_meta().address(&TestHasher)
+}
+
+fn book_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("book"),
+        config: vec![Value::Address(BASE), Value::Address(QUOTE)],
+        salt: Hash32([3; 32]),
+    }
+}
+
+/// The order book instance.
+fn book() -> Address {
+    book_meta().address(&TestHasher)
+}
+
+fn mirror_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("mirror"),
+        config: vec![],
+        salt: Hash32([4; 32]),
+    }
 }
 
 /// Which guest each published package runs.
@@ -498,13 +508,7 @@ fn mirror_metadata() -> PackageMetadata {
 fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<()> {
     let (mut cache, mut instances) = world();
     cache.publish(pkg("mirror"), mirror_metadata());
-    instances.register(
-        DANA,
-        InstanceMeta {
-            package: pkg("mirror"),
-            config: vec![],
-        },
-    );
+    let dana = instances.create(&TestHasher, mirror_meta());
     let world = (cache, instances);
 
     let engines = Engines::build()?;
@@ -517,7 +521,7 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
     let graph = {
         let mut b = GraphBuilder::new();
         let [funds] = b.call(ALICE, "withdraw", (RES_X, 100u128));
-        let [] = b.call(DANA, "deposit", (funds.resource_is(RES_X),));
+        let [] = b.call(dana, "deposit", (funds.resource_is(RES_X),));
         b.build().expect("every output is consumed")
     };
     let (results, _) = run_both(
@@ -533,13 +537,13 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
         receipt
             .delta
             .movements
-            .get(&vault(DANA, RES_X))
+            .get(&vault(dana, RES_X))
             .map(|movement| movement.credit),
         Some(100),
         "the bound clause's cell takes the credit"
     );
     assert!(
-        receipt.delta.movements.get(&claims(DANA, RES_X)).is_none(),
+        receipt.delta.movements.get(&claims(dana, RES_X)).is_none(),
         "the unbound clause is declared and untouched"
     );
     Ok(())
@@ -717,7 +721,7 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
 fn swap_graph(min_out: u128) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(ALICE, "withdraw", (RES_X, 500u128));
-    let [out] = b.call(POOL, "swap", (funds, min_out));
+    let [out] = b.call(pool(), "swap", (funds, min_out));
     let [] = b.call(ALICE, "deposit", (out.resource_is(RES_Y),));
     b.build().expect("every output is consumed")
 }
@@ -728,15 +732,15 @@ fn swap_store() -> MemoryStore {
         .write(vault(ALICE, RES_X), encode_amount(600).to_vec())
         .unwrap();
     store
-        .write(vault(POOL, RES_X), encode_amount(1_000).to_vec())
+        .write(vault(pool(), RES_X), encode_amount(1_000).to_vec())
         .unwrap();
     store
-        .write(vault(POOL, RES_Y), encode_amount(1_000).to_vec())
+        .write(vault(pool(), RES_Y), encode_amount(1_000).to_vec())
         .unwrap();
     store
-        .write(config_leaf(POOL), 30u16.to_le_bytes().to_vec())
+        .write(config_leaf(pool()), 30u16.to_le_bytes().to_vec())
         .unwrap();
-    store.lock(config_leaf(POOL)).unwrap();
+    store.lock(config_leaf(pool())).unwrap();
     store.clear_log();
     store
 }
@@ -746,13 +750,13 @@ fn swap_profile_and_provision_shape_are_exact() {
     let world = world();
     let routing = sharded_routing(&world, &swap_graph(300));
 
-    let pool_set = &routing.per_shard[&shard_of(POOL)];
+    let pool_set = &routing.per_shard[&shard_of(pool())];
     assert_eq!(
         *pool_set,
         set(&[
-            point(config_leaf(POOL), Mode::Locked,),
-            point(vault(POOL, RES_X), Mode::Write),
-            point(vault(POOL, RES_Y), Mode::Write),
+            point(config_leaf(pool()), Mode::Locked,),
+            point(vault(pool(), RES_X), Mode::Write),
+            point(vault(pool(), RES_Y), Mode::Write),
         ])
     );
     // The pool-shard provision carries the two balance cells and nothing
@@ -761,8 +765,8 @@ fn swap_profile_and_provision_shape_are_exact() {
     assert_eq!(
         pool_set.provision_targets(),
         [
-            EffectTarget::Point(vault(POOL, RES_X)),
-            EffectTarget::Point(vault(POOL, RES_Y)),
+            EffectTarget::Point(vault(pool(), RES_X)),
+            EffectTarget::Point(vault(pool(), RES_Y)),
         ]
         .into_iter()
         .collect()
@@ -793,11 +797,11 @@ fn swap_executes_with_real_pool_math_on_both_runtimes() -> Result<()> {
     // The constant-product math, computed independently: 30 bps fee on
     // 500 in gives 498 effective; out = 1000 * 498 / 1498 = 332.
     assert_eq!(
-        receipt.delta.cells.get(&vault(POOL, RES_X)),
+        receipt.delta.cells.get(&vault(pool(), RES_X)),
         Some(&Some(encode_amount(1_500).to_vec()))
     );
     assert_eq!(
-        receipt.delta.cells.get(&vault(POOL, RES_Y)),
+        receipt.delta.cells.get(&vault(pool(), RES_Y)),
         Some(&Some(encode_amount(668).to_vec()))
     );
     assert_eq!(receipt.delta.settles.get(&vault(ALICE, RES_X)), Some(&500));
@@ -829,7 +833,7 @@ fn a_violated_output_floor_traps_identically() -> Result<()> {
         &[(&graph, TxHash(Hash32([0x03; 32])))],
     );
     assert_eq!(results[0], TxResult::Trapped);
-    assert_eq!(amount_of(&mut final_store, vault(POOL, RES_X)), 1_000);
+    assert_eq!(amount_of(&mut final_store, vault(pool(), RES_X)), 1_000);
     assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 600);
     Ok(())
 }
@@ -837,14 +841,14 @@ fn a_violated_output_floor_traps_identically() -> Result<()> {
 fn place_graph() -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(MAKER, "withdraw", (BASE, 50u128));
-    let [] = b.call(BOOK, "place-ask", (3u64, funds));
+    let [] = b.call(book(), "place-ask", (3u64, funds));
     b.build().expect("every output is consumed")
 }
 
 fn fill_graph() -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [payment] = b.call(TAKER, "withdraw", (QUOTE, 100u128));
-    let [base, refund] = b.call(BOOK, "fill-asks", (3u64, 5u64, payment));
+    let [base, refund] = b.call(book(), "fill-asks", (3u64, 5u64, payment));
     let [] = b.call(TAKER, "deposit", (base.resource_is(BASE),));
     let [] = b.call(TAKER, "deposit", (refund.resource_is(QUOTE),));
     b.build().expect("every output is consumed")
@@ -854,13 +858,13 @@ fn fill_graph() -> ManifestGraph {
 fn fill_provisions_only_the_interval() {
     let world = world();
     let routing = sharded_routing(&world, &fill_graph());
-    let book_set = &routing.per_shard[&shard_of(BOOK)];
+    let book_set = &routing.per_shard[&shard_of(book())];
     // The write interval is the only provisioned target: the escrow legs
     // are deltas and carry nothing.
     assert_eq!(
         book_set.provision_targets(),
         std::iter::once(EffectTarget::Range {
-            owner: BOOK,
+            owner: book(),
             collection: ASKS,
             lo: 3u128 << 64,
             hi: (5u128 << 64) | u128::from(u64::MAX),
@@ -883,10 +887,10 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
         .unwrap();
     // A resting ask at price 5 from an earlier session, escrow included.
     store
-        .entry_write(BOOK, ASKS, (5u128 << 64) | 7, encode_amount(10).to_vec())
+        .entry_write(book(), ASKS, (5u128 << 64) | 7, encode_amount(10).to_vec())
         .unwrap();
     store
-        .write(vault(BOOK, BASE), encode_amount(10).to_vec())
+        .write(vault(book(), BASE), encode_amount(10).to_vec())
         .unwrap();
     store.clear_log();
 
@@ -914,21 +918,27 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
     let seq = fresh_id(&TestHasher, admitted.identity(), 1, 0, 0);
     let placed_order = (3u128 << 64) | u128::from(seq);
     assert_eq!(
-        place_receipt.delta.entries.get(&(BOOK, ASKS, placed_order)),
+        place_receipt
+            .delta
+            .entries
+            .get(&(book(), ASKS, placed_order)),
         Some(&Some(encode_amount(50).to_vec()))
     );
 
     // The fill: budget 100 at price 3 buys 33 (cost 99), leaving change 1;
     // the price-5 ask is untouched. Partial fill rewrote the entry.
     assert_eq!(
-        fill_receipt.delta.entries.get(&(BOOK, ASKS, placed_order)),
+        fill_receipt
+            .delta
+            .entries
+            .get(&(book(), ASKS, placed_order)),
         Some(&Some(encode_amount(17).to_vec()))
     );
     assert_eq!(
         fill_receipt
             .delta
             .movements
-            .get(&vault(BOOK, BASE))
+            .get(&vault(book(), BASE))
             .unwrap()
             .debit,
         33
@@ -937,7 +947,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
         fill_receipt
             .delta
             .movements
-            .get(&vault(BOOK, QUOTE))
+            .get(&vault(book(), QUOTE))
             .unwrap()
             .credit,
         99
@@ -945,19 +955,19 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
 
     assert_eq!(amount_of(&mut final_store, vault(TAKER, BASE)), 33);
     assert_eq!(amount_of(&mut final_store, vault(TAKER, QUOTE)), 51);
-    assert_eq!(amount_of(&mut final_store, vault(BOOK, BASE)), 27);
-    assert_eq!(amount_of(&mut final_store, vault(BOOK, QUOTE)), 99);
+    assert_eq!(amount_of(&mut final_store, vault(book(), BASE)), 27);
+    assert_eq!(amount_of(&mut final_store, vault(book(), QUOTE)), 99);
     assert_eq!(amount_of(&mut final_store, vault(MAKER, BASE)), 10);
     let entries: BTreeMap<_, _> = final_store
         .collection_entries()
         .map(|(k, v)| (k, v.to_vec()))
         .collect();
     assert_eq!(
-        entries.get(&(BOOK, ASKS, placed_order)),
+        entries.get(&(book(), ASKS, placed_order)),
         Some(&encode_amount(17).to_vec())
     );
     assert_eq!(
-        entries.get(&(BOOK, ASKS, (5u128 << 64) | 7)),
+        entries.get(&(book(), ASKS, (5u128 << 64) | 7)),
         Some(&encode_amount(10).to_vec())
     );
     Ok(())

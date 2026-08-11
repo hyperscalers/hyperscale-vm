@@ -9,19 +9,31 @@
 
 use hyperscale_vm_effects::stdlib::{account_metadata, splitter_metadata};
 use hyperscale_vm_effects::{
-    Address, AddressClass, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
-    TestHasher, admit,
+    Address, AddressClass, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache,
+    PackageHash, TestHasher, admit,
 };
 use hyperscale_vm_manifest_builder::GraphBuilder;
 use proptest::prelude::{Strategy, prop, proptest};
 
 const ACCOUNTS: [Address; 4] = [
-    Address::new([0x10; 31], AddressClass::Component),
-    Address::new([0x20; 31], AddressClass::Component),
-    Address::new([0x30; 31], AddressClass::Component),
-    Address::new([0x40; 31], AddressClass::Component),
+    Address::new([0x10; 31], AddressClass::Principal),
+    Address::new([0x20; 31], AddressClass::Principal),
+    Address::new([0x30; 31], AddressClass::Principal),
+    Address::new([0x40; 31], AddressClass::Principal),
 ];
-const SPLITTER: Address = Address::new([0x50; 31], AddressClass::Component);
+
+fn splitter_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("splitter"),
+        config: vec![],
+        salt: Hash32([2; 32]),
+    }
+}
+
+/// The splitter instance, at the address its record derives.
+fn splitter() -> Address {
+    splitter_meta().address(&TestHasher)
+}
 const RES: Address = Address::new([0xE1; 31], AddressClass::Component);
 
 fn pkg(name: &str) -> PackageHash {
@@ -33,22 +45,8 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     cache.publish(pkg("account"), account_metadata());
     cache.publish(pkg("splitter"), splitter_metadata());
     let mut instances = InstanceRegistry::new();
-    for account in ACCOUNTS {
-        instances.register(
-            account,
-            InstanceMeta {
-                package: pkg("account"),
-                config: vec![],
-            },
-        );
-    }
-    instances.register(
-        SPLITTER,
-        InstanceMeta {
-            package: pkg("splitter"),
-            config: vec![],
-        },
-    );
+    instances.serve_principals(pkg("account"));
+    instances.create(&TestHasher, splitter_meta());
     (cache, instances)
 }
 
@@ -94,7 +92,7 @@ proptest! {
                 funds = funds.min(min).max(max);
             }
             if let Some(taken) = t.split {
-                let [taken, rest] = b.call(SPLITTER, "take", (funds, taken));
+                let [taken, rest] = b.call(splitter(), "take", (funds, taken));
                 let [] = b.call(ACCOUNTS[t.to], "deposit", (taken,));
                 let [] = b.call(ACCOUNTS[t.from], "deposit", (rest,));
             } else {

@@ -4,10 +4,10 @@
 //! creates.
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Clause, Effect, EffectTarget, Expr, GraphNode, Hash32, InstanceMeta,
-    InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash,
-    PackageMetadata, PrefixShardResolver, RoleId, ShardResolver, TargetExpr, TestHasher, Value,
-    admit, fresh_id, route,
+    Clause, Effect, EffectTarget, Expr, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
+    ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
+    PrefixShardResolver, RoleId, ShardResolver, TargetExpr, TestHasher, Value, admit, fresh_id,
+    route,
 };
 use hyperscale_vm_kernel::{CreationContext, MemoryStore, SubstateStore};
 
@@ -39,16 +39,16 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
             ..MethodSignature::default()
         },
     );
-    let creator = Address::new([0x11; 31], AddressClass::Component);
     let package_hash = PackageHash(Hash32([1; 32]));
     let mut cache = MetadataCache::new();
     cache.publish(package_hash, package);
     let mut instances = InstanceRegistry::new();
-    instances.register(
-        creator,
+    let creator = instances.create(
+        &TestHasher,
         InstanceMeta {
             package: package_hash,
             config: vec![],
+            salt: Hash32([1; 32]),
         },
     );
 
