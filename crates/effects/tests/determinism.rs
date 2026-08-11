@@ -6,22 +6,35 @@ mod common;
 
 use common::{account_metadata, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
-    Address, CallSite, EdgeRef, Effect, EffectTarget, EvalInputs, Expr, GraphArg, GraphNode,
-    Hash32, InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash, MetadataCache,
+    Address, AddressClass, CallSite, EdgeRef, Effect, EffectTarget, EvalInputs, Expr, GraphArg,
+    GraphNode, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash, MetadataCache,
     MethodSignature, Mode, PackageMetadata, ParamType, RoleId, TestHasher, Value, admit,
     evaluate_expr, route,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
 
+/// An address whose body counts, so no repeated-byte body a generator
+/// produces can equal it. `variant` separates two such addresses.
+fn counting_address(variant: u8) -> Address {
+    let mut body = [0u8; 31];
+    for (index, byte) in body.iter_mut().enumerate() {
+        *byte = u8::try_from(index)
+            .expect("a body is 31 bytes")
+            .wrapping_add(variant.wrapping_mul(31));
+    }
+    Address::new(body, AddressClass::Component)
+}
+
 fn arb_value() -> impl Strategy<Value = Value> {
     let leaf = prop_oneof![
         any::<u64>().prop_map(Value::U64),
         any::<u128>().prop_map(Value::U128),
         vec(any::<u8>(), 0..8).prop_map(Value::Bytes),
-        any::<u8>().prop_map(|byte| Value::Address(Address([byte; 16]))),
+        any::<u8>()
+            .prop_map(|byte| Value::Address(Address::new([byte; 31], AddressClass::Component))),
         any::<u8>().prop_map(|byte| Value::Bucket {
-            resource: Address([byte; 16]),
+            resource: Address::new([byte; 31], AddressClass::Component),
         }),
     ];
     leaf.prop_recursive(2, 8, 3, |inner| {
@@ -78,7 +91,7 @@ proptest! {
         seed in any::<[u8; 32]>(),
     ) {
         let inputs = EvalInputs {
-            self_addr: Address([self_byte; 16]),
+            self_addr: Address::new([self_byte; 31], AddressClass::Component),
             args: &args,
             config: &config,
             node_index,
@@ -97,9 +110,9 @@ proptest! {
         recipient_byte in any::<u8>(),
         resource_byte in any::<u8>(),
     ) {
-        let sender = Address([sender_byte; 16]);
-        let recipient = Address([recipient_byte; 16]);
-        let resource = Address([resource_byte; 16]);
+        let sender = Address::new([sender_byte; 31], AddressClass::Component);
+        let recipient = Address::new([recipient_byte; 31], AddressClass::Component);
+        let resource = Address::new([resource_byte; 31], AddressClass::Component);
         let mut cache = MetadataCache::new();
         cache.publish(pkg("account"), account_metadata());
         let mut instances = InstanceRegistry::new();
@@ -153,9 +166,9 @@ proptest! {
     ) {
         // Non-uniform bytes: no repeated-byte address the generator can
         // produce collides with the router's.
-        let router = Address([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-        let recipient = Address([recipient_byte; 16]);
-        let resource = Address([resource_byte; 16]);
+        let router = counting_address(0);
+        let recipient = Address::new([recipient_byte; 31], AddressClass::Component);
+        let resource = Address::new([resource_byte; 31], AddressClass::Component);
         let mut cache = MetadataCache::new();
         cache.publish(pkg("account"), account_metadata());
         let mut forward = PackageMetadata::default();
@@ -183,7 +196,7 @@ proptest! {
         );
         // The funding account is non-uniform too, so no generated
         // recipient collides with it.
-        let sender = Address([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+        let sender = counting_address(1);
         instances.register(
             sender,
             InstanceMeta { package: pkg("account"), config: vec![] },
@@ -232,8 +245,8 @@ proptest! {
 /// passing quietly.
 mod golden {
     use hyperscale_vm_effects::{
-        Address, EdgeRef, GraphArg, GraphNode, ManifestGraph, RoleId, TestHasher, Value, child_key,
-        fresh_id, fresh_local,
+        Address, AddressClass, EdgeRef, GraphArg, GraphNode, ManifestGraph, RoleId, TestHasher,
+        Value, child_key, fresh_id, fresh_local,
     };
 
     fn hex(bytes: &[u8]) -> String {
@@ -246,21 +259,24 @@ mod golden {
 
     #[test]
     fn child_addresses_are_pinned() {
-        let owner = Address([0x11; 16]);
+        let owner = Address::new([0x11; 31], AddressClass::Component);
         assert_eq!(
             hex(&child_key(&TestHasher, owner, RoleId(1), &[]).local.0),
-            "dc6c13eb2baa09f63abaf0e2e156be74"
+            "e199cd48f5bff4daeaed5bf184f8ee12"
         );
         assert_eq!(
             hex(&child_key(
                 &TestHasher,
                 owner,
                 RoleId(1),
-                &[Value::Address(Address([0xE1; 16])).canonical_bytes()],
+                &[
+                    Value::Address(Address::new([0xE1; 31], AddressClass::Component))
+                        .canonical_bytes()
+                ],
             )
             .local
             .0),
-            "006e45ea9b3867ba7cfbf76bc53429cc"
+            "5660dedc7bf25483d739f1994544ef53"
         );
     }
 
@@ -269,12 +285,12 @@ mod golden {
         let graph = ManifestGraph {
             nodes: vec![
                 GraphNode {
-                    target: Address([0x10; 16]),
+                    target: Address::new([0x10; 31], AddressClass::Component),
                     method: "withdraw".into(),
                     args: vec![GraphArg::Literal(Value::U128(7))],
                 },
                 GraphNode {
-                    target: Address([0x20; 16]),
+                    target: Address::new([0x20; 31], AddressClass::Component),
                     method: "deposit".into(),
                     args: vec![GraphArg::Edge {
                         edge: EdgeRef {
@@ -289,15 +305,15 @@ mod golden {
         let identity = graph.hash(&TestHasher);
         assert_eq!(
             hex(&identity.0.0),
-            "b067c053eef49015efb51d436eb971c2ca1d8d7d1287cd4718ceee3c00892b4d"
+            "9657c3c40eb8079b108b84c4500b93efcc7c0771927dc4f5d3aae1b183eddb30"
         );
         assert_eq!(
             format!("{:016x}", fresh_id(&TestHasher, identity, 1, 0, 0)),
-            "f41c89b7499d51af"
+            "09356acabd228b6a"
         );
         assert_eq!(
             hex(&fresh_local(&TestHasher, identity, 1, 0, 0).0),
-            "af519d49b7891cf42042f5654a5e771e"
+            "6a8b22bdca6a350921396181f8e14011"
         );
     }
 }

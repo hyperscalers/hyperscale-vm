@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, child_key,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -59,12 +59,37 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let sender = child_key(&TestHasher, Address([0x10; 16]), RoleId(1), &[]);
-    let recipient = child_key(&TestHasher, Address([0x20; 16]), RoleId(1), &[]);
-    let config = child_key(&TestHasher, Address([0x30; 16]), RoleId(3), &[]);
-    let rmw = child_key(&TestHasher, Address([0x30; 16]), RoleId(5), &[]);
-    let readable = child_key(&TestHasher, Address([0x30; 16]), RoleId(6), &[]);
-    let book = Address([0x40; 16]);
+    let sender = child_key(
+        &TestHasher,
+        Address::new([0x10; 31], AddressClass::Component),
+        RoleId(1),
+        &[],
+    );
+    let recipient = child_key(
+        &TestHasher,
+        Address::new([0x20; 31], AddressClass::Component),
+        RoleId(1),
+        &[],
+    );
+    let config = child_key(
+        &TestHasher,
+        Address::new([0x30; 31], AddressClass::Component),
+        RoleId(3),
+        &[],
+    );
+    let rmw = child_key(
+        &TestHasher,
+        Address::new([0x30; 31], AddressClass::Component),
+        RoleId(5),
+        &[],
+    );
+    let readable = child_key(
+        &TestHasher,
+        Address::new([0x30; 31], AddressClass::Component),
+        RoleId(6),
+        &[],
+    );
+    let book = Address::new([0x40; 31], AddressClass::Component);
 
     let mut store = MemoryStore::new();
     store.write(sender, encode_amount(100).to_vec()).unwrap();

@@ -554,28 +554,28 @@ mod tests {
             (
                 "staking",
                 "cast-param-vote",
-                Accessibility::RequiresConfiguredAuth(2),
+                Accessibility::RequiresConfiguredAuth(1),
             ),
             (
                 "staking",
                 "clear-param-vote",
-                Accessibility::RequiresConfiguredAuth(2),
+                Accessibility::RequiresConfiguredAuth(1),
             ),
             (
                 "staking",
                 "deactivate-validator",
-                Accessibility::RequiresConfiguredAuth(2),
+                Accessibility::RequiresConfiguredAuth(1),
             ),
             (
                 "staking",
                 "register-validator",
-                Accessibility::RequiresConfiguredAuth(2),
+                Accessibility::RequiresConfiguredAuth(1),
             ),
             ("staking", "stake", Accessibility::Public),
             (
                 "staking",
                 "unjail",
-                Accessibility::RequiresConfiguredAuth(2),
+                Accessibility::RequiresConfiguredAuth(1),
             ),
             ("staking", "unstake", Accessibility::Public),
         ];

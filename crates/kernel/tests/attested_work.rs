@@ -24,9 +24,9 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, FOOTPRINT_WEIGHT, Hash32, Hasher, Mode, RoleId,
-    SubintentHash, SubstateKey, TestHasher, child_key, effect_units, footprint, nullifier_key,
-    work_units,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, FOOTPRINT_WEIGHT, Hash32, Hasher, Mode,
+    RoleId, SubintentHash, SubstateKey, TestHasher, child_key, effect_units, footprint,
+    nullifier_key, work_units,
 };
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore,
@@ -45,11 +45,16 @@ const fn tx(byte: u8) -> TxHash {
 }
 
 fn cell(byte: u8) -> SubstateKey {
-    child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[])
+    child_key(
+        &TestHasher,
+        Address::new([byte; 31], AddressClass::Component),
+        RoleId(1),
+        &[],
+    )
 }
 
 fn owned_by(byte: u8) -> Locality {
-    Locality::Owned(Arc::new(move |owner: Address| owner.0[0] == byte))
+    Locality::Owned(Arc::new(move |owner: Address| owner.to_bytes()[0] == byte))
 }
 
 /// A declaration whose footprint is unmistakably nonzero and unevenly
@@ -69,7 +74,7 @@ fn transfer_declared(amount: u128) -> EffectSet {
     .unwrap();
     set.insert(Effect {
         target: EffectTarget::Range {
-            owner: Address([RECIPIENT_BYTE; 16]),
+            owner: Address::new([RECIPIENT_BYTE; 31], AddressClass::Component),
             collection: RoleId(4),
             lo: 0,
             hi: 1 << 40,
@@ -286,7 +291,7 @@ fn a_range_is_charged_its_declared_width_through_the_locality_filter() {
     let mut wide = EffectSet::new();
     let range = Effect {
         target: EffectTarget::Range {
-            owner: Address([RECIPIENT_BYTE; 16]),
+            owner: Address::new([RECIPIENT_BYTE; 31], AddressClass::Component),
             collection: RoleId(4),
             lo: 0,
             hi: u128::MAX,
@@ -332,7 +337,11 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
 
     // A spent nullifier: aborted inside the group, before materialization.
     let subintent = SubintentHash(Hash32([9; 32]));
-    let nullifier = nullifier_key(&TestHasher, Address([PAYER_BYTE; 16]), subintent);
+    let nullifier = nullifier_key(
+        &TestHasher,
+        Address::new([PAYER_BYTE; 31], AddressClass::Component),
+        subintent,
+    );
     let mut declared = transfer_declared(100);
     declared
         .insert(Effect {

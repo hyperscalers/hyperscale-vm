@@ -115,7 +115,8 @@ pub fn undeclared_accesses(trace: &[Access], declared: &EffectSet) -> Vec<Access
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, TestHasher, child_key,
+        Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, TestHasher,
+        child_key,
     };
 
     use super::undeclared_accesses;
@@ -131,7 +132,7 @@ mod tests {
 
     #[test]
     fn coverage_spans_write_implied_reads_and_range_membership() {
-        let owner = Address([1; 16]);
+        let owner = Address::new([1; 31], AddressClass::Component);
         let cell = child_key(&TestHasher, owner, RoleId(1), &[]);
         let set = declared(&[
             Effect {
@@ -186,7 +187,7 @@ mod tests {
 
     #[test]
     fn undeclared_key_mode_and_interval_escapes_are_caught() {
-        let owner = Address([1; 16]);
+        let owner = Address::new([1; 31], AddressClass::Component);
         let cell = child_key(&TestHasher, owner, RoleId(1), &[]);
         let set = declared(&[
             Effect {

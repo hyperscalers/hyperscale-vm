@@ -9,19 +9,20 @@
 
 use hyperscale_vm_effects::stdlib::{account_metadata, splitter_metadata};
 use hyperscale_vm_effects::{
-    Address, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash, TestHasher, admit,
+    Address, AddressClass, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
+    TestHasher, admit,
 };
 use hyperscale_vm_manifest_builder::GraphBuilder;
 use proptest::prelude::{Strategy, prop, proptest};
 
 const ACCOUNTS: [Address; 4] = [
-    Address([0x10; 16]),
-    Address([0x20; 16]),
-    Address([0x30; 16]),
-    Address([0x40; 16]),
+    Address::new([0x10; 31], AddressClass::Component),
+    Address::new([0x20; 31], AddressClass::Component),
+    Address::new([0x30; 31], AddressClass::Component),
+    Address::new([0x40; 31], AddressClass::Component),
 ];
-const SPLITTER: Address = Address([0x50; 16]);
-const RES: Address = Address([0xE1; 16]);
+const SPLITTER: Address = Address::new([0x50; 31], AddressClass::Component);
+const RES: Address = Address::new([0xE1; 31], AddressClass::Component);
 
 fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))

@@ -102,7 +102,7 @@ impl ManifestGraph {
         let mut node_hashes = Vec::with_capacity(self.nodes.len());
         for node in &self.nodes {
             let mut parts: Vec<Vec<u8>> = Vec::with_capacity(2 + node.args.len());
-            parts.push(node.target.0.to_vec());
+            parts.push(node.target.to_bytes().to_vec());
             parts.push(node.method.as_bytes().to_vec());
             for arg in &node.args {
                 parts.push(to_vec(arg).expect("hashed graphs pass the depth gate first"));
@@ -119,19 +119,19 @@ impl ManifestGraph {
 mod tests {
     use super::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
     use crate::hash::TestHasher;
-    use crate::types::{Address, Value};
+    use crate::types::{Address, AddressClass, Value};
 
     #[test]
     fn the_graph_hash_covers_edges_and_constraints() {
         let base = ManifestGraph {
             nodes: vec![
                 GraphNode {
-                    target: Address([1; 16]),
+                    target: Address::new([1; 31], AddressClass::Component),
                     method: "withdraw".into(),
                     args: vec![GraphArg::Literal(Value::U128(5))],
                 },
                 GraphNode {
-                    target: Address([2; 16]),
+                    target: Address::new([2; 31], AddressClass::Component),
                     method: "deposit".into(),
                     args: vec![GraphArg::Edge {
                         edge: EdgeRef {

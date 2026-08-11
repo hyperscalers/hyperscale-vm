@@ -9,12 +9,14 @@
 
 use std::sync::LazyLock;
 
+use hyperscale_vm_effects::stdlib::GENESIS_PUBLISHER as GENESIS_PUBLISHER_ROLE;
 pub use hyperscale_vm_effects::stdlib::{
     ASKS, CLAIMS, CONFIG, ENTROPY, FILL_CAP, UNBONDING, VAULT, account_metadata, amm_metadata,
     book_metadata, splitter_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, Hasher, PackageHash, StateWrites, attach_metadata, package_hash, package_key,
+    Address, Hasher, PackageHash, StateWrites, attach_metadata, native_address, package_hash,
+    package_key,
 };
 
 /// The componentized account guest: reservation-backed `withdraw`, delta
@@ -41,9 +43,15 @@ pub fn staking_package_hash(hasher: &dyn Hasher) -> PackageHash {
 
 /// The prefix genesis publishes the stdlib packages under.
 ///
-/// No key derives it, so nothing can ever publish beside it or spend
-/// from it: the protocol's own packages sit where no signer reaches.
-pub const GENESIS_PUBLISHER: Address = Address([0; 16]);
+/// A native address: it names a protocol role, and only a *principal*
+/// address derives from a key. So no signer reaches this prefix — nothing
+/// can publish beside the protocol's own packages or spend from where
+/// they sit — and the code they hold moves with the protocol version
+/// rather than with anything a transaction can say.
+#[must_use]
+pub fn genesis_publisher(hasher: &dyn Hasher) -> Address {
+    native_address(hasher, GENESIS_PUBLISHER_ROLE)
+}
 
 /// The stdlib account package as a publishable artifact: the committed
 /// guest blob with its effect metadata attached in the section a
@@ -89,7 +97,7 @@ pub fn staking_artifact() -> &'static [u8] {
 pub fn genesis_writes(hasher: &dyn Hasher) -> StateWrites {
     let artifact = account_artifact();
     let package = package_hash(hasher, artifact);
-    let cell = package_key(hasher, GENESIS_PUBLISHER, package);
+    let cell = package_key(hasher, genesis_publisher(hasher), package);
     let mut writes = StateWrites::default();
     writes.cells.insert(cell, Some(artifact.to_vec()));
     writes
@@ -106,12 +114,12 @@ mod tests {
         let writes = genesis_writes(&TestHasher);
         assert_eq!(writes.cells.len(), 1);
         let (cell, value) = writes.cells.iter().next().unwrap();
-        assert_eq!(cell.owner, GENESIS_PUBLISHER);
+        assert_eq!(cell.owner, genesis_publisher(&TestHasher));
         assert_eq!(
             cell,
             &package_key(
                 &TestHasher,
-                GENESIS_PUBLISHER,
+                genesis_publisher(&TestHasher),
                 package_hash(&TestHasher, account_artifact()),
             )
         );

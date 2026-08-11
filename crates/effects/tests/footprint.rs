@@ -10,8 +10,8 @@
 //! expensive for everyone else.
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind, RoleId, SubstateKey,
-    compatible, effect_units, footprint, mode_weight,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind, RoleId,
+    SubstateKey, compatible, effect_units, footprint, mode_weight,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
@@ -45,12 +45,12 @@ fn arb_mode() -> impl Strategy<Value = Mode> {
 fn arb_target() -> impl Strategy<Value = EffectTarget> {
     prop_oneof![
         (any::<u8>(), any::<u8>()).prop_map(|(owner, local)| EffectTarget::Point(SubstateKey {
-            owner: Address([owner; 16]),
+            owner: Address::new([owner; 31], AddressClass::Component),
             local: LocalKey([local; 16]),
         })),
         (any::<u8>(), any::<u8>(), any::<u128>()).prop_map(|(owner, role, order)| {
             EffectTarget::Entry {
-                owner: Address([owner; 16]),
+                owner: Address::new([owner; 31], AddressClass::Component),
                 collection: RoleId(u16::from(role)),
                 order,
             }
@@ -63,7 +63,7 @@ fn arb_target() -> impl Strategy<Value = EffectTarget> {
             any::<u32>()
         )
             .prop_map(|(owner, role, lo, hi, cap)| EffectTarget::Range {
-                owner: Address([owner; 16]),
+                owner: Address::new([owner; 31], AddressClass::Component),
                 collection: RoleId(u16::from(role)),
                 lo: lo.min(hi),
                 hi: lo.max(hi),
@@ -124,7 +124,7 @@ fn the_whole_order_key_space_is_the_most_expensive_interval() {
     for kind in [Mode::Read, Mode::Delta, Mode::Write] {
         let whole = effect_units(Effect {
             target: EffectTarget::Range {
-                owner: Address([1; 16]),
+                owner: Address::new([1; 31], AddressClass::Component),
                 collection: RoleId(1),
                 lo: 0,
                 hi: u128::MAX,
@@ -135,7 +135,7 @@ fn the_whole_order_key_space_is_the_most_expensive_interval() {
         for (lo, hi) in [(0, 0), (5, 5), (0, 1023), (1 << 100, (1 << 100) + 4096)] {
             let narrower = effect_units(Effect {
                 target: EffectTarget::Range {
-                    owner: Address([1; 16]),
+                    owner: Address::new([1; 31], AddressClass::Component),
                     collection: RoleId(1),
                     lo,
                     hi,
@@ -167,7 +167,7 @@ proptest! {
         let hi = lo.saturating_add(span);
         let range = |hi, cap| Effect {
             target: EffectTarget::Range {
-                owner: Address([2; 16]),
+                owner: Address::new([2; 31], AddressClass::Component),
                 collection: RoleId(9),
                 lo,
                 hi,

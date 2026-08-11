@@ -5,9 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, GlobalAddress, InvalidAddress, LocalKey, Mode, ModeKind,
-    NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr, SchemeId, SubstateKey, WrongClass,
-    compatible,
+    Address, AddressClass, ComponentAddr, InvalidAddress, LocalKey, Mode, ModeKind, NativeAddr,
+    PackageAddr, PrincipalAddr, ResourceAddr, SchemeId, SubstateKey, WrongClass, compatible,
 };
 
 use crate::hash::{Hash32, Hasher};
@@ -76,9 +75,10 @@ pub fn child_key(
     role: RoleId,
     material: &[Vec<u8>],
 ) -> SubstateKey {
+    let owner_bytes = owner.to_bytes();
     let role_bytes = role.0.to_le_bytes();
     let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
-    parts.push(&owner.0);
+    parts.push(&owner_bytes);
     parts.push(&role_bytes);
     parts.extend(material.iter().map(Vec::as_slice));
     let digest = hasher.hash(DOMAIN_CHILD, &parts);
@@ -91,10 +91,10 @@ pub fn child_key(
 }
 
 /// The address whose body is the leading 31 bytes of `digest`.
-fn tagged(digest: Hash32, class: AddressClass) -> GlobalAddress {
+fn tagged(digest: Hash32, class: AddressClass) -> Address {
     let mut body = [0u8; 31];
     body.copy_from_slice(&digest.0[..31]);
-    GlobalAddress::new(body, class)
+    Address::new(body, class)
 }
 
 /// The principal address a public key opens.
@@ -109,11 +109,7 @@ fn tagged(digest: Hash32, class: AddressClass) -> GlobalAddress {
 /// which is what keeps a scheme added later from landing on an address
 /// already in use.
 #[must_use]
-pub fn principal_address(
-    hasher: &dyn Hasher,
-    scheme: SchemeId,
-    public_key: &[u8],
-) -> GlobalAddress {
+pub fn principal_address(hasher: &dyn Hasher, scheme: SchemeId, public_key: &[u8]) -> Address {
     let scheme_bytes = scheme.0.to_le_bytes();
     tagged(
         hasher.hash(DOMAIN_PRINCIPAL, &[&scheme_bytes, public_key]),
@@ -139,7 +135,7 @@ pub fn component_address(
     package: PackageHash,
     config: Hash32,
     salt: Hash32,
-) -> GlobalAddress {
+) -> Address {
     tagged(
         hasher.hash(DOMAIN_COMPONENT, &[&package.0.0, &config.0, &salt.0]),
         AddressClass::Component,
@@ -153,7 +149,7 @@ pub fn component_address(
 /// the same address, and the binding holds for as long as the package
 /// exists.
 #[must_use]
-pub fn package_address(hasher: &dyn Hasher, package: PackageHash) -> GlobalAddress {
+pub fn package_address(hasher: &dyn Hasher, package: PackageHash) -> Address {
     tagged(
         hasher.hash(DOMAIN_PACKAGE, &[&package.0.0]),
         AddressClass::Package,
@@ -167,11 +163,7 @@ pub fn package_address(hasher: &dyn Hasher, package: PackageHash) -> GlobalAddre
 /// recomputing the derivation rather than by trusting a claim about it.
 /// The material separates the resources one minter issues.
 #[must_use]
-pub fn resource_address(
-    hasher: &dyn Hasher,
-    minter: GlobalAddress,
-    material: &[Vec<u8>],
-) -> GlobalAddress {
+pub fn resource_address(hasher: &dyn Hasher, minter: Address, material: &[Vec<u8>]) -> Address {
     let minter_bytes = minter.to_bytes();
     let mut parts: Vec<&[u8]> = Vec::with_capacity(1 + material.len());
     parts.push(&minter_bytes);
@@ -186,7 +178,7 @@ pub fn resource_address(
 /// shard by preference. What the address names is the role; the code
 /// behind it moves with the protocol version.
 #[must_use]
-pub fn native_address(hasher: &dyn Hasher, role: NativeRole) -> GlobalAddress {
+pub fn native_address(hasher: &dyn Hasher, role: NativeRole) -> Address {
     let role_bytes = role.0.to_le_bytes();
     tagged(
         hasher.hash(DOMAIN_NATIVE, &[&role_bytes]),
@@ -467,10 +459,10 @@ mod tests {
     use hyperscale_hbor::{assert_canonical, from_slice_with_depth};
 
     use super::{
-        Address, AddressClass, Effect, EffectSet, EffectTarget, GlobalAddress, LocalKey,
-        MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH, Mode, ModeKind, NativeRole, RoleId, SchemeId,
-        SubstateKey, Value, child_key, compatible, component_address, config_hash, native_address,
-        package_address, principal_address, resource_address, to_vec,
+        Address, AddressClass, Effect, EffectSet, EffectTarget, LocalKey, MAX_VALUE_DEPTH,
+        MAX_VALUE_WIRE_DEPTH, Mode, ModeKind, NativeRole, RoleId, SchemeId, SubstateKey, Value,
+        child_key, compatible, component_address, config_hash, native_address, package_address,
+        principal_address, resource_address, to_vec,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::metadata::PackageHash;
@@ -504,7 +496,7 @@ mod tests {
         // A locked target cannot change, deltas read nothing, and a
         // reservation is judged where it lives — so a commutative-only
         // leg provisions nothing at all.
-        let owner = Address([1; 16]);
+        let owner = Address::new([1; 31], AddressClass::Component);
         let target =
             |byte: u8| EffectTarget::Point(child_key(&TestHasher, owner, RoleId(byte.into()), &[]));
         let mut set = EffectSet::new();
@@ -555,14 +547,14 @@ mod tests {
             Value::List(vec![Value::U64(2)]),
             Value::Bytes(vec![3, 4]),
             Value::Key(SubstateKey {
-                owner: Address([5; 16]),
+                owner: Address::new([5; 31], AddressClass::Component),
                 local: LocalKey([6; 16]),
             }),
         ]);
         assert_eq!(value.canonical_bytes(), to_vec(&value).unwrap());
         assert_canonical(&value);
         assert_canonical(&Value::Bucket {
-            resource: Address([7; 16]),
+            resource: Address::new([7; 31], AddressClass::Component),
         });
     }
 
@@ -598,7 +590,7 @@ mod tests {
 
     #[test]
     fn child_keys_separate_by_role_and_material() {
-        let owner = Address([1; 16]);
+        let owner = Address::new([1; 31], AddressClass::Component);
         let a = child_key(&TestHasher, owner, RoleId(1), &[vec![9]]);
         assert_eq!(a, child_key(&TestHasher, owner, RoleId(1), &[vec![9]]));
         assert_ne!(a, child_key(&TestHasher, owner, RoleId(2), &[vec![9]]));
@@ -609,14 +601,29 @@ mod tests {
 
     #[test]
     fn child_key_locals_separate_by_owner() {
-        let a = child_key(&TestHasher, Address([1; 16]), RoleId(1), &[vec![9]]);
-        let b = child_key(&TestHasher, Address([2; 16]), RoleId(1), &[vec![9]]);
+        let a = child_key(
+            &TestHasher,
+            Address::new([1; 31], AddressClass::Component),
+            RoleId(1),
+            &[vec![9]],
+        );
+        let b = child_key(
+            &TestHasher,
+            Address::new([2; 31], AddressClass::Component),
+            RoleId(1),
+            &[vec![9]],
+        );
         assert_ne!(a.local, b.local);
     }
 
     #[test]
     fn effect_set_folds_reserves_and_dedups() {
-        let key = child_key(&TestHasher, Address([1; 16]), RoleId(1), &[]);
+        let key = child_key(
+            &TestHasher,
+            Address::new([1; 31], AddressClass::Component),
+            RoleId(1),
+            &[],
+        );
         let target = EffectTarget::Point(key);
         let mut set = EffectSet::new();
         set.insert(Effect {
@@ -763,7 +770,7 @@ mod tests {
             package_address(&TestHasher, package).body(),
             resource_address(
                 &TestHasher,
-                GlobalAddress::new([0x11; 31], AddressClass::Component),
+                Address::new([0x11; 31], AddressClass::Component),
                 &[vec![0x11; 32]],
             )
             .body(),

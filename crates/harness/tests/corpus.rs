@@ -15,10 +15,11 @@ use hyperscale_vm_effects::stdlib::{
     ASKS, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
 };
 use hyperscale_vm_effects::{
-    AbiParam, Address, Clause, Constraint, Effect, EffectSet, EffectTarget, Expr, Hash32, Hasher,
-    InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr,
-    PackageHash, PackageMetadata, ParamType, PrefixShardResolver, RoleId, Routing, ShardId,
-    ShardResolver, SubstateKey, TargetExpr, TestHasher, Value, admit, child_key, fresh_id, route,
+    AbiParam, Address, AddressClass, Clause, Constraint, Effect, EffectSet, EffectTarget, Expr,
+    Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature,
+    Mode, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver, RoleId, Routing,
+    ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value, admit, child_key, fresh_id,
+    route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -39,18 +40,18 @@ use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
-const ALICE: Address = Address([0x10; 16]);
-const BOB: Address = Address([0x20; 16]);
-const POOL: Address = Address([0x30; 16]);
-const BOOK: Address = Address([0x40; 16]);
-const MAKER: Address = Address([0x50; 16]);
-const TAKER: Address = Address([0x60; 16]);
-const CAROL: Address = Address([0x70; 16]);
-const DANA: Address = Address([0x80; 16]);
-const RES_X: Address = Address([0xE1; 16]);
-const RES_Y: Address = Address([0xE2; 16]);
-const BASE: Address = Address([0xE3; 16]);
-const QUOTE: Address = Address([0xE4; 16]);
+const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
+const BOB: Address = Address::new([0x20; 31], AddressClass::Component);
+const POOL: Address = Address::new([0x30; 31], AddressClass::Component);
+const BOOK: Address = Address::new([0x40; 31], AddressClass::Component);
+const MAKER: Address = Address::new([0x50; 31], AddressClass::Component);
+const TAKER: Address = Address::new([0x60; 31], AddressClass::Component);
+const CAROL: Address = Address::new([0x70; 31], AddressClass::Component);
+const DANA: Address = Address::new([0x80; 31], AddressClass::Component);
+const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
+const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
+const BASE: Address = Address::new([0xE3; 31], AddressClass::Component);
+const QUOTE: Address = Address::new([0xE4; 31], AddressClass::Component);
 
 const FUEL: u64 = 1_000_000_000;
 

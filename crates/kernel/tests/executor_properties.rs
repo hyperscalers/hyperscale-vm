@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, child_key,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore,
@@ -40,7 +40,7 @@ const CELL_BASE: u8 = 0xC0;
 /// can mutate, which is what the mode means.
 const LOCKED_BASE: u8 = 0xD0;
 const LOCKED_CELLS: u8 = 2;
-const BOOK: Address = Address([0xB0; 16]);
+const BOOK: Address = Address::new([0xB0; 31], AddressClass::Component);
 const ASKS: RoleId = RoleId(4);
 const FUNDING: u128 = 1_000;
 /// The most transactions a generated batch carries.
@@ -59,7 +59,7 @@ const fn tx(byte: u8) -> TxHash {
 fn cell(index: u8) -> SubstateKey {
     child_key(
         &TestHasher,
-        Address([CELL_BASE + index; 16]),
+        Address::new([CELL_BASE + index; 31], AddressClass::Component),
         RoleId(1),
         &[],
     )
@@ -68,7 +68,10 @@ fn cell(index: u8) -> SubstateKey {
 fn locked_cell(index: u8) -> SubstateKey {
     child_key(
         &TestHasher,
-        Address([LOCKED_BASE + (index % LOCKED_CELLS); 16]),
+        Address::new(
+            [LOCKED_BASE + (index % LOCKED_CELLS); 31],
+            AddressClass::Component,
+        ),
         RoleId(1),
         &[],
     )
@@ -82,7 +85,7 @@ fn shard_owning(owned: &[bool], book: bool) -> Locality {
         if owner == BOOK {
             return book;
         }
-        let index = owner.0[0].wrapping_sub(CELL_BASE);
+        let index = owner.to_bytes()[0].wrapping_sub(CELL_BASE);
         owned.get(index as usize).copied().unwrap_or(false)
     }))
 }
@@ -595,7 +598,7 @@ proptest! {
         // all belong to the owner.
         let mut store = serial.store;
         for index in 0..CELLS {
-            if locality.is_local(Address([CELL_BASE + index; 16])) {
+            if locality.is_local(Address::new([CELL_BASE + index; 31], AddressClass::Component)) {
                 continue;
             }
             assert_eq!(

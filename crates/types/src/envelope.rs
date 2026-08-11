@@ -198,6 +198,7 @@ mod tests {
     use hyperscale_hbor::{HborSigned, assert_canonical, to_vec};
 
     use super::{Address, NetworkId, SubintentSig, TransactionBody, TransactionEnvelope};
+    use crate::address::AddressClass;
 
     fn sample() -> TransactionEnvelope {
         TransactionEnvelope {
@@ -206,7 +207,7 @@ mod tests {
                 public_key: [0x11; 32],
                 signature: [0x22; 64],
             }],
-            fee_payer: Address([0x33; 16]),
+            fee_payer: Address::new([0x33; 31], AddressClass::Principal),
             max_fee: 1_000_000,
             gas_limit: 500_000,
             validity_start_ms: 1_700_000_000_000,

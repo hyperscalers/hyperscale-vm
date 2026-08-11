@@ -23,7 +23,7 @@ pub mod work;
 pub mod writes;
 
 pub use address::{
-    Address, AddressClass, ComponentAddr, GlobalAddress, InvalidAddress, LocalKey, NativeAddr,
+    Address, AddressClass, ComponentAddr, InvalidAddress, LEAF_KEY_BYTES, LocalKey, NativeAddr,
     PackageAddr, PrincipalAddr, ResourceAddr, SchemeId, SubstateKey, WrongClass,
 };
 pub use amount::{AMOUNT_CELL_BYTES, amount_cell, encode_amount, read_amount};

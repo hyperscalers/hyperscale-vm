@@ -8,20 +8,20 @@ pub use hyperscale_vm_effects::stdlib::{
     splitter_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, CallSite, Clause, Effect, EffectSet, Expr, Hash32, Hasher, InstanceMeta,
+    Address, AddressClass, CallSite, Clause, Effect, EffectSet, Expr, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr, PackageHash,
     PackageMetadata, ParamType, PrefixShardResolver, RoleId, ShardId, ShardResolver, SubstateKey,
     TargetExpr, TestHasher, Value, child_key,
 };
 
-pub const ALICE: Address = Address([0x10; 16]);
-pub const BOB: Address = Address([0x20; 16]);
-pub const POOL: Address = Address([0x30; 16]);
-pub const BOOK: Address = Address([0x40; 16]);
-pub const RES_X: Address = Address([0xE1; 16]);
-pub const RES_Y: Address = Address([0xE2; 16]);
-pub const BASE: Address = Address([0xE3; 16]);
-pub const QUOTE: Address = Address([0xE4; 16]);
+pub const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
+pub const BOB: Address = Address::new([0x20; 31], AddressClass::Component);
+pub const POOL: Address = Address::new([0x30; 31], AddressClass::Component);
+pub const BOOK: Address = Address::new([0x40; 31], AddressClass::Component);
+pub const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
+pub const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
+pub const BASE: Address = Address::new([0xE3; 31], AddressClass::Component);
+pub const QUOTE: Address = Address::new([0xE4; 31], AddressClass::Component);
 
 fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
     Expr::ChildKey {

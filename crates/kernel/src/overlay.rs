@@ -828,21 +828,28 @@ impl Base for OverlayStore {
 mod tests {
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{Address, Hash32, RoleId, SubstateKey, TestHasher, child_key};
+    use hyperscale_vm_effects::{
+        Address, AddressClass, Hash32, RoleId, SubstateKey, TestHasher, child_key,
+    };
 
     use super::OverlayStore;
     use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
     use crate::store::{MemoryStore, StoreError, SubstateStore};
 
     fn key(byte: u8) -> SubstateKey {
-        child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[])
+        child_key(
+            &TestHasher,
+            Address::new([byte; 31], AddressClass::Component),
+            RoleId(1),
+            &[],
+        )
     }
 
     fn tx(byte: u8) -> TxHash {
         TxHash(Hash32([byte; 32]))
     }
 
-    const BOOK: Address = Address([9; 16]);
+    const BOOK: Address = Address::new([9; 31], AddressClass::Component);
     const ASKS: RoleId = RoleId(4);
 
     fn overlay_over(entries: &[(u128, u8)]) -> OverlayStore {

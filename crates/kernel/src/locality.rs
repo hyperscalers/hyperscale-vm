@@ -243,7 +243,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{Address, Hash32, LocalKey, SubstateKey, TxHash};
+    use hyperscale_vm_effects::{Address, AddressClass, Hash32, LocalKey, SubstateKey, TxHash};
 
     use super::Locality;
     use crate::modes::{decode_amount, encode_amount};
@@ -253,7 +253,7 @@ mod tests {
 
     fn key(owner: u8, local: u8) -> SubstateKey {
         SubstateKey {
-            owner: Address([owner; 16]),
+            owner: Address::new([owner; 31], AddressClass::Component),
             local: LocalKey([local; 16]),
         }
     }
@@ -411,7 +411,9 @@ mod tests {
                 },
             );
         }
-        let locality = Locality::Owned(Arc::new(|owner: Address| owner == Address([1; 16])));
+        let locality = Locality::Owned(Arc::new(|owner: Address| {
+            owner == Address::new([1; 31], AddressClass::Component)
+        }));
         let writes = delta.flatten(&locality, &mut |_| None);
         assert_eq!(writes.cells().len(), 1);
         assert_eq!(writes.cells()[&local], Some(encode_amount(5).to_vec()));

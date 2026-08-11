@@ -12,6 +12,8 @@ use crate::types::{NativeRole, RoleId, Value};
 
 /// The native fee and transfer resource.
 pub const XRD: NativeRole = NativeRole(1);
+/// The publisher the protocol's own packages sit under.
+pub const GENESIS_PUBLISHER: NativeRole = NativeRole(2);
 
 /// A fungible balance cell under its holder.
 pub const VAULT: RoleId = RoleId(1);
@@ -161,12 +163,15 @@ pub fn account_metadata() -> PackageMetadata {
 /// adding a governed parameter is a protocol change, and the package
 /// that votes on them is versioned with them.
 ///
-/// Three creation-fixed fields configure an instance: the resource it
-/// stakes, the resource it issues, and the operator its validator surface
-/// admits. There is deliberately no fourth naming the pool, because a pool
-/// that named itself could name a different one: the kernel stamps an
-/// event's emitter, so the instance is the subject and nothing about it is
-/// the guest's to choose.
+/// Two creation-fixed fields configure an instance: the resource it stakes
+/// and the operator its validator surface admits. The resource it *issues*
+/// is not among them — it derives from the pool, which is what keeps the
+/// configuration writable at all, since a pool's address commits its
+/// configuration and a configured field naming a value derived from that
+/// address could not be written down. There is deliberately no field
+/// naming the pool either, because a pool that named itself could name a
+/// different one: the kernel stamps an event's emitter, so the instance is
+/// the subject and nothing about it is the guest's to choose.
 ///
 /// `stake` and `unstake` are public, and that is not an oversight. A pool
 /// instance is owned by nobody; the authority behind a delegation is the
@@ -196,10 +201,19 @@ pub fn staking_metadata() -> PackageMetadata {
 
 /// The staked resource — what a delegation is denominated in.
 const STAKED_RESOURCE: u32 = 0;
-/// The resource this pool issues against delegations.
-const UNIT_RESOURCE: u32 = 1;
 /// The principal whose signature the operator surface admits.
-const OPERATOR: u32 = 2;
+const OPERATOR: u32 = 1;
+
+/// The resource this pool issues against delegations.
+///
+/// Derived from the pool rather than configured: the pool's address
+/// commits its configuration, so a configured field naming a value
+/// derived from that address would not be expressible.
+const fn unit_resource() -> Expr {
+    Expr::SelfResource {
+        material: Vec::new(),
+    }
+}
 
 /// `stake` and `unstake`: what anyone holding funds may do to a pool.
 fn delegation_methods(methods: &mut PackageMetadata) {
@@ -209,7 +223,7 @@ fn delegation_methods(methods: &mut PackageMetadata) {
             accessibility: Accessibility::Public,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
-            outputs: vec![Expr::Config(UNIT_RESOURCE)],
+            outputs: vec![unit_resource()],
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(self_child(VAULT, vec![Expr::Config(STAKED_RESOURCE)])),
                 mode: ModeExpr::Delta,

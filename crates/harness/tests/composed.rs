@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
-    Address, AdmittedTree, Constraint, EdgeRef, EnvelopeTree, Hasher, InstanceMeta,
+    Address, AddressClass, AdmittedTree, Constraint, EdgeRef, EnvelopeTree, Hasher, InstanceMeta,
     InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
     Subintent, SubstateKey, TestHasher, Value, YieldBinding, YieldParam, admit_tree, child_key,
     route_tree,
@@ -32,11 +32,11 @@ use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
-const ALICE: Address = Address([0x10; 16]);
-const BOB: Address = Address([0x20; 16]);
-const CAROL: Address = Address([0x30; 16]);
-const RES_X: Address = Address([0xE1; 16]);
-const RES_Y: Address = Address([0xE2; 16]);
+const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
+const BOB: Address = Address::new([0x20; 31], AddressClass::Component);
+const CAROL: Address = Address::new([0x30; 31], AddressClass::Component);
+const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
+const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
 
 const FUEL: u64 = 1_000_000_000;
 

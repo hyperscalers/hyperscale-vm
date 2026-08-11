@@ -106,19 +106,19 @@ mod tests {
     use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
 
     use super::{Address, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome, SubstateKey};
-    use crate::address::LocalKey;
+    use crate::address::{AddressClass, LocalKey};
 
     #[test]
     fn the_execution_record_is_canonical() {
         assert_canonical(&Event {
-            emitter: Address([1; 16]),
+            emitter: Address::new([1; 31], AddressClass::Component),
             event_type: 3,
             payload: vec![9, 9],
         });
         assert_canonical(&Outcome::Completed { value: Some(7) });
         assert_canonical(&Outcome::Infeasible {
             key: SubstateKey {
-                owner: Address([2; 16]),
+                owner: Address::new([2; 31], AddressClass::Component),
                 local: LocalKey([3; 16]),
             },
             amount: 100,
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn an_oversized_payload_rejects_at_decode() {
         let mut over = Event {
-            emitter: Address([1; 16]),
+            emitter: Address::new([1; 31], AddressClass::Component),
             event_type: 0,
             payload: vec![0; MAX_EVENT_PAYLOAD_BYTES + 1],
         };
@@ -151,7 +151,7 @@ mod tests {
         assert!(from_slice::<Event>(&bytes).is_ok());
 
         let smuggled = to_vec(&Uncapped {
-            emitter: Address([1; 16]),
+            emitter: Address::new([1; 31], AddressClass::Component),
             event_type: 0,
             payload: vec![0; MAX_EVENT_PAYLOAD_BYTES + 1],
         })

@@ -4,19 +4,19 @@
 
 use hyperscale_vm_effects::stdlib::account_metadata;
 use hyperscale_vm_effects::{
-    Address, AdmissionError, AdmittedTree, Bounds, Constraint, EdgeRef, Effect, EffectTarget,
-    EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceMeta, InstanceRegistry, IntentDecl,
-    MAX_SUBINTENTS, MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, Mode,
+    Address, AddressClass, AdmissionError, AdmittedTree, Bounds, Constraint, EdgeRef, Effect,
+    EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceMeta, InstanceRegistry,
+    IntentDecl, MAX_SUBINTENTS, MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, Mode,
     NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver, RoleId, ShardResolver, Subintent,
     TestHasher, Value, YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key,
     route_tree,
 };
 use proptest::prelude::{any, proptest};
 
-const ALICE: Address = Address([0x10; 16]);
-const BOB: Address = Address([0x20; 16]);
-const RES_X: Address = Address([0xE1; 16]);
-const RES_Y: Address = Address([0xE2; 16]);
+const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
+const BOB: Address = Address::new([0x20; 31], AddressClass::Component);
+const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
+const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
 
 fn pkg() -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[b"account"]))
@@ -306,12 +306,12 @@ fn two_bindings_cannot_consume_one_output() {
     // A second subintent binds the same root output the first consumes.
     let mut tree = composed_tree(100);
     let mut second = tree.subintents[0].clone();
-    second.signer = Address([0x21; 16]);
+    second.signer = Address::new([0x21; 31], AddressClass::Component);
     second.decl.graph.nodes[0] = withdraw(BOB, RES_Y, 11);
     tree.subintents.push(second);
     let (cache, mut instances) = world();
     instances.register(
-        Address([0x21; 16]),
+        Address::new([0x21; 31], AddressClass::Component),
         InstanceMeta {
             package: pkg(),
             config: vec![],

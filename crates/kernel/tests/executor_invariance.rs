@@ -8,8 +8,8 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, child_key,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
@@ -33,7 +33,12 @@ const fn tx(byte: u8) -> TxHash {
 }
 
 fn cell(byte: u8) -> SubstateKey {
-    child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[])
+    child_key(
+        &TestHasher,
+        Address::new([byte; 31], AddressClass::Component),
+        RoleId(1),
+        &[],
+    )
 }
 
 fn point(key: SubstateKey, mode: Mode) -> EffectSet {

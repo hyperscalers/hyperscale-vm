@@ -7,14 +7,14 @@ mod common;
 
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
 use hyperscale_vm_effects::{
-    Address, AdmissionError, Constraint, EdgeRef, Effect, EffectTarget, GraphArg, GraphNode,
-    InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, Mode,
+    Address, AddressClass, AdmissionError, Constraint, EdgeRef, Effect, EffectTarget, GraphArg,
+    GraphNode, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, Mode,
     TestHasher, Value, admit, fresh_id, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
 
-const SPLITTER: Address = Address([0x77; 16]);
+const SPLITTER: Address = Address::new([0x77; 31], AddressClass::Component);
 
 fn setup() -> (MetadataCache, InstanceRegistry) {
     let (mut cache, mut instances) = world();

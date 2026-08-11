@@ -120,13 +120,13 @@ impl SupplyLedger {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::Address;
+    use hyperscale_vm_effects::{Address, AddressClass};
 
     use super::SupplyLedger;
     use crate::modes::ModeError;
 
     fn resource(byte: u8) -> Address {
-        Address([byte; 16])
+        Address::new([byte; 31], AddressClass::Resource)
     }
 
     #[test]

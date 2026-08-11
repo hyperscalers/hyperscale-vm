@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubintentHash,
-    SubstateKey, TestHasher, child_key, nullifier_key,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    SubintentHash, SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
@@ -33,7 +33,12 @@ const fn tx(byte: u8) -> TxHash {
 }
 
 fn cell(byte: u8) -> SubstateKey {
-    child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[])
+    child_key(
+        &TestHasher,
+        Address::new([byte; 31], AddressClass::Component),
+        RoleId(1),
+        &[],
+    )
 }
 
 fn point(key: SubstateKey, mode: Mode) -> EffectSet {
@@ -299,7 +304,7 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
 fn nullifier() -> SubstateKey {
     nullifier_key(
         &TestHasher,
-        Address([0x77; 16]),
+        Address::new([0x77; 31], AddressClass::Component),
         SubintentHash(Hash32([0x99; 32])),
     )
 }

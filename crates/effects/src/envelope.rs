@@ -161,7 +161,7 @@ impl EnvelopeTree {
         parts.push(to_vec(&self.root_bindings).expect("bindings are flat"));
         for subintent in &self.subintents {
             parts.push(subintent.decl.hash(hasher).0.0.to_vec());
-            parts.push(subintent.signer.0.to_vec());
+            parts.push(subintent.signer.to_bytes().to_vec());
             parts.push(to_vec(&subintent.bindings).expect("bindings are flat"));
         }
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();

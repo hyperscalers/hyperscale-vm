@@ -9,8 +9,8 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, child_key,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -45,11 +45,21 @@ const fn tx(byte: u8) -> TxHash {
 }
 
 fn vault(owner: u8) -> SubstateKey {
-    child_key(&TestHasher, Address([owner; 16]), RoleId(1), &[])
+    child_key(
+        &TestHasher,
+        Address::new([owner; 31], AddressClass::Component),
+        RoleId(1),
+        &[],
+    )
 }
 
 fn rmw_cell() -> SubstateKey {
-    child_key(&TestHasher, Address([8; 16]), RoleId(5), &[])
+    child_key(
+        &TestHasher,
+        Address::new([8; 31], AddressClass::Component),
+        RoleId(5),
+        &[],
+    )
 }
 
 /// What each transaction's guest invocation looks like.

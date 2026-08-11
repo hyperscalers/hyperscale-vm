@@ -46,7 +46,8 @@ pub struct PrefixShardResolver {
 impl ShardResolver for PrefixShardResolver {
     fn shard_of(&self, owner: Address) -> ShardId {
         let depth = u32::from(self.bits.min(63));
-        let head = u64::from_be_bytes(owner.0[..8].try_into().expect("an address is 16 bytes"));
+        let bytes = owner.to_bytes();
+        let head = u64::from_be_bytes(bytes[..8].try_into().expect("an address is 32 bytes"));
         // At depth zero the shift is the full width, which `checked_shr`
         // reports rather than wrapping: the root's path is empty.
         let path = head.checked_shr(64 - depth).unwrap_or(0);
@@ -551,7 +552,7 @@ fn guest_arg(value: &Value) -> Option<CallArg> {
     match value {
         Value::U64(scalar) => Some(CallArg::U64(*scalar)),
         Value::U128(amount) => Some(CallArg::Bytes(amount.to_le_bytes().to_vec())),
-        Value::Address(address) => Some(CallArg::Bytes(address.0.to_vec())),
+        Value::Address(address) => Some(CallArg::Bytes(address.to_bytes().to_vec())),
         Value::Bytes(bytes) => Some(CallArg::Bytes(bytes.clone())),
         Value::Key(_) | Value::Bucket { .. } | Value::Tuple(_) | Value::List(_) => None,
     }
@@ -767,7 +768,8 @@ mod tests {
         PackageMetadata, ParamType,
     };
     use crate::types::{
-        Address, Effect, EffectSet, EffectTarget, Mode, RoleId, ShardId, Value, child_key,
+        Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, RoleId, ShardId, Value,
+        child_key,
     };
 
     fn pkg(name: &str) -> PackageHash {
@@ -786,7 +788,7 @@ mod tests {
     }
 
     fn addr(byte: u8) -> Address {
-        Address([byte; 16])
+        Address::new([byte; 31], AddressClass::Component)
     }
 
     fn point(owner: Address, role: RoleId) -> EffectTarget {
@@ -1351,20 +1353,14 @@ mod tests {
         // A locked read declares its target like any other mode; whether the
         // target is actually locked is the kernel's to refuse, since only
         // the store knows.
-        assert_eq!(
-            routing
-                .per_shard
-                .values()
-                .next()
-                .unwrap()
-                .iter()
-                .next()
-                .unwrap(),
-            Effect {
-                target: point(addr(5), RoleId(1)),
+        let declared = routing.per_shard.values().next().unwrap();
+        assert_eq!(declared.iter().count(), 2);
+        for role in [RoleId(1), RoleId(2)] {
+            assert!(declared.contains(&Effect {
+                target: point(addr(5), role),
                 mode: Mode::Locked,
-            }
-        );
+            }));
+        }
     }
 
     #[test]
@@ -1569,16 +1565,19 @@ mod tests {
     fn prefix_resolver_names_the_leaf_at_its_depth() {
         // `(1 << depth) | path`: the depth marker above the prefix bits.
         assert_eq!(
-            PrefixShardResolver { bits: 4 }.shard_of(Address([0xAB; 16])),
+            PrefixShardResolver { bits: 4 }
+                .shard_of(Address::new([0xAB; 31], AddressClass::Component)),
             ShardId(0x1A)
         );
         assert_eq!(
-            PrefixShardResolver { bits: 0 }.shard_of(Address([0xFF; 16])),
+            PrefixShardResolver { bits: 0 }
+                .shard_of(Address::new([0xFF; 31], AddressClass::Component)),
             ShardId(1),
             "the root holds every address, and is a leaf like any other"
         );
         assert_eq!(
-            PrefixShardResolver { bits: 16 }.shard_of(Address([0xAB; 16])),
+            PrefixShardResolver { bits: 16 }
+                .shard_of(Address::new([0xAB; 31], AddressClass::Component)),
             ShardId(0x1_ABAB)
         );
     }
@@ -1590,7 +1589,7 @@ mod tests {
         // their depth marker — and past depth 15 the marker alone leaves
         // `u16`. Truncated, every one of them would read as the same
         // shard, and one shard would be credited with all their effects.
-        let zeros = Address([0; 16]);
+        let zeros = Address::new([0; 31], AddressClass::Component);
         let ids: Vec<ShardId> = (0..=63)
             .map(|bits| PrefixShardResolver { bits }.shard_of(zeros))
             .collect();
@@ -1607,10 +1606,12 @@ mod tests {
     fn a_depth_past_the_bound_clamps_rather_than_wrapping() {
         // 64 would shift the marker off the top; the resolver pins at the
         // deepest leaf a heap index can name instead.
-        let deepest = PrefixShardResolver { bits: 63 }.shard_of(Address([0xAB; 16]));
+        let deepest = PrefixShardResolver { bits: 63 }
+            .shard_of(Address::new([0xAB; 31], AddressClass::Component));
         for bits in [64, 128, 255] {
             assert_eq!(
-                PrefixShardResolver { bits }.shard_of(Address([0xAB; 16])),
+                PrefixShardResolver { bits }
+                    .shard_of(Address::new([0xAB; 31], AddressClass::Component)),
                 deepest
             );
         }

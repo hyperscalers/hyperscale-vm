@@ -703,14 +703,20 @@ impl SubstateStore for MemoryStore {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        Address, EffectTarget, Hash32, ModeKind, RoleId, SubstateKey, TestHasher, child_key,
+        Address, AddressClass, EffectTarget, Hash32, ModeKind, RoleId, SubstateKey, TestHasher,
+        child_key,
     };
 
     use super::{Access, MemoryStore, StoreError, SubstateStore};
     use crate::modes::{DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount};
 
     fn key(byte: u8) -> SubstateKey {
-        child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[])
+        child_key(
+            &TestHasher,
+            Address::new([byte; 31], AddressClass::Component),
+            RoleId(1),
+            &[],
+        )
     }
 
     fn tx(byte: u8) -> TxHash {
@@ -862,7 +868,7 @@ mod tests {
     #[test]
     fn scans_truncate_at_the_cap_and_record_the_interval() {
         let mut store = MemoryStore::new();
-        let book = Address([9; 16]);
+        let book = Address::new([9; 31], AddressClass::Component);
         let asks = RoleId(4);
         for order in [5u128, 10, 15, 20] {
             store

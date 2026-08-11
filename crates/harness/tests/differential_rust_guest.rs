@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, child_key,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::build_transfer_component;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -32,8 +32,18 @@ fn test_hash(data: &[u8]) -> [u8; 32] {
 
 fn keys() -> (SubstateKey, SubstateKey) {
     (
-        child_key(&TestHasher, Address([1; 16]), RoleId(1), &[]),
-        child_key(&TestHasher, Address([2; 16]), RoleId(1), &[]),
+        child_key(
+            &TestHasher,
+            Address::new([1; 31], AddressClass::Component),
+            RoleId(1),
+            &[],
+        ),
+        child_key(
+            &TestHasher,
+            Address::new([2; 31], AddressClass::Component),
+            RoleId(1),
+            &[],
+        ),
     )
 }
 

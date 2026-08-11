@@ -205,12 +205,12 @@ mod tests {
     use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
 
     use super::{MAX_CELL_VALUE_LEN, Movement, StateWrites};
-    use crate::address::{Address, LocalKey, SubstateKey};
+    use crate::address::{Address, AddressClass, LEAF_KEY_BYTES, LocalKey, SubstateKey};
     use crate::amount::{amount_cell, read_amount};
 
     fn key(owner: u8, local: u8) -> SubstateKey {
         SubstateKey {
-            owner: Address([owner; 16]),
+            owner: Address::new([owner; 31], AddressClass::Component),
             local: LocalKey([local; 16]),
         }
     }
@@ -348,7 +348,8 @@ mod tests {
         // entries, which is the pair to swap — and the empty movements
         // map contributing its own length byte at the end.
         let mut swapped = sorted.clone();
-        let entry_len = 32 + 3; // key, Some tag, value length, one payload byte
+        // key, Some tag, value length, one payload byte
+        let entry_len = LEAF_KEY_BYTES + 3;
         assert_eq!(sorted.len(), 1 + 2 * entry_len + 1);
         for offset in 0..entry_len {
             swapped.swap(1 + offset, 1 + entry_len + offset);

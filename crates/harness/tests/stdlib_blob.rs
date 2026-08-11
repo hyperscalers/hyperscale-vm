@@ -13,8 +13,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, child_key,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    SubstateKey, TestHasher, child_key,
 };
 #[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::build_guest;
@@ -44,9 +44,9 @@ fn test_hash(data: &[u8]) -> [u8; 32] {
 }
 
 /// The account that withdraws, guards, and stamps.
-const SENDER: Address = Address([1; 16]);
+const SENDER: Address = Address::new([1; 31], AddressClass::Component);
 /// The account that receives.
-const RECIPIENT: Address = Address([2; 16]);
+const RECIPIENT: Address = Address::new([2; 31], AddressClass::Component);
 
 fn keys() -> (SubstateKey, SubstateKey) {
     (

@@ -7,25 +7,6 @@ use hyperscale_hbor::{
 };
 use thiserror::Error;
 
-/// A global object's address: its 16-byte owner prefix in the JMT key space.
-///
-/// Every substate an object owns lives under this prefix, and a shard
-/// boundary never cuts through a prefix, so an address resolves to exactly
-/// one shard.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
-#[hbor(transparent)]
-pub struct Address(pub [u8; 16]);
-
-impl fmt::Debug for Address {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Address(")?;
-        for byte in &self.0 {
-            write!(f, "{byte:02x}")?;
-        }
-        write!(f, ")")
-    }
-}
-
 /// The local half of a substate key, assigned within an owner's prefix.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
@@ -50,29 +31,37 @@ pub struct SubstateKey {
     pub local: LocalKey,
 }
 
+/// The byte width of a JMT leaf key: the owner address, then the local
+/// half.
+pub const LEAF_KEY_BYTES: usize = 48;
+
 impl SubstateKey {
-    /// The key as its 32 leaf bytes: owner prefix, then local half. The
+    /// The key as its 48 leaf bytes: owner prefix, then local half. The
     /// same bytes the wire encoding carries and the state tree keys its
     /// leaf by — the key *is* its placement.
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; 32] {
-        let mut bytes = [0u8; 32];
-        bytes[..16].copy_from_slice(&self.owner.0);
-        bytes[16..].copy_from_slice(&self.local.0);
+    pub fn to_bytes(&self) -> [u8; LEAF_KEY_BYTES] {
+        let mut bytes = [0u8; LEAF_KEY_BYTES];
+        bytes[..32].copy_from_slice(&self.owner.to_bytes());
+        bytes[32..].copy_from_slice(&self.local.0);
         bytes
     }
 
-    /// Rebuild a key from its 32 leaf bytes.
-    #[must_use]
-    pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        let mut owner = [0u8; 16];
+    /// Rebuild a key from its 48 leaf bytes.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidAddress`] when the owner half's tag names no class —
+    /// a leaf key is only a key if its owner is an address.
+    pub fn from_bytes(bytes: [u8; LEAF_KEY_BYTES]) -> Result<Self, InvalidAddress> {
+        let mut owner = [0u8; 32];
         let mut local = [0u8; 16];
-        owner.copy_from_slice(&bytes[..16]);
-        local.copy_from_slice(&bytes[16..]);
-        Self {
-            owner: Address(owner),
+        owner.copy_from_slice(&bytes[..32]);
+        local.copy_from_slice(&bytes[32..]);
+        Ok(Self {
+            owner: Address::from_bytes(owner)?,
             local: LocalKey(local),
-        }
+        })
     }
 }
 
@@ -210,10 +199,14 @@ pub struct WrongClass {
 /// Thirty-one body bytes put the birthday bound at roughly 2^124, which
 /// is what buys self-certification with no registration step to fall back
 /// on.
+///
+/// The address is also the owner prefix in the JMT key space: every
+/// substate an object owns lives under it, and a shard boundary never
+/// cuts through a prefix, so an address resolves to exactly one shard.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct GlobalAddress([u8; 32]);
+pub struct Address([u8; 32]);
 
-impl GlobalAddress {
+impl Address {
     /// The address with `body` under `class`.
     #[must_use]
     pub const fn new(body: [u8; 31], class: AddressClass) -> Self {
@@ -270,9 +263,9 @@ impl GlobalAddress {
     }
 }
 
-impl fmt::Debug for GlobalAddress {
+impl fmt::Debug for Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "GlobalAddress(")?;
+        write!(f, "Address(")?;
         for byte in &self.0 {
             write!(f, "{byte:02x}")?;
         }
@@ -280,18 +273,18 @@ impl fmt::Debug for GlobalAddress {
     }
 }
 
-impl HborWidth for GlobalAddress {
+impl HborWidth for Address {
     const MIN_ENCODED_LEN: usize = 32;
 }
 
-impl HborEncode for GlobalAddress {
+impl HborEncode for Address {
     fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
         encoder.write_fixed(&self.0);
         Ok(())
     }
 }
 
-impl HborDecode for GlobalAddress {
+impl HborDecode for Address {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         let bytes: [u8; 32] = decoder.read_array()?;
         Self::from_bytes(bytes).map_err(|err| DecodeError::InvalidDiscriminant(err.tag))
@@ -305,7 +298,7 @@ macro_rules! class_addr {
         /// Constructed only through a checked conversion, so holding one
         /// is evidence of its class.
         #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(GlobalAddress);
+        pub struct $name(Address);
 
         impl $name {
             /// The class every value of this type carries.
@@ -313,15 +306,15 @@ macro_rules! class_addr {
 
             /// The address, with its class forgotten.
             #[must_use]
-            pub const fn address(self) -> GlobalAddress {
+            pub const fn address(self) -> Address {
                 self.0
             }
         }
 
-        impl TryFrom<GlobalAddress> for $name {
+        impl TryFrom<Address> for $name {
             type Error = WrongClass;
 
-            fn try_from(address: GlobalAddress) -> Result<Self, Self::Error> {
+            fn try_from(address: Address) -> Result<Self, Self::Error> {
                 let found = address.class();
                 if found == AddressClass::$class {
                     Ok(Self(address))
@@ -331,7 +324,7 @@ macro_rules! class_addr {
             }
         }
 
-        impl From<$name> for GlobalAddress {
+        impl From<$name> for Address {
             fn from(value: $name) -> Self {
                 value.0
             }
@@ -374,33 +367,43 @@ class_addr! {
 mod tests {
     use hyperscale_hbor::{assert_canonical, from_slice, to_vec};
 
-    use super::{
-        Address, AddressClass, ComponentAddr, GlobalAddress, LocalKey, PrincipalAddr, SubstateKey,
-    };
+    use super::{Address, AddressClass, ComponentAddr, LocalKey, PrincipalAddr, SubstateKey};
+
+    fn owner(seed: u8) -> Address {
+        Address::new([seed; 31], AddressClass::Component)
+    }
 
     #[test]
     fn addresses_are_their_bytes_on_the_wire() {
-        assert_eq!(to_vec(&Address([7; 16])).unwrap(), vec![7u8; 16]);
+        let address = owner(7);
+        assert_eq!(to_vec(&address).unwrap(), address.to_bytes());
         let key = SubstateKey {
-            owner: Address([1; 16]),
+            owner: owner(1),
             local: LocalKey([2; 16]),
         };
-        assert_eq!(to_vec(&key).unwrap().len(), 32);
+        assert_eq!(to_vec(&key).unwrap().len(), 48);
         assert_canonical(&key);
     }
 
     #[test]
     fn a_key_and_its_leaf_bytes_round_trip() {
         let key = SubstateKey {
-            owner: Address([1; 16]),
+            owner: owner(1),
             local: LocalKey([2; 16]),
         };
         let bytes = key.to_bytes();
-        assert_eq!(&bytes[..16], &[1; 16]);
-        assert_eq!(&bytes[16..], &[2; 16]);
-        assert_eq!(SubstateKey::from_bytes(bytes), key);
+        assert_eq!(&bytes[..32], &key.owner.to_bytes());
+        assert_eq!(&bytes[32..], &[2; 16]);
+        assert_eq!(SubstateKey::from_bytes(bytes).unwrap(), key);
         // The leaf bytes are the wire encoding: one layout, not two.
         assert_eq!(to_vec(&key).unwrap(), bytes);
+    }
+
+    #[test]
+    fn a_leaf_key_whose_owner_names_no_class_is_not_a_key() {
+        let mut bytes = [4u8; 48];
+        bytes[31] = 0x00;
+        assert!(SubstateKey::from_bytes(bytes).is_err());
     }
 
     const CLASSES: [AddressClass; 5] = [
@@ -414,7 +417,7 @@ mod tests {
     #[test]
     fn a_class_is_recoverable_from_the_address_it_tagged() {
         for class in CLASSES {
-            let address = GlobalAddress::new([9; 31], class);
+            let address = Address::new([9; 31], class);
             assert_eq!(address.class(), class);
             assert_eq!(address.body(), [9; 31]);
             assert_eq!(address.to_bytes()[31], class.tag());
@@ -445,32 +448,32 @@ mod tests {
             assert_eq!(AddressClass::from_tag(tag), None);
             let mut bytes = [3u8; 32];
             bytes[31] = tag;
-            let err = GlobalAddress::from_bytes(bytes).unwrap_err();
+            let err = Address::from_bytes(bytes).unwrap_err();
             assert_eq!(err.tag, tag);
             // The same refusal on the wire: an address a decoder cannot
             // classify is not an address it accepts and classifies later.
-            assert!(from_slice::<GlobalAddress>(&bytes).is_err());
+            assert!(from_slice::<Address>(&bytes).is_err());
         }
     }
 
     #[test]
     fn a_zeroed_address_fails_closed() {
-        assert!(GlobalAddress::from_bytes([0; 32]).is_err());
+        assert!(Address::from_bytes([0; 32]).is_err());
     }
 
     #[test]
     fn a_global_address_is_its_bytes_on_the_wire() {
-        let address = GlobalAddress::new([5; 31], AddressClass::Resource);
+        let address = Address::new([5; 31], AddressClass::Resource);
         let encoded = to_vec(&address).unwrap();
         assert_eq!(encoded, address.to_bytes());
         assert_eq!(encoded.len(), 32);
-        assert_eq!(from_slice::<GlobalAddress>(&encoded).unwrap(), address);
+        assert_eq!(from_slice::<Address>(&encoded).unwrap(), address);
         assert_canonical(&address);
     }
 
     #[test]
     fn a_typed_address_refuses_every_other_class() {
-        let principal = GlobalAddress::new([1; 31], AddressClass::Principal);
+        let principal = Address::new([1; 31], AddressClass::Principal);
         assert_eq!(
             PrincipalAddr::try_from(principal).unwrap().address(),
             principal
@@ -480,7 +483,7 @@ mod tests {
         assert_eq!(err.found, AddressClass::Principal);
 
         for class in CLASSES {
-            let address = GlobalAddress::new([2; 31], class);
+            let address = Address::new([2; 31], class);
             assert_eq!(
                 PrincipalAddr::try_from(address).is_ok(),
                 class == AddressClass::Principal

@@ -389,6 +389,12 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
             hi: Box::new(rebind(*hi, depth)),
             lo: Box::new(rebind(*lo, depth)),
         },
+        Expr::SelfResource { material } => Expr::SelfResource {
+            material: material
+                .into_iter()
+                .map(|expr| rebind(expr, depth))
+                .collect(),
+        },
         Expr::ChildKey {
             owner,
             role,

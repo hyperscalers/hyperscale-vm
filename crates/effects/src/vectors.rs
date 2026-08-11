@@ -13,7 +13,7 @@ use crate::hash::{Hash32, Hasher};
 use crate::metadata::PackageHash;
 use crate::stdlib::XRD;
 use crate::types::{
-    AddressClass, GlobalAddress, SchemeId, component_address, config_hash, native_address,
+    Address, AddressClass, SchemeId, component_address, config_hash, native_address,
     package_address, principal_address, resource_address,
 };
 
@@ -32,7 +32,7 @@ pub const PACKAGE: PackageHash = PackageHash(Hash32([0x70; 32]));
 /// The names are stable and are what a pinned table keys on, so a case
 /// added here shows up as a missing row rather than a shifted one.
 #[must_use]
-pub fn address_vectors(hasher: &dyn Hasher) -> Vec<(&'static str, GlobalAddress)> {
+pub fn address_vectors(hasher: &dyn Hasher) -> Vec<(&'static str, Address)> {
     let config = config_hash(hasher, CONFIG_LEAF);
     let minter = component_address(hasher, PACKAGE, config, SALT);
     vec![

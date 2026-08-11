@@ -2,7 +2,9 @@
 //! equals the sum of its cells through same-shard transfers, and moves
 //! only on mint and cross-shard legs.
 
-use hyperscale_vm_effects::{Address, Hash32, RoleId, SubstateKey, TestHasher, Value, child_key};
+use hyperscale_vm_effects::{
+    Address, AddressClass, Hash32, RoleId, SubstateKey, TestHasher, Value, child_key,
+};
 use hyperscale_vm_kernel::{
     DeltaOp, MemoryStore, SubstateStore, SupplyLedger, TxHash, decode_amount, encode_amount,
 };
@@ -12,7 +14,7 @@ const VAULT: RoleId = RoleId(1);
 fn vault(owner: u8, resource: Address) -> SubstateKey {
     child_key(
         &TestHasher,
-        Address([owner; 16]),
+        Address::new([owner; 31], AddressClass::Component),
         VAULT,
         &[Value::Address(resource).canonical_bytes()],
     )
@@ -36,7 +38,7 @@ fn cell_total(store: &mut MemoryStore, cells: &[SubstateKey]) -> u128 {
 
 #[test]
 fn supply_tracks_cells_through_transfers_and_cross_shard_legs() {
-    let resource = Address([0xEE; 16]);
+    let resource = Address::new([0xEE; 31], AddressClass::Component);
     let alice = vault(1, resource);
     let bob = vault(2, resource);
     let cells = [alice, bob];

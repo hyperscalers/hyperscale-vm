@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubintentHash,
-    SubstateKey, TestHasher, child_key, nullifier_key,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    SubintentHash, SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MemoryStore, Movement,
@@ -33,7 +33,12 @@ const fn env() -> EnvInputs {
 }
 
 fn cell(byte: u8) -> SubstateKey {
-    child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[])
+    child_key(
+        &TestHasher,
+        Address::new([byte; 31], AddressClass::Component),
+        RoleId(1),
+        &[],
+    )
 }
 
 fn transfer_declared(amount: u128) -> EffectSet {
@@ -74,7 +79,7 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
 }
 
 fn owned_by(byte: u8) -> Locality {
-    Locality::Owned(Arc::new(move |owner: Address| owner.0[0] == byte))
+    Locality::Owned(Arc::new(move |owner: Address| owner.to_bytes()[0] == byte))
 }
 
 #[test]
@@ -159,7 +164,7 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
 fn signed_nullifier() -> SubstateKey {
     nullifier_key(
         &TestHasher,
-        Address([PAYER_BYTE; 16]),
+        Address::new([PAYER_BYTE; 31], AddressClass::Component),
         SubintentHash(Hash32([0x99; 32])),
     )
 }

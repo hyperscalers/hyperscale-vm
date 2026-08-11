@@ -22,9 +22,9 @@ use hyperscale_vm_effects::stdlib::{
     UNBONDING, VALIDATORS, VAULT, VOTE, account_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, EnvelopeTree, Hasher, InstanceMeta, InstanceRegistry, IntentDecl, ManifestGraph,
-    MetadataCache, PackageHash, PrefixShardResolver, SubstateKey, TestHasher, Value, admit_tree,
-    child_key, route_tree,
+    Address, AddressClass, EnvelopeTree, Hasher, InstanceMeta, InstanceRegistry, IntentDecl,
+    ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, SubstateKey, TestHasher, Value,
+    admit_tree, child_key, resource_address, route_tree,
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -45,19 +45,23 @@ use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
-const ALICE: Address = Address([0x10; 16]);
+const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
 /// The pool instance: an address like any other, distinguished only by the
 /// package its registry entry names.
-const POOL: Address = Address([0x50; 16]);
+const POOL: Address = Address::new([0x50; 31], AddressClass::Component);
 /// The resource a delegation is denominated in.
-const XRD: Address = Address([0xE1; 16]);
-/// The resource this pool issues against delegations.
-const UNIT: Address = Address([0xE2; 16]);
+const XRD: Address = Address::new([0xE1; 31], AddressClass::Component);
+/// The resource this pool issues against delegations — derived from the
+/// pool, not configured, which is what the signature's `SelfResource`
+/// evaluates to.
+fn unit() -> Address {
+    resource_address(&TestHasher, POOL, &[])
+}
 /// The principal this pool's validator surface admits. Nothing here
 /// enforces that — the check is at admission, against the envelope's
 /// signatures — so what these tests exercise is the surface's behaviour
 /// once a call reaches it.
-const OPERATOR: Address = Address([0x0B; 16]);
+const OPERATOR: Address = Address::new([0x0B; 31], AddressClass::Component);
 const FUEL: u64 = 1_000_000_000;
 
 /// A validator the pool operates, and the consensus material a
@@ -105,11 +109,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
         POOL,
         InstanceMeta {
             package: staking_pkg(),
-            config: vec![
-                Value::Address(XRD),
-                Value::Address(UNIT),
-                Value::Address(OPERATOR),
-            ],
+            config: vec![Value::Address(XRD), Value::Address(OPERATOR)],
         },
     );
     (cache, instances)
@@ -139,7 +139,7 @@ fn stake_graph(amount: u128) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(ALICE, "withdraw", (XRD, amount));
     let [units] = b.call(POOL, "stake", (funds.resource_is(XRD),));
-    let [] = b.call(ALICE, "deposit", (units.resource_is(UNIT),));
+    let [] = b.call(ALICE, "deposit", (units.resource_is(unit()),));
     b.build().expect("every output is consumed")
 }
 
@@ -148,8 +148,8 @@ fn stake_graph(amount: u128) -> ManifestGraph {
 /// not built.
 fn unstake_graph(amount: u128) -> ManifestGraph {
     let mut b = GraphBuilder::new();
-    let [units] = b.call(ALICE, "withdraw", (UNIT, amount));
-    let [] = b.call(POOL, "unstake", (units.resource_is(UNIT),));
+    let [units] = b.call(ALICE, "withdraw", (unit(), amount));
+    let [] = b.call(POOL, "unstake", (units.resource_is(unit()),));
     b.build().expect("every output is consumed")
 }
 
@@ -338,7 +338,7 @@ fn seeded_store(xrd: u128, units: u128) -> MemoryStore {
         .unwrap();
     if units > 0 {
         store
-            .write(vault(ALICE, UNIT), encode_amount(units).to_vec())
+            .write(vault(ALICE, unit()), encode_amount(units).to_vec())
             .unwrap();
     }
     store.clear_log();
@@ -455,7 +455,7 @@ fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
     assert_eq!(amount_of(&outcome, vault(ALICE, XRD)), 50);
     assert_eq!(amount_of(&outcome, vault(POOL, XRD)), 100);
     // The position came back as an ordinary balance, at par.
-    assert_eq!(amount_of(&outcome, vault(ALICE, UNIT)), 100);
+    assert_eq!(amount_of(&outcome, vault(ALICE, unit())), 100);
 
     // What the beacon's witness lift consumes, pinned at the boundary that
     // produces it: the pool's own identifier and the staked amount.
@@ -478,7 +478,7 @@ fn returned_units_are_consumed_and_recorded_as_unbonding() -> Result<()> {
     let receipt = &outcome.receipts[&entry.tx];
     assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
 
-    assert_eq!(amount_of(&outcome, vault(ALICE, UNIT)), 60);
+    assert_eq!(amount_of(&outcome, vault(ALICE, unit())), 60);
     assert_eq!(amount_of(&outcome, unbonding(POOL, XRD)), 40);
     // Nothing came back: the release leg is a later method, so the units
     // are gone and the delegator holds no claim on the pool's vault yet.

@@ -7,17 +7,17 @@
 //! checked here against the real evaluator rather than against a fixture.
 
 use hyperscale_vm_effects::{
-    Address, Declaration, Effect, EffectSet, EffectTarget, EvalInputs, Hash32,
+    Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, EvalInputs, Hash32,
     MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature, Mode, ModeKind, ParamType, RoleId,
     SubstateKey, TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
 };
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym};
 use hyperscale_vm_sdk::{Blueprint, TargetShape, Trace};
 
-const BASKET: Address = Address([0x50; 16]);
-const RES_X: Address = Address([0xE1; 16]);
-const RES_Y: Address = Address([0xE2; 16]);
-const RES_Z: Address = Address([0xE3; 16]);
+const BASKET: Address = Address::new([0x50; 31], AddressClass::Component);
+const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
+const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
+const RES_Z: Address = Address::new([0xE3; 31], AddressClass::Component);
 const VAULT: RoleId = RoleId(1);
 const CONFIG: RoleId = RoleId(3);
 
@@ -115,7 +115,12 @@ fn the_same_declaration_scales_with_configuration_alone() {
 
     for width in [0_usize, 1, 8, 64] {
         let holdings: Vec<Value> = (0..width)
-            .map(|i| Value::Address(Address([u8::try_from(i).unwrap(); 16])))
+            .map(|i| {
+                Value::Address(Address::new(
+                    [u8::try_from(i).unwrap(); 31],
+                    AddressClass::Component,
+                ))
+            })
             .collect();
         let set = declared(signature, &[], &[Value::List(holdings)]);
         assert_eq!(set.len(), width + 1, "width {width}");
@@ -225,8 +230,8 @@ fn the_handle_plan_matches_what_the_kernel_materializes() {
                 continue; // a degenerate pair collapses; see the test below
             }
             let config = vec![
-                Value::Address(Address([x; 16])),
-                Value::Address(Address([y; 16])),
+                Value::Address(Address::new([x; 31], AddressClass::Component)),
+                Value::Address(Address::new([y; 31], AddressClass::Component)),
             ];
             let declaration = evaluated(method.signature(), &[], &config);
 

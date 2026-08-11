@@ -144,14 +144,14 @@ pub fn move_object<S: SubstateStore>(
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{Address, Hash32, ManifestHash, TestHasher};
+    use hyperscale_vm_effects::{Address, AddressClass, Hash32, ManifestHash, TestHasher};
 
     use super::{CreationContext, MoveError, move_object};
     use crate::store::{MemoryStore, StoreError, SubstateStore};
 
     fn context(owner_byte: u8) -> CreationContext {
         CreationContext::new(
-            Address([owner_byte; 16]),
+            Address::new([owner_byte; 31], AddressClass::Component),
             ManifestHash(Hash32([7; 32])),
             2,
             0,
@@ -179,15 +179,27 @@ mod tests {
         let mut ctx = context(1);
         let source = ctx.create(&mut store, &TestHasher, vec![9]).unwrap();
 
-        let destination = move_object(&mut store, source, Address([2; 16])).unwrap();
-        assert_eq!(destination.owner, Address([2; 16]));
+        let destination = move_object(
+            &mut store,
+            source,
+            Address::new([2; 31], AddressClass::Component),
+        )
+        .unwrap();
+        assert_eq!(
+            destination.owner,
+            Address::new([2; 31], AddressClass::Component)
+        );
         assert_eq!(destination.local, source.local);
         assert_eq!(store.read(source).unwrap(), None);
         assert_eq!(store.read(destination).unwrap(), Some(vec![9]));
 
         // Nothing left at the source to move.
         assert_eq!(
-            move_object(&mut store, source, Address([3; 16])),
+            move_object(
+                &mut store,
+                source,
+                Address::new([3; 31], AddressClass::Component)
+            ),
             Err(MoveError::Missing(source))
         );
         // A move can never destroy destination state: slot zero under owner
@@ -203,7 +215,11 @@ mod tests {
         // A locked substate cannot move.
         let locked = ctx.create_locked(&mut store, &TestHasher, vec![4]).unwrap();
         assert_eq!(
-            move_object(&mut store, locked, Address([5; 16])),
+            move_object(
+                &mut store,
+                locked,
+                Address::new([5; 31], AddressClass::Component)
+            ),
             Err(MoveError::Store(StoreError::Locked(locked)))
         );
     }

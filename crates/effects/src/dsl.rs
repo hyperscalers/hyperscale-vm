@@ -14,7 +14,7 @@ use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::types::{
     Address, Effect, EffectSet, EffectTarget, LocalKey, Mode, ReserveOverflow, RoleId, SubstateKey,
-    Value, child_key,
+    Value, child_key, resource_address,
 };
 
 /// The bound on any collection a `for-each` clause maps over. Keeps
@@ -62,6 +62,18 @@ pub enum Expr {
         map: Box<Self>,
         /// The key to match against each pair's first field.
         key: Box<Self>,
+    },
+    /// A resource the target instance mints: the resource address whose
+    /// provenance is this instance.
+    ///
+    /// Derived rather than configured, and deliberately so — an instance's
+    /// address commits its configuration, so a configured field naming a
+    /// value derived from that address could not be written down. The
+    /// material separates the resources one instance issues.
+    SelfResource {
+        /// The material separating this resource from the instance's
+        /// others, canonically encoded into the derivation.
+        material: Vec<Self>,
     },
     /// The canonical child key `owner | H(role, material…)`.
     ChildKey {
@@ -617,6 +629,17 @@ fn eval_expr(
             }
             Err(EvalError::LookupMiss)
         }
+        Expr::SelfResource { material } => {
+            let mut encoded = Vec::with_capacity(material.len());
+            for expr in material {
+                encoded.push(eval_expr(expr, inputs, hasher, bindings, deeper)?.canonical_bytes());
+            }
+            Ok(Value::Address(resource_address(
+                hasher,
+                inputs.self_addr,
+                &encoded,
+            )))
+        }
         Expr::ChildKey {
             owner,
             role,
@@ -730,11 +753,13 @@ mod tests {
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::manifest::ManifestHash;
-    use crate::types::{Address, Effect, EffectTarget, Mode, RoleId, Value, child_key};
+    use crate::types::{
+        Address, AddressClass, Effect, EffectTarget, Mode, RoleId, Value, child_key,
+    };
 
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
         EvalInputs {
-            self_addr: Address([7; 16]),
+            self_addr: Address::new([7; 31], AddressClass::Component),
             args,
             config,
             node_index: 3,
@@ -751,7 +776,7 @@ mod tests {
         let point = |byte: u8| {
             TargetExpr::Point(Expr::Literal(Value::Key(child_key(
                 &TestHasher,
-                Address([byte; 16]),
+                Address::new([byte; 31], AddressClass::Component),
                 RoleId(1),
                 &[],
             ))))
@@ -794,7 +819,10 @@ mod tests {
     #[test]
     fn projections_and_lookup() {
         let args = [
-            Value::Tuple(vec![Value::U64(1), Value::Address(Address([2; 16]))]),
+            Value::Tuple(vec![
+                Value::U64(1),
+                Value::Address(Address::new([2; 31], AddressClass::Component)),
+            ]),
             Value::List(vec![
                 Value::Tuple(vec![Value::U64(10), Value::U64(100)]),
                 Value::Tuple(vec![Value::U64(20), Value::U64(200)]),
@@ -804,7 +832,10 @@ mod tests {
         let field = Expr::Field(Box::new(Expr::Arg(0)), 1);
         assert_eq!(
             evaluate_expr(&field, &ins, &TestHasher),
-            Ok(Value::Address(Address([2; 16])))
+            Ok(Value::Address(Address::new(
+                [2; 31],
+                AddressClass::Component
+            )))
         );
         let hit = Expr::Lookup {
             map: Box::new(Expr::Arg(1)),
@@ -860,12 +891,12 @@ mod tests {
         // the recipient's vault for that resource.
         let args = [Value::List(vec![
             Value::Tuple(vec![
-                Value::Address(Address([1; 16])),
-                Value::Address(Address([0xAA; 16])),
+                Value::Address(Address::new([1; 31], AddressClass::Component)),
+                Value::Address(Address::new([0xAA; 31], AddressClass::Component)),
             ]),
             Value::Tuple(vec![
-                Value::Address(Address([2; 16])),
-                Value::Address(Address([0xBB; 16])),
+                Value::Address(Address::new([2; 31], AddressClass::Component)),
+                Value::Address(Address::new([0xBB; 31], AddressClass::Component)),
             ]),
         ])];
         let ins = inputs(&args, &[]);
@@ -882,12 +913,15 @@ mod tests {
         }];
         let set = evaluate_effects(&clauses, &ins, &TestHasher).unwrap();
         assert_eq!(set.len(), 2);
-        for (owner, resource) in [([1u8; 16], [0xAAu8; 16]), ([2; 16], [0xBB; 16])] {
+        for (owner, resource) in [([1u8; 31], [0xAAu8; 31]), ([2; 31], [0xBB; 31])] {
             let key = child_key(
                 &TestHasher,
-                Address(owner),
+                Address::new(owner, AddressClass::Component),
                 RoleId(1),
-                &[Value::Address(Address(resource)).canonical_bytes()],
+                &[
+                    Value::Address(Address::new(resource, AddressClass::Component))
+                        .canonical_bytes(),
+                ],
             );
             assert!(set.contains(&Effect {
                 target: EffectTarget::Point(key),
@@ -1040,7 +1074,10 @@ mod tests {
 
     #[test]
     fn reserve_amount_comes_from_arguments() {
-        let args = [Value::Address(Address([0xCC; 16])), Value::U128(75)];
+        let args = [
+            Value::Address(Address::new([0xCC; 31], AddressClass::Component)),
+            Value::U128(75),
+        ];
         let ins = inputs(&args, &[]);
         let clauses = [Clause::Effect {
             target: TargetExpr::Point(Expr::ChildKey {

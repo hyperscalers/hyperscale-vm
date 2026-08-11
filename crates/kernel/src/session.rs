@@ -1193,8 +1193,8 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        Address, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId, SubstateKey, TestHasher,
-        child_key,
+        Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId, SubstateKey,
+        TestHasher, child_key,
     };
 
     use super::{
@@ -1206,7 +1206,12 @@ mod tests {
     use crate::store::{MemoryStore, StoreError, SubstateStore};
 
     fn key(byte: u8) -> SubstateKey {
-        child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[])
+        child_key(
+            &TestHasher,
+            Address::new([byte; 31], AddressClass::Component),
+            RoleId(1),
+            &[],
+        )
     }
 
     const fn tx(byte: u8) -> TxHash {
@@ -1440,7 +1445,7 @@ mod tests {
 
     #[test]
     fn interval_operations_bound_their_index_and_order() {
-        let owner = Address([9; 16]);
+        let owner = Address::new([9; 31], AddressClass::Component);
         let collection = RoleId(4);
         let mut store = MemoryStore::new();
         store.entry_write(owner, collection, 10, vec![1]).unwrap();
@@ -1483,7 +1488,7 @@ mod tests {
 
     #[test]
     fn a_read_interval_refuses_every_mutation() {
-        let owner = Address([9; 16]);
+        let owner = Address::new([9; 31], AddressClass::Component);
         let set = declared(&[Effect {
             target: EffectTarget::Range {
                 owner,
@@ -1565,7 +1570,7 @@ mod tests {
         // A locked read of a collection interval has no capability form.
         let set = declared(&[Effect {
             target: EffectTarget::Range {
-                owner: Address([9; 16]),
+                owner: Address::new([9; 31], AddressClass::Component),
                 collection: RoleId(4),
                 lo: 0,
                 hi: 1,
@@ -1601,7 +1606,10 @@ mod tests {
         // comes from the runner entering a node — never from the guest,
         // which would make it a claim.
         let mut session = session_over(MemoryStore::new(), &EffectSet::new());
-        let (first, second) = (Address([0x11; 16]), Address([0x22; 16]));
+        let (first, second) = (
+            Address::new([0x11; 31], AddressClass::Component),
+            Address::new([0x22; 31], AddressClass::Component),
+        );
 
         session.enter_invocation(first);
         session.emit(3, b"one".to_vec()).unwrap();
@@ -1633,7 +1641,7 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &EffectSet::new());
         assert_eq!(session.emit(0, Vec::new()), Err(SessionTrap::NoInvocation));
 
-        session.enter_invocation(Address([7; 16]));
+        session.enter_invocation(Address::new([7; 31], AddressClass::Component));
         assert_eq!(
             session.emit(MAX_EVENT_TYPES, Vec::new()),
             Err(SessionTrap::EventTypeOutOfRange(MAX_EVENT_TYPES)),
@@ -1667,7 +1675,7 @@ mod tests {
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
-        session.enter_invocation(Address([9; 16]));
+        session.enter_invocation(Address::new([9; 31], AddressClass::Component));
         session.emit(1, b"paid".to_vec()).unwrap();
         session.delta_sub(0, &encode_amount(1)).unwrap();
 

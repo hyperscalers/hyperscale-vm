@@ -251,14 +251,14 @@ impl Default for GraphBuilder {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        Address, Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, Value,
+        Address, AddressClass, Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, Value,
     };
 
     use super::{BuildError, GraphBuilder, Param};
 
-    const ALICE: Address = Address([0x10; 16]);
-    const BOB: Address = Address([0x20; 16]);
-    const RES: Address = Address([0xE1; 16]);
+    const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
+    const BOB: Address = Address::new([0x20; 31], AddressClass::Component);
+    const RES: Address = Address::new([0xE1; 31], AddressClass::Component);
 
     #[test]
     fn a_transfer_builds_the_hand_written_graph() {

@@ -11,18 +11,28 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Address, Hash32, RoleId, SubstateKey, TestHasher, child_key};
+use hyperscale_vm_effects::{
+    Address, AddressClass, Hash32, RoleId, SubstateKey, TestHasher, child_key,
+};
 use hyperscale_vm_kernel::{
     DeltaOp, MemoryStore, OverlayStore, SubstateStore, TxHash, encode_amount,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
 
-const OWNERS: [Address; 2] = [Address([0xA1; 16]), Address([0xA2; 16])];
+const OWNERS: [Address; 2] = [
+    Address::new([0xA1; 31], AddressClass::Component),
+    Address::new([0xA2; 31], AddressClass::Component),
+];
 const COLLECTIONS: [RoleId; 2] = [RoleId(3), RoleId(4)];
 
 fn cell(byte: u8) -> SubstateKey {
-    child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[])
+    child_key(
+        &TestHasher,
+        Address::new([byte; 31], AddressClass::Component),
+        RoleId(1),
+        &[],
+    )
 }
 
 const fn tx(byte: u8) -> TxHash {

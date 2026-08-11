@@ -911,7 +911,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use hyperscale_vm_effects::{
-        Address, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId, TestHasher, child_key,
+        Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId, TestHasher,
+        child_key,
     };
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
@@ -922,7 +923,7 @@ mod tests {
     use crate::session::MaterializeError;
     use crate::store::StoreError;
 
-    const BOOK: Address = Address([0x77; 16]);
+    const BOOK: Address = Address::new([0x77; 31], AddressClass::Component);
     const ASKS: RoleId = RoleId(4);
 
     const fn nth_mode(index: u8) -> Mode {
@@ -942,7 +943,7 @@ mod tests {
             (0u8..4, 0u8..5).prop_map(|(key, mode)| Effect {
                 target: EffectTarget::Point(child_key(
                     &TestHasher,
-                    Address([0xC0 + key; 16]),
+                    Address::new([0xC0 + key; 31], AddressClass::Component),
                     RoleId(1),
                     &[],
                 )),
@@ -1036,7 +1037,12 @@ mod tests {
     /// that cannot produce one.
     #[test]
     fn only_the_senders_own_defects_are_priced_to_them() {
-        let key = child_key(&TestHasher, Address([1; 16]), RoleId(1), &[]);
+        let key = child_key(
+            &TestHasher,
+            Address::new([1; 31], AddressClass::Component),
+            RoleId(1),
+            &[],
+        );
 
         for sender_fault in [
             MaterializeError::MutationOfLocked(key),

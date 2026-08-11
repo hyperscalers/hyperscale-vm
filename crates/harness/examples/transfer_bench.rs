@@ -13,9 +13,9 @@ use std::time::Instant;
 
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
-    Address, Declaration, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
-    MetadataCache, NodeCall, PackageHash, PrefixShardResolver, SubstateKey, TestHasher, Value,
-    admit, child_key, route,
+    Address, AddressClass, Declaration, Hash32, Hasher, InstanceMeta, InstanceRegistry,
+    ManifestGraph, MetadataCache, NodeCall, PackageHash, PrefixShardResolver, SubstateKey,
+    TestHasher, Value, admit, child_key, route,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -33,8 +33,8 @@ use wasmtime::component::{Component, InstancePre, Linker};
 use wasmtime::error::Context;
 use wasmtime::{Engine, Result, Store};
 
-const RES: Address = Address([0xE1; 16]);
-const RECIPIENT: Address = Address([0xFE; 16]);
+const RES: Address = Address::new([0xE1; 31], AddressClass::Component);
+const RECIPIENT: Address = Address::new([0xFE; 31], AddressClass::Component);
 const AMOUNT: u128 = 100;
 const FUEL: u64 = 10_000_000;
 
@@ -50,9 +50,9 @@ const fn env() -> EnvInputs {
 }
 
 fn sender(index: u32) -> Address {
-    let mut bytes = [0x10u8; 16];
+    let mut bytes = [0x10u8; 31];
     bytes[..4].copy_from_slice(&index.to_le_bytes());
-    Address(bytes)
+    Address::new(bytes, AddressClass::Principal)
 }
 
 fn tx(index: u32) -> TxHash {

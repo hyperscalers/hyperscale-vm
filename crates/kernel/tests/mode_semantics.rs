@@ -2,7 +2,7 @@
 //! are invariant under arrival permutation, at the pure-function level and
 //! through the store lifecycle.
 
-use hyperscale_vm_effects::{Address, Hash32, RoleId, TestHasher, child_key};
+use hyperscale_vm_effects::{Address, AddressClass, Hash32, RoleId, TestHasher, child_key};
 use hyperscale_vm_kernel::{
     DeltaOp, MemoryStore, SubstateStore, TxHash, decode_amount, encode_amount, fold_deltas, judge,
 };
@@ -77,7 +77,7 @@ proptest! {
     ) {
         let run = |batch: &[(u8, TxHash, bool, u128)]| {
             let mut store = MemoryStore::new();
-            let cell = |byte: u8| child_key(&TestHasher, Address([byte; 16]), RoleId(1), &[]);
+            let cell = |byte: u8| child_key(&TestHasher, Address::new([byte; 31], AddressClass::Component), RoleId(1), &[]);
             for byte in 0u8..4 {
                 store.write(cell(byte), encode_amount(1 << 40).to_vec()).unwrap();
             }
