@@ -3,16 +3,20 @@
 //! derivation, so a routed declaration names exactly the key the kernel
 //! creates.
 
+use std::collections::BTreeSet;
+
 use hyperscale_vm_effects::{
     Clause, Effect, EffectTarget, Expr, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
     ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
-    PrefixShardResolver, RoleId, ShardResolver, TargetExpr, TestHasher, Value, admit, fresh_id,
-    route,
+    PrefixShardResolver, PrincipalAddr, RoleId, ShardResolver, TargetExpr, TestHasher, Value,
+    admit, fresh_id, route,
 };
 use hyperscale_vm_kernel::{CreationContext, MemoryStore, SubstateStore};
 
 #[test]
 fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
+    // The composer of this one-intent graph; nothing it calls is guarded.
+    const COMPOSER: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
     // A package whose method creates one object and inserts one collection
     // entry at a fresh sequence.
     let mut package = PackageMetadata::default();
@@ -60,15 +64,17 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
                 target: creator.into(),
                 method: "spawn".into(),
                 args: vec![],
+                evidence: BTreeSet::new(),
             },
             GraphNode {
                 target: creator.into(),
                 method: "spawn".into(),
                 args: vec![],
+                evidence: BTreeSet::new(),
             },
         ],
     };
-    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, COMPOSER, &cache, &instances, &TestHasher).expect("admits");
     let identity = admitted.identity();
     let routing = route(
         &admitted,

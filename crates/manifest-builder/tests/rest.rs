@@ -81,7 +81,7 @@ fn a_policy_deposits_what_nothing_claimed() {
     assert_eq!(edge.producer, 1);
     assert_eq!(edge.output, 1);
     assert_eq!(constraints, &vec![Constraint::ResourceIs(RES.into())]);
-    admit(&graph, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn explicit_consumption_wins() {
     // nothing — and the second half went where the author sent it.
     assert_eq!(graph.nodes.len(), 4);
     assert_eq!(graph.nodes[3].target, CallTarget::Principal(BOB));
-    admit(&graph, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn every_rest_edge_is_routed_not_just_the_first() {
         assert_eq!(node.target, CallTarget::Principal(ALICE));
         assert_eq!(node.method, "deposit");
     }
-    admit(&graph, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn the_untyped_builder_routes_by_class_alone() {
     // the strength of the sink's class.
     let mut b = GraphBuilder::new();
     b.rest_to(ALICE);
-    let [_funds] = b.call(ALICE, "withdraw", (RES, 100u128));
+    let [_funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
     let graph = b.build().unwrap();
     assert_eq!(graph.nodes.len(), 2);
     assert_eq!(graph.nodes[1].target, CallTarget::Principal(ALICE));
@@ -139,5 +139,5 @@ fn the_untyped_builder_routes_by_class_alone() {
         panic!("a rest edge binds an edge");
     };
     assert!(constraints.is_empty());
-    admit(&graph, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }

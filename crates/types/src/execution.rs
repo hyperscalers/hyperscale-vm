@@ -80,6 +80,18 @@ pub enum Outcome {
         /// What the edge actually carried.
         amount: u128,
     },
+    /// A guarded call whose presented evidence is not the identity its
+    /// target requires.
+    ///
+    /// The signer's own fault and priced as such: what a node presents
+    /// and what its target requires are both signed content, so a
+    /// composer could have known — while whether the target still admits
+    /// that identity is the target's state, which is why the verdict is
+    /// reached here rather than at admission.
+    Unauthorized {
+        /// The calling node.
+        node: u32,
+    },
     /// A subintent this transaction commits was already spent.
     ///
     /// The composer lost a race it could not have won: canonical order

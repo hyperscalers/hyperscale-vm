@@ -188,6 +188,10 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
         // the whole transaction and cannot tell whose call is running.
         session.enter_invocation(call.target);
 
+        if !authorized(call) {
+            return Err(fail(session, Outcome::Unauthorized { node }, 0));
+        }
+
         // Every signed edge bound this node consumes, before anything
         // runs. The check is the node's, not the callee's: a producer
         // returning less than the consumer declared fails the
@@ -302,6 +306,16 @@ fn edge_cell(outputs: &[Vec<Vec<u8>>], source: u32, output: u32) -> Option<&[u8]
         .ok()
         .and_then(|slot| produced.get(slot))
         .map(Vec::as_slice)
+}
+
+/// Whether a call presents the identity its target requires.
+///
+/// Admission has already checked that a guarded call presents something;
+/// what remains is whether it presents *this*, which is the target's own
+/// question and is asked where the target is.
+fn authorized(call: &NodeCall) -> bool {
+    call.authority
+        .is_none_or(|required| call.evidence.contains(&required))
 }
 
 /// Split an export's returned blob into one cell per output edge.

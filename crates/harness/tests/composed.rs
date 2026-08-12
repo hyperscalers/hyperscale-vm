@@ -115,7 +115,7 @@ fn batch_entry(
     let (cache, instances) = world;
     let identity = tree.hash(&TestHasher);
     let admitted =
-        admit_tree(tree, identity, cache, instances, &TestHasher).context("admission")?;
+        admit_tree(tree, ALICE, identity, cache, instances, &TestHasher).context("admission")?;
     let routing = route_tree(
         &admitted,
         cache,

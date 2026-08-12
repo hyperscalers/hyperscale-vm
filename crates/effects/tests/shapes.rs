@@ -5,15 +5,16 @@
 
 mod common;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use common::{
     ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, book, claims, config_leaf, effect_set,
     pkg, pool, resolver, shard_of, vault, wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
-    EdgeRef, Effect, EffectTarget, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
-    ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit, fresh_id, route,
+    EdgeRef, Effect, EffectTarget, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
+    InstanceRegistry, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit, fresh_id,
+    route,
 };
 
 /// One consumed output edge, unconstrained.
@@ -37,15 +38,17 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
                     GraphArg::Literal(Value::Address(usdc.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: BOB.into(),
                 method: "deposit".into(),
                 args: vec![edge(0, 0)],
+                evidence: BTreeSet::new(),
             },
         ],
     };
-    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
     let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
 
     let expected = BTreeMap::from([
@@ -86,20 +89,23 @@ fn swap_writes_both_reserves_and_reads_the_locked_config() {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(500)),
                 ],
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: pool().into(),
                 method: "swap".into(),
                 args: vec![edge(0, 0), GraphArg::Literal(Value::U128(50))],
+                evidence: BTreeSet::new(),
             },
             GraphNode {
                 target: ALICE.into(),
                 method: "deposit".into(),
                 args: vec![edge(1, 0)],
+                evidence: BTreeSet::new(),
             },
         ],
     };
-    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
     let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
 
     let expected = BTreeMap::from([
@@ -153,15 +159,17 @@ fn order_book_place_inserts_at_a_computed_entry() {
                     GraphArg::Literal(Value::Address(BASE.address())),
                     GraphArg::Literal(Value::U128(10)),
                 ],
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: book().into(),
                 method: "place-ask".into(),
                 args: vec![GraphArg::Literal(Value::U64(105)), edge(0, 0)],
+                evidence: BTreeSet::new(),
             },
         ],
     };
-    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
     let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
 
     let seq = fresh_id(&TestHasher, admitted.identity(), 1, 0, 0);
@@ -206,6 +214,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     GraphArg::Literal(Value::Address(QUOTE.address())),
                     GraphArg::Literal(Value::U128(1000)),
                 ],
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: book().into(),
@@ -215,6 +224,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     GraphArg::Literal(Value::U64(110)),
                     edge(0, 0),
                 ],
+                evidence: BTreeSet::new(),
             },
             // The fill returns what it bought and what it did not spend;
             // both edges have to land somewhere.
@@ -222,15 +232,17 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 target: BOB.into(),
                 method: "deposit".into(),
                 args: vec![edge(1, 0)],
+                evidence: BTreeSet::new(),
             },
             GraphNode {
                 target: BOB.into(),
                 method: "deposit".into(),
                 args: vec![edge(1, 1)],
+                evidence: BTreeSet::new(),
             },
         ],
     };
-    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
     let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
 
     let expected = BTreeMap::from([
@@ -310,15 +322,17 @@ fn a_declared_superset_evaluates_without_error() {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(1)),
                 ],
+                evidence: BTreeSet::new(),
             },
             GraphNode {
                 target: alice.into(),
                 method: "deposit".into(),
                 args: vec![edge(0, 0)],
+                evidence: BTreeSet::new(),
             },
         ],
     };
-    let admitted = admit(&graph, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
     let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
     let set = &routing.per_shard[&shard_of(alice)];
     // The exact effect and the never-touched superset both routed; the

@@ -4,12 +4,14 @@
 
 mod common;
 
-use common::{account_metadata, pkg, resolver, shard_of, vault};
+use std::collections::BTreeSet;
+
+use common::{ALICE, account_metadata, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
     Address, AddressClass, CallSite, ComponentAddr, EdgeRef, Effect, EffectTarget, EvalInputs,
-    Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash,
-    MetadataCache, MethodSignature, Mode, PackageMetadata, ParamType, RoleId, TestHasher, Value,
-    admit, evaluate_expr, route,
+    EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph,
+    ManifestHash, MetadataCache, MethodSignature, Mode, PackageMetadata, ParamType, RoleId,
+    TestHasher, Value, admit, evaluate_expr, route,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
@@ -134,6 +136,7 @@ proptest! {
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(amount)),
                     ],
+                    evidence: [EvidenceRef::IntentSignature].into(),
                 },
                 GraphNode {
                     target: recipient.into(),
@@ -142,10 +145,11 @@ proptest! {
                         edge: EdgeRef { producer: 0, output: 0 },
                         constraints: vec![],
                     }],
+                    evidence: BTreeSet::new(),
                 },
             ],
         };
-        let admitted = admit(&graph, &cache, &instances, &TestHasher).unwrap();
+        let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
         let first = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
         let second = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
         assert_eq!(first, second);
@@ -200,6 +204,7 @@ proptest! {
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(1)),
                     ],
+                    evidence: [EvidenceRef::IntentSignature].into(),
                 },
                 GraphNode {
                     target: router.into(),
@@ -211,10 +216,11 @@ proptest! {
                             constraints: vec![],
                         },
                     ],
+                    evidence: BTreeSet::new(),
                 },
             ],
         };
-        let admitted = admit(&graph, &cache, &instances, &TestHasher).unwrap();
+        let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
         let first = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
         let second = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
         assert_eq!(first, second);
@@ -234,9 +240,11 @@ proptest! {
 /// a shift in any encoding under them moves a value here rather than
 /// passing quietly.
 mod golden {
+    use std::collections::BTreeSet;
+
     use hyperscale_vm_effects::{
-        Address, AddressClass, ComponentAddr, EdgeRef, GraphArg, GraphNode, ManifestGraph, RoleId,
-        TestHasher, Value, child_key, fresh_id, fresh_local,
+        Address, AddressClass, ComponentAddr, EdgeRef, EvidenceRef, GraphArg, GraphNode,
+        ManifestGraph, RoleId, TestHasher, Value, child_key, fresh_id, fresh_local,
     };
 
     fn hex(bytes: &[u8]) -> String {
@@ -278,6 +286,7 @@ mod golden {
                     target: ComponentAddr::new([0x10; 31]).into(),
                     method: "withdraw".into(),
                     args: vec![GraphArg::Literal(Value::U128(7))],
+                    evidence: [EvidenceRef::IntentSignature].into(),
                 },
                 GraphNode {
                     target: ComponentAddr::new([0x20; 31]).into(),
@@ -289,21 +298,22 @@ mod golden {
                         },
                         constraints: vec![],
                     }],
+                    evidence: BTreeSet::new(),
                 },
             ],
         };
         let identity = graph.hash(&TestHasher);
         assert_eq!(
             hex(&identity.0.0),
-            "9657c3c40eb8079b108b84c4500b93efcc7c0771927dc4f5d3aae1b183eddb30"
+            "15387bd1be8120f212af82b61d60660653714fdcfbec8de9a98859080c41d98b"
         );
         assert_eq!(
             format!("{:016x}", fresh_id(&TestHasher, identity, 1, 0, 0)),
-            "09356acabd228b6a"
+            "f60d547d88f36a07"
         );
         assert_eq!(
             hex(&fresh_local(&TestHasher, identity, 1, 0, 0).0),
-            "6a8b22bdca6a350921396181f8e14011"
+            "076af3887d540df6e33131f7d5dfd7c1"
         );
     }
 }

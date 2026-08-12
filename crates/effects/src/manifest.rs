@@ -78,6 +78,16 @@ pub struct Node {
     pub method: String,
     /// The node's bound inputs, in the method's parameter order.
     pub inputs: Vec<NodeInput>,
+    /// The identities this call presents, resolved from the signed
+    /// evidence the node names. Empty for a call requiring none.
+    pub evidence: Vec<Address>,
+    /// The identity a guarded call must present, evaluated from what the
+    /// target itself names. `None` for a method admitting anyone.
+    ///
+    /// Admission has already checked that a guarded call presents
+    /// *something*; whether what it presents is *this* is answered at
+    /// execution, against the target.
+    pub authority: Option<Address>,
 }
 
 /// A manifest: invocation nodes in topological order.

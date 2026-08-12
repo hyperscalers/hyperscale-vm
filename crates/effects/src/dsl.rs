@@ -108,6 +108,32 @@ pub enum Expr {
     },
 }
 
+impl Expr {
+    /// Whether evaluating this reads anything the caller supplies.
+    ///
+    /// An authority expression must not: an identity a caller names is an
+    /// identity that caller can always present, so a method gated on one
+    /// reads as guarded and admits everyone.
+    #[must_use]
+    pub fn reads_call_inputs(&self) -> bool {
+        match self {
+            Self::Arg(_) | Self::Binding(_) => true,
+            Self::Literal(_)
+            | Self::Config(_)
+            | Self::SelfAddr
+            | Self::FreshId { .. }
+            | Self::FreshKey { .. } => false,
+            Self::Field(inner, _) | Self::ResourceOf(inner) => inner.reads_call_inputs(),
+            Self::Lookup { map, key } => map.reads_call_inputs() || key.reads_call_inputs(),
+            Self::Pack { hi, lo } => hi.reads_call_inputs() || lo.reads_call_inputs(),
+            Self::SelfResource { material } => material.iter().any(Self::reads_call_inputs),
+            Self::ChildKey {
+                owner, material, ..
+            } => owner.reads_call_inputs() || material.iter().any(Self::reads_call_inputs),
+        }
+    }
+}
+
 /// A mode with its parameters still unevaluated.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum ModeExpr {

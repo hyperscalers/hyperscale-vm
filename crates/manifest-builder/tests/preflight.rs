@@ -64,11 +64,20 @@ fn a_report_is_what_the_chain_derives() {
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
 
-    let report = preflight(&graph, &cache, &instances, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let report = preflight(
+        &graph,
+        ALICE,
+        &cache,
+        &instances,
+        &TestHasher,
+        &SHARDS,
+        NETWORK,
+    )
+    .unwrap();
 
     // Nothing new is computed here, so everything must equal the direct
     // call it composes.
-    let admitted = admit(&graph, &cache, &instances, &TestHasher).unwrap();
+    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
     let routing = route(&admitted, &cache, &instances, &TestHasher, &SHARDS).unwrap();
     assert_eq!(report.identity(), admitted.identity());
     assert_eq!(report.manifest(), admitted.manifest());
@@ -100,7 +109,16 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
     let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight(&graph, &cache, &instances, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let report = preflight(
+        &graph,
+        ALICE,
+        &cache,
+        &instances,
+        &TestHasher,
+        &SHARDS,
+        NETWORK,
+    )
+    .unwrap();
 
     // Spending is the sender's; being paid is nobody's to refuse, so a
     // transfer composes under one signature.
@@ -116,7 +134,16 @@ fn a_configured_operator_is_the_signature_its_surface_names() {
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
     staking::unjail(&mut b, pool(Some(OPERATOR)), 42).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight(&graph, &cache, &instances, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let report = preflight(
+        &graph,
+        ALICE,
+        &cache,
+        &instances,
+        &TestHasher,
+        &SHARDS,
+        NETWORK,
+    )
+    .unwrap();
 
     // A pool is owned by nobody, so its operator surface names the
     // principal its configuration carries rather than the pool.
@@ -127,22 +154,27 @@ fn a_configured_operator_is_the_signature_its_surface_names() {
     assert_eq!(report.signers(), std::iter::once(OPERATOR).collect());
 }
 
+/// A method requiring an identity the instance does not configure is
+/// unsatisfiable by construction, and admission says so from the
+/// signature and the creation-fixed record alone.
 #[test]
-fn a_slot_naming_no_principal_is_reported_rather_than_refused() {
+fn a_slot_naming_no_principal_is_refused() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
     staking::unjail(&mut b, pool(None), 42).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight(&graph, &cache, &instances, &TestHasher, &SHARDS, NETWORK).unwrap();
-
-    // The transaction is well-formed and routes; what it cannot be is
-    // signed. Saying so is the report's job, not refusing to make one.
-    assert_eq!(
-        report.authority[0].authority,
-        Authority::NoPrincipalConfigured { slot: 1 }
-    );
-    assert_eq!(report.unsatisfiable().count(), 1);
-    assert!(report.signers().is_empty());
+    assert!(matches!(
+        preflight(
+            &graph,
+            ALICE,
+            &cache,
+            &instances,
+            &TestHasher,
+            &SHARDS,
+            NETWORK
+        ),
+        Err(PreflightError::Admission(_))
+    ));
 }
 
 #[test]
@@ -152,7 +184,16 @@ fn every_address_the_report_names_is_named_for_the_network() {
     let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight(&graph, &cache, &instances, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let report = preflight(
+        &graph,
+        ALICE,
+        &cache,
+        &instances,
+        &TestHasher,
+        &SHARDS,
+        NETWORK,
+    )
+    .unwrap();
 
     for (address, text) in &report.named {
         assert_eq!(*text, address.to_text(NETWORK).unwrap());
@@ -163,7 +204,16 @@ fn every_address_the_report_names_is_named_for_the_network() {
         report.named.get(&ALICE.address()).map(String::as_str)
     );
     // A report on one network says nothing about another.
-    let elsewhere = preflight(&graph, &cache, &instances, &TestHasher, &SHARDS, "testnet").unwrap();
+    let elsewhere = preflight(
+        &graph,
+        ALICE,
+        &cache,
+        &instances,
+        &TestHasher,
+        &SHARDS,
+        "testnet",
+    )
+    .unwrap();
     assert_ne!(elsewhere.named, report.named);
 }
 
@@ -175,11 +225,19 @@ fn a_network_word_the_encoding_refuses_fails_once() {
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     assert!(matches!(
-        preflight(&graph, &cache, &instances, &TestHasher, &SHARDS, "Main Net"),
+        preflight(
+            &graph,
+            ALICE,
+            &cache,
+            &instances,
+            &TestHasher,
+            &SHARDS,
+            "Main Net"
+        ),
         Err(PreflightError::Network(TextError::InvalidCharacter(_)))
     ));
     assert!(matches!(
-        preflight(&graph, &cache, &instances, &TestHasher, &SHARDS, ""),
+        preflight(&graph, ALICE, &cache, &instances, &TestHasher, &SHARDS, ""),
         Err(PreflightError::Network(TextError::IncompletePrefix))
     ));
 }
@@ -214,7 +272,16 @@ fn a_composition_names_every_signer_it_needs() {
     env.bind(wants_x, paid_x);
     let tree = env.build().unwrap();
 
-    let report = preflight_tree(&tree, &cache, &instances, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let report = preflight_tree(
+        &tree,
+        ALICE,
+        &cache,
+        &instances,
+        &TestHasher,
+        &SHARDS,
+        NETWORK,
+    )
+    .unwrap();
     // Both withdrawals name their own account, and the subintent's signer
     // signs its declaration; here the two sets coincide.
     assert_eq!(report.signers(), [ALICE, BOB].into_iter().collect());

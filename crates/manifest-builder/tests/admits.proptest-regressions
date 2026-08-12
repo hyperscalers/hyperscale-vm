@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3b680cf6bb5e6ad668dba092e164d1e9e79342b612bcc68872adaa19a252b126 # shrinks to transfers = [Transfer { from: 0, to: 0, amount: 100, split: None, bounds: None }]

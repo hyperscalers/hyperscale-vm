@@ -110,7 +110,7 @@ struct Routed {
 fn routed(world: &(MetadataCache, InstanceRegistry), from: PrincipalAddr) -> Result<Routed> {
     let (cache, instances) = world;
     let graph = transfer_graph(cache, instances, from);
-    let admitted = admit(&graph, cache, instances, &TestHasher)?;
+    let admitted = admit(&graph, from, cache, instances, &TestHasher)?;
     let routing = route(
         &admitted,
         cache,
@@ -228,8 +228,14 @@ fn main() -> Result<()> {
             .map(|index| transfer_graph(&cache, &instances, sender(index)))
             .collect();
         // Warmup.
-        for graph in graphs.iter().take(200) {
-            let admitted = admit(graph, &cache, &instances, &TestHasher)?;
+        for (index, graph) in graphs.iter().enumerate().take(200) {
+            let admitted = admit(
+                graph,
+                sender(u32::try_from(index)?),
+                &cache,
+                &instances,
+                &TestHasher,
+            )?;
             std::hint::black_box(route(
                 &admitted,
                 &cache,
@@ -239,8 +245,14 @@ fn main() -> Result<()> {
             )?);
         }
         let start = Instant::now();
-        for graph in &graphs {
-            let admitted = admit(graph, &cache, &instances, &TestHasher)?;
+        for (index, graph) in graphs.iter().enumerate() {
+            let admitted = admit(
+                graph,
+                sender(u32::try_from(index)?),
+                &cache,
+                &instances,
+                &TestHasher,
+            )?;
             std::hint::black_box(route(
                 &admitted,
                 &cache,

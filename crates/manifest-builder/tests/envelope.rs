@@ -37,7 +37,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
 fn admits(tree: &EnvelopeTree) {
     let (cache, instances) = world();
     let identity = tree.hash(&TestHasher);
-    admit_tree(tree, identity, &cache, &instances, &TestHasher)
+    admit_tree(tree, ALICE, identity, &cache, &instances, &TestHasher)
         .expect("a composed envelope admits");
 }
 

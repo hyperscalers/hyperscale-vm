@@ -92,7 +92,7 @@ proptest! {
         let (cache, instances) = world();
         let mut b = GraphBuilder::new();
         for t in &transfers {
-            let [funds] = b.call(ACCOUNTS[t.from], "withdraw", (RES, t.amount));
+            let [funds] = b.call_signed(ACCOUNTS[t.from], "withdraw", (RES, t.amount));
             let mut funds = funds.resource_is(RES);
             if let Some((min, max)) = t.bounds {
                 funds = funds.min(min).max(max);
@@ -106,7 +106,7 @@ proptest! {
             }
         }
         let graph = b.build().expect("every output is consumed");
-        admit(&graph, &cache, &instances, &TestHasher).expect("a built graph admits");
+        admit(&graph, ACCOUNTS[0], &cache, &instances, &TestHasher).expect("a built graph admits");
     }
 
     #[test]
@@ -140,7 +140,7 @@ proptest! {
                 }
             }
         }
-        admit(&graph, &cache, &instances, &TestHasher).expect("a built graph admits");
+        admit(&graph, ACCOUNTS[0], &cache, &instances, &TestHasher).expect("a built graph admits");
     }
 }
 
@@ -150,9 +150,9 @@ proptest! {
 fn the_walkthrough_transfer_admits() {
     let (cache, instances) = world();
     let mut b = GraphBuilder::new();
-    let [funds] = b.call(ACCOUNTS[0], "withdraw", (RES, 100u128));
+    let [funds] = b.call_signed(ACCOUNTS[0], "withdraw", (RES, 100u128));
     let [] = b.call(ACCOUNTS[1], "deposit", (funds.resource_is(RES),));
     let graph = b.build().unwrap();
-    let admitted = admit(&graph, &cache, &instances, &TestHasher).unwrap();
+    let admitted = admit(&graph, ACCOUNTS[0], &cache, &instances, &TestHasher).unwrap();
     assert_eq!(admitted.manifest().nodes.len(), 2);
 }

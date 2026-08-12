@@ -96,7 +96,7 @@ fn a_typed_edge_asserts_its_own_resource() {
     b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
     assert_eq!(asserted(&graph, 1), vec![Some(RES.into())]);
-    admit(&graph, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
             constraints: vec![Constraint::ResourceIs(RES.into()), Constraint::MinAmount(1)],
         }]
     );
-    admit(&graph, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn a_pool_types_its_units_by_itself() {
     b.call(ALICE, "deposit", (units,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
     assert_eq!(asserted(&graph, 2), vec![Some(unit().into())]);
-    admit(&graph, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn an_edge_nothing_typed_stays_untyped() {
     // The untyped path mints an edge with no declared type behind it.
     // `take` types its outputs by that edge, so neither output can be
     // typed either — and the layer leaves them alone rather than guessing.
-    let [funds] = b.untyped().call(ALICE, "withdraw", (RES, 100u128));
+    let [funds] = b.untyped().call_signed(ALICE, "withdraw", (RES, 100u128));
     let [taken, rest] = b
         .call(splitter(), "take", (funds, 30u128))
         .unwrap()
@@ -177,7 +177,7 @@ fn an_edge_nothing_typed_stays_untyped() {
     assert_eq!(asserted(&graph, 2), vec![None]);
     // Untyped is not unadmitted: admission evaluates the same output
     // expressions against the graph it can see whole.
-    admit(&graph, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
 #[test]
@@ -186,7 +186,7 @@ fn an_asserted_type_carries_through_the_untyped_path() {
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
     // An author who types the edge by hand tells the layer as much as a
     // signature would, and the type propagates from the assertion.
-    let [funds] = b.untyped().call(ALICE, "withdraw", (RES, 100u128));
+    let [funds] = b.untyped().call_signed(ALICE, "withdraw", (RES, 100u128));
     let [taken, rest] = b
         .call(splitter(), "take", (funds.resource_is(RES), 30u128))
         .unwrap()
@@ -270,7 +270,7 @@ fn a_refused_call_appends_nothing() {
     b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
     assert_eq!(graph.nodes.len(), 2);
-    admit(&graph, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
 #[test]

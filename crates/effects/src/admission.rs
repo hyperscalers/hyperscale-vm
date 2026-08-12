@@ -16,12 +16,12 @@
 
 use crate::dsl::{EvalError, EvalInputs, evaluate_expr};
 use crate::envelope::{YieldBinding, YieldParam};
-use crate::graph::{Constraint, GraphArg, ManifestGraph};
+use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
 use crate::hash::Hasher;
 use crate::manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
-use crate::metadata::{InstanceRegistry, MetadataCache, PackageHash, ParamType};
+use crate::metadata::{Accessibility, InstanceRegistry, MetadataCache, PackageHash, ParamType};
 use crate::route::MAX_MANIFEST_NODES;
-use crate::types::{Address, MAX_VALUE_DEPTH, Value};
+use crate::types::{Address, MAX_VALUE_DEPTH, PrincipalAddr, Value};
 
 /// The bound on yield parameters one intent may declare.
 ///
@@ -106,6 +106,34 @@ pub enum AdmissionError {
     /// other's outputs in a cycle.
     #[error("the envelope's yield edges admit no execution order")]
     CyclicYields,
+    /// A guarded method named with no evidence presented.
+    #[error("node {node} calls a guarded method and presents no evidence")]
+    MissingEvidence {
+        /// The offending node.
+        node: u32,
+    },
+    /// Evidence presented to a method that requires none.
+    ///
+    /// Refused rather than ignored: a presentation nothing reads would be
+    /// authority travelling further than its author could see.
+    #[error("node {node} presents evidence to a method that admits anyone")]
+    UnexpectedEvidence {
+        /// The offending node.
+        node: u32,
+    },
+    /// A guarded method whose required identity does not evaluate to an
+    /// address — a package whose declaration is unsatisfiable by anyone.
+    #[error("node {node} requires an authority that is not an address")]
+    AuthorityType {
+        /// The offending node.
+        node: u32,
+    },
+    /// A badge drawn from an intent signature in an unsigned graph.
+    #[error("node {node} presents a signature badge, and its intent is unsigned")]
+    UnsignedEvidence {
+        /// The offending node.
+        node: u32,
+    },
     /// A call target with no registered instance.
     #[error("no instance at {0:?}")]
     UnknownInstance(Address),
@@ -305,8 +333,9 @@ impl Admitted {
 /// Admit a graph: check well-formedness, linearity, and type agreement
 /// against package metadata, and lower it to the routing manifest.
 ///
-/// A bare graph is the degenerate envelope: one intent, no parameters,
-/// no subintents, its own hash as the identity. Envelope trees go
+/// A bare graph is the degenerate envelope: one intent signed by
+/// `composer`, no parameters, no subintents, its own hash as the
+/// identity. Envelope trees go
 /// through [`crate::envelope::admit_tree`], which supplies the identity
 /// from the signed envelope.
 ///
@@ -316,6 +345,7 @@ impl Admitted {
 /// every node.
 pub fn admit(
     graph: &ManifestGraph,
+    composer: PrincipalAddr,
     cache: &MetadataCache,
     instances: &InstanceRegistry,
     hasher: &dyn Hasher,
@@ -327,6 +357,7 @@ pub fn admit(
             graph,
             params: &[],
             bindings: &[],
+            signer: Some(composer.address()),
         }],
         identity,
         cache,
@@ -381,6 +412,9 @@ pub(crate) struct IntentView<'a> {
     pub graph: &'a ManifestGraph,
     pub params: &'a [YieldParam],
     pub bindings: &'a [YieldBinding],
+    /// Whose signature this intent carries, and so whose identity its
+    /// badge names. A bare graph is unsigned and produces none.
+    pub signer: Option<Address>,
 }
 
 /// Check every intent's bindings and parameter consumption, interleave
@@ -668,6 +702,39 @@ pub(crate) fn admit_intents(
             }
         }
 
+        // Evidence presence is a property of the signed form: a guarded
+        // call presents something, a public one presents nothing.
+        // Whether what it presents satisfies the target's rule is the
+        // target's own business, answered where the target's state is.
+        let required = match &signature.accessibility {
+            Accessibility::Public => {
+                if !node.evidence.is_empty() {
+                    return Err(AdmissionError::UnexpectedEvidence { node: node_index });
+                }
+                None
+            }
+            Accessibility::Guarded(identity) => {
+                if node.evidence.is_empty() {
+                    return Err(AdmissionError::MissingEvidence { node: node_index });
+                }
+                Some(identity)
+            }
+        };
+        // A badge is scoped to the intent whose signature produced it, so
+        // the identities resolve against this node's own intent and no
+        // other.
+        let mut evidence = Vec::with_capacity(node.evidence.len());
+        for reference in &node.evidence {
+            match reference {
+                EvidenceRef::IntentSignature => {
+                    let signer = intent
+                        .signer
+                        .ok_or(AdmissionError::UnsignedEvidence { node: node_index })?;
+                    evidence.push(signer);
+                }
+            }
+        }
+
         // Evaluate this node's output resource types over its bound
         // inputs.
         let eval_inputs = EvalInputs {
@@ -678,6 +745,25 @@ pub(crate) fn admit_intents(
             frame: 0,
             identity,
         };
+        // The identity a guarded call must present, over the same inputs
+        // the output types evaluate against: what the target itself names,
+        // never what the caller claims.
+        let authority = match required {
+            None => None,
+            Some(expr) => {
+                let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
+                    AdmissionError::Eval {
+                        node: node_index,
+                        source,
+                    }
+                })?;
+                match value {
+                    Value::Address(identity) => Some(identity),
+                    _ => return Err(AdmissionError::AuthorityType { node: node_index }),
+                }
+            }
+        };
+
         let mut node_outputs = Vec::with_capacity(signature.outputs.len());
         for (slot, expr) in signature.outputs.iter().enumerate() {
             let slot_index = u32::try_from(slot).map_err(|_| AdmissionError::TooManyNodes)?;
@@ -701,6 +787,8 @@ pub(crate) fn admit_intents(
             target: node.target.address(),
             method: node.method.clone(),
             inputs,
+            evidence,
+            authority,
         });
     }
 

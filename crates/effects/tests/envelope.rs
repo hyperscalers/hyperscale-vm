@@ -35,22 +35,18 @@ fn withdraw(
     resource: impl Into<Address>,
     amount: u128,
 ) -> GraphNode {
-    GraphNode {
-        target: target.into(),
-        method: "withdraw".into(),
-        args: vec![
+    GraphNode::signed(
+        target,
+        "withdraw",
+        vec![
             GraphArg::Literal(Value::Address(resource.into())),
             GraphArg::Literal(Value::U128(amount)),
         ],
-    }
+    )
 }
 
 fn deposit_param(target: impl Into<CallTarget>, param: u32) -> GraphNode {
-    GraphNode {
-        target: target.into(),
-        method: "deposit".into(),
-        args: vec![GraphArg::Param(param)],
-    }
+    GraphNode::new(target, "deposit", vec![GraphArg::Param(param)])
 }
 
 /// The two-signer composition: the root withdraws X and deposits the
@@ -98,7 +94,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
 fn admit_composed(tree: &EnvelopeTree) -> Result<AdmittedTree, AdmissionError> {
     let (cache, instances) = world();
     let identity = tree.hash(&TestHasher);
-    admit_tree(tree, identity, &cache, &instances, &TestHasher)
+    admit_tree(tree, ALICE, identity, &cache, &instances, &TestHasher)
 }
 
 #[test]
@@ -308,7 +304,7 @@ fn two_bindings_cannot_consume_one_output() {
     second.decl.graph.nodes[0] = withdraw(BOB, RES_Y, 11);
     tree.subintents.push(second);
     let identity = tree.hash(&TestHasher);
-    let result = admit_tree(&tree, identity, &cache, &instances, &TestHasher);
+    let result = admit_tree(&tree, ALICE, identity, &cache, &instances, &TestHasher);
     assert_eq!(
         result,
         Err(AdmissionError::DoubleConsumption {
@@ -353,11 +349,11 @@ fn a_yield_param_cannot_bind_a_value_parameter() {
     // into it is a parameter defect — not the edge defect the shared
     // arity check would otherwise report.
     let mut tree = composed_tree(100);
-    tree.subintents[0].decl.graph.nodes[1] = GraphNode {
-        target: BOB.into(),
-        method: "withdraw".into(),
-        args: vec![GraphArg::Param(0), GraphArg::Literal(Value::U128(1))],
-    };
+    tree.subintents[0].decl.graph.nodes[1] = GraphNode::signed(
+        BOB,
+        "withdraw",
+        vec![GraphArg::Param(0), GraphArg::Literal(Value::U128(1))],
+    );
     assert_eq!(
         admit_composed(&tree),
         Err(AdmissionError::ParamForValueParam { node: 3, param: 0 })
@@ -371,7 +367,7 @@ fn a_bare_graph_admits_no_params() {
         nodes: vec![deposit_param(ALICE, 0)],
     };
     assert_eq!(
-        admit(&graph, &cache, &instances, &TestHasher),
+        admit(&graph, ALICE, &cache, &instances, &TestHasher),
         Err(AdmissionError::UnboundParam { node: 0, param: 0 })
     );
 }
@@ -389,7 +385,9 @@ fn fresh_keys_root_at_the_envelope_identity() {
     ];
     let admitted: Vec<_> = identities
         .iter()
-        .map(|identity| admit_tree(&tree, *identity, &cache, &instances, &TestHasher).unwrap())
+        .map(|identity| {
+            admit_tree(&tree, ALICE, *identity, &cache, &instances, &TestHasher).unwrap()
+        })
         .collect();
     assert_eq!(
         admitted[0].admitted.manifest(),
@@ -492,8 +490,8 @@ proptest! {
             tree.root_bindings[0] = binding;
         }
         let identity = tree.hash(&TestHasher);
-        let first = admit_tree(&tree, identity, &cache, &instances, &TestHasher);
-        let second = admit_tree(&tree, identity, &cache, &instances, &TestHasher);
+        let first = admit_tree(&tree, ALICE, identity, &cache, &instances, &TestHasher);
+        let second = admit_tree(&tree, ALICE, identity, &cache, &instances, &TestHasher);
         assert_eq!(first, second);
     }
 }

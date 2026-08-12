@@ -15,11 +15,11 @@ use hyperscale_vm_effects::stdlib::{
     ASKS, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
 };
 use hyperscale_vm_effects::{
-    AbiParam, Address, Clause, ComponentAddr, Constraint, Effect, EffectSet, EffectTarget, Expr,
-    Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature,
-    Mode, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr,
-    ResourceAddr, RoleId, Routing, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher,
-    Value, admit, child_key, fresh_id, route,
+    AbiParam, Accessibility, Address, Clause, ComponentAddr, Constraint, Effect, EffectSet,
+    EffectTarget, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
+    MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata, ParamType,
+    PrefixShardResolver, PrincipalAddr, ResourceAddr, RoleId, Routing, ShardId, ShardResolver,
+    SubstateKey, TargetExpr, TestHasher, Value, admit, child_key, fresh_id, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -314,6 +314,34 @@ enum TxResult {
     Refused(Outcome),
 }
 
+/// Whose signature a corpus graph rides.
+///
+/// An intent carries one signature, so every guarded node in one names
+/// the same account — which is a property of these fixtures rather than
+/// of manifests generally, and worth asserting where it is relied on.
+fn composer(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> PrincipalAddr {
+    let (cache, instances) = world;
+    let mut signer = None;
+    for node in &graph.nodes {
+        let guarded = instances
+            .get(node.target)
+            .and_then(|meta| cache.get(meta.package))
+            .and_then(|package| package.methods.get(&node.method))
+            .is_some_and(|signature| matches!(signature.accessibility, Accessibility::Guarded(_)));
+        if !guarded {
+            continue;
+        }
+        let principal = PrincipalAddr::try_from(node.target.address())
+            .expect("a guarded corpus node targets an account");
+        assert!(
+            signer.is_none_or(|seen| seen == principal),
+            "one intent, one signature: this graph needs two"
+        );
+        signer = Some(principal);
+    }
+    signer.unwrap_or(ALICE)
+}
+
 /// Execute one admitted manifest through the kernel's own walk: routing
 /// lowers each node to the invocation its package's ABI binding
 /// describes, the walk performs them in order, and the session finishes
@@ -332,7 +360,8 @@ fn execute_manifest(
     tx: TxHash,
 ) -> Result<(TxResult, MemoryStore)> {
     let (cache, instances) = world;
-    let admitted = admit(graph, cache, instances, &TestHasher).context("admission")?;
+    let admitted =
+        admit(graph, composer(world, graph), cache, instances, &TestHasher).context("admission")?;
     let routing = route(
         &admitted,
         cache,
@@ -408,7 +437,8 @@ fn shard_of(address: impl Into<Address>) -> ShardId {
 
 fn sharded_routing(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> Routing {
     let (cache, instances) = world;
-    let admitted = admit(graph, cache, instances, &TestHasher).expect("admits");
+    let admitted =
+        admit(graph, composer(world, graph), cache, instances, &TestHasher).expect("admits");
     let first = route(
         &admitted,
         cache,
@@ -938,7 +968,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
     };
 
     // The placed ask landed at the declared fresh sequence.
-    let admitted = admit(&place, &world.0, &world.1, &TestHasher).unwrap();
+    let admitted = admit(&place, MAKER, &world.0, &world.1, &TestHasher).unwrap();
     let seq = fresh_id(&TestHasher, admitted.identity(), 1, 0, 0);
     let placed_order = (3u128 << 64) | u128::from(seq);
     assert_eq!(

@@ -49,7 +49,9 @@ pub use footprint::{
     EXCLUSIVITY_FLOOR, TARGET_UNITS, WIDTH_UNITS, effect_units, footprint, mode_weight, order_bits,
     span_units,
 };
-pub use graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
+pub use graph::{
+    Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, MAX_EVIDENCE_PER_NODE, ManifestGraph,
+};
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
     AUTH_BYTE_WEIGHT, Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT, MAX_CELL_VALUE_LEN,

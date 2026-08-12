@@ -5,11 +5,13 @@
 
 mod common;
 
+use std::collections::BTreeSet;
+
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
 use hyperscale_vm_effects::{
-    AdmissionError, ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget, GraphArg, GraphNode,
-    Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, Mode,
-    TestHasher, Value, admit, fresh_id, route,
+    AdmissionError, ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget, EvidenceRef,
+    GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph,
+    MetadataCache, Mode, TestHasher, Value, admit, fresh_id, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -46,6 +48,7 @@ fn valid_graph() -> ManifestGraph {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: splitter().into(),
@@ -60,6 +63,7 @@ fn valid_graph() -> ManifestGraph {
                     },
                     GraphArg::Literal(Value::U128(30)),
                 ],
+                evidence: BTreeSet::new(),
             },
             GraphNode {
                 target: BOB.into(),
@@ -71,6 +75,7 @@ fn valid_graph() -> ManifestGraph {
                     },
                     constraints: vec![Constraint::MinAmount(30), Constraint::MaxAmount(30)],
                 }],
+                evidence: BTreeSet::new(),
             },
             GraphNode {
                 target: ALICE.into(),
@@ -82,6 +87,7 @@ fn valid_graph() -> ManifestGraph {
                     },
                     constraints: vec![],
                 }],
+                evidence: BTreeSet::new(),
             },
         ],
     }
@@ -90,7 +96,7 @@ fn valid_graph() -> ManifestGraph {
 #[test]
 fn a_well_formed_graph_lowers_and_routes() {
     let (cache, instances) = setup();
-    let admitted = admit(&valid_graph(), &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&valid_graph(), ALICE, &cache, &instances, &TestHasher).expect("admits");
 
     // The lowered edges carry their static resource types.
     let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
@@ -119,8 +125,8 @@ fn constraint_changes_reach_lowering_and_the_fresh_id_root() {
     };
     constraints[0] = Constraint::MinAmount(29);
 
-    let strict = admit(&valid_graph(), &cache, &instances, &TestHasher).expect("admits");
-    let loose = admit(&loosened, &cache, &instances, &TestHasher).expect("admits");
+    let strict = admit(&valid_graph(), ALICE, &cache, &instances, &TestHasher).expect("admits");
+    let loose = admit(&loosened, ALICE, &cache, &instances, &TestHasher).expect("admits");
     // A bound is execution-relevant, so lowering carries it: the two
     // manifests differ where the constraint does. The identity differs
     // too — it is the signed graph's hash, so two distinct signed
@@ -133,11 +139,33 @@ fn constraint_changes_reach_lowering_and_the_fresh_id_root() {
     );
 }
 
+/// Evidence is refused where nothing reads it: a presentation the callee
+/// never consults would be authority travelling further than its author
+/// could see.
+#[test]
+fn evidence_is_presented_exactly_where_it_is_required() {
+    let (cache, instances) = setup();
+    let mut extra = valid_graph();
+    extra.nodes[1].evidence = [EvidenceRef::IntentSignature].into();
+    assert_eq!(
+        admit(&extra, ALICE, &cache, &instances, &TestHasher),
+        Err(AdmissionError::UnexpectedEvidence { node: 1 })
+    );
+
+    // And the mirror: a guarded call presenting nothing.
+    let mut missing = valid_graph();
+    missing.nodes[0].evidence.clear();
+    assert_eq!(
+        admit(&missing, ALICE, &cache, &instances, &TestHasher),
+        Err(AdmissionError::MissingEvidence { node: 0 })
+    );
+}
+
 #[test]
 #[allow(clippy::too_many_lines)] // one assertion block per mutation class
 fn every_malformed_mutation_rejects() {
     let (cache, instances) = setup();
-    let admit_it = |graph: &ManifestGraph| admit(graph, &cache, &instances, &TestHasher);
+    let admit_it = |graph: &ManifestGraph| admit(graph, ALICE, &cache, &instances, &TestHasher);
 
     // Dangling edge: drop the rest-consuming node.
     let mut dangling = valid_graph();
@@ -299,7 +327,7 @@ fn a_literal_nested_past_the_bound_rejects_ahead_of_the_hash() {
     let mut graph = valid_graph();
     graph.nodes[0].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH));
     assert_eq!(
-        admit(&graph, &cache, &instances, &TestHasher),
+        admit(&graph, ALICE, &cache, &instances, &TestHasher),
         Err(AdmissionError::ValueTooDeep { node: 0, param: 0 })
     );
 
@@ -307,7 +335,7 @@ fn a_literal_nested_past_the_bound_rejects_ahead_of_the_hash() {
     // takes over, so the bound is exactly where it says it is.
     graph.nodes[0].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH - 1));
     assert!(matches!(
-        admit(&graph, &cache, &instances, &TestHasher),
+        admit(&graph, ALICE, &cache, &instances, &TestHasher),
         Err(AdmissionError::ParamKind { .. })
     ));
 }
@@ -315,7 +343,7 @@ fn a_literal_nested_past_the_bound_rejects_ahead_of_the_hash() {
 #[test]
 fn repeated_amount_bounds_fold_to_their_conjunction() {
     let (cache, instances) = setup();
-    let admit_it = |graph: &ManifestGraph| admit(graph, &cache, &instances, &TestHasher);
+    let admit_it = |graph: &ManifestGraph| admit(graph, ALICE, &cache, &instances, &TestHasher);
 
     // Execution enforces every constraint in the list, so admission judges
     // the conjunction — greatest lower bound against least upper bound.
@@ -372,7 +400,7 @@ proptest! {
             edge: EdgeRef { producer: 1, output: 0 },
             constraints,
         };
-        let verdict = admit(&graph, &cache, &instances, &TestHasher);
+        let verdict = admit(&graph, ALICE, &cache, &instances, &TestHasher);
         let lower = mins.iter().copied().max().expect("non-empty");
         let upper = maxes.iter().copied().min().expect("non-empty");
         if lower > upper {
@@ -403,8 +431,8 @@ proptest! {
             edge: EdgeRef { producer, output },
             constraints: vec![],
         };
-        let first = admit(&graph, &cache, &instances, &TestHasher);
-        let second = admit(&graph, &cache, &instances, &TestHasher);
+        let first = admit(&graph, ALICE, &cache, &instances, &TestHasher);
+        let second = admit(&graph, ALICE, &cache, &instances, &TestHasher);
         assert_eq!(first, second);
     }
 
@@ -417,7 +445,7 @@ proptest! {
             edge: EdgeRef { producer: 1, output: 0 },
             constraints: vec![Constraint::MinAmount(min), Constraint::MaxAmount(max)],
         };
-        let verdict = admit(&graph, &cache, &instances, &TestHasher);
+        let verdict = admit(&graph, ALICE, &cache, &instances, &TestHasher);
         if min > max {
             assert_eq!(
                 verdict,

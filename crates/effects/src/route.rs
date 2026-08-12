@@ -12,10 +12,10 @@ use crate::admission::Admitted;
 use crate::dsl::{Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr};
 use crate::hash::Hasher;
 use crate::invoke::{CallArg, EdgeBound, NodeCall};
-use crate::manifest::{ManifestHash, NodeInput};
+use crate::manifest::{ManifestHash, Node, NodeInput};
 use crate::metadata::{
-    AbiError, AbiParam, CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature,
-    PackageHash, check_abi,
+    AbiError, AbiParam, Accessibility, CallSite, InstanceMeta, InstanceRegistry, MetadataCache,
+    MethodSignature, PackageHash, check_abi,
 };
 use crate::types::{Address, CallTarget, Effect, EffectSet, ShardId, Value};
 
@@ -244,6 +244,18 @@ pub enum RouteError {
     /// Folding reserve amounts across shards overflowed.
     #[error("declared reserve amounts overflow")]
     ReserveOverflow,
+    /// A static call site naming a guarded method.
+    ///
+    /// Authority does not propagate through a call: a callee frame holds
+    /// no badge, so a method requiring one is unreachable from a call
+    /// site, however the caller itself was authorized.
+    #[error("node {node} reaches `{method}`, which is guarded, through a call site")]
+    GuardedCallSite {
+        /// The manifest node whose fold reached it.
+        node: u32,
+        /// The guarded method reached.
+        method: String,
+    },
     /// A handle binding naming a clause that did not evaluate to exactly
     /// one declared access.
     ///
@@ -376,7 +388,7 @@ pub fn route(
                 method: &node.method,
                 args: &args,
                 node_index,
-                node_inputs: Some(&node.inputs),
+                node: Some(node),
                 caller: None,
             },
             &mut stack,
@@ -409,9 +421,30 @@ struct Lowering<'a> {
     package: PackageHash,
     declaration: &'a Declaration,
     offset: u32,
-    node_inputs: &'a [NodeInput],
+    node: &'a Node,
     inputs: &'a EvalInputs<'a>,
     hasher: &'a dyn Hasher,
+}
+
+/// Refuse a static call site naming a guarded method.
+///
+/// Authority does not propagate through a call: a callee frame presents
+/// nothing — its caller's badge was handed to the caller, not through it
+/// — so a guarded method is unreachable from one, and reaching for it is
+/// a refusal rather than a silent pass.
+fn reachable_from_a_call_site(
+    is_callee: bool,
+    signature: &MethodSignature,
+    node_index: u32,
+    method: &str,
+) -> Result<(), RouteError> {
+    if is_callee && matches!(signature.accessibility, Accessibility::Guarded(_)) {
+        return Err(RouteError::GuardedCallSite {
+            node: node_index,
+            method: method.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn lower_call(
@@ -429,7 +462,7 @@ fn lower_call(
         package,
         declaration,
         offset,
-        node_inputs,
+        node,
         inputs,
         hasher,
     } = *lowering;
@@ -480,7 +513,7 @@ fn lower_call(
             AbiParam::Bucket(declared) => {
                 let input = usize::try_from(*declared)
                     .ok()
-                    .and_then(|index| node_inputs.get(index))
+                    .and_then(|index| node.inputs.get(index))
                     .ok_or_else(|| unbindable(format!("no bound input {declared}")))?;
                 match input {
                     NodeInput::Edge { source, output, .. } => CallArg::Bucket {
@@ -512,8 +545,10 @@ fn lower_call(
         target: instance,
         export: method.to_owned(),
         args,
-        edges: edge_bounds(node_inputs),
+        edges: edge_bounds(&node.inputs),
         outputs: u32::try_from(signature.outputs.len()).unwrap_or(u32::MAX),
+        evidence: node.evidence.clone(),
+        authority: node.authority,
     })
 }
 
@@ -587,8 +622,9 @@ struct Frame<'a> {
     node_index: u32,
     /// Present only for a manifest node's own frame: a callee is invoked
     /// by its caller's code, so there is no lowered invocation for the
-    /// walk to perform.
-    node_inputs: Option<&'a [NodeInput]>,
+    /// walk to perform, and no evidence beyond what its caller was
+    /// handed — which is nothing.
+    node: Option<&'a Node>,
     caller: Option<&'a MethodRef>,
 }
 
@@ -621,7 +657,7 @@ impl Fold<'_> {
             method,
             args,
             node_index,
-            node_inputs,
+            node,
             caller,
         } = *site;
         self.evaluations += 1;
@@ -645,6 +681,7 @@ impl Fold<'_> {
                 package: meta.package,
                 method: method.to_owned(),
             })?;
+        reachable_from_a_call_site(node.is_none(), signature, node_index, method)?;
         let vertex = (meta.package, method.to_owned());
         if stack.contains(&vertex) {
             return Err(RouteError::CyclicCalls {
@@ -672,12 +709,12 @@ impl Fold<'_> {
         // The frame's handles occupy the run of the table starting here,
         // so the offset has to be taken before the frame is logged.
         let offset = self.table_len;
-        if let Some(node_inputs) = node_inputs {
+        if let Some(node) = node {
             let lowering = Lowering {
                 package: meta.package,
                 declaration: &declaration,
                 offset,
-                node_inputs,
+                node,
                 inputs: &inputs,
                 hasher: self.hasher,
             };
@@ -757,7 +794,7 @@ impl Fold<'_> {
                     method: &site.method,
                     args: &call_args,
                     node_index,
-                    node_inputs: None,
+                    node: None,
                     caller: Some(caller),
                 },
                 stack,
@@ -772,8 +809,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        AbiParam, Admitted, CallArg, CallEdge, EdgeBound, MAX_CALL_DEPTH, MAX_MANIFEST_NODES,
-        MethodRef, PrefixShardResolver, RouteError, ShardResolver, route,
+        AbiParam, Accessibility, Admitted, CallArg, CallEdge, EdgeBound, MAX_CALL_DEPTH,
+        MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver, RouteError, ShardResolver, route,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, fresh_id};
     use crate::hash::{Hash32, Hasher, TestHasher};
@@ -892,6 +929,8 @@ mod tests {
                     NodeInput::Literal(Value::Address(instance_of("payee").into())),
                     NodeInput::Literal(Value::U128(9)),
                 ],
+                evidence: Vec::new(),
+                authority: None,
             }],
         };
         (cache, instances, manifest)
@@ -1051,6 +1090,8 @@ mod tests {
                 target: instance_of("maker").into(),
                 method: "make".into(),
                 inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
             }],
         };
 
@@ -1102,6 +1143,8 @@ mod tests {
                 target: instance_of("loop").into(),
                 method: "m".into(),
                 inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
             }],
         };
         assert_eq!(
@@ -1171,6 +1214,8 @@ mod tests {
                 target: a_1_3.into(),
                 method: "m".into(),
                 inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
             }],
         };
         assert_eq!(
@@ -1226,6 +1271,8 @@ mod tests {
                 target: instance_of("root").into(),
                 method: "r".into(),
                 inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
             }],
         };
         let routing = route(
@@ -1251,6 +1298,8 @@ mod tests {
                     resource: addr(9),
                     bounds: Bounds::default(),
                 }],
+                evidence: Vec::new(),
+                authority: None,
             }],
         };
         assert_eq!(
@@ -1281,6 +1330,8 @@ mod tests {
                 target: a_1_4.into(),
                 method: "m".into(),
                 inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
             }],
         };
         let empty = route(
@@ -1343,6 +1394,8 @@ mod tests {
                 target: instance_of("oracle").into(),
                 method: "peek".into(),
                 inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
             }],
         };
         let routing = route(
@@ -1407,6 +1460,8 @@ mod tests {
                 target: instance_of("wide").into(),
                 method: "root".into(),
                 inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
             }],
         };
         assert_eq!(
@@ -1442,6 +1497,8 @@ mod tests {
                 target: instance_of("chain").into(),
                 method: "m0".into(),
                 inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
             }],
         };
         assert_eq!(
@@ -1474,6 +1531,8 @@ mod tests {
                     target: instance_of("wide").into(),
                     method: "m".into(),
                     inputs: vec![],
+                    evidence: Vec::new(),
+                    authority: None,
                 })
                 .collect(),
         };
@@ -1525,6 +1584,8 @@ mod tests {
             target: instance_of("vault").into(),
             method: "take".into(),
             inputs: vec![NodeInput::Literal(Value::U128(u128::MAX))],
+            evidence: Vec::new(),
+            authority: None,
         };
         assert_eq!(
             route(
@@ -1643,6 +1704,8 @@ mod tests {
                 target: target.into(),
                 method: "m".into(),
                 inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
             }],
         }
     }
@@ -1734,6 +1797,8 @@ mod tests {
                     target: instance_of("edges").into(),
                     method: "make".into(),
                     inputs: vec![],
+                    evidence: Vec::new(),
+                    authority: None,
                 },
                 Node {
                     target: instance_of("edges").into(),
@@ -1747,6 +1812,8 @@ mod tests {
                             max: None,
                         },
                     }],
+                    evidence: Vec::new(),
+                    authority: None,
                 },
             ],
         };
@@ -1828,6 +1895,8 @@ mod tests {
                     target: instance_of("router").into(),
                     method: "make".into(),
                     inputs: vec![],
+                    evidence: Vec::new(),
+                    authority: None,
                 },
                 Node {
                     target: instance_of("router").into(),
@@ -1841,6 +1910,8 @@ mod tests {
                             max: None,
                         },
                     }],
+                    evidence: Vec::new(),
+                    authority: None,
                 },
             ],
         };
@@ -1885,6 +1956,57 @@ mod tests {
         );
     }
 
+    /// Authority does not propagate through a call: a package cannot
+    /// reach a guarded method by naming it from a call site, however its
+    /// own caller was authorized.
+    #[test]
+    fn a_call_site_cannot_reach_a_guarded_method() {
+        let mut package = PackageMetadata::default();
+        package.methods.insert(
+            "reach".into(),
+            MethodSignature {
+                calls: vec![CallSite {
+                    target: Expr::SelfAddr,
+                    method: "guarded".into(),
+                    args: vec![],
+                }],
+                ..MethodSignature::default()
+            },
+        );
+        package.methods.insert(
+            "guarded".into(),
+            MethodSignature {
+                accessibility: Accessibility::Guarded(Expr::SelfAddr),
+                ..MethodSignature::default()
+            },
+        );
+        let mut cache = MetadataCache::new();
+        cache.publish(pkg("reacher"), package);
+        let mut instances = InstanceRegistry::new();
+        instances.create(&TestHasher, meta_of("reacher"));
+        let manifest = Manifest {
+            nodes: vec![Node {
+                target: instance_of("reacher").into(),
+                method: "reach".into(),
+                inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
+            }],
+        };
+        let error = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect_err("a call site holds no badge");
+        assert!(
+            matches!(error, RouteError::GuardedCallSite { node: 0, .. }),
+            "unexpected refusal: {error:?}"
+        );
+    }
+
     #[test]
     fn a_malformed_binding_refuses_at_routing() {
         // Publish is the gate that should have caught this. Routing
@@ -1918,6 +2040,8 @@ mod tests {
                     target: instance_of("bad").into(),
                     method: "make".into(),
                     inputs: vec![],
+                    evidence: Vec::new(),
+                    authority: None,
                 },
                 Node {
                     target: instance_of("bad").into(),
@@ -1928,6 +2052,8 @@ mod tests {
                         resource: addr(0xE1),
                         bounds: Bounds::default(),
                     }],
+                    evidence: Vec::new(),
+                    authority: None,
                 },
             ],
         };

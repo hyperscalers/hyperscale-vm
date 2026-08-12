@@ -95,4 +95,10 @@ pub struct NodeCall {
     /// exactly when this is non-zero, and then exactly
     /// `outputs * EDGE_CELL_BYTES` of them.
     pub outputs: u32,
+    /// The identities this call presents, resolved from the signed
+    /// evidence the manifest node names.
+    pub evidence: Vec<Address>,
+    /// The identity a guarded call must present. `None` for a method
+    /// admitting anyone, and then the presented set is empty too.
+    pub authority: Option<Address>,
 }

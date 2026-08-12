@@ -97,7 +97,7 @@ fn admits(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
     write(&mut b).expect("every wrapper types against its own signature");
     let graph = b.build().expect("every output is consumed");
-    admit(&graph, &cache, &instances, &TestHasher).expect("a wrapped graph admits");
+    admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("a wrapped graph admits");
     graph
 }
 

@@ -69,7 +69,7 @@ pub fn account_metadata() -> PackageMetadata {
     methods.methods.insert(
         "withdraw".into(),
         MethodSignature {
-            accessibility: Accessibility::RequiresTargetAuth,
+            accessibility: Accessibility::Guarded(Expr::SelfAddr),
             params: vec![ParamType::Address, ParamType::U128],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
             outputs: vec![Expr::Arg(0)],
@@ -109,7 +109,7 @@ pub fn account_metadata() -> PackageMetadata {
     methods.methods.insert(
         "stamp-entropy".into(),
         MethodSignature {
-            accessibility: Accessibility::RequiresTargetAuth,
+            accessibility: Accessibility::Guarded(Expr::SelfAddr),
             params: vec![],
             abi: vec![AbiParam::Handle(0)],
             outputs: vec![],
@@ -264,7 +264,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "register-validator".into(),
         MethodSignature {
-            accessibility: Accessibility::RequiresConfiguredAuth(OPERATOR),
+            accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
             params: vec![ParamType::U64, ParamType::Bytes, ParamType::Bytes],
             abi: vec![
                 AbiParam::Handle(0),
@@ -280,7 +280,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "deactivate-validator".into(),
         MethodSignature {
-            accessibility: Accessibility::RequiresConfiguredAuth(OPERATOR),
+            accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
             params: vec![ParamType::U64],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
             outputs: vec![],
@@ -291,7 +291,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "unjail".into(),
         MethodSignature {
-            accessibility: Accessibility::RequiresConfiguredAuth(OPERATOR),
+            accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
             params: vec![ParamType::U64],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
             outputs: vec![],
@@ -314,7 +314,7 @@ fn governance_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "cast-param-vote".into(),
         MethodSignature {
-            accessibility: Accessibility::RequiresConfiguredAuth(OPERATOR),
+            accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
             params: vec![ParamType::U64, ParamType::U64, ParamType::U64],
             abi: vec![
                 AbiParam::Handle(0),
@@ -330,7 +330,7 @@ fn governance_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "clear-param-vote".into(),
         MethodSignature {
-            accessibility: Accessibility::RequiresConfiguredAuth(OPERATOR),
+            accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
             params: vec![],
             abi: vec![AbiParam::Handle(0)],
             outputs: vec![],

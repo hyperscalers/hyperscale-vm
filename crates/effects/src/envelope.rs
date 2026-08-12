@@ -210,7 +210,9 @@ pub struct AdmittedTree {
 ///
 /// `identity` is the signed envelope's hash — the root of every fresh
 /// derivation. Distinct signed envelopes never mint the same fresh key,
-/// even when they carry the same tree.
+/// even when they carry the same tree. `composer` is who signed the root
+/// intent, and so whose identity the root's badge names; each subintent
+/// names its own signer.
 ///
 /// # Errors
 ///
@@ -223,6 +225,7 @@ pub struct AdmittedTree {
 /// it excludes.
 pub fn admit_tree(
     tree: &EnvelopeTree,
+    composer: PrincipalAddr,
     identity: ManifestHash,
     cache: &MetadataCache,
     instances: &InstanceRegistry,
@@ -258,12 +261,14 @@ pub fn admit_tree(
         graph: &tree.root.graph,
         params: &tree.root.params,
         bindings: &tree.root_bindings,
+        signer: Some(composer.address()),
     });
     for subintent in &tree.subintents {
         views.push(IntentView {
             graph: &subintent.decl.graph,
             params: &subintent.decl.params,
             bindings: &subintent.bindings,
+            signer: Some(subintent.signer.address()),
         });
     }
     let manifest = admit_intents(&views, identity, cache, instances, hasher)?;

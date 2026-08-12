@@ -24,9 +24,11 @@ Griefing residual, on record: the payer's shard can commit and reserve while a c
 
 **Rejected: exchange-rate-pegged pricing.** A ledger-state exchange rate is an exogenous oracle input into consensus pricing; every other quantity in this economics is endogenous and fold-derived. Token-denominated prices are governance-adjustable if they drift.
 
-## 3. Target authority at admission
+## 3. Authority: presence at admission, satisfaction at execution
 
-A manifest node whose target's method declares that target's own authority is admitted only inside an intent that authority signed: the composer's account for a root-intent node, the declared signer's account for a subintent node (INV-VM-12). A method's accessibility is package metadata, content-addressed with the code it describes and judged at publish, so no transaction can weaken it and no shard reads it differently. An un-securified account's address is the hash of the key that owns it, so the rule's only satisfier is a signature already in the envelope — the whole verdict is a pure function of signed content, with no state read. It is reached at admission, ahead of ordering and fee exposure: an envelope that fails it never enters a block and nobody pays for it.
+A manifest node calling a guarded method presents evidence, and every badge it presents is produced inside its own intent: the composer's signature for a root-intent node, the declared signer's for a subintent node (INV-VM-12). A method's accessibility is package metadata, content-addressed with the code it describes and judged at publish, so no transaction can weaken it and no shard reads it differently. Presence is a pure function of signed content, with no state read, and is reached at admission ahead of ordering and fee exposure: an envelope that presents nothing where something is required never enters a block and nobody pays for it.
+
+Whether what a call presents *satisfies* its target is a separate question with a separate answer (INV-VM-15). A method requires an identity its own target names — its own address, or a slot of its creation-fixed configuration — so the verdict is reached at execution, against the target, and never by reading state under a prefix the manifest did not name. An account with no auth module of its own is governed by the identity its address derives, so today the two halves coincide for a virtual account and the composer's own badge satisfies its own account directly. A call presenting anything else aborts and its sender pays the ceiling they signed: both what the call presents and what the target requires are content the signer put their name to.
 
 ## 4. What the host provides the environment
 

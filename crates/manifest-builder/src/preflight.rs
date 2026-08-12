@@ -23,11 +23,11 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    Accessibility, Address, AdmissionError, Admitted, CallTarget, EnvelopeTree, Hasher,
-    InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache, NetworkWord,
+    Accessibility, Address, AdmissionError, Admitted, CallTarget, EnvelopeTree, EvalInputs, Hash32,
+    Hasher, InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache, NetworkWord,
     PrincipalAddr, RouteError, Routing, SchemeId, ShardId, ShardResolver, SubintentRecord,
-    TextError, Value, admit, admit_tree, declared_work, footprint, route, route_tree,
-    signature_work,
+    TextError, Value, admit, admit_tree, declared_work, evaluate_expr, footprint, route,
+    route_tree, signature_work,
 };
 
 /// Why a transaction could not be preflighted.
@@ -56,17 +56,10 @@ pub enum Authority {
     Anyone,
     /// A signature this principal's address derives.
     Signature(PrincipalAddr),
-    /// The target's own authority, which its address derives from no key.
-    /// An instance is owned by nobody, so a method gated on its own
-    /// authority cannot be named on it by anyone.
+    /// An identity no key derives — an instance's own address, or a
+    /// configured slot holding one. Nothing signs for a hash of what an
+    /// object is, so a method requiring one cannot be named by anyone.
     TargetHasNoKey,
-    /// A configured authority slot naming no principal — past the
-    /// instance's configuration, or holding something that is not a
-    /// principal address.
-    NoPrincipalConfigured {
-        /// The configuration slot the signature named.
-        slot: u32,
-    },
 }
 
 /// What one node of the flattened manifest requires of a signature.
@@ -158,9 +151,7 @@ impl Report {
             .iter()
             .filter_map(|required| match required.authority {
                 Authority::Signature(principal) => Some(principal),
-                Authority::Anyone
-                | Authority::TargetHasNoKey
-                | Authority::NoPrincipalConfigured { .. } => None,
+                Authority::Anyone | Authority::TargetHasNoKey => None,
             })
             .chain(self.subintents.iter().map(|record| record.signer))
             .collect()
@@ -169,12 +160,9 @@ impl Report {
     /// The nodes whose access no signature can satisfy. A transaction
     /// carrying one cannot be made to succeed by signing it differently.
     pub fn unsatisfiable(&self) -> impl Iterator<Item = &Required> {
-        self.authority.iter().filter(|required| {
-            matches!(
-                required.authority,
-                Authority::TargetHasNoKey | Authority::NoPrincipalConfigured { .. }
-            )
-        })
+        self.authority
+            .iter()
+            .filter(|required| matches!(required.authority, Authority::TargetHasNoKey))
     }
 
     /// An address the report names, in this network's text form.
@@ -193,15 +181,24 @@ impl Report {
 /// a network word no address can be named under.
 pub fn preflight(
     graph: &ManifestGraph,
+    composer: PrincipalAddr,
     cache: &MetadataCache,
     instances: &InstanceRegistry,
     hasher: &dyn Hasher,
     shards: &dyn ShardResolver,
     network: &str,
 ) -> Result<Report, PreflightError> {
-    let admitted = admit(graph, cache, instances, hasher)?;
+    let admitted = admit(graph, composer, cache, instances, hasher)?;
     let routing = route(&admitted, cache, instances, hasher, shards)?;
-    report(admitted, routing, Vec::new(), instances, cache, network)
+    report(
+        admitted,
+        routing,
+        Vec::new(),
+        instances,
+        cache,
+        hasher,
+        network,
+    )
 }
 
 /// The same verdict on a composed envelope, whose subintent records name
@@ -212,6 +209,7 @@ pub fn preflight(
 /// As [`preflight`].
 pub fn preflight_tree(
     tree: &EnvelopeTree,
+    composer: PrincipalAddr,
     cache: &MetadataCache,
     instances: &InstanceRegistry,
     hasher: &dyn Hasher,
@@ -219,7 +217,7 @@ pub fn preflight_tree(
     network: &str,
 ) -> Result<Report, PreflightError> {
     let identity = tree.hash(hasher);
-    let admitted = admit_tree(tree, identity, cache, instances, hasher)?;
+    let admitted = admit_tree(tree, composer, identity, cache, instances, hasher)?;
     let routing = route_tree(&admitted, cache, instances, hasher, shards)?;
     report(
         admitted.admitted,
@@ -227,6 +225,7 @@ pub fn preflight_tree(
         admitted.subintents,
         instances,
         cache,
+        hasher,
         network,
     )
 }
@@ -238,6 +237,7 @@ fn report(
     subintents: Vec<SubintentRecord>,
     instances: &InstanceRegistry,
     cache: &MetadataCache,
+    hasher: &dyn Hasher,
     network: &str,
 ) -> Result<Report, PreflightError> {
     let footprints = routing
@@ -253,7 +253,7 @@ fn report(
             node: node_index,
             target: node.target,
             method: node.method.clone(),
-            authority: required_authority(node.target, &node.method, instances, cache),
+            authority: required_authority(node.target, &node.method, instances, cache, hasher),
         });
     }
 
@@ -299,6 +299,7 @@ fn required_authority(
     method: &str,
     instances: &InstanceRegistry,
     cache: &MetadataCache,
+    hasher: &dyn Hasher,
 ) -> Authority {
     let declared = CallTarget::try_from(target)
         .ok()
@@ -308,24 +309,26 @@ fn required_authority(
     let Some((meta, signature)) = declared else {
         return Authority::TargetHasNoKey;
     };
-    match signature.accessibility {
-        Accessibility::Public => Authority::Anyone,
-        // A principal's address derives from its key material, so its own
-        // authority is a signature. Every other class derives from a hash
-        // of what it is, and nothing signs for that.
-        Accessibility::RequiresTargetAuth => match CallTarget::try_from(target) {
-            Ok(CallTarget::Principal(principal)) => Authority::Signature(principal),
-            _ => Authority::TargetHasNoKey,
-        },
-        Accessibility::RequiresConfiguredAuth(slot) => usize::try_from(slot)
-            .ok()
-            .and_then(|slot| meta.config.get(slot))
-            .and_then(|value| match value {
-                Value::Address(address) => PrincipalAddr::try_from(*address).ok(),
-                _ => None,
-            })
-            .map_or(Authority::NoPrincipalConfigured { slot }, |principal| {
-                Authority::Signature(principal)
-            }),
+    let Accessibility::Guarded(identity) = &signature.accessibility else {
+        return Authority::Anyone;
+    };
+    // An authority expression reads nothing the caller supplies, so the
+    // target and its configuration are the whole evaluation.
+    let inputs = EvalInputs {
+        self_addr: target,
+        args: &[],
+        config: &meta.config,
+        node_index: 0,
+        frame: 0,
+        identity: ManifestHash(Hash32([0; 32])),
+    };
+    // A principal's address derives from its key material, so its own
+    // authority is a signature. Every other class derives from a hash of
+    // what it is, and nothing signs for that.
+    match evaluate_expr(identity, &inputs, hasher) {
+        Ok(Value::Address(address)) => {
+            PrincipalAddr::try_from(address).map_or(Authority::TargetHasNoKey, Authority::Signature)
+        }
+        _ => Authority::TargetHasNoKey,
     }
 }

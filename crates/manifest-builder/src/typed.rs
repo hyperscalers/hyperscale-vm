@@ -23,10 +23,13 @@
 //! properties over the signed form, so a defect here costs a signer a
 //! refused transaction and can never admit one the protocol would refuse.
 
+use std::collections::BTreeSet;
+
 use hyperscale_vm_effects::{
-    Address, CallTarget, Constraint, EdgeRef, EvalInputs, Expr, GraphArg, Hash32, Hasher,
-    InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MetadataCache, MethodSignature,
-    PackageHash, ParamType, PrincipalAddr, ResourceRef, Value, evaluate_expr,
+    Accessibility, Address, CallTarget, Constraint, EdgeRef, EvalInputs, EvidenceRef, Expr,
+    GraphArg, Hash32, Hasher, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash,
+    MetadataCache, MethodSignature, PackageHash, ParamType, PrincipalAddr, ResourceRef, Value,
+    evaluate_expr,
 };
 
 use crate::args::Args;
@@ -274,8 +277,16 @@ impl<'a> TypedBuilder<'a> {
             hasher,
         );
 
+        // A guarded method takes the intent's signature badge; the
+        // signature says which are guarded, so no call site has to.
+        let evidence = match signature.accessibility {
+            Accessibility::Public => BTreeSet::new(),
+            Accessibility::Guarded(_) => BTreeSet::from([EvidenceRef::IntentSignature]),
+        };
         let outputs = resources.len();
-        let producer = self.graph.push(target, method.to_owned(), args, resources);
+        let producer = self
+            .graph
+            .push(target, method.to_owned(), args, resources, evidence);
         let buckets = (0..outputs)
             .map(|slot| {
                 let slot = u32::try_from(slot).expect("outputs are bounded by the signature");

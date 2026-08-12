@@ -184,8 +184,16 @@ fn main() {
 
 /// The preflight report, as a wallet would read it out.
 fn summarise(graph: &ManifestGraph, cache: &MetadataCache, instances: &InstanceRegistry) {
-    let report = preflight(graph, cache, instances, &TestHasher, &SHARDS, NETWORK)
-        .expect("the graph admits and routes");
+    let report = preflight(
+        graph,
+        ALICE,
+        cache,
+        instances,
+        &TestHasher,
+        &SHARDS,
+        NETWORK,
+    )
+    .expect("the graph admits and routes");
     let names = vocabulary();
     let signers: Vec<String> = report
         .signers()
@@ -210,8 +218,7 @@ fn summarise(graph: &ManifestGraph, cache: &MetadataCache, instances: &InstanceR
     );
     for required in report.unsatisfiable() {
         let reason = match required.authority {
-            Authority::TargetHasNoKey => "its target's own authority, which no key holds",
-            Authority::NoPrincipalConfigured { .. } => "a configured slot naming no principal",
+            Authority::TargetHasNoKey => "an identity no key derives",
             Authority::Anyone | Authority::Signature(_) => unreachable!("satisfiable"),
         };
         println!(

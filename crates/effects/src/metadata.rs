@@ -140,33 +140,25 @@ pub enum AbiParam {
 /// address is a hash and nothing about a target can be read off it: only
 /// the package knows whether a method spends the target's funds, writes
 /// its leaves, or merely offers something to whoever asks.
-///
-/// Every value is a whole rule rather than a fragment of a language. The
-/// expression language that replaces them says the same things at more
-/// length — `Public` is the absent requirement, and each of the others
-/// requires one virtual signature badge — so a value substitutes rather
-/// than being extended into.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub enum Accessibility {
     /// Anyone may name this method on this target. What the caller
     /// supplies is the caller's own, gated wherever it was obtained.
     #[default]
     Public,
-    /// Only an envelope carrying the target's own authority may name it.
-    /// The satisfier is a signature the target's address derives from.
-    RequiresTargetAuth,
-    /// Only an envelope carrying the authority of the principal named at
-    /// this slot of the target's creation-fixed configuration may name
-    /// it. The satisfier is a signature that principal's address derives
-    /// from.
+    /// Naming this method requires presenting the identity this
+    /// expression evaluates to, over the target's own inputs.
     ///
-    /// This is how an object nobody owns admits somebody: a pool
-    /// instance's address derives from no key, so its own authority is
-    /// unsatisfiable, while a configuration field can name a principal
-    /// whose is not. Fixed at creation like the rest of an instance's
-    /// configuration, which is what keeps the check a pure function of
-    /// signed content and immutable metadata.
-    RequiresConfiguredAuth(u32),
+    /// `SelfAddr` is a method only the target itself may be made to
+    /// perform; a configuration slot is how an object nobody owns admits
+    /// somebody, since a pool's address derives from no key while a
+    /// configured field can name an identity that does.
+    ///
+    /// Every identity a method can require is one the target itself
+    /// names, so an authority verdict never reaches state under a prefix
+    /// the manifest did not name. Authority held by somebody else is a
+    /// call to *them*, which the manifest writes down like any other.
+    Guarded(Expr),
 }
 
 /// A method's declared access. Its transitive effect set is the fold of its
@@ -245,6 +237,12 @@ pub enum AbiError {
         /// What that parameter actually is.
         kind: &'static str,
     },
+    /// An authority expression reading what the caller supplies.
+    ///
+    /// A caller who names the identity they must present can always
+    /// present it, so the method reads as guarded and admits everyone.
+    #[error("the authority this method requires is one its caller names")]
+    CallerNamedAuthority,
     /// One bucket parameter carried by more than one ABI parameter.
     ///
     /// A bucket carried by *none* is well-formed: a method that forwards
@@ -276,6 +274,11 @@ pub enum AbiError {
 /// Any [`AbiError`]; verdicts are deterministic and identical on every
 /// node.
 pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
+    if let Accessibility::Guarded(identity) = &signature.accessibility
+        && identity.reads_call_inputs()
+    {
+        return Err(AbiError::CallerNamedAuthority);
+    }
     let bound = |count: usize| u32::try_from(count).unwrap_or(u32::MAX);
     let mut carried = vec![0u32; signature.params.len()];
     for (index, binding) in signature.abi.iter().enumerate() {
@@ -724,6 +727,31 @@ mod tests {
         ));
     }
 
+    /// A method requiring an identity its own caller names admits
+    /// everyone while reading as guarded, so the declaration is refused
+    /// where the package publishes.
+    #[test]
+    fn an_authority_the_caller_names_is_refused() {
+        let guarded = |identity: Expr| MethodSignature {
+            accessibility: Accessibility::Guarded(identity),
+            ..MethodSignature::default()
+        };
+        assert_eq!(check_abi(&guarded(Expr::SelfAddr)), Ok(()));
+        assert_eq!(check_abi(&guarded(Expr::Config(0))), Ok(()));
+        assert_eq!(
+            check_abi(&guarded(Expr::Arg(0))),
+            Err(AbiError::CallerNamedAuthority)
+        );
+        // And however deeply the argument is buried.
+        assert_eq!(
+            check_abi(&guarded(Expr::ResourceOf(Box::new(Expr::Field(
+                Box::new(Expr::Arg(1)),
+                0
+            ))))),
+            Err(AbiError::CallerNamedAuthority)
+        );
+    }
+
     #[test]
     fn a_bucket_is_carried_at_most_once() {
         // A guest receiving one edge's bytes under two names.
@@ -783,9 +811,13 @@ mod tests {
             (
                 "account",
                 "stamp-entropy",
-                Accessibility::RequiresTargetAuth,
+                Accessibility::Guarded(Expr::SelfAddr),
             ),
-            ("account", "withdraw", Accessibility::RequiresTargetAuth),
+            (
+                "account",
+                "withdraw",
+                Accessibility::Guarded(Expr::SelfAddr),
+            ),
             ("amm", "swap", Accessibility::Public),
             ("book", "fill-asks", Accessibility::Public),
             ("book", "place-ask", Accessibility::Public),
@@ -793,29 +825,25 @@ mod tests {
             (
                 "staking",
                 "cast-param-vote",
-                Accessibility::RequiresConfiguredAuth(1),
+                Accessibility::Guarded(Expr::Config(1)),
             ),
             (
                 "staking",
                 "clear-param-vote",
-                Accessibility::RequiresConfiguredAuth(1),
+                Accessibility::Guarded(Expr::Config(1)),
             ),
             (
                 "staking",
                 "deactivate-validator",
-                Accessibility::RequiresConfiguredAuth(1),
+                Accessibility::Guarded(Expr::Config(1)),
             ),
             (
                 "staking",
                 "register-validator",
-                Accessibility::RequiresConfiguredAuth(1),
+                Accessibility::Guarded(Expr::Config(1)),
             ),
             ("staking", "stake", Accessibility::Public),
-            (
-                "staking",
-                "unjail",
-                Accessibility::RequiresConfiguredAuth(1),
-            ),
+            ("staking", "unjail", Accessibility::Guarded(Expr::Config(1))),
             ("staking", "unstake", Accessibility::Public),
         ];
         let packages = stdlib();
@@ -823,7 +851,7 @@ mod tests {
             .iter()
             .flat_map(|(package, metadata)| {
                 metadata.methods.iter().map(move |(name, signature)| {
-                    (*package, name.as_str(), signature.accessibility)
+                    (*package, name.as_str(), signature.accessibility.clone())
                 })
             })
             .collect();

@@ -9,11 +9,12 @@
 //! consumed — is [`GraphBuilder::build`]'s check, surfaced as
 //! [`BuildError::DanglingOutput`] before a signature is ever made.
 
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
-    CallTarget, Constraint, EdgeRef, GraphArg, GraphNode, MAX_MANIFEST_NODES, ManifestGraph,
-    PrincipalAddr, ResourceRef,
+    CallTarget, Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, MAX_MANIFEST_NODES,
+    ManifestGraph, PrincipalAddr, ResourceRef,
 };
 
 use crate::args::Args;
@@ -247,8 +248,44 @@ impl GraphBuilder {
         method: impl Into<String>,
         args: impl Args,
     ) -> [Bucket; N] {
+        self.call_presenting(target, method, args, BTreeSet::new())
+    }
+
+    /// The same call, presenting the enclosing intent's signature badge —
+    /// what a guarded method takes.
+    ///
+    /// The typed builder reads which methods need this off their
+    /// signatures; here the author says so, because a bare graph builder
+    /// has no metadata to consult.
+    ///
+    /// # Panics
+    ///
+    /// As [`call`](Self::call).
+    #[must_use = "every minted output must be consumed for the graph to build"]
+    pub fn call_signed<const N: usize>(
+        &mut self,
+        target: impl Into<CallTarget>,
+        method: impl Into<String>,
+        args: impl Args,
+    ) -> [Bucket; N] {
+        self.call_presenting(
+            target,
+            method,
+            args,
+            BTreeSet::from([EvidenceRef::IntentSignature]),
+        )
+    }
+
+    #[must_use = "every minted output must be consumed for the graph to build"]
+    fn call_presenting<const N: usize>(
+        &mut self,
+        target: impl Into<CallTarget>,
+        method: impl Into<String>,
+        args: impl Args,
+        evidence: BTreeSet<EvidenceRef>,
+    ) -> [Bucket; N] {
         let args = args.bind_all(self);
-        let producer = self.push(target.into(), method.into(), args, vec![None; N]);
+        let producer = self.push(target.into(), method.into(), args, vec![None; N], evidence);
         std::array::from_fn(|output| {
             self.mint(
                 producer,
@@ -271,6 +308,7 @@ impl GraphBuilder {
         method: String,
         args: Vec<GraphArg>,
         outputs: Vec<Option<ResourceRef>>,
+        evidence: BTreeSet<EvidenceRef>,
     ) -> u32 {
         let producer = u32::try_from(self.nodes.len()).expect("more nodes than an edge can name");
         for arg in &args {
@@ -282,6 +320,7 @@ impl GraphBuilder {
             target,
             method,
             args,
+            evidence,
         });
         self.outputs.push(
             outputs
@@ -384,7 +423,13 @@ impl GraphBuilder {
             let rests: Vec<EdgeRef> = self.dangling().collect();
             for edge in rests {
                 let arg = self.mint(edge.producer, edge.output).into_arg();
-                self.push(sink.into(), "deposit".into(), vec![arg], Vec::new());
+                self.push(
+                    sink.into(),
+                    "deposit".into(),
+                    vec![arg],
+                    Vec::new(),
+                    BTreeSet::new(),
+                );
             }
         }
         if self.nodes.len() > MAX_MANIFEST_NODES {
@@ -425,8 +470,11 @@ impl Default for GraphBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use hyperscale_vm_effects::{
-        Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, PrincipalAddr, ResourceAddr, Value,
+        Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, ManifestGraph, PrincipalAddr,
+        ResourceAddr, Value,
     };
 
     use super::{BuildError, GraphBuilder, Param};
@@ -438,7 +486,7 @@ mod tests {
     #[test]
     fn a_transfer_builds_the_hand_written_graph() {
         let mut b = GraphBuilder::new();
-        let [funds] = b.call(ALICE, "withdraw", (RES, 100u128));
+        let [funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
         let [] = b.call(BOB, "deposit", (funds.resource_is(RES).min(1),));
         assert_eq!(
             b.build(),
@@ -451,6 +499,7 @@ mod tests {
                             GraphArg::Literal(Value::Address(RES.address())),
                             GraphArg::Literal(Value::U128(100)),
                         ],
+                        evidence: [EvidenceRef::IntentSignature].into(),
                     },
                     GraphNode {
                         target: BOB.into(),
@@ -465,6 +514,7 @@ mod tests {
                                 Constraint::MinAmount(1)
                             ],
                         }],
+                        evidence: BTreeSet::new(),
                     },
                 ],
             })
@@ -474,7 +524,7 @@ mod tests {
     #[test]
     fn a_dropped_output_is_a_dangling_edge() {
         let mut b = GraphBuilder::new();
-        let [_funds] = b.call(ALICE, "withdraw", (RES, 100u128));
+        let [_funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
         assert_eq!(
             b.build(),
             Err(BuildError::DanglingOutput {
@@ -501,7 +551,7 @@ mod tests {
     #[test]
     fn an_export_consumes_without_a_node() {
         let mut b = GraphBuilder::new();
-        let [funds] = b.call(ALICE, "withdraw", (RES, 100u128));
+        let [funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
         let yielded = b.export(funds);
         assert_eq!(
             yielded,
@@ -519,7 +569,7 @@ mod tests {
     #[should_panic(expected = "consuming intent's parameter")]
     fn a_constrained_export_is_refused() {
         let mut b = GraphBuilder::new();
-        let [funds] = b.call(ALICE, "withdraw", (RES, 100u128));
+        let [funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
         let _ = b.export(funds.min(1));
     }
 
@@ -527,7 +577,7 @@ mod tests {
     #[should_panic(expected = "the builder that minted it")]
     fn a_foreign_bucket_is_refused() {
         let mut minting = GraphBuilder::new();
-        let [funds] = minting.call(ALICE, "withdraw", (RES, 100u128));
+        let [funds] = minting.call_signed(ALICE, "withdraw", (RES, 100u128));
         let mut other = GraphBuilder::new();
         #[allow(
             clippy::tuple_array_conversions,

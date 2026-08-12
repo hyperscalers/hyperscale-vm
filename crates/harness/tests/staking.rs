@@ -22,10 +22,10 @@ use hyperscale_vm_effects::stdlib::{
     UNBONDING, VALIDATORS, VAULT, VOTE, account_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, AddressClass, ComponentAddr, EnvelopeTree, Hash32, Hasher, InstanceMeta,
-    InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
-    PrincipalAddr, ResourceAddr, SubstateKey, TestHasher, Value, admit_tree, child_key,
-    resource_address, route_tree,
+    Address, ComponentAddr, EnvelopeTree, Hash32, Hasher, InstanceMeta, InstanceRegistry,
+    IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, PrincipalAddr,
+    ResourceAddr, SubstateKey, TestHasher, Value, admit_tree, child_key, resource_address,
+    route_tree,
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -56,11 +56,9 @@ const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 fn unit() -> ResourceAddr {
     resource_address(&TestHasher, pool(), &[])
 }
-/// The principal this pool's validator surface admits. Nothing here
-/// enforces that — the check is at admission, against the envelope's
-/// signatures — so what these tests exercise is the surface's behaviour
-/// once a call reaches it.
-const OPERATOR: Address = Address::new([0x0B; 31], AddressClass::Component);
+/// The principal this pool's validator surface admits: the identity a
+/// call to one of those methods has to present.
+const OPERATOR: PrincipalAddr = PrincipalAddr::new([0x0B; 31]);
 const FUEL: u64 = 1_000_000_000;
 
 /// A validator the pool operates, and the consensus material a
@@ -108,7 +106,10 @@ fn world() -> (MetadataCache, InstanceRegistry) {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: staking_pkg(),
-        config: vec![Value::Address(XRD.address()), Value::Address(OPERATOR)],
+        config: vec![
+            Value::Address(XRD.address()),
+            Value::Address(OPERATOR.address()),
+        ],
         salt: Hash32([2; 32]),
     }
 }
@@ -207,11 +208,15 @@ const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
 }
 
 /// Admit and route one envelope into its batch entry.
-fn batch_entry(world: &(MetadataCache, InstanceRegistry), tree: &EnvelopeTree) -> Result<BatchTx> {
+fn batch_entry(
+    world: &(MetadataCache, InstanceRegistry),
+    tree: &EnvelopeTree,
+    composer: PrincipalAddr,
+) -> Result<BatchTx> {
     let (cache, instances) = world;
     let identity = tree.hash(&TestHasher);
     let admitted =
-        admit_tree(tree, identity, cache, instances, &TestHasher).context("admission")?;
+        admit_tree(tree, composer, identity, cache, instances, &TestHasher).context("admission")?;
     let routing = route_tree(
         &admitted,
         cache,
@@ -460,7 +465,7 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<BatchOutcome> {
 #[test]
 fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(stake_graph(100)))?;
+    let entry = batch_entry(&world, &single_intent(stake_graph(100)), ALICE)?;
 
     let outcome = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry))?;
     let receipt = &outcome.receipts[&entry.tx];
@@ -487,7 +492,7 @@ fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
 #[test]
 fn returned_units_are_consumed_and_recorded_as_unbonding() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(unstake_graph(40)))?;
+    let entry = batch_entry(&world, &single_intent(unstake_graph(40)), ALICE)?;
 
     let outcome = run_both(&seeded_store(0, 100), std::slice::from_ref(&entry))?;
     let receipt = &outcome.receipts[&entry.tx];
@@ -518,7 +523,7 @@ fn the_emitter_names_the_pool_and_the_guest_cannot() -> Result<()> {
     // names a pool — so a second instance of this same package emits facts
     // about itself and can never emit one about this pool.
     let world = world();
-    let entry = batch_entry(&world, &single_intent(stake_graph(10)))?;
+    let entry = batch_entry(&world, &single_intent(stake_graph(10)), ALICE)?;
     let outcome = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry))?;
 
     let events = &outcome.receipts[&entry.tx].events;
@@ -557,7 +562,7 @@ fn pool_event(outcome: &BatchOutcome, entry: &BatchTx) -> (u32, Vec<u8>) {
 #[test]
 fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)))?;
+    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
     let outcome = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
@@ -580,7 +585,7 @@ fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
 #[test]
 fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)))?;
+    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
 
     // The leaf already holds a key, which is the state a first
     // registration leaves behind.
@@ -607,7 +612,7 @@ fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
     let world = world();
     for method in ["deactivate-validator", "unjail"] {
         let graph = operator_graph(method, VALIDATOR);
-        let entry = batch_entry(&world, &single_intent(graph))?;
+        let entry = batch_entry(&world, &single_intent(graph), OPERATOR)?;
         let outcome = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
         assert!(
             !matches!(
@@ -629,7 +634,7 @@ fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
 
     for (method, event_type) in [("deactivate-validator", 3), ("unjail", 4)] {
         let graph = operator_graph(method, VALIDATOR);
-        let entry = batch_entry(&world, &single_intent(graph))?;
+        let entry = batch_entry(&world, &single_intent(graph), OPERATOR)?;
         let outcome = run_both(&store, std::slice::from_ref(&entry))?;
         assert!(matches!(
             outcome.receipts[&entry.tx].outcome,
@@ -657,8 +662,12 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
     // Per validator rather than per pool, so two operator actions on two
     // validators commute rather than taking turns.
     let world = world();
-    let first = batch_entry(&world, &single_intent(register_graph(VALIDATOR)))?;
-    let second = batch_entry(&world, &single_intent(register_graph(VALIDATOR + 1)))?;
+    let first = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
+    let second = batch_entry(
+        &world,
+        &single_intent(register_graph(VALIDATOR + 1)),
+        OPERATOR,
+    )?;
     let outcome = run_both(&MemoryStore::new(), &[first.clone(), second.clone()])?;
 
     for entry in [&first, &second] {
@@ -704,7 +713,7 @@ fn cast_graph() -> ManifestGraph {
 #[test]
 fn a_cast_vote_is_held_on_the_pools_own_leaf_and_reported() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(cast_graph()))?;
+    let entry = batch_entry(&world, &single_intent(cast_graph()), OPERATOR)?;
     let outcome = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
@@ -729,7 +738,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     store.clear_log();
 
     let cleared = graph(|b| staking::clear_param_vote(b, pool()));
-    let entry = batch_entry(&world, &single_intent(cleared))?;
+    let entry = batch_entry(&world, &single_intent(cleared), OPERATOR)?;
     let outcome = run_both(&store, std::slice::from_ref(&entry))?;
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
@@ -755,7 +764,7 @@ fn a_second_cast_replaces_the_first() -> Result<()> {
     store.write(vote_leaf(pool()), vec![0xAA; 24])?;
     store.clear_log();
 
-    let entry = batch_entry(&world, &single_intent(cast_graph()))?;
+    let entry = batch_entry(&world, &single_intent(cast_graph()), OPERATOR)?;
     let outcome = run_both(&store, std::slice::from_ref(&entry))?;
     assert_eq!(
         cells(&outcome).get(&vote_leaf(pool())),
