@@ -5,8 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, InvalidAddress, LocalKey, Mode, ModeKind, NativeAddr,
-    PackageAddr, PrincipalAddr, ResourceAddr, SchemeId, SubstateKey, WrongClass, compatible,
+    Address, AddressClass, CallTarget, ComponentAddr, InvalidAddress, LocalKey, Mode, ModeKind,
+    NativeAddr, NotAResource, NotCallable, PackageAddr, PrincipalAddr, ResourceAddr, ResourceRef,
+    SchemeId, SubstateKey, WrongClass, compatible,
 };
 
 use crate::hash::{Hash32, Hasher};
@@ -71,10 +72,11 @@ const DOMAIN_INSTANCE_CONFIG: &[u8] = b"hyperscale-vm/instance-config";
 #[must_use]
 pub fn child_key(
     hasher: &dyn Hasher,
-    owner: Address,
+    owner: impl Into<Address>,
     role: RoleId,
     material: &[Vec<u8>],
 ) -> SubstateKey {
+    let owner = owner.into();
     let owner_bytes = owner.to_bytes();
     let role_bytes = role.0.to_le_bytes();
     let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
@@ -163,8 +165,12 @@ pub fn package_address(hasher: &dyn Hasher, package: PackageHash) -> Address {
 /// recomputing the derivation rather than by trusting a claim about it.
 /// The material separates the resources one minter issues.
 #[must_use]
-pub fn resource_address(hasher: &dyn Hasher, minter: Address, material: &[Vec<u8>]) -> Address {
-    let minter_bytes = minter.to_bytes();
+pub fn resource_address(
+    hasher: &dyn Hasher,
+    minter: impl Into<Address>,
+    material: &[Vec<u8>],
+) -> Address {
+    let minter_bytes = minter.into().to_bytes();
     let mut parts: Vec<&[u8]> = Vec::with_capacity(1 + material.len());
     parts.push(&minter_bytes);
     parts.extend(material.iter().map(Vec::as_slice));

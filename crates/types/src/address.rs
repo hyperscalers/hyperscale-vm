@@ -181,6 +181,22 @@ pub struct WrongClass {
     pub found: AddressClass,
 }
 
+/// An address of a class nothing invokes methods on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[error("a {found} address is not callable")]
+pub struct NotCallable {
+    /// The class the address carries.
+    pub found: AddressClass,
+}
+
+/// An address of a class that denominates no supply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[error("a {found} address names no resource")]
+pub struct NotAResource {
+    /// The class the address carries.
+    pub found: AddressClass,
+}
+
 /// A global object's address: 31 bytes of domain-separated hash followed
 /// by the byte naming its class.
 ///
@@ -304,10 +320,66 @@ macro_rules! class_addr {
             /// The class every value of this type carries.
             pub const CLASS: AddressClass = AddressClass::$class;
 
+            /// The address of this class with `body`.
+            ///
+            /// The class comes from the constructor rather than from an
+            /// argument, so a value of this type cannot be built carrying
+            /// another class's tag and a fixture needs no checked
+            /// conversion to write one down.
+            #[must_use]
+            pub const fn new(body: [u8; 31]) -> Self {
+                Self(Address::new(body, AddressClass::$class))
+            }
+
             /// The address, with its class forgotten.
             #[must_use]
             pub const fn address(self) -> Address {
                 self.0
+            }
+
+            /// The derivation commitment: everything but the tag.
+            #[must_use]
+            pub fn body(self) -> [u8; 31] {
+                self.0.body()
+            }
+
+            /// The address as its 32 bytes.
+            #[must_use]
+            pub const fn to_bytes(self) -> [u8; 32] {
+                self.0.to_bytes()
+            }
+        }
+
+        // A typed address and an untyped one are equal when their bytes
+        // are: knowing the class of one side is not a difference the
+        // comparison should have to be told about.
+        impl PartialEq<Address> for $name {
+            fn eq(&self, other: &Address) -> bool {
+                self.0 == *other
+            }
+        }
+
+        impl PartialEq<$name> for Address {
+            fn eq(&self, other: &$name) -> bool {
+                *self == other.0
+            }
+        }
+
+        impl HborWidth for $name {
+            const MIN_ENCODED_LEN: usize = 32;
+        }
+
+        impl HborEncode for $name {
+            fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+                self.0.encode(encoder)
+            }
+        }
+
+        impl HborDecode for $name {
+            fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+                let address = Address::decode(decoder)?;
+                Self::try_from(address)
+                    .map_err(|err| DecodeError::InvalidDiscriminant(err.found.tag()))
             }
         }
 
@@ -363,14 +435,160 @@ class_addr! {
     NativeAddr => Native
 }
 
+/// The classes a position admits, for a position no single class fills.
+///
+/// Each of these is a small closed set over the class newtypes: the
+/// variants are the classes the position accepts, the conversion from a
+/// plain [`Address`] is where an address of any other class is refused,
+/// and a reader dispatching over the set is exhaustive rather than
+/// carrying an arm for classes that cannot arrive.
+macro_rules! position_addr {
+    (
+        $(#[$doc:meta])*
+        $name:ident, $error:ident {
+            $($(#[$variant_doc:meta])* $variant:ident($class:ident)),+ $(,)?
+        }
+    ) => {
+        $(#[$doc])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum $name {
+            $($(#[$variant_doc])* $variant($class),)+
+        }
+
+        impl $name {
+            /// The address, with the position's narrowing forgotten.
+            #[must_use]
+            pub const fn address(self) -> Address {
+                match self {
+                    $(Self::$variant(address) => address.address(),)+
+                }
+            }
+
+            /// The class the address carries.
+            #[must_use]
+            pub const fn class(self) -> AddressClass {
+                match self {
+                    $(Self::$variant(_) => $class::CLASS,)+
+                }
+            }
+
+            /// The address as its 32 bytes.
+            #[must_use]
+            pub const fn to_bytes(self) -> [u8; 32] {
+                self.address().to_bytes()
+            }
+        }
+
+        $(
+            impl From<$class> for $name {
+                fn from(address: $class) -> Self {
+                    Self::$variant(address)
+                }
+            }
+        )+
+
+        impl From<$name> for Address {
+            fn from(value: $name) -> Self {
+                value.address()
+            }
+        }
+
+        impl TryFrom<Address> for $name {
+            type Error = $error;
+
+            fn try_from(address: Address) -> Result<Self, Self::Error> {
+                $(
+                    if let Ok(narrowed) = $class::try_from(address) {
+                        return Ok(Self::$variant(narrowed));
+                    }
+                )+
+                Err($error { found: address.class() })
+            }
+        }
+
+        impl PartialEq<Address> for $name {
+            fn eq(&self, other: &Address) -> bool {
+                self.address() == *other
+            }
+        }
+
+        impl PartialEq<$name> for Address {
+            fn eq(&self, other: &$name) -> bool {
+                *self == other.address()
+            }
+        }
+
+        impl HborWidth for $name {
+            const MIN_ENCODED_LEN: usize = 32;
+        }
+
+        impl HborEncode for $name {
+            fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+                self.address().encode(encoder)
+            }
+        }
+
+        impl HborDecode for $name {
+            fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+                let address = Address::decode(decoder)?;
+                Self::try_from(address)
+                    .map_err(|err| DecodeError::InvalidDiscriminant(err.found.tag()))
+            }
+        }
+    };
+}
+
+position_addr! {
+    /// An address a method may be invoked on.
+    ///
+    /// Callability is not one class. An account and an instance of a user
+    /// package both answer calls; a package *is* code and a resource *is*
+    /// a supply, so neither has methods to name, and naming one as a
+    /// target is a byte string a reader refuses rather than a claim it
+    /// resolves and rejects later.
+    ///
+    /// No protocol role is callable, so the native class is absent — the
+    /// register's two roles are a resource and a publisher. A callable
+    /// role arrives with its conversion, which is the fail-closed
+    /// direction: a class not listed here cannot be called at all.
+    CallTarget, NotCallable {
+        /// An account, answering through the protocol's account blueprint.
+        Principal(PrincipalAddr),
+        /// An instance, answering through the blueprint its address
+        /// commits to.
+        Component(ComponentAddr),
+    }
+}
+
+position_addr! {
+    /// An address naming the resource an amount is denominated in.
+    ///
+    /// Two classes name resources, because the protocol's own resource
+    /// has no minter to commit to. An ordinary resource address commits
+    /// its provenance — who may mint it — while the native fee resource
+    /// is derived from the role it plays, its supply moving only with the
+    /// protocol. Keeping them separate classes is what keeps one tag
+    /// naming one derivation rule.
+    ResourceRef, NotAResource {
+        /// A resource addressed by who may mint it.
+        Resource(ResourceAddr),
+        /// A protocol resource, addressed by the role it plays.
+        Native(NativeAddr),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{assert_canonical, from_slice, to_vec};
+    use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
 
-    use super::{Address, AddressClass, ComponentAddr, LocalKey, PrincipalAddr, SubstateKey};
+    use super::AddressClass::{Component, Native, Package, Principal, Resource};
+    use super::{
+        Address, AddressClass, CallTarget, ComponentAddr, LocalKey, NativeAddr, PackageAddr,
+        PrincipalAddr, ResourceAddr, ResourceRef, SubstateKey,
+    };
 
     fn owner(seed: u8) -> Address {
-        Address::new([seed; 31], AddressClass::Component)
+        Address::new([seed; 31], Component)
     }
 
     #[test]
@@ -406,13 +624,7 @@ mod tests {
         assert!(SubstateKey::from_bytes(bytes).is_err());
     }
 
-    const CLASSES: [AddressClass; 5] = [
-        AddressClass::Principal,
-        AddressClass::Component,
-        AddressClass::Package,
-        AddressClass::Resource,
-        AddressClass::Native,
-    ];
+    const CLASSES: [AddressClass; 5] = [Principal, Component, Package, Resource, Native];
 
     #[test]
     fn a_class_is_recoverable_from_the_address_it_tagged() {
@@ -463,7 +675,7 @@ mod tests {
 
     #[test]
     fn a_global_address_is_its_bytes_on_the_wire() {
-        let address = Address::new([5; 31], AddressClass::Resource);
+        let address = Address::new([5; 31], Resource);
         let encoded = to_vec(&address).unwrap();
         assert_eq!(encoded, address.to_bytes());
         assert_eq!(encoded.len(), 32);
@@ -473,21 +685,117 @@ mod tests {
 
     #[test]
     fn a_typed_address_refuses_every_other_class() {
-        let principal = Address::new([1; 31], AddressClass::Principal);
+        let principal = Address::new([1; 31], Principal);
         assert_eq!(
             PrincipalAddr::try_from(principal).unwrap().address(),
             principal
         );
         let err = ComponentAddr::try_from(principal).unwrap_err();
-        assert_eq!(err.expected, AddressClass::Component);
-        assert_eq!(err.found, AddressClass::Principal);
+        assert_eq!(err.expected, Component);
+        assert_eq!(err.found, Principal);
 
         for class in CLASSES {
             let address = Address::new([2; 31], class);
-            assert_eq!(
-                PrincipalAddr::try_from(address).is_ok(),
-                class == AddressClass::Principal
-            );
+            assert_eq!(PrincipalAddr::try_from(address).is_ok(), class == Principal);
         }
+    }
+
+    #[test]
+    fn a_typed_constructor_carries_its_own_class() {
+        assert_eq!(PrincipalAddr::new([8; 31]).address().class(), Principal);
+        assert_eq!(ComponentAddr::new([8; 31]).address().class(), Component);
+        assert_eq!(PackageAddr::new([8; 31]).address().class(), Package);
+        assert_eq!(ResourceAddr::new([8; 31]).address().class(), Resource);
+        assert_eq!(NativeAddr::new([8; 31]).address().class(), Native);
+        // The body is the constructor's argument and the tag is the
+        // constructor's choice, so the two cannot disagree.
+        assert_eq!(ResourceAddr::new([8; 31]).body(), [8; 31]);
+        assert_eq!(
+            ResourceAddr::new([8; 31]).to_bytes(),
+            Address::new([8; 31], Resource).to_bytes()
+        );
+    }
+
+    #[test]
+    fn a_typed_address_equals_the_untyped_one_it_narrows() {
+        let native = NativeAddr::new([0x5A; 31]);
+        assert_eq!(native, native.address());
+        assert_eq!(native.address(), native);
+        assert_ne!(native, Address::new([0x5A; 31], Resource));
+        let position = ResourceRef::from(native);
+        assert_eq!(position, native.address());
+        assert_eq!(native.address(), position);
+    }
+
+    #[test]
+    fn a_call_target_admits_the_classes_that_answer_calls() {
+        let principal = Address::new([1; 31], Principal);
+        let component = Address::new([2; 31], Component);
+        assert_eq!(
+            CallTarget::try_from(principal),
+            Ok(CallTarget::Principal(PrincipalAddr::new([1; 31])))
+        );
+        assert_eq!(
+            CallTarget::try_from(component),
+            Ok(CallTarget::Component(ComponentAddr::new([2; 31])))
+        );
+        for class in [Package, Resource, Native] {
+            let err = CallTarget::try_from(Address::new([3; 31], class)).unwrap_err();
+            assert_eq!(err.found, class);
+        }
+        // The position forgets its narrowing on the way back out.
+        assert_eq!(
+            CallTarget::try_from(component).unwrap().address(),
+            component
+        );
+        assert_eq!(CallTarget::try_from(component).unwrap().class(), Component);
+    }
+
+    #[test]
+    fn a_resource_reference_admits_the_classes_that_name_supply() {
+        for class in [Resource, Native] {
+            let address = Address::new([4; 31], class);
+            let resource = ResourceRef::try_from(address).unwrap();
+            assert_eq!(resource.address(), address);
+            assert_eq!(resource.class(), class);
+        }
+        for class in [Principal, Component, Package] {
+            let err = ResourceRef::try_from(Address::new([4; 31], class)).unwrap_err();
+            assert_eq!(err.found, class);
+        }
+    }
+
+    #[test]
+    fn a_position_is_its_address_bytes_on_the_wire() {
+        let target = CallTarget::Component(ComponentAddr::new([6; 31]));
+        let encoded = to_vec(&target).unwrap();
+        assert_eq!(encoded, target.address().to_bytes());
+        assert_eq!(from_slice::<CallTarget>(&encoded).unwrap(), target);
+        assert_canonical(&target);
+
+        let resource = ResourceRef::Native(NativeAddr::new([7; 31]));
+        assert_eq!(to_vec(&resource).unwrap(), resource.address().to_bytes());
+        assert_canonical(&resource);
+    }
+
+    #[test]
+    fn a_class_a_position_refuses_is_refused_at_decode() {
+        // A package answers no calls, so a target naming one is not a
+        // target a reader accepts and rejects afterwards.
+        let package = to_vec(&Address::new([9; 31], Package)).unwrap();
+        assert!(matches!(
+            from_slice::<CallTarget>(&package),
+            Err(DecodeError::InvalidDiscriminant(tag)) if tag == Package.tag()
+        ));
+        assert!(matches!(
+            from_slice::<ResourceRef>(&package),
+            Err(DecodeError::InvalidDiscriminant(tag)) if tag == Package.tag()
+        ));
+        // And so is a class the position does admit, read as another.
+        assert!(from_slice::<ResourceAddr>(&package).is_err());
+        assert_eq!(
+            from_slice::<PackageAddr>(&package).unwrap(),
+            PackageAddr::new([9; 31])
+        );
     }
 }

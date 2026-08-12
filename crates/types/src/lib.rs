@@ -23,8 +23,9 @@ pub mod work;
 pub mod writes;
 
 pub use address::{
-    Address, AddressClass, ComponentAddr, InvalidAddress, LEAF_KEY_BYTES, LocalKey, NativeAddr,
-    PackageAddr, PrincipalAddr, ResourceAddr, SchemeId, SubstateKey, WrongClass,
+    Address, AddressClass, CallTarget, ComponentAddr, InvalidAddress, LEAF_KEY_BYTES, LocalKey,
+    NativeAddr, NotAResource, NotCallable, PackageAddr, PrincipalAddr, ResourceAddr, ResourceRef,
+    SchemeId, SubstateKey, WrongClass,
 };
 pub use amount::{AMOUNT_CELL_BYTES, amount_cell, encode_amount, read_amount};
 pub use envelope::{
