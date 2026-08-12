@@ -25,8 +25,8 @@
 
 use hyperscale_vm_effects::{
     Address, CallTarget, Constraint, EdgeRef, EvalInputs, Expr, GraphArg, Hash32, Hasher,
-    InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MetadataCache, PackageHash,
-    ParamType, PrincipalAddr, ResourceRef, Value, evaluate_expr,
+    InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MetadataCache, MethodSignature,
+    PackageHash, ParamType, PrincipalAddr, ResourceRef, Value, evaluate_expr,
 };
 
 use crate::args::Args;
@@ -264,27 +264,15 @@ impl<'a> TypedBuilder<'a> {
             .map(|value| value.unwrap_or_else(unknown))
             .collect();
 
-        let inputs = EvalInputs {
-            self_addr: target.address(),
-            args: &values,
-            config: &meta.config,
-            node_index: self.graph.len(),
-            frame: 0,
-            identity: UNBOUND,
-        };
-        let resources: Vec<Option<ResourceRef>> = signature
-            .outputs
-            .iter()
-            .map(|expr| {
-                if !resolvable(expr, &known, 0) {
-                    return None;
-                }
-                match evaluate_expr(expr, &inputs, hasher) {
-                    Ok(Value::Address(address)) => ResourceRef::try_from(address).ok(),
-                    _ => None,
-                }
-            })
-            .collect();
+        let resources = output_resources(
+            signature,
+            target,
+            &meta.config,
+            &values,
+            &known,
+            self.graph.len(),
+            hasher,
+        );
 
         let outputs = resources.len();
         let producer = self.graph.push(target, method.to_owned(), args, resources);
@@ -406,12 +394,52 @@ fn type_args(
     Ok(inputs)
 }
 
+/// What each of a method's declared outputs carries, where the inputs
+/// feeding the declaration are known.
+///
+/// The one derivation both tiers of this crate want: the typed builder
+/// tags the handles it mints with it, and the projection reads it back off
+/// a graph it was handed. `known` says which of `values` is real; the rest
+/// hold [`unknown`], which nothing reaches because [`resolvable`] refuses
+/// every expression that would.
+pub(crate) fn output_resources(
+    signature: &MethodSignature,
+    target: CallTarget,
+    config: &[Value],
+    values: &[Value],
+    known: &[bool],
+    node_index: u32,
+    hasher: &dyn Hasher,
+) -> Vec<Option<ResourceRef>> {
+    let inputs = EvalInputs {
+        self_addr: target.address(),
+        args: values,
+        config,
+        node_index,
+        frame: 0,
+        identity: UNBOUND,
+    };
+    signature
+        .outputs
+        .iter()
+        .map(|expr| {
+            if !resolvable(expr, known, 0) {
+                return None;
+            }
+            match evaluate_expr(expr, &inputs, hasher) {
+                Ok(Value::Address(address)) => ResourceRef::try_from(address).ok(),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 /// The value standing in for an input nothing determined.
 ///
 /// Never read: [`resolvable`] is what decides whether an expression may be
 /// evaluated at all, and it answers no for every expression reaching an
 /// unknown input.
-const fn unknown() -> Value {
+pub(crate) const fn unknown() -> Value {
     Value::Tuple(Vec::new())
 }
 

@@ -36,10 +36,12 @@ pub mod builder;
 pub mod envelope;
 pub mod native;
 pub mod preflight;
+pub mod render;
 pub mod typed;
 
 pub use args::{Arg, Args, BucketArg};
 pub use builder::{Bucket, BuildError, GraphBuilder, Param};
 pub use envelope::{EnvelopeBuilder, EnvelopeError, IntentBuilder, YieldSink, YieldSource};
 pub use preflight::{Authority, PreflightError, Report, Required, preflight, preflight_tree};
+pub use render::{Names, render};
 pub use typed::{Outputs, TypedBuilder, TypedError};
