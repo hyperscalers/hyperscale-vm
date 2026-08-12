@@ -12,9 +12,9 @@
 //! preimage a signature covers, and the scheme vocabulary its key and
 //! signature are read under — while producing and verifying them binds a
 //! hash and a curve, which belongs to the workspace that owns the
-//! protocol's cryptography and reaches back through [`Verifier`]. The same
-//! line keeps validity windows here as plain milliseconds: judging them
-//! against a clock is consensus's side.
+//! protocol's cryptography and reaches back through [`SchemeVerifier`].
+//! The same line keeps validity windows here as plain milliseconds:
+//! judging them against a clock is consensus's side.
 
 pub mod address;
 pub mod amount;
@@ -38,6 +38,6 @@ pub use envelope::{
 };
 pub use execution::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome};
 pub use mode::{Mode, ModeKind, compatible};
-pub use scheme::{SchemeId, SchemeSpec, Verifier};
+pub use scheme::{MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId, SchemeSpec, SchemeVerifier};
 pub use work::{FOOTPRINT_WEIGHT, FUEL_WEIGHT, TX_UNITS, declared_work, work_units};
 pub use writes::{MAX_CELL_VALUE_LEN, Movement, SettledWrites, StateWrites};

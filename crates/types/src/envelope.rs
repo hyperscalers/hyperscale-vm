@@ -19,6 +19,7 @@ use core::fmt;
 use hyperscale_hbor::{Hash32, Hbor};
 
 use crate::address::PrincipalAddr;
+use crate::scheme::{MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId};
 
 /// The cap on an envelope body's bytes — a call tree or a package
 /// artifact.
@@ -91,15 +92,23 @@ impl fmt::Display for TxHash {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hbor)]
 pub struct NetworkId(pub u8);
 
-/// One bound subintent's signature: the signer's key and their ed25519
-/// signature over the subintent's declaration hash, in tree order.
+/// One bound subintent's signature: the signer's key and their signature
+/// over the subintent's declaration hash, in tree order.
+///
+/// The composer's own signature covers this whole value, so a subintent's
+/// scheme, key, and signature are all signed content twice over — once by
+/// the subintent's signer and once by the composer binding it.
 #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
 pub struct SubintentSig {
-    /// The subintent signer's ed25519 public key; its derived account
-    /// address must match the signer the tree binds.
-    pub public_key: [u8; 32],
+    /// The scheme the key and signature below belong to.
+    pub scheme: SchemeId,
+    /// The subintent signer's public key; its derived account address
+    /// must match the signer the tree binds.
+    #[hbor(max = MAX_KEY_BYTES)]
+    pub public_key: Vec<u8>,
     /// The signature over the subintent's declaration hash.
-    pub signature: [u8; 64],
+    #[hbor(max = MAX_SIG_BYTES)]
+    pub signature: Vec<u8>,
 }
 
 /// What an envelope asks the chain for: a call graph to run, or a
@@ -155,13 +164,22 @@ pub struct TransactionEnvelope {
     /// other field, so the transaction can neither be replayed onto a
     /// network its composer never named nor re-targeted after signing.
     pub network: NetworkId,
-    /// The composer's ed25519 public key.
+    /// The scheme the composer's key and signature belong to.
+    ///
+    /// Signed content, unlike the material it describes: a composer says
+    /// which scheme they signed under, so one key and signature pair that
+    /// happened to validate under two registered schemes could still only
+    /// be presented as the one its signer named.
+    pub signer_scheme: SchemeId,
+    /// The composer's public key, under [`signer_scheme`](Self::signer_scheme).
     #[hbor(unsigned)]
-    pub signer: [u8; 32],
+    #[hbor(max = MAX_KEY_BYTES)]
+    pub signer: Vec<u8>,
     /// The composer's signature over the hash of
     /// [`signing_bytes`](hyperscale_hbor::HborSigned::signing_bytes).
     #[hbor(unsigned)]
-    pub signature: [u8; 64],
+    #[hbor(max = MAX_SIG_BYTES)]
+    pub signature: Vec<u8>,
 }
 
 impl TransactionEnvelope {
@@ -204,8 +222,9 @@ mod tests {
         TransactionEnvelope {
             body: TransactionBody::Call(vec![1, 2, 3]),
             subintent_sigs: vec![SubintentSig {
-                public_key: [0x11; 32],
-                signature: [0x22; 64],
+                scheme: SchemeId::ED25519,
+                public_key: vec![0x11; 32],
+                signature: vec![0x22; 64],
             }],
             fee_payer: PrincipalAddr::new([0x33; 31]),
             max_fee: 1_000_000,
@@ -214,8 +233,9 @@ mod tests {
             validity_end_ms: 1_700_000_060_000,
             message: b"hello".to_vec(),
             network: NetworkId(242),
-            signer: [0x44; 32],
-            signature: [0x55; 64],
+            signer_scheme: SchemeId::ED25519,
+            signer: vec![0x44; 32],
+            signature: vec![0x55; 64],
         }
     }
 
@@ -224,18 +244,40 @@ mod tests {
         assert_canonical(&sample());
     }
 
-    /// The envelope's field widths and the registered widths of the scheme
-    /// it carries are one fact written in two places; they agree.
+    /// Material the envelope carries is material its named scheme claims.
     #[test]
-    fn the_wire_widths_are_the_registered_ones() {
+    fn the_carried_material_is_what_the_scheme_registers() {
         let envelope = sample();
-        let spec = SchemeId::ED25519.spec().expect("ed25519 is registered");
-        assert_eq!(envelope.signer.len(), spec.key_len);
-        assert_eq!(envelope.signature.len(), spec.sig_len);
+        let spec = envelope
+            .signer_scheme
+            .spec()
+            .expect("the sample names a registered scheme");
+        assert!(spec.admits(&envelope.signer, &envelope.signature));
         for sig in &envelope.subintent_sigs {
-            assert_eq!(sig.public_key.len(), spec.key_len);
-            assert_eq!(sig.signature.len(), spec.sig_len);
+            let spec = sig.scheme.spec().expect("a registered scheme");
+            assert!(spec.admits(&sig.public_key, &sig.signature));
         }
+    }
+
+    /// The scheme is signed content while the material it describes is
+    /// not, so re-tagging a key and signature to a second scheme they also
+    /// satisfy is a different preimage and loses the signature.
+    #[test]
+    fn the_scheme_is_signed_and_the_material_is_not() {
+        let envelope = sample();
+        let mut retagged = envelope.clone();
+        retagged.signer_scheme = SchemeId(0xFFFF);
+        assert_ne!(
+            envelope.signing_bytes().unwrap(),
+            retagged.signing_bytes().unwrap()
+        );
+
+        let mut rebound = envelope.clone();
+        rebound.subintent_sigs[0].scheme = SchemeId(0xFFFF);
+        assert_ne!(
+            envelope.signing_bytes().unwrap(),
+            rebound.signing_bytes().unwrap()
+        );
     }
 
     /// The two fields a signature cannot cover ride the wire and are
@@ -244,8 +286,8 @@ mod tests {
     fn the_signature_covers_everything_but_itself() {
         let envelope = sample();
         let mut resigned = envelope.clone();
-        resigned.signer = [0x99; 32];
-        resigned.signature = [0xAA; 64];
+        resigned.signer = vec![0x99; 32];
+        resigned.signature = vec![0xAA; 64];
         assert_eq!(
             envelope.signing_bytes().unwrap(),
             resigned.signing_bytes().unwrap()
