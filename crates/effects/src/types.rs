@@ -92,11 +92,11 @@ pub fn child_key(
     }
 }
 
-/// The address whose body is the leading 31 bytes of `digest`.
-fn tagged(digest: Hash32, class: AddressClass) -> Address {
+/// An address body: the leading 31 bytes of `digest`.
+fn body(digest: Hash32) -> [u8; 31] {
     let mut body = [0u8; 31];
     body.copy_from_slice(&digest.0[..31]);
-    Address::new(body, class)
+    body
 }
 
 /// The principal address a public key opens.
@@ -111,12 +111,15 @@ fn tagged(digest: Hash32, class: AddressClass) -> Address {
 /// which is what keeps a scheme added later from landing on an address
 /// already in use.
 #[must_use]
-pub fn principal_address(hasher: &dyn Hasher, scheme: SchemeId, public_key: &[u8]) -> Address {
+pub fn principal_address(
+    hasher: &dyn Hasher,
+    scheme: SchemeId,
+    public_key: &[u8],
+) -> PrincipalAddr {
     let scheme_bytes = scheme.0.to_le_bytes();
-    tagged(
+    PrincipalAddr::new(body(
         hasher.hash(DOMAIN_PRINCIPAL, &[&scheme_bytes, public_key]),
-        AddressClass::Principal,
-    )
+    ))
 }
 
 /// The address of the instance `package` creates under `config`, salted by
@@ -137,11 +140,10 @@ pub fn component_address(
     package: PackageHash,
     config: Hash32,
     salt: Hash32,
-) -> Address {
-    tagged(
+) -> ComponentAddr {
+    ComponentAddr::new(body(
         hasher.hash(DOMAIN_COMPONENT, &[&package.0.0, &config.0, &salt.0]),
-        AddressClass::Component,
-    )
+    ))
 }
 
 /// The address of published code.
@@ -151,11 +153,8 @@ pub fn component_address(
 /// the same address, and the binding holds for as long as the package
 /// exists.
 #[must_use]
-pub fn package_address(hasher: &dyn Hasher, package: PackageHash) -> Address {
-    tagged(
-        hasher.hash(DOMAIN_PACKAGE, &[&package.0.0]),
-        AddressClass::Package,
-    )
+pub fn package_address(hasher: &dyn Hasher, package: PackageHash) -> PackageAddr {
+    PackageAddr::new(body(hasher.hash(DOMAIN_PACKAGE, &[&package.0.0])))
 }
 
 /// The address of a resource minted under `minter`.
@@ -169,12 +168,12 @@ pub fn resource_address(
     hasher: &dyn Hasher,
     minter: impl Into<Address>,
     material: &[Vec<u8>],
-) -> Address {
+) -> ResourceAddr {
     let minter_bytes = minter.into().to_bytes();
     let mut parts: Vec<&[u8]> = Vec::with_capacity(1 + material.len());
     parts.push(&minter_bytes);
     parts.extend(material.iter().map(Vec::as_slice));
-    tagged(hasher.hash(DOMAIN_RESOURCE, &parts), AddressClass::Resource)
+    ResourceAddr::new(body(hasher.hash(DOMAIN_RESOURCE, &parts)))
 }
 
 /// The address of a protocol role.
@@ -184,12 +183,9 @@ pub fn resource_address(
 /// shard by preference. What the address names is the role; the code
 /// behind it moves with the protocol version.
 #[must_use]
-pub fn native_address(hasher: &dyn Hasher, role: NativeRole) -> Address {
+pub fn native_address(hasher: &dyn Hasher, role: NativeRole) -> NativeAddr {
     let role_bytes = role.0.to_le_bytes();
-    tagged(
-        hasher.hash(DOMAIN_NATIVE, &[&role_bytes]),
-        AddressClass::Native,
-    )
+    NativeAddr::new(body(hasher.hash(DOMAIN_NATIVE, &[&role_bytes])))
 }
 
 /// The commitment an instance's address carries to its creation-fixed

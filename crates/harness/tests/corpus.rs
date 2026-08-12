@@ -15,11 +15,11 @@ use hyperscale_vm_effects::stdlib::{
     ASKS, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
 };
 use hyperscale_vm_effects::{
-    AbiParam, Address, AddressClass, Clause, Constraint, Effect, EffectSet, EffectTarget, Expr,
-    Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature,
-    Mode, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver, RoleId, Routing,
-    ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value, admit, child_key, fresh_id,
-    route,
+    AbiParam, Address, AddressClass, Clause, ComponentAddr, Constraint, Effect, EffectSet,
+    EffectTarget, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
+    MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata, ParamType,
+    PrefixShardResolver, RoleId, Routing, ShardId, ShardResolver, SubstateKey, TargetExpr,
+    TestHasher, Value, admit, child_key, fresh_id, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -66,25 +66,25 @@ fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
 }
 
-fn vault(owner: Address, resource: Address) -> SubstateKey {
+fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
     child_key(
         &TestHasher,
         owner,
         VAULT,
-        &[Value::Address(resource).canonical_bytes()],
+        &[Value::Address(resource.into()).canonical_bytes()],
     )
 }
 
-fn claims(owner: Address, resource: Address) -> SubstateKey {
+fn claims(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
     child_key(
         &TestHasher,
         owner,
         CLAIMS,
-        &[Value::Address(resource).canonical_bytes()],
+        &[Value::Address(resource.into()).canonical_bytes()],
     )
 }
 
-fn config_leaf(owner: Address) -> SubstateKey {
+fn config_leaf(owner: impl Into<Address>) -> SubstateKey {
     child_key(&TestHasher, owner, CONFIG, &[])
 }
 
@@ -109,7 +109,7 @@ fn pool_meta() -> InstanceMeta {
 }
 
 /// The pool instance, at the address its record derives.
-fn pool() -> Address {
+fn pool() -> ComponentAddr {
     pool_meta().address(&TestHasher)
 }
 
@@ -122,7 +122,7 @@ fn book_meta() -> InstanceMeta {
 }
 
 /// The order book instance.
-fn book() -> Address {
+fn book() -> ComponentAddr {
     book_meta().address(&TestHasher)
 }
 
@@ -395,8 +395,8 @@ fn set(effects: &[Effect]) -> EffectSet {
 
 /// Where the sharded routing above puts an address — asked rather than
 /// restated, so a change to the resolver cannot leave this behind.
-fn shard_of(address: Address) -> ShardId {
-    PrefixShardResolver { bits: 8 }.shard_of(address)
+fn shard_of(address: impl Into<Address>) -> ShardId {
+    PrefixShardResolver { bits: 8 }.shard_of(address.into())
 }
 
 fn sharded_routing(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> Routing {
@@ -521,7 +521,7 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
     let graph = {
         let mut b = GraphBuilder::new();
         let [funds] = b.call(ALICE, "withdraw", (RES_X, 100u128));
-        let [] = b.call(dana, "deposit", (funds.resource_is(RES_X),));
+        let [] = b.call(dana.address(), "deposit", (funds.resource_is(RES_X),));
         b.build().expect("every output is consumed")
     };
     let (results, _) = run_both(
@@ -721,7 +721,7 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
 fn swap_graph(min_out: u128) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(ALICE, "withdraw", (RES_X, 500u128));
-    let [out] = b.call(pool(), "swap", (funds, min_out));
+    let [out] = b.call(pool().address(), "swap", (funds, min_out));
     let [] = b.call(ALICE, "deposit", (out.resource_is(RES_Y),));
     b.build().expect("every output is consumed")
 }
@@ -841,14 +841,14 @@ fn a_violated_output_floor_traps_identically() -> Result<()> {
 fn place_graph() -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(MAKER, "withdraw", (BASE, 50u128));
-    let [] = b.call(book(), "place-ask", (3u64, funds));
+    let [] = b.call(book().address(), "place-ask", (3u64, funds));
     b.build().expect("every output is consumed")
 }
 
 fn fill_graph() -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [payment] = b.call(TAKER, "withdraw", (QUOTE, 100u128));
-    let [base, refund] = b.call(book(), "fill-asks", (3u64, 5u64, payment));
+    let [base, refund] = b.call(book().address(), "fill-asks", (3u64, 5u64, payment));
     let [] = b.call(TAKER, "deposit", (base.resource_is(BASE),));
     let [] = b.call(TAKER, "deposit", (refund.resource_is(QUOTE),));
     b.build().expect("every output is consumed")
@@ -864,7 +864,7 @@ fn fill_provisions_only_the_interval() {
     assert_eq!(
         book_set.provision_targets(),
         std::iter::once(EffectTarget::Range {
-            owner: book(),
+            owner: book().into(),
             collection: ASKS,
             lo: 3u128 << 64,
             hi: (5u128 << 64) | u128::from(u64::MAX),
@@ -887,7 +887,12 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
         .unwrap();
     // A resting ask at price 5 from an earlier session, escrow included.
     store
-        .entry_write(book(), ASKS, (5u128 << 64) | 7, encode_amount(10).to_vec())
+        .entry_write(
+            book().address(),
+            ASKS,
+            (5u128 << 64) | 7,
+            encode_amount(10).to_vec(),
+        )
         .unwrap();
     store
         .write(vault(book(), BASE), encode_amount(10).to_vec())
@@ -921,7 +926,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
         place_receipt
             .delta
             .entries
-            .get(&(book(), ASKS, placed_order)),
+            .get(&(book().address(), ASKS, placed_order)),
         Some(&Some(encode_amount(50).to_vec()))
     );
 
@@ -931,7 +936,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
         fill_receipt
             .delta
             .entries
-            .get(&(book(), ASKS, placed_order)),
+            .get(&(book().address(), ASKS, placed_order)),
         Some(&Some(encode_amount(17).to_vec()))
     );
     assert_eq!(
@@ -963,11 +968,11 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
         .map(|(k, v)| (k, v.to_vec()))
         .collect();
     assert_eq!(
-        entries.get(&(book(), ASKS, placed_order)),
+        entries.get(&(book().address(), ASKS, placed_order)),
         Some(&encode_amount(17).to_vec())
     );
     assert_eq!(
-        entries.get(&(book(), ASKS, (5u128 << 64) | 7)),
+        entries.get(&(book().address(), ASKS, (5u128 << 64) | 7)),
         Some(&encode_amount(10).to_vec())
     );
     Ok(())

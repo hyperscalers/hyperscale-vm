@@ -9,7 +9,8 @@ use thiserror::Error;
 use crate::dsl::{Clause, Expr};
 use crate::hash::{Hash32, Hasher};
 use crate::types::{
-    Address, AddressClass, RoleId, SubstateKey, Value, child_key, component_address, config_hash,
+    Address, AddressClass, ComponentAddr, RoleId, SubstateKey, Value, child_key, component_address,
+    config_hash,
 };
 
 /// A published package's identity: the hash of its artifact, which covers
@@ -40,7 +41,11 @@ pub const PACKAGE_ROLE: RoleId = RoleId(0xFFFE);
 /// same artifact is the same cell — which is what makes publishing
 /// idempotent rather than a conflict.
 #[must_use]
-pub fn package_key(hasher: &dyn Hasher, publisher: Address, package: PackageHash) -> SubstateKey {
+pub fn package_key(
+    hasher: &dyn Hasher,
+    publisher: impl Into<Address>,
+    package: PackageHash,
+) -> SubstateKey {
     child_key(hasher, publisher, PACKAGE_ROLE, &[package.0.0.to_vec()])
 }
 
@@ -420,14 +425,16 @@ impl InstanceMeta {
     ///
     /// The creation side of the same equality [`Self::derives`] checks:
     /// an instance's address is a function of what it is, so whoever
-    /// creates one computes the address rather than choosing it.
+    /// creates one computes the address rather than choosing it. The class
+    /// is not a claim about the result either — a record derives a
+    /// component and nothing else, so the derivation answers with one.
     ///
     /// # Panics
     ///
     /// If the configuration is past the vocabulary's own caps, which no
     /// admitted creation can have produced.
     #[must_use]
-    pub fn address(&self, hasher: &dyn Hasher) -> Address {
+    pub fn address(&self, hasher: &dyn Hasher) -> ComponentAddr {
         let bytes = self
             .config_bytes()
             .expect("an admitted configuration encodes");
@@ -438,13 +445,16 @@ impl InstanceMeta {
     ///
     /// The whole of certificate admission: the address commits the
     /// package, the configuration leaf's bytes and the salt, so equality
-    /// here is the verification and there is nothing else to consult.
+    /// here is the verification and there is nothing else to consult. The
+    /// question is total over every class — an address of any other one is
+    /// an address no record derives.
     #[must_use]
-    pub fn derives(&self, hasher: &dyn Hasher, address: Address) -> bool {
+    pub fn derives(&self, hasher: &dyn Hasher, address: impl Into<Address>) -> bool {
         let Ok(bytes) = self.config_bytes() else {
             return false;
         };
-        component_address(hasher, self.package, config_hash(hasher, &bytes), self.salt) == address
+        component_address(hasher, self.package, config_hash(hasher, &bytes), self.salt)
+            == address.into()
     }
 }
 
@@ -503,9 +513,10 @@ impl InstanceRegistry {
     pub fn admit(
         &mut self,
         hasher: &dyn Hasher,
-        address: Address,
+        address: impl Into<Address>,
         meta: InstanceMeta,
     ) -> Result<(), CertificateMismatch> {
+        let address = address.into();
         if !meta.derives(hasher, address) {
             return Err(CertificateMismatch);
         }
@@ -522,15 +533,16 @@ impl InstanceRegistry {
     /// # Panics
     ///
     /// If the configuration is past the vocabulary's own caps.
-    pub fn create(&mut self, hasher: &dyn Hasher, meta: InstanceMeta) -> Address {
+    pub fn create(&mut self, hasher: &dyn Hasher, meta: InstanceMeta) -> ComponentAddr {
         let address = meta.address(hasher);
-        self.instances.entry(address).or_insert(meta);
+        self.instances.entry(address.address()).or_insert(meta);
         address
     }
 
     /// Look up an instance's creation-fixed record.
     #[must_use]
-    pub fn get(&self, address: Address) -> Option<&InstanceMeta> {
+    pub fn get(&self, address: impl Into<Address>) -> Option<&InstanceMeta> {
+        let address = address.into();
         match address.class() {
             AddressClass::Principal => self.principal.as_ref(),
             _ => self.instances.get(&address),

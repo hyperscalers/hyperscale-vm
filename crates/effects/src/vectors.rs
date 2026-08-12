@@ -38,19 +38,19 @@ pub fn address_vectors(hasher: &dyn Hasher) -> Vec<(&'static str, Address)> {
     vec![
         (
             "principal/ed25519/a",
-            principal_address(hasher, SchemeId::ED25519, &[0xa1; 32]),
+            principal_address(hasher, SchemeId::ED25519, &[0xa1; 32]).into(),
         ),
         (
             "principal/ed25519/b",
-            principal_address(hasher, SchemeId::ED25519, &[0xb2; 32]),
+            principal_address(hasher, SchemeId::ED25519, &[0xb2; 32]).into(),
         ),
-        ("component/salted", minter),
-        ("package/content", package_address(hasher, PACKAGE)),
+        ("component/salted", minter.into()),
+        ("package/content", package_address(hasher, PACKAGE).into()),
         (
             "resource/minted",
-            resource_address(hasher, minter, &[b"unit".to_vec()]),
+            resource_address(hasher, minter, &[b"unit".to_vec()]).into(),
         ),
-        ("native/xrd", native_address(hasher, XRD)),
+        ("native/xrd", native_address(hasher, XRD).into()),
     ]
 }
 

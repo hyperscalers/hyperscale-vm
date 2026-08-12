@@ -174,7 +174,7 @@ impl EnvelopeTree {
 #[must_use]
 pub fn nullifier_key(
     hasher: &dyn Hasher,
-    signer: Address,
+    signer: impl Into<Address>,
     subintent: SubintentHash,
 ) -> SubstateKey {
     child_key(hasher, signer, NULLIFIER_ROLE, &[subintent.0.0.to_vec()])

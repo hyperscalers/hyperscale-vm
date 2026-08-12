@@ -6,10 +6,10 @@ mod common;
 
 use common::{account_metadata, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
-    Address, AddressClass, CallSite, EdgeRef, Effect, EffectTarget, EvalInputs, Expr, GraphArg,
-    GraphNode, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash, MetadataCache,
-    MethodSignature, Mode, PackageMetadata, ParamType, RoleId, TestHasher, Value, admit,
-    evaluate_expr, route,
+    Address, AddressClass, CallSite, ComponentAddr, EdgeRef, Effect, EffectTarget, EvalInputs,
+    Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash,
+    MetadataCache, MethodSignature, Mode, PackageMetadata, ParamType, RoleId, TestHasher, Value,
+    admit, evaluate_expr, route,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
@@ -24,7 +24,7 @@ const fn salt(lane: u8, seed: u8) -> Hash32 {
 }
 
 /// An instance of `package`, at the address its record derives.
-fn instance(instances: &mut InstanceRegistry, package: &str, lane: u8, seed: u8) -> Address {
+fn instance(instances: &mut InstanceRegistry, package: &str, lane: u8, seed: u8) -> ComponentAddr {
     instances.create(
         &TestHasher,
         InstanceMeta {
@@ -128,7 +128,7 @@ proptest! {
         let graph = ManifestGraph {
             nodes: vec![
                 GraphNode {
-                    target: sender,
+                    target: sender.into(),
                     method: "withdraw".into(),
                     args: vec![
                         GraphArg::Literal(Value::Address(resource)),
@@ -136,7 +136,7 @@ proptest! {
                     ],
                 },
                 GraphNode {
-                    target: recipient,
+                    target: recipient.into(),
                     method: "deposit".into(),
                     args: vec![GraphArg::Edge {
                         edge: EdgeRef { producer: 0, output: 0 },
@@ -194,7 +194,7 @@ proptest! {
         let graph = ManifestGraph {
             nodes: vec![
                 GraphNode {
-                    target: sender,
+                    target: sender.into(),
                     method: "withdraw".into(),
                     args: vec![
                         GraphArg::Literal(Value::Address(resource)),
@@ -202,10 +202,10 @@ proptest! {
                     ],
                 },
                 GraphNode {
-                    target: router,
+                    target: router.into(),
                     method: "forward".into(),
                     args: vec![
-                        GraphArg::Literal(Value::Address(recipient)),
+                        GraphArg::Literal(Value::Address(recipient.into())),
                         GraphArg::Edge {
                             edge: EdgeRef { producer: 0, output: 0 },
                             constraints: vec![],

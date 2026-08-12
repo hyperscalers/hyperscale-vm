@@ -8,10 +8,10 @@ pub use hyperscale_vm_effects::stdlib::{
     splitter_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, AddressClass, CallSite, Clause, Effect, EffectSet, Expr, Hash32, Hasher, InstanceMeta,
-    InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr, PackageHash,
-    PackageMetadata, ParamType, PrefixShardResolver, RoleId, ShardId, ShardResolver, SubstateKey,
-    TargetExpr, TestHasher, Value, child_key,
+    Address, AddressClass, CallSite, Clause, ComponentAddr, Effect, EffectSet, Expr, Hash32,
+    Hasher, InstanceMeta, InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr,
+    PackageHash, PackageMetadata, ParamType, PrefixShardResolver, RoleId, ShardId, ShardResolver,
+    SubstateKey, TargetExpr, TestHasher, Value, child_key,
 };
 
 /// Accounts are principals: their class is what resolves them to the
@@ -71,7 +71,7 @@ pub fn pool_meta() -> InstanceMeta {
 
 /// The pool instance every shape test names.
 #[must_use]
-pub fn pool() -> Address {
+pub fn pool() -> ComponentAddr {
     pool_meta().address(&TestHasher)
 }
 
@@ -87,7 +87,7 @@ pub fn book_meta() -> InstanceMeta {
 
 /// The book instance every shape test names.
 #[must_use]
-pub fn book() -> Address {
+pub fn book() -> ComponentAddr {
     book_meta().address(&TestHasher)
 }
 
@@ -100,32 +100,32 @@ pub const fn resolver() -> PrefixShardResolver {
 /// change to the resolver's own identities cannot leave the expectation
 /// behind.
 #[must_use]
-pub fn shard_of(address: Address) -> ShardId {
-    resolver().shard_of(address)
+pub fn shard_of(address: impl Into<Address>) -> ShardId {
+    resolver().shard_of(address.into())
 }
 
 #[must_use]
-pub fn vault(owner: Address, resource: Address) -> SubstateKey {
+pub fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
     child_key(
         &TestHasher,
         owner,
         VAULT,
-        &[Value::Address(resource).canonical_bytes()],
+        &[Value::Address(resource.into()).canonical_bytes()],
     )
 }
 
 #[must_use]
-pub fn claims(owner: Address, resource: Address) -> SubstateKey {
+pub fn claims(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
     child_key(
         &TestHasher,
         owner,
         CLAIMS,
-        &[Value::Address(resource).canonical_bytes()],
+        &[Value::Address(resource.into()).canonical_bytes()],
     )
 }
 
 #[must_use]
-pub fn config_leaf(owner: Address) -> SubstateKey {
+pub fn config_leaf(owner: impl Into<Address>) -> SubstateKey {
     child_key(&TestHasher, owner, CONFIG, &[])
 }
 

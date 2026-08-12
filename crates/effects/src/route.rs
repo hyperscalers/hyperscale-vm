@@ -768,8 +768,8 @@ mod tests {
         PackageMetadata, ParamType,
     };
     use crate::types::{
-        Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, RoleId, ShardId, Value,
-        child_key,
+        Address, AddressClass, ComponentAddr, Effect, EffectSet, EffectTarget, Mode, RoleId,
+        ShardId, Value, child_key,
     };
 
     fn pkg(name: &str) -> PackageHash {
@@ -802,11 +802,11 @@ mod tests {
 
     /// The address that record derives — what the fixture names, and
     /// where creation puts it, without either being told the other.
-    fn instance_of(package: &str) -> Address {
+    fn instance_of(package: &str) -> ComponentAddr {
         meta_of(package).address(&TestHasher)
     }
 
-    fn point(owner: Address, role: RoleId) -> EffectTarget {
+    fn point(owner: impl Into<Address>, role: RoleId) -> EffectTarget {
         EffectTarget::Point(child_key(&TestHasher, owner, role, &[]))
     }
 
@@ -871,10 +871,10 @@ mod tests {
         instances.create(&TestHasher, meta_of("payee"));
         let manifest = Manifest {
             nodes: vec![Node {
-                target: instance_of("payer"),
+                target: instance_of("payer").into(),
                 method: "pay".into(),
                 inputs: vec![
-                    NodeInput::Literal(Value::Address(instance_of("payee"))),
+                    NodeInput::Literal(Value::Address(instance_of("payee").into())),
                     NodeInput::Literal(Value::U128(9)),
                 ],
             }],
@@ -897,8 +897,8 @@ mod tests {
         // called is its business, and the claim here is that the two
         // instances land apart and keep their own effects.
         let (sender, recipient) = (
-            resolver().shard_of(instance_of("payer")),
-            resolver().shard_of(instance_of("payee")),
+            resolver().shard_of(instance_of("payer").into()),
+            resolver().shard_of(instance_of("payee").into()),
         );
         assert_ne!(sender, recipient);
         // `shards()` is ascending, so the claim is the participating set
@@ -914,11 +914,11 @@ mod tests {
             mode: Mode::Reserve { amount: 9 },
         }));
         let pay_ref = MethodRef {
-            instance: instance_of("payer"),
+            instance: instance_of("payer").into(),
             method: "pay".into(),
         };
         let recv_ref = MethodRef {
-            instance: instance_of("payee"),
+            instance: instance_of("payee").into(),
             method: "recv".into(),
         };
         assert_eq!(routing.call_graph.roots, BTreeSet::from([pay_ref.clone()]));
@@ -1016,7 +1016,7 @@ mod tests {
             method(
                 vec![fresh_entry()],
                 vec![CallSite {
-                    target: Expr::Literal(Value::Address(a_2)),
+                    target: Expr::Literal(Value::Address(a_2.into())),
                     method: "assist".into(),
                     args: vec![],
                 }],
@@ -1033,7 +1033,7 @@ mod tests {
         assert_eq!(instances.create(&TestHasher, helper_meta), a_2);
         let manifest = Manifest {
             nodes: vec![Node {
-                target: instance_of("maker"),
+                target: instance_of("maker").into(),
                 method: "make".into(),
                 inputs: vec![],
             }],
@@ -1084,7 +1084,7 @@ mod tests {
         instances.create(&TestHasher, meta_of("loop"));
         let manifest = Manifest {
             nodes: vec![Node {
-                target: instance_of("loop"),
+                target: instance_of("loop").into(),
                 method: "m".into(),
                 inputs: vec![],
             }],
@@ -1128,7 +1128,7 @@ mod tests {
             method(
                 vec![],
                 vec![CallSite {
-                    target: Expr::Literal(Value::Address(a_2_2)),
+                    target: Expr::Literal(Value::Address(a_2_2.into())),
                     method: "n".into(),
                     args: vec![],
                 }],
@@ -1140,7 +1140,7 @@ mod tests {
             method(
                 vec![],
                 vec![CallSite {
-                    target: Expr::Literal(Value::Address(a_1_3)),
+                    target: Expr::Literal(Value::Address(a_1_3.into())),
                     method: "m".into(),
                     args: vec![],
                 }],
@@ -1153,7 +1153,7 @@ mod tests {
         instances.create(&TestHasher, second_meta);
         let manifest = Manifest {
             nodes: vec![Node {
-                target: a_1_3,
+                target: a_1_3.into(),
                 method: "m".into(),
                 inputs: vec![],
             }],
@@ -1177,7 +1177,7 @@ mod tests {
     fn a_diamond_is_not_a_cycle() {
         let mut cache = MetadataCache::new();
         let call = |target: &str, name: &str| CallSite {
-            target: Expr::Literal(Value::Address(instance_of(target))),
+            target: Expr::Literal(Value::Address(instance_of(target).into())),
             method: name.into(),
             args: vec![],
         };
@@ -1208,7 +1208,7 @@ mod tests {
         }
         let manifest = Manifest {
             nodes: vec![Node {
-                target: instance_of("root"),
+                target: instance_of("root").into(),
                 method: "r".into(),
                 inputs: vec![],
             }],
@@ -1263,7 +1263,7 @@ mod tests {
         let a_1_4 = ghost_meta.address(&TestHasher);
         let manifest = Manifest {
             nodes: vec![Node {
-                target: a_1_4,
+                target: a_1_4.into(),
                 method: "m".into(),
                 inputs: vec![],
             }],
@@ -1275,7 +1275,7 @@ mod tests {
             &TestHasher,
             &resolver(),
         );
-        assert_eq!(empty, Err(RouteError::UnknownInstance(a_1_4)));
+        assert_eq!(empty, Err(RouteError::UnknownInstance(a_1_4.into())));
 
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, ghost_meta);
@@ -1325,7 +1325,7 @@ mod tests {
         instances.create(&TestHasher, meta_of("oracle"));
         let manifest = Manifest {
             nodes: vec![Node {
-                target: instance_of("oracle"),
+                target: instance_of("oracle").into(),
                 method: "peek".into(),
                 inputs: vec![],
             }],
@@ -1389,7 +1389,7 @@ mod tests {
         instances.create(&TestHasher, meta_of("wide"));
         let manifest = Manifest {
             nodes: vec![Node {
-                target: instance_of("wide"),
+                target: instance_of("wide").into(),
                 method: "root".into(),
                 inputs: vec![],
             }],
@@ -1424,7 +1424,7 @@ mod tests {
         instances.create(&TestHasher, meta_of("chain"));
         let manifest = Manifest {
             nodes: vec![Node {
-                target: instance_of("chain"),
+                target: instance_of("chain").into(),
                 method: "m0".into(),
                 inputs: vec![],
             }],
@@ -1456,7 +1456,7 @@ mod tests {
         let nodes = |count: usize| Manifest {
             nodes: (0..count)
                 .map(|_| Node {
-                    target: instance_of("wide"),
+                    target: instance_of("wide").into(),
                     method: "m".into(),
                     inputs: vec![],
                 })
@@ -1507,7 +1507,7 @@ mod tests {
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, meta_of("vault"));
         let node = || Node {
-            target: instance_of("vault"),
+            target: instance_of("vault").into(),
             method: "take".into(),
             inputs: vec![NodeInput::Literal(Value::U128(u128::MAX))],
         };
@@ -1622,10 +1622,10 @@ mod tests {
         (cache, instances, one_node(spreader))
     }
 
-    fn one_node(target: Address) -> Manifest {
+    fn one_node(target: impl Into<Address>) -> Manifest {
         Manifest {
             nodes: vec![Node {
-                target,
+                target: target.into(),
                 method: "m".into(),
                 inputs: vec![],
             }],
@@ -1716,12 +1716,12 @@ mod tests {
         let manifest = Manifest {
             nodes: vec![
                 Node {
-                    target: instance_of("edges"),
+                    target: instance_of("edges").into(),
                     method: "make".into(),
                     inputs: vec![],
                 },
                 Node {
-                    target: instance_of("edges"),
+                    target: instance_of("edges").into(),
                     method: "take".into(),
                     inputs: vec![NodeInput::Edge {
                         source: 0,
@@ -1777,7 +1777,7 @@ mod tests {
                 abi: vec![AbiParam::Handle(0)],
                 effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
                 calls: vec![CallSite {
-                    target: Expr::Literal(Value::Address(instance_of("callee"))),
+                    target: Expr::Literal(Value::Address(instance_of("callee").into())),
                     method: "take".into(),
                     args: vec![Expr::Arg(0)],
                 }],
@@ -1810,12 +1810,12 @@ mod tests {
         let manifest = Manifest {
             nodes: vec![
                 Node {
-                    target: instance_of("router"),
+                    target: instance_of("router").into(),
                     method: "make".into(),
                     inputs: vec![],
                 },
                 Node {
-                    target: instance_of("router"),
+                    target: instance_of("router").into(),
                     method: "forward".into(),
                     inputs: vec![NodeInput::Edge {
                         source: 0,
@@ -1900,12 +1900,12 @@ mod tests {
         let manifest = Manifest {
             nodes: vec![
                 Node {
-                    target: instance_of("bad"),
+                    target: instance_of("bad").into(),
                     method: "make".into(),
                     inputs: vec![],
                 },
                 Node {
-                    target: instance_of("bad"),
+                    target: instance_of("bad").into(),
                     method: "m".into(),
                     inputs: vec![NodeInput::Edge {
                         source: 0,

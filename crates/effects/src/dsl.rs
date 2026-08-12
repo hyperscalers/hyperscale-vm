@@ -634,11 +634,9 @@ fn eval_expr(
             for expr in material {
                 encoded.push(eval_expr(expr, inputs, hasher, bindings, deeper)?.canonical_bytes());
             }
-            Ok(Value::Address(resource_address(
-                hasher,
-                inputs.self_addr,
-                &encoded,
-            )))
+            Ok(Value::Address(
+                resource_address(hasher, inputs.self_addr, &encoded).into(),
+            ))
         }
         Expr::ChildKey {
             owner,

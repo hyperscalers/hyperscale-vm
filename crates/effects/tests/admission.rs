@@ -7,7 +7,7 @@ mod common;
 
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
 use hyperscale_vm_effects::{
-    Address, AdmissionError, Constraint, EdgeRef, Effect, EffectTarget, GraphArg, GraphNode,
+    AdmissionError, ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget, GraphArg, GraphNode,
     Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, Mode,
     TestHasher, Value, admit, fresh_id, route,
 };
@@ -23,7 +23,7 @@ fn splitter_meta() -> InstanceMeta {
 }
 
 /// The splitter instance, at the address its record derives.
-fn splitter() -> Address {
+fn splitter() -> ComponentAddr {
     splitter_meta().address(&TestHasher)
 }
 
@@ -48,7 +48,7 @@ fn valid_graph() -> ManifestGraph {
                 ],
             },
             GraphNode {
-                target: splitter(),
+                target: splitter().into(),
                 method: "take".into(),
                 args: vec![
                     GraphArg::Edge {

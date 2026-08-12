@@ -9,8 +9,8 @@
 
 use hyperscale_vm_effects::stdlib::{account_metadata, splitter_metadata};
 use hyperscale_vm_effects::{
-    Address, AddressClass, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache,
-    PackageHash, TestHasher, admit,
+    Address, AddressClass, ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry,
+    MetadataCache, PackageHash, TestHasher, admit,
 };
 use hyperscale_vm_manifest_builder::GraphBuilder;
 use proptest::prelude::{Strategy, prop, proptest};
@@ -31,7 +31,7 @@ fn splitter_meta() -> InstanceMeta {
 }
 
 /// The splitter instance, at the address its record derives.
-fn splitter() -> Address {
+fn splitter() -> ComponentAddr {
     splitter_meta().address(&TestHasher)
 }
 const RES: Address = Address::new([0xE1; 31], AddressClass::Component);
@@ -92,7 +92,7 @@ proptest! {
                 funds = funds.min(min).max(max);
             }
             if let Some(taken) = t.split {
-                let [taken, rest] = b.call(splitter(), "take", (funds, taken));
+                let [taken, rest] = b.call(splitter().address(), "take", (funds, taken));
                 let [] = b.call(ACCOUNTS[t.to], "deposit", (taken,));
                 let [] = b.call(ACCOUNTS[t.from], "deposit", (rest,));
             } else {

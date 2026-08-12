@@ -88,7 +88,7 @@ fn swap_writes_both_reserves_and_reads_the_locked_config() {
                 ],
             },
             GraphNode {
-                target: pool(),
+                target: pool().into(),
                 method: "swap".into(),
                 args: vec![edge(0, 0), GraphArg::Literal(Value::U128(50))],
             },
@@ -155,7 +155,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
                 ],
             },
             GraphNode {
-                target: book(),
+                target: book().into(),
                 method: "place-ask".into(),
                 args: vec![GraphArg::Literal(Value::U64(105)), edge(0, 0)],
             },
@@ -178,7 +178,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
             effect_set(&[
                 Effect {
                     target: EffectTarget::Entry {
-                        owner: book(),
+                        owner: book().into(),
                         collection: ASKS,
                         order: (u128::from(105u64) << 64) | u128::from(seq),
                     },
@@ -208,7 +208,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 ],
             },
             GraphNode {
-                target: book(),
+                target: book().into(),
                 method: "fill-asks".into(),
                 args: vec![
                     GraphArg::Literal(Value::U64(100)),
@@ -266,7 +266,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
             effect_set(&[
                 Effect {
                     target: EffectTarget::Range {
-                        owner: book(),
+                        owner: book().into(),
                         collection: ASKS,
                         lo: u128::from(100u64) << 64,
                         hi: (u128::from(110u64) << 64) | u128::from(u64::MAX),
@@ -304,7 +304,7 @@ fn a_declared_superset_evaluates_without_error() {
     let graph = ManifestGraph {
         nodes: vec![
             GraphNode {
-                target: alice,
+                target: alice.into(),
                 method: "withdraw_wide".into(),
                 args: vec![
                     GraphArg::Literal(Value::Address(RES_X)),
@@ -312,7 +312,7 @@ fn a_declared_superset_evaluates_without_error() {
                 ],
             },
             GraphNode {
-                target: alice,
+                target: alice.into(),
                 method: "deposit".into(),
                 args: vec![edge(0, 0)],
             },

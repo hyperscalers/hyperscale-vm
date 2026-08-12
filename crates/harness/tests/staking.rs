@@ -22,9 +22,10 @@ use hyperscale_vm_effects::stdlib::{
     UNBONDING, VALIDATORS, VAULT, VOTE, account_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, AddressClass, EnvelopeTree, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, SubstateKey,
-    TestHasher, Value, admit_tree, child_key, resource_address, route_tree,
+    Address, AddressClass, ComponentAddr, EnvelopeTree, Hash32, Hasher, InstanceMeta,
+    InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
+    ResourceAddr, SubstateKey, TestHasher, Value, admit_tree, child_key, resource_address,
+    route_tree,
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -51,7 +52,7 @@ const XRD: Address = Address::new([0xE1; 31], AddressClass::Component);
 /// The resource this pool issues against delegations — derived from the
 /// pool, not configured, which is what the signature's `SelfResource`
 /// evaluates to.
-fn unit() -> Address {
+fn unit() -> ResourceAddr {
     resource_address(&TestHasher, pool(), &[])
 }
 /// The principal this pool's validator surface admits. Nothing here
@@ -112,25 +113,25 @@ fn pool_meta() -> InstanceMeta {
 }
 
 /// The pool instance, at the address its record derives.
-fn pool() -> Address {
+fn pool() -> ComponentAddr {
     pool_meta().address(&TestHasher)
 }
 
-fn vault(owner: Address, resource: Address) -> SubstateKey {
+fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
     child_key(
         &TestHasher,
         owner,
         VAULT,
-        &[Value::Address(resource).canonical_bytes()],
+        &[Value::Address(resource.into()).canonical_bytes()],
     )
 }
 
-fn unbonding(pool: Address, resource: Address) -> SubstateKey {
+fn unbonding(pool: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
     child_key(
         &TestHasher,
         pool,
         UNBONDING,
-        &[Value::Address(resource).canonical_bytes()],
+        &[Value::Address(resource.into()).canonical_bytes()],
     )
 }
 
@@ -139,8 +140,8 @@ fn unbonding(pool: Address, resource: Address) -> SubstateKey {
 fn stake_graph(amount: u128) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(ALICE, "withdraw", (XRD, amount));
-    let [units] = b.call(pool(), "stake", (funds.resource_is(XRD),));
-    let [] = b.call(ALICE, "deposit", (units.resource_is(unit()),));
+    let [units] = b.call(pool().address(), "stake", (funds.resource_is(XRD),));
+    let [] = b.call(ALICE, "deposit", (units.resource_is(unit().address()),));
     b.build().expect("every output is consumed")
 }
 
@@ -149,13 +150,17 @@ fn stake_graph(amount: u128) -> ManifestGraph {
 /// not built.
 fn unstake_graph(amount: u128) -> ManifestGraph {
     let mut b = GraphBuilder::new();
-    let [units] = b.call(ALICE, "withdraw", (unit(), amount));
-    let [] = b.call(pool(), "unstake", (units.resource_is(unit()),));
+    let [units] = b.call(ALICE, "withdraw", (unit().address(), amount));
+    let [] = b.call(
+        pool().address(),
+        "unstake",
+        (units.resource_is(unit().address()),),
+    );
     b.build().expect("every output is consumed")
 }
 
 /// The pool's own record of one validator it operates.
-fn validator_leaf(pool: Address, validator: u64) -> SubstateKey {
+fn validator_leaf(pool: impl Into<Address>, validator: u64) -> SubstateKey {
     child_key(
         &TestHasher,
         pool,
@@ -167,14 +172,14 @@ fn validator_leaf(pool: Address, validator: u64) -> SubstateKey {
 /// A one-node graph naming a validator on the pool's operator surface.
 fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
     let mut b = GraphBuilder::new();
-    let [] = b.call(pool(), method, (validator,));
+    let [] = b.call(pool().address(), method, (validator,));
     b.build().expect("every output is consumed")
 }
 
 fn register_graph(validator: u64) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [] = b.call(
-        pool(),
+        pool().address(),
         "register-validator",
         (validator, PUBKEY.to_vec(), POSSESSION_PROOF.to_vec()),
     );
@@ -667,7 +672,7 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
 
 /// The pool's vote leaf: one per pool, holding whatever it currently
 /// backs.
-fn vote_leaf(pool: Address) -> SubstateKey {
+fn vote_leaf(pool: impl Into<Address>) -> SubstateKey {
     child_key(&TestHasher, pool, VOTE, &[])
 }
 
@@ -686,7 +691,7 @@ fn cast_payload() -> Vec<u8> {
 fn cast_graph() -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [] = b.call(
-        pool(),
+        pool().address(),
         "cast-param-vote",
         (SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT),
     );
@@ -722,7 +727,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
 
     let graph = {
         let mut b = GraphBuilder::new();
-        let [] = b.call(pool(), "clear-param-vote", ());
+        let [] = b.call(pool().address(), "clear-param-vote", ());
         b.build().expect("every output is consumed")
     };
     let entry = batch_entry(&world, &single_intent(graph))?;

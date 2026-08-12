@@ -15,7 +15,7 @@ pub use hyperscale_vm_effects::stdlib::{
     book_metadata, splitter_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, Hasher, PackageHash, StateWrites, attach_metadata, native_address, package_hash,
+    Hasher, NativeAddr, PackageHash, StateWrites, attach_metadata, native_address, package_hash,
     package_key,
 };
 
@@ -49,7 +49,7 @@ pub fn staking_package_hash(hasher: &dyn Hasher) -> PackageHash {
 /// they sit — and the code they hold moves with the protocol version
 /// rather than with anything a transaction can say.
 #[must_use]
-pub fn genesis_publisher(hasher: &dyn Hasher) -> Address {
+pub fn genesis_publisher(hasher: &dyn Hasher) -> NativeAddr {
     native_address(hasher, GENESIS_PUBLISHER_ROLE)
 }
 

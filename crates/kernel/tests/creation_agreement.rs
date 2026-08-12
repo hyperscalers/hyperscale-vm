@@ -57,12 +57,12 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     let graph = ManifestGraph {
         nodes: vec![
             GraphNode {
-                target: creator,
+                target: creator.into(),
                 method: "spawn".into(),
                 args: vec![],
             },
             GraphNode {
-                target: creator,
+                target: creator.into(),
                 method: "spawn".into(),
                 args: vec![],
             },
@@ -80,12 +80,12 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     .unwrap();
     // Asked of the resolver rather than restated: the claim is about the
     // creator's shard holding the key, not about what it is called.
-    let declared = &routing.per_shard[&PrefixShardResolver { bits: 8 }.shard_of(creator)];
+    let declared = &routing.per_shard[&PrefixShardResolver { bits: 8 }.shard_of(creator.address())];
 
     // The kernel executes node 1: its creation context derives from the
     // same transaction identity, node index, and frame.
     let mut store = MemoryStore::new();
-    let mut ctx = CreationContext::new(creator, identity, 1, 0);
+    let mut ctx = CreationContext::new(creator.address(), identity, 1, 0);
     let created = ctx.create(&mut store, &TestHasher, vec![42]).unwrap();
     assert!(declared.contains(&Effect {
         target: EffectTarget::Point(created),
@@ -96,7 +96,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     let seq = fresh_id(&TestHasher, identity, 1, 0, 1);
     store
         .entry_write(
-            creator,
+            creator.address(),
             RoleId(4),
             (u128::from(99u64) << 64) | u128::from(seq),
             vec![7],
@@ -104,7 +104,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
         .unwrap();
     assert!(declared.contains(&Effect {
         target: EffectTarget::Entry {
-            owner: creator,
+            owner: creator.into(),
             collection: RoleId(4),
             order: (u128::from(99u64) << 64) | u128::from(seq),
         },
@@ -112,7 +112,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     }));
 
     // Node 0's creation is a different key: the node index namespaces.
-    let mut other = CreationContext::new(creator, identity, 0, 0);
+    let mut other = CreationContext::new(creator.address(), identity, 0, 0);
     let from_node_zero = other.fresh_key(&TestHasher);
     assert_ne!(from_node_zero, created);
     assert!(declared.contains(&Effect {
