@@ -23,12 +23,13 @@
 
 use hyperscale_vm_effects::{ComponentAddr, PrincipalAddr, ResourceRef};
 
+use crate::args::BucketArg;
 use crate::builder::Bucket;
 use crate::typed::{TypedBuilder, TypedError};
 
 /// The fungible account: every principal answers these.
 pub mod account {
-    use super::{Bucket, PrincipalAddr, ResourceRef, TypedBuilder, TypedError};
+    use super::{Bucket, BucketArg, PrincipalAddr, ResourceRef, TypedBuilder, TypedError};
 
     /// Reserve `amount` of `resource` on `who`'s vault, producing it as an
     /// edge typed by the resource named here.
@@ -55,7 +56,7 @@ pub mod account {
     pub fn deposit(
         builder: &mut TypedBuilder<'_>,
         who: PrincipalAddr,
-        funds: Bucket,
+        funds: impl BucketArg,
     ) -> Result<(), TypedError> {
         builder.call(who, "deposit", (funds,))?.none()
     }
@@ -76,7 +77,7 @@ pub mod account {
 /// The stake pool: a delegation surface anyone may use, and an operator
 /// surface the pool's configured principal may.
 pub mod staking {
-    use super::{Bucket, ComponentAddr, TypedBuilder, TypedError};
+    use super::{Bucket, BucketArg, ComponentAddr, TypedBuilder, TypedError};
 
     /// Delegate `funds` to `pool`, receiving the pool's own stake units —
     /// an edge typed by the pool rather than by what was staked.
@@ -87,7 +88,7 @@ pub mod staking {
     pub fn stake(
         builder: &mut TypedBuilder<'_>,
         pool: ComponentAddr,
-        funds: Bucket,
+        funds: impl BucketArg,
     ) -> Result<Bucket, TypedError> {
         builder.call(pool, "stake", (funds,))?.one()
     }
@@ -100,7 +101,7 @@ pub mod staking {
     pub fn unstake(
         builder: &mut TypedBuilder<'_>,
         pool: ComponentAddr,
-        units: Bucket,
+        units: impl BucketArg,
     ) -> Result<(), TypedError> {
         builder.call(pool, "unstake", (units,))?.none()
     }
@@ -197,7 +198,7 @@ pub mod staking {
 
 /// The constant-product pool.
 pub mod amm {
-    use super::{Bucket, ComponentAddr, TypedBuilder, TypedError};
+    use super::{Bucket, BucketArg, ComponentAddr, TypedBuilder, TypedError};
 
     /// Trade `input` through `pool`, refusing to settle for less than
     /// `min_out`. The proceeds are typed by the pool's configured output
@@ -209,7 +210,7 @@ pub mod amm {
     pub fn swap(
         builder: &mut TypedBuilder<'_>,
         pool: ComponentAddr,
-        input: Bucket,
+        input: impl BucketArg,
         min_out: u128,
     ) -> Result<Bucket, TypedError> {
         builder.call(pool, "swap", (input, min_out))?.one()
@@ -218,7 +219,7 @@ pub mod amm {
 
 /// The order book.
 pub mod book {
-    use super::{Bucket, ComponentAddr, TypedBuilder, TypedError};
+    use super::{Bucket, BucketArg, ComponentAddr, TypedBuilder, TypedError};
 
     /// Offer `funds` on `book` at `price`, escrowed until filled.
     ///
@@ -229,7 +230,7 @@ pub mod book {
         builder: &mut TypedBuilder<'_>,
         book: ComponentAddr,
         price: u64,
-        funds: Bucket,
+        funds: impl BucketArg,
     ) -> Result<(), TypedError> {
         builder.call(book, "place-ask", (price, funds))?.none()
     }
@@ -246,7 +247,7 @@ pub mod book {
         book: ComponentAddr,
         from: u64,
         to: u64,
-        payment: Bucket,
+        payment: impl BucketArg,
     ) -> Result<[Bucket; 2], TypedError> {
         builder
             .call(book, "fill-asks", (from, to, payment))?
@@ -256,7 +257,7 @@ pub mod book {
 
 /// The bucket splitter.
 pub mod splitter {
-    use super::{Bucket, ComponentAddr, TypedBuilder, TypedError};
+    use super::{Bucket, BucketArg, ComponentAddr, TypedBuilder, TypedError};
 
     /// Split `amount` off `funds`, answering the part taken and then the
     /// rest — both typed by what went in, and both of which linearity
@@ -268,7 +269,7 @@ pub mod splitter {
     pub fn take(
         builder: &mut TypedBuilder<'_>,
         splitter: ComponentAddr,
-        funds: Bucket,
+        funds: impl BucketArg,
         amount: u128,
     ) -> Result<[Bucket; 2], TypedError> {
         builder

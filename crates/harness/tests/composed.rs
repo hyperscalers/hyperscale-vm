@@ -8,10 +8,9 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
-    Address, AdmittedTree, Constraint, EdgeRef, EnvelopeTree, Hasher, InstanceRegistry, IntentDecl,
-    ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr,
-    Subintent, SubstateKey, TestHasher, Value, YieldBinding, YieldParam, admit_tree, child_key,
-    route_tree,
+    Address, AdmittedTree, Constraint, EnvelopeTree, Hasher, InstanceRegistry, MetadataCache,
+    PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SubstateKey, TestHasher, Value,
+    admit_tree, child_key, route_tree,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -20,8 +19,8 @@ use hyperscale_vm_kernel::{
     InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, OUT_OF_GAS, Outcome,
     SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
 };
+use hyperscale_vm_manifest_builder::EnvelopeBuilder;
 use hyperscale_vm_manifest_builder::native::account;
-use hyperscale_vm_manifest_builder::{Param, TypedBuilder};
 use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
 };
@@ -73,53 +72,31 @@ fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey
     )
 }
 
-/// One side's leg: withdraw the paid resource and export it as the yield;
-/// deposit whatever the enclosing envelope binds to parameter 0.
-fn leg(owner: PrincipalAddr, resource: ResourceAddr, amount: u128) -> (ManifestGraph, EdgeRef) {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    let funds = account::withdraw(&mut b, owner, resource, amount).expect("withdraw types");
-    let yielded = b.export(funds);
-    b.call(owner, "deposit", (Param(0),))
-        .expect("a yield parameter binds a bucket")
-        .none()
-        .expect("deposit produces nothing");
-    let graph = b.build().expect("every output is consumed or exported");
-    (graph, yielded)
-}
-
 /// The composition: the composer pays `pay` of X for the subintent's 10
-/// Y — each side withdraws its leg and deposits the other's yield.
+/// Y — each side withdraws its leg, exports it, and deposits the other's
+/// yield. Neither graph names the other; the envelope is the two edges
+/// between them.
 fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
-    let (root_graph, root_yield) = leg(composer, RES_X, pay);
-    let (sub_graph, sub_yield) = leg(BOB, RES_Y, 10);
-    EnvelopeTree {
-        root: IntentDecl {
-            graph: root_graph,
-            params: vec![YieldParam {
-                resource: RES_Y.into(),
-                constraints: vec![Constraint::MinAmount(10)],
-            }],
-        },
-        root_bindings: vec![YieldBinding {
-            intent: 1,
-            edge: root_yield,
-        }],
-        subintents: vec![Subintent {
-            decl: IntentDecl {
-                graph: sub_graph,
-                params: vec![YieldParam {
-                    resource: RES_X.into(),
-                    constraints: vec![Constraint::MinAmount(100)],
-                }],
-            },
-            signer: BOB,
-            bindings: vec![YieldBinding {
-                intent: 0,
-                edge: sub_yield,
-            }],
-        }],
-    }
+    let (cache, instances) = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
+
+    let (taken, wants_y) = root.declare(RES_Y, [Constraint::MinAmount(10)]);
+    let funds = account::withdraw(&mut root, composer, RES_X, pay).expect("withdraw types");
+    let paid_x = root.export(funds);
+    account::deposit(&mut root, composer, taken).expect("deposit types");
+
+    let mut sub = env.subintent(BOB);
+    let (taken, wants_x) = sub.declare(RES_X, [Constraint::MinAmount(100)]);
+    let funds = account::withdraw(&mut sub, BOB, RES_Y, 10).expect("withdraw types");
+    let paid_y = sub.export(funds);
+    account::deposit(&mut sub, BOB, taken).expect("deposit types");
+
+    env.seal(root).expect("the root discharges its declaration");
+    env.seal(sub)
+        .expect("the subintent discharges its declaration");
+    env.bind(wants_y, paid_y);
+    env.bind(wants_x, paid_x);
+    env.build().expect("every hole is bound")
 }
 
 /// Admit and route one envelope into its batch entry, plus the manifest

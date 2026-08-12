@@ -123,6 +123,17 @@ impl Arg for Param {
     }
 }
 
+/// An argument that fills a declared bucket parameter.
+///
+/// Exactly the two things a bucket position admits: an edge the author
+/// holds, and the hole a composition will bind one to. Naming the pair is
+/// what lets a wrapper over a method taking funds be called from inside an
+/// intent, where the funds arrive from another intent's graph.
+pub trait BucketArg: Arg {}
+
+impl BucketArg for Bucket {}
+impl BucketArg for Param {}
+
 /// A tuple of [`Arg`]s, bound in parameter order.
 pub trait Args: sealed::Sealed {
     /// Bind every element in order.
