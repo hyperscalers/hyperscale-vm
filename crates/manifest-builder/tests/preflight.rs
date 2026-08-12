@@ -184,19 +184,27 @@ fn a_composition_names_every_signer_it_needs() {
     let (cache, instances) = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
 
-    let (taken, wants_y) = root.declare(RES_Y, [Constraint::MinAmount(10)]);
+    let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
     let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     let paid_x = root.export(funds);
     account::deposit(&mut root, ALICE, taken).unwrap();
 
     let mut sub = env.subintent(BOB);
-    let (taken, wants_x) = sub.declare(RES_X, [Constraint::MinAmount(100)]);
+    let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
     let funds = account::withdraw(&mut sub, BOB, RES_Y, 10).unwrap();
     let paid_y = sub.export(funds);
     account::deposit(&mut sub, BOB, taken).unwrap();
 
-    env.seal(root).unwrap();
-    env.seal(sub).unwrap();
+    let [wants_y] = env
+        .seal(root)
+        .unwrap()
+        .try_into()
+        .expect("one declared parameter");
+    let [wants_x] = env
+        .seal(sub)
+        .unwrap()
+        .try_into()
+        .expect("one declared parameter");
     env.bind(wants_y, paid_y);
     env.bind(wants_x, paid_x);
     let tree = env.build().unwrap();

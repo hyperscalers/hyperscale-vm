@@ -9,12 +9,20 @@
 //! thing in whatever envelope later carries it.
 //!
 //! The wiring is done from handles rather than from indices. Declaring a
-//! parameter answers with two things, because a declaration creates two
-//! separate obligations: a [`Param`] the intent's own graph must consume,
-//! and a [`YieldSink`] the composition must bind. Exporting answers with a
-//! [`YieldSource`]. Both are affine, so a hole takes one source and a
-//! source fills one hole, and both name the intent they came from, so a
-//! binding cannot reach an intent or an edge that does not exist.
+//! parameter answers with the [`Param`] the intent's own graph must
+//! consume; the composition's side of the same declaration is a
+//! [`YieldSink`], which arrives when the intent enters an envelope.
+//! Exporting answers with a [`YieldSource`]. Sinks and sources are affine,
+//! so a hole takes one source and a source fills one hole, and both name
+//! the intent they came from, so a binding cannot reach an intent or an
+//! edge that does not exist.
+//!
+//! An intent enters an envelope one of two ways, and both hand back sinks
+//! the same way. [`EnvelopeBuilder::seal`] takes one the composer wrote.
+//! [`EnvelopeBuilder::present`] takes one somebody else signed — built
+//! through [`IntentBuilder::declaration`] before any envelope existed, and
+//! stored exactly as handed over, because the signature already covering
+//! it would not survive a rebuild.
 //!
 //! What is left is arithmetic over declarations, which the builder checks
 //! when it emits: every intent sealed, every declared parameter consumed
@@ -135,14 +143,35 @@ pub struct IntentBuilder<'a> {
     params: Vec<YieldParam>,
 }
 
-impl IntentBuilder<'_> {
+impl<'a> IntentBuilder<'a> {
+    /// An intent written to be signed on its own and handed to a composer
+    /// afterwards — a declaration that exists before any envelope does.
+    ///
+    /// Its holes are bound by whoever presents it, so nothing here mints a
+    /// [`YieldSink`]: those come from [`EnvelopeBuilder::present`], on the
+    /// composing side, where the intent this declaration will be is known.
+    #[must_use]
+    pub fn declaration(
+        cache: &'a MetadataCache,
+        instances: &'a InstanceRegistry,
+        hasher: &'a dyn Hasher,
+    ) -> Self {
+        Self {
+            graph: TypedBuilder::new(cache, instances, hasher),
+            envelope: NEXT_ENVELOPE.fetch_add(1, Ordering::Relaxed),
+            intent: 0,
+            params: Vec::new(),
+        }
+    }
+
     /// Declare a typed hole: an edge the composition must bind, carrying
     /// `resource` and satisfying `constraints`.
     ///
-    /// Answers with the two obligations a declaration creates — the
-    /// [`Param`] this intent's graph must consume, and the [`YieldSink`]
-    /// the composition must bind — because they are checked separately
-    /// and discharged in different places.
+    /// The [`Param`] is this intent's own obligation — its graph must
+    /// consume it exactly once. The composition's obligation to bind the
+    /// hole is discharged against a [`YieldSink`], which arrives when the
+    /// intent enters an envelope rather than here, so that an intent
+    /// written and one presented hand back sinks the same way.
     ///
     /// # Panics
     ///
@@ -152,21 +181,35 @@ impl IntentBuilder<'_> {
         &mut self,
         resource: impl Into<ResourceRef>,
         constraints: impl IntoIterator<Item = Constraint>,
-    ) -> (Param, YieldSink) {
+    ) -> Param {
         let position =
             u32::try_from(self.params.len()).expect("parameters are bounded by MAX_YIELD_PARAMS");
         self.params.push(YieldParam {
             resource: resource.into(),
             constraints: constraints.into_iter().collect(),
         });
-        (
-            Param(position),
-            YieldSink {
-                envelope: self.envelope,
-                intent: self.intent,
-                position,
-            },
-        )
+        Param(position)
+    }
+
+    /// The declaration, for its signer to sign and hand on.
+    ///
+    /// # Errors
+    ///
+    /// As [`EnvelopeBuilder::seal`], over this intent alone.
+    pub fn into_decl(self) -> Result<IntentDecl, EnvelopeError> {
+        self.finish(0)
+    }
+
+    /// Build the graph and check that every parameter this intent declared
+    /// is consumed by exactly one of its own node arguments.
+    fn finish(self, intent: u32) -> Result<IntentDecl, EnvelopeError> {
+        if self.params.len() > MAX_YIELD_PARAMS {
+            return Err(EnvelopeError::TooManyYieldParams { intent });
+        }
+        let params = self.params;
+        let graph = self.graph.build()?;
+        check_params(&graph, params.len(), intent)?;
+        Ok(IntentDecl { graph, params })
     }
 
     /// Consume an output as this intent's yield edge, for the composition
@@ -263,9 +306,47 @@ impl<'a> EnvelopeBuilder<'a> {
         }
     }
 
-    /// Seal an intent into the envelope: build its graph and check that
-    /// every parameter it declared is consumed by exactly one of its own
-    /// node arguments.
+    /// Bind a declaration its signer already signed, answering one
+    /// [`YieldSink`] per parameter it declares, in declaration order.
+    ///
+    /// This is what a subintent is for. The signer put their name to a
+    /// graph over typed holes before any composer existed; the composition
+    /// supplies the sources and alters nothing, so the signature that
+    /// already covers the declaration still covers it — which is why the
+    /// declaration is stored exactly as handed over rather than rebuilt.
+    /// [`subintent`](Self::subintent) is the other case: a leg the
+    /// composer writes and signs itself.
+    ///
+    /// # Errors
+    ///
+    /// The same refusals [`seal`](Self::seal) reaches over a declaration
+    /// the composer wrote, because a composer signing an envelope around a
+    /// malformed declaration is a transaction the chain refuses either
+    /// way, and refusing it here is the only place it can still be
+    /// declined.
+    ///
+    /// # Panics
+    ///
+    /// Past a `u32` of intents, far beyond [`MAX_SUBINTENTS`], which
+    /// [`build`](Self::build) enforces as an error.
+    pub fn present(
+        &mut self,
+        signer: PrincipalAddr,
+        decl: IntentDecl,
+    ) -> Result<Vec<YieldSink>, EnvelopeError> {
+        let intent = u32::try_from(self.intents.len()).expect("intents fit an index");
+        if decl.params.len() > MAX_YIELD_PARAMS {
+            return Err(EnvelopeError::TooManyYieldParams { intent });
+        }
+        check_params(&decl.graph, decl.params.len(), intent)?;
+        let sinks = self.sinks(intent, decl.params.len());
+        self.signers.push(signer);
+        self.intents.push(Some(decl));
+        Ok(sinks)
+    }
+
+    /// Seal an intent into the envelope, answering one [`YieldSink`] per
+    /// parameter it declared, in declaration order.
     ///
     /// # Errors
     ///
@@ -277,27 +358,32 @@ impl<'a> EnvelopeBuilder<'a> {
     /// # Panics
     ///
     /// On an intent from a different envelope, or one sealed twice.
-    pub fn seal(&mut self, intent: IntentBuilder<'a>) -> Result<(), EnvelopeError> {
+    pub fn seal(&mut self, intent: IntentBuilder<'a>) -> Result<Vec<YieldSink>, EnvelopeError> {
         assert_eq!(
             intent.envelope, self.id,
             "an intent must be sealed into the envelope that opened it"
         );
-        let slot = usize::try_from(intent.intent).expect("minted indices fit");
+        let index = intent.intent;
+        let slot = usize::try_from(index).expect("minted indices fit");
         assert!(
             self.intents[slot].is_none(),
             "an intent is sealed into the envelope once"
         );
-        if intent.params.len() > MAX_YIELD_PARAMS {
-            return Err(EnvelopeError::TooManyYieldParams {
-                intent: intent.intent,
-            });
-        }
-        let index = intent.intent;
-        let params = intent.params;
-        let graph = intent.graph.build()?;
-        check_params(&graph, params.len(), index)?;
-        self.intents[slot] = Some(IntentDecl { graph, params });
-        Ok(())
+        let decl = intent.finish(index)?;
+        let sinks = self.sinks(index, decl.params.len());
+        self.intents[slot] = Some(decl);
+        Ok(sinks)
+    }
+
+    /// One sink per declared parameter of `intent`, in declaration order.
+    fn sinks(&self, intent: u32, params: usize) -> Vec<YieldSink> {
+        (0..params)
+            .map(|position| YieldSink {
+                envelope: self.id,
+                intent,
+                position: u32::try_from(position).expect("bounded by MAX_YIELD_PARAMS"),
+            })
+            .collect()
     }
 
     /// Bind a declared hole to the edge that will fill it.

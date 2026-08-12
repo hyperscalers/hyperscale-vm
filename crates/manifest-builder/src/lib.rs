@@ -18,7 +18,8 @@
 //! signature determines asserts that type by itself.
 //!
 //! Above the graph, an [`EnvelopeBuilder`] composes intents along typed
-//! yield edges, and [`preflight`] answers what the chain will make of the
+//! yield edges — ones the composer writes, and ones somebody else already
+//! signed — and [`preflight`] answers what the chain will make of the
 //! result before any of it is signed.
 //!
 //! The builder sits strictly on the client side of the trust boundary.
