@@ -69,9 +69,9 @@ pub use route::{
 };
 pub use types::{
     Address, AddressClass, CallTarget, ComponentAddr, Effect, EffectSet, EffectTarget,
-    InvalidAddress, LocalKey, MAX_VALUE_DEPTH, Mode, ModeKind, NativeAddr, NativeRole,
+    InvalidAddress, LocalKey, MAX_VALUE_DEPTH, Mode, ModeKind, NativeAddr, NativeRole, NetworkWord,
     NotAResource, NotCallable, PackageAddr, PrincipalAddr, ReserveOverflow, ResourceAddr,
-    ResourceRef, RoleId, SchemeId, ShardId, SubstateKey, Value, WrongClass, child_key, compatible,
-    component_address, config_hash, native_address, package_address, principal_address,
+    ResourceRef, RoleId, SchemeId, ShardId, SubstateKey, TextError, Value, WrongClass, child_key,
+    compatible, component_address, config_hash, native_address, package_address, principal_address,
     resource_address,
 };

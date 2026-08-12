@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::{
     Address, AddressClass, CallTarget, ComponentAddr, InvalidAddress, LocalKey, Mode, ModeKind,
-    NativeAddr, NotAResource, NotCallable, PackageAddr, PrincipalAddr, ResourceAddr, ResourceRef,
-    SchemeId, SubstateKey, WrongClass, compatible,
+    NativeAddr, NetworkWord, NotAResource, NotCallable, PackageAddr, PrincipalAddr, ResourceAddr,
+    ResourceRef, SchemeId, SubstateKey, TextError, WrongClass, compatible,
 };
 
 use crate::hash::{Hash32, Hasher};
