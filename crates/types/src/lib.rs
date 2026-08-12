@@ -22,6 +22,7 @@ pub mod mode;
 pub mod work;
 pub mod writes;
 
+pub use address::text::{NetworkWord, TextError};
 pub use address::{
     Address, AddressClass, CallTarget, ComponentAddr, InvalidAddress, LEAF_KEY_BYTES, LocalKey,
     NativeAddr, NotAResource, NotCallable, PackageAddr, PrincipalAddr, ResourceAddr, ResourceRef,

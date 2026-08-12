@@ -1,5 +1,7 @@
 //! The address space state lives in.
 
+pub mod text;
+
 use core::fmt;
 
 use hyperscale_hbor::{
@@ -154,6 +156,23 @@ impl AddressClass {
             Self::Resource => "resource",
             Self::Native => "native",
         }
+    }
+
+    /// The class a leading word names, or `None` for a word naming none.
+    ///
+    /// The inverse of [`Self::word`]: what a human-readable encoding's
+    /// prefix is checked against before the address bytes are believed.
+    #[must_use]
+    pub fn from_word(word: &str) -> Option<Self> {
+        [
+            Self::Principal,
+            Self::Component,
+            Self::Package,
+            Self::Resource,
+            Self::Native,
+        ]
+        .into_iter()
+        .find(|class| class.word() == word)
     }
 }
 
