@@ -9,7 +9,8 @@
 //! away.
 
 use hyperscale_vm_effects::{
-    Address, ComponentAddr, GraphArg, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr, Value,
+    Address, CallTarget, ComponentAddr, GraphArg, NativeAddr, PackageAddr, PrincipalAddr,
+    ResourceAddr, ResourceRef, Value,
 };
 
 use crate::builder::{Bucket, GraphBuilder, Param};
@@ -54,7 +55,8 @@ impl Arg for Address {
 /// declared parameter kind is `address`, and which class belongs at a
 /// given position is the package's business, not the argument list's. So a
 /// typed address binds like an untyped one rather than needing to forget
-/// its class first.
+/// its class first — a class newtype and a position over several of them
+/// alike, since a position narrows an address without changing what it is.
 macro_rules! address_arg {
     ($($name:ident),+ $(,)?) => {
         $(
@@ -73,7 +75,9 @@ address_arg!(
     ComponentAddr,
     PackageAddr,
     ResourceAddr,
-    NativeAddr
+    NativeAddr,
+    CallTarget,
+    ResourceRef
 );
 
 impl sealed::Sealed for Vec<u8> {}

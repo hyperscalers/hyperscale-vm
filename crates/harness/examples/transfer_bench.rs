@@ -24,7 +24,8 @@ use hyperscale_vm_kernel::{
     GuestRunner, InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome,
     OverlayStore, SubstateStore, TxHash, encode_amount, execute_batch,
 };
-use hyperscale_vm_manifest_builder::GraphBuilder;
+use hyperscale_vm_manifest_builder::TypedBuilder;
+use hyperscale_vm_manifest_builder::native::account;
 use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
     validate_component,
@@ -84,10 +85,14 @@ fn world(_senders: u32) -> (MetadataCache, InstanceRegistry) {
     (cache, instances)
 }
 
-fn transfer_graph(from: PrincipalAddr) -> ManifestGraph {
-    let mut b = GraphBuilder::new();
-    let [funds] = b.call(from, "withdraw", (RES, AMOUNT));
-    let [] = b.call(RECIPIENT, "deposit", (funds.resource_is(RES),));
+fn transfer_graph(
+    cache: &MetadataCache,
+    instances: &InstanceRegistry,
+    from: PrincipalAddr,
+) -> ManifestGraph {
+    let mut b = TypedBuilder::new(cache, instances, &TestHasher);
+    let funds = account::withdraw(&mut b, from, RES, AMOUNT).expect("withdraw types");
+    account::deposit(&mut b, RECIPIENT, funds).expect("deposit types");
     b.build().expect("every output is consumed")
 }
 
@@ -104,7 +109,8 @@ struct Routed {
 
 fn routed(world: &(MetadataCache, InstanceRegistry), from: PrincipalAddr) -> Result<Routed> {
     let (cache, instances) = world;
-    let admitted = admit(&transfer_graph(from), cache, instances, &TestHasher)?;
+    let graph = transfer_graph(cache, instances, from);
+    let admitted = admit(&graph, cache, instances, &TestHasher)?;
     let routing = route(
         &admitted,
         cache,
@@ -216,14 +222,14 @@ fn main() -> Result<()> {
         let count = 2_000u32;
         let (cache, instances) = world(count);
         let resolver = PrefixShardResolver { bits: 0 };
+        // Built up front: the timed section is what a node derives from a
+        // graph it received, and construction happened at a wallet.
+        let graphs: Vec<ManifestGraph> = (0..count)
+            .map(|index| transfer_graph(&cache, &instances, sender(index)))
+            .collect();
         // Warmup.
-        for index in 0..200 {
-            let admitted = admit(
-                &transfer_graph(sender(index)),
-                &cache,
-                &instances,
-                &TestHasher,
-            )?;
+        for graph in graphs.iter().take(200) {
+            let admitted = admit(graph, &cache, &instances, &TestHasher)?;
             std::hint::black_box(route(
                 &admitted,
                 &cache,
@@ -233,13 +239,8 @@ fn main() -> Result<()> {
             )?);
         }
         let start = Instant::now();
-        for index in 0..count {
-            let admitted = admit(
-                &transfer_graph(sender(index)),
-                &cache,
-                &instances,
-                &TestHasher,
-            )?;
+        for graph in &graphs {
+            let admitted = admit(graph, &cache, &instances, &TestHasher)?;
             std::hint::black_box(route(
                 &admitted,
                 &cache,

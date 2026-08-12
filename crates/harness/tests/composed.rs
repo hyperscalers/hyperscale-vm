@@ -20,7 +20,8 @@ use hyperscale_vm_kernel::{
     InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, OUT_OF_GAS, Outcome,
     SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
 };
-use hyperscale_vm_manifest_builder::{GraphBuilder, Param};
+use hyperscale_vm_manifest_builder::native::account;
+use hyperscale_vm_manifest_builder::{Param, TypedBuilder};
 use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
 };
@@ -75,10 +76,14 @@ fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey
 /// One side's leg: withdraw the paid resource and export it as the yield;
 /// deposit whatever the enclosing envelope binds to parameter 0.
 fn leg(owner: PrincipalAddr, resource: ResourceAddr, amount: u128) -> (ManifestGraph, EdgeRef) {
-    let mut b = GraphBuilder::new();
-    let [funds] = b.call(owner, "withdraw", (resource, amount));
+    let (cache, instances) = world();
+    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let funds = account::withdraw(&mut b, owner, resource, amount).expect("withdraw types");
     let yielded = b.export(funds);
-    let [] = b.call(owner, "deposit", (Param(0),));
+    b.call(owner, "deposit", (Param(0),))
+        .expect("a yield parameter binds a bucket")
+        .none()
+        .expect("deposit produces nothing");
     let graph = b.build().expect("every output is consumed or exported");
     (graph, yielded)
 }

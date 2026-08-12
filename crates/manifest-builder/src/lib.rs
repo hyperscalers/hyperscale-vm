@@ -26,6 +26,7 @@
 
 pub mod args;
 pub mod builder;
+pub mod native;
 pub mod typed;
 
 pub use args::{Arg, Args};

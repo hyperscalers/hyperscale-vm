@@ -28,7 +28,8 @@ use hyperscale_vm_kernel::{
     InvokeResult, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt,
     SubstateStore, TxHash, decode_amount, encode_amount,
 };
-use hyperscale_vm_manifest_builder::GraphBuilder;
+use hyperscale_vm_manifest_builder::native::{account, amm, book};
+use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
 };
@@ -463,11 +464,21 @@ fn amount_of(store: &mut MemoryStore, key: SubstateKey) -> u128 {
         .map_or(0, |cell| decode_amount(&cell).unwrap())
 }
 
-fn transfer_graph() -> ManifestGraph {
-    let mut b = GraphBuilder::new();
-    let [funds] = b.call(ALICE, "withdraw", (RES_X, 100u128));
-    let [] = b.call(BOB, "deposit", (funds.resource_is(RES_X),));
+/// Build against this world's metadata, so every call is typed by the
+/// signature it names and every edge carries the resource that signature
+/// declares — neither of which is written out below.
+fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -> ManifestGraph {
+    let (cache, instances) = world();
+    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    write(&mut b).expect("every call types against its signature");
     b.build().expect("every output is consumed")
+}
+
+fn transfer_graph() -> ManifestGraph {
+    graph(|b| {
+        let funds = account::withdraw(b, ALICE, RES_X, 100)?;
+        account::deposit(b, BOB, funds)
+    })
 }
 
 /// A package the authored stdlib table does not describe: the same
@@ -525,9 +536,12 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
     store.clear_log();
 
     let graph = {
-        let mut b = GraphBuilder::new();
-        let [funds] = b.call(ALICE, "withdraw", (RES_X, 100u128));
-        let [] = b.call(dana, "deposit", (funds.resource_is(RES_X),));
+        // Not a wrapper call: `dana` runs the mirror package, so its
+        // deposit is the one this test published rather than the account's.
+        let (cache, instances) = &world;
+        let mut b = TypedBuilder::new(cache, instances, &TestHasher);
+        let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
+        b.call(dana, "deposit", (funds,)).unwrap().none().unwrap();
         b.build().expect("every output is consumed")
     };
     let (results, _) = run_both(
@@ -558,11 +572,10 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
 /// A transfer whose recipient signs a bound the sender's withdrawal
 /// cannot meet.
 fn bounded_transfer_graph(constraint: Constraint) -> ManifestGraph {
-    let mut b = GraphBuilder::new();
-    let [funds] = b.call(ALICE, "withdraw", (RES_X, 100u128));
-    let funds = funds.resource_is(RES_X).constrain(constraint);
-    let [] = b.call(BOB, "deposit", (funds,));
-    b.build().expect("every output is consumed")
+    graph(|b| {
+        let funds = account::withdraw(b, ALICE, RES_X, 100)?;
+        account::deposit(b, BOB, funds.constrain(constraint))
+    })
 }
 
 #[test]
@@ -725,11 +738,11 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
 }
 
 fn swap_graph(min_out: u128) -> ManifestGraph {
-    let mut b = GraphBuilder::new();
-    let [funds] = b.call(ALICE, "withdraw", (RES_X, 500u128));
-    let [out] = b.call(pool(), "swap", (funds, min_out));
-    let [] = b.call(ALICE, "deposit", (out.resource_is(RES_Y),));
-    b.build().expect("every output is consumed")
+    graph(|b| {
+        let funds = account::withdraw(b, ALICE, RES_X, 500)?;
+        let out = amm::swap(b, pool(), funds, min_out)?;
+        account::deposit(b, ALICE, out)
+    })
 }
 
 fn swap_store() -> MemoryStore {
@@ -845,19 +858,19 @@ fn a_violated_output_floor_traps_identically() -> Result<()> {
 }
 
 fn place_graph() -> ManifestGraph {
-    let mut b = GraphBuilder::new();
-    let [funds] = b.call(MAKER, "withdraw", (BASE, 50u128));
-    let [] = b.call(book(), "place-ask", (3u64, funds));
-    b.build().expect("every output is consumed")
+    graph(|b| {
+        let funds = account::withdraw(b, MAKER, BASE, 50)?;
+        book::place_ask(b, book(), 3, funds)
+    })
 }
 
 fn fill_graph() -> ManifestGraph {
-    let mut b = GraphBuilder::new();
-    let [payment] = b.call(TAKER, "withdraw", (QUOTE, 100u128));
-    let [base, refund] = b.call(book(), "fill-asks", (3u64, 5u64, payment));
-    let [] = b.call(TAKER, "deposit", (base.resource_is(BASE),));
-    let [] = b.call(TAKER, "deposit", (refund.resource_is(QUOTE),));
-    b.build().expect("every output is consumed")
+    graph(|b| {
+        let payment = account::withdraw(b, TAKER, QUOTE, 100)?;
+        let [bought, refund] = book::fill_asks(b, book(), 3, 5, payment)?;
+        account::deposit(b, TAKER, bought)?;
+        account::deposit(b, TAKER, refund)
+    })
 }
 
 #[test]

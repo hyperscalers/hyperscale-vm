@@ -33,7 +33,8 @@ use hyperscale_vm_kernel::{
     InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, Receipt,
     SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
 };
-use hyperscale_vm_manifest_builder::GraphBuilder;
+use hyperscale_vm_manifest_builder::native::{account, staking};
+use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
 };
@@ -135,24 +136,34 @@ fn unbonding(pool: impl Into<Address>, resource: impl Into<Address>) -> Substate
     )
 }
 
+/// Build against this world's metadata, so every call is typed by the
+/// signature it names and every edge carries the resource that signature
+/// declares — neither of which is written out below.
+fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -> ManifestGraph {
+    let (cache, instances) = world();
+    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    write(&mut b).expect("every call types against its signature");
+    b.build().expect("every output is consumed")
+}
+
 /// `alice.withdraw(XRD) -> pool.stake -> alice.deposit(units)`: the
 /// delegation goes in and the position comes back as an ordinary balance.
 fn stake_graph(amount: u128) -> ManifestGraph {
-    let mut b = GraphBuilder::new();
-    let [funds] = b.call(ALICE, "withdraw", (XRD, amount));
-    let [units] = b.call(pool(), "stake", (funds.resource_is(XRD),));
-    let [] = b.call(ALICE, "deposit", (units.resource_is(unit()),));
-    b.build().expect("every output is consumed")
+    graph(|b| {
+        let funds = account::withdraw(b, ALICE, XRD, amount)?;
+        let units = staking::stake(b, pool(), funds)?;
+        account::deposit(b, ALICE, units)
+    })
 }
 
 /// `alice.withdraw(UNIT) -> pool.unstake`: the units are consumed and the
 /// pool's unbonding total grows. Nothing comes back — the release leg is
 /// not built.
 fn unstake_graph(amount: u128) -> ManifestGraph {
-    let mut b = GraphBuilder::new();
-    let [units] = b.call(ALICE, "withdraw", (unit().address(), amount));
-    let [] = b.call(pool(), "unstake", (units.resource_is(unit()),));
-    b.build().expect("every output is consumed")
+    graph(|b| {
+        let units = account::withdraw(b, ALICE, unit(), amount)?;
+        staking::unstake(b, pool(), units)
+    })
 }
 
 /// The pool's own record of one validator it operates.
@@ -166,20 +177,22 @@ fn validator_leaf(pool: impl Into<Address>, validator: u64) -> SubstateKey {
 }
 
 /// A one-node graph naming a validator on the pool's operator surface.
+/// The method is a parameter because the tests below are about two of
+/// them behaving alike, which is not a shape a wrapper per method has.
 fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
-    let mut b = GraphBuilder::new();
-    let [] = b.call(pool(), method, (validator,));
-    b.build().expect("every output is consumed")
+    graph(|b| b.call(pool(), method, (validator,))?.none())
 }
 
 fn register_graph(validator: u64) -> ManifestGraph {
-    let mut b = GraphBuilder::new();
-    let [] = b.call(
-        pool(),
-        "register-validator",
-        (validator, PUBKEY.to_vec(), POSSESSION_PROOF.to_vec()),
-    );
-    b.build().expect("every output is consumed")
+    graph(|b| {
+        staking::register_validator(
+            b,
+            pool(),
+            validator,
+            PUBKEY.to_vec(),
+            POSSESSION_PROOF.to_vec(),
+        )
+    })
 }
 
 const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
@@ -685,13 +698,7 @@ fn cast_payload() -> Vec<u8> {
 }
 
 fn cast_graph() -> ManifestGraph {
-    let mut b = GraphBuilder::new();
-    let [] = b.call(
-        pool(),
-        "cast-param-vote",
-        (SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT),
-    );
-    b.build().expect("every output is consumed")
+    graph(|b| staking::cast_param_vote(b, pool(), SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT))
 }
 
 #[test]
@@ -721,12 +728,8 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     store.write(vote_leaf(pool()), cast_payload())?;
     store.clear_log();
 
-    let graph = {
-        let mut b = GraphBuilder::new();
-        let [] = b.call(pool(), "clear-param-vote", ());
-        b.build().expect("every output is consumed")
-    };
-    let entry = batch_entry(&world, &single_intent(graph))?;
+    let cleared = graph(|b| staking::clear_param_vote(b, pool()));
+    let entry = batch_entry(&world, &single_intent(cleared))?;
     let outcome = run_both(&store, std::slice::from_ref(&entry))?;
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
