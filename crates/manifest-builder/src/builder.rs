@@ -12,7 +12,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
-    CallTarget, Constraint, EdgeRef, GraphNode, MAX_MANIFEST_NODES, ManifestGraph, ResourceRef,
+    CallTarget, Constraint, EdgeRef, GraphArg, GraphNode, MAX_MANIFEST_NODES, ManifestGraph,
+    ResourceRef,
 };
 
 use crate::args::Args;
@@ -47,16 +48,32 @@ pub enum BuildError {
 /// signed form carries them: on the consuming argument, not the producer.
 #[derive(Debug)]
 pub struct Bucket {
-    /// The minting builder's identity; consumption checks it, because an
+    /// The minting builder's identity; binding checks it, because an
     /// edge reference is meaningless in any other builder's index space.
     pub(crate) builder: u64,
     /// The edge this handle stands for.
     pub(crate) edge: EdgeRef,
+    /// The edge's static resource type where the producing call's
+    /// signature determined it, and `None` where nothing did.
+    ///
+    /// Derived rather than asserted: it is what the producer's declared
+    /// output type evaluates to, so binding it asserts a
+    /// [`Constraint::ResourceIs`] the author never had to write. The
+    /// untyped path leaves it `None`, because a builder reading no
+    /// metadata has nothing to derive it from.
+    pub(crate) resource: Option<ResourceRef>,
     /// The consumer's constraints, in the order they were asserted.
     pub(crate) constraints: Vec<Constraint>,
 }
 
 impl Bucket {
+    /// The edge's static resource type, where the producing signature
+    /// determined it.
+    #[must_use]
+    pub const fn resource(&self) -> Option<ResourceRef> {
+        self.resource
+    }
+
     /// Assert an already-built [`Constraint`] — the generic form of the
     /// typed assertions below, for callers holding the constraint as a
     /// value.
@@ -83,9 +100,44 @@ impl Bucket {
     /// Two classes name a resource — an ordinary one and the protocol's
     /// own — so the argument is the pair of them rather than a single
     /// class, and naming an account or a package here does not compile.
+    ///
+    /// # Panics
+    ///
+    /// On an edge whose producing signature already typed it as something
+    /// else. Admission would refuse the assertion anyway; a handle that
+    /// knows its own type can say so at the line that wrote it.
     #[must_use]
     pub fn resource_is(self, resource: impl Into<ResourceRef>) -> Self {
-        self.constrain(Constraint::ResourceIs(resource.into()))
+        let resource = resource.into();
+        assert!(
+            self.resource.is_none_or(|derived| derived == resource),
+            "the producing signature types this edge as a different resource"
+        );
+        self.constrain(Constraint::ResourceIs(resource))
+    }
+
+    /// The bound argument this handle stands for: the edge, the resource
+    /// type its producer determined, and the constraints its consumer
+    /// asserted.
+    ///
+    /// A derived type binds as a leading [`Constraint::ResourceIs`] unless
+    /// the consumer asserted one itself, which is the whole of "the
+    /// manifest's own guarantee is on by default": the assertion rides
+    /// every typed edge without the author writing it, and an author who
+    /// writes one anyway keeps the one they wrote, for admission to judge.
+    pub(crate) fn into_arg(self) -> GraphArg {
+        let asserted = self
+            .constraints
+            .iter()
+            .any(|constraint| matches!(constraint, Constraint::ResourceIs(_)));
+        let derived = self.resource.filter(|_| !asserted);
+        let mut constraints = Vec::with_capacity(self.constraints.len() + usize::from(!asserted));
+        constraints.extend(derived.map(Constraint::ResourceIs));
+        constraints.extend(self.constraints);
+        GraphArg::Edge {
+            edge: self.edge,
+            constraints,
+        }
     }
 }
 
@@ -167,22 +219,79 @@ impl GraphBuilder {
         method: impl Into<String>,
         args: impl Args,
     ) -> [Bucket; N] {
-        let producer = u32::try_from(self.nodes.len()).expect("more nodes than an edge can name");
         let args = args.bind_all(self);
+        let producer = self.push(target.into(), method.into(), args, N);
+        std::array::from_fn(|output| {
+            self.mint(
+                producer,
+                u32::try_from(output).expect("more outputs than an edge can name"),
+                None,
+            )
+        })
+    }
+
+    /// Append a node whose arguments are already bound, consuming every
+    /// edge among them, and reserve its `outputs` slots.
+    ///
+    /// Binding and appending are separate so that a layer holding the
+    /// target's signature can judge the bound arguments against it and
+    /// refuse *before* anything is appended: a refusal that had already
+    /// marked its edges consumed would leave the builder describing a
+    /// graph it never built.
+    pub(crate) fn push(
+        &mut self,
+        target: CallTarget,
+        method: String,
+        args: Vec<GraphArg>,
+        outputs: usize,
+    ) -> u32 {
+        let producer = u32::try_from(self.nodes.len()).expect("more nodes than an edge can name");
+        for arg in &args {
+            if let GraphArg::Edge { edge, .. } = arg {
+                self.consume(*edge);
+            }
+        }
         self.nodes.push(GraphNode {
-            target: target.into(),
-            method: method.into(),
+            target,
+            method,
             args,
         });
-        self.outputs.push(vec![false; N]);
-        std::array::from_fn(|output| Bucket {
+        self.outputs.push(vec![false; outputs]);
+        producer
+    }
+
+    /// A handle on one of a pushed node's minted outputs.
+    pub(crate) const fn mint(
+        &self,
+        producer: u32,
+        output: u32,
+        resource: Option<ResourceRef>,
+    ) -> Bucket {
+        Bucket {
             builder: self.id,
-            edge: EdgeRef {
-                producer,
-                output: u32::try_from(output).expect("more outputs than an edge can name"),
-            },
+            edge: EdgeRef { producer, output },
+            resource,
             constraints: Vec::new(),
-        })
+        }
+    }
+
+    /// How many nodes have been appended — the index the next call takes,
+    /// which is what admission will number it by.
+    pub(crate) fn len(&self) -> u32 {
+        u32::try_from(self.nodes.len()).expect("more nodes than an edge can name")
+    }
+
+    /// Refuse a handle this builder did not mint, whose indices its tables
+    /// cannot mean anything by.
+    ///
+    /// # Panics
+    ///
+    /// On a bucket minted by a different builder.
+    pub(crate) fn check(&self, bucket: &Bucket) {
+        assert_eq!(
+            bucket.builder, self.id,
+            "a bucket must be consumed by the builder that minted it"
+        );
     }
 
     /// Consume an output as a yield edge: bound by the enclosing
@@ -205,24 +314,16 @@ impl GraphBuilder {
             bucket.constraints.is_empty(),
             "a yield edge's constraints belong on the consuming intent's parameter"
         );
-        self.consume(&bucket);
+        self.check(&bucket);
+        self.consume(bucket.edge);
         bucket.edge
     }
 
     /// Mark one minted output consumed. Called once per bucket by
     /// construction: every caller takes the bucket by value.
-    ///
-    /// # Panics
-    ///
-    /// On a bucket minted by a different builder, whose indices this one's
-    /// tables cannot mean anything by.
-    pub(crate) fn consume(&mut self, bucket: &Bucket) {
-        assert_eq!(
-            bucket.builder, self.id,
-            "a bucket must be consumed by the builder that minted it"
-        );
-        let producer = usize::try_from(bucket.edge.producer).expect("minted indices fit");
-        let output = usize::try_from(bucket.edge.output).expect("minted indices fit");
+    fn consume(&mut self, edge: EdgeRef) {
+        let producer = usize::try_from(edge.producer).expect("minted indices fit");
+        let output = usize::try_from(edge.output).expect("minted indices fit");
         self.outputs[producer][output] = true;
     }
 

@@ -1,5 +1,11 @@
-//! The crate's whole contract, stated as a property: any graph the
+//! The crate's whole contract, stated as a property: any graph either
 //! builder emits without error passes admission.
+//!
+//! The two builders are held to it over the same generated transfers,
+//! because they promise different halves of it. The untyped one keeps the
+//! structural rules and leaves typing to admission; the typed one derives
+//! the typing too, so its graphs carry an assertion on every edge that
+//! nothing in the test wrote.
 //!
 //! The world is the stdlib account and the bucket splitter — enough to
 //! exercise every shape the builder can produce: literals of each scalar
@@ -9,11 +15,11 @@
 
 use hyperscale_vm_effects::stdlib::{account_metadata, splitter_metadata};
 use hyperscale_vm_effects::{
-    ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
-    PrincipalAddr, ResourceAddr, TestHasher, admit,
+    ComponentAddr, Constraint, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry,
+    MetadataCache, PackageHash, PrincipalAddr, ResourceAddr, TestHasher, admit,
 };
-use hyperscale_vm_manifest_builder::GraphBuilder;
-use proptest::prelude::{Strategy, prop, proptest};
+use hyperscale_vm_manifest_builder::{GraphBuilder, TypedBuilder};
+use proptest::prelude::{Strategy, prop, prop_assert, proptest};
 
 const ACCOUNTS: [PrincipalAddr; 4] = [
     PrincipalAddr::new([0x10; 31]),
@@ -100,6 +106,40 @@ proptest! {
             }
         }
         let graph = b.build().expect("every output is consumed");
+        admit(&graph, &cache, &instances, &TestHasher).expect("a built graph admits");
+    }
+
+    #[test]
+    fn typed_graphs_admit_and_type_every_edge(transfers in prop::collection::vec(transfer(), 1..12)) {
+        let (cache, instances) = world();
+        let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+        for t in &transfers {
+            // No `resource_is` anywhere below: `withdraw` declares its
+            // output's type and `take` carries it, so the assertions are
+            // the signatures' rather than the author's.
+            let mut funds = b.call(ACCOUNTS[t.from], "withdraw", (RES, t.amount)).unwrap().one().unwrap();
+            if let Some((min, max)) = t.bounds {
+                funds = funds.min(min).max(max);
+            }
+            if let Some(taken) = t.split {
+                let [taken, rest] = b.call(splitter(), "take", (funds, taken)).unwrap().into_array().unwrap();
+                b.call(ACCOUNTS[t.to], "deposit", (taken,)).unwrap().none().unwrap();
+                b.call(ACCOUNTS[t.from], "deposit", (rest,)).unwrap().none().unwrap();
+            } else {
+                b.call(ACCOUNTS[t.to], "deposit", (funds,)).unwrap().none().unwrap();
+            }
+        }
+        let graph = b.build().expect("every output is consumed");
+        for node in &graph.nodes {
+            for arg in &node.args {
+                if let GraphArg::Edge { constraints, .. } = arg {
+                    prop_assert!(
+                        constraints.contains(&Constraint::ResourceIs(RES.into())),
+                        "every edge in this world resolves to one resource, and says so"
+                    );
+                }
+            }
+        }
         admit(&graph, &cache, &instances, &TestHasher).expect("a built graph admits");
     }
 }

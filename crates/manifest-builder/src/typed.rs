@@ -1,0 +1,451 @@
+//! The metadata-typed layer: a builder that resolves its targets.
+//!
+//! [`GraphBuilder`] reads no metadata, so a call's arity, its argument
+//! kinds and its output count are the author's claims, judged where every
+//! claim is. A [`TypedBuilder`] holds the same tables admission does — the
+//! metadata cache and the instance registry — and resolves the target
+//! before appending anything: a principal by its class, a component
+//! through the certificate its address derives. With the signature in
+//! hand, four of admission's verdicts move to the call site, and the
+//! output count stops being a claim at all.
+//!
+//! It also types the edges. A method's declared output is an expression
+//! over its bound inputs, and where those inputs are known at construction
+//! the expression evaluates to the resource the edge will carry. The
+//! resulting handle is tagged, and a tagged handle asserts its own
+//! [`ResourceIs`](hyperscale_vm_effects::Constraint::ResourceIs) when it
+//! binds — so the manifest's own guarantee, that a bucket carries what its
+//! consumer expected, rides every typed edge without the author writing
+//! it. Tags propagate: a split of a typed bucket is two typed buckets.
+//! What the layer cannot evaluate it leaves untagged rather than guessing.
+//!
+//! None of this is judgement. Admission re-derives every one of these
+//! properties over the signed form, so a defect here costs a signer a
+//! refused transaction and can never admit one the protocol would refuse.
+
+use hyperscale_vm_effects::{
+    Address, CallTarget, Constraint, EdgeRef, EvalInputs, Expr, GraphArg, Hash32, Hasher,
+    InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MetadataCache, PackageHash,
+    ParamType, ResourceRef, Value, evaluate_expr,
+};
+
+use crate::args::Args;
+use crate::builder::{Bucket, BuildError, GraphBuilder};
+
+/// Why a call could not be typed against the target's signature.
+///
+/// Every variant is a verdict admission would also reach, named here
+/// against the method the author just wrote rather than against a node
+/// index in a graph they have not finished building.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum TypedError {
+    /// A call target no certificate resolves.
+    #[error("no instance at {0:?}")]
+    UnknownInstance(Address),
+    /// A target whose package is not in the metadata cache.
+    #[error("no package {0:?} in the metadata cache")]
+    UnknownPackage(PackageHash),
+    /// A method the target's package does not declare.
+    #[error("package {package:?} has no method `{method}`")]
+    UnknownMethod {
+        /// The package consulted.
+        package: PackageHash,
+        /// The method requested.
+        method: String,
+    },
+    /// An argument count differing from the declared parameters.
+    #[error("`{method}` takes {expected} arguments, {found} passed")]
+    ArityMismatch {
+        /// The method called.
+        method: String,
+        /// Declared parameter count.
+        expected: usize,
+        /// Bound argument count.
+        found: usize,
+    },
+    /// A literal of the wrong kind.
+    #[error("`{method}` argument {param}: expected {expected}, found {found}")]
+    ParamKind {
+        /// The method called.
+        method: String,
+        /// The parameter position.
+        param: u32,
+        /// The declared kind.
+        expected: &'static str,
+        /// The bound value's kind.
+        found: &'static str,
+    },
+    /// A literal where the method declares a bucket.
+    #[error("`{method}` argument {param}: a bucket parameter needs an edge")]
+    LiteralForBucketParam {
+        /// The method called.
+        method: String,
+        /// The parameter position.
+        param: u32,
+    },
+    /// An edge where the method declares a value.
+    #[error("`{method}` argument {param}: an edge cannot bind a value parameter")]
+    EdgeForValueParam {
+        /// The method called.
+        method: String,
+        /// The parameter position.
+        param: u32,
+    },
+    /// A yield parameter where the method declares a value.
+    #[error("`{method}` argument {param}: a yield parameter cannot bind a value parameter")]
+    ParamForValueParam {
+        /// The method called.
+        method: String,
+        /// The parameter position.
+        param: u32,
+    },
+    /// Outputs unpacked into a different arity than the method declares.
+    #[error("`{method}` produces {declared} outputs, unpacked as {claimed}")]
+    OutputArity {
+        /// The method called.
+        method: String,
+        /// The method's declared output count.
+        declared: usize,
+        /// The arity the caller unpacked into.
+        claimed: usize,
+    },
+    /// The graph's own structural refusal, reached at [`TypedBuilder::build`].
+    #[error(transparent)]
+    Build(#[from] BuildError),
+}
+
+/// The output edges of one typed call, in slot order.
+///
+/// Held as a group rather than an array because a method's output count is
+/// its signature's, not the caller's: there is no arity to name here, which
+/// is what makes naming a slot the producer does not have inexpressible.
+/// [`into_array`](Self::into_array) is where a caller states an expected
+/// shape and is held to it.
+#[derive(Debug)]
+#[must_use = "every minted output must be consumed for the graph to build"]
+pub struct Outputs {
+    method: String,
+    buckets: Vec<Bucket>,
+}
+
+impl Outputs {
+    /// How many edges the call produced.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.buckets.len()
+    }
+
+    /// Whether the call produced no edges.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.buckets.is_empty()
+    }
+
+    /// Unpack into an array, most often by destructuring — `let [taken,
+    /// rest] = ….into_array()?` — which is where `N` comes from.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::OutputArity`] when the method declares some other
+    /// number of outputs.
+    pub fn into_array<const N: usize>(self) -> Result<[Bucket; N], TypedError> {
+        let Self { method, buckets } = self;
+        let declared = buckets.len();
+        buckets.try_into().map_err(|_| TypedError::OutputArity {
+            method,
+            declared,
+            claimed: N,
+        })
+    }
+
+    /// The single edge of a call that produces one.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::OutputArity`] when the method produces some other
+    /// number of outputs.
+    pub fn one(self) -> Result<Bucket, TypedError> {
+        let [bucket] = self.into_array()?;
+        Ok(bucket)
+    }
+
+    /// Discharge a call that produces nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::OutputArity`] when the method produces an output,
+    /// which would then dangle.
+    pub fn none(self) -> Result<(), TypedError> {
+        let [] = self.into_array()?;
+        Ok(())
+    }
+}
+
+/// The identity a construction-time evaluation runs under.
+///
+/// A transaction's identity is the signed graph's hash, which does not
+/// exist while the graph is being written. Nothing reads this: the only
+/// expressions that derive from an identity are the fresh-id forms, and
+/// [`resolvable`] refuses to evaluate an output expression containing one.
+const UNBOUND: ManifestHash = ManifestHash(Hash32([0; 32]));
+
+/// A [`GraphBuilder`] that resolves its targets against the same tables
+/// admission consults.
+pub struct TypedBuilder<'a> {
+    graph: GraphBuilder,
+    cache: &'a MetadataCache,
+    instances: &'a InstanceRegistry,
+    hasher: &'a dyn Hasher,
+}
+
+impl<'a> TypedBuilder<'a> {
+    /// A builder with no nodes, typing its calls against `cache` and
+    /// resolving its targets through `instances`.
+    pub fn new(
+        cache: &'a MetadataCache,
+        instances: &'a InstanceRegistry,
+        hasher: &'a dyn Hasher,
+    ) -> Self {
+        Self {
+            graph: GraphBuilder::new(),
+            cache,
+            instances,
+            hasher,
+        }
+    }
+
+    /// Append an invocation of `method` on `target`, typed against the
+    /// signature the target's package declares.
+    ///
+    /// The arguments are bound before anything is appended and judged
+    /// against the declared parameters, so a refusal here leaves the
+    /// builder exactly as it was — the handles it was passed are spent,
+    /// as consuming them by value already said, but no node claims them.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::UnknownInstance`], [`TypedError::UnknownPackage`] or
+    /// [`TypedError::UnknownMethod`] when the target or its method does
+    /// not resolve; [`TypedError::ArityMismatch`] and the per-argument
+    /// kind refusals when the arguments disagree with the signature.
+    ///
+    /// # Panics
+    ///
+    /// On a [`Bucket`] argument minted by a different builder.
+    pub fn call(
+        &mut self,
+        target: impl Into<CallTarget>,
+        method: &str,
+        args: impl Args,
+    ) -> Result<Outputs, TypedError> {
+        // Copied out of `self` so the signature borrows the caller's
+        // tables rather than the builder, leaving it free to append.
+        let (cache, instances, hasher) = (self.cache, self.instances, self.hasher);
+        let target = target.into();
+        let meta = instances
+            .get(target)
+            .ok_or_else(|| TypedError::UnknownInstance(target.address()))?;
+        let package = cache
+            .get(meta.package)
+            .ok_or(TypedError::UnknownPackage(meta.package))?;
+        let signature = package
+            .methods
+            .get(method)
+            .ok_or_else(|| TypedError::UnknownMethod {
+                package: meta.package,
+                method: method.to_owned(),
+            })?;
+
+        let args = args.bind_all(&self.graph);
+        let inputs = type_args(method, &args, &signature.params)?;
+        let known: Vec<bool> = inputs.iter().map(Option::is_some).collect();
+        let values: Vec<Value> = inputs
+            .into_iter()
+            .map(|value| value.unwrap_or_else(unknown))
+            .collect();
+
+        let inputs = EvalInputs {
+            self_addr: target.address(),
+            args: &values,
+            config: &meta.config,
+            node_index: self.graph.len(),
+            frame: 0,
+            identity: UNBOUND,
+        };
+        let resources: Vec<Option<ResourceRef>> = signature
+            .outputs
+            .iter()
+            .map(|expr| {
+                if !resolvable(expr, &known, 0) {
+                    return None;
+                }
+                match evaluate_expr(expr, &inputs, hasher) {
+                    Ok(Value::Address(address)) => ResourceRef::try_from(address).ok(),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        let producer = self
+            .graph
+            .push(target, method.to_owned(), args, resources.len());
+        let buckets = resources
+            .into_iter()
+            .enumerate()
+            .map(|(slot, resource)| {
+                let slot = u32::try_from(slot).expect("outputs are bounded by the signature");
+                self.graph.mint(producer, slot, resource)
+            })
+            .collect();
+        Ok(Outputs {
+            method: method.to_owned(),
+            buckets,
+        })
+    }
+
+    /// Consume an output as a yield edge, as [`GraphBuilder::export`].
+    ///
+    /// # Panics
+    ///
+    /// On a bucket carrying constraints, or one minted by a different
+    /// builder.
+    pub fn export(&mut self, bucket: Bucket) -> EdgeRef {
+        self.graph.export(bucket)
+    }
+
+    /// The untyped builder underneath, for calls this layer cannot type —
+    /// a target the caller holds no certificate for, or a graph written
+    /// deliberately to be refused. Its handles share this one's index
+    /// space, so the two paths interleave freely.
+    pub const fn untyped(&mut self) -> &mut GraphBuilder {
+        &mut self.graph
+    }
+
+    /// Emit the graph, checking that every minted output was consumed.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::Build`] wrapping the structural refusal.
+    pub fn build(self) -> Result<ManifestGraph, TypedError> {
+        Ok(self.graph.build()?)
+    }
+}
+
+/// Type each bound argument against the parameter it fills, answering the
+/// value an output expression would read at that position — `None` where
+/// nothing at construction determines it.
+///
+/// This is admission's own per-argument check, run against the same
+/// declared parameters, one graph earlier.
+fn type_args(
+    method: &str,
+    args: &[GraphArg],
+    params: &[ParamType],
+) -> Result<Vec<Option<Value>>, TypedError> {
+    if args.len() != params.len() {
+        return Err(TypedError::ArityMismatch {
+            method: method.to_owned(),
+            expected: params.len(),
+            found: args.len(),
+        });
+    }
+    let mut inputs = Vec::with_capacity(args.len());
+    for (position, (arg, param)) in args.iter().zip(params).enumerate() {
+        let index = u32::try_from(position).expect("arguments are bounded by the signature");
+        let method = || method.to_owned();
+        inputs.push(match arg {
+            GraphArg::Literal(value) => {
+                if *param == ParamType::Bucket {
+                    return Err(TypedError::LiteralForBucketParam {
+                        method: method(),
+                        param: index,
+                    });
+                }
+                if !param.admits(value) {
+                    return Err(TypedError::ParamKind {
+                        method: method(),
+                        param: index,
+                        expected: param.name(),
+                        found: value.kind(),
+                    });
+                }
+                Some(value.clone())
+            }
+            GraphArg::Edge { constraints, .. } => {
+                if *param != ParamType::Bucket {
+                    return Err(TypedError::EdgeForValueParam {
+                        method: method(),
+                        param: index,
+                    });
+                }
+                edge_resource(constraints).map(|resource| Value::Bucket {
+                    resource: resource.address(),
+                })
+            }
+            GraphArg::Param(_) => {
+                if *param != ParamType::Bucket {
+                    return Err(TypedError::ParamForValueParam {
+                        method: method(),
+                        param: index,
+                    });
+                }
+                // A yield edge's resource is the consuming intent's
+                // declaration, which lives a tier up from here.
+                None
+            }
+        });
+    }
+    Ok(inputs)
+}
+
+/// The value standing in for an input nothing determined.
+///
+/// Never read: [`resolvable`] is what decides whether an expression may be
+/// evaluated at all, and it answers no for every expression reaching an
+/// unknown input.
+const fn unknown() -> Value {
+    Value::Tuple(Vec::new())
+}
+
+/// The resource a bound edge was typed with, read off the assertion it
+/// carries — which is where a typed handle put it, and where an author
+/// asserting one by hand puts it too.
+fn edge_resource(constraints: &[Constraint]) -> Option<ResourceRef> {
+    constraints.iter().find_map(|constraint| match constraint {
+        Constraint::ResourceIs(resource) => Some(*resource),
+        Constraint::MinAmount(_) | Constraint::MaxAmount(_) => None,
+    })
+}
+
+/// Whether an output expression can be evaluated against what is known at
+/// construction.
+///
+/// Two things a signed graph has that a graph under construction does not:
+/// the resource on an edge nothing typed, and the transaction identity the
+/// fresh-id forms derive from. An expression reaching either is left to
+/// admission, which has both. The depth bound mirrors the evaluator's own,
+/// so metadata nested past what any evaluation would accept is refused
+/// here rather than recursed into.
+fn resolvable(expr: &Expr, known: &[bool], depth: usize) -> bool {
+    if depth > MAX_EXPR_DEPTH {
+        return false;
+    }
+    let deeper = |expr| resolvable(expr, known, depth + 1);
+    match expr {
+        Expr::Literal(_) | Expr::SelfAddr | Expr::Config(_) => true,
+        Expr::Arg(index) => usize::try_from(*index)
+            .ok()
+            .and_then(|index| known.get(index).copied())
+            .unwrap_or(false),
+        // No `for-each` encloses an output expression, and no identity
+        // exists to derive from yet.
+        Expr::Binding(_) | Expr::FreshId { .. } | Expr::FreshKey { .. } => false,
+        Expr::Field(inner, _) | Expr::ResourceOf(inner) => deeper(inner),
+        Expr::Lookup { map, key } => deeper(map) && deeper(key),
+        Expr::Pack { hi, lo } => deeper(hi) && deeper(lo),
+        Expr::SelfResource { material } => material.iter().all(deeper),
+        Expr::ChildKey {
+            owner, material, ..
+        } => deeper(owner) && material.iter().all(deeper),
+    }
+}
