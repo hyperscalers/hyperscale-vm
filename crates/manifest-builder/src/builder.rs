@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
     CallTarget, Constraint, EdgeRef, GraphArg, GraphNode, MAX_MANIFEST_NODES, ManifestGraph,
-    ResourceRef,
+    PrincipalAddr, ResourceRef,
 };
 
 use crate::args::Args;
@@ -177,8 +177,18 @@ static NEXT_BUILDER: AtomicU64 = AtomicU64::new(0);
 pub struct GraphBuilder {
     id: u64,
     nodes: Vec<GraphNode>,
-    /// One consumption flag per minted output, per node, in node order.
-    outputs: Vec<Vec<bool>>,
+    /// One entry per minted output, per node, in node order.
+    outputs: Vec<Vec<Output>>,
+    /// Where unconsumed outputs go at [`build`](Self::build), if the
+    /// author named somewhere.
+    rest: Option<PrincipalAddr>,
+}
+
+/// One minted output slot: what it carries, and whether anything took it.
+#[derive(Debug)]
+struct Output {
+    resource: Option<ResourceRef>,
+    consumed: bool,
 }
 
 impl GraphBuilder {
@@ -189,7 +199,25 @@ impl GraphBuilder {
             id: NEXT_BUILDER.fetch_add(1, Ordering::Relaxed),
             nodes: Vec::new(),
             outputs: Vec::new(),
+            rest: None,
         }
+    }
+
+    /// Route whatever the author did not: at [`build`](Self::build), every
+    /// still-unconsumed output is deposited to `sink` instead of refusing
+    /// the graph.
+    ///
+    /// Explicit consumption always wins — the policy only sees outputs
+    /// nothing took — and there is no default policy, because silently
+    /// routing value somewhere is worse than refusing to build. Naming the
+    /// sink is the author saying where their own change goes.
+    ///
+    /// The sink is a principal because that is what makes the appended
+    /// node well-formed without reading anything: every principal answers
+    /// through the protocol's account blueprint, and a deposit there takes
+    /// one bucket and produces nothing.
+    pub const fn rest_to(&mut self, sink: PrincipalAddr) {
+        self.rest = Some(sink);
     }
 
     /// Append an invocation of `method` on `target` and mint its `N`
@@ -220,12 +248,11 @@ impl GraphBuilder {
         args: impl Args,
     ) -> [Bucket; N] {
         let args = args.bind_all(self);
-        let producer = self.push(target.into(), method.into(), args, N);
+        let producer = self.push(target.into(), method.into(), args, vec![None; N]);
         std::array::from_fn(|output| {
             self.mint(
                 producer,
                 u32::try_from(output).expect("more outputs than an edge can name"),
-                None,
             )
         })
     }
@@ -243,7 +270,7 @@ impl GraphBuilder {
         target: CallTarget,
         method: String,
         args: Vec<GraphArg>,
-        outputs: usize,
+        outputs: Vec<Option<ResourceRef>>,
     ) -> u32 {
         let producer = u32::try_from(self.nodes.len()).expect("more nodes than an edge can name");
         for arg in &args {
@@ -256,21 +283,31 @@ impl GraphBuilder {
             method,
             args,
         });
-        self.outputs.push(vec![false; outputs]);
+        self.outputs.push(
+            outputs
+                .into_iter()
+                .map(|resource| Output {
+                    resource,
+                    consumed: false,
+                })
+                .collect(),
+        );
         producer
     }
 
-    /// A handle on one of a pushed node's minted outputs.
-    pub(crate) const fn mint(
-        &self,
-        producer: u32,
-        output: u32,
-        resource: Option<ResourceRef>,
-    ) -> Bucket {
+    /// A handle on one of a pushed node's minted outputs, carrying the
+    /// resource its producing signature typed the slot with.
+    ///
+    /// # Panics
+    ///
+    /// On a slot this builder never minted.
+    pub(crate) fn mint(&self, producer: u32, output: u32) -> Bucket {
+        let slot = &self.outputs[usize::try_from(producer).expect("minted indices fit")]
+            [usize::try_from(output).expect("minted indices fit")];
         Bucket {
             builder: self.id,
             edge: EdgeRef { producer, output },
-            resource,
+            resource: slot.resource,
             constraints: Vec::new(),
         }
     }
@@ -324,31 +361,59 @@ impl GraphBuilder {
     fn consume(&mut self, edge: EdgeRef) {
         let producer = usize::try_from(edge.producer).expect("minted indices fit");
         let output = usize::try_from(edge.output).expect("minted indices fit");
-        self.outputs[producer][output] = true;
+        self.outputs[producer][output].consumed = true;
     }
 
     /// Emit the graph, checking the one linearity rule the handles cannot
     /// carry: every minted output was consumed — by an argument or by
     /// [`export`](Self::export).
     ///
+    /// A builder carrying a [`rest_to`](Self::rest_to) policy deposits
+    /// what dangles to the named sink instead, so only a policy-free
+    /// builder refuses.
+    ///
     /// # Errors
     ///
     /// [`BuildError::DanglingOutput`] for the first unconsumed output in
     /// node order; [`BuildError::TooManyNodes`] past
-    /// [`MAX_MANIFEST_NODES`].
-    pub fn build(self) -> Result<ManifestGraph, BuildError> {
+    /// [`MAX_MANIFEST_NODES`], counted after any rest edges are routed.
+    pub fn build(mut self) -> Result<ManifestGraph, BuildError> {
+        if let Some(sink) = self.rest {
+            // Read whole first: routing a rest edge appends to the very
+            // table the walk reads.
+            let rests: Vec<EdgeRef> = self.dangling().collect();
+            for edge in rests {
+                let arg = self.mint(edge.producer, edge.output).into_arg();
+                self.push(sink.into(), "deposit".into(), vec![arg], Vec::new());
+            }
+        }
         if self.nodes.len() > MAX_MANIFEST_NODES {
             return Err(BuildError::TooManyNodes);
         }
-        for (producer, outputs) in (0u32..).zip(&self.outputs) {
-            let dangling = (0u32..)
-                .zip(outputs)
-                .find_map(|(output, consumed)| (!consumed).then_some(output));
-            if let Some(output) = dangling {
-                return Err(BuildError::DanglingOutput { producer, output });
-            }
+        if let Some(edge) = self.dangling().next() {
+            return Err(BuildError::DanglingOutput {
+                producer: edge.producer,
+                output: edge.output,
+            });
         }
         Ok(ManifestGraph { nodes: self.nodes })
+    }
+
+    /// Every minted output nothing has taken, in node order.
+    fn dangling(&self) -> impl Iterator<Item = EdgeRef> + '_ {
+        self.outputs
+            .iter()
+            .enumerate()
+            .flat_map(|(producer, outputs)| {
+                outputs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, slot)| !slot.consumed)
+                    .map(move |(output, _)| EdgeRef {
+                        producer: u32::try_from(producer).expect("minted indices fit"),
+                        output: u32::try_from(output).expect("minted indices fit"),
+                    })
+            })
     }
 }
 

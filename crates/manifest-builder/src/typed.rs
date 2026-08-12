@@ -26,7 +26,7 @@
 use hyperscale_vm_effects::{
     Address, CallTarget, Constraint, EdgeRef, EvalInputs, Expr, GraphArg, Hash32, Hasher,
     InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MetadataCache, PackageHash,
-    ParamType, ResourceRef, Value, evaluate_expr,
+    ParamType, PrincipalAddr, ResourceRef, Value, evaluate_expr,
 };
 
 use crate::args::Args;
@@ -286,15 +286,12 @@ impl<'a> TypedBuilder<'a> {
             })
             .collect();
 
-        let producer = self
-            .graph
-            .push(target, method.to_owned(), args, resources.len());
-        let buckets = resources
-            .into_iter()
-            .enumerate()
-            .map(|(slot, resource)| {
+        let outputs = resources.len();
+        let producer = self.graph.push(target, method.to_owned(), args, resources);
+        let buckets = (0..outputs)
+            .map(|slot| {
                 let slot = u32::try_from(slot).expect("outputs are bounded by the signature");
-                self.graph.mint(producer, slot, resource)
+                self.graph.mint(producer, slot)
             })
             .collect();
         Ok(Outputs {
@@ -311,6 +308,17 @@ impl<'a> TypedBuilder<'a> {
     /// builder.
     pub fn export(&mut self, bucket: Bucket) -> EdgeRef {
         self.graph.export(bucket)
+    }
+
+    /// Route whatever the author did not: at [`build`](Self::build), every
+    /// still-unconsumed output is deposited to `sink`, carrying whatever
+    /// resource its producing signature typed it with, instead of refusing
+    /// the graph.
+    ///
+    /// See [`GraphBuilder::rest_to`] for why the sink is a principal and
+    /// why there is no default.
+    pub const fn rest_to(&mut self, sink: PrincipalAddr) {
+        self.graph.rest_to(sink);
     }
 
     /// The untyped builder underneath, for calls this layer cannot type —
