@@ -39,5 +39,8 @@ pub use envelope::{
 pub use execution::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome};
 pub use mode::{Mode, ModeKind, compatible};
 pub use scheme::{MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId, SchemeSpec, SchemeVerifier};
-pub use work::{FOOTPRINT_WEIGHT, FUEL_WEIGHT, TX_UNITS, declared_work, work_units};
+pub use work::{
+    AUTH_BYTE_WEIGHT, FOOTPRINT_WEIGHT, FUEL_WEIGHT, TX_UNITS, VERIFY_WEIGHT, declared_work,
+    signature_work, work_units,
+};
 pub use writes::{MAX_CELL_VALUE_LEN, Movement, SettledWrites, StateWrites};

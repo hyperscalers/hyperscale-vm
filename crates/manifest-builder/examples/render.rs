@@ -10,7 +10,7 @@ use hyperscale_vm_effects::stdlib::{
 };
 use hyperscale_vm_effects::{
     ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
-    PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, TestHasher, Value,
+    PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId, TestHasher, Value,
     resource_address,
 };
 use hyperscale_vm_manifest_builder::native::{account, amm, splitter, staking};
@@ -205,8 +205,8 @@ fn summarise(graph: &ManifestGraph, cache: &MetadataCache, instances: &InstanceR
         report.footprints.len()
     );
     println!(
-        "   work       {} at a {GAS_LIMIT} gas ceiling",
-        report.declared_work(GAS_LIMIT)
+        "   work       {} at a {GAS_LIMIT} gas ceiling, signed under ed25519",
+        report.declared_work(GAS_LIMIT, &[SchemeId::ED25519])
     );
     for required in report.unsatisfiable() {
         let reason = match required.authority {

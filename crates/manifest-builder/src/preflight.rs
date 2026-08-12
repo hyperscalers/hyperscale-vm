@@ -25,8 +25,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use hyperscale_vm_effects::{
     Accessibility, Address, AdmissionError, Admitted, CallTarget, EnvelopeTree, Hasher,
     InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache, NetworkWord,
-    PrincipalAddr, RouteError, Routing, ShardId, ShardResolver, SubintentRecord, TextError, Value,
-    admit, admit_tree, declared_work, footprint, route, route_tree,
+    PrincipalAddr, RouteError, Routing, SchemeId, ShardId, ShardResolver, SubintentRecord,
+    TextError, Value, admit, admit_tree, declared_work, footprint, route, route_tree,
+    signature_work,
 };
 
 /// Why a transaction could not be preflighted.
@@ -132,15 +133,21 @@ impl Report {
             .fold(0, |total, shard| total.saturating_add(*shard))
     }
 
-    /// What this transaction costs a block at `gas_limit`: the fixed
-    /// carry charge, the footprint it declares, and the ceiling it would
-    /// sign for its own execution.
+    /// What this transaction costs a block at `gas_limit` under
+    /// `schemes`: the fixed carry charge, the footprint it declares, the
+    /// ceiling it would sign for its own execution, and what the
+    /// signatures it will carry cost to check.
     ///
-    /// The ceiling is the signer's own number and cannot be read off the
-    /// graph, so it is asked for here rather than reported.
+    /// `schemes` names one entry per signature the envelope will bind —
+    /// the composer's and each bound subintent signer's. Neither it nor
+    /// the ceiling can be read off the graph: both are the signer's own
+    /// choices, so both are asked for here rather than reported.
     #[must_use]
-    pub fn declared_work(&self, gas_limit: u64) -> u64 {
-        declared_work(self.footprint(), gas_limit)
+    pub fn declared_work(&self, gas_limit: u64, schemes: &[SchemeId]) -> u64 {
+        let signatures = schemes.iter().fold(0u64, |total, scheme| {
+            total.saturating_add(signature_work(*scheme))
+        });
+        declared_work(self.footprint(), gas_limit, signatures)
     }
 
     /// Every signature the transaction needs: what its nodes' declared

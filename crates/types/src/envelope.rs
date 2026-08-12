@@ -20,6 +20,7 @@ use hyperscale_hbor::{Hash32, Hbor};
 
 use crate::address::PrincipalAddr;
 use crate::scheme::{MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId};
+use crate::work::signature_work;
 
 /// The cap on an envelope body's bytes — a call tree or a package
 /// artifact.
@@ -209,6 +210,20 @@ impl TransactionEnvelope {
     pub const fn abort_floor(&self) -> u128 {
         self.max_fee / ABORT_FLOOR_DIVISOR
     }
+
+    /// What every signature this envelope binds costs to carry and check.
+    ///
+    /// The composer's, plus one per bound subintent. Each scheme is signed
+    /// content and each width comes from the registry, so this is a pure
+    /// function of what the composer put their name to.
+    #[must_use]
+    pub fn signature_work(&self) -> u64 {
+        self.subintent_sigs
+            .iter()
+            .fold(signature_work(self.signer_scheme), |total, sig| {
+                total.saturating_add(signature_work(sig.scheme))
+            })
+    }
 }
 
 #[cfg(test)]
@@ -216,7 +231,7 @@ mod tests {
     use hyperscale_hbor::{HborSigned, assert_canonical, to_vec};
 
     use super::{NetworkId, PrincipalAddr, SubintentSig, TransactionBody, TransactionEnvelope};
-    use crate::SchemeId;
+    use crate::{SchemeId, signature_work};
 
     fn sample() -> TransactionEnvelope {
         TransactionEnvelope {
@@ -257,6 +272,31 @@ mod tests {
             let spec = sig.scheme.spec().expect("a registered scheme");
             assert!(spec.admits(&sig.public_key, &sig.signature));
         }
+    }
+
+    /// Every signature the envelope binds is priced, and each scheme is
+    /// priced as the registry has it.
+    #[test]
+    fn the_declared_signature_work_counts_every_signature() {
+        let mut envelope = sample();
+        assert_eq!(
+            envelope.signature_work(),
+            signature_work(SchemeId::ED25519) * 2,
+            "the composer's signature and the one subintent it binds"
+        );
+
+        envelope.subintent_sigs.push(SubintentSig {
+            scheme: SchemeId::SECP256K1,
+            public_key: vec![0x66; 33],
+            signature: vec![0x77; 64],
+        });
+        assert_eq!(
+            envelope.signature_work(),
+            signature_work(SchemeId::ED25519) * 2 + signature_work(SchemeId::SECP256K1)
+        );
+
+        envelope.subintent_sigs.clear();
+        assert_eq!(envelope.signature_work(), signature_work(SchemeId::ED25519));
     }
 
     /// The scheme is signed content while the material it describes is

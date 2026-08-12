@@ -52,9 +52,9 @@ pub use footprint::{
 pub use graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
-    Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT, MAX_CELL_VALUE_LEN, MAX_EVENT_PAYLOAD_BYTES,
-    MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, SettledWrites, StateWrites, TX_UNITS, TxHash,
-    declared_work, work_units,
+    AUTH_BYTE_WEIGHT, Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT, MAX_CELL_VALUE_LEN,
+    MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, SettledWrites,
+    StateWrites, TX_UNITS, TxHash, VERIFY_WEIGHT, declared_work, signature_work, work_units,
 };
 pub use invoke::{CallArg, EDGE_CELL_BYTES, EdgeBound, NodeCall};
 pub use manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};

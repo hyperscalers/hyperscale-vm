@@ -8,8 +8,8 @@
 use hyperscale_vm_effects::stdlib::{account_metadata, staking_metadata};
 use hyperscale_vm_effects::{
     ComponentAddr, Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache,
-    PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, TestHasher, TextError, Value,
-    admit, declared_work, footprint, route,
+    PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId, TestHasher, TextError,
+    Value, admit, declared_work, footprint, route, signature_work,
 };
 use hyperscale_vm_manifest_builder::native::{account, staking};
 use hyperscale_vm_manifest_builder::{
@@ -82,8 +82,13 @@ fn a_report_is_what_the_chain_derives() {
         "the reservation is taken once against every shard's declaration"
     );
     assert_eq!(
-        report.declared_work(7_000),
-        declared_work(report.footprint(), 7_000)
+        report.declared_work(7_000, &[SchemeId::ED25519]),
+        declared_work(report.footprint(), 7_000, signature_work(SchemeId::ED25519)),
+    );
+    assert!(
+        report.declared_work(7_000, &[SchemeId::ED25519, SchemeId::ED25519])
+            > report.declared_work(7_000, &[SchemeId::ED25519]),
+        "a second signature is a second verification to pay for"
     );
     assert_eq!(report.shards().count(), routing.per_shard.len());
 }

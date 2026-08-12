@@ -40,11 +40,26 @@
 //! nothing — the one failure mode that looks like ordinary data rather
 //! than like an error.
 
+use crate::scheme::SchemeId;
+
 /// Work units charged per unit of consumed fuel.
 pub const FUEL_WEIGHT: u64 = 1;
 
 /// Work units charged per unit of declared footprint.
 pub const FOOTPRINT_WEIGHT: u64 = 1;
+
+/// Work units charged per ed25519-equivalent signature verification, the
+/// unit [`verify_weight`](crate::SchemeSpec::verify_weight) counts in.
+pub const VERIFY_WEIGHT: u64 = 1;
+
+/// Work units charged per byte of auth material carried — a public key
+/// and the signature over it.
+///
+/// Separate from the verification term because the two scale apart. A
+/// post-quantum scheme is a kilobyte of material at roughly the
+/// verification cost of a curve, so a single weight over either one would
+/// price it as the other.
+pub const AUTH_BYTE_WEIGHT: u64 = 1;
 
 /// Work units charged for carrying one transaction at all, before
 /// anything it declares.
@@ -78,8 +93,32 @@ pub const fn work_units(fuel: u64, footprint: u64) -> u64 {
         .saturating_add(FOOTPRINT_WEIGHT.saturating_mul(footprint))
 }
 
+/// What carrying and verifying one signature under `scheme` costs.
+///
+/// Read off the registry rather than off the material an envelope
+/// carries, because the scheme is signed content and the key and
+/// signature bytes are not: a quantity measured from the wire lengths
+/// would be one a sender could move without signing for it.
+///
+/// A scheme nothing registers costs nothing, which is sound only because
+/// it also verifies under nothing — no envelope reaches a fee carrying
+/// one.
+#[must_use]
+pub const fn signature_work(scheme: SchemeId) -> u64 {
+    match scheme.spec() {
+        Some(spec) => {
+            let bytes = (spec.key_len + spec.sig_len) as u64;
+            VERIFY_WEIGHT
+                .saturating_mul(spec.verify_weight)
+                .saturating_add(AUTH_BYTE_WEIGHT.saturating_mul(bytes))
+        }
+        None => 0,
+    }
+}
+
 /// The work a transaction declares before it runs: the fixed carry
-/// charge, the footprint it claims, and the fuel ceiling it signed.
+/// charge, the footprint it claims, the fuel ceiling it signed, and what
+/// its signatures cost to carry and check.
 ///
 /// The ceiling enters at [`FUEL_WEIGHT`] because that is what the fuel
 /// it stands for will cost — so this bounds the [`work_units`] the same
@@ -87,27 +126,36 @@ pub const fn work_units(fuel: u64, footprint: u64) -> u64 {
 /// a reservation against it and release the reservation later without
 /// the two figures being measured differently.
 ///
+/// `signatures` is the sum of [`signature_work`] over every signature the
+/// envelope binds, its composer's included. It sits on the declared side
+/// alone: verification is admission's cost, paid before an execution
+/// exists to attest anything.
+///
 /// `gas_limit` is the sender's own number and is bounded by the
 /// embedder, not here; a ceiling large enough to saturate this is one
 /// the embedder should already have refused.
 #[must_use]
-pub const fn declared_work(footprint: u64, gas_limit: u64) -> u64 {
+pub const fn declared_work(footprint: u64, gas_limit: u64, signatures: u64) -> u64 {
     TX_UNITS
         .saturating_add(FOOTPRINT_WEIGHT.saturating_mul(footprint))
         .saturating_add(FUEL_WEIGHT.saturating_mul(gas_limit))
+        .saturating_add(signatures)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FOOTPRINT_WEIGHT, FUEL_WEIGHT, TX_UNITS, declared_work, work_units};
+    use super::{
+        AUTH_BYTE_WEIGHT, FOOTPRINT_WEIGHT, FUEL_WEIGHT, SchemeId, TX_UNITS, VERIFY_WEIGHT,
+        declared_work, signature_work, work_units,
+    };
 
     #[test]
     fn a_declaration_costs_something_whatever_it_asks_for() {
         // The term the count bound rests on: a transaction declaring
         // nothing and signing a zero ceiling still costs a place in every
         // structure that holds one entry per transaction.
-        assert_eq!(declared_work(0, 0), TX_UNITS);
-        assert!(declared_work(0, 0) > 0);
+        assert_eq!(declared_work(0, 0, 0), TX_UNITS);
+        assert!(declared_work(0, 0, 0) > 0);
     }
 
     #[test]
@@ -116,8 +164,12 @@ mod tests {
         // it reserved by widening what it claims.
         for footprint in [0, 1, 1_000, u64::from(u32::MAX)] {
             for gas in [0, 1, 1_000, u64::from(u32::MAX)] {
-                assert!(declared_work(footprint + 1, gas) >= declared_work(footprint, gas));
-                assert!(declared_work(footprint, gas + 1) >= declared_work(footprint, gas));
+                for sigs in [0, 1, 1_000] {
+                    let base = declared_work(footprint, gas, sigs);
+                    assert!(declared_work(footprint + 1, gas, sigs) >= base);
+                    assert!(declared_work(footprint, gas + 1, sigs) >= base);
+                    assert!(declared_work(footprint, gas, sigs + 1) >= base);
+                }
             }
         }
     }
@@ -134,9 +186,9 @@ mod tests {
             for gas in [0, 1, 50_000, 1_000_000] {
                 for burned in [0, gas / 2, gas] {
                     assert!(
-                        declared_work(footprint, gas) >= work_units(burned, footprint),
+                        declared_work(footprint, gas, 0) >= work_units(burned, footprint),
                         "declared {} < attested {} at footprint {footprint}, gas {gas}",
-                        declared_work(footprint, gas),
+                        declared_work(footprint, gas, 0),
                         work_units(burned, footprint),
                     );
                 }
@@ -148,8 +200,47 @@ mod tests {
     fn the_declared_ceiling_reads_as_the_ceiling() {
         // Saturating like its counterpart: a declaration at the top pins
         // rather than wrapping to something an embedder would admit.
-        assert_eq!(declared_work(u64::MAX, u64::MAX), u64::MAX);
-        assert_eq!(declared_work(u64::MAX, 0), u64::MAX);
+        assert_eq!(declared_work(u64::MAX, u64::MAX, u64::MAX), u64::MAX);
+        assert_eq!(declared_work(u64::MAX, 0, 0), u64::MAX);
+        assert_eq!(declared_work(0, 0, u64::MAX), u64::MAX);
+    }
+
+    /// A wider scheme declares more, which is the whole reason the term
+    /// is read off the registry: a kilobyte signature is a fee fact
+    /// rather than free bandwidth.
+    #[test]
+    fn a_wider_scheme_declares_more() {
+        let ed = signature_work(SchemeId::ED25519);
+        let secp = signature_work(SchemeId::SECP256K1);
+        assert!(ed > 0 && secp > 0);
+        assert!(
+            secp > ed,
+            "secp256k1 carries a wider key and verifies slower"
+        );
+        assert!(declared_work(0, 0, secp) > declared_work(0, 0, ed));
+    }
+
+    /// Both halves of a signature's cost move the total, so neither a
+    /// slow scheme with small material nor a fast one with a lot of it
+    /// prices as free.
+    #[test]
+    fn both_halves_of_a_signature_are_priced() {
+        const { assert!(VERIFY_WEIGHT > 0) };
+        const { assert!(AUTH_BYTE_WEIGHT > 0) };
+        let spec = SchemeId::ED25519.spec().expect("ed25519 is registered");
+        assert_eq!(
+            signature_work(SchemeId::ED25519),
+            VERIFY_WEIGHT * spec.verify_weight
+                + AUTH_BYTE_WEIGHT * (spec.key_len + spec.sig_len) as u64
+        );
+    }
+
+    /// Material no scheme claims prices at nothing, which is sound only
+    /// because it verifies under nothing either.
+    #[test]
+    fn an_unregistered_scheme_prices_at_nothing() {
+        assert_eq!(signature_work(SchemeId::NONE), 0);
+        assert_eq!(signature_work(SchemeId(u16::MAX)), 0);
     }
 
     #[test]
