@@ -149,6 +149,29 @@ impl SchemeSpec {
     }
 }
 
+/// A key that can put a scheme-tagged signature on a message.
+///
+/// One method per thing a signature records: which scheme signed, the key
+/// that verifies under it, and the signature. Nothing here chooses a
+/// digest — the caller passes the 32 bytes it commits to, and what a
+/// scheme does with them is the scheme's own business: ed25519 signs them
+/// as a message, ECDSA takes them as its prehash.
+///
+/// The mirror of [`SchemeVerifier`], and held apart from it for the same
+/// reason a wallet is not a validator: signing needs a secret and
+/// verifying does not, so the two are supplied by different parties and
+/// almost never by one crate.
+pub trait AccountSigner {
+    /// The scheme this key signs under.
+    fn scheme(&self) -> SchemeId;
+
+    /// The public key, in the width and encoding its scheme registers.
+    fn public_key_bytes(&self) -> Vec<u8>;
+
+    /// Sign the 32 bytes the caller commits to.
+    fn sign_digest(&self, digest: &[u8; 32]) -> Vec<u8>;
+}
+
 /// Signature verification for the schemes the registry describes.
 ///
 /// Implementations must be pure — equal `(scheme, key, signature, message)`

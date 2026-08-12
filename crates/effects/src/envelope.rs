@@ -204,6 +204,20 @@ pub struct AdmittedTree {
     pub subintents: Vec<SubintentRecord>,
 }
 
+/// The tree's canonical bytes — what an envelope's body carries.
+///
+/// The vocabulary owns its own codec: a tree is an ordinary HBOR value,
+/// and the encoding a composer writes is the one admission decodes.
+///
+/// # Panics
+///
+/// On a tree past the vocabulary's own caps — one no admission path can
+/// have accepted.
+#[must_use]
+pub fn encode_tree(tree: &EnvelopeTree) -> Vec<u8> {
+    to_vec(tree).expect("a tree within its caps encodes")
+}
+
 /// Admit a bound envelope tree: validate every intent, interleave the
 /// tree into one flattened manifest along its yield edges, and derive
 /// the subintent nullifier records.

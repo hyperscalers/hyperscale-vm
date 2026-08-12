@@ -16,7 +16,8 @@
 
 use core::fmt;
 
-use hyperscale_hbor::{Hash32, Hbor};
+use hyperscale_hbor::hash::Hasher;
+use hyperscale_hbor::{Hash32, Hbor, HborSigned};
 
 use crate::address::PrincipalAddr;
 use crate::scheme::{MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId};
@@ -209,6 +210,28 @@ impl TransactionEnvelope {
     #[must_use]
     pub const fn abort_floor(&self) -> u128 {
         self.max_fee / ABORT_FLOOR_DIVISOR
+    }
+
+    /// The digest a signature over this envelope covers.
+    ///
+    /// Also the identity fresh derivations root at: distinct signed
+    /// envelopes never mint the same fresh key.
+    ///
+    /// The domain is the preimage's, applied once. The hasher is asked for
+    /// an undomained digest of it rather than for a second domain around
+    /// the first, because two byte strings for one commitment is what the
+    /// preimage encoding exists to prevent.
+    ///
+    /// # Panics
+    ///
+    /// On an envelope past this crate's own caps, which no decoded
+    /// envelope can be.
+    #[must_use]
+    pub fn signing_digest(&self, hasher: &dyn Hasher) -> [u8; 32] {
+        let preimage = self
+            .signing_bytes()
+            .expect("an envelope within its caps encodes");
+        hasher.hash(&[], &[&preimage]).0
     }
 
     /// What every signature this envelope binds costs to carry and check.
