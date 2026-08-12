@@ -198,6 +198,7 @@ mod tests {
     use hyperscale_hbor::{HborSigned, assert_canonical, to_vec};
 
     use super::{NetworkId, PrincipalAddr, SubintentSig, TransactionBody, TransactionEnvelope};
+    use crate::SchemeId;
 
     fn sample() -> TransactionEnvelope {
         TransactionEnvelope {
@@ -221,6 +222,20 @@ mod tests {
     #[test]
     fn the_envelope_is_canonical() {
         assert_canonical(&sample());
+    }
+
+    /// The envelope's field widths and the registered widths of the scheme
+    /// it carries are one fact written in two places; they agree.
+    #[test]
+    fn the_wire_widths_are_the_registered_ones() {
+        let envelope = sample();
+        let spec = SchemeId::ED25519.spec().expect("ed25519 is registered");
+        assert_eq!(envelope.signer.len(), spec.key_len);
+        assert_eq!(envelope.signature.len(), spec.sig_len);
+        for sig in &envelope.subintent_sigs {
+            assert_eq!(sig.public_key.len(), spec.key_len);
+            assert_eq!(sig.signature.len(), spec.sig_len);
+        }
     }
 
     /// The two fields a signature cannot cover ride the wire and are

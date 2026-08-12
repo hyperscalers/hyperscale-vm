@@ -67,22 +67,6 @@ impl SubstateKey {
     }
 }
 
-/// The signature scheme a principal's auth material belongs to.
-///
-/// A principal address commits to the scheme alongside the key, so one
-/// public key presented under two schemes is two principals — a scheme
-/// added later cannot land on an address already in use.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
-#[hbor(transparent)]
-pub struct SchemeId(pub u16);
-
-impl SchemeId {
-    /// Ed25519, the only scheme the protocol verifies. A second scheme
-    /// arrives with its verifier and takes the next value; nothing may
-    /// claim one before then, because the address space would be spent.
-    pub const ED25519: Self = Self(1);
-}
-
 /// The class of object an address names.
 ///
 /// The class is a fact about the address rather than a lookup: what
