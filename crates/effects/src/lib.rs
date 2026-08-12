@@ -29,6 +29,7 @@ pub mod invoke;
 pub mod manifest;
 pub mod metadata;
 pub mod route;
+pub mod rule;
 pub mod stdlib;
 pub mod types;
 pub mod vectors;
@@ -69,6 +70,7 @@ pub use route::{
     CallEdge, CallGraph, FrameDeclaration, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef,
     PrefixShardResolver, RouteError, Routing, ShardResolver, route,
 };
+pub use rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule};
 pub use types::{
     Address, AddressClass, CallTarget, ComponentAddr, Effect, EffectSet, EffectTarget,
     InvalidAddress, LocalKey, MAX_VALUE_DEPTH, Mode, ModeKind, NativeAddr, NativeRole, NetworkWord,
