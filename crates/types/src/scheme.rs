@@ -32,10 +32,16 @@ impl SchemeId {
     /// presented under it verifies under nothing.
     pub const NONE: Self = Self(0);
 
-    /// Ed25519, the only scheme the protocol verifies. A second scheme
-    /// arrives with its verifier and takes the next value; nothing may
-    /// claim one before then, because the address space would be spent.
+    /// Ed25519 over RFC 8032, keys as compressed Edwards points.
     pub const ED25519: Self = Self(1);
+
+    /// ECDSA over secp256k1, keys as SEC1 compressed points and
+    /// signatures as compact `r || s` under a low-`s` rule.
+    ///
+    /// A third scheme arrives with its verifier and takes the next value;
+    /// nothing may claim one before then, because the address space would
+    /// be spent on something no chain could verify.
+    pub const SECP256K1: Self = Self(2);
 
     /// What this id is registered as, or `None` if nothing is.
     ///
@@ -57,14 +63,24 @@ impl SchemeId {
 }
 
 /// Every registered scheme, by id.
-const REGISTRY: &[(SchemeId, SchemeSpec)] = &[(
-    SchemeId::ED25519,
-    SchemeSpec {
-        key_len: 32,
-        sig_len: 64,
-        verify_weight: 1,
-    },
-)];
+const REGISTRY: &[(SchemeId, SchemeSpec)] = &[
+    (
+        SchemeId::ED25519,
+        SchemeSpec {
+            key_len: 32,
+            sig_len: 64,
+            verify_weight: 1,
+        },
+    ),
+    (
+        SchemeId::SECP256K1,
+        SchemeSpec {
+            key_len: 33,
+            sig_len: 64,
+            verify_weight: 2,
+        },
+    ),
+];
 
 /// The widest public key any registered scheme has.
 ///
@@ -108,7 +124,10 @@ pub struct SchemeSpec {
     ///
     /// A ratio between schemes rather than a price: what one ed25519
     /// verification costs against fuel and footprint is a weight, and the
-    /// weights are [`crate::work`]'s.
+    /// weights are [`crate::work`]'s. Placeholder ratios, on the same
+    /// terms as those weights — measured against real implementations
+    /// rather than chosen here, and a scheme whose verifier is slower
+    /// than its entry claims is underpriced rather than unsound.
     pub verify_weight: u64,
 }
 
@@ -154,7 +173,7 @@ mod tests {
     use super::{MAX_KEY_BYTES, MAX_SIG_BYTES, REGISTRY, SchemeId, SchemeSpec};
 
     #[test]
-    fn ed25519_is_registered_at_its_wire_widths() {
+    fn the_launch_schemes_are_registered_at_their_wire_widths() {
         assert_eq!(
             SchemeId::ED25519.spec(),
             Some(SchemeSpec {
@@ -163,6 +182,26 @@ mod tests {
                 verify_weight: 1,
             })
         );
+        assert_eq!(
+            SchemeId::SECP256K1.spec(),
+            Some(SchemeSpec {
+                key_len: 33,
+                sig_len: 64,
+                verify_weight: 2,
+            })
+        );
+    }
+
+    /// Two schemes sharing a signature width is ordinary; two sharing an
+    /// id is the registry contradicting itself.
+    #[test]
+    fn every_id_is_registered_once() {
+        for (index, (id, _)) in REGISTRY.iter().enumerate() {
+            assert!(
+                !REGISTRY[..index].iter().any(|(seen, _)| seen == id),
+                "{id:?} is registered twice"
+            );
+        }
     }
 
     /// The caps are read off the registry, so a scheme cannot register
@@ -205,7 +244,7 @@ mod tests {
 
     #[test]
     fn an_unclaimed_id_has_no_entry() {
-        assert_eq!(SchemeId(2).spec(), None);
+        assert_eq!(SchemeId(3).spec(), None);
         assert_eq!(SchemeId(u16::MAX).spec(), None);
     }
 }
