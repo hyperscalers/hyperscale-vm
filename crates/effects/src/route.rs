@@ -482,19 +482,21 @@ fn own_prefix_only(
     Ok(())
 }
 
-/// Refuse a static call site naming a guarded method.
+/// Refuse a static call site naming a method that takes evidence.
 ///
 /// Authority does not propagate through a call: a callee frame presents
 /// nothing — its caller's badge was handed to the caller, not through it
 /// — so a guarded method is unreachable from one, and reaching for it is
-/// a refusal rather than a silent pass.
+/// a refusal rather than a silent pass. An authorizing method is doubly
+/// so: what it mints is a badge admission judged, and admission never
+/// saw a callee frame.
 fn reachable_from_a_call_site(
     is_callee: bool,
     signature: &MethodSignature,
     node_index: u32,
     method: &str,
 ) -> Result<(), RouteError> {
-    if is_callee && matches!(signature.accessibility, Accessibility::Guarded(_)) {
+    if is_callee && !matches!(signature.accessibility, Accessibility::Public) {
         return Err(RouteError::GuardedCallSite {
             node: node_index,
             method: method.to_owned(),

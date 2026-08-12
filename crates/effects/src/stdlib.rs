@@ -50,7 +50,10 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 /// for `resource`. `deposit(bucket)`: delta on the recipient's vault plus
 /// the claims-area fallback cell, both keyed by the bucket's resource.
 /// `stamp-entropy()`: an exclusive write of the transaction's randomness
-/// draw into the account's entropy leaf.
+/// draw into the account's entropy leaf. `authorize()`: nothing but its
+/// own gate — naming it mints the account's identity as evidence for
+/// later nodes of the intent, which is how an account acts through calls
+/// its own signature badge would not open.
 ///
 /// Spending and writing require the account's own authority; being paid
 /// does not. Anyone may credit you, and a transfer therefore still
@@ -103,6 +106,17 @@ pub fn account_metadata() -> PackageMetadata {
                     mode: ModeExpr::Delta,
                 },
             ],
+            calls: vec![],
+        },
+    );
+    methods.methods.insert(
+        "authorize".into(),
+        MethodSignature {
+            accessibility: Accessibility::Authorizing,
+            params: vec![],
+            abi: vec![],
+            outputs: vec![],
+            effects: vec![],
             calls: vec![],
         },
     );

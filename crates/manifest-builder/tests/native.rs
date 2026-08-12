@@ -181,7 +181,10 @@ fn every_stdlib_method_has_a_wrapper() {
     // that no wrapper names. Exhaustive on purpose — adding a method
     // breaks this list, which is the point.
     let wrapped: Vec<(&str, &[&str])> = vec![
-        ("account", &["deposit", "stamp-entropy", "withdraw"]),
+        (
+            "account",
+            &["authorize", "deposit", "stamp-entropy", "withdraw"],
+        ),
         ("amm", &["swap"]),
         ("book", &["fill-asks", "place-ask"]),
         ("splitter", &["take"]),

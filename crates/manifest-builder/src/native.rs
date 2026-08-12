@@ -25,11 +25,11 @@ use hyperscale_vm_effects::{ComponentAddr, PrincipalAddr, ResourceRef};
 
 use crate::args::BucketArg;
 use crate::builder::Bucket;
-use crate::typed::{TypedBuilder, TypedError};
+use crate::typed::{Badge, TypedBuilder, TypedError};
 
 /// The fungible account: every principal answers these.
 pub mod account {
-    use super::{Bucket, BucketArg, PrincipalAddr, ResourceRef, TypedBuilder, TypedError};
+    use super::{Badge, Bucket, BucketArg, PrincipalAddr, ResourceRef, TypedBuilder, TypedError};
 
     /// Reserve `amount` of `resource` on `who`'s vault, producing it as an
     /// edge typed by the resource named here.
@@ -71,6 +71,19 @@ pub mod account {
         who: PrincipalAddr,
     ) -> Result<(), TypedError> {
         builder.call(who, "stamp-entropy", ())?.none()
+    }
+
+    /// Sign in as `who`: mint the account's identity as a badge later
+    /// calls of the same graph present.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `authorize`.
+    pub fn authorize(
+        builder: &mut TypedBuilder<'_>,
+        who: PrincipalAddr,
+    ) -> Result<Badge, TypedError> {
+        builder.call_minting(who, "authorize")
     }
 }
 

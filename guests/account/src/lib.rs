@@ -38,6 +38,10 @@ impl Guest for Account {
     fn stamp_entropy(leaf: &WriteCell) {
         write_cell_set(leaf, &randomness());
     }
+
+    fn authorize() {
+        // The gate is the kernel's; a body would have nothing to say.
+    }
 }
 
 export!(Account);

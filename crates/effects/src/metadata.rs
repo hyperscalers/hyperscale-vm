@@ -159,6 +159,15 @@ pub enum Accessibility {
     /// the manifest did not name. Authority held by somebody else is a
     /// call to *them*, which the manifest writes down like any other.
     Guarded(Expr),
+    /// Naming this method requires satisfying the target's own rule, and
+    /// doing so mints the target's identity as evidence for later nodes
+    /// of the same intent.
+    ///
+    /// The one gate that is the target's rule rather than an identity an
+    /// expression names. Minting is a property of this accessibility and
+    /// of nothing else, so a caller cannot conjure a target's authority
+    /// by pointing evidence at a method that merely does something.
+    Authorizing,
 }
 
 /// A method's declared access. Its transitive effect set is the fold of its
@@ -955,6 +964,7 @@ mod tests {
         // later per-account module. Adding a method breaks this list,
         // which is the point.
         let expected = [
+            ("account", "authorize", Accessibility::Authorizing),
             ("account", "deposit", Accessibility::Public),
             (
                 "account",

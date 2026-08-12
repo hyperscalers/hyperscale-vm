@@ -161,6 +161,112 @@ fn evidence_is_presented_exactly_where_it_is_required() {
     );
 }
 
+/// Authorize Alice, withdraw on her badge rather than on the signature,
+/// deposit to Bob — the minted-badge shape, fully consumed.
+fn badge_graph() -> ManifestGraph {
+    ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE.into(),
+                method: "authorize".into(),
+                args: vec![],
+                evidence: [EvidenceRef::IntentSignature].into(),
+            },
+            GraphNode {
+                target: ALICE.into(),
+                method: "withdraw".into(),
+                args: vec![
+                    GraphArg::Literal(Value::Address(RES_X.address())),
+                    GraphArg::Literal(Value::U128(100)),
+                ],
+                evidence: [EvidenceRef::Node(0)].into(),
+            },
+            GraphNode {
+                target: BOB.into(),
+                method: "deposit".into(),
+                args: vec![GraphArg::Edge {
+                    edge: EdgeRef {
+                        producer: 1,
+                        output: 0,
+                    },
+                    constraints: vec![],
+                }],
+                evidence: BTreeSet::new(),
+            },
+        ],
+    }
+}
+
+/// A minted badge resolves at admission to its producer's target — the
+/// same address set an intent signature would have produced for a
+/// virtual account, reached through the authorizing node instead.
+#[test]
+fn a_minted_badge_resolves_to_its_producers_target() {
+    let (cache, instances) = setup();
+    let admitted = admit(&badge_graph(), ALICE, &cache, &instances, &TestHasher).expect("admits");
+
+    let authorize = &admitted.manifest().nodes[0];
+    assert_eq!(authorize.evidence, vec![ALICE.address()]);
+    assert_eq!(authorize.authority, Some(ALICE.address()));
+
+    let withdraw = &admitted.manifest().nodes[1];
+    assert_eq!(withdraw.evidence, vec![ALICE.address()]);
+    assert_eq!(withdraw.authority, Some(ALICE.address()));
+
+    // A node with no effects still routes: the graph's declaration is
+    // its other nodes', and the authorizing node adds no participant.
+    route(&admitted, &cache, &instances, &TestHasher, &resolver()).expect("routes");
+}
+
+/// A badge consumer never runs ahead of its producer, and never draws
+/// authority from a method that merely does something.
+#[test]
+fn a_badge_is_drawn_from_an_earlier_minting_node_or_refused() {
+    let (cache, instances) = setup();
+
+    // Its own node: not earlier.
+    let mut own = badge_graph();
+    own.nodes[1].evidence = [EvidenceRef::Node(1)].into();
+    assert_eq!(
+        admit(&own, ALICE, &cache, &instances, &TestHasher),
+        Err(AdmissionError::ForwardBadge {
+            node: 1,
+            producer: 1
+        })
+    );
+
+    // A later node, which is also every out-of-range index.
+    let mut later = badge_graph();
+    later.nodes[1].evidence = [EvidenceRef::Node(2)].into();
+    assert_eq!(
+        admit(&later, ALICE, &cache, &instances, &TestHasher),
+        Err(AdmissionError::ForwardBadge {
+            node: 1,
+            producer: 2
+        })
+    );
+
+    // An earlier node whose method is guarded but does not mint: naming
+    // it does something, and doing something is not authorizing.
+    let mut unminting = badge_graph();
+    unminting.nodes[0].method = "stamp-entropy".into();
+    assert_eq!(
+        admit(&unminting, ALICE, &cache, &instances, &TestHasher),
+        Err(AdmissionError::UnmintingBadge {
+            node: 1,
+            producer: 0
+        })
+    );
+
+    // The authorizing node's own gate takes evidence like any other.
+    let mut unsigned = badge_graph();
+    unsigned.nodes[0].evidence.clear();
+    assert_eq!(
+        admit(&unsigned, ALICE, &cache, &instances, &TestHasher),
+        Err(AdmissionError::MissingEvidence { node: 0 })
+    );
+}
+
 #[test]
 #[allow(clippy::too_many_lines)] // one assertion block per mutation class
 fn every_malformed_mutation_rejects() {

@@ -23,11 +23,11 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    Accessibility, Address, AdmissionError, Admitted, CallTarget, EnvelopeTree, EvalInputs, Hash32,
-    Hasher, InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache, NetworkWord,
-    PrincipalAddr, RouteError, Routing, SchemeId, ShardId, ShardResolver, SubintentRecord,
-    TextError, Value, admit, admit_tree, declared_work, evaluate_expr, footprint, route,
-    route_tree, signature_work,
+    Accessibility, Address, AdmissionError, Admitted, CallTarget, EnvelopeTree, EvalInputs, Expr,
+    Hash32, Hasher, InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache,
+    NetworkWord, PrincipalAddr, RouteError, Routing, SchemeId, ShardId, ShardResolver,
+    SubintentRecord, TextError, Value, admit, admit_tree, declared_work, evaluate_expr, footprint,
+    route, route_tree, signature_work,
 };
 
 /// Why a transaction could not be preflighted.
@@ -309,8 +309,12 @@ fn required_authority(
     let Some((meta, signature)) = declared else {
         return Authority::TargetHasNoKey;
     };
-    let Accessibility::Guarded(identity) = &signature.accessibility else {
-        return Authority::Anyone;
+    let identity = match &signature.accessibility {
+        Accessibility::Public => return Authority::Anyone,
+        Accessibility::Guarded(identity) => identity,
+        // An authorizing method's rule, while nothing is stored, is the
+        // virtual one — the identity its target's address derives.
+        Accessibility::Authorizing => &Expr::SelfAddr,
     };
     // An authority expression reads nothing the caller supplies, so the
     // target and its configuration are the whole evaluation.

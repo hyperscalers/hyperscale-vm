@@ -14,7 +14,7 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
-use crate::dsl::{EvalError, EvalInputs, evaluate_expr};
+use crate::dsl::{EvalError, EvalInputs, Expr, evaluate_expr};
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
 use crate::hash::Hasher;
@@ -29,6 +29,11 @@ use crate::types::{Address, MAX_VALUE_DEPTH, PrincipalAddr, Value};
 /// vector too — which is what makes every parameter position expressible
 /// as a `u32` index by construction rather than by hope.
 pub const MAX_YIELD_PARAMS: usize = 32;
+
+/// The rule an authorizing method is gated on while its target stores
+/// nothing: the identity the target's address derives, which is the same
+/// comparison `SelfAddr` evaluates to.
+const VIRTUAL_RULE: &Expr = &Expr::SelfAddr;
 
 /// Why admission rejected a graph or an envelope tree.
 ///
@@ -133,6 +138,24 @@ pub enum AdmissionError {
     UnsignedEvidence {
         /// The offending node.
         node: u32,
+    },
+    /// A badge drawn from a node that is not an earlier node of the same
+    /// intent — the badge's producer must have run, and aborted the
+    /// transaction if its own gate refused, before anything consumes it.
+    #[error("node {node} draws a badge from node {producer}, which is not earlier")]
+    ForwardBadge {
+        /// The consuming node, flattened.
+        node: u32,
+        /// The claimed producer, in the intent's own node order.
+        producer: u32,
+    },
+    /// A badge drawn from a node whose method mints no identity.
+    #[error("node {node} draws a badge from node {producer}, whose method does not mint")]
+    UnmintingBadge {
+        /// The consuming node, flattened.
+        node: u32,
+        /// The producer named, in the intent's own node order.
+        producer: u32,
     },
     /// A call target with no registered instance.
     #[error("no instance at {0:?}")]
@@ -703,9 +726,10 @@ pub(crate) fn admit_intents(
         }
 
         // Evidence presence is a property of the signed form: a guarded
-        // call presents something, a public one presents nothing.
-        // Whether what it presents satisfies the target's rule is the
-        // target's own business, answered where the target's state is.
+        // or authorizing call presents something, a public one presents
+        // nothing. Whether what it presents satisfies the target's rule
+        // is the target's own business, answered where the target's
+        // state is.
         let required = match &signature.accessibility {
             Accessibility::Public => {
                 if !node.evidence.is_empty() {
@@ -719,10 +743,17 @@ pub(crate) fn admit_intents(
                 }
                 Some(identity)
             }
+            Accessibility::Authorizing => {
+                if node.evidence.is_empty() {
+                    return Err(AdmissionError::MissingEvidence { node: node_index });
+                }
+                Some(VIRTUAL_RULE)
+            }
         };
-        // A badge is scoped to the intent whose signature produced it, so
-        // the identities resolve against this node's own intent and no
-        // other.
+        // A badge is scoped to the intent that produced it — a signature
+        // badge to the intent whose signature, a node badge to the intent
+        // whose node — so the identities resolve against this node's own
+        // intent and no other.
         let mut evidence = Vec::with_capacity(node.evidence.len());
         for reference in &node.evidence {
             match reference {
@@ -731,6 +762,36 @@ pub(crate) fn admit_intents(
                         .signer
                         .ok_or(AdmissionError::UnsignedEvidence { node: node_index })?;
                     evidence.push(signer);
+                }
+                EvidenceRef::Node(producer) => {
+                    let source = usize::try_from(*producer)
+                        .ok()
+                        .filter(|&earlier| earlier < local_index)
+                        .and_then(|earlier| intent.graph.nodes.get(earlier))
+                        .ok_or(AdmissionError::ForwardBadge {
+                            node: node_index,
+                            producer: *producer,
+                        })?;
+                    let source_meta = instances
+                        .get(source.target)
+                        .ok_or_else(|| AdmissionError::UnknownInstance(source.target.address()))?;
+                    let source_package = cache
+                        .get(source_meta.package)
+                        .ok_or(AdmissionError::UnknownPackage(source_meta.package))?;
+                    let minting =
+                        source_package
+                            .methods
+                            .get(&source.method)
+                            .is_some_and(|signature| {
+                                matches!(signature.accessibility, Accessibility::Authorizing)
+                            });
+                    if !minting {
+                        return Err(AdmissionError::UnmintingBadge {
+                            node: node_index,
+                            producer: *producer,
+                        });
+                    }
+                    evidence.push(source.target.address());
                 }
             }
         }

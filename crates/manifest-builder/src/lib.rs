@@ -46,4 +46,4 @@ pub use builder::{Bucket, BuildError, GraphBuilder, Param};
 pub use envelope::{EnvelopeBuilder, EnvelopeError, IntentBuilder, YieldSink, YieldSource};
 pub use preflight::{Authority, PreflightError, Report, Required, preflight, preflight_tree};
 pub use render::{Names, render};
-pub use typed::{Outputs, TypedBuilder, TypedError};
+pub use typed::{Badge, Outputs, TypedBuilder, TypedError};

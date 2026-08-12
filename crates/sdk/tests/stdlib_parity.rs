@@ -56,6 +56,9 @@ fn account() -> Blueprint {
             let leaf = holder.child(ENTROPY, &[]);
             t.point(&leaf).write();
         })
+        // Nothing but its own gate: the body neither reads nor writes,
+        // and the gate is accessibility, which no trace can see.
+        .method("authorize", &[], |_: &mut Trace| {})
         .build()
 }
 

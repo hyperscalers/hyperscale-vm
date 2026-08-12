@@ -69,13 +69,23 @@ pub const MAX_EVIDENCE_PER_NODE: usize = 8;
 ///
 /// Evidence is presented, never ambient: a node names what it hands its
 /// callee, so a call into one package cannot carry authority the author
-/// meant for another. An intent's signature is the only thing that
-/// produces a badge, and it produces one usable inside that intent alone.
+/// meant for another. Both sources are scoped to the node's own intent:
+/// a signature badge to the intent whose signature produced it, a node
+/// badge to the intent whose node minted it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum EvidenceRef {
     /// The badge the enclosing intent's own signature produces, carrying
     /// the identity of whoever signed that intent.
     IntentSignature,
+    /// The badge an earlier node of the same intent minted, carrying the
+    /// identity of that node's target.
+    ///
+    /// Admission resolves the index against the intent's own node list
+    /// and refuses one that is not earlier or whose method does not mint.
+    /// Nothing checks the badge later: if the producing node's own gate
+    /// refuses, that node aborts the transaction, so a consumer only ever
+    /// runs in a world where the producer succeeded.
+    Node(u32),
 }
 
 /// A method invocation node.

@@ -316,9 +316,12 @@ enum TxResult {
 
 /// Whose signature a corpus graph rides.
 ///
-/// An intent carries one signature, so every guarded node in one names
-/// the same account — which is a property of these fixtures rather than
-/// of manifests generally, and worth asserting where it is relied on.
+/// An intent carries one signature, so every guarded or authorizing node
+/// in one names the same account — which is a property of these fixtures
+/// rather than of manifests generally, and worth asserting where it is
+/// relied on. A node presenting a minted badge still names its target
+/// here: the badge's producer targets the same account, so the union is
+/// unchanged.
 fn composer(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> PrincipalAddr {
     let (cache, instances) = world;
     let mut signer = None;
@@ -327,7 +330,12 @@ fn composer(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) ->
             .get(node.target)
             .and_then(|meta| cache.get(meta.package))
             .and_then(|package| package.methods.get(&node.method))
-            .is_some_and(|signature| matches!(signature.accessibility, Accessibility::Guarded(_)));
+            .is_some_and(|signature| {
+                matches!(
+                    signature.accessibility,
+                    Accessibility::Guarded(_) | Accessibility::Authorizing
+                )
+            });
         if !guarded {
             continue;
         }
@@ -358,10 +366,10 @@ fn execute_manifest(
     store: MemoryStore,
     graph: &ManifestGraph,
     tx: TxHash,
+    signer: PrincipalAddr,
 ) -> Result<(TxResult, MemoryStore)> {
     let (cache, instances) = world;
-    let admitted =
-        admit(graph, composer(world, graph), cache, instances, &TestHasher).context("admission")?;
+    let admitted = admit(graph, signer, cache, instances, &TestHasher).context("admission")?;
     let routing = route(
         &admitted,
         cache,
@@ -465,13 +473,27 @@ fn run_both(
     store: &MemoryStore,
     transactions: &[(&ManifestGraph, TxHash)],
 ) -> (Vec<TxResult>, MemoryStore) {
+    run_both_signed(engines, world, store, transactions, None)
+}
+
+/// As [`run_both`], with one signature riding every graph — how a test
+/// puts the wrong signer behind an authorization.
+fn run_both_signed(
+    engines: &Engines,
+    world: &(MetadataCache, InstanceRegistry),
+    store: &MemoryStore,
+    transactions: &[(&ManifestGraph, TxHash)],
+    signer: Option<PrincipalAddr>,
+) -> (Vec<TxResult>, MemoryStore) {
     let mut lanes = Vec::new();
     for lane in [Lane::Blessed, Lane::Reference] {
         let mut results = Vec::new();
         let mut threaded = store.clone();
         for (graph, tx) in transactions {
+            let signer = signer.unwrap_or_else(|| composer(world, graph));
             let (result, next) =
-                execute_manifest(lane, engines, world, threaded, graph, *tx).expect("driver");
+                execute_manifest(lane, engines, world, threaded, graph, *tx, signer)
+                    .expect("driver");
             results.push(result);
             threaded = next;
         }
@@ -764,6 +786,89 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
     }
     assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 50);
     assert_eq!(amount_of(&mut final_store, vault(BOB, RES_X)), 100);
+    Ok(())
+}
+
+/// The same transfer, signed in rather than signed per call: authorize
+/// mints Alice's identity and the withdrawal presents that badge instead
+/// of the intent's signature.
+fn authorized_transfer_graph() -> ManifestGraph {
+    graph(|b| {
+        let badge = account::authorize(b, ALICE)?;
+        let funds = b
+            .call_as(badge, ALICE, "withdraw", (RES_X, 100u128))?
+            .one()?;
+        account::deposit(b, BOB, funds)
+    })
+}
+
+#[test]
+fn a_transfer_on_a_minted_badge_settles_like_one_on_the_signature() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    store.clear_log();
+
+    let graph = authorized_transfer_graph();
+    let (results, mut final_store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[(&graph, TxHash(Hash32([0x0A; 32])))],
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("the authorized transfer must complete");
+    };
+    // The badge changes where the withdrawal's authority came from and
+    // nothing about what it did.
+    assert_eq!(receipt.delta.settles.get(&vault(ALICE, RES_X)), Some(&100));
+    assert_eq!(
+        receipt
+            .delta
+            .movements
+            .get(&vault(BOB, RES_X))
+            .unwrap()
+            .credit,
+        100
+    );
+    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 50);
+    assert_eq!(amount_of(&mut final_store, vault(BOB, RES_X)), 100);
+    Ok(())
+}
+
+#[test]
+fn a_refused_authorization_takes_its_consumers_with_it() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    store.clear_log();
+
+    // Bob's signature behind Alice's sign-in: admission passes — the
+    // evidence is present, and whether it satisfies the target is the
+    // target's question — and the authorizing node's own gate refuses at
+    // execution, taking the whole transaction with it. This is what
+    // makes the minted badge sound with nothing checking it later: the
+    // withdrawal that would have spent on it never runs.
+    let graph = authorized_transfer_graph();
+    let (results, mut final_store) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&graph, TxHash(Hash32([0x0B; 32])))],
+        Some(BOB),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::Unauthorized { node: 0 })]
+    );
+    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 150);
+    assert_eq!(amount_of(&mut final_store, vault(BOB, RES_X)), 0);
     Ok(())
 }
 

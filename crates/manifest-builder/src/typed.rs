@@ -112,9 +112,38 @@ pub enum TypedError {
         /// The arity the caller unpacked into.
         claimed: usize,
     },
+    /// A badge presented to a method that admits anyone — admission's
+    /// same-named verdict, reached at the call site.
+    #[error("`{method}` admits anyone and reads no badge")]
+    UnexpectedEvidence {
+        /// The method called.
+        method: String,
+    },
+    /// A badge requested from a method that does not mint — admission's
+    /// [`UnmintingBadge`](hyperscale_vm_effects::AdmissionError::UnmintingBadge)
+    /// verdict, reached where the badge is requested rather than where it
+    /// would be presented.
+    #[error("`{method}` mints no identity")]
+    UnmintingBadge {
+        /// The method called.
+        method: String,
+    },
     /// The graph's own structural refusal, reached at [`TypedBuilder::build`].
     #[error(transparent)]
     Build(#[from] BuildError),
+}
+
+/// The identity an authorizing node mints, as a later call of the same
+/// graph presents it.
+///
+/// A node reference rather than a value edge: nothing is conserved, and
+/// presenting it twice says nothing presenting it once does not. It
+/// carries authority only downward — admission refuses a badge drawn
+/// from a node that is not earlier.
+#[derive(Clone, Copy, Debug)]
+#[must_use = "an unpresented badge authorizes nothing"]
+pub struct Badge {
+    node: u32,
 }
 
 /// The output edges of one typed call, in slot order.
@@ -241,10 +270,90 @@ impl<'a> TypedBuilder<'a> {
         method: &str,
         args: impl Args,
     ) -> Result<Outputs, TypedError> {
+        self.append(target.into(), method, args, None)
+            .map(|(_, outputs)| outputs)
+    }
+
+    /// The same call, presenting `badge` instead of the intent's
+    /// signature badge — how a call acts as the account an earlier
+    /// authorizing node signed in.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::UnexpectedEvidence`] on a method that admits anyone,
+    /// and everything [`call`](Self::call) refuses.
+    ///
+    /// # Panics
+    ///
+    /// As [`call`](Self::call).
+    pub fn call_as(
+        &mut self,
+        badge: Badge,
+        target: impl Into<CallTarget>,
+        method: &str,
+        args: impl Args,
+    ) -> Result<Outputs, TypedError> {
+        self.append(target.into(), method, args, Some(badge))
+            .map(|(_, outputs)| outputs)
+    }
+
+    /// Append an invocation of `method`, an authorizing method of
+    /// `target`, and return the badge it mints.
+    ///
+    /// The call presents the intent's signature badge to its own gate —
+    /// signing in starts from a signature. Acting as one account through
+    /// another's authorization is [`call_as`](Self::call_as) on the
+    /// authorizing call itself.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::UnmintingBadge`] when the method's accessibility
+    /// does not mint, and everything [`call`](Self::call) refuses.
+    ///
+    /// # Panics
+    ///
+    /// As [`call`](Self::call).
+    pub fn call_minting(
+        &mut self,
+        target: impl Into<CallTarget>,
+        method: &str,
+    ) -> Result<Badge, TypedError> {
+        let target = target.into();
+        let meta = self
+            .instances
+            .get(target)
+            .ok_or_else(|| TypedError::UnknownInstance(target.address()))?;
+        let package = self
+            .cache
+            .get(meta.package)
+            .ok_or(TypedError::UnknownPackage(meta.package))?;
+        let signature = package
+            .methods
+            .get(method)
+            .ok_or_else(|| TypedError::UnknownMethod {
+                package: meta.package,
+                method: method.to_owned(),
+            })?;
+        if !matches!(signature.accessibility, Accessibility::Authorizing) {
+            return Err(TypedError::UnmintingBadge {
+                method: method.to_owned(),
+            });
+        }
+        let (node, outputs) = self.append(target, method, (), None)?;
+        outputs.none()?;
+        Ok(Badge { node })
+    }
+
+    fn append(
+        &mut self,
+        target: CallTarget,
+        method: &str,
+        args: impl Args,
+        badge: Option<Badge>,
+    ) -> Result<(u32, Outputs), TypedError> {
         // Copied out of `self` so the signature borrows the caller's
         // tables rather than the builder, leaving it free to append.
         let (cache, instances, hasher) = (self.cache, self.instances, self.hasher);
-        let target = target.into();
         let meta = instances
             .get(target)
             .ok_or_else(|| TypedError::UnknownInstance(target.address()))?;
@@ -277,11 +386,23 @@ impl<'a> TypedBuilder<'a> {
             hasher,
         );
 
-        // A guarded method takes the intent's signature badge; the
-        // signature says which are guarded, so no call site has to.
-        let evidence = match signature.accessibility {
-            Accessibility::Public => BTreeSet::new(),
-            Accessibility::Guarded(_) => BTreeSet::from([EvidenceRef::IntentSignature]),
+        // A guarded or authorizing method takes the intent's signature
+        // badge unless the caller presents a minted one; the signature
+        // says which methods take evidence at all, so no call site has
+        // to.
+        let evidence = match (&signature.accessibility, badge) {
+            (Accessibility::Public, None) => BTreeSet::new(),
+            (Accessibility::Public, Some(_)) => {
+                return Err(TypedError::UnexpectedEvidence {
+                    method: method.to_owned(),
+                });
+            }
+            (Accessibility::Guarded(_) | Accessibility::Authorizing, None) => {
+                BTreeSet::from([EvidenceRef::IntentSignature])
+            }
+            (Accessibility::Guarded(_) | Accessibility::Authorizing, Some(badge)) => {
+                BTreeSet::from([EvidenceRef::Node(badge.node)])
+            }
         };
         let outputs = resources.len();
         let producer = self
@@ -293,10 +414,13 @@ impl<'a> TypedBuilder<'a> {
                 self.graph.mint(producer, slot)
             })
             .collect();
-        Ok(Outputs {
-            method: method.to_owned(),
-            buckets,
-        })
+        Ok((
+            producer,
+            Outputs {
+                method: method.to_owned(),
+                buckets,
+            },
+        ))
     }
 
     /// Consume an output as a yield edge, as [`GraphBuilder::export`].

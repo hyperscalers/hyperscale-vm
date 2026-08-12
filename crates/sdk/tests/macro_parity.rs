@@ -61,6 +61,11 @@ mod account {
         pub fn stamp_entropy(&mut self) {
             self.entropy.set(0);
         }
+
+        /// Nothing but its own gate, which is accessibility — a claim no
+        /// body carries.
+        #[allow(clippy::unused_self, clippy::missing_const_for_fn)] // a contract body, deliberately empty
+        pub fn authorize(&mut self) {}
     }
 }
 
