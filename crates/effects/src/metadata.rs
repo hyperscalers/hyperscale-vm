@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use hyperscale_hbor::{EncodeError, Hbor, to_vec};
 use thiserror::Error;
 
-use crate::dsl::{Clause, Expr};
+use crate::dsl::{Clause, Expr, TargetExpr};
 use crate::hash::{Hash32, Hasher};
 use crate::types::{
     Address, CallTarget, ComponentAddr, RoleId, SubstateKey, Value, child_key, component_address,
@@ -339,6 +339,72 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
     Ok(())
 }
 
+/// Why a signature's declared effects are not its to declare.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum DeclarationError {
+    /// A clause targeting a prefix the declaring instance does not own.
+    #[error("effect clause {clause} targets a prefix the instance does not own")]
+    ForeignPrefix {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects, `for-each` bodies counted in place.
+        clause: u32,
+    },
+}
+
+/// Whether a target names the declaring instance's own prefix.
+///
+/// The owner half of a key is either written as `SelfAddr` or derived
+/// under it: a fresh key is minted under the instance that creates it, and
+/// a child key names its owner outright. Everything else — an argument, a
+/// configuration slot, a `for-each` binding, a literal — is another
+/// object's prefix, whatever the author meant by it.
+fn targets_own_prefix(target: &TargetExpr) -> bool {
+    match target {
+        TargetExpr::Point(key) => match key {
+            Expr::ChildKey { owner, .. } => matches!(**owner, Expr::SelfAddr),
+            Expr::FreshKey { .. } => true,
+            _ => false,
+        },
+        TargetExpr::Entry { owner, .. } | TargetExpr::Range { owner, .. } => {
+            matches!(owner, Expr::SelfAddr)
+        }
+    }
+}
+
+/// Judge a signature's declared effects against the prefix they are the
+/// signature's to declare.
+///
+/// A declaration bounds what execution may touch, and this bounds what a
+/// declaration may claim: an object's cells are reachable by calling it,
+/// never by naming them. Refused here so an author hears about it, and
+/// again on the evaluated effect at routing, where no expression shape can
+/// be overlooked.
+///
+/// # Errors
+///
+/// [`DeclarationError`]; verdicts are deterministic and identical on every
+/// node.
+pub fn check_declarations(signature: &MethodSignature) -> Result<(), DeclarationError> {
+    fn walk(clauses: &[Clause], next: &mut u32) -> Result<(), DeclarationError> {
+        for clause in clauses {
+            let clause_index = *next;
+            *next = next.saturating_add(1);
+            match clause {
+                Clause::Effect { target, .. } => {
+                    if !targets_own_prefix(target) {
+                        return Err(DeclarationError::ForeignPrefix {
+                            clause: clause_index,
+                        });
+                    }
+                }
+                Clause::ForEach { body, .. } => walk(body, next)?,
+            }
+        }
+        Ok(())
+    }
+    walk(&signature.effects, &mut 0)
+}
+
 /// Everything routing reads about a published package.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct PackageMetadata {
@@ -657,14 +723,15 @@ mod tests {
         );
     }
     use super::{
-        AbiError, AbiParam, Accessibility, MetadataCache, MethodSignature, PackageHash,
-        PackageMetadata, ParamType, check_abi,
+        AbiError, AbiParam, Accessibility, DeclarationError, MetadataCache, MethodSignature,
+        PackageHash, PackageMetadata, ParamType, check_abi, check_declarations,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::hash::Hash32;
     use crate::stdlib::{
         account_metadata, amm_metadata, book_metadata, splitter_metadata, staking_metadata,
     };
+    use crate::types::AddressClass;
 
     /// Every stdlib package, in the order the exhaustive tests read them.
     fn stdlib() -> Vec<(&'static str, PackageMetadata)> {
@@ -783,6 +850,87 @@ mod tests {
                 vec![AbiParam::Handle(0)]
             )),
             Ok(())
+        );
+    }
+
+    /// Exhaustive over the stdlib: whatever a package may declare, an
+    /// authored one declares only its own.
+    #[test]
+    fn every_authored_signature_declares_its_own_prefix() {
+        for (package, metadata) in stdlib() {
+            for (name, signature) in &metadata.methods {
+                assert_eq!(check_declarations(signature), Ok(()), "{package}::{name}");
+            }
+        }
+    }
+
+    /// Every way a signature can write somebody else's prefix, refused
+    /// where its author can see it.
+    #[test]
+    fn a_signature_reaching_another_prefix_is_refused() {
+        let declaring = |target: TargetExpr| MethodSignature {
+            effects: vec![Clause::Effect {
+                target,
+                mode: ModeExpr::Delta,
+            }],
+            ..MethodSignature::default()
+        };
+        let child_of = |owner: Expr| {
+            TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(owner),
+                role: RoleId(1),
+                material: vec![],
+            })
+        };
+
+        // Its own prefix, however the key under it is derived.
+        assert_eq!(
+            check_declarations(&declaring(child_of(Expr::SelfAddr))),
+            Ok(())
+        );
+        assert_eq!(
+            check_declarations(&declaring(TargetExpr::Point(Expr::FreshKey { slot: 0 }))),
+            Ok(())
+        );
+        assert_eq!(
+            check_declarations(&declaring(TargetExpr::Entry {
+                owner: Expr::SelfAddr,
+                collection: RoleId(2),
+                order: Expr::Literal(Value::U128(0)),
+            })),
+            Ok(())
+        );
+
+        // An argument, a configuration slot, and a literal: three ways of
+        // naming an object that never agreed to be named.
+        for owner in [
+            Expr::Arg(0),
+            Expr::Config(0),
+            Expr::Literal(Value::Address(Address::new(
+                [9; 31],
+                AddressClass::Component,
+            ))),
+        ] {
+            assert_eq!(
+                check_declarations(&declaring(child_of(owner))),
+                Err(DeclarationError::ForeignPrefix { clause: 0 })
+            );
+        }
+
+        // And inside a `for-each` body, where the element is the owner.
+        let looped = MethodSignature {
+            effects: vec![Clause::ForEach {
+                list: Expr::Arg(0),
+                body: vec![Clause::Effect {
+                    target: child_of(Expr::Binding(0)),
+                    mode: ModeExpr::Delta,
+                }],
+            }],
+            ..MethodSignature::default()
+        };
+        assert_eq!(
+            check_declarations(&looped),
+            Err(DeclarationError::ForeignPrefix { clause: 1 })
         );
     }
 

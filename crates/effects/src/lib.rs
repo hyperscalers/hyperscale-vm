@@ -61,9 +61,9 @@ pub use hyperscale_vm_types::{
 pub use invoke::{CallArg, EDGE_CELL_BYTES, EdgeBound, NodeCall};
 pub use manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
-    AbiError, AbiParam, Accessibility, CallSite, InstanceMeta, InstanceRegistry, MetadataCache,
-    MethodSignature, PACKAGE_ROLE, PackageHash, PackageMetadata, ParamType, check_abi,
-    package_hash, package_key,
+    AbiError, AbiParam, Accessibility, CallSite, DeclarationError, InstanceMeta, InstanceRegistry,
+    MetadataCache, MethodSignature, PACKAGE_ROLE, PackageHash, PackageMetadata, ParamType,
+    check_abi, check_declarations, package_hash, package_key,
 };
 pub use route::{
     CallEdge, CallGraph, FrameDeclaration, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef,
