@@ -244,6 +244,25 @@ pub enum RouteError {
     /// Folding reserve amounts across shards overflowed.
     #[error("declared reserve amounts overflow")]
     ReserveOverflow,
+    /// A frame declaring an effect on somebody else's prefix.
+    ///
+    /// An object's cells are reachable by calling it, never by naming
+    /// them: a package that could declare against another owner would
+    /// reach that owner's state with no method of theirs in the path.
+    #[error(
+        "node {node}: `{method}` declares effect {clause} on {owner:?}, which is not its own \
+         prefix"
+    )]
+    ForeignDeclaration {
+        /// The manifest node whose fold reached it.
+        node: u32,
+        /// The method whose signature declared it.
+        method: String,
+        /// Which of the frame's evaluated effects it is, in clause order.
+        clause: u32,
+        /// The prefix it reached for.
+        owner: Address,
+    },
     /// A static call site naming a guarded method.
     ///
     /// Authority does not propagate through a call: a callee frame holds
@@ -424,6 +443,43 @@ struct Lowering<'a> {
     node: &'a Node,
     inputs: &'a EvalInputs<'a>,
     hasher: &'a dyn Hasher,
+}
+
+/// Refuse a frame declaring an effect on a prefix that is not its own.
+///
+/// A declaration bounds what execution may touch; this bounds what a
+/// declaration may claim. Without it the two are the same sentence read
+/// twice, and a package reaches any cell it can name — a stranger's
+/// balance among them — with no method's accessibility in the path,
+/// because reaching for a cell is not calling the object that owns it.
+///
+/// Judged on the evaluated effect rather than on the expression that
+/// produced it. The publish gate refuses the expression, so an author
+/// hears about it first; this cannot be outgrown by an expression shape
+/// nobody anticipated, because an effect either carries the frame's own
+/// owner or it does not.
+///
+/// The nullifier a bound subintent spends is not judged here: it sits
+/// under its signer's prefix, no signature declared it, and it reaches
+/// the routing view as a kernel effect rather than through any frame.
+fn own_prefix_only(
+    declaration: &Declaration,
+    instance: Address,
+    node_index: u32,
+    method: &str,
+) -> Result<(), RouteError> {
+    for (position, effect) in declaration.ordered.iter().enumerate() {
+        let owner = effect.target.owner();
+        if owner != instance {
+            return Err(RouteError::ForeignDeclaration {
+                node: node_index,
+                method: method.to_owned(),
+                clause: u32::try_from(position).unwrap_or(u32::MAX),
+                owner,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Refuse a static call site naming a guarded method.
@@ -706,6 +762,7 @@ impl Fold<'_> {
         };
         let declaration =
             evaluate_declaration(&signature.effects, &inputs, self.hasher).map_err(eval_context)?;
+        own_prefix_only(&declaration, instance, node_index, method)?;
         // The frame's handles occupy the run of the table starting here,
         // so the offset has to be taken before the frame is logged.
         let offset = self.table_len;
@@ -1041,12 +1098,13 @@ mod tests {
     #[test]
     fn caller_and_callee_fresh_slots_never_collide() {
         // One package's slot 0 and its callee's slot 0 are authored
-        // independently; the frame ordinal keeps their fresh IDs apart even
-        // under a shared literal owner.
-        let ledger = addr(0x33);
+        // independently; the frame ordinal keeps their fresh IDs apart.
+        // Each frame writes into its own collection, because that is the
+        // only prefix a frame may declare against — so what the two
+        // entries share is the slot, which is the whole question.
         let fresh_entry = || Clause::Effect {
             target: TargetExpr::Entry {
-                owner: Expr::Literal(Value::Address(ledger)),
+                owner: Expr::SelfAddr,
                 collection: RoleId(6),
                 order: Expr::Pack {
                     hi: Box::new(Expr::Literal(Value::U64(0))),
@@ -1107,11 +1165,14 @@ mod tests {
             .map(|frame| u128::from(fresh_id(&TestHasher, identity(), 0, frame, 0)))
             .collect();
         assert_ne!(orders[0], orders[1]);
-        let set = &routing.per_shard[&resolver().shard_of(ledger)];
-        for order in orders {
+        for (owner, order) in [
+            (instance_of("maker").address(), orders[0]),
+            (a_2.address(), orders[1]),
+        ] {
+            let set = &routing.per_shard[&resolver().shard_of(owner)];
             assert!(set.contains(&Effect {
                 target: EffectTarget::Entry {
-                    owner: ledger,
+                    owner,
                     collection: RoleId(6),
                     order,
                 },
@@ -1954,6 +2015,68 @@ mod tests {
                 },
             }]
         );
+    }
+
+    /// A declaration bounds what execution may touch; nothing about that
+    /// bounds what a declaration may claim, unless this does.
+    #[test]
+    fn a_frame_cannot_declare_against_another_prefix() {
+        let victim = addr(0x99);
+        let foreign = |owner: Expr| {
+            let mut package = PackageMetadata::default();
+            package.methods.insert(
+                "reach".into(),
+                MethodSignature {
+                    params: vec![ParamType::Address],
+                    effects: vec![Clause::Effect {
+                        target: TargetExpr::Point(Expr::ChildKey {
+                            owner: Box::new(owner),
+                            role: RoleId(1),
+                            material: vec![],
+                        }),
+                        mode: ModeExpr::Delta,
+                    }],
+                    ..MethodSignature::default()
+                },
+            );
+            let mut cache = MetadataCache::new();
+            cache.publish(pkg("reacher"), package);
+            let mut instances = InstanceRegistry::new();
+            instances.create(&TestHasher, meta_of("reacher"));
+            let manifest = Manifest {
+                nodes: vec![Node {
+                    target: instance_of("reacher").into(),
+                    method: "reach".into(),
+                    inputs: vec![NodeInput::Literal(Value::Address(victim))],
+                    evidence: Vec::new(),
+                    authority: None,
+                }],
+            };
+            route(
+                &admitted(&manifest),
+                &cache,
+                &instances,
+                &TestHasher,
+                &resolver(),
+            )
+        };
+
+        // Every way a frame can name somebody else: what its caller
+        // passed, and what it holds as a literal.
+        for owner in [Expr::Arg(0), Expr::Literal(Value::Address(victim))] {
+            let error = foreign(owner).expect_err("a foreign prefix is not a frame's to declare");
+            assert!(
+                matches!(
+                    error,
+                    RouteError::ForeignDeclaration { node: 0, ref owner, .. } if *owner == victim
+                ),
+                "unexpected refusal: {error:?}"
+            );
+        }
+
+        // Its own prefix is the admitted case, so what bites is whose
+        // cells the clause names and not the shape of the declaration.
+        assert!(foreign(Expr::SelfAddr).is_ok());
     }
 
     /// Authority does not propagate through a call: a package cannot
