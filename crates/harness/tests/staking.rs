@@ -24,8 +24,8 @@ use hyperscale_vm_effects::stdlib::{
 use hyperscale_vm_effects::{
     Address, AddressClass, ComponentAddr, EnvelopeTree, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
-    ResourceAddr, SubstateKey, TestHasher, Value, admit_tree, child_key, resource_address,
-    route_tree,
+    PrincipalAddr, ResourceAddr, SubstateKey, TestHasher, Value, admit_tree, child_key,
+    resource_address, route_tree,
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -46,9 +46,9 @@ use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
-const ALICE: Address = Address::new([0x10; 31], AddressClass::Principal);
+const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 /// The resource a delegation is denominated in.
-const XRD: Address = Address::new([0xE1; 31], AddressClass::Component);
+const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// The resource this pool issues against delegations — derived from the
 /// pool, not configured, which is what the signature's `SelfResource`
 /// evaluates to.
@@ -107,7 +107,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: staking_pkg(),
-        config: vec![Value::Address(XRD), Value::Address(OPERATOR)],
+        config: vec![Value::Address(XRD.address()), Value::Address(OPERATOR)],
         salt: Hash32([2; 32]),
     }
 }
@@ -140,8 +140,8 @@ fn unbonding(pool: impl Into<Address>, resource: impl Into<Address>) -> Substate
 fn stake_graph(amount: u128) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(ALICE, "withdraw", (XRD, amount));
-    let [units] = b.call(pool().address(), "stake", (funds.resource_is(XRD),));
-    let [] = b.call(ALICE, "deposit", (units.resource_is(unit().address()),));
+    let [units] = b.call(pool(), "stake", (funds.resource_is(XRD),));
+    let [] = b.call(ALICE, "deposit", (units.resource_is(unit()),));
     b.build().expect("every output is consumed")
 }
 
@@ -151,11 +151,7 @@ fn stake_graph(amount: u128) -> ManifestGraph {
 fn unstake_graph(amount: u128) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [units] = b.call(ALICE, "withdraw", (unit().address(), amount));
-    let [] = b.call(
-        pool().address(),
-        "unstake",
-        (units.resource_is(unit().address()),),
-    );
+    let [] = b.call(pool(), "unstake", (units.resource_is(unit()),));
     b.build().expect("every output is consumed")
 }
 
@@ -172,14 +168,14 @@ fn validator_leaf(pool: impl Into<Address>, validator: u64) -> SubstateKey {
 /// A one-node graph naming a validator on the pool's operator surface.
 fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
     let mut b = GraphBuilder::new();
-    let [] = b.call(pool().address(), method, (validator,));
+    let [] = b.call(pool(), method, (validator,));
     b.build().expect("every output is consumed")
 }
 
 fn register_graph(validator: u64) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [] = b.call(
-        pool().address(),
+        pool(),
         "register-validator",
         (validator, PUBKEY.to_vec(), POSSESSION_PROOF.to_vec()),
     );
@@ -691,7 +687,7 @@ fn cast_payload() -> Vec<u8> {
 fn cast_graph() -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [] = b.call(
-        pool().address(),
+        pool(),
         "cast-param-vote",
         (SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT),
     );
@@ -727,7 +723,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
 
     let graph = {
         let mut b = GraphBuilder::new();
-        let [] = b.call(pool().address(), "clear-param-vote", ());
+        let [] = b.call(pool(), "clear-param-vote", ());
         b.build().expect("every output is consumed")
     };
     let entry = batch_entry(&world, &single_intent(graph))?;

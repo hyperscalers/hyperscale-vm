@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
-    Address, AddressClass, AdmittedTree, Constraint, EdgeRef, EnvelopeTree, Hasher,
-    InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
+    Address, AdmittedTree, Constraint, EdgeRef, EnvelopeTree, Hasher, InstanceRegistry, IntentDecl,
+    ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr,
     Subintent, SubstateKey, TestHasher, Value, YieldBinding, YieldParam, admit_tree, child_key,
     route_tree,
 };
@@ -32,11 +32,11 @@ use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
-const ALICE: Address = Address::new([0x10; 31], AddressClass::Principal);
-const BOB: Address = Address::new([0x20; 31], AddressClass::Principal);
-const CAROL: Address = Address::new([0x30; 31], AddressClass::Principal);
-const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
-const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
+const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
+const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
+const CAROL: PrincipalAddr = PrincipalAddr::new([0x30; 31]);
+const RES_X: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+const RES_Y: ResourceAddr = ResourceAddr::new([0xE2; 31]);
 
 const FUEL: u64 = 1_000_000_000;
 
@@ -63,18 +63,18 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     (cache, instances)
 }
 
-fn vault(owner: Address, resource: Address) -> SubstateKey {
+fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
     child_key(
         &TestHasher,
         owner,
         VAULT,
-        &[Value::Address(resource).canonical_bytes()],
+        &[Value::Address(resource.into()).canonical_bytes()],
     )
 }
 
 /// One side's leg: withdraw the paid resource and export it as the yield;
 /// deposit whatever the enclosing envelope binds to parameter 0.
-fn leg(owner: Address, resource: Address, amount: u128) -> (ManifestGraph, EdgeRef) {
+fn leg(owner: PrincipalAddr, resource: ResourceAddr, amount: u128) -> (ManifestGraph, EdgeRef) {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(owner, "withdraw", (resource, amount));
     let yielded = b.export(funds);
@@ -85,14 +85,14 @@ fn leg(owner: Address, resource: Address, amount: u128) -> (ManifestGraph, EdgeR
 
 /// The composition: the composer pays `pay` of X for the subintent's 10
 /// Y — each side withdraws its leg and deposits the other's yield.
-fn composed_tree(composer: Address, pay: u128) -> EnvelopeTree {
+fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
     let (root_graph, root_yield) = leg(composer, RES_X, pay);
     let (sub_graph, sub_yield) = leg(BOB, RES_Y, 10);
     EnvelopeTree {
         root: IntentDecl {
             graph: root_graph,
             params: vec![YieldParam {
-                resource: RES_Y,
+                resource: RES_Y.into(),
                 constraints: vec![Constraint::MinAmount(10)],
             }],
         },
@@ -104,7 +104,7 @@ fn composed_tree(composer: Address, pay: u128) -> EnvelopeTree {
             decl: IntentDecl {
                 graph: sub_graph,
                 params: vec![YieldParam {
-                    resource: RES_X,
+                    resource: RES_X.into(),
                     constraints: vec![Constraint::MinAmount(100)],
                 }],
             },

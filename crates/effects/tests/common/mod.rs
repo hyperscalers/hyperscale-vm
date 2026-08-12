@@ -8,21 +8,21 @@ pub use hyperscale_vm_effects::stdlib::{
     splitter_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, AddressClass, CallSite, Clause, ComponentAddr, Effect, EffectSet, Expr, Hash32,
-    Hasher, InstanceMeta, InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr,
-    PackageHash, PackageMetadata, ParamType, PrefixShardResolver, RoleId, ShardId, ShardResolver,
-    SubstateKey, TargetExpr, TestHasher, Value, child_key,
+    Address, CallSite, Clause, ComponentAddr, Effect, EffectSet, Expr, Hash32, Hasher,
+    InstanceMeta, InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr,
+    PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, ResourceAddr,
+    RoleId, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value, child_key,
 };
 
 /// Accounts are principals: their class is what resolves them to the
 /// protocol's account blueprint, so a fixture names one without anything
 /// having to be registered for it.
-pub const ALICE: Address = Address::new([0x10; 31], AddressClass::Principal);
-pub const BOB: Address = Address::new([0x20; 31], AddressClass::Principal);
-pub const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
-pub const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
-pub const BASE: Address = Address::new([0xE3; 31], AddressClass::Component);
-pub const QUOTE: Address = Address::new([0xE4; 31], AddressClass::Component);
+pub const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
+pub const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
+pub const RES_X: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+pub const RES_Y: ResourceAddr = ResourceAddr::new([0xE2; 31]);
+pub const BASE: ResourceAddr = ResourceAddr::new([0xE3; 31]);
+pub const QUOTE: ResourceAddr = ResourceAddr::new([0xE4; 31]);
 
 fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
     Expr::ChildKey {
@@ -64,7 +64,10 @@ pub fn world() -> (MetadataCache, InstanceRegistry) {
 pub fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("amm"),
-        config: vec![Value::Address(RES_X), Value::Address(RES_Y)],
+        config: vec![
+            Value::Address(RES_X.address()),
+            Value::Address(RES_Y.address()),
+        ],
         salt: Hash32([2; 32]),
     }
 }
@@ -80,7 +83,10 @@ pub fn pool() -> ComponentAddr {
 pub fn book_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("book"),
-        config: vec![Value::Address(BASE), Value::Address(QUOTE)],
+        config: vec![
+            Value::Address(BASE.address()),
+            Value::Address(QUOTE.address()),
+        ],
         salt: Hash32([3; 32]),
     }
 }

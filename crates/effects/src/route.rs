@@ -14,10 +14,10 @@ use crate::hash::Hasher;
 use crate::invoke::{CallArg, EdgeBound, NodeCall};
 use crate::manifest::{ManifestHash, NodeInput};
 use crate::metadata::{
-    AbiError, AbiParam, CallSite, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
-    check_abi,
+    AbiError, AbiParam, CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature,
+    PackageHash, check_abi,
 };
-use crate::types::{Address, Effect, EffectSet, ShardId, Value};
+use crate::types::{Address, CallTarget, Effect, EffectSet, ShardId, Value};
 
 /// Resolves an owner prefix to the shard holding it.
 pub trait ShardResolver {
@@ -593,6 +593,24 @@ struct Frame<'a> {
 }
 
 impl Fold<'_> {
+    /// The record serving `instance`, whose class the fold has to check
+    /// itself.
+    ///
+    /// A callee's address is evaluated from its caller's inputs and
+    /// configuration, so unlike a manifest node's target it arrives
+    /// unclassified. An address that answers no calls is an address no
+    /// record serves, which is the refusal it already had.
+    fn record_of(
+        instances: &InstanceRegistry,
+        instance: Address,
+    ) -> Result<&InstanceMeta, RouteError> {
+        let target =
+            CallTarget::try_from(instance).map_err(|_| RouteError::UnknownInstance(instance))?;
+        instances
+            .get(target)
+            .ok_or(RouteError::UnknownInstance(instance))
+    }
+
     fn call(
         &mut self,
         site: &Frame<'_>,
@@ -615,10 +633,7 @@ impl Fold<'_> {
         }
         let frame = self.frames;
         self.frames += 1;
-        let meta = self
-            .instances
-            .get(instance)
-            .ok_or(RouteError::UnknownInstance(instance))?;
+        let meta = Self::record_of(self.instances, instance)?;
         let package = self
             .cache
             .get(meta.package)

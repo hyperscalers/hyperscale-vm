@@ -15,11 +15,11 @@ use hyperscale_vm_effects::stdlib::{
     ASKS, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
 };
 use hyperscale_vm_effects::{
-    AbiParam, Address, AddressClass, Clause, ComponentAddr, Constraint, Effect, EffectSet,
-    EffectTarget, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
-    MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata, ParamType,
-    PrefixShardResolver, RoleId, Routing, ShardId, ShardResolver, SubstateKey, TargetExpr,
-    TestHasher, Value, admit, child_key, fresh_id, route,
+    AbiParam, Address, Clause, ComponentAddr, Constraint, Effect, EffectSet, EffectTarget, Expr,
+    Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature,
+    Mode, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr,
+    ResourceAddr, RoleId, Routing, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher,
+    Value, admit, child_key, fresh_id, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -40,14 +40,14 @@ use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
 
-const ALICE: Address = Address::new([0x10; 31], AddressClass::Principal);
-const BOB: Address = Address::new([0x20; 31], AddressClass::Principal);
-const MAKER: Address = Address::new([0x50; 31], AddressClass::Principal);
-const TAKER: Address = Address::new([0x60; 31], AddressClass::Principal);
-const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
-const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
-const BASE: Address = Address::new([0xE3; 31], AddressClass::Component);
-const QUOTE: Address = Address::new([0xE4; 31], AddressClass::Component);
+const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
+const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
+const MAKER: PrincipalAddr = PrincipalAddr::new([0x50; 31]);
+const TAKER: PrincipalAddr = PrincipalAddr::new([0x60; 31]);
+const RES_X: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+const RES_Y: ResourceAddr = ResourceAddr::new([0xE2; 31]);
+const BASE: ResourceAddr = ResourceAddr::new([0xE3; 31]);
+const QUOTE: ResourceAddr = ResourceAddr::new([0xE4; 31]);
 
 const FUEL: u64 = 1_000_000_000;
 
@@ -103,7 +103,10 @@ fn world() -> (MetadataCache, InstanceRegistry) {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("amm"),
-        config: vec![Value::Address(RES_X), Value::Address(RES_Y)],
+        config: vec![
+            Value::Address(RES_X.address()),
+            Value::Address(RES_Y.address()),
+        ],
         salt: Hash32([2; 32]),
     }
 }
@@ -116,7 +119,10 @@ fn pool() -> ComponentAddr {
 fn book_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("book"),
-        config: vec![Value::Address(BASE), Value::Address(QUOTE)],
+        config: vec![
+            Value::Address(BASE.address()),
+            Value::Address(QUOTE.address()),
+        ],
         salt: Hash32([3; 32]),
     }
 }
@@ -521,7 +527,7 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
     let graph = {
         let mut b = GraphBuilder::new();
         let [funds] = b.call(ALICE, "withdraw", (RES_X, 100u128));
-        let [] = b.call(dana.address(), "deposit", (funds.resource_is(RES_X),));
+        let [] = b.call(dana, "deposit", (funds.resource_is(RES_X),));
         b.build().expect("every output is consumed")
     };
     let (results, _) = run_both(
@@ -690,12 +696,12 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
         receipt.events,
         vec![
             Event {
-                emitter: ALICE,
+                emitter: ALICE.address(),
                 event_type: 0,
                 payload: encode_amount(100).to_vec(),
             },
             Event {
-                emitter: BOB,
+                emitter: BOB.address(),
                 event_type: 1,
                 payload: encode_amount(100).to_vec(),
             },
@@ -721,7 +727,7 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
 fn swap_graph(min_out: u128) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(ALICE, "withdraw", (RES_X, 500u128));
-    let [out] = b.call(pool().address(), "swap", (funds, min_out));
+    let [out] = b.call(pool(), "swap", (funds, min_out));
     let [] = b.call(ALICE, "deposit", (out.resource_is(RES_Y),));
     b.build().expect("every output is consumed")
 }
@@ -841,14 +847,14 @@ fn a_violated_output_floor_traps_identically() -> Result<()> {
 fn place_graph() -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(MAKER, "withdraw", (BASE, 50u128));
-    let [] = b.call(book().address(), "place-ask", (3u64, funds));
+    let [] = b.call(book(), "place-ask", (3u64, funds));
     b.build().expect("every output is consumed")
 }
 
 fn fill_graph() -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [payment] = b.call(TAKER, "withdraw", (QUOTE, 100u128));
-    let [base, refund] = b.call(book().address(), "fill-asks", (3u64, 5u64, payment));
+    let [base, refund] = b.call(book(), "fill-asks", (3u64, 5u64, payment));
     let [] = b.call(TAKER, "deposit", (base.resource_is(BASE),));
     let [] = b.call(TAKER, "deposit", (refund.resource_is(QUOTE),));
     b.build().expect("every output is consumed")

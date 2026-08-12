@@ -8,7 +8,9 @@
 //! caller's, and growing it is a change to this crate rather than an impl
 //! away.
 
-use hyperscale_vm_effects::{Address, GraphArg, Value};
+use hyperscale_vm_effects::{
+    Address, ComponentAddr, GraphArg, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr, Value,
+};
 
 use crate::builder::{Bucket, GraphBuilder, Param};
 
@@ -44,6 +46,32 @@ impl Arg for Address {
         GraphArg::Literal(Value::Address(self))
     }
 }
+
+/// An address argument binds whatever class it carries: a method's
+/// declared parameter kind is `address`, and which class belongs at a
+/// given position is the package's business, not the argument list's. So a
+/// typed address binds like an untyped one rather than needing to forget
+/// its class first.
+macro_rules! address_arg {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            impl sealed::Sealed for $name {}
+            impl Arg for $name {
+                fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
+                    GraphArg::Literal(Value::Address(self.address()))
+                }
+            }
+        )+
+    };
+}
+
+address_arg!(
+    PrincipalAddr,
+    ComponentAddr,
+    PackageAddr,
+    ResourceAddr,
+    NativeAddr
+);
 
 impl sealed::Sealed for Vec<u8> {}
 impl Arg for Vec<u8> {

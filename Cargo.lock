@@ -685,6 +685,7 @@ dependencies = [
  "hyperscale-vm-effects",
  "proptest",
  "thiserror 2.0.19",
+ "trybuild",
 ]
 
 [[package]]

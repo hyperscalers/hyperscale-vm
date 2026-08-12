@@ -40,10 +40,10 @@ fn valid_graph() -> ManifestGraph {
     ManifestGraph {
         nodes: vec![
             GraphNode {
-                target: ALICE,
+                target: ALICE.into(),
                 method: "withdraw".into(),
                 args: vec![
-                    GraphArg::Literal(Value::Address(RES_X)),
+                    GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
             },
@@ -56,13 +56,13 @@ fn valid_graph() -> ManifestGraph {
                             producer: 0,
                             output: 0,
                         },
-                        constraints: vec![Constraint::ResourceIs(RES_X)],
+                        constraints: vec![Constraint::ResourceIs(RES_X.into())],
                     },
                     GraphArg::Literal(Value::U128(30)),
                 ],
             },
             GraphNode {
-                target: BOB,
+                target: BOB.into(),
                 method: "deposit".into(),
                 args: vec![GraphArg::Edge {
                     edge: EdgeRef {
@@ -73,7 +73,7 @@ fn valid_graph() -> ManifestGraph {
                 }],
             },
             GraphNode {
-                target: ALICE,
+                target: ALICE.into(),
                 method: "deposit".into(),
                 args: vec![GraphArg::Edge {
                     edge: EdgeRef {
@@ -265,7 +265,7 @@ fn every_malformed_mutation_rejects() {
             producer: 0,
             output: 0,
         },
-        constraints: vec![Constraint::ResourceIs(common::RES_Y)],
+        constraints: vec![Constraint::ResourceIs(common::RES_Y.into())],
     };
     assert_eq!(
         admit_it(&wrong_resource),

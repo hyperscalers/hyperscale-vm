@@ -235,8 +235,8 @@ proptest! {
 /// passing quietly.
 mod golden {
     use hyperscale_vm_effects::{
-        Address, AddressClass, EdgeRef, GraphArg, GraphNode, ManifestGraph, RoleId, TestHasher,
-        Value, child_key, fresh_id, fresh_local,
+        Address, AddressClass, ComponentAddr, EdgeRef, GraphArg, GraphNode, ManifestGraph, RoleId,
+        TestHasher, Value, child_key, fresh_id, fresh_local,
     };
 
     fn hex(bytes: &[u8]) -> String {
@@ -275,12 +275,12 @@ mod golden {
         let graph = ManifestGraph {
             nodes: vec![
                 GraphNode {
-                    target: Address::new([0x10; 31], AddressClass::Component),
+                    target: ComponentAddr::new([0x10; 31]).into(),
                     method: "withdraw".into(),
                     args: vec![GraphArg::Literal(Value::U128(7))],
                 },
                 GraphNode {
-                    target: Address::new([0x20; 31], AddressClass::Component),
+                    target: ComponentAddr::new([0x20; 31]).into(),
                     method: "deposit".into(),
                     args: vec![GraphArg::Edge {
                         edge: EdgeRef {

@@ -16,7 +16,7 @@ use hyperscale_hbor::{Hbor, to_vec};
 use crate::hash::Hasher;
 use crate::manifest::ManifestHash;
 use crate::route::MAX_MANIFEST_NODES;
-use crate::types::{Address, Value};
+use crate::types::{CallTarget, ResourceRef, Value};
 
 /// One produced value edge: the `output`-th edge of the `producer` node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
@@ -38,7 +38,7 @@ pub enum Constraint {
     MaxAmount(u128),
     /// The edge's static resource type must be exactly this — checked at
     /// admission.
-    ResourceIs(Address),
+    ResourceIs(ResourceRef),
 }
 
 /// One bound argument of a graph node.
@@ -63,8 +63,10 @@ pub enum GraphArg {
 /// A method invocation node.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct GraphNode {
-    /// The target instance, named in the manifest.
-    pub target: Address,
+    /// The target instance, named in the manifest. Its class is what
+    /// makes it invocable: a package is code and a resource is a supply,
+    /// so neither can be written here at all.
+    pub target: CallTarget,
     /// The method to invoke.
     pub method: String,
     /// The bound arguments, in parameter order.
@@ -119,19 +121,19 @@ impl ManifestGraph {
 mod tests {
     use super::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
     use crate::hash::TestHasher;
-    use crate::types::{Address, AddressClass, Value};
+    use crate::types::{ComponentAddr, Value};
 
     #[test]
     fn the_graph_hash_covers_edges_and_constraints() {
         let base = ManifestGraph {
             nodes: vec![
                 GraphNode {
-                    target: Address::new([1; 31], AddressClass::Component),
+                    target: ComponentAddr::new([1; 31]).into(),
                     method: "withdraw".into(),
                     args: vec![GraphArg::Literal(Value::U128(5))],
                 },
                 GraphNode {
-                    target: Address::new([2; 31], AddressClass::Component),
+                    target: ComponentAddr::new([2; 31]).into(),
                     method: "deposit".into(),
                     args: vec![GraphArg::Edge {
                         edge: EdgeRef {

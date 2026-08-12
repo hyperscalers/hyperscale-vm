@@ -32,7 +32,9 @@ use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::metadata::{InstanceRegistry, MetadataCache};
 use crate::route::{RouteError, Routing, ShardResolver, route};
-use crate::types::{Address, Effect, EffectTarget, Mode, RoleId, SubstateKey, child_key};
+use crate::types::{
+    Address, Effect, EffectTarget, Mode, PrincipalAddr, ResourceRef, RoleId, SubstateKey, child_key,
+};
 
 /// The kernel-reserved role of subintent nullifier substates under a
 /// signer's prefix. Stdlib roles count up from one; the top of the role
@@ -45,7 +47,7 @@ pub const NULLIFIER_ROLE: RoleId = RoleId(0xFFFF);
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct YieldParam {
     /// The resource the yielded edge must carry.
-    pub resource: Address,
+    pub resource: ResourceRef,
     /// The declaring intent's constraints on the yielded edge — the same
     /// language that constrains ordinary graph edges.
     pub constraints: Vec<Constraint>,
@@ -123,7 +125,7 @@ pub struct Subintent {
     /// What the subintent's signer signed.
     pub decl: IntentDecl,
     /// The signer's account prefix — the owner of the nullifier.
-    pub signer: Address,
+    pub signer: PrincipalAddr,
     /// The composition's binding for each declared parameter.
     #[hbor(max = MAX_YIELD_PARAMS)]
     pub bindings: Vec<YieldBinding>,
@@ -187,7 +189,7 @@ pub struct SubintentRecord {
     /// The signed declaration's hash.
     pub subintent: SubintentHash,
     /// The signer's account prefix.
-    pub signer: Address,
+    pub signer: PrincipalAddr,
     /// The canonical nullifier key under the signer.
     pub nullifier: SubstateKey,
 }
@@ -295,7 +297,7 @@ pub fn route_tree(
 ) -> Result<Routing, RouteError> {
     let mut routing = route(&tree.admitted, cache, instances, hasher, shards)?;
     for record in &tree.subintents {
-        let shard = shards.shard_of(record.signer);
+        let shard = shards.shard_of(record.signer.address());
         let effect = Effect {
             target: EffectTarget::Point(record.nullifier),
             mode: Mode::Write,

@@ -31,15 +31,15 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
     let graph = ManifestGraph {
         nodes: vec![
             GraphNode {
-                target: ALICE,
+                target: ALICE.into(),
                 method: "withdraw".into(),
                 args: vec![
-                    GraphArg::Literal(Value::Address(usdc)),
+                    GraphArg::Literal(Value::Address(usdc.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
             },
             GraphNode {
-                target: BOB,
+                target: BOB.into(),
                 method: "deposit".into(),
                 args: vec![edge(0, 0)],
             },
@@ -80,10 +80,10 @@ fn swap_writes_both_reserves_and_reads_the_locked_config() {
     let graph = ManifestGraph {
         nodes: vec![
             GraphNode {
-                target: ALICE,
+                target: ALICE.into(),
                 method: "withdraw".into(),
                 args: vec![
-                    GraphArg::Literal(Value::Address(RES_X)),
+                    GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(500)),
                 ],
             },
@@ -93,7 +93,7 @@ fn swap_writes_both_reserves_and_reads_the_locked_config() {
                 args: vec![edge(0, 0), GraphArg::Literal(Value::U128(50))],
             },
             GraphNode {
-                target: ALICE,
+                target: ALICE.into(),
                 method: "deposit".into(),
                 args: vec![edge(1, 0)],
             },
@@ -147,10 +147,10 @@ fn order_book_place_inserts_at_a_computed_entry() {
     let graph = ManifestGraph {
         nodes: vec![
             GraphNode {
-                target: ALICE,
+                target: ALICE.into(),
                 method: "withdraw".into(),
                 args: vec![
-                    GraphArg::Literal(Value::Address(BASE)),
+                    GraphArg::Literal(Value::Address(BASE.address())),
                     GraphArg::Literal(Value::U128(10)),
                 ],
             },
@@ -200,10 +200,10 @@ fn order_book_fill_declares_a_capped_price_interval() {
     let graph = ManifestGraph {
         nodes: vec![
             GraphNode {
-                target: BOB,
+                target: BOB.into(),
                 method: "withdraw".into(),
                 args: vec![
-                    GraphArg::Literal(Value::Address(QUOTE)),
+                    GraphArg::Literal(Value::Address(QUOTE.address())),
                     GraphArg::Literal(Value::U128(1000)),
                 ],
             },
@@ -219,12 +219,12 @@ fn order_book_fill_declares_a_capped_price_interval() {
             // The fill returns what it bought and what it did not spend;
             // both edges have to land somewhere.
             GraphNode {
-                target: BOB,
+                target: BOB.into(),
                 method: "deposit".into(),
                 args: vec![edge(1, 0)],
             },
             GraphNode {
-                target: BOB,
+                target: BOB.into(),
                 method: "deposit".into(),
                 args: vec![edge(1, 1)],
             },
@@ -307,7 +307,7 @@ fn a_declared_superset_evaluates_without_error() {
                 target: alice.into(),
                 method: "withdraw_wide".into(),
                 args: vec![
-                    GraphArg::Literal(Value::Address(RES_X)),
+                    GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(1)),
                 ],
             },

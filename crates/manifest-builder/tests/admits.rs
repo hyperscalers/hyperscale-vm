@@ -9,17 +9,17 @@
 
 use hyperscale_vm_effects::stdlib::{account_metadata, splitter_metadata};
 use hyperscale_vm_effects::{
-    Address, AddressClass, ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    MetadataCache, PackageHash, TestHasher, admit,
+    ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
+    PrincipalAddr, ResourceAddr, TestHasher, admit,
 };
 use hyperscale_vm_manifest_builder::GraphBuilder;
 use proptest::prelude::{Strategy, prop, proptest};
 
-const ACCOUNTS: [Address; 4] = [
-    Address::new([0x10; 31], AddressClass::Principal),
-    Address::new([0x20; 31], AddressClass::Principal),
-    Address::new([0x30; 31], AddressClass::Principal),
-    Address::new([0x40; 31], AddressClass::Principal),
+const ACCOUNTS: [PrincipalAddr; 4] = [
+    PrincipalAddr::new([0x10; 31]),
+    PrincipalAddr::new([0x20; 31]),
+    PrincipalAddr::new([0x30; 31]),
+    PrincipalAddr::new([0x40; 31]),
 ];
 
 fn splitter_meta() -> InstanceMeta {
@@ -34,7 +34,7 @@ fn splitter_meta() -> InstanceMeta {
 fn splitter() -> ComponentAddr {
     splitter_meta().address(&TestHasher)
 }
-const RES: Address = Address::new([0xE1; 31], AddressClass::Component);
+const RES: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
 fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
@@ -92,7 +92,7 @@ proptest! {
                 funds = funds.min(min).max(max);
             }
             if let Some(taken) = t.split {
-                let [taken, rest] = b.call(splitter().address(), "take", (funds, taken));
+                let [taken, rest] = b.call(splitter(), "take", (funds, taken));
                 let [] = b.call(ACCOUNTS[t.to], "deposit", (taken,));
                 let [] = b.call(ACCOUNTS[t.from], "deposit", (rest,));
             } else {

@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::dsl::{Clause, Expr};
 use crate::hash::{Hash32, Hasher};
 use crate::types::{
-    Address, AddressClass, ComponentAddr, RoleId, SubstateKey, Value, child_key, component_address,
+    Address, CallTarget, ComponentAddr, RoleId, SubstateKey, Value, child_key, component_address,
     config_hash,
 };
 
@@ -539,13 +539,16 @@ impl InstanceRegistry {
         address
     }
 
-    /// Look up an instance's creation-fixed record.
+    /// Look up the creation-fixed record serving a call target.
+    ///
+    /// Both classes a target can carry are answered here and nothing else
+    /// arrives: a principal resolves to the protocol's account blueprint
+    /// by its class alone, an instance to the record its address derives.
     #[must_use]
-    pub fn get(&self, address: impl Into<Address>) -> Option<&InstanceMeta> {
-        let address = address.into();
-        match address.class() {
-            AddressClass::Principal => self.principal.as_ref(),
-            _ => self.instances.get(&address),
+    pub fn get(&self, target: impl Into<CallTarget>) -> Option<&InstanceMeta> {
+        match target.into() {
+            CallTarget::Principal(_) => self.principal.as_ref(),
+            CallTarget::Component(address) => self.instances.get(&address.address()),
         }
     }
 }
@@ -554,6 +557,7 @@ impl InstanceRegistry {
 mod tests {
     use super::*;
     use crate::hash::TestHasher;
+    use crate::types::PrincipalAddr;
 
     #[test]
     fn a_record_is_admitted_only_at_the_address_it_derives() {
@@ -570,7 +574,7 @@ mod tests {
         assert_eq!(registry.get(address), Some(&meta));
 
         // Any other address is a claim the derivation refuses.
-        let elsewhere = Address::new([9; 31], AddressClass::Component);
+        let elsewhere = ComponentAddr::new([9; 31]);
         assert_eq!(
             registry.admit(&TestHasher, elsewhere, meta),
             Err(CertificateMismatch)
@@ -613,7 +617,7 @@ mod tests {
         let package = PackageHash(Hash32([3; 32]));
         let mut registry = InstanceRegistry::new();
         assert_eq!(
-            registry.get(Address::new([1; 31], AddressClass::Principal)),
+            registry.get(PrincipalAddr::new([1; 31])),
             None,
             "until the protocol's blueprint is bound"
         );
@@ -621,14 +625,11 @@ mod tests {
         // One record answers for every principal: an account's identity
         // is in its address, so there is nothing per-account to hold.
         for seed in [1u8, 2, 0xFF] {
-            let principal = Address::new([seed; 31], AddressClass::Principal);
+            let principal = PrincipalAddr::new([seed; 31]);
             assert_eq!(registry.get(principal).map(|m| m.package), Some(package));
         }
         // A component still needs its record.
-        assert_eq!(
-            registry.get(Address::new([1; 31], AddressClass::Component)),
-            None
-        );
+        assert_eq!(registry.get(ComponentAddr::new([1; 31])), None);
     }
 
     #[test]

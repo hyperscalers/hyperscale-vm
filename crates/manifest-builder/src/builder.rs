@@ -12,7 +12,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
-    Address, Constraint, EdgeRef, GraphNode, MAX_MANIFEST_NODES, ManifestGraph,
+    CallTarget, Constraint, EdgeRef, GraphNode, MAX_MANIFEST_NODES, ManifestGraph, ResourceRef,
 };
 
 use crate::args::Args;
@@ -79,9 +79,13 @@ impl Bucket {
     }
 
     /// Assert the edge's static resource type; checked at admission.
+    ///
+    /// Two classes name a resource — an ordinary one and the protocol's
+    /// own — so the argument is the pair of them rather than a single
+    /// class, and naming an account or a package here does not compile.
     #[must_use]
-    pub fn resource_is(self, resource: Address) -> Self {
-        self.constrain(Constraint::ResourceIs(resource))
+    pub fn resource_is(self, resource: impl Into<ResourceRef>) -> Self {
+        self.constrain(Constraint::ResourceIs(resource.into()))
     }
 }
 
@@ -145,6 +149,11 @@ impl GraphBuilder {
     /// builder holds the claim to its own linearity rules, and admission
     /// judges it against the method's declared outputs.
     ///
+    /// The target is a class that answers calls — an account or an
+    /// instance. A package address is code and a resource address is a
+    /// supply, so naming either as a target does not compile rather than
+    /// failing admission.
+    ///
     /// # Panics
     ///
     /// On a [`Bucket`] argument minted by a different builder, and on more
@@ -154,14 +163,14 @@ impl GraphBuilder {
     #[must_use = "every minted output must be consumed for the graph to build"]
     pub fn call<const N: usize>(
         &mut self,
-        target: Address,
+        target: impl Into<CallTarget>,
         method: impl Into<String>,
         args: impl Args,
     ) -> [Bucket; N] {
         let producer = u32::try_from(self.nodes.len()).expect("more nodes than an edge can name");
         let args = args.bind_all(self);
         self.nodes.push(GraphNode {
-            target,
+            target: target.into(),
             method: method.into(),
             args,
         });
@@ -251,14 +260,14 @@ impl Default for GraphBuilder {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        Address, AddressClass, Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, Value,
+        Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, PrincipalAddr, ResourceAddr, Value,
     };
 
     use super::{BuildError, GraphBuilder, Param};
 
-    const ALICE: Address = Address::new([0x10; 31], AddressClass::Component);
-    const BOB: Address = Address::new([0x20; 31], AddressClass::Component);
-    const RES: Address = Address::new([0xE1; 31], AddressClass::Component);
+    const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
+    const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
+    const RES: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
     #[test]
     fn a_transfer_builds_the_hand_written_graph() {
@@ -270,15 +279,15 @@ mod tests {
             Ok(ManifestGraph {
                 nodes: vec![
                     GraphNode {
-                        target: ALICE,
+                        target: ALICE.into(),
                         method: "withdraw".into(),
                         args: vec![
-                            GraphArg::Literal(Value::Address(RES)),
+                            GraphArg::Literal(Value::Address(RES.address())),
                             GraphArg::Literal(Value::U128(100)),
                         ],
                     },
                     GraphNode {
-                        target: BOB,
+                        target: BOB.into(),
                         method: "deposit".into(),
                         args: vec![GraphArg::Edge {
                             edge: EdgeRef {
@@ -286,7 +295,7 @@ mod tests {
                                 output: 0,
                             },
                             constraints: vec![
-                                Constraint::ResourceIs(RES),
+                                Constraint::ResourceIs(RES.into()),
                                 Constraint::MinAmount(1)
                             ],
                         }],

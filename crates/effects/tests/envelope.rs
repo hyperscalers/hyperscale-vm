@@ -4,19 +4,19 @@
 
 use hyperscale_vm_effects::stdlib::account_metadata;
 use hyperscale_vm_effects::{
-    Address, AddressClass, AdmissionError, AdmittedTree, Bounds, Constraint, EdgeRef, Effect,
+    Address, AdmissionError, AdmittedTree, Bounds, CallTarget, Constraint, EdgeRef, Effect,
     EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceRegistry, IntentDecl,
     MAX_SUBINTENTS, MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, Mode,
-    NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver, RoleId, ShardResolver, Subintent,
-    TestHasher, Value, YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key,
-    route_tree,
+    NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr,
+    RoleId, ShardResolver, Subintent, TestHasher, Value, YieldBinding, YieldParam, admit,
+    admit_tree, child_key, nullifier_key, route_tree,
 };
 use proptest::prelude::{any, proptest};
 
-const ALICE: Address = Address::new([0x10; 31], AddressClass::Principal);
-const BOB: Address = Address::new([0x20; 31], AddressClass::Principal);
-const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
-const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
+const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
+const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
+const RES_X: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+const RES_Y: ResourceAddr = ResourceAddr::new([0xE2; 31]);
 
 fn pkg() -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[b"account"]))
@@ -30,20 +30,24 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     (cache, instances)
 }
 
-fn withdraw(target: Address, resource: Address, amount: u128) -> GraphNode {
+fn withdraw(
+    target: impl Into<CallTarget>,
+    resource: impl Into<Address>,
+    amount: u128,
+) -> GraphNode {
     GraphNode {
-        target,
+        target: target.into(),
         method: "withdraw".into(),
         args: vec![
-            GraphArg::Literal(Value::Address(resource)),
+            GraphArg::Literal(Value::Address(resource.into())),
             GraphArg::Literal(Value::U128(amount)),
         ],
     }
 }
 
-fn deposit_param(target: Address, param: u32) -> GraphNode {
+fn deposit_param(target: impl Into<CallTarget>, param: u32) -> GraphNode {
     GraphNode {
-        target,
+        target: target.into(),
         method: "deposit".into(),
         args: vec![GraphArg::Param(param)],
     }
@@ -58,7 +62,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
                 nodes: vec![withdraw(ALICE, RES_X, pay), deposit_param(ALICE, 0)],
             },
             params: vec![YieldParam {
-                resource: RES_Y,
+                resource: RES_Y.into(),
                 constraints: vec![Constraint::MinAmount(10)],
             }],
         },
@@ -75,7 +79,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
                     nodes: vec![withdraw(BOB, RES_Y, 10), deposit_param(BOB, 0)],
                 },
                 params: vec![YieldParam {
-                    resource: RES_X,
+                    resource: RES_X.into(),
                     constraints: vec![Constraint::MinAmount(100)],
                 }],
             },
@@ -114,10 +118,10 @@ fn a_composed_tree_flattens_deterministically() {
     assert_eq!(
         shape,
         vec![
-            (ALICE, "withdraw"),
-            (BOB, "withdraw"),
-            (ALICE, "deposit"),
-            (BOB, "deposit"),
+            (ALICE.address(), "withdraw"),
+            (BOB.address(), "withdraw"),
+            (ALICE.address(), "deposit"),
+            (BOB.address(), "deposit"),
         ]
     );
     assert_eq!(
@@ -125,7 +129,7 @@ fn a_composed_tree_flattens_deterministically() {
         vec![NodeInput::Edge {
             source: 1,
             output: 0,
-            resource: RES_Y,
+            resource: RES_Y.address(),
             bounds: Bounds {
                 min: Some(10),
                 max: None,
@@ -137,7 +141,7 @@ fn a_composed_tree_flattens_deterministically() {
         vec![NodeInput::Edge {
             source: 0,
             output: 0,
-            resource: RES_X,
+            resource: RES_X.address(),
             bounds: Bounds {
                 min: Some(100),
                 max: None,
@@ -173,8 +177,8 @@ fn routing_carries_the_nullifier_creation_write() {
     // write lands at the signer's shard and nowhere else, not what those
     // shards happen to be called.
     let resolver = PrefixShardResolver { bits: 8 };
-    let signer = resolver.shard_of(record.signer);
-    let root = resolver.shard_of(ALICE);
+    let signer = resolver.shard_of(record.signer.address());
+    let root = resolver.shard_of(ALICE.address());
     assert_ne!(signer, root);
     assert!(routing.per_shard[&signer].contains(&Effect {
         target: EffectTarget::Point(record.nullifier),
@@ -215,7 +219,7 @@ fn the_declaration_hash_covers_params_and_constraints() {
     reconstrained.params[0].constraints = vec![Constraint::MinAmount(101)];
     assert_ne!(decl.hash(&TestHasher), reconstrained.hash(&TestHasher));
     let mut retyped = decl.clone();
-    retyped.params[0].resource = RES_Y;
+    retyped.params[0].resource = RES_Y.into();
     assert_ne!(decl.hash(&TestHasher), retyped.hash(&TestHasher));
 }
 
@@ -232,7 +236,7 @@ fn mutual_yields_with_no_order_are_a_cycle() {
 #[test]
 fn a_yielded_resource_must_match_the_declared_type() {
     let mut tree = composed_tree(100);
-    tree.subintents[0].decl.params[0].resource = RES_Y;
+    tree.subintents[0].decl.params[0].resource = RES_Y.into();
     assert_eq!(
         admit_composed(&tree),
         Err(AdmissionError::YieldResourceMismatch {
@@ -297,7 +301,7 @@ fn bindings_must_cover_the_declared_params() {
 fn two_bindings_cannot_consume_one_output() {
     // A second subintent binds the same root output the first consumes.
     let (cache, instances) = world();
-    let second_signer = Address::new([0x21; 31], AddressClass::Principal);
+    let second_signer = PrincipalAddr::new([0x21; 31]);
     let mut tree = composed_tree(100);
     let mut second = tree.subintents[0].clone();
     second.signer = second_signer;
@@ -350,7 +354,7 @@ fn a_yield_param_cannot_bind_a_value_parameter() {
     // arity check would otherwise report.
     let mut tree = composed_tree(100);
     tree.subintents[0].decl.graph.nodes[1] = GraphNode {
-        target: BOB,
+        target: BOB.into(),
         method: "withdraw".into(),
         args: vec![GraphArg::Param(0), GraphArg::Literal(Value::U128(1))],
     };

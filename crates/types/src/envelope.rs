@@ -18,7 +18,7 @@ use core::fmt;
 
 use hyperscale_hbor::{Hash32, Hbor};
 
-use crate::address::Address;
+use crate::address::PrincipalAddr;
 
 /// The cap on an envelope body's bytes — a call tree or a package
 /// artifact.
@@ -138,7 +138,7 @@ pub struct TransactionEnvelope {
     #[hbor(max = MAX_SUBINTENTS)]
     pub subintent_sigs: Vec<SubintentSig>,
     /// The fee-paying account — the composer's.
-    pub fee_payer: Address,
+    pub fee_payer: PrincipalAddr,
     /// The signed fee ceiling, in fee units.
     pub max_fee: u128,
     /// The signed execution gas limit.
@@ -197,8 +197,7 @@ impl TransactionEnvelope {
 mod tests {
     use hyperscale_hbor::{HborSigned, assert_canonical, to_vec};
 
-    use super::{Address, NetworkId, SubintentSig, TransactionBody, TransactionEnvelope};
-    use crate::address::AddressClass;
+    use super::{NetworkId, PrincipalAddr, SubintentSig, TransactionBody, TransactionEnvelope};
 
     fn sample() -> TransactionEnvelope {
         TransactionEnvelope {
@@ -207,7 +206,7 @@ mod tests {
                 public_key: [0x11; 32],
                 signature: [0x22; 64],
             }],
-            fee_payer: Address::new([0x33; 31], AddressClass::Principal),
+            fee_payer: PrincipalAddr::new([0x33; 31]),
             max_fee: 1_000_000,
             gas_limit: 500_000,
             validity_start_ms: 1_700_000_000_000,

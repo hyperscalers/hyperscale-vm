@@ -524,7 +524,7 @@ pub(crate) fn admit_intents(
         let local = u32::try_from(local_index).map_err(|_| AdmissionError::TooManyNodes)?;
         let meta = instances
             .get(node.target)
-            .ok_or(AdmissionError::UnknownInstance(node.target))?;
+            .ok_or_else(|| AdmissionError::UnknownInstance(node.target.address()))?;
         let package = cache
             .get(meta.package)
             .ok_or(AdmissionError::UnknownPackage(meta.package))?;
@@ -671,7 +671,7 @@ pub(crate) fn admit_intents(
         // Evaluate this node's output resource types over its bound
         // inputs.
         let eval_inputs = EvalInputs {
-            self_addr: node.target,
+            self_addr: node.target.address(),
             args: &bound,
             config: &meta.config,
             node_index,
@@ -698,7 +698,7 @@ pub(crate) fn admit_intents(
         consumed.push(vec![0; node_outputs.len()]);
         outputs.push(node_outputs);
         lowered.push(Node {
-            target: node.target,
+            target: node.target.address(),
             method: node.method.clone(),
             inputs,
         });

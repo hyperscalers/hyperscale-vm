@@ -44,10 +44,10 @@ pub enum Locality {
 impl Locality {
     /// Whether this shard owns keys under `owner`.
     #[must_use]
-    pub fn is_local(&self, owner: Address) -> bool {
+    pub fn is_local(&self, owner: impl Into<Address>) -> bool {
         match self {
             Self::All => true,
-            Self::Owned(predicate) => predicate(owner),
+            Self::Owned(predicate) => predicate(owner.into()),
         }
     }
 

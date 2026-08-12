@@ -13,8 +13,8 @@ use std::time::Instant;
 
 use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
 use hyperscale_vm_effects::{
-    Address, AddressClass, Declaration, Hash32, Hasher, InstanceRegistry, ManifestGraph,
-    MetadataCache, NodeCall, PackageHash, PrefixShardResolver, SubstateKey, TestHasher, Value,
+    Address, Declaration, Hash32, Hasher, InstanceRegistry, ManifestGraph, MetadataCache, NodeCall,
+    PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SubstateKey, TestHasher, Value,
     admit, child_key, route,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
@@ -33,8 +33,8 @@ use wasmtime::component::{Component, InstancePre, Linker};
 use wasmtime::error::Context;
 use wasmtime::{Engine, Result, Store};
 
-const RES: Address = Address::new([0xE1; 31], AddressClass::Component);
-const RECIPIENT: Address = Address::new([0xFE; 31], AddressClass::Principal);
+const RES: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+const RECIPIENT: PrincipalAddr = PrincipalAddr::new([0xFE; 31]);
 const AMOUNT: u128 = 100;
 const FUEL: u64 = 10_000_000;
 
@@ -49,10 +49,10 @@ const fn env() -> EnvInputs {
     }
 }
 
-fn sender(index: u32) -> Address {
+fn sender(index: u32) -> PrincipalAddr {
     let mut bytes = [0x10u8; 31];
     bytes[..4].copy_from_slice(&index.to_le_bytes());
-    Address::new(bytes, AddressClass::Principal)
+    PrincipalAddr::new(bytes)
 }
 
 fn tx(index: u32) -> TxHash {
@@ -61,12 +61,12 @@ fn tx(index: u32) -> TxHash {
     TxHash(Hash32(bytes))
 }
 
-fn vault(owner: Address) -> SubstateKey {
+fn vault(owner: impl Into<Address>) -> SubstateKey {
     child_key(
         &TestHasher,
         owner,
         VAULT,
-        &[Value::Address(RES).canonical_bytes()],
+        &[Value::Address(RES.address()).canonical_bytes()],
     )
 }
 
@@ -84,7 +84,7 @@ fn world(_senders: u32) -> (MetadataCache, InstanceRegistry) {
     (cache, instances)
 }
 
-fn transfer_graph(from: Address) -> ManifestGraph {
+fn transfer_graph(from: PrincipalAddr) -> ManifestGraph {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(from, "withdraw", (RES, AMOUNT));
     let [] = b.call(RECIPIENT, "deposit", (funds.resource_is(RES),));
@@ -102,7 +102,7 @@ struct Routed {
     calls: Vec<NodeCall>,
 }
 
-fn routed(world: &(MetadataCache, InstanceRegistry), from: Address) -> Result<Routed> {
+fn routed(world: &(MetadataCache, InstanceRegistry), from: PrincipalAddr) -> Result<Routed> {
     let (cache, instances) = world;
     let admitted = admit(&transfer_graph(from), cache, instances, &TestHasher)?;
     let routing = route(
