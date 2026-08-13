@@ -76,7 +76,8 @@ pub use metadata::{
     package_key,
 };
 pub use resource::{
-    Fungibility, ResourceRecord, holdings_collection, instance_data_key, resource_record_key,
+    Fungibility, ResourceRecord, holdings_collection, holdings_range, instance_data_key,
+    resource_record_key,
 };
 pub use route::{
     CallEdge, CallGraph, FrameDeclaration, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef,

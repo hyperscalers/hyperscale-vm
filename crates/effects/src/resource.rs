@@ -8,6 +8,7 @@
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 
+use crate::dsl::{Expr, TargetExpr};
 use crate::hash::Hasher;
 pub use crate::stdlib::{INSTANCE, NF_VAULT, RESOURCE};
 use crate::types::{Address, CollectionId, SubstateKey, Value, child_key, collection_id};
@@ -102,6 +103,29 @@ pub fn holdings_collection(
         NF_VAULT,
         &[Value::Address(resource.into()).canonical_bytes()],
     )
+}
+
+/// The declaring side's spelling of that same fold: the whole
+/// `(NF_VAULT, resource)` interval under the declaring instance, at most
+/// `cap` entries of it.
+///
+/// Every holdings declaration is this one shape — deposit and withdraw
+/// range over it, and the custody gate admits a possession read only as
+/// this target keyed by exactly the minted expression
+/// ([`MethodSignature::custody_shape`]) — so a declaration that spells
+/// the fold any other way is refused rather than silently unmatched.
+///
+/// [`MethodSignature::custody_shape`]: crate::metadata::MethodSignature::custody_shape
+#[must_use]
+pub fn holdings_range(resource: Expr, cap: u32) -> TargetExpr {
+    TargetExpr::Range {
+        owner: Expr::SelfAddr,
+        collection: NF_VAULT,
+        material: vec![resource],
+        lo: Expr::Literal(Value::U128(0)),
+        hi: Expr::Literal(Value::U128(u128::MAX)),
+        cap,
+    }
 }
 
 /// The data cell for one instance of `resource` under `issuer`, keyed by

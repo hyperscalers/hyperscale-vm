@@ -8,13 +8,13 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
-use hyperscale_vm_effects::stdlib::{AUTH, NF_VAULT, VAULT};
+use hyperscale_vm_effects::stdlib::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     Accessibility, Address, AddressClass, AdmissionError, AuthRole, AuthorityGate, Clause,
     ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget, EvidenceRef, Expr, GraphArg,
     GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph,
     MetadataCache, MethodSignature, Mode, ModeExpr, PackageMetadata, TargetExpr, TestHasher, Value,
-    admit, child_key, fresh_id, holdings_collection, route,
+    admit, child_key, fresh_id, holdings_collection, holdings_range, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -274,14 +274,7 @@ fn custodian_world(
                 mode: ModeExpr::Read,
             },
             Clause::Effect {
-                target: TargetExpr::Range {
-                    owner: Expr::SelfAddr,
-                    collection: NF_VAULT,
-                    material: vec![Expr::Config(0)],
-                    lo: Expr::Literal(Value::U128(0)),
-                    hi: Expr::Literal(Value::U128(u128::MAX)),
-                    cap: 1,
-                },
+                target: holdings_range(Expr::Config(0), 1),
                 mode: ModeExpr::Read,
             },
         ],

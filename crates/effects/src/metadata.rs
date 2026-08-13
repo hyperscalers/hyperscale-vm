@@ -12,8 +12,9 @@ use crate::dsl::{
     Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, ModeExpr, TargetExpr,
 };
 use crate::hash::{Hash32, Hasher};
+use crate::resource::holdings_range;
 use crate::rule::Rule;
-use crate::stdlib::{NF_VAULT, VAULT};
+use crate::stdlib::VAULT;
 use crate::types::{
     Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, RoleId, SubstateKey,
     Value, child_key, component_address, config_hash,
@@ -311,14 +312,13 @@ impl MethodSignature {
     ///
     /// `Some` exactly when the accessibility is custodial and the
     /// declaration is the pinned shape: the rule cell's point read, the
-    /// badge-keyed vault's point read, and the badge-keyed holdings
-    /// interval's read — the last two keyed by *exactly* the minted
-    /// expression, which is what makes the identity minted and the thing
-    /// held one resource. Every judge of the shape asks here, so none
-    /// can drift: the publish check refuses a custodial signature this
-    /// returns `None` for, and admission re-asks so a cached package
-    /// that never passed one refuses rather than minting an untied
-    /// identity.
+    /// badge-keyed vault's point read, and the [`holdings_range`] of the
+    /// badge — the last two keyed by *exactly* the minted expression,
+    /// which is what makes the identity minted and the thing held one
+    /// resource. Every judge of the shape asks here, so none can drift:
+    /// the publish check refuses a custodial signature this returns
+    /// `None` for, and admission re-asks so a cached package that never
+    /// passed one refuses rather than minting an untied identity.
     #[must_use]
     pub fn custody_shape(&self) -> Option<(&Expr, &Expr)> {
         if !matches!(self.accessibility, Accessibility::Custodial) {
@@ -335,15 +335,7 @@ impl MethodSignature {
                 mode: ModeExpr::Read,
             },
             Clause::Effect {
-                target:
-                    TargetExpr::Range {
-                        owner: Expr::SelfAddr,
-                        collection,
-                        material,
-                        lo: Expr::Literal(Value::U128(0)),
-                        hi: Expr::Literal(Value::U128(u128::MAX)),
-                        cap,
-                    },
+                target: holdings @ TargetExpr::Range { cap, .. },
                 mode: ModeExpr::Read,
             },
         ] = self.effects.as_slice()
@@ -355,10 +347,7 @@ impl MethodSignature {
             role: VAULT,
             material: vec![badge.clone()],
         };
-        (*vault == vault_shape
-            && *collection == NF_VAULT
-            && material.as_slice() == std::slice::from_ref(badge)
-            && *cap >= 1)
+        (*vault == vault_shape && *cap >= 1 && *holdings == holdings_range(badge.clone(), *cap))
             .then_some((badge, rule))
     }
 }
@@ -1322,14 +1311,7 @@ mod tests {
                     mode: ModeExpr::Read,
                 },
                 Clause::Effect {
-                    target: TargetExpr::Range {
-                        owner: Expr::SelfAddr,
-                        collection: NF_VAULT,
-                        material: vec![holdings_key],
-                        lo: Expr::Literal(Value::U128(0)),
-                        hi: Expr::Literal(Value::U128(u128::MAX)),
-                        cap: 1,
-                    },
+                    target: holdings_range(holdings_key, 1),
                     mode: ModeExpr::Read,
                 },
             ]

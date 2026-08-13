@@ -9,6 +9,7 @@
 use crate::auth::AuthRole;
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::metadata::{AbiParam, Accessibility, MethodSignature, PackageMetadata, ParamType};
+use crate::resource::holdings_range;
 use crate::types::{NativeRole, RoleId, Value};
 
 /// The native fee and transfer resource.
@@ -176,14 +177,6 @@ fn funds_methods(methods: &mut PackageMetadata) {
 /// entries of its per-resource holdings interval, created at deposit and
 /// removed at withdrawal, gated exactly as the fungible pair is.
 fn holdings_methods(methods: &mut PackageMetadata) {
-    let holdings = |resource: Expr, cap: u32| TargetExpr::Range {
-        owner: Expr::SelfAddr,
-        collection: NF_VAULT,
-        material: vec![resource],
-        lo: Expr::Literal(Value::U128(0)),
-        hi: Expr::Literal(Value::U128(u128::MAX)),
-        cap,
-    };
     methods.methods.insert(
         "deposit-nf".into(),
         MethodSignature {
@@ -193,7 +186,7 @@ fn holdings_methods(methods: &mut PackageMetadata) {
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             outputs: vec![],
             effects: vec![Clause::Effect {
-                target: holdings(Expr::ResourceOf(Box::new(Expr::Arg(0))), NF_MOVE_CAP),
+                target: holdings_range(Expr::ResourceOf(Box::new(Expr::Arg(0))), NF_MOVE_CAP),
                 mode: ModeExpr::Write,
             }],
             calls: vec![],
@@ -211,7 +204,7 @@ fn holdings_methods(methods: &mut PackageMetadata) {
                 ids: Box::new(Expr::Arg(1)),
             }],
             effects: vec![Clause::Effect {
-                target: holdings(Expr::Arg(0), NF_MOVE_CAP),
+                target: holdings_range(Expr::Arg(0), NF_MOVE_CAP),
                 mode: ModeExpr::Write,
             }],
             calls: vec![],
@@ -238,7 +231,7 @@ fn holdings_methods(methods: &mut PackageMetadata) {
                     mode: ModeExpr::Read,
                 },
                 Clause::Effect {
-                    target: holdings(Expr::Arg(0), 1),
+                    target: holdings_range(Expr::Arg(0), 1),
                     mode: ModeExpr::Read,
                 },
             ],
@@ -839,14 +832,6 @@ pub fn registry_metadata() -> PackageMetadata {
 /// range capability.
 #[must_use]
 pub fn nf_metadata() -> PackageMetadata {
-    let holdings = |resource: Expr| TargetExpr::Range {
-        owner: Expr::SelfAddr,
-        collection: NF_VAULT,
-        material: vec![resource],
-        lo: Expr::Literal(Value::U128(0)),
-        hi: Expr::Literal(Value::U128(u128::MAX)),
-        cap: NF_MOVE_CAP,
-    };
     let minted_resource = Expr::SelfResource { material: vec![] };
     let minted_id = Expr::FreshId { slot: 0 };
     let mut methods = PackageMetadata::default();
@@ -880,7 +865,7 @@ pub fn nf_metadata() -> PackageMetadata {
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             effects: vec![Clause::Effect {
-                target: holdings(Expr::ResourceOf(Box::new(Expr::Arg(0)))),
+                target: holdings_range(Expr::ResourceOf(Box::new(Expr::Arg(0))), NF_MOVE_CAP),
                 mode: ModeExpr::Write,
             }],
             ..MethodSignature::default()
@@ -898,7 +883,7 @@ pub fn nf_metadata() -> PackageMetadata {
                 ids: Box::new(Expr::Arg(1)),
             }],
             effects: vec![Clause::Effect {
-                target: holdings(Expr::Arg(0)),
+                target: holdings_range(Expr::Arg(0), NF_MOVE_CAP),
                 mode: ModeExpr::Write,
             }],
             ..MethodSignature::default()
