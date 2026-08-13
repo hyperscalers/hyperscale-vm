@@ -375,6 +375,55 @@ pub mod book {
     }
 }
 
+/// The name registry.
+pub mod registry {
+    use super::{ComponentAddr, TypedBuilder, TypedError};
+
+    /// Bind `name` to `value` on `registry`, overwriting any prior
+    /// binding.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `bind`.
+    pub fn bind(
+        builder: &mut TypedBuilder<'_>,
+        registry: ComponentAddr,
+        name: u64,
+        value: u128,
+    ) -> Result<(), TypedError> {
+        builder.call(registry, "bind", (name, value))?.none()
+    }
+
+    /// Read the binding for `name`; execution traps unless it holds
+    /// exactly `expected`.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `check`.
+    pub fn check(
+        builder: &mut TypedBuilder<'_>,
+        registry: ComponentAddr,
+        name: u64,
+        expected: u128,
+    ) -> Result<(), TypedError> {
+        builder.call(registry, "check", (name, expected))?.none()
+    }
+
+    /// Remove one crank's worth of bindings from `cursor` up the hash
+    /// order; resume from the last removed order plus one.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `drain`.
+    pub fn drain(
+        builder: &mut TypedBuilder<'_>,
+        registry: ComponentAddr,
+        cursor: u128,
+    ) -> Result<(), TypedError> {
+        builder.call(registry, "drain", (cursor,))?.none()
+    }
+}
+
 /// The bucket splitter.
 pub mod splitter {
     use super::{Bucket, BucketArg, ComponentAddr, TypedBuilder, TypedError};

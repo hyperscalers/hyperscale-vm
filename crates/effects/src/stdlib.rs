@@ -37,8 +37,14 @@ pub const VOTE: RoleId = RoleId(8);
 /// `securify` creates. Absent for a virtual account.
 pub const AUTH: RoleId = RoleId(9);
 
+/// The registry's bindings: an unordered collection keyed by hashed name.
+pub const NAMES: RoleId = RoleId(10);
+
 /// The entry cap the book's fill range declares.
 pub const FILL_CAP: u32 = 64;
+
+/// The entry cap the registry's drain declares.
+pub const DRAIN_CAP: u32 = 8;
 
 fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
     Expr::ChildKey {
@@ -605,6 +611,87 @@ pub fn splitter_metadata() -> PackageMetadata {
                 Expr::ResourceOf(Box::new(Expr::Arg(0))),
                 Expr::ResourceOf(Box::new(Expr::Arg(0))),
             ],
+            ..MethodSignature::default()
+        },
+    );
+    methods
+}
+
+/// The name registry: the unordered-collection surface end to end.
+///
+/// Each binding is one entry of the `NAMES` collection at the hash of its
+/// name — the order arrives at the guest as a derived argument, because
+/// the hash is admission's to compute. `bind` writes the binding, `check`
+/// reads it and traps on a mismatch, and `drain` removes the hash order's
+/// tail from a caller-named cursor, `DRAIN_CAP` entries per crank.
+#[must_use]
+pub fn registry_metadata() -> PackageMetadata {
+    let binding = |name_slot: u32| {
+        let order = Expr::OrderKey {
+            owner: Box::new(Expr::SelfAddr),
+            role: NAMES,
+            material: vec![Expr::Arg(name_slot)],
+        };
+        (
+            TargetExpr::Entry {
+                owner: Expr::SelfAddr,
+                collection: NAMES,
+                material: vec![],
+                order: order.clone(),
+            },
+            order,
+        )
+    };
+    let mut methods = PackageMetadata::default();
+    let (target, order) = binding(0);
+    methods.methods.insert(
+        "bind".into(),
+        MethodSignature {
+            accessibility: Accessibility::Public,
+            params: vec![ParamType::U64, ParamType::U128],
+            abi: vec![
+                AbiParam::Handle(0),
+                AbiParam::Derived(order),
+                AbiParam::Derived(Expr::Arg(1)),
+            ],
+            effects: vec![Clause::Effect {
+                target,
+                mode: ModeExpr::Write,
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    let (target, _) = binding(0);
+    methods.methods.insert(
+        "check".into(),
+        MethodSignature {
+            accessibility: Accessibility::Public,
+            params: vec![ParamType::U64, ParamType::U128],
+            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
+            effects: vec![Clause::Effect {
+                target,
+                mode: ModeExpr::Read,
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    methods.methods.insert(
+        "drain".into(),
+        MethodSignature {
+            accessibility: Accessibility::Public,
+            params: vec![ParamType::U128],
+            abi: vec![AbiParam::Handle(0)],
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Range {
+                    owner: Expr::SelfAddr,
+                    collection: NAMES,
+                    material: vec![],
+                    lo: Expr::Arg(0),
+                    hi: Expr::Literal(Value::U128(u128::MAX)),
+                    cap: DRAIN_CAP,
+                },
+                mode: ModeExpr::Write,
+            }],
             ..MethodSignature::default()
         },
     );

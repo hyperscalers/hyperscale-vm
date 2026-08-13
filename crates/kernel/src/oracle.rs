@@ -66,6 +66,29 @@ pub fn target_covers(declared: &EffectTarget, accessed: &EffectTarget) -> bool {
                 && declared_collection == accessed_collection
                 && (lo..=hi).contains(&order)
         }
+        // A declared entry materializes as the width-one interval at its
+        // order, so reading through that capability records a one-entry
+        // scan of exactly the declared key. The scan is the entry.
+        (
+            EffectTarget::Entry {
+                owner: declared_owner,
+                collection: declared_collection,
+                order,
+            },
+            EffectTarget::Range {
+                owner: accessed_owner,
+                collection: accessed_collection,
+                lo,
+                hi,
+                cap,
+            },
+        ) => {
+            declared_owner == accessed_owner
+                && declared_collection == accessed_collection
+                && *lo == *order
+                && *hi == *order
+                && *cap <= 1
+        }
         (
             EffectTarget::Range {
                 owner: declared_owner,
@@ -183,6 +206,46 @@ mod tests {
             },
         ];
         assert_eq!(undeclared_accesses(&trace, &set), Vec::new());
+    }
+
+    #[test]
+    fn a_declared_entry_covers_its_own_width_one_scan() {
+        let owner = Address::new([1; 31], AddressClass::Component);
+        let entry = |mode| Effect {
+            target: EffectTarget::Entry {
+                owner,
+                collection: CollectionId([4; 16]),
+                order: 15,
+            },
+            mode,
+        };
+        let scan = |lo, hi, cap| Access {
+            target: EffectTarget::Range {
+                owner,
+                collection: CollectionId([4; 16]),
+                lo,
+                hi,
+                cap,
+            },
+            kind: ModeKind::Read,
+        };
+        // Reading through the entry's capability is the entry.
+        let set = declared(&[entry(Mode::Read)]);
+        assert_eq!(undeclared_accesses(&[scan(15, 15, 1)], &set), Vec::new());
+        // The write-implied read too.
+        let written = declared(&[entry(Mode::Write)]);
+        assert_eq!(
+            undeclared_accesses(&[scan(15, 15, 1)], &written),
+            Vec::new()
+        );
+        // A wider interval, a shifted one, or a larger cap is not the
+        // declared entry.
+        for escape in [scan(15, 16, 1), scan(14, 14, 1), scan(15, 15, 2)] {
+            assert_eq!(
+                undeclared_accesses(std::slice::from_ref(&escape), &set),
+                vec![escape.clone()]
+            );
+        }
     }
 
     #[test]

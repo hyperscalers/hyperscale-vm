@@ -12,7 +12,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{
-    ASKS, AUTH, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
+    ASKS, AUTH, CLAIMS, CONFIG, DRAIN_CAP, FILL_CAP, NAMES, VAULT, account_metadata, amm_metadata,
+    book_metadata, registry_metadata,
 };
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, Address, AuthBase, AuthCell, Clause, CollectionId, ComponentAddr,
@@ -20,7 +21,7 @@ use hyperscale_vm_effects::{
     InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash,
     PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, Proposal, ResourceAddr, RoleId,
     RoleSet, Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value,
-    admit, child_key, collection_id, fresh_id, route,
+    admit, child_key, collection_id, fresh_id, order_key, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -29,7 +30,7 @@ use hyperscale_vm_kernel::{
     InvokeResult, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt,
     SubstateStore, TxHash, decode_amount, encode_amount,
 };
-use hyperscale_vm_manifest_builder::native::{account, amm, book};
+use hyperscale_vm_manifest_builder::native::{account, amm, book, registry};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
@@ -113,10 +114,12 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     cache.publish(pkg("account"), account_metadata());
     cache.publish(pkg("amm"), amm_metadata());
     cache.publish(pkg("book"), book_metadata());
+    cache.publish(pkg("registry"), registry_metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, pool_meta());
     instances.create(&TestHasher, book_meta());
+    instances.create(&TestHasher, registry_meta());
     (cache, instances)
 }
 
@@ -152,6 +155,19 @@ fn book() -> ComponentAddr {
     book_meta().address(&TestHasher)
 }
 
+fn registry_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("registry"),
+        config: vec![],
+        salt: Hash32([5; 32]),
+    }
+}
+
+/// The name registry instance.
+fn registry_addr() -> ComponentAddr {
+    registry_meta().address(&TestHasher)
+}
+
 fn mirror_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("mirror"),
@@ -169,6 +185,7 @@ const PACKAGES: &[(&str, &str)] = &[
     ("account", "account"),
     ("amm", "amm"),
     ("book", "book"),
+    ("registry", "registry"),
     ("mirror", "account"),
 ];
 
@@ -187,7 +204,7 @@ impl Engines {
         let engine = blessed_engine()?;
         let mut blessed = BTreeMap::new();
         let mut reference = BTreeMap::new();
-        for name in ["account", "amm", "book"] {
+        for name in ["account", "amm", "book", "registry"] {
             let bytes = build_guest(name)?;
             validate_component(&bytes).with_context(|| format!("profile validation of {name}"))?;
             blessed.insert(name, Component::new(&engine, &bytes)?);
@@ -558,6 +575,17 @@ fn run_both_at(
         store.cells().map(|(k, v)| (k, v.to_vec())).collect()
     };
     assert_eq!(cells(&blessed_store), cells(&ref_store), "state diverged");
+    let entries = |store: &MemoryStore| -> BTreeMap<(Address, CollectionId, u128), Vec<u8>> {
+        store
+            .collection_entries()
+            .map(|(k, v)| (k, v.to_vec()))
+            .collect()
+    };
+    assert_eq!(
+        entries(&blessed_store),
+        entries(&ref_store),
+        "entries diverged"
+    );
     (blessed, blessed_store)
 }
 
@@ -1789,5 +1817,83 @@ fn every_guest_builds_against_the_canonical_world() -> Result<()> {
             std::fs::read(repo_root().join(format!("guests/{guest}/wit/deps/kernel/kernel.wit")))?;
         assert_eq!(canonical, copy, "{guest} kernel.wit drifted");
     }
+    Ok(())
+}
+
+/// The unordered collection end to end on both runtimes: bindings land at
+/// their hashed orders, a rebind overwrites in place, a mismatched check
+/// traps and rolls back, and one drain crank clears the tail.
+#[test]
+fn the_registry_binds_checks_and_drains_hashed_entries() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let store = MemoryStore::new();
+
+    let bind = |name: u64, value: u128| graph(|b| registry::bind(b, registry_addr(), name, value));
+    let check =
+        |name: u64, expected: u128| graph(|b| registry::check(b, registry_addr(), name, expected));
+
+    let (results, store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[
+            (&bind(7, 700), TxHash(Hash32([0x51; 32]))),
+            (&bind(9, 900), TxHash(Hash32([0x52; 32]))),
+            (&bind(7, 701), TxHash(Hash32([0x53; 32]))),
+            (&check(7, 701), TxHash(Hash32([0x54; 32]))),
+            (&check(9, 901), TxHash(Hash32([0x55; 32]))),
+        ],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    assert!(matches!(results[1], TxResult::Completed(_)));
+    assert!(
+        matches!(results[2], TxResult::Completed(_)),
+        "a rebind lands"
+    );
+    assert!(
+        matches!(results[3], TxResult::Completed(_)),
+        "a true check passes"
+    );
+    assert_eq!(results[4], TxResult::Trapped, "a false check traps");
+
+    // Exactly two bindings, each at the order its name hashes to, holding
+    // the last value bound — the rebind overwrote in place.
+    let names = collection_id(&TestHasher, registry_addr(), NAMES, &[]);
+    let order_of = |name: u64| {
+        order_key(
+            &TestHasher,
+            registry_addr(),
+            NAMES,
+            &[Value::U64(name).canonical_bytes()],
+        )
+    };
+    let entries: BTreeMap<u128, Vec<u8>> = store
+        .collection_entries()
+        .filter(|((owner, collection, _), _)| {
+            (*owner, *collection) == (registry_addr().into(), names)
+        })
+        .map(|((.., order), value)| (order, value.to_vec()))
+        .collect();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[&order_of(7)], 701u128.to_le_bytes().to_vec());
+    assert_eq!(entries[&order_of(9)], 900u128.to_le_bytes().to_vec());
+
+    // One crank from the bottom of the hash order clears everything —
+    // two entries against a cap of eight.
+    assert!(u32::try_from(entries.len()).unwrap() <= DRAIN_CAP);
+    let drain = graph(|b| registry::drain(b, registry_addr(), 0));
+    let (results, store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[(&drain, TxHash(Hash32([0x56; 32])))],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    assert_eq!(
+        store.collection_entries().count(),
+        0,
+        "the drain left nothing"
+    );
     Ok(())
 }

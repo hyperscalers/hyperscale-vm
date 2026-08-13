@@ -7,20 +7,22 @@
 //! that leaves is a method nobody wrapped, which the coverage check at the
 //! bottom is for.
 //!
-//! Only `account` and `staking` have guests. The other three are exercised
-//! against their metadata alone, which is all a wrapper can drift from.
+//! Only `account` and `staking` have committed guests. The rest are
+//! exercised against their metadata alone, which is all a wrapper can
+//! drift from.
 
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::stdlib::{
-    account_metadata, amm_metadata, book_metadata, splitter_metadata, staking_metadata,
+    account_metadata, amm_metadata, book_metadata, registry_metadata, splitter_metadata,
+    staking_metadata,
 };
 use hyperscale_vm_effects::{
     ComponentAddr, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
     MetadataCache, PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr, RoleSet, Rule,
     TestHasher, Value, admit, resource_address,
 };
-use hyperscale_vm_manifest_builder::native::{account, amm, book, splitter, staking};
+use hyperscale_vm_manifest_builder::native::{account, amm, book, registry, splitter, staking};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -72,6 +74,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
         ("staking", pool_config()),
         ("amm", pair_config()),
         ("book", pair_config()),
+        ("registry", vec![]),
         ("splitter", vec![]),
     ] {
         instances.create(&TestHasher, instance(name, config));
@@ -85,6 +88,7 @@ fn stdlib() -> Vec<(&'static str, PackageMetadata)> {
         ("account", account_metadata()),
         ("amm", amm_metadata()),
         ("book", book_metadata()),
+        ("registry", registry_metadata()),
         ("splitter", splitter_metadata()),
         ("staking", staking_metadata()),
     ]
@@ -248,6 +252,16 @@ fn the_book_wrappers_match_their_signatures() {
 }
 
 #[test]
+fn the_registry_wrappers_match_their_signatures() {
+    let registry_addr = address("registry", vec![]);
+    admits(|b| {
+        registry::bind(b, registry_addr, 7, 700)?;
+        registry::check(b, registry_addr, 7, 700)?;
+        registry::drain(b, registry_addr, 0)
+    });
+}
+
+#[test]
 fn the_splitter_wrapper_matches_its_signature() {
     let splitter = address("splitter", vec![]);
     admits(|b| {
@@ -280,6 +294,7 @@ fn every_stdlib_method_has_a_wrapper() {
         ),
         ("amm", &["swap"]),
         ("book", &["fill-asks", "place-ask"]),
+        ("registry", &["bind", "check", "drain"]),
         ("splitter", &["take"]),
         (
             "staking",

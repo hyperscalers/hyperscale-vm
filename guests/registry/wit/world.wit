@@ -1,0 +1,21 @@
+package test:guest;
+
+/// The name registry: each binding is one entry of an unordered
+/// collection, living at the hash of its name, and a drain walks the hash
+/// order's tail.
+world registry {
+    import hyperscale:kernel/state;
+
+    use hyperscale:kernel/state.{range-read, range-write};
+
+    /// Set the binding — the width-one interval at the name's hashed
+    /// order — to `value`. The order arrives derived, because the hash is
+    /// admission's to compute, never the guest's.
+    export bind: func(entry: borrow<range-write>, order: list<u8>, value: list<u8>);
+
+    /// Trap unless the binding holds exactly `expected`.
+    export check: func(entry: borrow<range-read>, expected: list<u8>);
+
+    /// Remove every entry the declared tail shows, bounded by its cap.
+    export drain: func(tail: borrow<range-write>);
+}
