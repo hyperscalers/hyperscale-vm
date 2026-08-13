@@ -20,9 +20,9 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Base, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
+    Baseline, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
     GuestRunner, InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome,
-    OverlayStore, SubstateStore, TxHash, encode_amount, execute_batch,
+    OverlayStore, TxHash, WorkingStore, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_manifest_builder::native::account;
@@ -350,7 +350,7 @@ fn main() -> Result<()> {
             .iter()
             .map(|entry| {
                 KernelSession::materialize(
-                    OverlayStore::new(Arc::clone(&base) as Arc<dyn Base>),
+                    OverlayStore::new(Arc::clone(&base) as Arc<dyn Baseline>),
                     &entry.declared,
                     &entry.ordered,
                     entry.tx,

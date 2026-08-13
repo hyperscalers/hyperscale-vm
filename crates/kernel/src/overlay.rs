@@ -1,7 +1,7 @@
 //! The overlay store: a transaction's state surface as layers over a
 //! shared committed base.
 //!
-//! An [`OverlayStore`] holds an immutable base (`Arc<dyn Base>`), a
+//! An [`OverlayStore`] holds an immutable base (`Arc<dyn Baseline>`), a
 //! `committed` layer carrying what earlier transactions in the same
 //! conflict group threaded, and an `active` layer carrying the current
 //! transaction's effects. Every mutation lands in `active`; reads fall
@@ -23,7 +23,9 @@ use hyperscale_vm_effects::{Address, CollectionId, EffectTarget, ModeKind, Subst
 use crate::modes::{
     DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount, fold_deltas, judge,
 };
-use crate::store::{Access, AppliedDelta, Base, MemoryStore, StoreError, SubstateStore};
+use crate::store::{
+    Access, AppliedDelta, Baseline, MemoryStore, StoreError, Substates, WorkingStore,
+};
 
 /// A collection's layered entry changes: `None` values are tombstones.
 type EntryChanges = BTreeMap<u128, Option<Vec<u8>>>;
@@ -50,7 +52,6 @@ fn layer_range<'a>(
 struct Layer {
     cells: BTreeMap<SubstateKey, Option<Vec<u8>>>,
     entries: BTreeMap<(Address, CollectionId), EntryChanges>,
-    locked: BTreeSet<SubstateKey>,
     pending_deltas: BTreeMap<SubstateKey, Vec<DeltaOp>>,
     held: BTreeMap<SubstateKey, BTreeMap<TxHash, Option<u128>>>,
 }
@@ -63,7 +64,7 @@ struct Layer {
 /// group's threading O(overlay), not O(store).
 #[derive(Clone, Debug)]
 pub struct OverlayStore {
-    base: Arc<dyn Base>,
+    base: Arc<dyn Baseline>,
     committed: Arc<Layer>,
     active: Layer,
     log: Vec<Access>,
@@ -72,7 +73,7 @@ pub struct OverlayStore {
 impl OverlayStore {
     /// An empty overlay over `base`.
     #[must_use]
-    pub fn new(base: Arc<dyn Base>) -> Self {
+    pub fn new(base: Arc<dyn Baseline>) -> Self {
         Self {
             base,
             committed: Arc::new(Layer::default()),
@@ -83,7 +84,7 @@ impl OverlayStore {
 
     /// The shared base: the batch baseline locked reads resolve against.
     #[must_use]
-    pub const fn base(&self) -> &Arc<dyn Base> {
+    pub const fn base(&self) -> &Arc<dyn Baseline> {
         &self.base
     }
 
@@ -102,24 +103,11 @@ impl OverlayStore {
         self.log.push(Access { target, kind });
     }
 
-    /// Whether a substate is permanently locked, in any layer.
+    /// Whether a substate is permanently locked. Locks are baseline
+    /// state — creation-fixed configuration composed under the base — so
+    /// the layers never carry one.
     #[must_use]
     pub fn is_locked(&self, key: SubstateKey) -> bool {
-        self.active.locked.contains(&key)
-            || self.committed.locked.contains(&key)
-            || self.base.is_locked(key)
-    }
-
-    /// Whether a substate is locked at the batch baseline — the layer a
-    /// locked read serves from.
-    ///
-    /// The two lockedness questions part ways over a lock born in this
-    /// batch: every mutation gate must see it (a fresh lock rejects
-    /// writes like an old one), and no locked read may pass on it,
-    /// because [`SubstateStore::locked`] reads the baseline and would
-    /// come back with whatever the cell held before the batch.
-    #[must_use]
-    pub fn is_locked_at_baseline(&self, key: SubstateKey) -> bool {
         self.base.is_locked(key)
     }
 
@@ -564,7 +552,6 @@ impl OverlayStore {
                 .or_default()
                 .extend(entries);
         }
-        committed.locked.extend(active.locked);
         for (key, ops) in active.pending_deltas {
             committed.pending_deltas.entry(key).or_default().extend(ops);
         }
@@ -590,66 +577,57 @@ impl OverlayStore {
         !self.active.cells.is_empty() || !self.committed.cells.is_empty()
     }
 
-    /// Collapse the overlay into a plain store: the base with both layers
-    /// applied and a clear access log. The base is taken over when
-    /// unshared, copied otherwise.
-    ///
-    /// # Panics
-    ///
-    /// If the base is not a plain [`MemoryStore`] — collapse is the
-    /// kernel-suite convenience; integration bases diff the layers
-    /// instead.
+    /// Apply both layers onto `base`, returning the collapsed plain store
+    /// with a clear access log — the kernel-suite convenience for
+    /// asserting a batch's end state. `base` must be the store this
+    /// overlay was built over; integration bases diff the layers instead.
     #[must_use]
-    pub fn collapse(self) -> MemoryStore {
-        let base = self
-            .base
-            .into_any()
-            .downcast::<MemoryStore>()
-            .expect("collapse requires a MemoryStore base");
-        let mut store = Arc::try_unwrap(base).unwrap_or_else(|shared| (*shared).clone());
-        let committed = Arc::try_unwrap(self.committed).unwrap_or_else(|shared| (*shared).clone());
-        for layer in [committed, self.active] {
-            for (key, change) in layer.cells {
+    pub fn collapse_onto(&self, mut store: MemoryStore) -> MemoryStore {
+        for layer in [self.committed.as_ref(), &self.active] {
+            for (key, change) in &layer.cells {
                 match change {
                     Some(value) => {
-                        store.cells.insert(key, value);
+                        store.cells.insert(*key, value.clone());
                     }
                     None => {
-                        store.cells.remove(&key);
+                        store.cells.remove(key);
                     }
                 }
             }
-            for (collection, entries) in layer.entries {
+            for (collection, entries) in &layer.entries {
                 for (order, change) in entries {
                     match change {
                         Some(value) => {
                             store
                                 .entries
-                                .entry(collection)
+                                .entry(*collection)
                                 .or_default()
-                                .insert(order, value);
+                                .insert(*order, value.clone());
                         }
                         None => {
-                            if let Some(existing) = store.entries.get_mut(&collection) {
-                                existing.remove(&order);
+                            if let Some(existing) = store.entries.get_mut(collection) {
+                                existing.remove(order);
                             }
                         }
                     }
                 }
             }
-            store.locked.extend(layer.locked);
-            for (key, ops) in layer.pending_deltas {
-                store.pending_deltas.entry(key).or_default().extend(ops);
+            for (key, ops) in &layer.pending_deltas {
+                store
+                    .pending_deltas
+                    .entry(*key)
+                    .or_default()
+                    .extend(ops.iter().copied());
             }
-            for (key, holds) in layer.held {
+            for (key, holds) in &layer.held {
                 for (tx, change) in holds {
                     match change {
                         Some(amount) => {
-                            store.held.entry(key).or_default().insert(tx, amount);
+                            store.held.entry(*key).or_default().insert(*tx, *amount);
                         }
                         None => {
-                            if let Some(existing) = store.held.get_mut(&key) {
-                                existing.remove(&tx);
+                            if let Some(existing) = store.held.get_mut(key) {
+                                existing.remove(tx);
                             }
                         }
                     }
@@ -661,7 +639,7 @@ impl OverlayStore {
     }
 }
 
-impl SubstateStore for OverlayStore {
+impl WorkingStore for OverlayStore {
     fn read(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
         self.record(EffectTarget::Point(key), ModeKind::Read);
         Ok(self.cell_value(key))
@@ -670,8 +648,8 @@ impl SubstateStore for OverlayStore {
     fn locked(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
         self.record(EffectTarget::Point(key), ModeKind::Locked);
         // The baseline, deliberately: a locked read is pinned like every
-        // snapshot, and materialization refuses a lock born in this
-        // batch, so the layers can hold nothing this read should see.
+        // snapshot, and a locked cell rejects every mutation, so the
+        // layers can hold nothing this read should see.
         Ok(self.base.cell(key))
     }
 
@@ -690,36 +668,11 @@ impl SubstateStore for OverlayStore {
         Ok(previous)
     }
 
-    fn lock(&mut self, key: SubstateKey) -> Result<(), StoreError> {
-        if self.cell_value(key).is_none() {
-            return Err(StoreError::LockMissing(key));
-        }
-        self.active.locked.insert(key);
-        Ok(())
-    }
-
     fn queue_delta(&mut self, key: SubstateKey, op: DeltaOp) -> Result<(), StoreError> {
         self.reject_locked(key)?;
         self.record(EffectTarget::Point(key), ModeKind::Delta);
         self.active.pending_deltas.entry(key).or_default().push(op);
         Ok(())
-    }
-
-    fn entry_read(
-        &mut self,
-        owner: Address,
-        collection: CollectionId,
-        order: u128,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        self.record(
-            EffectTarget::Entry {
-                owner,
-                collection,
-                order,
-            },
-            ModeKind::Read,
-        );
-        Ok(self.entry_value(owner, collection, order))
     }
 
     fn entry_write(
@@ -768,7 +721,7 @@ impl SubstateStore for OverlayStore {
         Ok(previous)
     }
 
-    fn scan(
+    fn entries_in_range(
         &mut self,
         owner: Address,
         collection: CollectionId,
@@ -796,7 +749,7 @@ impl SubstateStore for OverlayStore {
     }
 }
 
-impl Base for OverlayStore {
+impl Substates for OverlayStore {
     fn cell(&self, key: SubstateKey) -> Option<Vec<u8>> {
         self.cell_value(key)
     }
@@ -811,7 +764,9 @@ impl Base for OverlayStore {
     ) -> Vec<(u128, Vec<u8>)> {
         self.merged_entries(owner, collection, lo, hi, limit)
     }
+}
 
+impl Baseline for OverlayStore {
     fn is_locked(&self, key: SubstateKey) -> bool {
         Self::is_locked(self, key)
     }
@@ -822,10 +777,6 @@ impl Base for OverlayStore {
 
     fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
         Self::held_reservation(self, key, tx)
-    }
-
-    fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
-        self
     }
 }
 
@@ -839,7 +790,7 @@ mod tests {
 
     use super::OverlayStore;
     use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
-    use crate::store::{MemoryStore, StoreError, SubstateStore};
+    use crate::store::{MemoryStore, StoreError, WorkingStore};
 
     fn key(byte: u8) -> SubstateKey {
         child_key(
@@ -878,10 +829,13 @@ mod tests {
         // Effective entries: 10→99 (active over base), 15, 20; a removed
         // base entry and a removed committed-layer entry never surface,
         // and neither consumes the cap.
-        let hits = overlay.scan(BOOK, ASKS, 0, 100, 3).unwrap();
+        let hits = overlay.entries_in_range(BOOK, ASKS, 0, 100, 3).unwrap();
         assert_eq!(hits, vec![(10, vec![99]), (15, vec![15]), (20, vec![20])]);
         // Inverted intervals are empty, not errors.
-        assert_eq!(overlay.scan(BOOK, ASKS, 100, 0, 3).unwrap(), Vec::new());
+        assert_eq!(
+            overlay.entries_in_range(BOOK, ASKS, 100, 0, 3).unwrap(),
+            Vec::new()
+        );
     }
 
     #[test]
@@ -897,12 +851,12 @@ mod tests {
         overlay.merge_active();
         // Sixteen tombstones stand between the interval's start and the
         // first survivor, and the cap is two.
-        let hits = overlay.scan(BOOK, ASKS, 0, 100, 2).unwrap();
+        let hits = overlay.entries_in_range(BOOK, ASKS, 0, 100, 2).unwrap();
         assert_eq!(hits, vec![(16, vec![16]), (17, vec![17])]);
 
         // Deleting in the active layer over a merged one is the same.
         overlay.entry_remove(BOOK, ASKS, 16).unwrap();
-        let hits = overlay.scan(BOOK, ASKS, 0, 100, 2).unwrap();
+        let hits = overlay.entries_in_range(BOOK, ASKS, 0, 100, 2).unwrap();
         assert_eq!(hits, vec![(17, vec![17]), (18, vec![18])]);
     }
 
@@ -937,7 +891,13 @@ mod tests {
         overlay.entry_remove(BOOK, ASKS, 5).unwrap();
         overlay.discard_active();
         assert_eq!(overlay.read(cell).unwrap(), Some(vec![1]));
-        assert_eq!(overlay.scan(BOOK, ASKS, 0, 10, 10).unwrap().len(), 1);
+        assert_eq!(
+            overlay
+                .entries_in_range(BOOK, ASKS, 0, 10, 10)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -1050,15 +1010,16 @@ mod tests {
     }
 
     #[test]
-    fn locks_layer_and_reject_mutations() {
-        let mut overlay = overlay_over(&[]);
+    fn base_locks_reject_overlay_mutations() {
+        let mut base = MemoryStore::new();
         let cell = key(5);
-        assert_eq!(overlay.lock(cell), Err(StoreError::LockMissing(cell)));
-        overlay.write(cell, vec![7]).unwrap();
-        overlay.lock(cell).unwrap();
-        overlay.merge_active();
+        base.write(cell, vec![7]).unwrap();
+        base.lock(cell);
+        base.clear_log();
+        let mut overlay = OverlayStore::new(Arc::new(base));
         assert!(overlay.is_locked(cell));
         assert_eq!(overlay.write(cell, vec![8]), Err(StoreError::Locked(cell)));
+        assert_eq!(overlay.remove(cell), Err(StoreError::Locked(cell)));
         assert_eq!(
             overlay.queue_delta(cell, DeltaOp::Add(1)),
             Err(StoreError::Locked(cell))
@@ -1067,7 +1028,12 @@ mod tests {
 
     #[test]
     fn collapse_applies_both_layers_to_the_base() {
-        let mut overlay = overlay_over(&[(5, 5), (10, 10)]);
+        let mut base = MemoryStore::new();
+        for (order, value) in [(5u128, 5u8), (10, 10)] {
+            base.entry_write(BOOK, ASKS, order, vec![value]).unwrap();
+        }
+        base.clear_log();
+        let mut overlay = OverlayStore::new(Arc::new(base.clone()));
         let cell = key(6);
         overlay.write(cell, vec![1]).unwrap();
         overlay.entry_remove(BOOK, ASKS, 5).unwrap();
@@ -1075,10 +1041,10 @@ mod tests {
         overlay.entry_write(BOOK, ASKS, 7, vec![7]).unwrap();
         overlay.remove(cell).unwrap();
 
-        let mut collapsed = overlay.collapse();
+        let mut collapsed = overlay.collapse_onto(base);
         assert_eq!(collapsed.read(cell).unwrap(), None);
         assert_eq!(
-            collapsed.scan(BOOK, ASKS, 0, 100, 10).unwrap(),
+            collapsed.entries_in_range(BOOK, ASKS, 0, 100, 10).unwrap(),
             vec![(7, vec![7]), (10, vec![10])]
         );
     }

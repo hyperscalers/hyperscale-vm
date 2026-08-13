@@ -14,7 +14,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{
     BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MemoryStore, Movement,
-    Outcome, RunResult, SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
+    Outcome, RunResult, TxHash, WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 
 const FUEL: u64 = 7;

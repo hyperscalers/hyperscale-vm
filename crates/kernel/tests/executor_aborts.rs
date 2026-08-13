@@ -11,7 +11,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{
     BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
-    MemoryStore, Outcome, OverlayStore, RunResult, SubstateStore, TxHash, decode_amount,
+    MemoryStore, Outcome, OverlayStore, RunResult, TxHash, WorkingStore, decode_amount,
     encode_amount, execute_batch,
 };
 
@@ -251,7 +251,7 @@ fn racing_debits_lose_deterministically_in_canonical_order() {
 fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
     let mut store = MemoryStore::new();
     store.write(cell(0xAB), vec![1]).unwrap();
-    store.lock(cell(0xAB)).unwrap();
+    store.lock(cell(0xAB));
     store.write(cell(0xAC), vec![1, 2, 3]).unwrap();
     store
         .write(cell(0xAD), encode_amount(100).to_vec())
@@ -422,7 +422,7 @@ fn a_drained_vault_leaves_no_cell() {
     // Crediting a deleted cell brings it back, and the arithmetic never
     // saw a difference: absent reads as zero throughout.
     let refilled = execute_batch(
-        Arc::new(outcome.store.collapse()),
+        Arc::new(outcome.store),
         &[BatchTx::new(
             tx(0x03),
             with_delta(point(cell(0xC), Mode::Reserve { amount: 20 }), cell(0xA)),

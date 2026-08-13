@@ -13,7 +13,7 @@ use hyperscale_vm_harness::fixtures::{build_transfer_component, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, KernelSession, MaterializeError, MemoryStore, Movement, Outcome,
-    OverlayStore, SubstateStore, TxHash, encode_amount,
+    OverlayStore, TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, add_kernel_to_linker, blessed_engine, validate_component,

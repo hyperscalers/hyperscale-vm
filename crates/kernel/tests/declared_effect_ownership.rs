@@ -25,7 +25,7 @@ use hyperscale_vm_effects::{
     SubstateKey, TargetExpr, TestHasher, Value, admit, child_key, route,
 };
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore, SubstateStore, TxHash,
+    Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, WorkingStore,
     encode_amount,
 };
 

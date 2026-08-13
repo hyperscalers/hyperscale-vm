@@ -12,8 +12,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::build_transfer_component;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome, OverlayStore,
-    SubstateStore, TxHash, encode_amount,
+    Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome, OverlayStore, TxHash,
+    WorkingStore, encode_amount,
 };
 use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,

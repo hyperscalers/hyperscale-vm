@@ -28,8 +28,8 @@ use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchTx, CellKind, EnvInputs, Event, GuestArg, GuestBackend, GuestCall, GuestRunner,
-    InvokeResult, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt,
-    SubstateStore, TxHash, decode_amount, encode_amount, multiply_held_ids,
+    InvokeResult, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt, TxHash,
+    WorkingStore, decode_amount, encode_amount, multiply_held_ids,
 };
 use hyperscale_vm_manifest_builder::native::{account, amm, book, nf, registry};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -508,7 +508,7 @@ fn execute_manifest(
                 .session
                 .finish(Outcome::Completed { value: None }, run.fuel)
                 .expect("the oracle stands on every corpus receipt");
-            Ok((TxResult::Completed(receipt), threaded.collapse()))
+            Ok((TxResult::Completed(receipt), threaded.collapse_onto(before)))
         }
         Outcome::UserError { .. } => Ok((TxResult::Trapped, before)),
         refused => Ok((TxResult::Refused(refused), before)),
@@ -1608,7 +1608,7 @@ fn swap_store() -> MemoryStore {
     store
         .write(config_leaf(pool()), 30u16.to_le_bytes().to_vec())
         .unwrap();
-    store.lock(config_leaf(pool())).unwrap();
+    store.lock(config_leaf(pool()));
     store.clear_log();
     store
 }

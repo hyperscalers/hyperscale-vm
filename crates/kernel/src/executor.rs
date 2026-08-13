@@ -41,7 +41,7 @@ use crate::overlay::OverlayStore;
 use crate::session::{
     EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt, StateDelta,
 };
-use crate::store::{Base, StoreError, SubstateStore};
+use crate::store::{Baseline, StoreError, Substates, WorkingStore};
 use crate::work::Work;
 
 /// One transaction of a batch: its identity and its routed effect set.
@@ -494,7 +494,7 @@ fn run_group<R: GuestRunner>(
     locality: &Locality,
 ) -> Result<Vec<(TxHash, Receipt)>, BatchError> {
     let mut receipts = Vec::with_capacity(group.len());
-    let shared: Arc<dyn Base> = Arc::<OverlayStore>::clone(judged);
+    let shared: Arc<dyn Baseline> = Arc::<OverlayStore>::clone(judged);
     let mut store = OverlayStore::new(shared);
     for &index in group {
         let entry = batch[index];
@@ -693,7 +693,7 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
 /// kernel defect of a group overlay outliving its group, or if judging
 /// wrote a cell and moved the batch's baseline.
 pub fn execute_batch<R: GuestRunner>(
-    base: Arc<dyn Base>,
+    base: Arc<dyn Baseline>,
     batch: &[BatchTx],
     runner: &R,
     hash_fn: fn(&[u8]) -> [u8; 32],

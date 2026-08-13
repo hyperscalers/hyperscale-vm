@@ -30,7 +30,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore,
-    Outcome, Receipt, RunResult, SubstateStore, TxHash, Work, encode_amount, execute_batch,
+    Outcome, Receipt, RunResult, TxHash, Work, WorkingStore, encode_amount, execute_batch,
 };
 
 const PAYER_BYTE: u8 = 0xA1;

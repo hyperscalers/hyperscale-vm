@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
-    MemoryStore, Movement, Outcome, RunResult, SubstateStore, TxHash, decode_amount, encode_amount,
+    MemoryStore, Movement, Outcome, RunResult, TxHash, WorkingStore, decode_amount, encode_amount,
     execute_batch,
 };
 
@@ -187,9 +187,10 @@ fn amount_at(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
         .map_or(0, |cell| decode_amount(&cell).unwrap())
 }
 
-/// The end state's full cell map, through the collapsed overlay.
-fn collect_cells(outcome: &BatchOutcome) -> BTreeMap<SubstateKey, Vec<u8>> {
-    let store = outcome.store.clone().collapse();
+/// The end state's full cell map, through the collapsed overlay. `base`
+/// is the store the batch executed over.
+fn collect_cells(outcome: &BatchOutcome, base: &MemoryStore) -> BTreeMap<SubstateKey, Vec<u8>> {
+    let store = outcome.store.collapse_onto(base.clone());
     store
         .cells()
         .map(|(key, value)| (key, value.to_vec()))
@@ -282,7 +283,7 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         scripted(entry, session)
     };
     let permuted = execute_batch(
-        Arc::new(store),
+        Arc::new(store.clone()),
         &batch,
         &stalled,
         test_hash,
@@ -294,8 +295,14 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
     assert_eq!(serial.receipts, parallel.receipts);
     assert_eq!(serial.receipts, permuted.receipts);
 
-    assert_eq!(collect_cells(&serial), collect_cells(&parallel));
-    assert_eq!(collect_cells(&serial), collect_cells(&permuted));
+    assert_eq!(
+        collect_cells(&serial, &store),
+        collect_cells(&parallel, &store)
+    );
+    assert_eq!(
+        collect_cells(&serial, &store),
+        collect_cells(&permuted, &store)
+    );
 }
 
 #[test]
@@ -328,7 +335,10 @@ fn input_order_cannot_influence_any_receipt() {
             )
             .unwrap();
             assert_eq!(baseline.receipts, outcome.receipts);
-            assert_eq!(collect_cells(&baseline), collect_cells(&outcome));
+            assert_eq!(
+                collect_cells(&baseline, &store),
+                collect_cells(&outcome, &store)
+            );
         }
     }
 }

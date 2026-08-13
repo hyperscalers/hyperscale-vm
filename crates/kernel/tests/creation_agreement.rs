@@ -11,7 +11,7 @@ use hyperscale_vm_effects::{
     PrefixShardResolver, PrincipalAddr, RoleId, ShardResolver, TargetExpr, TestHasher, Value,
     admit, collection_id, fresh_id, route,
 };
-use hyperscale_vm_kernel::{CreationContext, MemoryStore, SubstateStore};
+use hyperscale_vm_kernel::{CreationContext, MemoryStore, WorkingStore};
 
 #[test]
 fn a_routed_fresh_key_is_the_key_the_kernel_creates() {

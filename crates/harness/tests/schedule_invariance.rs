@@ -16,7 +16,7 @@ use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
-    Locality, MemoryStore, Outcome, OverlayStore, RunResult, SubstateStore, TxHash, decode_amount,
+    Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, WorkingStore, decode_amount,
     encode_amount, execute_batch,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
@@ -309,9 +309,11 @@ impl GuestRunner for RefRunner {
     }
 }
 
-fn cells(outcome: &BatchOutcome) -> BTreeMap<SubstateKey, Vec<u8>> {
-    let store = outcome.store.clone().collapse();
-    store
+/// The end state's full cell map; `base` is the store the batch ran over.
+fn cells(outcome: &BatchOutcome, base: &MemoryStore) -> BTreeMap<SubstateKey, Vec<u8>> {
+    outcome
+        .store
+        .collapse_onto(base.clone())
         .cells()
         .map(|(key, value)| (key, value.to_vec()))
         .collect()
@@ -365,8 +367,8 @@ fn six_schedules_one_outcome() -> Result<()> {
             "{name} receipts diverged from {baseline_name}"
         );
         assert_eq!(
-            cells(baseline),
-            cells(outcome),
+            cells(baseline, &store),
+            cells(outcome, &store),
             "{name} state diverged from {baseline_name}"
         );
     }

@@ -43,7 +43,7 @@ pub use session::{
     MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, Movement, Outcome, Receipt, SessionTrap,
     StateDelta,
 };
-pub use store::{Access, AppliedDelta, Base, MemoryStore, StoreError, SubstateStore};
+pub use store::{Access, AppliedDelta, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
 pub use supply::SupplyLedger;
 pub use walk::{
     CellKind, GuestArg, GuestBackend, GuestCall, InvokeResult, ManifestWalk, OUT_OF_GAS,

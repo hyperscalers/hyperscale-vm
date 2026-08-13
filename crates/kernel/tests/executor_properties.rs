@@ -25,7 +25,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore,
-    Movement, Outcome, RunResult, SubstateStore, TxHash, decode_amount, encode_amount,
+    Movement, Outcome, RunResult, TxHash, WorkingStore, decode_amount, encode_amount,
     execute_batch,
 };
 use proptest::collection::vec as prop_vec;
@@ -304,7 +304,7 @@ fn funded() -> MemoryStore {
         store
             .write(locked_cell(index), encode_amount(FUNDING).to_vec())
             .unwrap();
-        store.lock(locked_cell(index)).unwrap();
+        store.lock(locked_cell(index));
     }
     for order in 0..4u128 {
         store
@@ -324,6 +324,8 @@ struct EndState {
 }
 
 fn end_state(outcome: &BatchOutcome, batch: &[BatchTx]) -> EndState {
+    // Every property batch executes over `funded()`, so the collapse
+    // target is rebuilt rather than threaded through.
     let holds = batch
         .iter()
         .flat_map(|entry| {
@@ -335,7 +337,7 @@ fn end_state(outcome: &BatchOutcome, batch: &[BatchTx]) -> EndState {
             })
         })
         .collect();
-    let collapsed = outcome.store.clone().collapse();
+    let collapsed = outcome.store.collapse_onto(funded());
     EndState {
         cells: collapsed
             .cells()

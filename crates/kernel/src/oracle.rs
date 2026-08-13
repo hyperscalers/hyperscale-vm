@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{Address, CollectionId, EffectSet, EffectTarget, ModeKind};
 
-use crate::store::{Access, Base};
+use crate::store::{Access, Substates};
 
 /// Whether a declared mode kind permits an access of the given kind.
 #[must_use]
@@ -148,7 +148,7 @@ pub fn undeclared_accesses(trace: &[Access], declared: &EffectSet) -> Vec<Access
 /// wave creates an entry it later removes and nets to a single holding,
 /// while an id genuinely landing twice is two entries no netting erases.
 #[must_use]
-pub fn multiply_held_ids(store: &dyn Base, holdings: &[(Address, CollectionId)]) -> Vec<u128> {
+pub fn multiply_held_ids(store: &dyn Substates, holdings: &[(Address, CollectionId)]) -> Vec<u128> {
     let mut holders: BTreeMap<u128, usize> = BTreeMap::new();
     for &(holder, collection) in holdings {
         for (order, _) in store.entries_in_range(holder, collection, 0, u128::MAX, usize::MAX) {
@@ -170,7 +170,7 @@ mod tests {
     };
 
     use super::{multiply_held_ids, undeclared_accesses};
-    use crate::store::{Access, MemoryStore, SubstateStore};
+    use crate::store::{Access, MemoryStore, WorkingStore};
 
     fn declared(effects: &[Effect]) -> EffectSet {
         let mut set = EffectSet::new();

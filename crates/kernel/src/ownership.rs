@@ -11,7 +11,7 @@
 
 use hyperscale_vm_effects::{Address, Hasher, ManifestHash, SubstateKey, fresh_local};
 
-use crate::store::{StoreError, SubstateStore};
+use crate::store::{StoreError, WorkingStore};
 
 /// The creating context: who owns what this call creates, and the
 /// derivation root that makes every created key deterministic.
@@ -74,7 +74,7 @@ impl CreationContext {
     /// # Errors
     ///
     /// Any [`StoreError`] from the write.
-    pub fn create<S: SubstateStore>(
+    pub fn create<S: WorkingStore>(
         &mut self,
         store: &mut S,
         hasher: &dyn Hasher,
@@ -82,23 +82,6 @@ impl CreationContext {
     ) -> Result<SubstateKey, StoreError> {
         let key = self.fresh_key(hasher);
         store.write(key, value)?;
-        Ok(key)
-    }
-
-    /// Create a substate at the next fresh key and permanently lock it —
-    /// the creation-fixed configuration path.
-    ///
-    /// # Errors
-    ///
-    /// Any [`StoreError`] from the write or the lock.
-    pub fn create_locked<S: SubstateStore>(
-        &mut self,
-        store: &mut S,
-        hasher: &dyn Hasher,
-        value: Vec<u8>,
-    ) -> Result<SubstateKey, StoreError> {
-        let key = self.create(store, hasher, value)?;
-        store.lock(key)?;
         Ok(key)
     }
 }
@@ -125,7 +108,7 @@ pub enum MoveError {
 ///
 /// [`MoveError::Missing`] if the source is absent, [`MoveError::Occupied`]
 /// if the destination key holds a value, or any store failure.
-pub fn move_object<S: SubstateStore>(
+pub fn move_object<S: WorkingStore>(
     store: &mut S,
     source: SubstateKey,
     to: Address,
@@ -147,7 +130,7 @@ mod tests {
     use hyperscale_vm_effects::{Address, AddressClass, Hash32, ManifestHash, TestHasher};
 
     use super::{CreationContext, MoveError, move_object};
-    use crate::store::{MemoryStore, StoreError, SubstateStore};
+    use crate::store::{MemoryStore, StoreError, WorkingStore};
 
     fn context(owner_byte: u8) -> CreationContext {
         CreationContext::new(
@@ -168,9 +151,6 @@ mod tests {
         assert_eq!(second.owner, ctx.owner());
         assert_ne!(first.local, second.local);
         assert_eq!(store.read(first).unwrap(), Some(vec![1]));
-
-        let locked = ctx.create_locked(&mut store, &TestHasher, vec![3]).unwrap();
-        assert!(store.is_locked(locked));
     }
 
     #[test]
@@ -213,7 +193,8 @@ mod tests {
         );
 
         // A locked substate cannot move.
-        let locked = ctx.create_locked(&mut store, &TestHasher, vec![4]).unwrap();
+        let locked = ctx.create(&mut store, &TestHasher, vec![4]).unwrap();
+        store.lock(locked);
         assert_eq!(
             move_object(
                 &mut store,

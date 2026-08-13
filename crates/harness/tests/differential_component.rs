@@ -14,7 +14,7 @@ use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome, OverlayStore, Receipt,
-    SubstateStore, TxHash, encode_amount,
+    TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
@@ -94,7 +94,7 @@ fn fixture() -> Fixture {
     let mut store = MemoryStore::new();
     store.write(sender, encode_amount(100).to_vec()).unwrap();
     store.write(config, vec![7, 7]).unwrap();
-    store.lock(config).unwrap();
+    store.lock(config);
     store.write(rmw, vec![1, 2, 3]).unwrap();
     store.write(readable, vec![5]).unwrap();
     for (order, value) in [(10u128, vec![3u8]), (20, vec![4]), (30, vec![5])] {

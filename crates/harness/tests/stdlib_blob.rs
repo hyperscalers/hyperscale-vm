@@ -21,7 +21,7 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, Event, KernelSession, MemoryStore, Movement, Outcome, OverlayStore,
-    Receipt, SubstateStore, TxHash, encode_amount,
+    Receipt, TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{

@@ -15,7 +15,7 @@ use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Hash32, RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    DeltaOp, MemoryStore, OverlayStore, SubstateStore, TxHash, encode_amount,
+    DeltaOp, MemoryStore, OverlayStore, TxHash, WorkingStore, encode_amount,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
@@ -45,10 +45,8 @@ enum Op {
     Read(u8),
     Write(u8, Vec<u8>),
     Remove(u8),
-    Lock(u8),
     QueueDelta(u8, DeltaOp),
     CommitDeltas,
-    EntryRead(u8, u8, u128),
     EntryWrite(u8, u8, u128, Vec<u8>),
     EntryRemove(u8, u8, u128),
     Scan(u8, u8, u128, u128, u32),
@@ -72,7 +70,6 @@ fn arb_op() -> impl Strategy<Value = Op> {
         // exercisable on the same cells.
         (key.clone(), amount.clone()).prop_map(|(k, a)| Op::Write(k, encode_amount(a).to_vec())),
         key.clone().prop_map(Op::Remove),
-        key.clone().prop_map(Op::Lock),
         (key.clone(), any::<bool>(), amount.clone()).prop_map(|(k, add, a)| {
             Op::QueueDelta(
                 k,
@@ -84,8 +81,6 @@ fn arb_op() -> impl Strategy<Value = Op> {
             )
         }),
         Just(Op::CommitDeltas),
-        (owner.clone(), collection.clone(), order.clone())
-            .prop_map(|(o, c, ord)| Op::EntryRead(o, c, ord)),
         (owner.clone(), collection.clone(), order.clone(), value)
             .prop_map(|(o, c, ord, v)| Op::EntryWrite(o, c, ord, v)),
         (owner.clone(), collection.clone(), order.clone())
@@ -104,15 +99,8 @@ fn apply<S: Store>(store: &mut S, op: &Op) -> String {
         Op::Read(k) => format!("{:?}", store.sub().read(cell(*k))),
         Op::Write(k, v) => format!("{:?}", store.sub().write(cell(*k), v.clone())),
         Op::Remove(k) => format!("{:?}", store.sub().remove(cell(*k))),
-        Op::Lock(k) => format!("{:?}", store.sub().lock(cell(*k))),
         Op::QueueDelta(k, op) => format!("{:?}", store.sub().queue_delta(cell(*k), *op)),
         Op::CommitDeltas => format!("{:?}", store.commit_deltas()),
-        Op::EntryRead(o, c, ord) => format!(
-            "{:?}",
-            store
-                .sub()
-                .entry_read(OWNERS[*o as usize], COLLECTIONS[*c as usize], *ord)
-        ),
         Op::EntryWrite(o, c, ord, v) => format!(
             "{:?}",
             store.sub().entry_write(
@@ -130,7 +118,7 @@ fn apply<S: Store>(store: &mut S, op: &Op) -> String {
         ),
         Op::Scan(o, c, lo, hi, cap) => format!(
             "{:?}",
-            store.sub().scan(
+            store.sub().entries_in_range(
                 OWNERS[*o as usize],
                 COLLECTIONS[*c as usize],
                 *lo,
@@ -146,7 +134,7 @@ fn apply<S: Store>(store: &mut S, op: &Op) -> String {
 
 /// The shared surface of the two stores, for the differential driver.
 trait Store {
-    fn sub(&mut self) -> &mut dyn SubstateStore;
+    fn sub(&mut self) -> &mut dyn WorkingStore;
     fn commit_deltas(&mut self) -> String;
     fn judge(&mut self, requests: &[(TxHash, SubstateKey, u128)]) -> String;
     fn settle(&mut self, key: SubstateKey, tx: TxHash) -> String;
@@ -154,7 +142,7 @@ trait Store {
 }
 
 impl Store for MemoryStore {
-    fn sub(&mut self) -> &mut dyn SubstateStore {
+    fn sub(&mut self) -> &mut dyn WorkingStore {
         self
     }
     fn commit_deltas(&mut self) -> String {
@@ -172,7 +160,7 @@ impl Store for MemoryStore {
 }
 
 impl Store for OverlayStore {
-    fn sub(&mut self) -> &mut dyn SubstateStore {
+    fn sub(&mut self) -> &mut dyn WorkingStore {
         self
     }
     fn commit_deltas(&mut self) -> String {
@@ -189,8 +177,9 @@ impl Store for OverlayStore {
     }
 }
 
-/// A populated base: cells (some amount-encoded), entries, and one held
-/// reservation, so layered ops immediately interact with base state.
+/// A populated base: cells (some amount-encoded), entries, one held
+/// reservation, and one locked cell, so layered ops immediately interact
+/// with base state.
 fn base_store(seed: &[(u8, u128)]) -> MemoryStore {
     let mut base = MemoryStore::new();
     for (index, (k, a)) in seed.iter().enumerate() {
@@ -205,6 +194,9 @@ fn base_store(seed: &[(u8, u128)]) -> MemoryStore {
             .unwrap();
         base.judge_and_hold(&[(tx(0), cell(*k), 25)]).unwrap();
     }
+    if let Some((k, _)) = seed.last() {
+        base.lock(cell(*k));
+    }
     base.clear_log();
     base
 }
@@ -218,7 +210,7 @@ proptest! {
     ) {
         let base = base_store(&seed);
         let mut reference = base.clone();
-        let mut overlay = OverlayStore::new(Arc::new(base));
+        let mut overlay = OverlayStore::new(Arc::new(base.clone()));
 
         for op in &first {
             assert_eq!(apply(&mut overlay, op), apply(&mut reference, op), "{op:?}");
@@ -249,7 +241,7 @@ proptest! {
         assert_eq!(overlay_pending, reference_pending);
 
         // The collapsed overlay is the reference, state for state.
-        let collapsed = overlay.collapse();
+        let collapsed = overlay.collapse_onto(base);
         let collapsed_cells: Vec<_> = collapsed
             .cells()
             .map(|(key, value)| (key, value.to_vec()))

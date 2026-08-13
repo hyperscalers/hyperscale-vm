@@ -30,8 +30,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
-    InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, Receipt,
-    SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
+    InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, Receipt, TxHash,
+    WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::native::{account, staking};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -383,18 +383,14 @@ fn seeded_store(xrd: u128, units: u128) -> MemoryStore {
     store
 }
 
-fn cells(outcome: &BatchOutcome) -> BTreeMap<SubstateKey, Vec<u8>> {
-    outcome
-        .store
-        .clone()
-        .collapse()
-        .cells()
+fn cells(end: &MemoryStore) -> BTreeMap<SubstateKey, Vec<u8>> {
+    end.cells()
         .map(|(key, value)| (key, value.to_vec()))
         .collect()
 }
 
-fn amount_of(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
-    cells(outcome)
+fn amount_of(end: &MemoryStore, key: SubstateKey) -> u128 {
+    cells(end)
         .get(&key)
         .map_or(0, |cell| decode_amount(cell).unwrap())
 }
@@ -425,7 +421,9 @@ fn comparable(outcome: &BatchOutcome) -> BTreeMap<TxHash, Receipt> {
 
 /// Execute on both runtimes over both packages and assert identical
 /// receipts and end state; returns the blessed outcome.
-fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<BatchOutcome> {
+/// Execute the batch on both runtimes and assert byte-identical receipts
+/// and end state; returns the blessed outcome and its collapsed end state.
+fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<(BatchOutcome, MemoryStore)> {
     let engine = blessed_engine()?;
     let mut blessed = BlessedPackages {
         components: BTreeMap::new(),
@@ -472,12 +470,13 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<BatchOutcome> {
         comparable(&ref_outcome),
         "lanes diverged"
     );
+    let end = blessed_outcome.store.collapse_onto(store.clone());
     assert_eq!(
-        cells(&blessed_outcome),
-        cells(&ref_outcome),
+        cells(&end),
+        cells(&ref_outcome.store.collapse_onto(store.clone())),
         "state diverged"
     );
-    Ok(blessed_outcome)
+    Ok((blessed_outcome, end))
 }
 
 #[test]
@@ -485,15 +484,15 @@ fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(stake_graph(100)), ALICE)?;
 
-    let outcome = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry))?;
     let receipt = &outcome.receipts[&entry.tx];
     assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
 
     // The delegation left the delegator and reached the pool.
-    assert_eq!(amount_of(&outcome, vault(ALICE, XRD)), 50);
-    assert_eq!(amount_of(&outcome, vault(pool(), XRD)), 100);
+    assert_eq!(amount_of(&end, vault(ALICE, XRD)), 50);
+    assert_eq!(amount_of(&end, vault(pool(), XRD)), 100);
     // The position came back as an ordinary balance, at par.
-    assert_eq!(amount_of(&outcome, vault(ALICE, unit())), 100);
+    assert_eq!(amount_of(&end, vault(ALICE, unit())), 100);
 
     // What the beacon's witness lift consumes, pinned at the boundary that
     // produces it: the pool's own identifier and the staked amount.
@@ -512,16 +511,16 @@ fn returned_units_are_consumed_and_recorded_as_unbonding() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(unstake_graph(40)), ALICE)?;
 
-    let outcome = run_both(&seeded_store(0, 100), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&seeded_store(0, 100), std::slice::from_ref(&entry))?;
     let receipt = &outcome.receipts[&entry.tx];
     assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
 
-    assert_eq!(amount_of(&outcome, vault(ALICE, unit())), 60);
-    assert_eq!(amount_of(&outcome, unbonding(pool(), XRD)), 40);
+    assert_eq!(amount_of(&end, vault(ALICE, unit())), 60);
+    assert_eq!(amount_of(&end, unbonding(pool(), XRD)), 40);
     // Nothing came back: the release leg is a later method, so the units
     // are gone and the delegator holds no claim on the pool's vault yet.
-    assert_eq!(amount_of(&outcome, vault(ALICE, XRD)), 0);
-    assert_eq!(amount_of(&outcome, vault(pool(), XRD)), 0);
+    assert_eq!(amount_of(&end, vault(ALICE, XRD)), 0);
+    assert_eq!(amount_of(&end, vault(pool(), XRD)), 0);
 
     let unstaked = receipt
         .events
@@ -542,7 +541,7 @@ fn the_emitter_names_the_pool_and_the_guest_cannot() -> Result<()> {
     // about itself and can never emit one about this pool.
     let world = world();
     let entry = batch_entry(&world, &single_intent(stake_graph(10)), ALICE)?;
-    let outcome = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry))?;
+    let (outcome, _) = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry))?;
 
     let events = &outcome.receipts[&entry.tx].events;
     let from_pool: Vec<_> = events.iter().filter(|e| e.emitter == pool()).collect();
@@ -581,7 +580,7 @@ fn pool_event(outcome: &BatchOutcome, entry: &BatchTx) -> (u32, Vec<u8>) {
 fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
-    let outcome = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
         Outcome::Completed { .. }
@@ -590,7 +589,7 @@ fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
     // The pool keeps the key it registered — the whole of its claim on
     // this validator, and what makes a second registration refusable.
     assert_eq!(
-        cells(&outcome).get(&validator_leaf(pool(), VALIDATOR)),
+        cells(&end).get(&validator_leaf(pool(), VALIDATOR)),
         Some(&PUBKEY.to_vec()),
     );
     assert_eq!(
@@ -611,7 +610,7 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
     store.write(validator_leaf(pool(), VALIDATOR), PUBKEY.to_vec())?;
     store.clear_log();
 
-    let outcome = run_both(&store, std::slice::from_ref(&entry))?;
+    let (outcome, _) = run_both(&store, std::slice::from_ref(&entry))?;
     assert!(
         !matches!(
             outcome.receipts[&entry.tx].outcome,
@@ -631,7 +630,7 @@ fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
     for method in ["deactivate-validator", "unjail"] {
         let graph = operator_graph(method, VALIDATOR);
         let entry = batch_entry(&world, &single_intent(graph), OPERATOR)?;
-        let outcome = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
+        let (outcome, _) = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
         assert!(
             !matches!(
                 outcome.receipts[&entry.tx].outcome,
@@ -653,7 +652,7 @@ fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
     for (method, event_type) in [("deactivate-validator", 3), ("unjail", 4)] {
         let graph = operator_graph(method, VALIDATOR);
         let entry = batch_entry(&world, &single_intent(graph), OPERATOR)?;
-        let outcome = run_both(&store, std::slice::from_ref(&entry))?;
+        let (outcome, end) = run_both(&store, std::slice::from_ref(&entry))?;
         assert!(matches!(
             outcome.receipts[&entry.tx].outcome,
             Outcome::Completed { .. }
@@ -667,7 +666,7 @@ fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
         // took on is spent for the life of the chain, which is the
         // beacon's own rule held locally.
         assert_eq!(
-            cells(&outcome).get(&validator_leaf(pool(), VALIDATOR)),
+            cells(&end).get(&validator_leaf(pool(), VALIDATOR)),
             Some(&PUBKEY.to_vec()),
             "{method}",
         );
@@ -686,7 +685,7 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
         &single_intent(register_graph(VALIDATOR + 1)),
         OPERATOR,
     )?;
-    let outcome = run_both(&MemoryStore::new(), &[first.clone(), second.clone()])?;
+    let (outcome, end) = run_both(&MemoryStore::new(), &[first.clone(), second.clone()])?;
 
     for entry in [&first, &second] {
         assert!(matches!(
@@ -694,7 +693,7 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
             Outcome::Completed { .. }
         ));
     }
-    let cells = cells(&outcome);
+    let cells = cells(&end);
     assert_eq!(
         cells.get(&validator_leaf(pool(), VALIDATOR)),
         Some(&PUBKEY.to_vec()),
@@ -742,7 +741,7 @@ fn cast_graph() -> ManifestGraph {
 fn a_cast_vote_is_held_on_the_pools_own_leaf_and_reported() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(cast_graph()), OPERATOR)?;
-    let outcome = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
         Outcome::Completed { .. }
@@ -750,10 +749,7 @@ fn a_cast_vote_is_held_on_the_pools_own_leaf_and_reported() -> Result<()> {
 
     // The parameters travel as themselves: what the pool holds and what
     // it reports are the same bytes, laid out in the declared order.
-    assert_eq!(
-        cells(&outcome).get(&vote_leaf(pool())),
-        Some(&cast_payload())
-    );
+    assert_eq!(cells(&end).get(&vote_leaf(pool())), Some(&cast_payload()));
     assert_eq!(pool_event(&outcome, &entry), (5, cast_payload()));
     Ok(())
 }
@@ -770,7 +766,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
         staking::clear_param_vote(b, operator, pool())
     });
     let entry = batch_entry(&world, &single_intent(cleared), OPERATOR)?;
-    let outcome = run_both(&store, std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&store, std::slice::from_ref(&entry))?;
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
         Outcome::Completed { .. }
@@ -779,7 +775,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     // A pool backing nothing holds nothing, and the fact carries no
     // parameters because there are none to carry.
     assert_eq!(
-        cells(&outcome).get(&vote_leaf(pool())).map(Vec::as_slice),
+        cells(&end).get(&vote_leaf(pool())).map(Vec::as_slice),
         Some(&[][..]),
     );
     assert_eq!(pool_event(&outcome, &entry), (6, Vec::new()));
@@ -796,10 +792,7 @@ fn a_second_cast_replaces_the_first() -> Result<()> {
     store.clear_log();
 
     let entry = batch_entry(&world, &single_intent(cast_graph()), OPERATOR)?;
-    let outcome = run_both(&store, std::slice::from_ref(&entry))?;
-    assert_eq!(
-        cells(&outcome).get(&vote_leaf(pool())),
-        Some(&cast_payload())
-    );
+    let (_, end) = run_both(&store, std::slice::from_ref(&entry))?;
+    assert_eq!(cells(&end).get(&vote_leaf(pool())), Some(&cast_payload()));
     Ok(())
 }

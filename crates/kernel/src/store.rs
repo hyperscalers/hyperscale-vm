@@ -1,13 +1,19 @@
-//! The substate store: the kernel-facing state surface and its in-memory,
-//! access-recording implementation.
+//! The kernel's state surfaces and their in-memory, access-recording
+//! implementation.
 //!
-//! The trait is the surface capability handles drive: mode-specific
-//! operations over point cells and ordered-collection entries. The
-//! [`MemoryStore`] records every access as an [`Access`] — the substrate
-//! the trace-subset oracle asserts against — and owns the commutative
-//! modes' lifecycle: deltas queue during execution and fold at commit;
-//! reservations are judged and held before execution and settle or release
-//! afterward.
+//! Three traits, split where durability ends. [`Substates`] is durable
+//! content — point cells and ordered-collection entries, what a state
+//! backend serves. [`Baseline`] is committed state as an overlay reads
+//! it: substates plus the execution context standing over them —
+//! permanent locks and outstanding reservations. [`WorkingStore`] is the
+//! mutable surface capability handles drive: mode-specific operations
+//! over cells and entries.
+//!
+//! The [`MemoryStore`] implements all three, records every access as an
+//! [`Access`] — the substrate the trace-subset oracle asserts against —
+//! and owns the commutative modes' lifecycle: deltas queue during
+//! execution and fold at commit; reservations are judged and held before
+//! execution and settle or release afterward.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,9 +30,6 @@ pub enum StoreError {
     /// A mutation of a permanently locked substate.
     #[error("substate {0:?} is locked")]
     Locked(SubstateKey),
-    /// Locking a substate that does not exist.
-    #[error("cannot lock absent substate {0:?}")]
-    LockMissing(SubstateKey),
     /// Settling or releasing a reservation that is not held.
     #[error("no reservation held by {tx:?} on {key:?}")]
     MissingReservation {
@@ -65,13 +68,14 @@ pub struct Access {
     pub kind: ModeKind,
 }
 
-/// The kernel-facing state surface.
+/// The mutable state surface a transaction executes against — working
+/// state, not baseline.
 ///
 /// Operations are mode-specific because that is what capability handles
 /// invoke: a delta handle can queue deltas and nothing else. Reservations
 /// have no trait operation — they are judged before execution and settled
 /// after it, outside any guest's reach.
-pub trait SubstateStore {
+pub trait WorkingStore {
     /// Fresh coherent read of a point cell.
     ///
     /// # Errors
@@ -100,15 +104,6 @@ pub trait SubstateStore {
     /// [`StoreError::Locked`] on a locked substate.
     fn remove(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError>;
 
-    /// Permanently lock a substate: creation-fixed configuration. Locked
-    /// substates read through `Mode::Locked` and reject every mutation.
-    /// A kernel operation, not an access — nothing is recorded.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::LockMissing`] if the substate does not exist.
-    fn lock(&mut self, key: SubstateKey) -> Result<(), StoreError>;
-
     /// Queue a delta against an amount cell; folded at commit. An absent
     /// cell folds from zero, which is what lets deposits create balances
     /// without a prior write.
@@ -117,18 +112,6 @@ pub trait SubstateStore {
     ///
     /// [`StoreError::Locked`] on a locked substate.
     fn queue_delta(&mut self, key: SubstateKey, op: DeltaOp) -> Result<(), StoreError>;
-
-    /// Read one ordered-collection entry.
-    ///
-    /// # Errors
-    ///
-    /// Any [`StoreError`].
-    fn entry_read(
-        &mut self,
-        owner: Address,
-        collection: CollectionId,
-        order: u128,
-    ) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Write one ordered-collection entry.
     ///
@@ -155,15 +138,15 @@ pub trait SubstateStore {
         order: u128,
     ) -> Result<Option<Vec<u8>>, StoreError>;
 
-    /// Scan a collection interval in ascending order, truncated at `cap`
-    /// entries — the cap is the range effect's declared bound, so touching
-    /// beyond it is not expressible through this surface. An inverted
-    /// interval is empty.
+    /// The entries of a collection interval in ascending order, truncated
+    /// at `cap` entries — the cap is the range effect's declared bound, so
+    /// touching beyond it is not expressible through this surface. An
+    /// inverted interval is empty.
     ///
     /// # Errors
     ///
     /// Any [`StoreError`].
-    fn scan(
+    fn entries_in_range(
         &mut self,
         owner: Address,
         collection: CollectionId,
@@ -184,14 +167,12 @@ pub struct AppliedDelta {
     pub after: u128,
 }
 
-/// Committed state as an overlay's baseline reads it.
+/// Durable substate content: point cells and ordered-collection entries,
+/// nothing execution-scoped.
 ///
-/// Point cells, ordered-collection entries, permanent locks, and
-/// outstanding reservations. [`MemoryStore`] implements it for the kernel
-/// suite; a state-tree snapshot implements it at integration. Every read
-/// is of committed content only — pending deltas and access logs are
-/// working state, not baseline.
-pub trait Base: std::fmt::Debug + Send + Sync + 'static {
+/// The contract a state backend implements. Every read is of committed
+/// content only.
+pub trait Substates: Send + Sync {
     /// The committed value of a point cell.
     fn cell(&self, key: SubstateKey) -> Option<Vec<u8>>;
 
@@ -205,7 +186,52 @@ pub trait Base: std::fmt::Debug + Send + Sync + 'static {
         hi: u128,
         limit: usize,
     ) -> Vec<(u128, Vec<u8>)>;
+}
 
+impl<T: Substates + ?Sized> Substates for std::sync::Arc<T> {
+    fn cell(&self, key: SubstateKey) -> Option<Vec<u8>> {
+        T::cell(self, key)
+    }
+
+    fn entries_in_range(
+        &self,
+        owner: Address,
+        collection: CollectionId,
+        lo: u128,
+        hi: u128,
+        limit: usize,
+    ) -> Vec<(u128, Vec<u8>)> {
+        T::entries_in_range(self, owner, collection, lo, hi, limit)
+    }
+}
+
+impl<T: Substates + ?Sized> Substates for &T {
+    fn cell(&self, key: SubstateKey) -> Option<Vec<u8>> {
+        T::cell(self, key)
+    }
+
+    fn entries_in_range(
+        &self,
+        owner: Address,
+        collection: CollectionId,
+        lo: u128,
+        hi: u128,
+        limit: usize,
+    ) -> Vec<(u128, Vec<u8>)> {
+        T::entries_in_range(self, owner, collection, lo, hi, limit)
+    }
+}
+
+/// Committed state as an overlay's baseline reads it: durable content
+/// plus the execution context standing over it — permanent locks and
+/// outstanding reservations.
+///
+/// Locks and holds are execution context, not backend state, which is why
+/// the composite is a separate trait: [`MemoryStore`] implements it whole
+/// for the kernel suite, while an embedder composes it from a
+/// [`Substates`] backend and its own hold tracking. Pending deltas and
+/// access logs are working state, not baseline.
+pub trait Baseline: Substates + std::fmt::Debug {
     /// Whether the committed store permanently locks `key`.
     fn is_locked(&self, key: SubstateKey) -> bool;
 
@@ -216,13 +242,9 @@ pub trait Base: std::fmt::Debug + Send + Sync + 'static {
     fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
         self.holds(key).get(&tx).copied()
     }
-
-    /// The base as `Any`, for the collapse path's recovery of a concrete
-    /// [`MemoryStore`].
-    fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync>;
 }
 
-impl Base for MemoryStore {
+impl Substates for MemoryStore {
     fn cell(&self, key: SubstateKey) -> Option<Vec<u8>> {
         self.cells.get(&key).cloned()
     }
@@ -246,7 +268,9 @@ impl Base for MemoryStore {
             .map(|(order, value)| (*order, value.clone()))
             .collect()
     }
+}
 
+impl Baseline for MemoryStore {
     fn is_locked(&self, key: SubstateKey) -> bool {
         Self::is_locked(self, key)
     }
@@ -257,10 +281,6 @@ impl Base for MemoryStore {
 
     fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
         Self::held_reservation(self, key, tx)
-    }
-
-    fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
-        self
     }
 }
 
@@ -304,6 +324,13 @@ impl MemoryStore {
     #[must_use]
     pub fn is_locked(&self, key: SubstateKey) -> bool {
         self.locked.contains(&key)
+    }
+
+    /// Permanently lock a substate: creation-fixed configuration, composed
+    /// into a base store beside its value. Locked substates read through
+    /// `Mode::Locked` and reject every mutation.
+    pub fn lock(&mut self, key: SubstateKey) {
+        self.locked.insert(key);
     }
 
     /// The reservation amount `tx` holds on `key`, if any.
@@ -562,7 +589,7 @@ impl MemoryStore {
     }
 }
 
-impl SubstateStore for MemoryStore {
+impl WorkingStore for MemoryStore {
     fn read(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
         self.record(EffectTarget::Point(key), ModeKind::Read);
         Ok(self.cells.get(&key).cloned())
@@ -586,40 +613,11 @@ impl SubstateStore for MemoryStore {
         Ok(self.cells.remove(&key))
     }
 
-    fn lock(&mut self, key: SubstateKey) -> Result<(), StoreError> {
-        if !self.cells.contains_key(&key) {
-            return Err(StoreError::LockMissing(key));
-        }
-        self.locked.insert(key);
-        Ok(())
-    }
-
     fn queue_delta(&mut self, key: SubstateKey, op: DeltaOp) -> Result<(), StoreError> {
         self.reject_locked(key)?;
         self.record(EffectTarget::Point(key), ModeKind::Delta);
         self.pending_deltas.entry(key).or_default().push(op);
         Ok(())
-    }
-
-    fn entry_read(
-        &mut self,
-        owner: Address,
-        collection: CollectionId,
-        order: u128,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        self.record(
-            EffectTarget::Entry {
-                owner,
-                collection,
-                order,
-            },
-            ModeKind::Read,
-        );
-        Ok(self
-            .entries
-            .get(&(owner, collection))
-            .and_then(|entries| entries.get(&order))
-            .cloned())
     }
 
     fn entry_write(
@@ -664,7 +662,7 @@ impl SubstateStore for MemoryStore {
             .and_then(|entries| entries.remove(&order)))
     }
 
-    fn scan(
+    fn entries_in_range(
         &mut self,
         owner: Address,
         collection: CollectionId,
@@ -707,7 +705,7 @@ mod tests {
         TestHasher, child_key,
     };
 
-    use super::{Access, MemoryStore, StoreError, SubstateStore};
+    use super::{Access, MemoryStore, StoreError, WorkingStore};
     use crate::modes::{DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount};
 
     fn key(byte: u8) -> SubstateKey {
@@ -753,7 +751,7 @@ mod tests {
         let mut store = MemoryStore::new();
         let config = key(1);
         store.write(config, vec![7]).unwrap();
-        store.lock(config).unwrap();
+        store.lock(config);
 
         assert_eq!(
             store.write(config, vec![8]),
@@ -778,8 +776,6 @@ mod tests {
                 kind: ModeKind::Locked,
             }]
         );
-
-        assert_eq!(store.lock(key(2)), Err(StoreError::LockMissing(key(2))));
     }
 
     #[test]
@@ -876,7 +872,7 @@ mod tests {
                 .unwrap();
         }
         store.clear_log();
-        let hits = store.scan(book, asks, 5, 20, 3).unwrap();
+        let hits = store.entries_in_range(book, asks, 5, 20, 3).unwrap();
         assert_eq!(
             hits.iter().map(|(order, _)| *order).collect::<Vec<_>>(),
             vec![5, 10, 15]
@@ -895,6 +891,9 @@ mod tests {
             }]
         );
         // Inverted intervals are empty, not errors.
-        assert_eq!(store.scan(book, asks, 20, 5, 3).unwrap(), Vec::new());
+        assert_eq!(
+            store.entries_in_range(book, asks, 20, 5, 3).unwrap(),
+            Vec::new()
+        );
     }
 }

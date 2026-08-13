@@ -6,7 +6,7 @@ use hyperscale_vm_effects::{
     Address, AddressClass, Hash32, RoleId, SubstateKey, TestHasher, Value, child_key,
 };
 use hyperscale_vm_kernel::{
-    DeltaOp, MemoryStore, SubstateStore, SupplyLedger, TxHash, decode_amount, encode_amount,
+    DeltaOp, MemoryStore, SupplyLedger, TxHash, WorkingStore, decode_amount, encode_amount,
 };
 
 const VAULT: RoleId = RoleId(1);

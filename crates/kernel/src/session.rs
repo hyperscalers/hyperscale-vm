@@ -24,7 +24,7 @@ use crate::locality::Locality;
 use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
 use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
-use crate::store::{Access, StoreError, SubstateStore};
+use crate::store::{Access, StoreError, WorkingStore};
 
 /// One materialized capability: what a handle rep grants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,12 +90,6 @@ pub enum MaterializeError {
     /// sound only where no version of the target differs.
     #[error("declared locked read of unlocked substate {0:?}")]
     UnlockedTarget(SubstateKey),
-    /// A locked read declared on a substate whose lock was created in
-    /// this batch. The read serves from the batch baseline, where the
-    /// lock — and possibly the value — does not exist yet; the substate
-    /// is readable from the next batch.
-    #[error("declared locked read of {0:?}, whose lock is not at the baseline yet")]
-    LockedThisBatch(SubstateKey),
     /// A declared reservation the committed balance cannot cover.
     #[error("reservation of {amount} on {key:?} is infeasible")]
     Infeasible {
@@ -506,7 +500,7 @@ impl KernelSession {
     ) -> Result<bool, SessionTrap> {
         Ok(!self
             .store
-            .scan(owner, collection, 0, u128::MAX, 1)?
+            .entries_in_range(owner, collection, 0, u128::MAX, 1)?
             .is_empty())
     }
 
@@ -644,7 +638,9 @@ impl KernelSession {
             return Ok(());
         }
         let (owner, collection, lo, hi, cap, _) = self.range_of(rep)?;
-        let entries = self.store.scan(owner, collection, lo, hi, cap)?;
+        let entries = self
+            .store
+            .entries_in_range(owner, collection, lo, hi, cap)?;
         self.scans.insert(rep, entries);
         Ok(())
     }
@@ -1109,16 +1105,8 @@ fn capability_for(store: &OverlayStore, effect: Effect) -> Result<Capability, Ma
         // receipts. A read of mutable state is `Mode::Read`, which
         // provisions.
         (EffectTarget::Point(key), Mode::Locked) => {
-            // Judged at the baseline the read will land on, not at the
-            // layers: a lock born in this batch is real for every
-            // mutation gate, but the read behind this capability serves
-            // the baseline, and passing the gate on the layers would
-            // hand out a read of whatever the cell held before the
-            // batch — empty, or worse, the stale unlocked value.
-            if store.is_locked_at_baseline(key) {
+            if store.is_locked(key) {
                 Ok(Capability::Locked(key))
-            } else if store.is_locked(key) {
-                Err(MaterializeError::LockedThisBatch(key))
             } else {
                 Err(MaterializeError::UnlockedTarget(key))
             }
@@ -1238,7 +1226,7 @@ mod tests {
     };
     use crate::modes::{TxHash, encode_amount};
     use crate::overlay::OverlayStore;
-    use crate::store::{MemoryStore, StoreError, SubstateStore};
+    use crate::store::{MemoryStore, StoreError, WorkingStore};
 
     fn key(byte: u8) -> SubstateKey {
         child_key(

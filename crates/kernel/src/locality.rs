@@ -19,10 +19,9 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, CollectionId, EffectSet, SettledWrites, StateWrites, SubstateKey, effect_units,
+    Address, CollectionId, EffectSet, StateWrites, SubstateKey, effect_units,
 };
 
-use crate::modes::decode_amount;
 use crate::session::{Movement, StateDelta};
 
 /// Which keys the executing shard owns.
@@ -111,10 +110,7 @@ impl StateDelta {
     /// executed against — it is settled later, possibly after a sibling
     /// the baseline excluded — so the value a movement produces is a
     /// question for the moment it applies. [`StateWrites::resolve`] is
-    /// where it gets answered, and [`Self::flatten`] is this followed
-    /// immediately by that, for the one caller whose prior really is at
-    /// hand: the batch's own running fold, where a later transaction must
-    /// read what an earlier one in the same tick left.
+    /// where it gets answered.
     ///
     /// A settled reservation is a debit like any other. The distinction
     /// the delta draws between the two is about what authorized the
@@ -147,47 +143,6 @@ impl StateDelta {
         }
         writes
     }
-
-    /// Fold the owned part of this delta into absolute cell outcomes.
-    ///
-    /// The canonical application order: exclusive cells, then movements,
-    /// then settles — each folding over whichever value stands when it
-    /// applies, this receipt's own earlier write first and `prior`
-    /// otherwise. `prior` is the committed value a cell has before this
-    /// receipt: the embedder threads its own batch's earlier receipts
-    /// through it, and an absent cell reads as zero. A drained amount
-    /// cell flattens to a removal — the absent-cell rule the overlay
-    /// applies.
-    ///
-    /// # Panics
-    ///
-    /// Panics on arithmetic or a cell the kernel's apply phase already
-    /// vetted — a defect in the delta or in `prior`'s view of committed
-    /// state, never a legitimate input.
-    #[must_use]
-    pub fn flatten(
-        &self,
-        locality: &Locality,
-        prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>,
-    ) -> SettledWrites {
-        self.project(locality).resolve(prior)
-    }
-}
-
-/// The amount standing at `key` while a flatten is in progress: the
-/// receipt's own write when it made one, the committed value otherwise.
-#[allow(dead_code)] // retained by the tests below as the independent reference
-fn amount_at(
-    writes: &StateWrites,
-    prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>,
-    key: SubstateKey,
-) -> u128 {
-    writes
-        .cells
-        .get(&key)
-        .map_or_else(|| prior(key), Clone::clone)
-        .map_or(Ok(0), |bytes| decode_amount(&bytes))
-        .expect("an amount cell the apply phase accepted decodes")
 }
 
 /// One delta as one shard sees it: four walks, each already filtered.
@@ -250,7 +205,7 @@ mod tests {
     use crate::modes::{decode_amount, encode_amount};
     use crate::overlay::OverlayStore;
     use crate::session::{Movement, StateDelta};
-    use crate::store::{MemoryStore, SubstateStore};
+    use crate::store::{MemoryStore, WorkingStore};
 
     fn key(owner: u8, local: u8) -> SubstateKey {
         SubstateKey {
@@ -259,11 +214,11 @@ mod tests {
         }
     }
 
-    /// The differential guard on the flatten: the overlay applying the
-    /// same operations, collapsed to plain cells, is the authority the
-    /// flattened writes must reproduce key for key.
+    /// The differential guard on project-then-resolve: the overlay
+    /// applying the same operations, collapsed to plain cells, is the
+    /// authority the resolved writes must reproduce key for key.
     #[test]
-    fn flatten_matches_the_overlay_application() {
+    fn a_resolved_projection_matches_the_overlay_application() {
         let vault = key(1, 1); // 100, movement +30 −10 → 120
         let drained = key(1, 2); // 40, movement −40 → absent
         let fresh = key(1, 3); // absent, movement +5 → 5
@@ -324,9 +279,11 @@ mod tests {
             overlay.hold_unjudged(cell, tx, amount);
             overlay.settle(cell, tx).unwrap();
         }
-        let expected = overlay.collapse();
+        let expected = overlay.collapse_onto(base.clone());
 
-        let writes = delta.flatten(&Locality::All, &mut |cell| base.cells.get(&cell).cloned());
+        let writes = delta
+            .project(&Locality::All)
+            .resolve(&mut |cell| base.cells.get(&cell).cloned());
         let mut folded: BTreeMap<_, _> = base.cells.clone();
         for (cell, change) in writes.cells() {
             match change {
@@ -390,16 +347,16 @@ mod tests {
                 debit: 20,
             },
         );
-        let writes = delta.flatten(&Locality::All, &mut |_| {
-            panic!("the receipt's own write answers this read")
-        });
+        let writes = delta
+            .project(&Locality::All)
+            .resolve(&mut |_| panic!("the receipt's own write answers this read"));
         assert_eq!(writes.cells()[&cell], Some(encode_amount(30).to_vec()));
     }
 
     /// Remote keys stay in the receipt as the outbound record; the
-    /// flattened writes carry owned keys only.
+    /// projected writes carry owned keys only.
     #[test]
-    fn flatten_folds_only_owned_keys() {
+    fn a_projection_carries_owned_keys_only() {
         let local = key(1, 1);
         let remote = key(2, 1);
         let mut delta = StateDelta::default();
@@ -415,7 +372,7 @@ mod tests {
         let locality = Locality::Owned(Arc::new(|owner: Address| {
             owner == Address::new([1; 31], AddressClass::Component)
         }));
-        let writes = delta.flatten(&locality, &mut |_| None);
+        let writes = delta.project(&locality).resolve(&mut |_| None);
         assert_eq!(writes.cells().len(), 1);
         assert_eq!(writes.cells()[&local], Some(encode_amount(5).to_vec()));
     }

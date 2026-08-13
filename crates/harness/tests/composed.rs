@@ -16,8 +16,8 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
-    InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, OUT_OF_GAS, Outcome,
-    SubstateStore, TxHash, decode_amount, encode_amount, execute_batch,
+    InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, OUT_OF_GAS, Outcome, TxHash,
+    WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
 use hyperscale_vm_manifest_builder::native::account;
@@ -274,23 +274,21 @@ fn seeded_store() -> MemoryStore {
     store
 }
 
-fn cells(outcome: &BatchOutcome) -> BTreeMap<SubstateKey, Vec<u8>> {
-    let store = outcome.store.clone().collapse();
-    store
-        .cells()
+fn cells(end: &MemoryStore) -> BTreeMap<SubstateKey, Vec<u8>> {
+    end.cells()
         .map(|(key, value)| (key, value.to_vec()))
         .collect()
 }
 
-fn amount_of(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
-    cells(outcome)
+fn amount_of(end: &MemoryStore, key: SubstateKey) -> u128 {
+    cells(end)
         .get(&key)
         .map_or(0, |cell| decode_amount(cell).unwrap())
 }
 
-/// Execute the batch on both runtimes and assert byte-identical
-/// receipts and end state; returns the blessed outcome.
-fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<BatchOutcome> {
+/// Execute the batch on both runtimes and assert byte-identical receipts
+/// and end state; returns the blessed outcome and its collapsed end state.
+fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<(BatchOutcome, MemoryStore)> {
     let bytes = build_guest("account")?;
     validate_component(&bytes).context("profile validation")?;
     let engine = blessed_engine()?;
@@ -325,12 +323,13 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<BatchOutcome> {
         blessed_outcome.receipts, ref_outcome.receipts,
         "lanes diverged"
     );
+    let end = blessed_outcome.store.collapse_onto(store.clone());
     assert_eq!(
-        cells(&blessed_outcome),
-        cells(&ref_outcome),
+        cells(&end),
+        cells(&ref_outcome.store.collapse_onto(store.clone())),
         "state diverged"
     );
-    Ok(blessed_outcome)
+    Ok((blessed_outcome, end))
 }
 
 #[test]
@@ -340,21 +339,18 @@ fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     let (entry, admitted) = batch_entry(&world, &tree)?;
     let nullifier = admitted.subintents[0].nullifier;
 
-    let outcome = run_both(&seeded_store(), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&entry))?;
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
         Outcome::Completed { .. }
     ));
-    assert_eq!(amount_of(&outcome, vault(ALICE, RES_X)), 50);
-    assert_eq!(amount_of(&outcome, vault(ALICE, RES_Y)), 10);
-    assert_eq!(amount_of(&outcome, vault(BOB, RES_Y)), 20);
-    assert_eq!(amount_of(&outcome, vault(BOB, RES_X)), 100);
+    assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 50);
+    assert_eq!(amount_of(&end, vault(ALICE, RES_Y)), 10);
+    assert_eq!(amount_of(&end, vault(BOB, RES_Y)), 20);
+    assert_eq!(amount_of(&end, vault(BOB, RES_X)), 100);
     // The spent nullifier records the consuming transaction, receipt and
     // state alike.
-    assert_eq!(
-        cells(&outcome).get(&nullifier),
-        Some(&entry.tx.0.0.to_vec())
-    );
+    assert_eq!(cells(&end).get(&nullifier), Some(&entry.tx.0.0.to_vec()));
     assert_eq!(
         outcome.receipts[&entry.tx].delta.cells.get(&nullifier),
         Some(&Some(entry.tx.0.0.to_vec()))
@@ -375,7 +371,7 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     );
     let alice_wins = alice_entry.tx < carol_entry.tx;
     let batch = vec![alice_entry.clone(), carol_entry.clone()];
-    let outcome = run_both(&seeded_store(), &batch)?;
+    let (outcome, end) = run_both(&seeded_store(), &batch)?;
 
     let (winner, loser, pay) = if alice_wins {
         (&alice_entry, &carol_entry, 100)
@@ -400,15 +396,15 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     } else {
         (CAROL, ALICE)
     };
-    assert_eq!(amount_of(&outcome, vault(winner_addr, RES_X)), 150 - pay);
-    assert_eq!(amount_of(&outcome, vault(winner_addr, RES_Y)), 10);
-    assert_eq!(amount_of(&outcome, vault(loser_addr, RES_X)), 150);
-    assert_eq!(amount_of(&outcome, vault(loser_addr, RES_Y)), 0);
+    assert_eq!(amount_of(&end, vault(winner_addr, RES_X)), 150 - pay);
+    assert_eq!(amount_of(&end, vault(winner_addr, RES_Y)), 10);
+    assert_eq!(amount_of(&end, vault(loser_addr, RES_X)), 150);
+    assert_eq!(amount_of(&end, vault(loser_addr, RES_Y)), 0);
     // The subintent leg settled exactly once.
-    assert_eq!(amount_of(&outcome, vault(BOB, RES_Y)), 20);
-    assert_eq!(amount_of(&outcome, vault(BOB, RES_X)), pay);
+    assert_eq!(amount_of(&end, vault(BOB, RES_Y)), 20);
+    assert_eq!(amount_of(&end, vault(BOB, RES_X)), pay);
     assert_eq!(
-        cells(&outcome).get(&alice_admitted.subintents[0].nullifier),
+        cells(&end).get(&alice_admitted.subintents[0].nullifier),
         Some(&winner.tx.0.0.to_vec())
     );
     Ok(())
@@ -421,16 +417,15 @@ fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
     let (carol_entry, _) = batch_entry(&world, &composed_tree(CAROL, 120))?;
     let nullifier = alice_admitted.subintents[0].nullifier;
 
-    let first = run_both(&seeded_store(), std::slice::from_ref(&alice_entry))?;
-    let committed = first.store.collapse();
+    let (_, committed) = run_both(&seeded_store(), std::slice::from_ref(&alice_entry))?;
 
-    let second = run_both(&committed, std::slice::from_ref(&carol_entry))?;
+    let (second, second_end) = run_both(&committed, std::slice::from_ref(&carol_entry))?;
     assert_eq!(
         second.receipts[&carol_entry.tx].outcome,
         Outcome::NullifierSpent { key: nullifier }
     );
-    assert_eq!(amount_of(&second, vault(CAROL, RES_X)), 150);
-    assert_eq!(amount_of(&second, vault(BOB, RES_Y)), 20);
+    assert_eq!(amount_of(&second_end, vault(CAROL, RES_X)), 150);
+    assert_eq!(amount_of(&second_end, vault(BOB, RES_Y)), 20);
     Ok(())
 }
 
@@ -450,14 +445,14 @@ fn a_transaction_that_spends_its_gas_limit_aborts_on_both_runtimes() -> Result<(
 
     // Enough to enter the guest and nowhere near enough to leave it.
     let starved = entry.with_gas_limit(64);
-    let outcome = run_both(&seeded_store(), std::slice::from_ref(&starved))?;
+    let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&starved))?;
 
     match &outcome.receipts[&starved.tx].outcome {
         Outcome::UserError { reason } => assert_eq!(reason, OUT_OF_GAS),
         other => panic!("expected the gas ceiling to abort it, got {other:?}"),
     }
     // Nothing moved: the seeded balances stand.
-    assert_eq!(amount_of(&outcome, vault(ALICE, RES_X)), 150);
-    assert_eq!(amount_of(&outcome, vault(BOB, RES_X)), 0);
+    assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 150);
+    assert_eq!(amount_of(&end, vault(BOB, RES_X)), 0);
     Ok(())
 }

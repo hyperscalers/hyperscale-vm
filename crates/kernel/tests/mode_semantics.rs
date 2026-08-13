@@ -4,7 +4,7 @@
 
 use hyperscale_vm_effects::{Address, AddressClass, Hash32, RoleId, TestHasher, child_key};
 use hyperscale_vm_kernel::{
-    DeltaOp, MemoryStore, SubstateStore, TxHash, decode_amount, encode_amount, fold_deltas, judge,
+    DeltaOp, MemoryStore, TxHash, WorkingStore, decode_amount, encode_amount, fold_deltas, judge,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, proptest};
