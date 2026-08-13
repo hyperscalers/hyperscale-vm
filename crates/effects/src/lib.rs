@@ -69,8 +69,9 @@ pub use invoke::{CallArg, EDGE_CELL_BYTES, EdgeBound, EdgeKind, NodeCall, cell_i
 pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     AbiError, AbiParam, Accessibility, CallSite, DeclarationError, InstanceMeta, InstanceRegistry,
-    MetadataCache, MethodSignature, PACKAGE_ROLE, PackageHash, PackageMetadata, ParamType,
-    check_abi, check_declarations, package_hash, package_key,
+    MetadataBoundsError, MetadataCache, MethodSignature, PACKAGE_ROLE, PackageHash,
+    PackageMetadata, ParamType, check_abi, check_declarations, check_metadata, package_hash,
+    package_key,
 };
 pub use resource::{
     Fungibility, ResourceRecord, holdings_collection, instance_data_key, resource_record_key,

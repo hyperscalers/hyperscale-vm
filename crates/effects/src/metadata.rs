@@ -4,16 +4,19 @@
 use std::collections::BTreeMap;
 
 use hyperscale_hbor::{EncodeError, Hbor, to_vec};
+use hyperscale_vm_types::MAX_EVENT_TYPES;
 use thiserror::Error;
 
 use crate::auth::{AuthRole, RoleSet};
-use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
+use crate::dsl::{
+    Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, ModeExpr, TargetExpr,
+};
 use crate::hash::{Hash32, Hasher};
 use crate::rule::Rule;
 use crate::stdlib::{NF_VAULT, VAULT};
 use crate::types::{
-    Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, RoleId, SubstateKey, Value, child_key,
-    component_address, config_hash,
+    Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, RoleId, SubstateKey,
+    Value, child_key, component_address, config_hash,
 };
 
 /// A published package's identity: the hash of its artifact, which covers
@@ -613,6 +616,193 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
         Ok(())
     }
     walk(&signature.effects, &mut 0)
+}
+
+/// Why metadata is past a bound the vocabulary fixes.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct MetadataBoundsError(pub String);
+
+/// Reject metadata past a bound the vocabulary fixes.
+///
+/// The depth walks mirror the evaluator's own recursion — same starting
+/// depth, same comparison — so a signature this accepts is one
+/// evaluation will not refuse on structure alone, and the event table
+/// stays inside the index an emitted event can carry.
+///
+/// # Errors
+///
+/// [`MetadataBoundsError`]; verdicts are deterministic and identical on
+/// every node.
+pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsError> {
+    if metadata.events.len() > MAX_EVENT_TYPES as usize {
+        return Err(MetadataBoundsError(format!(
+            "event table names {} types, past the {MAX_EVENT_TYPES} an event index can reach",
+            metadata.events.len()
+        )));
+    }
+    for (name, signature) in &metadata.methods {
+        check_signature_bounds(signature)
+            .map_err(|error| MetadataBoundsError(format!("method {name:?}: {}", error.0)))?;
+    }
+    Ok(())
+}
+
+fn check_signature_bounds(signature: &MethodSignature) -> Result<(), MetadataBoundsError> {
+    if let Accessibility::Guarded(identity) = &signature.accessibility {
+        check_expr_bounds(identity, 0)?;
+    }
+    if let Some(minted) = &signature.mints {
+        check_expr_bounds(minted, 0)?;
+    }
+    for output in &signature.outputs {
+        check_expr_bounds(output, 0)?;
+    }
+    for call in &signature.calls {
+        check_expr_bounds(&call.target, 0)?;
+        for arg in &call.args {
+            check_expr_bounds(arg, 0)?;
+        }
+    }
+    let mut declared = 0usize;
+    check_clause_bounds(&signature.effects, 0, &mut declared)
+}
+
+fn check_clause_bounds(
+    clauses: &[Clause],
+    depth: usize,
+    declared: &mut usize,
+) -> Result<(), MetadataBoundsError> {
+    if depth > MAX_CLAUSE_DEPTH {
+        return Err(MetadataBoundsError(format!(
+            "for-each clauses nest deeper than {MAX_CLAUSE_DEPTH}"
+        )));
+    }
+    for clause in clauses {
+        match clause {
+            Clause::Effect { target, mode } => {
+                *declared += 1;
+                if *declared > MAX_EFFECTS_PER_SIGNATURE {
+                    return Err(MetadataBoundsError(format!(
+                        "signature declares more than {MAX_EFFECTS_PER_SIGNATURE} effects"
+                    )));
+                }
+                check_target_bounds(target)?;
+                check_mode_bounds(mode)?;
+            }
+            Clause::ForEach { list, body } => {
+                check_expr_bounds(list, 0)?;
+                check_clause_bounds(body, depth + 1, declared)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_target_bounds(target: &TargetExpr) -> Result<(), MetadataBoundsError> {
+    match target {
+        TargetExpr::Point(key) => check_expr_bounds(key, 0),
+        TargetExpr::Entry {
+            owner,
+            material,
+            order,
+            ..
+        } => {
+            check_expr_bounds(owner, 0)?;
+            for part in material {
+                check_expr_bounds(part, 0)?;
+            }
+            check_expr_bounds(order, 0)
+        }
+        TargetExpr::Range {
+            owner,
+            material,
+            lo,
+            hi,
+            ..
+        } => {
+            check_expr_bounds(owner, 0)?;
+            for part in material {
+                check_expr_bounds(part, 0)?;
+            }
+            check_expr_bounds(lo, 0)?;
+            check_expr_bounds(hi, 0)
+        }
+    }
+}
+
+fn check_mode_bounds(mode: &ModeExpr) -> Result<(), MetadataBoundsError> {
+    match mode {
+        ModeExpr::Read | ModeExpr::Delta | ModeExpr::Write | ModeExpr::Locked => Ok(()),
+        ModeExpr::Reserve(amount) => check_expr_bounds(amount, 0),
+    }
+}
+
+fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), MetadataBoundsError> {
+    if depth > MAX_EXPR_DEPTH {
+        return Err(MetadataBoundsError(format!(
+            "expression nests deeper than {MAX_EXPR_DEPTH}"
+        )));
+    }
+    let deeper = depth + 1;
+    match expr {
+        Expr::Literal(literal) => {
+            if literal.depth() > MAX_VALUE_DEPTH {
+                return Err(MetadataBoundsError(format!(
+                    "literal nests deeper than {MAX_VALUE_DEPTH}"
+                )));
+            }
+            Ok(())
+        }
+        Expr::Arg(_)
+        | Expr::Config(_)
+        | Expr::Binding(_)
+        | Expr::SelfAddr
+        | Expr::FreshId { .. }
+        | Expr::FreshKey { .. } => Ok(()),
+        Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) => {
+            check_expr_bounds(inner, deeper)
+        }
+        Expr::Lookup {
+            map: first,
+            key: second,
+        }
+        | Expr::Pack {
+            hi: first,
+            lo: second,
+        }
+        | Expr::NfBucket {
+            resource: first,
+            ids: second,
+        } => {
+            check_expr_bounds(first, deeper)?;
+            check_expr_bounds(second, deeper)
+        }
+        Expr::List(elements) => {
+            for element in elements {
+                check_expr_bounds(element, deeper)?;
+            }
+            Ok(())
+        }
+        Expr::SelfResource { material } => {
+            for part in material {
+                check_expr_bounds(part, deeper)?;
+            }
+            Ok(())
+        }
+        Expr::ChildKey {
+            owner, material, ..
+        }
+        | Expr::OrderKey {
+            owner, material, ..
+        } => {
+            check_expr_bounds(owner, deeper)?;
+            for part in material {
+                check_expr_bounds(part, deeper)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Everything routing reads about a published package.
