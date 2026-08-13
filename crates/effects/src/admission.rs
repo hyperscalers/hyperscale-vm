@@ -128,6 +128,22 @@ pub enum AdmissionError {
         /// The offending node.
         node: u32,
     },
+    /// An authorizing method whose minted identity does not evaluate to
+    /// an address.
+    #[error("node {node} mints an identity that is not an address")]
+    MintType {
+        /// The offending node.
+        node: u32,
+    },
+    /// A minted-identity expression reading the caller's inputs — re-asked
+    /// of the signature here, like the rule cell's shape, so a cached
+    /// package that never passed the publish check refuses rather than
+    /// minting whatever the caller asks for.
+    #[error("node {node} mints an identity its caller names")]
+    CallerNamedMint {
+        /// The offending node.
+        node: u32,
+    },
     /// An authorizing method whose declaration is not the single point
     /// read its stored rule lives at — the shape the publish check pins,
     /// re-derived so a cached package that never passed one is a refusal
@@ -591,6 +607,10 @@ pub(crate) fn admit_intents(
     let mut outputs: Vec<Vec<(Address, EdgeContent)>> = Vec::with_capacity(total);
     let mut consumed: Vec<Vec<u32>> = Vec::with_capacity(total);
     let mut lowered: Vec<Node> = Vec::with_capacity(total);
+    // The identity each node mints, indexed by flattened position: `Some`
+    // exactly for an authorizing method — its declared minted identity,
+    // or the target itself when the metadata names none.
+    let mut minted: Vec<Option<Address>> = Vec::with_capacity(total);
 
     for &(intent_index, local_index) in &order {
         let intent = &intents[intent_index];
@@ -815,34 +835,26 @@ pub(crate) fn admit_intents(
                     evidence.push(signer);
                 }
                 EvidenceRef::Node(producer) => {
-                    let source = usize::try_from(*producer)
+                    // An earlier node of the same intent, whose minted
+                    // identity — the target's own statement, resolved
+                    // when that node was judged — is what this proof
+                    // presents. A node that minted nothing has no entry.
+                    let flat = usize::try_from(*producer)
                         .ok()
                         .filter(|&earlier| earlier < local_index)
-                        .and_then(|earlier| intent.graph.nodes.get(earlier))
+                        .map(|earlier| flat_of[intent_index][earlier])
+                        .and_then(|flat| usize::try_from(flat).ok())
                         .ok_or(AdmissionError::ForwardProof {
                             node: node_index,
                             producer: *producer,
                         })?;
-                    let source_meta = instances
-                        .get(source.target)
-                        .ok_or_else(|| AdmissionError::UnknownInstance(source.target.address()))?;
-                    let source_package = cache
-                        .get(source_meta.package)
-                        .ok_or(AdmissionError::UnknownPackage(source_meta.package))?;
-                    let minting =
-                        source_package
-                            .methods
-                            .get(&source.method)
-                            .is_some_and(|signature| {
-                                matches!(signature.accessibility, Accessibility::Authorizing)
-                            });
-                    if !minting {
-                        return Err(AdmissionError::UnmintingProof {
+                    let identity = minted.get(flat).copied().flatten().ok_or(
+                        AdmissionError::UnmintingProof {
                             node: node_index,
                             producer: *producer,
-                        });
-                    }
-                    evidence.push(source.target.address());
+                        },
+                    )?;
+                    evidence.push(identity);
                 }
             }
         }
@@ -910,6 +922,30 @@ pub(crate) fn admit_intents(
                 }
             });
         }
+        // The identity this node mints, resolved over the same inputs its
+        // gate and outputs evaluate against: the declared minted identity,
+        // or the target itself when the metadata names none.
+        minted.push(match &signature.accessibility {
+            Accessibility::Authorizing => Some(match &signature.mints {
+                None => node.target.address(),
+                Some(expr) => {
+                    if expr.reads_call_inputs() {
+                        return Err(AdmissionError::CallerNamedMint { node: node_index });
+                    }
+                    let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
+                        AdmissionError::Eval {
+                            node: node_index,
+                            source,
+                        }
+                    })?;
+                    match value {
+                        Value::Address(identity) => identity,
+                        _ => return Err(AdmissionError::MintType { node: node_index }),
+                    }
+                }
+            }),
+            Accessibility::Public | Accessibility::Guarded(_) | Accessibility::RoleGated(_) => None,
+        });
         consumed.push(vec![0; node_outputs.len()]);
         outputs.push(node_outputs);
         lowered.push(Node {

@@ -116,6 +116,7 @@ fn funds_methods(methods: &mut PackageMetadata) {
         "withdraw".into(),
         MethodSignature {
             accessibility: Accessibility::Guarded(Expr::SelfAddr),
+            mints: None,
             params: vec![ParamType::Address, ParamType::U128],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
             outputs: vec![Expr::Arg(0)],
@@ -130,6 +131,7 @@ fn funds_methods(methods: &mut PackageMetadata) {
         "deposit".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             outputs: vec![],
@@ -156,6 +158,7 @@ fn funds_methods(methods: &mut PackageMetadata) {
         "stamp-entropy".into(),
         MethodSignature {
             accessibility: Accessibility::Guarded(Expr::SelfAddr),
+            mints: None,
             params: vec![],
             abi: vec![AbiParam::Handle(0)],
             outputs: vec![],
@@ -175,6 +178,7 @@ fn authority_methods(methods: &mut PackageMetadata) {
         "authorize".into(),
         MethodSignature {
             accessibility: Accessibility::Authorizing,
+            mints: None,
             params: vec![],
             abi: vec![],
             outputs: vec![],
@@ -193,6 +197,7 @@ fn authority_methods(methods: &mut PackageMetadata) {
         "securify".into(),
         MethodSignature {
             accessibility: Accessibility::Guarded(Expr::SelfAddr),
+            mints: None,
             params: vec![ParamType::RoleSet, ParamType::U64],
             abi: vec![
                 AbiParam::Handle(0),
@@ -219,6 +224,7 @@ fn authority_methods(methods: &mut PackageMetadata) {
         "propose".into(),
         MethodSignature {
             accessibility: Accessibility::RoleGated(AuthRole::Recovery),
+            mints: None,
             params: vec![ParamType::RoleSet, ParamType::U64],
             abi: vec![
                 AbiParam::Handle(0),
@@ -237,6 +243,7 @@ fn authority_methods(methods: &mut PackageMetadata) {
         "cancel".into(),
         MethodSignature {
             accessibility: Accessibility::RoleGated(AuthRole::Primary),
+            mints: None,
             params: vec![],
             abi: vec![AbiParam::Handle(0)],
             outputs: vec![],
@@ -251,6 +258,7 @@ fn authority_methods(methods: &mut PackageMetadata) {
         "confirm".into(),
         MethodSignature {
             accessibility: Accessibility::RoleGated(AuthRole::Confirmation),
+            mints: None,
             params: vec![],
             abi: vec![AbiParam::Handle(0)],
             outputs: vec![],
@@ -358,6 +366,7 @@ fn delegation_methods(methods: &mut PackageMetadata) {
         "stake".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             outputs: vec![unit_resource()],
@@ -372,6 +381,7 @@ fn delegation_methods(methods: &mut PackageMetadata) {
         "unstake".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             outputs: vec![],
@@ -402,6 +412,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
         "register-validator".into(),
         MethodSignature {
             accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
+            mints: None,
             params: vec![ParamType::U64, ParamType::Bytes, ParamType::Bytes],
             abi: vec![
                 AbiParam::Handle(0),
@@ -418,6 +429,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
         "deactivate-validator".into(),
         MethodSignature {
             accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
+            mints: None,
             params: vec![ParamType::U64],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
             outputs: vec![],
@@ -429,6 +441,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
         "unjail".into(),
         MethodSignature {
             accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
+            mints: None,
             params: vec![ParamType::U64],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
             outputs: vec![],
@@ -452,6 +465,7 @@ fn governance_methods(methods: &mut PackageMetadata) {
         "cast-param-vote".into(),
         MethodSignature {
             accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
+            mints: None,
             params: vec![ParamType::U64, ParamType::U64, ParamType::U64],
             abi: vec![
                 AbiParam::Handle(0),
@@ -468,6 +482,7 @@ fn governance_methods(methods: &mut PackageMetadata) {
         "clear-param-vote".into(),
         MethodSignature {
             accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
+            mints: None,
             params: vec![],
             abi: vec![AbiParam::Handle(0)],
             outputs: vec![],
@@ -487,6 +502,7 @@ pub fn amm_metadata() -> PackageMetadata {
         "swap".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::Bucket, ParamType::U128],
             abi: vec![
                 AbiParam::Handle(0),
@@ -530,6 +546,7 @@ pub fn book_metadata() -> PackageMetadata {
         "place-ask".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::U64, ParamType::Bucket],
             abi: vec![
                 AbiParam::Handle(0),
@@ -567,6 +584,7 @@ pub fn book_metadata() -> PackageMetadata {
         "fill-asks".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::U64, ParamType::U64, ParamType::Bucket],
             abi: vec![
                 AbiParam::Handle(0),
@@ -663,6 +681,7 @@ pub fn registry_metadata() -> PackageMetadata {
         "bind".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![
                 AbiParam::Handle(0),
@@ -681,6 +700,7 @@ pub fn registry_metadata() -> PackageMetadata {
         "check".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
             effects: vec![Clause::Effect {
@@ -694,6 +714,7 @@ pub fn registry_metadata() -> PackageMetadata {
         "drain".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::U128],
             abi: vec![AbiParam::Handle(0)],
             effects: vec![Clause::Effect {
@@ -741,6 +762,7 @@ pub fn nf_metadata() -> PackageMetadata {
         "mint".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(minted_id.clone())],
             outputs: vec![Expr::NfBucket {
@@ -762,6 +784,7 @@ pub fn nf_metadata() -> PackageMetadata {
         "deposit".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             effects: vec![Clause::Effect {
@@ -775,6 +798,7 @@ pub fn nf_metadata() -> PackageMetadata {
         "withdraw".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::Address, ParamType::Ids],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
             outputs: vec![Expr::NfBucket {
@@ -792,6 +816,7 @@ pub fn nf_metadata() -> PackageMetadata {
         "burn".into(),
         MethodSignature {
             accessibility: Accessibility::Public,
+            mints: None,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Bucket(0)],
             ..MethodSignature::default()

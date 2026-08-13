@@ -10,10 +10,11 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
 use hyperscale_vm_effects::stdlib::AUTH;
 use hyperscale_vm_effects::{
-    AdmissionError, AuthRole, AuthorityGate, ComponentAddr, Constraint, EdgeRef, Effect,
-    EffectTarget, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
-    MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit, child_key,
-    fresh_id, route,
+    Accessibility, Address, AddressClass, AdmissionError, AuthRole, AuthorityGate, Clause,
+    ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget, EvidenceRef, Expr, GraphArg,
+    GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph,
+    MetadataCache, MethodSignature, Mode, ModeExpr, PackageMetadata, TargetExpr, TestHasher, Value,
+    admit, child_key, fresh_id, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -243,6 +244,135 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     );
 
     route(&admitted, &cache, &instances, &TestHasher, &resolver()).expect("routes");
+}
+
+/// A custodian fixture: an authorizing method minting whatever identity
+/// its metadata names, and a guarded method opening for the configured
+/// one.
+fn custodian_world(
+    mints: Option<Expr>,
+    config: Vec<Value>,
+) -> (MetadataCache, InstanceRegistry, ComponentAddr) {
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "present".into(),
+        MethodSignature {
+            accessibility: Accessibility::Authorizing,
+            mints,
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    role: AUTH,
+                    material: vec![],
+                }),
+                mode: ModeExpr::Read,
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    package.methods.insert(
+        "operate".into(),
+        MethodSignature {
+            accessibility: Accessibility::Guarded(Expr::Config(0)),
+            ..MethodSignature::default()
+        },
+    );
+    let (mut cache, mut instances) = setup();
+    cache.publish(pkg("custodian"), package);
+    let meta = InstanceMeta {
+        package: pkg("custodian"),
+        config,
+        salt: Hash32([9; 32]),
+    };
+    let custodian = meta.address(&TestHasher);
+    instances.create(&TestHasher, meta);
+    (cache, instances, custodian)
+}
+
+fn custodian_graph(custodian: ComponentAddr) -> ManifestGraph {
+    ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: custodian.into(),
+                method: "present".into(),
+                args: vec![],
+                evidence: [EvidenceRef::IntentSignature].into(),
+            },
+            GraphNode {
+                target: custodian.into(),
+                method: "operate".into(),
+                args: vec![],
+                evidence: [EvidenceRef::Node(0)].into(),
+            },
+        ],
+    }
+}
+
+/// The minted identity is the metadata's statement: absent means the
+/// target itself, present names something else — the badge a custody
+/// gate mints — and never anything the caller feeds or a value that is
+/// not an address.
+#[test]
+fn a_minting_method_mints_what_its_metadata_names() {
+    let badge = Address::new([0xB0; 31], AddressClass::Resource);
+
+    let (cache, instances, custodian) =
+        custodian_world(Some(Expr::Config(0)), vec![Value::Address(badge)]);
+    let admitted = admit(
+        &custodian_graph(custodian),
+        ALICE,
+        &cache,
+        &instances,
+        &TestHasher,
+    )
+    .expect("admits");
+    let operate = &admitted.manifest().nodes[1];
+    assert_eq!(
+        operate.evidence,
+        vec![badge],
+        "the proof presents the named identity, not the producer's address"
+    );
+    assert_eq!(operate.authority, Some(AuthorityGate::Identity(badge)));
+
+    // Absent means the target itself: exactly the sign-in's shape.
+    let (cache, instances, custodian) = custodian_world(None, vec![Value::Address(badge)]);
+    let admitted = admit(
+        &custodian_graph(custodian),
+        ALICE,
+        &cache,
+        &instances,
+        &TestHasher,
+    )
+    .expect("admits");
+    assert_eq!(
+        admitted.manifest().nodes[1].evidence,
+        vec![custodian.address()]
+    );
+
+    // A minted identity the caller names, and one that is not an address.
+    let (cache, instances, custodian) =
+        custodian_world(Some(Expr::Arg(0)), vec![Value::Address(badge)]);
+    assert_eq!(
+        admit(
+            &custodian_graph(custodian),
+            ALICE,
+            &cache,
+            &instances,
+            &TestHasher
+        ),
+        Err(AdmissionError::CallerNamedMint { node: 0 })
+    );
+    let (cache, instances, custodian) = custodian_world(Some(Expr::Config(0)), vec![Value::U64(7)]);
+    assert_eq!(
+        admit(
+            &custodian_graph(custodian),
+            ALICE,
+            &cache,
+            &instances,
+            &TestHasher
+        ),
+        Err(AdmissionError::MintType { node: 0 })
+    );
 }
 
 /// A proof consumer never runs ahead of its producer, and never draws

@@ -213,6 +213,7 @@ impl Builder {
                 // list, and a body determines neither. Both are authored
                 // beside the WIT and land on the signature there.
                 accessibility: Accessibility::default(),
+                mints: None,
                 params: params.to_vec(),
                 abi: Vec::new(),
                 outputs: recorded.outputs,

@@ -211,6 +211,17 @@ pub enum Accessibility {
 pub struct MethodSignature {
     /// Whose authority naming this method on this target requires.
     pub accessibility: Accessibility,
+    /// The identity an authorizing method mints, over the target's own
+    /// inputs; absent means the target itself.
+    ///
+    /// The custody shape: a possession gate mints the badge resource's
+    /// address rather than the account's own, so what a guarded consumer
+    /// matches is the thing held, never the holder. Meaningful only on
+    /// an authorizing method — a method that mints nothing has no
+    /// identity to name — and never an expression the caller feeds,
+    /// which would be minting authority on demand; the publish check
+    /// refuses both.
+    pub mints: Option<Expr>,
     /// The method's parameter kinds, in order; admission types every node
     /// against them.
     pub params: Vec<ParamType>,
@@ -330,6 +341,13 @@ pub enum AbiError {
     /// present it, so the method reads as guarded and admits everyone.
     #[error("the authority this method requires is one its caller names")]
     CallerNamedAuthority,
+    /// A minted identity named on a method that mints nothing.
+    #[error("a minted identity on a method whose gate does not mint")]
+    MintWithoutGate,
+    /// A minted-identity expression reading the caller's inputs — which
+    /// would be minting whatever authority the caller asks for.
+    #[error("the identity this method mints is one its caller names")]
+    CallerNamedMint,
     /// One bucket parameter carried by more than one ABI parameter.
     ///
     /// A bucket carried by *none* is well-formed: a method that forwards
@@ -365,6 +383,14 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
         && identity.reads_call_inputs()
     {
         return Err(AbiError::CallerNamedAuthority);
+    }
+    if let Some(minted) = &signature.mints {
+        if !matches!(signature.accessibility, Accessibility::Authorizing) {
+            return Err(AbiError::MintWithoutGate);
+        }
+        if minted.reads_call_inputs() {
+            return Err(AbiError::CallerNamedMint);
+        }
     }
     // A rule-reading method's whole declaration is the cell its gate
     // judges at, in the shape `rule_cell` pins.
@@ -987,6 +1013,41 @@ mod tests {
                 0
             ))))),
             Err(AbiError::CallerNamedAuthority)
+        );
+    }
+
+    /// A minted identity is the target's own statement: only a minting
+    /// gate may name one, and never from anything the caller feeds.
+    #[test]
+    fn a_minted_identity_needs_a_minting_gate_the_caller_cannot_reach() {
+        let minting = |accessibility, mints| MethodSignature {
+            accessibility,
+            mints: Some(mints),
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(Expr::SelfAddr),
+                mode: ModeExpr::Read,
+            }],
+            ..MethodSignature::default()
+        };
+        assert_eq!(
+            check_abi(&minting(Accessibility::Authorizing, Expr::Config(0))),
+            Ok(())
+        );
+        assert_eq!(
+            check_abi(&minting(Accessibility::Public, Expr::Config(0))),
+            Err(AbiError::MintWithoutGate)
+        );
+        assert_eq!(
+            check_abi(&minting(
+                Accessibility::RoleGated(AuthRole::Recovery),
+                Expr::Config(0)
+            )),
+            Err(AbiError::MintWithoutGate),
+            "a role-gated node is never a proof"
+        );
+        assert_eq!(
+            check_abi(&minting(Accessibility::Authorizing, Expr::Arg(0))),
+            Err(AbiError::CallerNamedMint)
         );
     }
 
