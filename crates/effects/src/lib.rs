@@ -78,7 +78,7 @@ pub use route::{
 };
 pub use rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule};
 pub use types::{
-    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, Effect, EffectSet,
+    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, EdgeContent, Effect, EffectSet,
     EffectTarget, InvalidAddress, LocalKey, MAX_VALUE_DEPTH, Mode, ModeKind, NativeAddr,
     NativeRole, NetworkWord, NotAResource, NotCallable, PackageAddr, PrincipalAddr,
     ReserveOverflow, ResourceAddr, ResourceRef, RoleId, SchemeId, ShardId, SubstateKey, TextError,

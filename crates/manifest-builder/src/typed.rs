@@ -26,8 +26,8 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    Accessibility, Address, CallTarget, Constraint, EdgeRef, EvalInputs, EvidenceRef, Expr,
-    GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph,
+    Accessibility, Address, CallTarget, Constraint, EdgeContent, EdgeRef, EvalInputs, EvidenceRef,
+    Expr, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph,
     ManifestHash, MetadataCache, MethodSignature, PackageHash, ParamType, PrincipalAddr,
     ResourceRef, Value, evaluate_expr,
 };
@@ -569,6 +569,7 @@ fn type_args(
                 }
                 edge_resource(constraints).map(|resource| Value::Bucket {
                     resource: resource.address(),
+                    content: EdgeContent::Fungible,
                 })
             }
             GraphArg::Param(_) => {
@@ -669,7 +670,7 @@ fn resolvable(expr: &Expr, known: &[bool], depth: usize) -> bool {
         // No `for-each` encloses an output expression, and no identity
         // exists to derive from yet.
         Expr::Binding(_) | Expr::FreshId { .. } | Expr::FreshKey { .. } => false,
-        Expr::Field(inner, _) | Expr::ResourceOf(inner) => deeper(inner),
+        Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) => deeper(inner),
         Expr::Lookup { map, key } => deeper(map) && deeper(key),
         Expr::Pack { hi, lo } => deeper(hi) && deeper(lo),
         Expr::SelfResource { material } => material.iter().all(deeper),

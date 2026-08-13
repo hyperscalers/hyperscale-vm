@@ -31,8 +31,8 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use hyperscale_vm_effects::{
-    Address, Constraint, EdgeRef, GraphArg, Hasher, InstanceRegistry, ManifestGraph, MetadataCache,
-    ResourceRef, SubstateKey, TextError, Value,
+    Address, Constraint, EdgeContent, EdgeRef, GraphArg, Hasher, InstanceRegistry, ManifestGraph,
+    MetadataCache, ResourceRef, SubstateKey, TextError, Value,
 };
 
 use crate::typed::{output_resources, unknown};
@@ -244,7 +244,7 @@ impl Printer<'_> {
             // Never a manifest literal — a bucket arrives as an edge — so
             // this is only reachable through the escape hatch that lets a
             // caller write any value.
-            Value::Bucket { resource } => format!("bucket(@{})", self.address(*resource)?),
+            Value::Bucket { resource, .. } => format!("bucket(@{})", self.address(*resource)?),
             Value::Tuple(fields) => {
                 let mut written = Vec::with_capacity(fields.len());
                 for field in fields {
@@ -314,6 +314,7 @@ fn edge_types(
                     .flatten()
                     .map(|resource| Value::Bucket {
                         resource: resource.address(),
+                        content: EdgeContent::Fungible,
                     }),
                 GraphArg::Param(_) => None,
             };

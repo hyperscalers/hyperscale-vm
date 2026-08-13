@@ -17,7 +17,7 @@ use crate::metadata::{
     AbiError, AbiParam, Accessibility, CallSite, InstanceMeta, InstanceRegistry, MetadataCache,
     MethodSignature, PackageHash, check_abi,
 };
-use crate::types::{Address, CallTarget, Effect, EffectSet, ShardId, Value};
+use crate::types::{Address, CallTarget, EdgeContent, Effect, EffectSet, ShardId, Value};
 
 /// Resolves an owner prefix to the shard holding it.
 pub trait ShardResolver {
@@ -392,6 +392,7 @@ pub fn route(
                     }
                     args.push(Value::Bucket {
                         resource: *resource,
+                        content: EdgeContent::Fungible,
                     });
                 }
             }

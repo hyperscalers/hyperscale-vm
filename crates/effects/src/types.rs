@@ -306,11 +306,13 @@ pub enum Value {
     Address(Address),
     /// A full substate key.
     Key(SubstateKey),
-    /// The routable projection of a value edge: its static resource type.
-    /// Amounts are dynamic and never visible to the DSL.
+    /// The routable projection of a value edge: its static resource type
+    /// and what it carries besides.
     Bucket {
         /// The resource the edge carries.
         resource: Address,
+        /// What crosses the edge: a dynamic amount, or named instances.
+        content: EdgeContent,
     },
     /// A fixed-arity product.
     Tuple(Vec<Self>),
@@ -371,6 +373,27 @@ impl Value {
         }
         deepest
     }
+}
+
+/// The bound on the instance ids one non-fungible edge may move — the
+/// cap every id-carrying projection decodes under, and the count the
+/// edge's boundary cell crossing is sized by.
+pub const MAX_IDS_PER_EDGE: usize = 64;
+
+/// What a value edge carries besides its resource. Structural rather
+/// than inferred, so a fungible edge cannot pose as an empty id set and
+/// an id read on one refuses instead of answering nothing.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+pub enum EdgeContent {
+    /// A dynamic amount, never visible to the DSL.
+    Fungible,
+    /// The named instances the edge moves — signed manifest content,
+    /// which is what lets an effect signature declare per-id accesses.
+    NonFungible {
+        /// The instance ids, in the resource's id space.
+        #[hbor(max = MAX_IDS_PER_EDGE)]
+        ids: Vec<u64>,
+    },
 }
 
 /// One declared access target.
@@ -529,10 +552,10 @@ mod tests {
     use hyperscale_hbor::{assert_canonical, from_slice_with_depth};
 
     use super::{
-        Address, AddressClass, Effect, EffectSet, EffectTarget, LocalKey, MAX_VALUE_DEPTH,
-        MAX_VALUE_WIRE_DEPTH, Mode, ModeKind, NativeRole, RoleId, SchemeId, SubstateKey, Value,
-        child_key, compatible, component_address, config_hash, native_address, package_address,
-        principal_address, resource_address, to_vec,
+        Address, AddressClass, EdgeContent, Effect, EffectSet, EffectTarget, LocalKey,
+        MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH, Mode, ModeKind, NativeRole, RoleId, SchemeId,
+        SubstateKey, Value, child_key, compatible, component_address, config_hash, native_address,
+        package_address, principal_address, resource_address, to_vec,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::metadata::PackageHash;
@@ -625,6 +648,11 @@ mod tests {
         assert_canonical(&value);
         assert_canonical(&Value::Bucket {
             resource: Address::new([7; 31], AddressClass::Component),
+            content: EdgeContent::Fungible,
+        });
+        assert_canonical(&Value::Bucket {
+            resource: Address::new([7; 31], AddressClass::Component),
+            content: EdgeContent::NonFungible { ids: vec![3, 9] },
         });
     }
 

@@ -21,7 +21,7 @@ use crate::hash::Hasher;
 use crate::manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{Accessibility, InstanceRegistry, MetadataCache, PackageHash, ParamType};
 use crate::route::MAX_MANIFEST_NODES;
-use crate::types::{Address, MAX_VALUE_DEPTH, PrincipalAddr, Value};
+use crate::types::{Address, EdgeContent, MAX_VALUE_DEPTH, PrincipalAddr, Value};
 
 /// The bound on yield parameters one intent may declare.
 ///
@@ -675,7 +675,10 @@ pub(crate) fn admit_intents(
                         });
                     }
                     let bounds = check_constraints(constraints, resource, node_index, param_index)?;
-                    bound.push(Value::Bucket { resource });
+                    bound.push(Value::Bucket {
+                        resource,
+                        content: EdgeContent::Fungible,
+                    });
                     inputs.push(NodeInput::Edge {
                         source,
                         output: edge.output,
@@ -731,7 +734,10 @@ pub(crate) fn admit_intents(
                     }
                     let bounds =
                         check_constraints(&decl.constraints, resource, node_index, param_index)?;
-                    bound.push(Value::Bucket { resource });
+                    bound.push(Value::Bucket {
+                        resource,
+                        content: EdgeContent::Fungible,
+                    });
                     inputs.push(NodeInput::Edge {
                         source,
                         output: binding.edge.output,

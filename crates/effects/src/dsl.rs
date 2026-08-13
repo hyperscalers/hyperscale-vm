@@ -13,8 +13,9 @@ use hyperscale_hbor::Hbor;
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::types::{
-    Address, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode, ReserveOverflow,
-    RoleId, SubstateKey, Value, child_key, collection_id, order_key, resource_address,
+    Address, CollectionId, EdgeContent, Effect, EffectSet, EffectTarget, LocalKey, Mode,
+    ReserveOverflow, RoleId, SubstateKey, Value, child_key, collection_id, order_key,
+    resource_address,
 };
 
 /// The bound on any collection a `for-each` clause maps over. Keeps
@@ -55,6 +56,8 @@ pub enum Expr {
     Field(Box<Self>, u32),
     /// The static resource type of a bucket edge.
     ResourceOf(Box<Self>),
+    /// The static id set of a non-fungible bucket edge, as a list.
+    IdsOf(Box<Self>),
     /// Keyed lookup over a list of `(key, value)` pair tuples; yields the
     /// value of the first pair whose key matches.
     Lookup {
@@ -135,7 +138,9 @@ impl Expr {
             | Self::SelfAddr
             | Self::FreshId { .. }
             | Self::FreshKey { .. } => false,
-            Self::Field(inner, _) | Self::ResourceOf(inner) => inner.reads_call_inputs(),
+            Self::Field(inner, _) | Self::ResourceOf(inner) | Self::IdsOf(inner) => {
+                inner.reads_call_inputs()
+            }
             Self::Lookup { map, key } => map.reads_call_inputs() || key.reads_call_inputs(),
             Self::Pack { hi, lo } => hi.reads_call_inputs() || lo.reads_call_inputs(),
             Self::SelfResource { material } => material.iter().any(Self::reads_call_inputs),
@@ -637,6 +642,32 @@ fn eval_mode(
     }
 }
 
+/// A non-fungible edge's ids as a list, or the refusal a fungible one
+/// earns: kind is structural, never an empty answer.
+fn edge_ids(content: EdgeContent) -> Result<Value, EvalError> {
+    match content {
+        EdgeContent::NonFungible { ids } => {
+            Ok(Value::List(ids.into_iter().map(Value::U64).collect()))
+        }
+        EdgeContent::Fungible => Err(EvalError::TypeMismatch {
+            expected: "non-fungible bucket",
+            found: "bucket",
+        }),
+    }
+}
+
+/// A bucket projection's parts, or the type mismatch every edge
+/// projection refuses alike.
+fn bucket_parts(value: Value) -> Result<(Address, EdgeContent), EvalError> {
+    match value {
+        Value::Bucket { resource, content } => Ok((resource, content)),
+        other => Err(EvalError::TypeMismatch {
+            expected: "bucket",
+            found: other.kind(),
+        }),
+    }
+}
+
 /// Evaluate material expressions to their canonical encodings — the form
 /// every derivation hashes.
 fn eval_material(
@@ -689,13 +720,14 @@ fn eval_expr(
                     arity,
                 })
         }
-        Expr::ResourceOf(bucket) => match eval_expr(bucket, inputs, hasher, bindings, deeper)? {
-            Value::Bucket { resource } => Ok(Value::Address(resource)),
-            other => Err(EvalError::TypeMismatch {
-                expected: "bucket",
-                found: other.kind(),
-            }),
-        },
+        Expr::ResourceOf(bucket) => {
+            let (resource, _) = bucket_parts(eval_expr(bucket, inputs, hasher, bindings, deeper)?)?;
+            Ok(Value::Address(resource))
+        }
+        Expr::IdsOf(bucket) => {
+            let (_, content) = bucket_parts(eval_expr(bucket, inputs, hasher, bindings, deeper)?)?;
+            edge_ids(content)
+        }
         Expr::Lookup { map, key } => {
             let pairs = as_list(eval_expr(map, inputs, hasher, bindings, deeper)?)?;
             let key = eval_expr(key, inputs, hasher, bindings, deeper)?;
@@ -838,8 +870,8 @@ mod tests {
     use crate::hash::{Hash32, TestHasher};
     use crate::manifest::ManifestHash;
     use crate::types::{
-        Address, AddressClass, Effect, EffectTarget, Mode, RoleId, Value, child_key, collection_id,
-        order_key,
+        Address, AddressClass, EdgeContent, Effect, EffectTarget, Mode, RoleId, Value, child_key,
+        collection_id, order_key,
     };
 
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
@@ -1268,6 +1300,27 @@ mod tests {
             order_key(&TestHasher, ins.self_addr, RoleId(2), &[]).to_be_bytes(),
             collection_id(&TestHasher, ins.self_addr, RoleId(2), &[]).0,
         );
+    }
+
+    #[test]
+    fn ids_of_projects_a_non_fungible_edge() {
+        let bucket = Value::Bucket {
+            resource: Address::new([0xE1; 31], AddressClass::Resource),
+            content: EdgeContent::NonFungible { ids: vec![7, 9] },
+        };
+        let fungible = Value::Bucket {
+            resource: Address::new([0xE1; 31], AddressClass::Resource),
+            content: EdgeContent::Fungible,
+        };
+        let args = [bucket, fungible];
+        let ins = inputs(&args, &[]);
+        assert_eq!(
+            evaluate_expr(&Expr::IdsOf(Box::new(Expr::Arg(0))), &ins, &TestHasher),
+            Ok(Value::List(vec![Value::U64(7), Value::U64(9)])),
+        );
+        // A fungible edge refuses the id read: kind is structural,
+        // never an empty answer.
+        assert!(evaluate_expr(&Expr::IdsOf(Box::new(Expr::Arg(1))), &ins, &TestHasher).is_err());
     }
 
     #[test]

@@ -8,12 +8,13 @@ use std::collections::BTreeSet;
 
 use common::{ALICE, account_metadata, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
-    Address, AddressClass, CallSite, ComponentAddr, EdgeRef, Effect, EffectTarget, EvalInputs,
-    EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph,
-    ManifestHash, MetadataCache, MethodSignature, Mode, PackageMetadata, ParamType, RoleId,
-    TestHasher, Value, admit, evaluate_expr, route,
+    Address, AddressClass, CallSite, ComponentAddr, EdgeContent, EdgeRef, Effect, EffectTarget,
+    EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
+    ManifestGraph, ManifestHash, MetadataCache, MethodSignature, Mode, PackageMetadata, ParamType,
+    RoleId, TestHasher, Value, admit, evaluate_expr, route,
 };
 use proptest::collection::vec;
+use proptest::option;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
 
 /// A creation salt in a named lane, so two instances of one package can
@@ -44,8 +45,13 @@ fn arb_value() -> impl Strategy<Value = Value> {
         vec(any::<u8>(), 0..8).prop_map(Value::Bytes),
         any::<u8>()
             .prop_map(|byte| Value::Address(Address::new([byte; 31], AddressClass::Component))),
-        any::<u8>().prop_map(|byte| Value::Bucket {
-            resource: Address::new([byte; 31], AddressClass::Component),
+        (any::<u8>(), option::of(vec(any::<u64>(), 0..4))).prop_map(|(byte, ids)| {
+            Value::Bucket {
+                resource: Address::new([byte; 31], AddressClass::Component),
+                content: ids.map_or(EdgeContent::Fungible, |ids| EdgeContent::NonFungible {
+                    ids,
+                }),
+            }
         }),
     ];
     leaf.prop_recursive(2, 8, 3, |inner| {
