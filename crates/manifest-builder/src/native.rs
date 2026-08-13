@@ -21,7 +21,7 @@
 //! Arity, kinds and output count are pinned by the typed layer refusing
 //! the call; a method added without a wrapper is pinned by the count.
 
-use hyperscale_vm_effects::{ComponentAddr, PrincipalAddr, ResourceRef, Rule};
+use hyperscale_vm_effects::{ComponentAddr, PrincipalAddr, ResourceRef, RoleSet, Rule};
 
 use crate::args::BucketArg;
 use crate::builder::Bucket;
@@ -30,7 +30,8 @@ use crate::typed::{Proof, TypedBuilder, TypedError};
 /// The fungible account: every principal answers these.
 pub mod account {
     use super::{
-        Bucket, BucketArg, PrincipalAddr, Proof, ResourceRef, Rule, TypedBuilder, TypedError,
+        Bucket, BucketArg, PrincipalAddr, Proof, ResourceRef, RoleSet, Rule, TypedBuilder,
+        TypedError,
     };
 
     /// Reserve `amount` of `resource` on the proof holder's vault,
@@ -89,10 +90,11 @@ pub mod account {
         builder.call_minting(who, "authorize")
     }
 
-    /// Create the proof holder's stored-authority cell, with `rule` as
-    /// all three roles — the one-way transition off the rule the
-    /// account's address derives. Refused at execution if the cell
-    /// already exists.
+    /// Create the proof holder's stored-authority cell — three roles
+    /// and the recovery delay.
+    ///
+    /// The one-way transition off the rule the account's address
+    /// derives. Refused at execution if the cell already exists.
     ///
     /// # Errors
     ///
@@ -100,11 +102,69 @@ pub mod account {
     pub fn securify(
         builder: &mut TypedBuilder<'_>,
         proof: Proof,
-        rule: Rule,
+        roles: RoleSet,
+        recovery_delay_ms: u64,
     ) -> Result<(), TypedError> {
         builder
-            .call_as(proof, proof.target(), "securify", (rule,))?
+            .call_as(
+                proof,
+                proof.target(),
+                "securify",
+                (roles, recovery_delay_ms),
+            )?
             .none()
+    }
+
+    /// Securify with one rule as all three roles.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `securify`.
+    pub fn securify_uniform(
+        builder: &mut TypedBuilder<'_>,
+        proof: Proof,
+        rule: Rule,
+        recovery_delay_ms: u64,
+    ) -> Result<(), TypedError> {
+        securify(builder, proof, RoleSet::uniform(rule), recovery_delay_ms)
+    }
+
+    /// Propose a full replacement for `who`'s roles and delay, judged by
+    /// the governing recovery rule against the intent's own signature.
+    /// The proposal matures after the delay the cell currently stores.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `propose`.
+    pub fn propose(
+        builder: &mut TypedBuilder<'_>,
+        who: PrincipalAddr,
+        roles: RoleSet,
+        recovery_delay_ms: u64,
+    ) -> Result<(), TypedError> {
+        builder
+            .call(who, "propose", (roles, recovery_delay_ms))?
+            .none()
+    }
+
+    /// Drop `who`'s unmatured proposal, judged by the governing primary
+    /// rule against the intent's own signature.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `cancel`.
+    pub fn cancel(builder: &mut TypedBuilder<'_>, who: PrincipalAddr) -> Result<(), TypedError> {
+        builder.call(who, "cancel", ())?.none()
+    }
+
+    /// Enact `who`'s pending proposal now, judged by the governing
+    /// confirmation rule against the intent's own signature.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `confirm`.
+    pub fn confirm(builder: &mut TypedBuilder<'_>, who: PrincipalAddr) -> Result<(), TypedError> {
+        builder.call(who, "confirm", ())?.none()
     }
 }
 

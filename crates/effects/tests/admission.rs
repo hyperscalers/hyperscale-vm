@@ -10,9 +10,10 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
 use hyperscale_vm_effects::stdlib::AUTH;
 use hyperscale_vm_effects::{
-    AdmissionError, AuthorityGate, ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget,
-    EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH,
-    ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit, child_key, fresh_id, route,
+    AdmissionError, AuthRole, AuthorityGate, ComponentAddr, Constraint, EdgeRef, Effect,
+    EffectTarget, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
+    MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit, child_key,
+    fresh_id, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -230,6 +231,7 @@ fn a_minted_proof_resolves_to_its_producers_target() {
         authorize.authority,
         Some(AuthorityGate::StoredRule {
             cell: child_key(&TestHasher, ALICE, AUTH, &[]),
+            role: AuthRole::Primary,
         })
     );
 

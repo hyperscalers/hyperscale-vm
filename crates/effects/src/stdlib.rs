@@ -6,6 +6,7 @@
 //! authored, not compiler-inferred — the inference backend is a later
 //! phase; what is final here is the signature format they are written in.
 
+use crate::auth::AuthRole;
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::metadata::{AbiParam, Accessibility, MethodSignature, PackageMetadata, ParamType};
 use crate::types::{NativeRole, RoleId, Value};
@@ -56,9 +57,14 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 /// draw into the account's entropy leaf. `authorize()`: nothing but its
 /// own gate — naming it mints the account's identity as evidence for
 /// later nodes of the intent, which is how an account acts through calls
-/// its own signature proof would not open. `securify(rule)`: create the
-/// stored-authority cell `authorize` reads, refusing one that already
-/// exists — the transition off the address-derived rule, one-way.
+/// its own signature proof would not open. `securify(roles, delay)`:
+/// create the stored-authority cell `authorize` reads, refusing one that
+/// already exists — the transition off the address-derived rule,
+/// one-way. `propose(roles, delay)`, `cancel()`, `confirm()`: the timed
+/// recovery surface, each judged against the stored role its
+/// accessibility names — recovery proposes a full replacement that
+/// matures after the stored delay, primary cancels one that has not,
+/// confirmation enacts one early.
 ///
 /// Spending and writing require the account's own authority; being paid
 /// does not. Anyone may credit you, and a transfer therefore still
@@ -74,6 +80,17 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 #[must_use]
 pub fn account_metadata() -> PackageMetadata {
     let mut methods = PackageMetadata::default();
+    funds_methods(&mut methods);
+    authority_methods(&mut methods);
+    // Index order is the contract: the guest emits 0 and 1, and these are
+    // what those indexes mean.
+    methods.events = vec!["withdrawn".into(), "deposited".into()];
+    methods
+}
+
+/// `withdraw`, `deposit`, and the entropy stamp: the account moving and
+/// recording things, gated by the identity its sign-in mints.
+fn funds_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "withdraw".into(),
         MethodSignature {
@@ -115,6 +132,25 @@ pub fn account_metadata() -> PackageMetadata {
         },
     );
     methods.methods.insert(
+        "stamp-entropy".into(),
+        MethodSignature {
+            accessibility: Accessibility::Guarded(Expr::SelfAddr),
+            params: vec![],
+            abi: vec![AbiParam::Handle(0)],
+            outputs: vec![],
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(self_child(ENTROPY, vec![])),
+                mode: ModeExpr::Write,
+            }],
+            calls: vec![],
+        },
+    );
+}
+
+/// The authority surface: the sign-in, the one-way door, and timed
+/// recovery — every method whose gate reads the stored rule cell.
+fn authority_methods(methods: &mut PackageMetadata) {
+    methods.methods.insert(
         "authorize".into(),
         MethodSignature {
             accessibility: Accessibility::Authorizing,
@@ -136,8 +172,12 @@ pub fn account_metadata() -> PackageMetadata {
         "securify".into(),
         MethodSignature {
             accessibility: Accessibility::Guarded(Expr::SelfAddr),
-            params: vec![ParamType::Rule],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
+            params: vec![ParamType::RoleSet, ParamType::U64],
+            abi: vec![
+                AbiParam::Handle(0),
+                AbiParam::Derived(Expr::Arg(0)),
+                AbiParam::Derived(Expr::Arg(1)),
+            ],
             outputs: vec![],
             // An exclusive read-modify-write: the body refuses a cell
             // that already exists, and the write conflicts with every
@@ -150,24 +190,56 @@ pub fn account_metadata() -> PackageMetadata {
             calls: vec![],
         },
     );
+    // The recovery surface: each method's whole declaration is the same
+    // exclusive write on the rule cell, which is where its gate's cell
+    // comes from and what keeps a role rewrite out of any wave that
+    // signs in under the roles it replaces.
     methods.methods.insert(
-        "stamp-entropy".into(),
+        "propose".into(),
         MethodSignature {
-            accessibility: Accessibility::Guarded(Expr::SelfAddr),
-            params: vec![],
-            abi: vec![AbiParam::Handle(0)],
+            accessibility: Accessibility::RoleGated(AuthRole::Recovery),
+            params: vec![ParamType::RoleSet, ParamType::U64],
+            abi: vec![
+                AbiParam::Handle(0),
+                AbiParam::Derived(Expr::Arg(0)),
+                AbiParam::Derived(Expr::Arg(1)),
+            ],
             outputs: vec![],
             effects: vec![Clause::Effect {
-                target: TargetExpr::Point(self_child(ENTROPY, vec![])),
+                target: TargetExpr::Point(self_child(AUTH, vec![])),
                 mode: ModeExpr::Write,
             }],
             calls: vec![],
         },
     );
-    // Index order is the contract: the guest emits 0 and 1, and these are
-    // what those indexes mean.
-    methods.events = vec!["withdrawn".into(), "deposited".into()];
-    methods
+    methods.methods.insert(
+        "cancel".into(),
+        MethodSignature {
+            accessibility: Accessibility::RoleGated(AuthRole::Primary),
+            params: vec![],
+            abi: vec![AbiParam::Handle(0)],
+            outputs: vec![],
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(self_child(AUTH, vec![])),
+                mode: ModeExpr::Write,
+            }],
+            calls: vec![],
+        },
+    );
+    methods.methods.insert(
+        "confirm".into(),
+        MethodSignature {
+            accessibility: Accessibility::RoleGated(AuthRole::Confirmation),
+            params: vec![],
+            abi: vec![AbiParam::Handle(0)],
+            outputs: vec![],
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(self_child(AUTH, vec![])),
+                mode: ModeExpr::Write,
+            }],
+            calls: vec![],
+        },
+    );
 }
 
 /// The stake pool.

@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use hyperscale_hbor::{EncodeError, Hbor, to_vec};
 use thiserror::Error;
 
+use crate::auth::{AuthRole, RoleSet};
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::hash::{Hash32, Hasher};
 use crate::rule::Rule;
@@ -81,6 +82,9 @@ pub enum ParamType {
     /// under the vocabulary caps at admission — so a rule past either
     /// cap is refused before anything signs.
     Rule,
+    /// A full role set — three rules, canonical bytes — decoded under
+    /// the same vocabulary caps at admission, for the same reason.
+    RoleSet,
 }
 
 impl ParamType {
@@ -94,6 +98,7 @@ impl ParamType {
             Self::Address => "address",
             Self::Bucket => "bucket",
             Self::Rule => "rule",
+            Self::RoleSet => "role-set",
         }
     }
 
@@ -108,6 +113,7 @@ impl ParamType {
             | (Self::Bytes, Value::Bytes(_))
             | (Self::Address, Value::Address(_)) => true,
             (Self::Rule, Value::Bytes(bytes)) => Rule::from_slice(bytes).is_ok(),
+            (Self::RoleSet, Value::Bytes(bytes)) => RoleSet::from_slice(bytes).is_ok(),
             _ => false,
         }
     }
@@ -176,6 +182,14 @@ pub enum Accessibility {
     /// of nothing else, so a caller cannot conjure a target's authority
     /// by pointing evidence at a method that merely does something.
     Authorizing,
+    /// Naming this method requires satisfying one of the target's stored
+    /// roles — which one is named here — and mints nothing.
+    ///
+    /// The recovery surface: judged like an authorizing gate, against
+    /// the role set that governs at the transaction clock, but a
+    /// role-gated node is never a proof, so recovery authority opens
+    /// recovery methods and nothing else.
+    RoleGated(AuthRole),
 }
 
 /// A method's declared access. Its transitive effect set is the fold of its
@@ -224,6 +238,12 @@ pub enum AbiError {
     /// evaluates and the read provisions.
     #[error("an authorizing method declares exactly one point read: its rule cell")]
     AuthorizingShape,
+    /// A role-gated method whose declaration is not exactly one point
+    /// write — the cell its stored roles live in. The write is where
+    /// the gate's cell comes from, and it serializes role rewrites
+    /// against concurrent sign-ins.
+    #[error("a role-gated method declares exactly one point write: its rule cell")]
+    RoleGatedShape,
     /// A handle binding naming an effect clause the signature does not
     /// declare.
     #[error("ABI parameter {position} names effect clause {clause}, past the {declared} declared")]
@@ -314,6 +334,21 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
         )
     {
         return Err(AbiError::AuthorizingShape);
+    }
+    // A role-gated method's whole declaration is the same cell as an
+    // exclusive write: the gate reads it, the body rewrites it, and the
+    // exclusivity keeps a role rewrite out of any wave that signs in
+    // under the roles it replaces.
+    if matches!(signature.accessibility, Accessibility::RoleGated(_))
+        && !matches!(
+            signature.effects.as_slice(),
+            [Clause::Effect {
+                target: TargetExpr::Point(_),
+                mode: ModeExpr::Write,
+            }]
+        )
+    {
+        return Err(AbiError::RoleGatedShape);
     }
     let bound = |count: usize| u32::try_from(count).unwrap_or(u32::MAX);
     let mut carried = vec![0u32; signature.params.len()];
@@ -992,7 +1027,22 @@ mod tests {
         // which is the point.
         let expected = [
             ("account", "authorize", Accessibility::Authorizing),
+            (
+                "account",
+                "cancel",
+                Accessibility::RoleGated(AuthRole::Primary),
+            ),
+            (
+                "account",
+                "confirm",
+                Accessibility::RoleGated(AuthRole::Confirmation),
+            ),
             ("account", "deposit", Accessibility::Public),
+            (
+                "account",
+                "propose",
+                Accessibility::RoleGated(AuthRole::Recovery),
+            ),
             (
                 "account",
                 "securify",

@@ -11,7 +11,7 @@
 //! embedding wrong; it cannot get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
-    Address, AuthorityGate, CallArg, EDGE_CELL_BYTES, NodeCall, PackageHash, Rule,
+    Address, AuthCell, AuthorityGate, CallArg, EDGE_CELL_BYTES, NodeCall, PackageHash,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult};
@@ -333,19 +333,29 @@ fn gated(
 /// pure match. A stored-rule gate reads the target's cell — declared by
 /// the method itself, so provisioned wherever this runs — and dispatches
 /// on presence: absent is the virtual rule, the identity the target's
-/// address derives; present is the stored primary. A stored cell that
-/// does not decode admits nobody: the write path refuses such bytes, so
-/// one here is not a rule, and a gate that cannot be read fails closed.
+/// address derives, whichever role asks; present is the stored role the
+/// gate names, picked from the role set that governs at the transaction
+/// clock — so a matured proposal judges here with nothing applying it.
+/// A stored cell that does not decode admits nobody: the write path
+/// refuses such bytes, so one here is not a rule, and a gate that
+/// cannot be read fails closed.
 fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, SessionTrap> {
     match call.authority {
         None => Ok(true),
         Some(AuthorityGate::Identity(required)) => Ok(call.evidence.contains(&required)),
-        Some(AuthorityGate::StoredRule { cell }) => {
+        Some(AuthorityGate::StoredRule { cell, role }) => {
             let bytes = session.declared_cell(cell)?;
             if bytes.is_empty() {
                 return Ok(call.evidence.contains(&call.target));
             }
-            Ok(Rule::from_slice(&bytes).is_ok_and(|stored| stored.satisfied_by(&call.evidence)))
+            let clock = session.clock_ms();
+            Ok(AuthCell::from_slice(&bytes).is_ok_and(|stored| {
+                stored
+                    .governing(clock)
+                    .roles
+                    .rule(role)
+                    .satisfied_by(&call.evidence)
+            }))
         }
     }
 }

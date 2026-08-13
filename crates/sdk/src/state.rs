@@ -261,3 +261,9 @@ pub fn fresh_id() -> u64 {
 /// admission gate already decoded under the vocabulary caps.
 #[derive(Clone, Debug, Default)]
 pub struct Rule(pub Vec<u8>);
+
+/// A role-set parameter, as a contract signature names it. The same
+/// marker shape as [`Rule`], for the three-rule form the
+/// stored-authority cell holds.
+#[derive(Clone, Debug, Default)]
+pub struct RoleSet(pub Vec<u8>);

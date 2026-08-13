@@ -28,9 +28,24 @@ world account {
     /// body has nothing left to do.
     export authorize: func();
 
-    /// Create the stored-authority cell with the caller's rule as every
-    /// role. The cell existing is this body's own refusal: nothing
-    /// deletes one, so the transition off the address-derived rule is
-    /// one-way.
-    export securify: func(cell: borrow<write-cell>, rule: list<u8>);
+    /// Create the stored-authority cell: the caller's roles and recovery
+    /// delay, with nothing pending. The cell existing is this body's own
+    /// refusal: nothing deletes one, so the transition off the
+    /// address-derived rule is one-way.
+    export securify: func(cell: borrow<write-cell>, roles: list<u8>, delay-ms: u64);
+
+    /// Append a pending replacement for the whole cell, maturing after
+    /// the stored recovery delay; an unmatured proposal is replaced, a
+    /// matured one first promoted. Gated by the governing recovery rule.
+    export propose: func(cell: borrow<write-cell>, roles: list<u8>, delay-ms: u64);
+
+    /// Drop an unmatured proposal; a matured one is promoted instead —
+    /// cancelling what already governs would be a rewrite, not a cancel.
+    /// Gated by the governing primary rule.
+    export cancel: func(cell: borrow<write-cell>);
+
+    /// Promote the pending proposal now, matured or not: early enactment
+    /// and compaction are one operation. Gated by the governing
+    /// confirmation rule.
+    export confirm: func(cell: borrow<write-cell>);
 }

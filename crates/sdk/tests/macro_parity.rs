@@ -32,7 +32,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod account {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed, Rule};
+    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed, RoleSet};
 
     #[state]
     struct Account {
@@ -72,9 +72,27 @@ mod account {
 
         /// Create the stored-authority cell; an existing one is the
         /// body's refusal.
-        #[allow(clippy::needless_pass_by_value)] // the contract consumes the rule it stores
-        pub fn securify(&mut self, rule: Rule) {
-            let _ = rule;
+        #[allow(clippy::needless_pass_by_value)] // the contract consumes the roles it stores
+        pub fn securify(&mut self, roles: RoleSet, delay_ms: u64) {
+            let _ = (roles, delay_ms);
+            self.auth.set(0);
+        }
+
+        /// Append a pending replacement, maturing after the stored
+        /// delay.
+        #[allow(clippy::needless_pass_by_value)] // the contract consumes the roles it stores
+        pub fn propose(&mut self, roles: RoleSet, delay_ms: u64) {
+            let _ = (roles, delay_ms);
+            self.auth.set(0);
+        }
+
+        /// Drop an unmatured proposal.
+        pub fn cancel(&mut self) {
+            self.auth.set(0);
+        }
+
+        /// Promote the pending proposal now.
+        pub fn confirm(&mut self) {
             self.auth.set(0);
         }
     }

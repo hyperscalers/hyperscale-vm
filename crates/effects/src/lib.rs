@@ -20,6 +20,7 @@
 
 pub mod admission;
 pub mod artifact;
+pub mod auth;
 pub mod dsl;
 pub mod envelope;
 pub mod footprint;
@@ -36,6 +37,9 @@ pub mod vectors;
 
 pub use admission::{AdmissionError, Admitted, MAX_YIELD_PARAMS, admit};
 pub use artifact::{ArtifactError, METADATA_SECTION, attach_metadata, extract_metadata};
+pub use auth::{
+    AuthBase, AuthCell, AuthCellError, AuthRole, MAX_ROLESET_WIRE_DEPTH, Proposal, RoleSet,
+};
 pub use dsl::{
     Clause, Declaration, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, evaluate_declaration,

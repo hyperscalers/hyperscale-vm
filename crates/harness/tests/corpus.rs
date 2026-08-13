@@ -15,11 +15,12 @@ use hyperscale_vm_effects::stdlib::{
     ASKS, AUTH, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
 };
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, Address, Clause, ComponentAddr, Constraint, Effect, EffectSet,
-    EffectTarget, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
-    MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata, ParamType,
-    PrefixShardResolver, PrincipalAddr, ResourceAddr, RoleId, Routing, Rule, ShardId,
-    ShardResolver, SubstateKey, TargetExpr, TestHasher, Value, admit, child_key, fresh_id, route,
+    AbiParam, Accessibility, Address, AuthBase, AuthCell, Clause, ComponentAddr, Constraint,
+    Effect, EffectSet, EffectTarget, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry,
+    ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
+    ParamType, PrefixShardResolver, PrincipalAddr, Proposal, ResourceAddr, RoleId, RoleSet,
+    Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value, admit,
+    child_key, fresh_id, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -92,6 +93,14 @@ fn config_leaf(owner: impl Into<Address>) -> SubstateKey {
 /// An account's stored-authority cell — what its sign-in reads.
 fn auth(owner: impl Into<Address>) -> SubstateKey {
     child_key(&TestHasher, owner, AUTH, &[])
+}
+
+/// One identity as all three roles, under the corpus delay.
+fn uniform_base(identity: Address) -> AuthBase {
+    AuthBase {
+        recovery_delay_ms: DAY_MS,
+        roles: RoleSet::uniform(Rule::Require(identity)),
+    }
 }
 
 fn world() -> (MetadataCache, InstanceRegistry) {
@@ -338,7 +347,9 @@ fn composer(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) ->
             .is_some_and(|signature| {
                 matches!(
                     signature.accessibility,
-                    Accessibility::Guarded(_) | Accessibility::Authorizing
+                    Accessibility::Guarded(_)
+                        | Accessibility::Authorizing
+                        | Accessibility::RoleGated(_)
                 )
             });
         if !guarded {
@@ -353,6 +364,15 @@ fn composer(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) ->
         signer = Some(principal);
     }
     signer.unwrap_or(ALICE)
+}
+
+/// What one corpus transaction runs under: its hash, its intent signer,
+/// and the transaction clock its block would have committed.
+#[derive(Clone, Copy)]
+struct Signing {
+    tx: TxHash,
+    signer: PrincipalAddr,
+    clock_ms: u64,
 }
 
 /// Execute one admitted manifest through the kernel's own walk: routing
@@ -370,9 +390,13 @@ fn execute_manifest(
     world: &(MetadataCache, InstanceRegistry),
     store: MemoryStore,
     graph: &ManifestGraph,
-    tx: TxHash,
-    signer: PrincipalAddr,
+    under: Signing,
 ) -> Result<(TxResult, MemoryStore)> {
+    let Signing {
+        tx,
+        signer,
+        clock_ms,
+    } = under;
     let (cache, instances) = world;
     let admitted = admit(graph, signer, cache, instances, &TestHasher).context("admission")?;
     let routing = route(
@@ -391,8 +415,7 @@ fn execute_manifest(
         "the null resolver routes to one shard"
     );
     let declaration = routing.declaration().context("declaration")?;
-    let entry =
-        BatchTx::new(tx, declaration, env().clock_ms, env().randomness).with_calls(routing.calls);
+    let entry = BatchTx::new(tx, declaration, clock_ms, env().randomness).with_calls(routing.calls);
 
     let before = store.clone();
     let session = KernelSession::materialize(
@@ -400,7 +423,10 @@ fn execute_manifest(
         &entry.declared,
         &entry.ordered,
         tx,
-        env(),
+        EnvInputs {
+            clock_ms,
+            randomness: env().randomness,
+        },
         test_hash,
     )
     .expect("corpus manifests are feasible");
@@ -490,15 +516,31 @@ fn run_both_signed(
     transactions: &[(&ManifestGraph, TxHash)],
     signer: Option<PrincipalAddr>,
 ) -> (Vec<TxResult>, MemoryStore) {
+    run_both_at(engines, world, store, transactions, signer, env().clock_ms)
+}
+
+/// As [`run_both_signed`], at an explicit transaction clock — how the
+/// recovery tests move weighted time between transactions.
+fn run_both_at(
+    engines: &Engines,
+    world: &(MetadataCache, InstanceRegistry),
+    store: &MemoryStore,
+    transactions: &[(&ManifestGraph, TxHash)],
+    signer: Option<PrincipalAddr>,
+    clock_ms: u64,
+) -> (Vec<TxResult>, MemoryStore) {
     let mut lanes = Vec::new();
     for lane in [Lane::Blessed, Lane::Reference] {
         let mut results = Vec::new();
         let mut threaded = store.clone();
         for (graph, tx) in transactions {
-            let signer = signer.unwrap_or_else(|| composer(world, graph));
+            let under = Signing {
+                tx: *tx,
+                signer: signer.unwrap_or_else(|| composer(world, graph)),
+                clock_ms,
+            };
             let (result, next) =
-                execute_manifest(lane, engines, world, threaded, graph, *tx, signer)
-                    .expect("driver");
+                execute_manifest(lane, engines, world, threaded, graph, under).expect("driver");
             results.push(result);
             threaded = next;
         }
@@ -891,11 +933,15 @@ fn a_refused_authorization_takes_its_consumers_with_it() -> Result<()> {
     Ok(())
 }
 
-/// Sign in and hand the account to Bob's rule.
+/// The recovery delay every corpus cell stores: one day of weighted
+/// time, against a test clock that starts at [`env`]'s 5000 ms.
+const DAY_MS: u64 = 86_400_000;
+
+/// Sign in and hand the account to Bob's rule, uniformly.
 fn securify_graph(rule: Rule) -> ManifestGraph {
     graph(|b| {
         let alice = account::authorize(b, ALICE)?;
-        account::securify(b, alice, rule)
+        account::securify_uniform(b, alice, rule, DAY_MS)
     })
 }
 
@@ -925,11 +971,13 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("securify must complete; got {:?}", results[0]);
     };
-    let rule_bytes = Rule::Require(BOB.address()).to_bytes().unwrap();
+    let cell_bytes = AuthCell::new(uniform_base(BOB.address()))
+        .to_bytes()
+        .unwrap();
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(rule_bytes)),
-        "the cell stores exactly the rule securify was handed"
+        Some(&Some(cell_bytes)),
+        "the guest's spliced frame is the codec's encoding, byte for byte"
     );
 
     // The old key still derives Alice's address, and that identity is
@@ -980,6 +1028,368 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
         vec![TxResult::Trapped],
         "securifying a securified account is the guest's own refusal"
     );
+    Ok(())
+}
+
+/// The split-role setup every recovery test starts from: Alice holds
+/// primary, Bob recovery, the maker confirmation, and the corpus delay
+/// separates a proposal from its maturity.
+const fn split_roles() -> RoleSet {
+    RoleSet {
+        primary: Rule::Require(ALICE.address()),
+        recovery: Rule::Require(BOB.address()),
+        confirmation: Rule::Require(MAKER.address()),
+    }
+}
+
+const fn split_base() -> AuthBase {
+    AuthBase {
+        recovery_delay_ms: DAY_MS,
+        roles: split_roles(),
+    }
+}
+
+/// A store holding Alice's funds and her securified split-role cell,
+/// written as the guest would write it.
+fn recovered_store() -> MemoryStore {
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    store
+        .write(auth(ALICE), AuthCell::new(split_base()).to_bytes().unwrap())
+        .unwrap();
+    store.clear_log();
+    store
+}
+
+fn propose_graph() -> ManifestGraph {
+    graph(|b| {
+        account::propose(
+            b,
+            ALICE,
+            RoleSet::uniform(Rule::Require(BOB.address())),
+            DAY_MS,
+        )
+    })
+}
+
+fn cancel_graph() -> ManifestGraph {
+    graph(|b| account::cancel(b, ALICE))
+}
+
+fn confirm_graph() -> ManifestGraph {
+    graph(|b| account::confirm(b, ALICE))
+}
+
+/// Whether `signer` opens Alice's sign-in at `clock_ms`: the whole
+/// authorized transfer completes, or refuses at its authorize node.
+fn assert_acts(
+    engines: &Engines,
+    world: &(MetadataCache, InstanceRegistry),
+    store: &MemoryStore,
+    signer: PrincipalAddr,
+    clock_ms: u64,
+    admits: bool,
+    tag: u8,
+) {
+    let transfer = authorized_transfer_graph();
+    let (results, _) = run_both_at(
+        engines,
+        world,
+        store,
+        &[(&transfer, TxHash(Hash32([tag; 32])))],
+        Some(signer),
+        clock_ms,
+    );
+    if admits {
+        assert!(
+            matches!(&results[0], TxResult::Completed(_)),
+            "the rule must admit this signer at {clock_ms}; got {:?}",
+            results[0]
+        );
+    } else {
+        assert_eq!(
+            results,
+            vec![TxResult::Refused(Outcome::Unauthorized { node: 0 })],
+            "the rule must refuse this signer at {clock_ms}"
+        );
+    }
+}
+
+/// A proposal matures on its own: nothing applies it, and the verdict
+/// flips at the instant — the retired primary refuses, the proposed one
+/// signs in, on both runtimes.
+#[test]
+fn a_proposal_governs_from_its_instant_with_nothing_applying_it() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let store = recovered_store();
+    let t0 = env().clock_ms;
+
+    // The primary cannot propose and the recovery key cannot spend:
+    // each role opens its own gate and no other.
+    let (results, _) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&propose_graph(), TxHash(Hash32([0x60; 32])))],
+        Some(ALICE),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::Unauthorized { node: 0 })],
+        "primary is not recovery"
+    );
+
+    // Bob proposes himself; the instant is the clock plus the stored
+    // delay, and the written frame is the codec's encoding exactly.
+    let (results, store) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&propose_graph(), TxHash(Hash32([0x61; 32])))],
+        Some(BOB),
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("propose must complete; got {:?}", results[0]);
+    };
+    let pending = AuthCell {
+        base: split_base(),
+        proposal: Some(Proposal {
+            effective_at_ms: t0 + DAY_MS,
+            base: uniform_base(BOB.address()),
+        }),
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(pending.to_bytes().unwrap())),
+        "the guest's spliced frame is the codec's encoding, byte for byte"
+    );
+
+    // One instant before maturity the old roles govern whole: Alice
+    // acts, Bob does not. At the instant the verdicts swap, with no
+    // write between: the matured proposal governs at read time.
+    let before = t0 + DAY_MS - 1;
+    let at = t0 + DAY_MS;
+    assert_acts(&engines, &world, &store, ALICE, before, true, 0x62);
+    assert_acts(&engines, &world, &store, BOB, before, false, 0x63);
+    assert_acts(&engines, &world, &store, BOB, at, true, 0x64);
+    assert_acts(&engines, &world, &store, ALICE, at, false, 0x65);
+
+    // A later cancel by the new primary compacts the matured proposal
+    // into the base — it cannot cancel what already governs — and the
+    // old primary stays retired.
+    let (results, store) = run_both_at(
+        &engines,
+        &world,
+        &store,
+        &[(&cancel_graph(), TxHash(Hash32([0x66; 32])))],
+        Some(BOB),
+        at,
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("cancel must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(
+            AuthCell::new(uniform_base(BOB.address()))
+                .to_bytes()
+                .unwrap()
+        )),
+        "cancelling a matured proposal is compaction, not reversal"
+    );
+    assert_acts(&engines, &world, &store, ALICE, at, false, 0x67);
+    Ok(())
+}
+
+/// Primary cancels an unmatured proposal, and every later verdict —
+/// however far past the would-be maturity — is under the old roles, as
+/// if nothing had been proposed.
+#[test]
+fn primary_cancels_an_unmatured_proposal() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let store = recovered_store();
+    let t0 = env().clock_ms;
+
+    let (results, store) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&propose_graph(), TxHash(Hash32([0x68; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    let (results, store) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&cancel_graph(), TxHash(Hash32([0x69; 32])))],
+        Some(ALICE),
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("cancel must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(AuthCell::new(split_base()).to_bytes().unwrap())),
+        "the cell is exactly what securify wrote"
+    );
+
+    // Far past the would-be maturity, the old roles still govern: a
+    // cancelled proposal never does.
+    let long_after = t0 + 10 * DAY_MS;
+    assert_acts(&engines, &world, &store, ALICE, long_after, true, 0x6A);
+    assert_acts(&engines, &world, &store, BOB, long_after, false, 0x6B);
+
+    // With nothing pending, confirm is the guest's own refusal.
+    let (results, _) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&confirm_graph(), TxHash(Hash32([0x6C; 32])))],
+        Some(MAKER),
+    );
+    assert_eq!(results, vec![TxResult::Trapped]);
+    Ok(())
+}
+
+/// Confirmation enacts a proposal early: the new roles govern from the
+/// confirm, a day before the instant would have arrived on its own.
+#[test]
+fn confirmation_enacts_a_proposal_early() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let store = recovered_store();
+    let t0 = env().clock_ms;
+
+    let (results, store) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&propose_graph(), TxHash(Hash32([0x6D; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    // The recovery key cannot confirm its own proposal.
+    let (results, _) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&confirm_graph(), TxHash(Hash32([0x6E; 32])))],
+        Some(BOB),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::Unauthorized { node: 0 })],
+        "recovery is not confirmation"
+    );
+
+    let (results, store) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&confirm_graph(), TxHash(Hash32([0x6F; 32])))],
+        Some(MAKER),
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("confirm must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(
+            AuthCell::new(uniform_base(BOB.address()))
+                .to_bytes()
+                .unwrap()
+        )),
+        "confirm promotes the proposal whole"
+    );
+
+    // Bob governs now — a day early — and Alice is retired now.
+    assert_acts(&engines, &world, &store, BOB, t0, true, 0x70);
+    assert_acts(&engines, &world, &store, ALICE, t0, false, 0x71);
+    Ok(())
+}
+
+/// A second propose replaces an unmatured proposal — its timer restarts
+/// from the replacing clock — and an unsecurified account has nothing
+/// to propose against.
+#[test]
+fn propose_replaces_a_pending_proposal_and_needs_a_cell() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let store = recovered_store();
+    let t0 = env().clock_ms;
+
+    let (results, store) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&propose_graph(), TxHash(Hash32([0x72; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    // Replace it half a day later: one proposal, the fresh instant.
+    let later = t0 + DAY_MS / 2;
+    let replace = graph(|b| {
+        account::propose(
+            b,
+            ALICE,
+            RoleSet::uniform(Rule::Require(MAKER.address())),
+            DAY_MS,
+        )
+    });
+    let (results, _) = run_both_at(
+        &engines,
+        &world,
+        &store,
+        &[(&replace, TxHash(Hash32([0x73; 32])))],
+        Some(BOB),
+        later,
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("propose must complete; got {:?}", results[0]);
+    };
+    let replaced = AuthCell {
+        base: split_base(),
+        proposal: Some(Proposal {
+            effective_at_ms: later + DAY_MS,
+            base: uniform_base(MAKER.address()),
+        }),
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(replaced.to_bytes().unwrap())),
+        "one proposal, restarted from the replacing clock"
+    );
+
+    // A virtual account has no cell: propose is the guest's own trap,
+    // judged after the virtual rule signed the caller in.
+    let mut virtual_store = MemoryStore::new();
+    virtual_store
+        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    virtual_store.clear_log();
+    let own_propose = graph(|b| {
+        account::propose(
+            b,
+            ALICE,
+            RoleSet::uniform(Rule::Require(BOB.address())),
+            DAY_MS,
+        )
+    });
+    let (results, _) = run_both_signed(
+        &engines,
+        &world,
+        &virtual_store,
+        &[(&own_propose, TxHash(Hash32([0x74; 32])))],
+        Some(ALICE),
+    );
+    assert_eq!(results, vec![TxResult::Trapped]);
     Ok(())
 }
 

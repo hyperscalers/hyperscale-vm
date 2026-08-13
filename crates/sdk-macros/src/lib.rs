@@ -167,6 +167,7 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         "Address" => quote!(Address),
         "Vec" | "Bytes" => quote!(Bytes),
         "Rule" => quote!(Rule),
+        "RoleSet" => quote!(RoleSet),
         _ => {
             return Err(syn::Error::new(
                 ty.span(),

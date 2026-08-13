@@ -17,8 +17,8 @@ use hyperscale_vm_effects::stdlib::{
 };
 use hyperscale_vm_effects::{
     ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
-    PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr, Rule, TestHasher, Value, admit,
-    resource_address,
+    PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr, RoleSet, Rule, TestHasher, Value,
+    admit, resource_address,
 };
 use hyperscale_vm_manifest_builder::native::{account, amm, book, splitter, staking};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -108,9 +108,17 @@ fn the_account_wrappers_match_their_signatures() {
         let funds = account::withdraw(b, alice, BASE, 100)?;
         account::deposit(b, BOB, funds)?;
         account::stamp_entropy(b, alice)?;
-        account::securify(b, alice, Rule::Require(BOB.address()))
+        account::securify_uniform(b, alice, Rule::Require(BOB.address()), 86_400_000)?;
+        account::propose(
+            b,
+            ALICE,
+            RoleSet::uniform(Rule::Require(BOB.address())),
+            86_400_000,
+        )?;
+        account::cancel(b, ALICE)?;
+        account::confirm(b, ALICE)
     });
-    assert_eq!(graph.nodes.len(), 5);
+    assert_eq!(graph.nodes.len(), 8);
 }
 
 #[test]
@@ -195,7 +203,10 @@ fn every_stdlib_method_has_a_wrapper() {
             "account",
             &[
                 "authorize",
+                "cancel",
+                "confirm",
                 "deposit",
+                "propose",
                 "securify",
                 "stamp-entropy",
                 "withdraw",

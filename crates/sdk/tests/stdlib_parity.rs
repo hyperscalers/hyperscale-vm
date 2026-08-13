@@ -63,10 +63,34 @@ fn account() -> Blueprint {
             let cell = holder.child(AUTH, &[]);
             t.point(&cell).read();
         })
-        // Securify writes the same cell, exclusively: an existing cell
-        // is the body's own refusal, and the write conflicts with every
-        // concurrent sign-in's read.
-        .method("securify", &[ParamType::Rule], |t: &mut Trace| {
+        // Securify and the recovery surface all write the same cell,
+        // exclusively: an existing cell is securify's own refusal, and
+        // every role rewrite conflicts with every concurrent sign-in's
+        // read.
+        .method(
+            "securify",
+            &[ParamType::RoleSet, ParamType::U64],
+            |t: &mut Trace| {
+                let holder = t.self_addr();
+                let cell = holder.child(AUTH, &[]);
+                t.point(&cell).write();
+            },
+        )
+        .method(
+            "propose",
+            &[ParamType::RoleSet, ParamType::U64],
+            |t: &mut Trace| {
+                let holder = t.self_addr();
+                let cell = holder.child(AUTH, &[]);
+                t.point(&cell).write();
+            },
+        )
+        .method("cancel", &[], |t: &mut Trace| {
+            let holder = t.self_addr();
+            let cell = holder.child(AUTH, &[]);
+            t.point(&cell).write();
+        })
+        .method("confirm", &[], |t: &mut Trace| {
             let holder = t.self_addr();
             let cell = holder.child(AUTH, &[]);
             t.point(&cell).write();

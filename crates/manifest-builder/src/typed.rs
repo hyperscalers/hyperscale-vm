@@ -419,15 +419,20 @@ impl<'a> TypedBuilder<'a> {
                     method: method.to_owned(),
                 });
             }
-            (Accessibility::Authorizing, None) => BTreeSet::from([EvidenceRef::IntentSignature]),
+            (Accessibility::Authorizing | Accessibility::RoleGated(_), None) => {
+                BTreeSet::from([EvidenceRef::IntentSignature])
+            }
             (Accessibility::Guarded(_), None) => {
                 return Err(TypedError::SignatureForGuarded {
                     method: method.to_owned(),
                 });
             }
-            (Accessibility::Guarded(_) | Accessibility::Authorizing, Some(proof)) => {
-                BTreeSet::from([EvidenceRef::Node(proof.node)])
-            }
+            (
+                Accessibility::Guarded(_)
+                | Accessibility::Authorizing
+                | Accessibility::RoleGated(_),
+                Some(proof),
+            ) => BTreeSet::from([EvidenceRef::Node(proof.node)]),
         };
         let outputs = resources.len();
         let producer = self

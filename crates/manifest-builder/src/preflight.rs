@@ -312,9 +312,9 @@ fn required_authority(
     let identity = match &signature.accessibility {
         Accessibility::Public => return Authority::Anyone,
         Accessibility::Guarded(identity) => identity,
-        // An authorizing method's rule, while nothing is stored, is the
+        // A rule-reading method's rule, while nothing is stored, is the
         // virtual one — the identity its target's address derives.
-        Accessibility::Authorizing => &Expr::SelfAddr,
+        Accessibility::Authorizing | Accessibility::RoleGated(_) => &Expr::SelfAddr,
     };
     // An authority expression reads nothing the caller supplies, so the
     // target and its configuration are the whole evaluation.

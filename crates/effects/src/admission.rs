@@ -14,6 +14,7 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
+use crate::auth::AuthRole;
 use crate::dsl::{Clause, EvalError, EvalInputs, TargetExpr, evaluate_expr};
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
@@ -760,19 +761,23 @@ pub(crate) fn admit_intents(
                 }
                 Some(identity)
             }
-            Accessibility::Authorizing => {
+            Accessibility::Authorizing | Accessibility::RoleGated(_) => {
                 if node.evidence.is_empty() {
                     return Err(AdmissionError::MissingEvidence { node: node_index });
                 }
                 None
             }
         };
-        // An authorizing gate is its target's stored rule, at the cell
-        // the method's own single point-read clause names — the shape
-        // the publish check pins, re-derived here so a cached package
-        // that never passed one is a refusal rather than a panic.
+        // A rule-reading gate is its target's stored rule, at the cell
+        // the method's own single point clause names — the shape the
+        // publish check pins, re-derived here so a cached package that
+        // never passed one is a refusal rather than a panic. Which
+        // stored rule judges the call is the accessibility's business:
+        // the primary for an authorizing method, the named role for a
+        // role-gated one.
         let rule_cell = match &signature.accessibility {
-            Accessibility::Authorizing => Some(&signature.effects),
+            Accessibility::Authorizing => Some((&signature.effects, AuthRole::Primary)),
+            Accessibility::RoleGated(role) => Some((&signature.effects, *role)),
             Accessibility::Public | Accessibility::Guarded(_) => None,
         };
         // A proof is scoped to the intent that produced it — a signature
@@ -785,9 +790,13 @@ pub(crate) fn admit_intents(
                 EvidenceRef::IntentSignature => {
                     // A signature signs in; a proof acts. Whether the
                     // key behind this proof still holds its account's
-                    // authority is the account's rule, so the only gate
-                    // it may reach is the one that reads a rule.
-                    if !matches!(signature.accessibility, Accessibility::Authorizing) {
+                    // authority is the account's rule, so the only
+                    // gates it may reach are the ones that read a rule
+                    // — the sign-in, and the recovery surface.
+                    if !matches!(
+                        signature.accessibility,
+                        Accessibility::Authorizing | Accessibility::RoleGated(_)
+                    ) {
                         return Err(AdmissionError::SignatureForGuarded { node: node_index });
                     }
                     let signer = intent
@@ -855,7 +864,7 @@ pub(crate) fn admit_intents(
                     _ => return Err(AdmissionError::AuthorityType { node: node_index }),
                 }
             }
-            (None, Some(effects)) => {
+            (None, Some((effects, role))) => {
                 let [
                     Clause::Effect {
                         target: TargetExpr::Point(target),
@@ -872,7 +881,7 @@ pub(crate) fn admit_intents(
                     }
                 })?;
                 match value {
-                    Value::Key(cell) => Some(AuthorityGate::StoredRule { cell }),
+                    Value::Key(cell) => Some(AuthorityGate::StoredRule { cell, role }),
                     _ => return Err(AdmissionError::RuleCell { node: node_index }),
                 }
             }

@@ -10,7 +10,7 @@
 
 use hyperscale_vm_effects::{
     Address, CallTarget, ComponentAddr, GraphArg, NativeAddr, PackageAddr, PrincipalAddr,
-    ResourceAddr, ResourceRef, Rule, Value,
+    ResourceAddr, ResourceRef, RoleSet, Rule, Value,
 };
 
 use crate::builder::{Bucket, GraphBuilder, Param};
@@ -120,6 +120,22 @@ impl Arg for Rule {
     fn bind(self, _builder: &GraphBuilder) -> GraphArg {
         GraphArg::Literal(Value::Bytes(
             self.to_bytes().expect("a rule within the caps encodes"),
+        ))
+    }
+}
+
+impl sealed::Sealed for RoleSet {}
+impl Arg for RoleSet {
+    /// A role set binds as its canonical bytes — the form admission
+    /// decodes under the vocabulary caps.
+    ///
+    /// # Panics
+    ///
+    /// On a rule past the vocabulary's own caps, which no admission path
+    /// would accept; the compose site is where its author can fix it.
+    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+        GraphArg::Literal(Value::Bytes(
+            self.to_bytes().expect("a role set within the caps encodes"),
         ))
     }
 }

@@ -7,6 +7,7 @@
 //! reads only what signatures evaluate over: each node's target, method, and
 //! bound inputs. Amounts are dynamic; types are static.
 
+use crate::auth::AuthRole;
 use crate::hash::Hash32;
 use crate::types::{Address, SubstateKey, Value};
 
@@ -100,14 +101,20 @@ pub enum AuthorityGate {
     /// The presented set must carry this identity — what the target
     /// itself named, evaluated at admission.
     Identity(Address),
-    /// The presented set must satisfy the target's stored rule at this
-    /// cell — or, while the cell is absent, carry the identity the
-    /// target's address derives. The cell is the authorizing method's
-    /// own declared point read, so it is provisioned wherever the call
-    /// runs.
+    /// The presented set must satisfy one of the target's stored rules
+    /// at this cell — or, while the cell is absent, carry the identity
+    /// the target's address derives. The cell is the method's own
+    /// declared point clause, so it is provisioned wherever the call
+    /// runs, and which stored rule judges the call is the role its
+    /// accessibility names: the primary for an authorizing method, the
+    /// named role for a role-gated one. The governing role set is
+    /// picked at the transaction clock, so a matured proposal judges
+    /// without anything applying it.
     StoredRule {
         /// The cell the target's rules live in.
         cell: SubstateKey,
+        /// The stored rule the presented set must satisfy.
+        role: AuthRole,
     },
 }
 
