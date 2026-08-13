@@ -13,8 +13,8 @@ use hyperscale_hbor::Hbor;
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::types::{
-    Address, Effect, EffectSet, EffectTarget, LocalKey, Mode, ReserveOverflow, RoleId, SubstateKey,
-    Value, child_key, resource_address,
+    Address, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode, ReserveOverflow,
+    RoleId, SubstateKey, Value, child_key, collection_id, resource_address,
 };
 
 /// The bound on any collection a `for-each` clause maps over. Keeps
@@ -160,6 +160,9 @@ pub enum TargetExpr {
         owner: Expr,
         /// The collection's role under the owner.
         collection: RoleId,
+        /// The material separating this collection from the role's others,
+        /// canonically encoded into its identity.
+        material: Vec<Expr>,
         /// The entry's order key.
         order: Expr,
     },
@@ -169,6 +172,9 @@ pub enum TargetExpr {
         owner: Expr,
         /// The collection's role under the owner.
         collection: RoleId,
+        /// The material separating this collection from the role's others,
+        /// canonically encoded into its identity.
+        material: Vec<Expr>,
         /// Inclusive lower bound.
         lo: Expr,
         /// Inclusive upper bound.
@@ -544,24 +550,30 @@ fn eval_target(
         TargetExpr::Entry {
             owner,
             collection,
+            material,
             order,
         } => {
             let owner = as_address(eval_expr(owner, inputs, hasher, bindings, 0)?)?;
+            let collection =
+                eval_collection(owner, *collection, material, inputs, hasher, bindings)?;
             let order = as_u128(eval_expr(order, inputs, hasher, bindings, 0)?)?;
             Ok(EffectTarget::Entry {
                 owner,
-                collection: *collection,
+                collection,
                 order,
             })
         }
         TargetExpr::Range {
             owner,
             collection,
+            material,
             lo,
             hi,
             cap,
         } => {
             let owner = as_address(eval_expr(owner, inputs, hasher, bindings, 0)?)?;
+            let collection =
+                eval_collection(owner, *collection, material, inputs, hasher, bindings)?;
             let lo = as_u128(eval_expr(lo, inputs, hasher, bindings, 0)?)?;
             let hi = as_u128(eval_expr(hi, inputs, hasher, bindings, 0)?)?;
             if lo > hi {
@@ -569,13 +581,30 @@ fn eval_target(
             }
             Ok(EffectTarget::Range {
                 owner,
-                collection: *collection,
+                collection,
                 lo,
                 hi,
                 cap: *cap,
             })
         }
     }
+}
+
+/// Fold a target's role and evaluated material into the collection
+/// identity everything downstream compares.
+fn eval_collection(
+    owner: Address,
+    role: RoleId,
+    material: &[Expr],
+    inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    bindings: &[Value],
+) -> Result<CollectionId, EvalError> {
+    let mut encoded = Vec::with_capacity(material.len());
+    for expr in material {
+        encoded.push(eval_expr(expr, inputs, hasher, bindings, 0)?.canonical_bytes());
+    }
+    Ok(collection_id(hasher, owner, role, &encoded))
 }
 
 fn eval_mode(
@@ -778,7 +807,7 @@ mod tests {
     use crate::hash::{Hash32, TestHasher};
     use crate::manifest::ManifestHash;
     use crate::types::{
-        Address, AddressClass, Effect, EffectTarget, Mode, RoleId, Value, child_key,
+        Address, AddressClass, Effect, EffectTarget, Mode, RoleId, Value, child_key, collection_id,
     };
 
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
@@ -1049,6 +1078,7 @@ mod tests {
                 target: TargetExpr::Range {
                     owner: Expr::SelfAddr,
                     collection: RoleId(4),
+                    material: vec![],
                     lo: Expr::Arg(0),
                     hi: Expr::Arg(1),
                     cap: 16,
@@ -1068,7 +1098,7 @@ mod tests {
         assert!(set.contains(&Effect {
             target: EffectTarget::Range {
                 owner: ins.self_addr,
-                collection: RoleId(4),
+                collection: collection_id(&TestHasher, ins.self_addr, RoleId(4), &[]),
                 lo: 100,
                 hi: 110,
                 cap: 16,
@@ -1084,6 +1114,7 @@ mod tests {
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
                 collection: RoleId(4),
+                material: vec![],
                 lo: Expr::Arg(1),
                 hi: Expr::Arg(0),
                 cap: 16,
@@ -1093,6 +1124,59 @@ mod tests {
         assert_eq!(
             evaluate_effects(&inverted, &ins, &TestHasher),
             Err(EvalError::InvalidRange)
+        );
+    }
+
+    #[test]
+    fn material_separates_collections_under_one_role() {
+        // One role, two materials: two collections. The identity folds the
+        // owner, the role, and the evaluated material, so an entry target
+        // parameterized by an argument lands in the argument's collection.
+        let resource_a = Value::Address(Address::new([0xAA; 31], AddressClass::Resource));
+        let resource_b = Value::Address(Address::new([0xBB; 31], AddressClass::Resource));
+        let args = [resource_a.clone(), resource_b.clone()];
+        let ins = inputs(&args, &[]);
+        let entry_for = |slot: u32| Clause::Effect {
+            target: TargetExpr::Entry {
+                owner: Expr::SelfAddr,
+                collection: RoleId(4),
+                material: vec![Expr::Arg(slot)],
+                order: Expr::Literal(Value::U128(9)),
+            },
+            mode: ModeExpr::Write,
+        };
+        let set = evaluate_effects(&[entry_for(0), entry_for(1)], &ins, &TestHasher).unwrap();
+        let id_for = |resource: &Value| {
+            collection_id(
+                &TestHasher,
+                ins.self_addr,
+                RoleId(4),
+                &[resource.canonical_bytes()],
+            )
+        };
+        assert_eq!(set.len(), 2, "distinct material is distinct collections");
+        for resource in [&resource_a, &resource_b] {
+            assert!(set.contains(&Effect {
+                target: EffectTarget::Entry {
+                    owner: ins.self_addr,
+                    collection: id_for(resource),
+                    order: 9,
+                },
+                mode: Mode::Write,
+            }));
+        }
+
+        // Same derivation, different role: a third collection. The salt
+        // arms are each load-bearing.
+        assert_ne!(id_for(&resource_a), id_for(&resource_b));
+        assert_ne!(
+            collection_id(&TestHasher, ins.self_addr, RoleId(4), &[]),
+            collection_id(&TestHasher, ins.self_addr, RoleId(5), &[]),
+        );
+        let other = Address::new([8; 31], AddressClass::Component);
+        assert_ne!(
+            collection_id(&TestHasher, ins.self_addr, RoleId(4), &[]),
+            collection_id(&TestHasher, other, RoleId(4), &[]),
         );
     }
 

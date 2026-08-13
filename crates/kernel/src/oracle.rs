@@ -115,8 +115,8 @@ pub fn undeclared_accesses(trace: &[Access], declared: &EffectSet) -> Vec<Access
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, TestHasher,
-        child_key,
+        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, ModeKind,
+        RoleId, TestHasher, child_key,
     };
 
     use super::undeclared_accesses;
@@ -142,7 +142,7 @@ mod tests {
             Effect {
                 target: EffectTarget::Range {
                     owner,
-                    collection: RoleId(4),
+                    collection: CollectionId([4; 16]),
                     lo: 10,
                     hi: 20,
                     cap: 8,
@@ -165,7 +165,7 @@ mod tests {
             Access {
                 target: EffectTarget::Entry {
                     owner,
-                    collection: RoleId(4),
+                    collection: CollectionId([4; 16]),
                     order: 15,
                 },
                 kind: ModeKind::Write,
@@ -174,7 +174,7 @@ mod tests {
             Access {
                 target: EffectTarget::Range {
                     owner,
-                    collection: RoleId(4),
+                    collection: CollectionId([4; 16]),
                     lo: 12,
                     hi: 18,
                     cap: 4,
@@ -197,7 +197,7 @@ mod tests {
             Effect {
                 target: EffectTarget::Range {
                     owner,
-                    collection: RoleId(4),
+                    collection: CollectionId([4; 16]),
                     lo: 10,
                     hi: 20,
                     cap: 8,
@@ -221,7 +221,7 @@ mod tests {
             Access {
                 target: EffectTarget::Entry {
                     owner,
-                    collection: RoleId(4),
+                    collection: CollectionId([4; 16]),
                     order: 15,
                 },
                 kind: ModeKind::Delta,
@@ -230,7 +230,7 @@ mod tests {
             Access {
                 target: EffectTarget::Entry {
                     owner,
-                    collection: RoleId(4),
+                    collection: CollectionId([4; 16]),
                     order: 21,
                 },
                 kind: ModeKind::Write,
@@ -239,7 +239,7 @@ mod tests {
             Access {
                 target: EffectTarget::Range {
                     owner,
-                    collection: RoleId(4),
+                    collection: CollectionId([4; 16]),
                     lo: 5,
                     hi: 20,
                     cap: 8,
@@ -249,7 +249,7 @@ mod tests {
             Access {
                 target: EffectTarget::Range {
                     owner,
-                    collection: RoleId(4),
+                    collection: CollectionId([4; 16]),
                     lo: 10,
                     hi: 20,
                     cap: 9,

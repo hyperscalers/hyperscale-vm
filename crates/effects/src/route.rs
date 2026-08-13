@@ -881,7 +881,7 @@ mod tests {
     };
     use crate::types::{
         Address, AddressClass, ComponentAddr, Effect, EffectSet, EffectTarget, Mode, RoleId,
-        ShardId, Value, child_key,
+        ShardId, Value, child_key, collection_id,
     };
 
     fn pkg(name: &str) -> PackageHash {
@@ -1109,6 +1109,7 @@ mod tests {
             target: TargetExpr::Entry {
                 owner: Expr::SelfAddr,
                 collection: RoleId(6),
+                material: vec![],
                 order: Expr::Pack {
                     hi: Box::new(Expr::Literal(Value::U64(0))),
                     lo: Box::new(Expr::FreshId { slot: 0 }),
@@ -1176,7 +1177,7 @@ mod tests {
             assert!(set.contains(&Effect {
                 target: EffectTarget::Entry {
                     owner,
-                    collection: RoleId(6),
+                    collection: collection_id(&TestHasher, owner, RoleId(6), &[]),
                     order,
                 },
                 mode: Mode::Write,

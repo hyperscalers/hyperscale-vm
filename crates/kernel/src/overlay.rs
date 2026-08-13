@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Address, EffectTarget, ModeKind, RoleId, SubstateKey};
+use hyperscale_vm_effects::{Address, CollectionId, EffectTarget, ModeKind, SubstateKey};
 
 use crate::modes::{
     DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount, fold_deltas, judge,
@@ -33,7 +33,7 @@ fn layer_range<'a>(
     layer: &'a Layer,
     empty: &'a EntryChanges,
     owner: Address,
-    collection: RoleId,
+    collection: CollectionId,
     lo: u128,
     hi: u128,
 ) -> std::collections::btree_map::Range<'a, u128, Option<Vec<u8>>> {
@@ -49,7 +49,7 @@ fn layer_range<'a>(
 #[derive(Clone, Debug, Default)]
 struct Layer {
     cells: BTreeMap<SubstateKey, Option<Vec<u8>>>,
-    entries: BTreeMap<(Address, RoleId), EntryChanges>,
+    entries: BTreeMap<(Address, CollectionId), EntryChanges>,
     locked: BTreeSet<SubstateKey>,
     pending_deltas: BTreeMap<SubstateKey, Vec<DeltaOp>>,
     held: BTreeMap<SubstateKey, BTreeMap<TxHash, Option<u128>>>,
@@ -166,7 +166,7 @@ impl OverlayStore {
     pub fn pre_active_entry(
         &self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         order: u128,
     ) -> Option<Vec<u8>> {
         if let Some(change) = self
@@ -188,7 +188,7 @@ impl OverlayStore {
     /// removal.
     pub fn active_entries(
         &self,
-    ) -> impl Iterator<Item = ((Address, RoleId, u128), Option<&[u8]>)> + '_ {
+    ) -> impl Iterator<Item = ((Address, CollectionId, u128), Option<&[u8]>)> + '_ {
         self.active
             .entries
             .iter()
@@ -199,7 +199,12 @@ impl OverlayStore {
             })
     }
 
-    fn entry_value(&self, owner: Address, collection: RoleId, order: u128) -> Option<Vec<u8>> {
+    fn entry_value(
+        &self,
+        owner: Address,
+        collection: CollectionId,
+        order: u128,
+    ) -> Option<Vec<u8>> {
         if let Some(change) = self
             .active
             .entries
@@ -460,7 +465,7 @@ impl OverlayStore {
     fn merged_entries(
         &self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         lo: u128,
         hi: u128,
         limit: usize,
@@ -703,7 +708,7 @@ impl SubstateStore for OverlayStore {
     fn entry_read(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         order: u128,
     ) -> Result<Option<Vec<u8>>, StoreError> {
         self.record(
@@ -720,7 +725,7 @@ impl SubstateStore for OverlayStore {
     fn entry_write(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         order: u128,
         value: Vec<u8>,
     ) -> Result<(), StoreError> {
@@ -743,7 +748,7 @@ impl SubstateStore for OverlayStore {
     fn entry_remove(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         order: u128,
     ) -> Result<Option<Vec<u8>>, StoreError> {
         self.record(
@@ -766,7 +771,7 @@ impl SubstateStore for OverlayStore {
     fn scan(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         lo: u128,
         hi: u128,
         cap: u32,
@@ -799,7 +804,7 @@ impl Base for OverlayStore {
     fn entries_in_range(
         &self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         lo: u128,
         hi: u128,
         limit: usize,
@@ -829,7 +834,7 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        Address, AddressClass, Hash32, RoleId, SubstateKey, TestHasher, child_key,
+        Address, AddressClass, CollectionId, Hash32, RoleId, SubstateKey, TestHasher, child_key,
     };
 
     use super::OverlayStore;
@@ -850,7 +855,7 @@ mod tests {
     }
 
     const BOOK: Address = Address::new([9; 31], AddressClass::Component);
-    const ASKS: RoleId = RoleId(4);
+    const ASKS: CollectionId = CollectionId([4; 16]);
 
     fn overlay_over(entries: &[(u128, u8)]) -> OverlayStore {
         let mut base = MemoryStore::new();

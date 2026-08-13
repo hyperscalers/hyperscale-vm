@@ -138,12 +138,11 @@ pub fn footprint(declared: &EffectSet) -> u64 {
 mod tests {
     use super::{EXCLUSIVITY_FLOOR, effect_units, footprint, mode_weight, order_bits};
     use crate::types::{
-        Address, AddressClass, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind, RoleId,
-        SubstateKey,
+        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode,
+        ModeKind, SubstateKey,
     };
 
     const OWNER: Address = Address::new([7; 31], AddressClass::Component);
-    const BOOK: RoleId = RoleId(3);
 
     fn point(byte: u8) -> EffectTarget {
         EffectTarget::Point(SubstateKey {
@@ -155,7 +154,7 @@ mod tests {
     const fn range(lo: u128, hi: u128) -> EffectTarget {
         EffectTarget::Range {
             owner: OWNER,
-            collection: BOOK,
+            collection: CollectionId([4; 16]),
             lo,
             hi,
             cap: 8,

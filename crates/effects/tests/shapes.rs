@@ -13,8 +13,8 @@ use common::{
 };
 use hyperscale_vm_effects::{
     EdgeRef, Effect, EffectTarget, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
-    InstanceRegistry, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit, fresh_id,
-    route,
+    InstanceRegistry, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit, collection_id,
+    fresh_id, route,
 };
 
 /// One consumed output edge, unconstrained.
@@ -221,7 +221,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
                 Effect {
                     target: EffectTarget::Entry {
                         owner: book().into(),
-                        collection: ASKS,
+                        collection: collection_id(&TestHasher, book(), ASKS, &[]),
                         order: (u128::from(105u64) << 64) | u128::from(seq),
                     },
                     mode: Mode::Write,
@@ -323,7 +323,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 Effect {
                     target: EffectTarget::Range {
                         owner: book().into(),
-                        collection: ASKS,
+                        collection: collection_id(&TestHasher, book(), ASKS, &[]),
                         lo: u128::from(100u64) << 64,
                         hi: (u128::from(110u64) << 64) | u128::from(u64::MAX),
                         cap: FILL_CAP,

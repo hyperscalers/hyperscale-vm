@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Hash32, RoleId, SubstateKey, TestHasher, child_key,
+    Address, AddressClass, CollectionId, Hash32, RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     DeltaOp, MemoryStore, OverlayStore, SubstateStore, TxHash, encode_amount,
@@ -24,7 +24,7 @@ const OWNERS: [Address; 2] = [
     Address::new([0xA1; 31], AddressClass::Component),
     Address::new([0xA2; 31], AddressClass::Component),
 ];
-const COLLECTIONS: [RoleId; 2] = [RoleId(3), RoleId(4)];
+const COLLECTIONS: [CollectionId; 2] = [CollectionId([3; 16]), CollectionId([4; 16])];
 
 fn cell(byte: u8) -> SubstateKey {
     child_key(

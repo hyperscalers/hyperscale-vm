@@ -1040,6 +1040,7 @@ mod tests {
             check_declarations(&declaring(TargetExpr::Entry {
                 owner: Expr::SelfAddr,
                 collection: RoleId(2),
+                material: vec![],
                 order: Expr::Literal(Value::U128(0)),
             })),
             Ok(())

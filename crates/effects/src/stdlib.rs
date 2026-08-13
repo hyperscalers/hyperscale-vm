@@ -523,6 +523,7 @@ pub fn book_metadata() -> PackageMetadata {
                     target: TargetExpr::Entry {
                         owner: Expr::SelfAddr,
                         collection: ASKS,
+                        material: vec![],
                         order: Expr::Pack {
                             hi: Box::new(Expr::Arg(0)),
                             lo: Box::new(Expr::FreshId { slot: 0 }),
@@ -558,6 +559,7 @@ pub fn book_metadata() -> PackageMetadata {
                     target: TargetExpr::Range {
                         owner: Expr::SelfAddr,
                         collection: ASKS,
+                        material: vec![],
                         lo: Expr::Pack {
                             hi: Box::new(Expr::Arg(0)),
                             lo: Box::new(Expr::Literal(Value::U64(0))),

@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, EffectSet, RoleId, SettledWrites, StateWrites, SubstateKey, effect_units,
+    Address, CollectionId, EffectSet, SettledWrites, StateWrites, SubstateKey, effect_units,
 };
 
 use crate::modes::decode_amount;
@@ -209,7 +209,8 @@ impl<'a> OwnedDelta<'a> {
     /// Changed entries of owned ordered collections.
     pub fn entries(
         &self,
-    ) -> impl Iterator<Item = ((Address, RoleId, u128), &'a Option<Vec<u8>>)> + use<'a, '_> {
+    ) -> impl Iterator<Item = ((Address, CollectionId, u128), &'a Option<Vec<u8>>)> + use<'a, '_>
+    {
         self.delta
             .entries
             .iter()

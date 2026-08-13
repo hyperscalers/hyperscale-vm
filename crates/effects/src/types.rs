@@ -49,6 +49,7 @@ pub struct RoleId(pub u16);
 pub struct NativeRole(pub u16);
 
 const DOMAIN_CHILD: &[u8] = b"hyperscale-vm/child-key";
+const DOMAIN_COLLECTION: &[u8] = b"hyperscale-vm/collection-id";
 const DOMAIN_PRINCIPAL: &[u8] = b"hyperscale-vm/principal-address";
 const DOMAIN_COMPONENT: &[u8] = b"hyperscale-vm/component-address";
 const DOMAIN_PACKAGE: &[u8] = b"hyperscale-vm/package-address";
@@ -90,6 +91,44 @@ pub fn child_key(
         owner,
         local: LocalKey(local),
     }
+}
+
+/// The identity of one ordered collection under an owner.
+///
+/// A collection is named by its role and its material together — the role
+/// says which kind of collection ("the asks book", "the unbonding queue"),
+/// the material separates instances of that kind ("for this resource",
+/// "for this market"). Both fold into one digest at evaluation, so
+/// everything downstream — conflict intervals, capabilities, the store —
+/// compares a single canonical identity rather than keeping two fields
+/// consistent by convention.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CollectionId(pub [u8; 16]);
+
+/// The collection identity for `role` and `material` under `owner`.
+///
+/// Sixteen bytes and owner-salted for the same reasons as [`child_key`]:
+/// the truncation sits at a 64-bit birthday bound, material can be chosen
+/// by a third party, and the salt confines a ground collision to the one
+/// owner it could hurt. Domain-separated from child keys, so a collection
+/// identity never aliases a point cell's local half.
+#[must_use]
+pub fn collection_id(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    role: RoleId,
+    material: &[Vec<u8>],
+) -> CollectionId {
+    let owner_bytes = owner.into().to_bytes();
+    let role_bytes = role.0.to_le_bytes();
+    let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
+    parts.push(&owner_bytes);
+    parts.push(&role_bytes);
+    parts.extend(material.iter().map(Vec::as_slice));
+    let digest = hasher.hash(DOMAIN_COLLECTION, &parts);
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&digest.0[..16]);
+    CollectionId(id)
 }
 
 /// An address body: the leading 31 bytes of `digest`.
@@ -314,8 +353,8 @@ pub enum EffectTarget {
     Entry {
         /// The collection's owner.
         owner: Address,
-        /// The collection's role under the owner.
-        collection: RoleId,
+        /// The collection's identity under the owner.
+        collection: CollectionId,
         /// The entry's position in the collection's order-key space.
         order: u128,
     },
@@ -327,8 +366,8 @@ pub enum EffectTarget {
     Range {
         /// The collection's owner.
         owner: Address,
-        /// The collection's role under the owner.
-        collection: RoleId,
+        /// The collection's identity under the owner.
+        collection: CollectionId,
         /// Inclusive lower order-key bound.
         lo: u128,
         /// Inclusive upper order-key bound.

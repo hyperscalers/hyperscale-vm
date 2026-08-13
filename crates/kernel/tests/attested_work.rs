@@ -24,9 +24,9 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, FOOTPRINT_WEIGHT, Hash32, Hasher, Mode,
-    RoleId, SubintentHash, SubstateKey, TestHasher, child_key, effect_units, footprint,
-    nullifier_key, work_units,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, FOOTPRINT_WEIGHT, Hash32,
+    Hasher, Mode, RoleId, SubintentHash, SubstateKey, TestHasher, child_key, effect_units,
+    footprint, nullifier_key, work_units,
 };
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore,
@@ -75,7 +75,7 @@ fn transfer_declared(amount: u128) -> EffectSet {
     set.insert(Effect {
         target: EffectTarget::Range {
             owner: Address::new([RECIPIENT_BYTE; 31], AddressClass::Component),
-            collection: RoleId(4),
+            collection: CollectionId([4; 16]),
             lo: 0,
             hi: 1 << 40,
             cap: 8,
@@ -292,7 +292,7 @@ fn a_range_is_charged_its_declared_width_through_the_locality_filter() {
     let range = Effect {
         target: EffectTarget::Range {
             owner: Address::new([RECIPIENT_BYTE; 31], AddressClass::Component),
-            collection: RoleId(4),
+            collection: CollectionId([4; 16]),
             lo: 0,
             hi: u128::MAX,
             cap: 8,

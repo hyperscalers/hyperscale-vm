@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
     Clause, Effect, EffectTarget, Expr, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
     ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
     PrefixShardResolver, PrincipalAddr, RoleId, ShardResolver, TargetExpr, TestHasher, Value,
-    admit, fresh_id, route,
+    admit, collection_id, fresh_id, route,
 };
 use hyperscale_vm_kernel::{CreationContext, MemoryStore, SubstateStore};
 
@@ -32,6 +32,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
                     target: TargetExpr::Entry {
                         owner: Expr::SelfAddr,
                         collection: RoleId(4),
+                        material: vec![],
                         order: Expr::Pack {
                             hi: Box::new(Expr::Literal(Value::U64(99))),
                             lo: Box::new(Expr::FreshId { slot: 1 }),
@@ -103,7 +104,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     store
         .entry_write(
             creator.address(),
-            RoleId(4),
+            collection_id(&TestHasher, creator.address(), RoleId(4), &[]),
             (u128::from(99u64) << 64) | u128::from(seq),
             vec![7],
         )
@@ -111,7 +112,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     assert!(declared.contains(&Effect {
         target: EffectTarget::Entry {
             owner: creator.into(),
-            collection: RoleId(4),
+            collection: collection_id(&TestHasher, creator.address(), RoleId(4), &[]),
             order: (u128::from(99u64) << 64) | u128::from(seq),
         },
         mode: Mode::Write,

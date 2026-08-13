@@ -190,6 +190,7 @@ impl Trace {
         let target = TargetExpr::Entry {
             owner: self.lower(owner.expr().clone()),
             collection,
+            material: vec![],
             order: self.lower(order.expr().clone()),
         };
         Access {
@@ -215,6 +216,7 @@ impl Trace {
         let target = TargetExpr::Range {
             owner: self.lower(owner.expr().clone()),
             collection,
+            material: vec![],
             lo: self.lower(lo.expr().clone()),
             hi: self.lower(hi.expr().clone()),
             cap,

@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::thread;
 
 use hyperscale_vm_effects::{
-    Address, Declaration, Effect, EffectSet, EffectTarget, Mode, ModeKind, NodeCall, RoleId,
+    Address, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Mode, ModeKind, NodeCall,
     SubstateKey, compatible,
 };
 
@@ -409,7 +409,7 @@ impl PointClasses {
 fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
     let mut component: Vec<usize> = (0..batch.len()).collect();
     let mut points: BTreeMap<SubstateKey, PointClasses> = BTreeMap::new();
-    let mut collections: BTreeMap<(Address, RoleId), CollectionClaims> = BTreeMap::new();
+    let mut collections: BTreeMap<(Address, CollectionId), CollectionClaims> = BTreeMap::new();
 
     for (index, entry) in batch.iter().enumerate() {
         for effect in entry.declared.iter() {
@@ -911,8 +911,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use hyperscale_vm_effects::{
-        Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId, TestHasher,
-        child_key,
+        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId,
+        TestHasher, child_key,
     };
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
@@ -924,7 +924,7 @@ mod tests {
     use crate::store::StoreError;
 
     const BOOK: Address = Address::new([0x77; 31], AddressClass::Component);
-    const ASKS: RoleId = RoleId(4);
+    const ASKS: CollectionId = CollectionId([4; 16]);
 
     const fn nth_mode(index: u8) -> Mode {
         match index {
@@ -1047,10 +1047,10 @@ mod tests {
         for sender_fault in [
             MaterializeError::MutationOfLocked(key),
             MaterializeError::SelfConflicting(key),
-            MaterializeError::Unsupported(Effect {
+            MaterializeError::Unsupported(Box::new(Effect {
                 target: EffectTarget::Point(key),
                 mode: Mode::Read,
-            }),
+            })),
         ] {
             assert!(
                 matches!(materialize_abort(&sender_fault), Outcome::UserError { .. }),

@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Mode, ModeKind, RoleId, SubstateKey,
+    Address, CollectionId, Effect, EffectSet, EffectTarget, Mode, ModeKind, SubstateKey,
 };
 
 use crate::locality::Locality;
@@ -51,8 +51,8 @@ pub enum Capability {
     RangeRead {
         /// The collection's owner.
         owner: Address,
-        /// The collection's role under the owner.
-        collection: RoleId,
+        /// The collection's identity under the owner.
+        collection: CollectionId,
         /// Inclusive lower order-key bound.
         lo: u128,
         /// Inclusive upper order-key bound.
@@ -64,8 +64,8 @@ pub enum Capability {
     RangeWrite {
         /// The collection's owner.
         owner: Address,
-        /// The collection's role under the owner.
-        collection: RoleId,
+        /// The collection's identity under the owner.
+        collection: CollectionId,
         /// Inclusive lower order-key bound.
         lo: u128,
         /// Inclusive upper order-key bound.
@@ -81,7 +81,7 @@ pub enum Capability {
 pub enum MaterializeError {
     /// A declared mode/target combination the world cannot yet hand out.
     #[error("no capability form for {0:?}")]
-    Unsupported(Effect),
+    Unsupported(Box<Effect>),
     /// A mutation declared on a permanently locked substate.
     #[error("declared mutation of locked substate {0:?}")]
     MutationOfLocked(SubstateKey),
@@ -198,7 +198,7 @@ pub struct StateDelta {
     /// Cells changed under exclusive write capabilities.
     pub cells: DeltaMap<SubstateKey, Option<Vec<u8>>>,
     /// Changed ordered-collection entries.
-    pub entries: DeltaMap<(Address, RoleId, u128), Option<Vec<u8>>>,
+    pub entries: DeltaMap<(Address, CollectionId, u128), Option<Vec<u8>>>,
     /// Delta movements per amount cell.
     pub movements: DeltaMap<SubstateKey, Movement>,
     /// Settled reservation amounts per cell.
@@ -596,7 +596,10 @@ impl KernelSession {
         }
     }
 
-    fn range_of(&self, rep: u32) -> Result<(Address, RoleId, u128, u128, u32, bool), SessionTrap> {
+    fn range_of(
+        &self,
+        rep: u32,
+    ) -> Result<(Address, CollectionId, u128, u128, u32, bool), SessionTrap> {
         match self.capability(rep)? {
             Capability::RangeRead {
                 owner,
@@ -628,7 +631,7 @@ impl KernelSession {
     }
 
     /// Drop every materialized interval over a collection a write touched.
-    fn invalidate(&mut self, owner: Address, collection: RoleId) {
+    fn invalidate(&mut self, owner: Address, collection: CollectionId) {
         let stale: Vec<u32> = self
             .scans
             .keys()
@@ -1167,7 +1170,7 @@ fn capability_for(store: &OverlayStore, effect: Effect) -> Result<Capability, Ma
             hi,
             cap,
         }),
-        _ => Err(MaterializeError::Unsupported(effect)),
+        _ => Err(MaterializeError::Unsupported(Box::new(effect))),
     }
 }
 
@@ -1206,8 +1209,8 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId, SubstateKey,
-        TestHasher, child_key,
+        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId,
+        SubstateKey, TestHasher, child_key,
     };
 
     use super::{
@@ -1459,7 +1462,7 @@ mod tests {
     #[test]
     fn interval_operations_bound_their_index_and_order() {
         let owner = Address::new([9; 31], AddressClass::Component);
-        let collection = RoleId(4);
+        let collection = CollectionId([4; 16]);
         let mut store = MemoryStore::new();
         store.entry_write(owner, collection, 10, vec![1]).unwrap();
         store.clear_log();
@@ -1505,7 +1508,7 @@ mod tests {
         let set = declared(&[Effect {
             target: EffectTarget::Range {
                 owner,
-                collection: RoleId(4),
+                collection: CollectionId([4; 16]),
                 lo: 0,
                 hi: 10,
                 cap: 4,
@@ -1584,7 +1587,7 @@ mod tests {
         let set = declared(&[Effect {
             target: EffectTarget::Range {
                 owner: Address::new([9; 31], AddressClass::Component),
-                collection: RoleId(4),
+                collection: CollectionId([4; 16]),
                 lo: 0,
                 hi: 1,
                 cap: 1,

@@ -10,7 +10,7 @@
 //! expensive for everyone else.
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind, RoleId,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind,
     SubstateKey, compatible, effect_units, footprint, mode_weight,
 };
 use proptest::collection::vec;
@@ -51,7 +51,7 @@ fn arb_target() -> impl Strategy<Value = EffectTarget> {
         (any::<u8>(), any::<u8>(), any::<u128>()).prop_map(|(owner, role, order)| {
             EffectTarget::Entry {
                 owner: Address::new([owner; 31], AddressClass::Component),
-                collection: RoleId(u16::from(role)),
+                collection: CollectionId([role; 16]),
                 order,
             }
         }),
@@ -64,7 +64,7 @@ fn arb_target() -> impl Strategy<Value = EffectTarget> {
         )
             .prop_map(|(owner, role, lo, hi, cap)| EffectTarget::Range {
                 owner: Address::new([owner; 31], AddressClass::Component),
-                collection: RoleId(u16::from(role)),
+                collection: CollectionId([role; 16]),
                 lo: lo.min(hi),
                 hi: lo.max(hi),
                 cap,
@@ -125,7 +125,7 @@ fn the_whole_order_key_space_is_the_most_expensive_interval() {
         let whole = effect_units(Effect {
             target: EffectTarget::Range {
                 owner: Address::new([1; 31], AddressClass::Component),
-                collection: RoleId(1),
+                collection: CollectionId([1; 16]),
                 lo: 0,
                 hi: u128::MAX,
                 cap: 1,
@@ -136,7 +136,7 @@ fn the_whole_order_key_space_is_the_most_expensive_interval() {
             let narrower = effect_units(Effect {
                 target: EffectTarget::Range {
                     owner: Address::new([1; 31], AddressClass::Component),
-                    collection: RoleId(1),
+                    collection: CollectionId([1; 16]),
                     lo,
                     hi,
                     cap: u32::MAX,
@@ -168,7 +168,7 @@ proptest! {
         let range = |hi, cap| Effect {
             target: EffectTarget::Range {
                 owner: Address::new([2; 31], AddressClass::Component),
-                collection: RoleId(9),
+                collection: CollectionId([9; 16]),
                 lo,
                 hi,
                 cap,

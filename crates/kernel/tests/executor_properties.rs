@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
-    SubstateKey, TestHasher, child_key,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
+    RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore,
@@ -41,7 +41,7 @@ const CELL_BASE: u8 = 0xC0;
 const LOCKED_BASE: u8 = 0xD0;
 const LOCKED_CELLS: u8 = 2;
 const BOOK: Address = Address::new([0xB0; 31], AddressClass::Component);
-const ASKS: RoleId = RoleId(4);
+const ASKS: CollectionId = CollectionId([4; 16]);
 const FUNDING: u128 = 1_000;
 /// The most transactions a generated batch carries.
 const MAX_TXS: usize = 6;
@@ -319,7 +319,7 @@ fn funded() -> MemoryStore {
 #[derive(Debug, PartialEq, Eq)]
 struct EndState {
     cells: BTreeMap<SubstateKey, Vec<u8>>,
-    entries: BTreeMap<(Address, RoleId, u128), Vec<u8>>,
+    entries: BTreeMap<(Address, CollectionId, u128), Vec<u8>>,
     holds: BTreeMap<(SubstateKey, TxHash), u128>,
 }
 

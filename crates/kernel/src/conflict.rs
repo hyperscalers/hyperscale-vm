@@ -100,7 +100,8 @@ pub fn conflicts(a: &Effect, b: &Effect) -> bool {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        Address, AddressClass, Effect, EffectTarget, Mode, ModeKind, RoleId, TestHasher, child_key,
+        Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, ModeKind, RoleId,
+        TestHasher, child_key,
     };
 
     use super::{conflicts, targets_overlap};
@@ -116,7 +117,7 @@ mod tests {
     fn entry(order: u128) -> EffectTarget {
         EffectTarget::Entry {
             owner: owner(1),
-            collection: RoleId(4),
+            collection: CollectionId([4; 16]),
             order,
         }
     }
@@ -124,7 +125,7 @@ mod tests {
     fn range(lo: u128, hi: u128) -> EffectTarget {
         EffectTarget::Range {
             owner: owner(1),
-            collection: RoleId(4),
+            collection: CollectionId([4; 16]),
             lo,
             hi,
             cap: 8,
@@ -199,7 +200,7 @@ mod tests {
         // A different collection or owner is a different key space.
         let other_collection = EffectTarget::Range {
             owner: owner(1),
-            collection: RoleId(5),
+            collection: CollectionId([5; 16]),
             lo: 0,
             hi: 100,
             cap: 8,
@@ -207,7 +208,7 @@ mod tests {
         assert!(!targets_overlap(&range(0, 100), &other_collection));
         let other_owner = EffectTarget::Entry {
             owner: owner(2),
-            collection: RoleId(4),
+            collection: CollectionId([4; 16]),
             order: 10,
         };
         assert!(!targets_overlap(&range(0, 100), &other_owner));

@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{Address, EffectTarget, ModeKind, RoleId, SubstateKey};
+use hyperscale_vm_effects::{Address, CollectionId, EffectTarget, ModeKind, SubstateKey};
 
 use crate::modes::{
     DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount, fold_deltas, judge,
@@ -126,7 +126,7 @@ pub trait SubstateStore {
     fn entry_read(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         order: u128,
     ) -> Result<Option<Vec<u8>>, StoreError>;
 
@@ -138,7 +138,7 @@ pub trait SubstateStore {
     fn entry_write(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         order: u128,
         value: Vec<u8>,
     ) -> Result<(), StoreError>;
@@ -151,7 +151,7 @@ pub trait SubstateStore {
     fn entry_remove(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         order: u128,
     ) -> Result<Option<Vec<u8>>, StoreError>;
 
@@ -166,7 +166,7 @@ pub trait SubstateStore {
     fn scan(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         lo: u128,
         hi: u128,
         cap: u32,
@@ -200,7 +200,7 @@ pub trait Base: std::fmt::Debug + Send + Sync + 'static {
     fn entries_in_range(
         &self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         lo: u128,
         hi: u128,
         limit: usize,
@@ -230,7 +230,7 @@ impl Base for MemoryStore {
     fn entries_in_range(
         &self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         lo: u128,
         hi: u128,
         limit: usize,
@@ -268,7 +268,7 @@ impl Base for MemoryStore {
 #[derive(Clone, Debug, Default)]
 pub struct MemoryStore {
     pub(crate) cells: BTreeMap<SubstateKey, Vec<u8>>,
-    pub(crate) entries: BTreeMap<(Address, RoleId), BTreeMap<u128, Vec<u8>>>,
+    pub(crate) entries: BTreeMap<(Address, CollectionId), BTreeMap<u128, Vec<u8>>>,
     pub(crate) locked: BTreeSet<SubstateKey>,
     pub(crate) pending_deltas: BTreeMap<SubstateKey, Vec<DeltaOp>>,
     pub(crate) held: BTreeMap<SubstateKey, BTreeMap<TxHash, u128>>,
@@ -332,7 +332,7 @@ impl MemoryStore {
     /// Every ordered-collection entry, in canonical order.
     pub fn collection_entries(
         &self,
-    ) -> impl Iterator<Item = ((Address, RoleId, u128), &[u8])> + '_ {
+    ) -> impl Iterator<Item = ((Address, CollectionId, u128), &[u8])> + '_ {
         self.entries
             .iter()
             .flat_map(|((owner, collection), entries)| {
@@ -604,7 +604,7 @@ impl SubstateStore for MemoryStore {
     fn entry_read(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         order: u128,
     ) -> Result<Option<Vec<u8>>, StoreError> {
         self.record(
@@ -625,7 +625,7 @@ impl SubstateStore for MemoryStore {
     fn entry_write(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         order: u128,
         value: Vec<u8>,
     ) -> Result<(), StoreError> {
@@ -647,7 +647,7 @@ impl SubstateStore for MemoryStore {
     fn entry_remove(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         order: u128,
     ) -> Result<Option<Vec<u8>>, StoreError> {
         self.record(
@@ -667,7 +667,7 @@ impl SubstateStore for MemoryStore {
     fn scan(
         &mut self,
         owner: Address,
-        collection: RoleId,
+        collection: CollectionId,
         lo: u128,
         hi: u128,
         cap: u32,
@@ -703,8 +703,8 @@ impl SubstateStore for MemoryStore {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        Address, AddressClass, EffectTarget, Hash32, ModeKind, RoleId, SubstateKey, TestHasher,
-        child_key,
+        Address, AddressClass, CollectionId, EffectTarget, Hash32, ModeKind, RoleId, SubstateKey,
+        TestHasher, child_key,
     };
 
     use super::{Access, MemoryStore, StoreError, SubstateStore};
@@ -869,7 +869,7 @@ mod tests {
     fn scans_truncate_at_the_cap_and_record_the_interval() {
         let mut store = MemoryStore::new();
         let book = Address::new([9; 31], AddressClass::Component);
-        let asks = RoleId(4);
+        let asks = CollectionId([4; 16]);
         for order in [5u128, 10, 15, 20] {
             store
                 .entry_write(book, asks, order, vec![u8::try_from(order).unwrap()])

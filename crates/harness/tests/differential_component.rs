@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
-    SubstateKey, TestHasher, child_key,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
+    RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -30,7 +30,7 @@ use wat::parse_str;
 
 const CLOCK_MS: u64 = 424_242;
 const FUEL: u64 = 1_000_000_000;
-const ASKS: RoleId = RoleId(4);
+const ASKS: CollectionId = CollectionId([4; 16]);
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0

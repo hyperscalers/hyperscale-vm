@@ -15,12 +15,12 @@ use hyperscale_vm_effects::stdlib::{
     ASKS, AUTH, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
 };
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, Address, AuthBase, AuthCell, Clause, ComponentAddr, Constraint,
-    Effect, EffectSet, EffectTarget, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
-    ParamType, PrefixShardResolver, PrincipalAddr, Proposal, ResourceAddr, RoleId, RoleSet,
-    Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value, admit,
-    child_key, fresh_id, route,
+    AbiParam, Accessibility, Address, AuthBase, AuthCell, Clause, CollectionId, ComponentAddr,
+    Constraint, Effect, EffectSet, EffectTarget, Expr, Hash32, Hasher, InstanceMeta,
+    InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash,
+    PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, Proposal, ResourceAddr, RoleId,
+    RoleSet, Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value,
+    admit, child_key, collection_id, fresh_id, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -88,6 +88,11 @@ fn claims(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKe
 
 fn config_leaf(owner: impl Into<Address>) -> SubstateKey {
     child_key(&TestHasher, owner, CONFIG, &[])
+}
+
+/// The book's asks collection, as the stdlib's declarations derive it.
+fn asks() -> CollectionId {
+    collection_id(&TestHasher, book(), ASKS, &[])
 }
 
 /// An account's stored-authority cell — what its sign-in reads.
@@ -1663,7 +1668,7 @@ fn fill_provisions_only_the_interval() {
         book_set.provision_targets(),
         std::iter::once(EffectTarget::Range {
             owner: book().into(),
-            collection: ASKS,
+            collection: asks(),
             lo: 3u128 << 64,
             hi: (5u128 << 64) | u128::from(u64::MAX),
             cap: FILL_CAP,
@@ -1687,7 +1692,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
     store
         .entry_write(
             book().address(),
-            ASKS,
+            asks(),
             (5u128 << 64) | 7,
             encode_amount(10).to_vec(),
         )
@@ -1724,7 +1729,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
         place_receipt
             .delta
             .entries
-            .get(&(book().address(), ASKS, placed_order)),
+            .get(&(book().address(), asks(), placed_order)),
         Some(&Some(encode_amount(50).to_vec()))
     );
 
@@ -1734,7 +1739,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
         fill_receipt
             .delta
             .entries
-            .get(&(book().address(), ASKS, placed_order)),
+            .get(&(book().address(), asks(), placed_order)),
         Some(&Some(encode_amount(17).to_vec()))
     );
     assert_eq!(
@@ -1766,11 +1771,11 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
         .map(|(k, v)| (k, v.to_vec()))
         .collect();
     assert_eq!(
-        entries.get(&(book().address(), ASKS, placed_order)),
+        entries.get(&(book().address(), asks(), placed_order)),
         Some(&encode_amount(17).to_vec())
     );
     assert_eq!(
-        entries.get(&(book().address(), ASKS, (5u128 << 64) | 7)),
+        entries.get(&(book().address(), asks(), (5u128 << 64) | 7)),
         Some(&encode_amount(10).to_vec())
     );
     Ok(())
