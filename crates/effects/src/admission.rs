@@ -276,8 +276,9 @@ pub enum AdmissionError {
         /// The parameter position.
         param: u32,
     },
-    /// An output-type expression that did not evaluate to an address.
-    #[error("node {node} output {output} is not typed by a resource address")]
+    /// An output expression that evaluated to neither a resource address
+    /// nor a bucket projection.
+    #[error("node {node} output {output} is not typed by a resource or bucket")]
     OutputType {
         /// The producing node.
         node: u32,
@@ -585,9 +586,9 @@ pub(crate) fn admit_intents(
         }
     }
 
-    // Per emitted node: evaluated output resource types and a
-    // consumption count per output slot, indexed by flattened position.
-    let mut outputs: Vec<Vec<Address>> = Vec::with_capacity(total);
+    // Per emitted node: evaluated output projections and a consumption
+    // count per output slot, indexed by flattened position.
+    let mut outputs: Vec<Vec<(Address, EdgeContent)>> = Vec::with_capacity(total);
     let mut consumed: Vec<Vec<u32>> = Vec::with_capacity(total);
     let mut lowered: Vec<Node> = Vec::with_capacity(total);
 
@@ -660,9 +661,10 @@ pub(crate) fn admit_intents(
                     let flat = usize::try_from(source).map_err(|_| AdmissionError::TooManyNodes)?;
                     let output =
                         usize::try_from(edge.output).map_err(|_| AdmissionError::TooManyNodes)?;
-                    let resource =
-                        *outputs[flat]
+                    let (resource, content) =
+                        outputs[flat]
                             .get(output)
+                            .cloned()
                             .ok_or(AdmissionError::NoSuchOutput {
                                 producer: source,
                                 output: edge.output,
@@ -677,12 +679,13 @@ pub(crate) fn admit_intents(
                     let bounds = check_constraints(constraints, resource, node_index, param_index)?;
                     bound.push(Value::Bucket {
                         resource,
-                        content: EdgeContent::Fungible,
+                        content: content.clone(),
                     });
                     inputs.push(NodeInput::Edge {
                         source,
                         output: edge.output,
                         resource,
+                        content,
                         bounds,
                     });
                 }
@@ -711,9 +714,10 @@ pub(crate) fn admit_intents(
                     let flat = usize::try_from(source).map_err(|_| AdmissionError::TooManyNodes)?;
                     let output = usize::try_from(binding.edge.output)
                         .map_err(|_| AdmissionError::TooManyNodes)?;
-                    let resource =
-                        *outputs[flat]
+                    let (resource, content) =
+                        outputs[flat]
                             .get(output)
+                            .cloned()
                             .ok_or(AdmissionError::NoSuchOutput {
                                 producer: source,
                                 output: binding.edge.output,
@@ -736,12 +740,13 @@ pub(crate) fn admit_intents(
                         check_constraints(&decl.constraints, resource, node_index, param_index)?;
                     bound.push(Value::Bucket {
                         resource,
-                        content: EdgeContent::Fungible,
+                        content: content.clone(),
                     });
                     inputs.push(NodeInput::Edge {
                         source,
                         output: binding.edge.output,
                         resource,
+                        content,
                         bounds,
                     });
                 }
@@ -892,13 +897,18 @@ pub(crate) fn admit_intents(
                     source,
                 }
             })?;
-            let Value::Address(resource) = value else {
-                return Err(AdmissionError::OutputType {
-                    node: node_index,
-                    output: slot_index,
-                });
-            };
-            node_outputs.push(resource);
+            // A bare resource address is the fungible projection; a
+            // bucket states its content. Nothing else names an edge.
+            node_outputs.push(match value {
+                Value::Address(resource) => (resource, EdgeContent::Fungible),
+                Value::Bucket { resource, content } => (resource, content),
+                _ => {
+                    return Err(AdmissionError::OutputType {
+                        node: node_index,
+                        output: slot_index,
+                    });
+                }
+            });
         }
         consumed.push(vec![0; node_outputs.len()]);
         outputs.push(node_outputs);

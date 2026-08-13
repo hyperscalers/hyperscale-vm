@@ -11,7 +11,8 @@
 //! embedding wrong; it cannot get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
-    Address, AuthCell, AuthorityGate, CallArg, EDGE_CELL_BYTES, NodeCall, PackageHash,
+    Address, AuthCell, AuthorityGate, CallArg, EDGE_CELL_BYTES, EdgeKind, MAX_IDS_PER_EDGE,
+    NodeCall, PackageHash, cell_ids,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult};
@@ -191,41 +192,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
         session.enter_invocation(call.target);
 
         let session = gated(call, node, session)?;
-
-        // Every signed edge bound this node consumes, before anything
-        // runs. The check is the node's, not the callee's: a producer
-        // returning less than the consumer declared fails the
-        // transaction whatever the producer's own code checked, and a
-        // node that forwards its funds onward never sees the amount its
-        // signer bounded.
-        for edge in &call.edges {
-            let Some(carried) = edge_cell(outputs, edge.source, edge.output) else {
-                return Err(composition_defect(
-                    session,
-                    format!(
-                        "parameter {} consumes output {} of node {}, which produced no such edge",
-                        edge.param, edge.output, edge.source
-                    ),
-                ));
-            };
-            let Ok(amount) = decode_amount(carried) else {
-                return Err(composition_defect(
-                    session,
-                    format!("parameter {} carries a malformed amount cell", edge.param),
-                ));
-            };
-            if !edge.bounds.admits(amount) {
-                return Err(fail(
-                    session,
-                    Outcome::ConstraintUnmet {
-                        node,
-                        param: edge.param,
-                        amount,
-                    },
-                    0,
-                ));
-            }
-        }
+        let session = edge_bounds_hold(call, node, outputs, session)?;
 
         let mut args = Vec::with_capacity(call.args.len());
         for (position, arg) in call.args.iter().enumerate() {
@@ -269,7 +236,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                 target: call.target,
                 export: &call.export,
                 args: &args,
-                returns: call.outputs > 0,
+                returns: !call.outputs.is_empty(),
                 fuel_budget,
             },
         );
@@ -281,7 +248,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                 return Err(fail(invoked.session, outcome, spent));
             }
         };
-        match split_outputs(returned.as_deref(), call.outputs) {
+        match split_outputs(returned.as_deref(), &call.outputs) {
             Some(cells) => Ok((invoked.session, cells, invoked.fuel)),
             None => Err(fail(
                 invoked.session,
@@ -290,13 +257,64 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                         "`{}` returned {} bytes for {} output edges",
                         call.export,
                         returned.map_or(0, |bytes| bytes.len()),
-                        call.outputs
+                        call.outputs.len()
                     ),
                 },
                 invoked.fuel,
             )),
         }
     }
+}
+
+/// Check every signed edge bound a node consumes, before anything runs.
+///
+/// The check is the node's, not the callee's: a producer returning less
+/// than the consumer declared fails the transaction whatever the
+/// producer's own code checked, and a node that forwards its funds
+/// onward never sees the amount its signer bounded. A non-fungible edge
+/// is judged over its id count, the quantity its cell carries in place
+/// of an amount.
+fn edge_bounds_hold(
+    call: &NodeCall,
+    node: u32,
+    outputs: &[Vec<Vec<u8>>],
+    session: KernelSession,
+) -> Result<KernelSession, NodeFailure> {
+    for edge in &call.edges {
+        let Some(carried) = edge_cell(outputs, edge.source, edge.output) else {
+            return Err(composition_defect(
+                session,
+                format!(
+                    "parameter {} consumes output {} of node {}, which produced no such edge",
+                    edge.param, edge.output, edge.source
+                ),
+            ));
+        };
+        let amount = match edge.kind {
+            EdgeKind::Fungible => decode_amount(carried).ok(),
+            EdgeKind::NonFungible => {
+                cell_ids(carried).and_then(|ids| u128::try_from(ids.len()).ok())
+            }
+        };
+        let Some(amount) = amount else {
+            return Err(composition_defect(
+                session,
+                format!("parameter {} carries a malformed cell", edge.param),
+            ));
+        };
+        if !edge.bounds.admits(amount) {
+            return Err(fail(
+                session,
+                Outcome::ConstraintUnmet {
+                    node,
+                    param: edge.param,
+                    amount,
+                },
+                0,
+            ));
+        }
+    }
+    Ok(session)
 }
 
 /// The cell a producer left on one of its output edges.
@@ -352,32 +370,42 @@ fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, Sess
     }
 }
 
-/// Split an export's returned blob into one cell per output edge.
+/// Split an export's returned blob into one cell per output edge, each
+/// framed by its declared kind.
 ///
-/// A method producing `n` edges returns exactly `n` amount cells
-/// concatenated, and one producing none returns nothing at all — so a
-/// blob of any other length is a package whose code and signature
+/// A method producing edges returns exactly their cells concatenated —
+/// a fungible cell is exactly [`EDGE_CELL_BYTES`], a non-fungible cell
+/// one count byte and that many ids, the count within
+/// [`MAX_IDS_PER_EDGE`] — and one producing none returns nothing at all.
+/// A blob of any other shape is a package whose code and signature
 /// disagree, which is its author's defect and its caller's trap.
-fn split_outputs(returned: Option<&[u8]>, outputs: u32) -> Option<Vec<Vec<u8>>> {
-    let expected = usize::try_from(outputs)
-        .ok()?
-        .checked_mul(EDGE_CELL_BYTES)?;
-    let bytes = match (returned, expected) {
-        (None, 0) => return Some(Vec::new()),
-        (None, _) | (Some(_), 0) => return None,
-        (Some(bytes), _) => bytes,
+fn split_outputs(returned: Option<&[u8]>, outputs: &[EdgeKind]) -> Option<Vec<Vec<u8>>> {
+    let bytes = match (returned, outputs.is_empty()) {
+        (None, true) => return Some(Vec::new()),
+        (None, false) | (Some(_), true) => return None,
+        (Some(bytes), false) => bytes,
     };
-    if bytes.len() != expected {
-        return None;
+    let mut cells = Vec::with_capacity(outputs.len());
+    let mut rest = bytes;
+    for kind in outputs {
+        let width = match kind {
+            EdgeKind::Fungible => EDGE_CELL_BYTES,
+            EdgeKind::NonFungible => {
+                let count = usize::from(*rest.first()?);
+                if count > MAX_IDS_PER_EDGE {
+                    return None;
+                }
+                1 + count * 8
+            }
+        };
+        if rest.len() < width {
+            return None;
+        }
+        let (cell, remaining) = rest.split_at(width);
+        cells.push(cell.to_vec());
+        rest = remaining;
     }
-    Some(
-        bytes
-            .as_chunks::<EDGE_CELL_BYTES>()
-            .0
-            .iter()
-            .map(|cell| cell.to_vec())
-            .collect(),
-    )
+    rest.is_empty().then_some(cells)
 }
 
 impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
@@ -416,15 +444,39 @@ impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_vm_effects::{EdgeKind, MAX_IDS_PER_EDGE, ids_cell};
+
     use super::split_outputs;
+
+    const FUNGIBLE: EdgeKind = EdgeKind::Fungible;
+    const NON_FUNGIBLE: EdgeKind = EdgeKind::NonFungible;
 
     #[test]
     fn an_export_returns_one_cell_per_output_edge() {
-        assert_eq!(split_outputs(None, 0), Some(Vec::new()));
-        assert_eq!(split_outputs(Some(&[7; 16]), 1), Some(vec![vec![7; 16]]));
+        assert_eq!(split_outputs(None, &[]), Some(Vec::new()));
         assert_eq!(
-            split_outputs(Some(&[9; 32]), 2),
+            split_outputs(Some(&[7; 16]), &[FUNGIBLE]),
+            Some(vec![vec![7; 16]])
+        );
+        assert_eq!(
+            split_outputs(Some(&[9; 32]), &[FUNGIBLE, FUNGIBLE]),
             Some(vec![vec![9; 16], vec![9; 16]])
+        );
+    }
+
+    #[test]
+    fn a_non_fungible_output_frames_as_a_counted_id_list() {
+        let cell = ids_cell(&[3, 9]);
+        assert_eq!(
+            split_outputs(Some(&cell), &[NON_FUNGIBLE]),
+            Some(vec![cell.clone()])
+        );
+
+        // An id cell beside an amount cell, in declared order.
+        let blob: Vec<u8> = cell.iter().copied().chain([7; 16]).collect();
+        assert_eq!(
+            split_outputs(Some(&blob), &[NON_FUNGIBLE, FUNGIBLE]),
+            Some(vec![cell, vec![7; 16]])
         );
     }
 
@@ -432,9 +484,29 @@ mod tests {
     fn any_other_return_shape_is_refused() {
         // A blob for a method that declared no edges, none for a method
         // that declared one, and a length between two whole cells.
-        assert_eq!(split_outputs(Some(&[0; 16]), 0), None);
-        assert_eq!(split_outputs(None, 1), None);
-        assert_eq!(split_outputs(Some(&[0; 24]), 1), None);
-        assert_eq!(split_outputs(Some(&[0; 16]), 2), None);
+        assert_eq!(split_outputs(Some(&[0; 16]), &[]), None);
+        assert_eq!(split_outputs(None, &[FUNGIBLE]), None);
+        assert_eq!(split_outputs(Some(&[0; 24]), &[FUNGIBLE]), None);
+        assert_eq!(split_outputs(Some(&[0; 16]), &[FUNGIBLE, FUNGIBLE]), None);
+    }
+
+    #[test]
+    fn a_malformed_id_cell_is_refused() {
+        // An id cell whose width disagrees with its count, one cut short
+        // of its declared ids, an empty blob with no count byte, a count
+        // past the cap, and trailing bytes after the last declared cell.
+        assert_eq!(split_outputs(Some(&[2, 0, 0, 0, 0]), &[NON_FUNGIBLE]), None);
+        let short = &ids_cell(&[3, 9])[..12];
+        assert_eq!(split_outputs(Some(short), &[NON_FUNGIBLE]), None);
+        assert_eq!(split_outputs(Some(&[]), &[NON_FUNGIBLE]), None);
+
+        let over_cap = u8::try_from(MAX_IDS_PER_EDGE + 1).unwrap();
+        let mut blob = vec![over_cap];
+        blob.extend(std::iter::repeat_n(0u8, (MAX_IDS_PER_EDGE + 1) * 8));
+        assert_eq!(split_outputs(Some(&blob), &[NON_FUNGIBLE]), None);
+
+        let mut trailing = ids_cell(&[3]);
+        trailing.push(0);
+        assert_eq!(split_outputs(Some(&trailing), &[NON_FUNGIBLE]), None);
     }
 }

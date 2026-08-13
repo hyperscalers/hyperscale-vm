@@ -9,7 +9,7 @@
 
 use crate::auth::AuthRole;
 use crate::hash::Hash32;
-use crate::types::{Address, SubstateKey, Value};
+use crate::types::{Address, EdgeContent, SubstateKey, Value};
 
 /// A consumer's signed amount bounds on an edge, folded to their
 /// conjunction: the greatest declared lower bound and the least declared
@@ -56,6 +56,9 @@ pub enum NodeInput {
         output: u32,
         /// The resource type the edge carries.
         resource: Address,
+        /// What the edge carries besides: a dynamic amount, or the named
+        /// instances the producer's evaluated projection declares.
+        content: EdgeContent,
         /// The consumer's signed bounds on the amount, folded to their
         /// conjunction at admission.
         ///

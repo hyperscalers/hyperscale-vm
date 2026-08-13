@@ -11,13 +11,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::admission::Admitted;
 use crate::dsl::{Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr};
 use crate::hash::Hasher;
-use crate::invoke::{CallArg, EdgeBound, NodeCall};
+use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall};
 use crate::manifest::{ManifestHash, Node, NodeInput};
 use crate::metadata::{
     AbiError, AbiParam, Accessibility, CallSite, InstanceMeta, InstanceRegistry, MetadataCache,
     MethodSignature, PackageHash, check_abi,
 };
-use crate::types::{Address, CallTarget, EdgeContent, Effect, EffectSet, ShardId, Value};
+use crate::types::{Address, CallTarget, Effect, EffectSet, ShardId, Value};
 
 /// Resolves an owner prefix to the shard holding it.
 pub trait ShardResolver {
@@ -382,7 +382,10 @@ pub fn route(
             match input {
                 NodeInput::Literal(value) => args.push(value.clone()),
                 NodeInput::Edge {
-                    source, resource, ..
+                    source,
+                    resource,
+                    content,
+                    ..
                 } => {
                     if *source >= node_index {
                         return Err(RouteError::EdgeOrder {
@@ -392,7 +395,7 @@ pub fn route(
                     }
                     args.push(Value::Bucket {
                         resource: *resource,
-                        content: EdgeContent::Fungible,
+                        content: content.clone(),
                     });
                 }
             }
@@ -606,10 +609,41 @@ fn lower_call(
         export: method.to_owned(),
         args,
         edges: edge_bounds(&node.inputs),
-        outputs: u32::try_from(signature.outputs.len()).unwrap_or(u32::MAX),
+        outputs: output_kinds(signature, lowering, node_index, method)?,
         evidence: node.evidence.clone(),
         authority: node.authority,
     })
+}
+
+/// The declared cell shape of each edge a node produces, from the same
+/// output projections admission evaluated — the two agree by
+/// construction, both evaluating at the manifest's root.
+fn output_kinds(
+    signature: &MethodSignature,
+    lowering: &Lowering<'_>,
+    node_index: u32,
+    method: &str,
+) -> Result<Vec<EdgeKind>, RouteError> {
+    let eval_context = |source| RouteError::Eval {
+        node: node_index,
+        method: method.to_owned(),
+        source,
+    };
+    let mut outputs = Vec::with_capacity(signature.outputs.len());
+    for expr in &signature.outputs {
+        let value = evaluate_expr(expr, lowering.inputs, lowering.hasher).map_err(eval_context)?;
+        outputs.push(match value {
+            Value::Address(_) => EdgeKind::Fungible,
+            Value::Bucket { content, .. } => EdgeKind::of(&content),
+            other => {
+                return Err(eval_context(EvalError::TypeMismatch {
+                    expected: "resource or bucket",
+                    found: other.kind(),
+                }));
+            }
+        });
+    }
+    Ok(outputs)
 }
 
 /// Every value edge a node consumes, with the bound its consumer signed.
@@ -626,11 +660,13 @@ fn edge_bounds(node_inputs: &[NodeInput]) -> Vec<EdgeBound> {
             NodeInput::Edge {
                 source,
                 output,
+                content,
                 bounds,
                 ..
             } => Some(EdgeBound {
                 source: *source,
                 output: *output,
+                kind: EdgeKind::of(content),
                 param: u32::try_from(position).unwrap_or(u32::MAX),
                 bounds: *bounds,
             }),
@@ -870,7 +906,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        AbiParam, Accessibility, Admitted, CallArg, CallEdge, EdgeBound, MAX_CALL_DEPTH,
+        AbiParam, Accessibility, Admitted, CallArg, CallEdge, EdgeBound, EdgeKind, MAX_CALL_DEPTH,
         MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver, RouteError, ShardResolver, route,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, fresh_id};
@@ -881,8 +917,8 @@ mod tests {
         PackageMetadata, ParamType,
     };
     use crate::types::{
-        Address, AddressClass, ComponentAddr, Effect, EffectSet, EffectTarget, Mode, RoleId,
-        ShardId, Value, child_key, collection_id,
+        Address, AddressClass, ComponentAddr, EdgeContent, Effect, EffectSet, EffectTarget, Mode,
+        RoleId, ShardId, Value, child_key, collection_id,
     };
 
     fn pkg(name: &str) -> PackageHash {
@@ -1362,6 +1398,7 @@ mod tests {
                     source: 0,
                     output: 0,
                     resource: addr(9),
+                    content: EdgeContent::Fungible,
                     bounds: Bounds::default(),
                 }],
                 evidence: Vec::new(),
@@ -1835,6 +1872,72 @@ mod tests {
     }
 
     #[test]
+    fn a_bucket_projection_types_its_edge_and_cell_shape() {
+        // A producer whose output projection is a non-fungible bucket:
+        // the lowered call frames its cell as an id list, and the
+        // consumer's bound is judged over the same shape.
+        let ids = vec![3, 9];
+        let mut package = PackageMetadata::default();
+        package.methods.insert(
+            "take".into(),
+            MethodSignature {
+                params: vec![ParamType::Bucket],
+                abi: vec![AbiParam::Bucket(0)],
+                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                ..MethodSignature::default()
+            },
+        );
+        package.methods.insert(
+            "make".into(),
+            MethodSignature {
+                outputs: vec![Expr::Literal(Value::Bucket {
+                    resource: addr(0xE1),
+                    content: EdgeContent::NonFungible { ids: ids.clone() },
+                })],
+                ..MethodSignature::default()
+            },
+        );
+        let mut cache = MetadataCache::new();
+        cache.publish(pkg("nf"), package);
+        let mut instances = InstanceRegistry::new();
+        instances.create(&TestHasher, meta_of("nf"));
+        let manifest = Manifest {
+            nodes: vec![
+                Node {
+                    target: instance_of("nf").into(),
+                    method: "make".into(),
+                    inputs: vec![],
+                    evidence: Vec::new(),
+                    authority: None,
+                },
+                Node {
+                    target: instance_of("nf").into(),
+                    method: "take".into(),
+                    inputs: vec![NodeInput::Edge {
+                        source: 0,
+                        output: 0,
+                        resource: addr(0xE1),
+                        content: EdgeContent::NonFungible { ids },
+                        bounds: Bounds::default(),
+                    }],
+                    evidence: Vec::new(),
+                    authority: None,
+                },
+            ],
+        };
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect("routes");
+        assert_eq!(routing.calls[0].outputs, vec![EdgeKind::NonFungible]);
+        assert_eq!(routing.calls[1].edges[0].kind, EdgeKind::NonFungible);
+    }
+
+    #[test]
     fn a_bucket_binding_names_the_edge_its_parameter_carries() {
         let mut package = PackageMetadata::default();
         package.methods.insert(
@@ -1873,6 +1976,7 @@ mod tests {
                         source: 0,
                         output: 3,
                         resource: addr(0xE1),
+                        content: EdgeContent::Fungible,
                         bounds: Bounds {
                             min: Some(7),
                             max: None,
@@ -1904,6 +2008,7 @@ mod tests {
             vec![EdgeBound {
                 source: 0,
                 output: 3,
+                kind: EdgeKind::Fungible,
                 param: 0,
                 bounds: Bounds {
                     min: Some(7),
@@ -1971,6 +2076,7 @@ mod tests {
                         source: 0,
                         output: 0,
                         resource: addr(0xE1),
+                        content: EdgeContent::Fungible,
                         bounds: Bounds {
                             min: Some(42),
                             max: None,
@@ -2013,6 +2119,7 @@ mod tests {
             vec![EdgeBound {
                 source: 0,
                 output: 0,
+                kind: EdgeKind::Fungible,
                 param: 0,
                 bounds: Bounds {
                     min: Some(42),
@@ -2178,6 +2285,7 @@ mod tests {
                         source: 0,
                         output: 0,
                         resource: addr(0xE1),
+                        content: EdgeContent::Fungible,
                         bounds: Bounds::default(),
                     }],
                     evidence: Vec::new(),

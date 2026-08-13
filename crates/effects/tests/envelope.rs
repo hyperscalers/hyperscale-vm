@@ -4,8 +4,8 @@
 
 use hyperscale_vm_effects::stdlib::account_metadata;
 use hyperscale_vm_effects::{
-    Address, AdmissionError, AdmittedTree, Bounds, CallTarget, Constraint, EdgeRef, Effect,
-    EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceRegistry, IntentDecl,
+    Address, AdmissionError, AdmittedTree, Bounds, CallTarget, Constraint, EdgeContent, EdgeRef,
+    Effect, EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceRegistry, IntentDecl,
     MAX_SUBINTENTS, MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, Mode,
     NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr,
     RoleId, ShardResolver, Subintent, TestHasher, Value, YieldBinding, YieldParam, admit,
@@ -141,6 +141,7 @@ fn a_composed_tree_flattens_deterministically() {
             source: 3,
             output: 0,
             resource: RES_Y.address(),
+            content: EdgeContent::Fungible,
             bounds: Bounds {
                 min: Some(10),
                 max: None,
@@ -153,6 +154,7 @@ fn a_composed_tree_flattens_deterministically() {
             source: 1,
             output: 0,
             resource: RES_X.address(),
+            content: EdgeContent::Fungible,
             bounds: Bounds {
                 min: Some(100),
                 max: None,
