@@ -56,6 +56,11 @@ pub const FILL_CAP: u32 = 64;
 /// The entry cap the registry's drain declares.
 pub const DRAIN_CAP: u32 = 8;
 
+/// The entry cap a holdings interval declares: enough for every id one
+/// edge can carry, since [`MAX_IDS_PER_EDGE`](crate::types::MAX_IDS_PER_EDGE)
+/// fits it.
+pub const NF_MOVE_CAP: u32 = 64;
+
 fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
     Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
@@ -702,6 +707,93 @@ pub fn registry_metadata() -> PackageMetadata {
                 },
                 mode: ModeExpr::Write,
             }],
+            ..MethodSignature::default()
+        },
+    );
+    methods
+}
+
+/// The non-fungible surface end to end: an issuer that mints and burns,
+/// and holders whose instances are the entries of their per-resource
+/// holdings interval.
+///
+/// `mint` derives one fresh id, writes its `INSTANCE` data cell, and
+/// produces the one-id edge; `deposit` files an arriving edge's ids as
+/// entries at their ids; `withdraw` removes named ids — one not held is
+/// a trap — and produces their edge; `burn` consumes an edge outright.
+/// Holdings are declared as the whole `(NF_VAULT, resource)` interval at
+/// [`NF_MOVE_CAP`], the guest reaching each id's entry through the one
+/// range capability.
+#[must_use]
+pub fn nf_metadata() -> PackageMetadata {
+    let holdings = |resource: Expr| TargetExpr::Range {
+        owner: Expr::SelfAddr,
+        collection: NF_VAULT,
+        material: vec![resource],
+        lo: Expr::Literal(Value::U128(0)),
+        hi: Expr::Literal(Value::U128(u128::MAX)),
+        cap: NF_MOVE_CAP,
+    };
+    let minted_resource = Expr::SelfResource { material: vec![] };
+    let minted_id = Expr::FreshId { slot: 0 };
+    let mut methods = PackageMetadata::default();
+    methods.methods.insert(
+        "mint".into(),
+        MethodSignature {
+            accessibility: Accessibility::Public,
+            params: vec![],
+            abi: vec![AbiParam::Handle(0), AbiParam::Derived(minted_id.clone())],
+            outputs: vec![Expr::NfBucket {
+                resource: Box::new(minted_resource.clone()),
+                ids: Box::new(Expr::List(vec![minted_id.clone()])),
+            }],
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    role: INSTANCE,
+                    material: vec![minted_resource, minted_id],
+                }),
+                mode: ModeExpr::Write,
+            }],
+            calls: vec![],
+        },
+    );
+    methods.methods.insert(
+        "deposit".into(),
+        MethodSignature {
+            accessibility: Accessibility::Public,
+            params: vec![ParamType::Bucket],
+            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
+            effects: vec![Clause::Effect {
+                target: holdings(Expr::ResourceOf(Box::new(Expr::Arg(0)))),
+                mode: ModeExpr::Write,
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    methods.methods.insert(
+        "withdraw".into(),
+        MethodSignature {
+            accessibility: Accessibility::Public,
+            params: vec![ParamType::Address, ParamType::Ids],
+            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
+            outputs: vec![Expr::NfBucket {
+                resource: Box::new(Expr::Arg(0)),
+                ids: Box::new(Expr::Arg(1)),
+            }],
+            effects: vec![Clause::Effect {
+                target: holdings(Expr::Arg(0)),
+                mode: ModeExpr::Write,
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    methods.methods.insert(
+        "burn".into(),
+        MethodSignature {
+            accessibility: Accessibility::Public,
+            params: vec![ParamType::Bucket],
+            abi: vec![AbiParam::Bucket(0)],
             ..MethodSignature::default()
         },
     );

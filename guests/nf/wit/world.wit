@@ -1,0 +1,26 @@
+package test:guest;
+
+/// The non-fungible fixture: one package serving an issuer that mints and
+/// burns, and holders whose instances are entries of their per-resource
+/// holdings interval. Id sets cross every boundary in the edge cell
+/// framing: one count byte, then that many little-endian u64 ids.
+world nf {
+    import hyperscale:kernel/state;
+
+    use hyperscale:kernel/state.{write-cell, range-write};
+
+    /// Mint one instance: write its data cell and return the one-id cell
+    /// as the produced edge.
+    export mint: func(data: borrow<write-cell>, id: u64) -> list<u8>;
+
+    /// Insert each id the arriving cell names into the holdings interval,
+    /// at the id as the order key.
+    export deposit: func(holdings: borrow<range-write>, funds: list<u8>);
+
+    /// Remove each named id from the holdings interval, trapping on one
+    /// not held, and return the same id cell as the produced edge.
+    export withdraw: func(holdings: borrow<range-write>, ids: list<u8>) -> list<u8>;
+
+    /// Consume the edge; the instances stop being held anywhere.
+    export burn: func(funds: list<u8>);
+}

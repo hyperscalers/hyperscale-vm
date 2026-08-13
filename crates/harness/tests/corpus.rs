@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{
     ASKS, AUTH, CLAIMS, CONFIG, DRAIN_CAP, FILL_CAP, NAMES, VAULT, account_metadata, amm_metadata,
-    book_metadata, registry_metadata,
+    book_metadata, nf_metadata, registry_metadata,
 };
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, Address, AuthBase, AuthCell, Clause, CollectionId, ComponentAddr,
@@ -21,16 +21,17 @@ use hyperscale_vm_effects::{
     InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash,
     PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, Proposal, ResourceAddr, RoleId,
     RoleSet, Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value,
-    admit, child_key, collection_id, fresh_id, order_key, route,
+    admit, child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
+    resource_address, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     BatchTx, CellKind, EnvInputs, Event, GuestArg, GuestBackend, GuestCall, GuestRunner,
     InvokeResult, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt,
-    SubstateStore, TxHash, decode_amount, encode_amount,
+    SubstateStore, TxHash, decode_amount, encode_amount, multiply_held_ids,
 };
-use hyperscale_vm_manifest_builder::native::{account, amm, book, registry};
+use hyperscale_vm_manifest_builder::native::{account, amm, book, nf, registry};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
@@ -115,11 +116,15 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     cache.publish(pkg("amm"), amm_metadata());
     cache.publish(pkg("book"), book_metadata());
     cache.publish(pkg("registry"), registry_metadata());
+    cache.publish(pkg("nf"), nf_metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, pool_meta());
     instances.create(&TestHasher, book_meta());
     instances.create(&TestHasher, registry_meta());
+    instances.create(&TestHasher, nf_issuer_meta());
+    instances.create(&TestHasher, nf_holder_meta(7));
+    instances.create(&TestHasher, nf_holder_meta(8));
     (cache, instances)
 }
 
@@ -168,6 +173,37 @@ fn registry_addr() -> ComponentAddr {
     registry_meta().address(&TestHasher)
 }
 
+fn nf_issuer_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("nf"),
+        config: vec![],
+        salt: Hash32([6; 32]),
+    }
+}
+
+/// The non-fungible issuer instance.
+fn nf_issuer() -> ComponentAddr {
+    nf_issuer_meta().address(&TestHasher)
+}
+
+/// The resource the issuer mints: its own provenance, empty material.
+fn nf_resource() -> ResourceAddr {
+    resource_address(&TestHasher, nf_issuer().address(), &[])
+}
+
+fn nf_holder_meta(salt: u8) -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("nf"),
+        config: vec![],
+        salt: Hash32([salt; 32]),
+    }
+}
+
+/// A non-fungible holder instance.
+fn nf_holder(salt: u8) -> ComponentAddr {
+    nf_holder_meta(salt).address(&TestHasher)
+}
+
 fn mirror_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("mirror"),
@@ -186,6 +222,7 @@ const PACKAGES: &[(&str, &str)] = &[
     ("amm", "amm"),
     ("book", "book"),
     ("registry", "registry"),
+    ("nf", "nf"),
     ("mirror", "account"),
 ];
 
@@ -204,7 +241,7 @@ impl Engines {
         let engine = blessed_engine()?;
         let mut blessed = BTreeMap::new();
         let mut reference = BTreeMap::new();
-        for name in ["account", "amm", "book", "registry"] {
+        for name in ["account", "amm", "book", "registry", "nf"] {
             let bytes = build_guest(name)?;
             validate_component(&bytes).with_context(|| format!("profile validation of {name}"))?;
             blessed.insert(name, Component::new(&engine, &bytes)?);
@@ -1894,6 +1931,102 @@ fn the_registry_binds_checks_and_drains_hashed_entries() -> Result<()> {
         store.collection_entries().count(),
         0,
         "the drain left nothing"
+    );
+    Ok(())
+}
+
+#[test]
+fn non_fungibles_mint_transfer_and_burn_end_to_end() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let store = MemoryStore::new();
+
+    let resource = nf_resource();
+    let holder_a = nf_holder(7);
+    let holder_b = nf_holder(8);
+    let a_holdings = holdings_collection(&TestHasher, holder_a, resource);
+    let b_holdings = holdings_collection(&TestHasher, holder_b, resource);
+    let holdings = [(holder_a.into(), a_holdings), (holder_b.into(), b_holdings)];
+    let held = |store: &MemoryStore, collection: CollectionId| -> Vec<u64> {
+        store
+            .collection_entries()
+            .filter(|((_, held_in, _), _)| *held_in == collection)
+            .map(|((.., order), _)| u64::try_from(order).unwrap())
+            .collect()
+    };
+
+    // Two mints in one manifest — distinct nodes, distinct fresh ids —
+    // both deposited to A.
+    let mint_to_a = graph(|b| {
+        let first = nf::mint(b, nf_issuer())?;
+        nf::deposit(b, holder_a, first)?;
+        let second = nf::mint(b, nf_issuer())?;
+        nf::deposit(b, holder_a, second)
+    });
+    let (results, store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[(&mint_to_a, TxHash(Hash32([0x61; 32])))],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+
+    // Two instances held by A, each with its data cell under the issuer
+    // holding the id it was minted with.
+    let ids = held(&store, a_holdings);
+    assert_eq!(ids.len(), 2, "two mints, two holdings");
+    for &id in &ids {
+        let data = instance_data_key(&TestHasher, nf_issuer(), resource, id);
+        assert_eq!(
+            store.cells().find(|(key, _)| *key == data).map(|(_, v)| v),
+            Some(id.to_le_bytes().as_slice()),
+            "the mint wrote the instance's data cell"
+        );
+    }
+    assert_eq!(multiply_held_ids(&store, &holdings), Vec::<u128>::new());
+
+    // Move the first id to B; a withdrawal of an id nobody holds traps;
+    // burn the second id.
+    let absent = (0..=u64::MAX).find(|id| !ids.contains(id)).unwrap();
+    let transfer = graph(|b| {
+        let moved = nf::withdraw(b, holder_a, resource, &[ids[0]])?;
+        nf::deposit(b, holder_b, moved)
+    });
+    let unheld = graph(|b| {
+        let moved = nf::withdraw(b, holder_a, resource, &[absent])?;
+        nf::deposit(b, holder_b, moved)
+    });
+    let burn = graph(|b| {
+        let moved = nf::withdraw(b, holder_a, resource, &[ids[1]])?;
+        nf::burn(b, nf_issuer(), moved)
+    });
+    let (results, store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[
+            (&transfer, TxHash(Hash32([0x63; 32]))),
+            (&unheld, TxHash(Hash32([0x64; 32]))),
+            (&burn, TxHash(Hash32([0x65; 32]))),
+        ],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    assert_eq!(
+        results[1],
+        TxResult::Trapped,
+        "moving an id you do not hold aborts"
+    );
+    assert!(matches!(results[2], TxResult::Completed(_)));
+
+    // A holds nothing, B holds exactly the moved id, no id is anywhere
+    // twice, and the burned instance's data cell survives unmoved.
+    assert_eq!(held(&store, a_holdings), Vec::<u64>::new());
+    assert_eq!(held(&store, b_holdings), vec![ids[0]]);
+    assert_eq!(multiply_held_ids(&store, &holdings), Vec::<u128>::new());
+    let burned = instance_data_key(&TestHasher, nf_issuer(), resource, ids[1]);
+    assert!(
+        store.cells().any(|(key, _)| key == burned),
+        "instance data is written at mint and immutable after"
     );
     Ok(())
 }

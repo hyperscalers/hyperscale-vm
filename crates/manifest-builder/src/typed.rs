@@ -622,6 +622,7 @@ pub(crate) fn output_resources(
             }
             match evaluate_expr(expr, &inputs, hasher) {
                 Ok(Value::Address(address)) => ResourceRef::try_from(address).ok(),
+                Ok(Value::Bucket { resource, .. }) => ResourceRef::try_from(resource).ok(),
                 _ => None,
             }
         })

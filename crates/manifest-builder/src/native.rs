@@ -424,6 +424,71 @@ pub mod registry {
     }
 }
 
+/// The non-fungible fixture: an issuer that mints and burns, holders
+/// whose instances are holdings entries.
+pub mod nf {
+    use hyperscale_vm_effects::Value;
+
+    use super::{Bucket, BucketArg, ComponentAddr, ResourceRef, TypedBuilder, TypedError};
+
+    /// Mint one fresh instance of `issuer`'s resource, producing its
+    /// one-id edge.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `mint`.
+    pub fn mint(
+        builder: &mut TypedBuilder<'_>,
+        issuer: ComponentAddr,
+    ) -> Result<Bucket, TypedError> {
+        builder.call(issuer, "mint", ())?.one()
+    }
+
+    /// File `funds`' instances as entries of `holder`'s holdings.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `deposit`.
+    pub fn deposit(
+        builder: &mut TypedBuilder<'_>,
+        holder: ComponentAddr,
+        funds: impl BucketArg,
+    ) -> Result<(), TypedError> {
+        builder.call(holder, "deposit", (funds,))?.none()
+    }
+
+    /// Remove the named `ids` of `resource` from `holder`'s holdings,
+    /// producing their edge; an id not held traps at execution.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `withdraw`.
+    pub fn withdraw(
+        builder: &mut TypedBuilder<'_>,
+        holder: ComponentAddr,
+        resource: impl Into<ResourceRef>,
+        ids: &[u64],
+    ) -> Result<Bucket, TypedError> {
+        let ids = Value::List(ids.iter().copied().map(Value::U64).collect());
+        builder
+            .call(holder, "withdraw", (resource.into(), ids))?
+            .one()
+    }
+
+    /// Consume `funds` outright: its instances stop being held anywhere.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `burn`.
+    pub fn burn(
+        builder: &mut TypedBuilder<'_>,
+        issuer: ComponentAddr,
+        funds: impl BucketArg,
+    ) -> Result<(), TypedError> {
+        builder.call(issuer, "burn", (funds,))?.none()
+    }
+}
+
 /// The bucket splitter.
 pub mod splitter {
     use super::{Bucket, BucketArg, ComponentAddr, TypedBuilder, TypedError};

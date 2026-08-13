@@ -14,15 +14,15 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::stdlib::{
-    account_metadata, amm_metadata, book_metadata, registry_metadata, splitter_metadata,
-    staking_metadata,
+    account_metadata, amm_metadata, book_metadata, nf_metadata, registry_metadata,
+    splitter_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
     ComponentAddr, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
     MetadataCache, PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr, RoleSet, Rule,
     TestHasher, Value, admit, resource_address,
 };
-use hyperscale_vm_manifest_builder::native::{account, amm, book, registry, splitter, staking};
+use hyperscale_vm_manifest_builder::native::{account, amm, book, nf, registry, splitter, staking};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -74,6 +74,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
         ("staking", pool_config()),
         ("amm", pair_config()),
         ("book", pair_config()),
+        ("nf", vec![]),
         ("registry", vec![]),
         ("splitter", vec![]),
     ] {
@@ -88,6 +89,7 @@ fn stdlib() -> Vec<(&'static str, PackageMetadata)> {
         ("account", account_metadata()),
         ("amm", amm_metadata()),
         ("book", book_metadata()),
+        ("nf", nf_metadata()),
         ("registry", registry_metadata()),
         ("splitter", splitter_metadata()),
         ("staking", staking_metadata()),
@@ -274,6 +276,18 @@ fn the_splitter_wrapper_matches_its_signature() {
 }
 
 #[test]
+fn the_nf_wrappers_match_their_signatures() {
+    let issuer = address("nf", vec![]);
+    let resource = resource_address(&TestHasher, issuer.address(), &[]);
+    admits(|b| {
+        let minted = nf::mint(b, issuer)?;
+        nf::deposit(b, issuer, minted)?;
+        let moved = nf::withdraw(b, issuer, resource, &[7, 9])?;
+        nf::burn(b, issuer, moved)
+    });
+}
+
+#[test]
 fn every_stdlib_method_has_a_wrapper() {
     // The one drift a call site cannot catch: a method added to a package
     // that no wrapper names. Exhaustive on purpose — adding a method
@@ -294,6 +308,7 @@ fn every_stdlib_method_has_a_wrapper() {
         ),
         ("amm", &["swap"]),
         ("book", &["fill-asks", "place-ask"]),
+        ("nf", &["burn", "deposit", "mint", "withdraw"]),
         ("registry", &["bind", "check", "drain"]),
         ("splitter", &["take"]),
         (
