@@ -45,17 +45,24 @@ pub struct EntryKey {
 }
 
 /// The leaf key an entry commits under in the state tree: the owner's
-/// prefix followed by a digest of the collection and order.
+/// prefix followed by a digest of the owner, collection, and order.
 ///
 /// Owner-prefixed like every leaf, so reshape's prefix-rooted model
 /// moves entries with their owner untouched. Domain-separated from every
 /// other local-half derivation, so an entry leaf never aliases a point
-/// cell.
+/// cell. The owner is salted into the digest for the same reason
+/// `child_key` salts it: a collection id can originate outside this
+/// derivation, so without the salt one ground collision on the 16-byte
+/// local half would reproduce under every owner at once.
 #[must_use]
 pub fn entry_leaf_key(hasher: &dyn Hasher, entry: EntryKey) -> SubstateKey {
+    let owner_bytes = entry.owner.to_bytes();
     let collection_bytes = entry.collection.0;
     let order_bytes = entry.order.to_le_bytes();
-    let digest = hasher.hash(DOMAIN_ENTRY, &[&collection_bytes, &order_bytes]);
+    let digest = hasher.hash(
+        DOMAIN_ENTRY,
+        &[&owner_bytes, &collection_bytes, &order_bytes],
+    );
     let mut local = [0u8; 16];
     local.copy_from_slice(&digest.0[..16]);
     SubstateKey {
@@ -428,7 +435,9 @@ mod tests {
     fn entry_leaves_stay_under_the_owner() {
         let first = entry_leaf_key(&TestHasher, entry(1, 4, 7));
         assert_eq!(first.owner, Address::new([1; 31], AddressClass::Component));
-        for other in [entry(1, 4, 8), entry(1, 5, 7)] {
+        // The owner varies the local half too: the salt that keeps a
+        // ground collision from reproducing under every owner at once.
+        for other in [entry(1, 4, 8), entry(1, 5, 7), entry(2, 4, 7)] {
             assert_ne!(first.local, entry_leaf_key(&TestHasher, other).local);
         }
         assert_canonical(&EntryLeaf {
