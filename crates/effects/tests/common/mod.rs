@@ -4,7 +4,7 @@
 #![allow(dead_code, unused_imports)] // shared between test binaries; each uses a subset
 
 pub use hyperscale_vm_effects::stdlib::{
-    ASKS, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
+    ASKS, AUTH, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
     splitter_metadata,
 };
 use hyperscale_vm_effects::{
@@ -133,6 +133,12 @@ pub fn claims(owner: impl Into<Address>, resource: impl Into<Address>) -> Substa
 #[must_use]
 pub fn config_leaf(owner: impl Into<Address>) -> SubstateKey {
     child_key(&TestHasher, owner, CONFIG, &[])
+}
+
+/// An account's stored-authority cell — what its sign-in reads.
+#[must_use]
+pub fn auth(owner: impl Into<Address>) -> SubstateKey {
+    child_key(&TestHasher, owner, AUTH, &[])
 }
 
 /// Build an exact expected set; panics only on reserve overflow, which the

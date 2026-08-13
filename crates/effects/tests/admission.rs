@@ -8,10 +8,11 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
+use hyperscale_vm_effects::stdlib::AUTH;
 use hyperscale_vm_effects::{
-    AdmissionError, ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget, EvidenceRef,
-    GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph,
-    MetadataCache, Mode, TestHasher, Value, admit, fresh_id, route,
+    AdmissionError, AuthorityGate, ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget,
+    EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH,
+    ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit, child_key, fresh_id, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -220,16 +221,25 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     let (cache, instances) = setup();
     let admitted = admit(&proof_graph(), ALICE, &cache, &instances, &TestHasher).expect("admits");
 
+    // The authorizing gate is the stored rule at the cell the method's
+    // own declared read names; the guarded withdrawal keeps the pure
+    // identity match.
     let authorize = &admitted.manifest().nodes[0];
     assert_eq!(authorize.evidence, vec![ALICE.address()]);
-    assert_eq!(authorize.authority, Some(ALICE.address()));
+    assert_eq!(
+        authorize.authority,
+        Some(AuthorityGate::StoredRule {
+            cell: child_key(&TestHasher, ALICE, AUTH, &[]),
+        })
+    );
 
     let withdraw = &admitted.manifest().nodes[1];
     assert_eq!(withdraw.evidence, vec![ALICE.address()]);
-    assert_eq!(withdraw.authority, Some(ALICE.address()));
+    assert_eq!(
+        withdraw.authority,
+        Some(AuthorityGate::Identity(ALICE.address()))
+    );
 
-    // A node with no effects still routes: the graph's declaration is
-    // its other nodes', and the authorizing node adds no participant.
     route(&admitted, &cache, &instances, &TestHasher, &resolver()).expect("routes");
 }
 

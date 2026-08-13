@@ -60,7 +60,7 @@ pub use hyperscale_vm_types::{
     StateWrites, TX_UNITS, TxHash, VERIFY_WEIGHT, declared_work, signature_work, work_units,
 };
 pub use invoke::{CallArg, EDGE_CELL_BYTES, EdgeBound, NodeCall};
-pub use manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
+pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     AbiError, AbiParam, Accessibility, CallSite, DeclarationError, InstanceMeta, InstanceRegistry,
     MetadataCache, MethodSignature, PACKAGE_ROLE, PackageHash, PackageMetadata, ParamType,

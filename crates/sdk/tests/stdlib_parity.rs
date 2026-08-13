@@ -16,8 +16,8 @@
 //! those tests without restating them.
 
 use hyperscale_vm_effects::stdlib::{
-    ASKS, CLAIMS, CONFIG, ENTROPY, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
-    splitter_metadata,
+    ASKS, AUTH, CLAIMS, CONFIG, ENTROPY, FILL_CAP, VAULT, account_metadata, amm_metadata,
+    book_metadata, splitter_metadata,
 };
 use hyperscale_vm_effects::{PackageMetadata, ParamType, RoleId};
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Num, Sym, lit_u64, pack};
@@ -56,9 +56,21 @@ fn account() -> Blueprint {
             let leaf = holder.child(ENTROPY, &[]);
             t.point(&leaf).write();
         })
-        // Nothing but its own gate: the body neither reads nor writes,
-        // and the gate is accessibility, which no trace can see.
-        .method("authorize", &[], |_: &mut Trace| {})
+        // The sign-in's whole body is its gate's read: the cell the
+        // account's stored rule lives in.
+        .method("authorize", &[], |t: &mut Trace| {
+            let holder = t.self_addr();
+            let cell = holder.child(AUTH, &[]);
+            t.point(&cell).read();
+        })
+        // Securify writes the same cell, exclusively: an existing cell
+        // is the body's own refusal, and the write conflicts with every
+        // concurrent sign-in's read.
+        .method("securify", &[ParamType::Rule], |t: &mut Trace| {
+            let holder = t.self_addr();
+            let cell = holder.child(AUTH, &[]);
+            t.point(&cell).write();
+        })
         .build()
 }
 

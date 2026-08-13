@@ -146,7 +146,9 @@ pub fn root_of(hasher: &dyn Hasher, domain: &[u8], chunks: &[Vec<u8>]) -> Hash32
             level.push(pad(hasher));
         }
         level = level
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| node(hasher, pair[0], pair[1]))
             .collect();
     }
@@ -168,7 +170,9 @@ pub fn prove(hasher: &dyn Hasher, chunks: &[Vec<u8>], index: usize) -> Option<Pr
         }
         siblings.push(level[position ^ 1]);
         level = level
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| node(hasher, pair[0], pair[1]))
             .collect();
         position /= 2;

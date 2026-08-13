@@ -325,7 +325,7 @@ fn declared_reservations(declared: &EffectSet) -> Vec<(SubstateKey, u128)> {
         .collect()
 }
 
-fn root(component: &mut [usize], mut index: usize) -> usize {
+const fn root(component: &mut [usize], mut index: usize) -> usize {
     while component[index] != index {
         component[index] = component[component[index]];
         index = component[index];

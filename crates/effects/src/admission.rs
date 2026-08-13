@@ -14,11 +14,11 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
-use crate::dsl::{EvalError, EvalInputs, Expr, evaluate_expr};
+use crate::dsl::{Clause, EvalError, EvalInputs, TargetExpr, evaluate_expr};
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
 use crate::hash::Hasher;
-use crate::manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
+use crate::manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{Accessibility, InstanceRegistry, MetadataCache, PackageHash, ParamType};
 use crate::route::MAX_MANIFEST_NODES;
 use crate::types::{Address, MAX_VALUE_DEPTH, PrincipalAddr, Value};
@@ -29,11 +29,6 @@ use crate::types::{Address, MAX_VALUE_DEPTH, PrincipalAddr, Value};
 /// vector too — which is what makes every parameter position expressible
 /// as a `u32` index by construction rather than by hope.
 pub const MAX_YIELD_PARAMS: usize = 32;
-
-/// The rule an authorizing method is gated on while its target stores
-/// nothing: the identity the target's address derives, which is the same
-/// comparison `SelfAddr` evaluates to.
-const VIRTUAL_RULE: &Expr = &Expr::SelfAddr;
 
 /// Why admission rejected a graph or an envelope tree.
 ///
@@ -130,6 +125,15 @@ pub enum AdmissionError {
     /// address — a package whose declaration is unsatisfiable by anyone.
     #[error("node {node} requires an authority that is not an address")]
     AuthorityType {
+        /// The offending node.
+        node: u32,
+    },
+    /// An authorizing method whose declaration is not the single point
+    /// read its stored rule lives at — the shape the publish check pins,
+    /// re-derived so a cached package that never passed one is a refusal
+    /// rather than a panic.
+    #[error("node {node}: the authorizing method names no rule cell")]
+    RuleCell {
         /// The offending node.
         node: u32,
     },
@@ -760,8 +764,16 @@ pub(crate) fn admit_intents(
                 if node.evidence.is_empty() {
                     return Err(AdmissionError::MissingEvidence { node: node_index });
                 }
-                Some(VIRTUAL_RULE)
+                None
             }
+        };
+        // An authorizing gate is its target's stored rule, at the cell
+        // the method's own single point-read clause names — the shape
+        // the publish check pins, re-derived here so a cached package
+        // that never passed one is a refusal rather than a panic.
+        let rule_cell = match &signature.accessibility {
+            Accessibility::Authorizing => Some(&signature.effects),
+            Accessibility::Public | Accessibility::Guarded(_) => None,
         };
         // A proof is scoped to the intent that produced it — a signature
         // proof to the intent whose signature, a node proof to the intent
@@ -829,9 +841,9 @@ pub(crate) fn admit_intents(
         // The identity a guarded call must present, over the same inputs
         // the output types evaluate against: what the target itself names,
         // never what the caller claims.
-        let authority = match required {
-            None => None,
-            Some(expr) => {
+        let authority = match (required, rule_cell) {
+            (None, None) => None,
+            (Some(expr), _) => {
                 let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
                     AdmissionError::Eval {
                         node: node_index,
@@ -839,8 +851,29 @@ pub(crate) fn admit_intents(
                     }
                 })?;
                 match value {
-                    Value::Address(identity) => Some(identity),
+                    Value::Address(identity) => Some(AuthorityGate::Identity(identity)),
                     _ => return Err(AdmissionError::AuthorityType { node: node_index }),
+                }
+            }
+            (None, Some(effects)) => {
+                let [
+                    Clause::Effect {
+                        target: TargetExpr::Point(target),
+                        ..
+                    },
+                ] = effects.as_slice()
+                else {
+                    return Err(AdmissionError::RuleCell { node: node_index });
+                };
+                let value = evaluate_expr(target, &eval_inputs, hasher).map_err(|source| {
+                    AdmissionError::Eval {
+                        node: node_index,
+                        source,
+                    }
+                })?;
+                match value {
+                    Value::Key(cell) => Some(AuthorityGate::StoredRule { cell }),
+                    _ => return Err(AdmissionError::RuleCell { node: node_index }),
                 }
             }
         };

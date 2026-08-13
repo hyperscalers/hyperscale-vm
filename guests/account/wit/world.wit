@@ -23,7 +23,14 @@ world account {
 
     /// Nothing but its own gate: naming this method mints the account's
     /// identity as evidence for later nodes of the same intent. The gate
-    /// is judged by the kernel before the export runs, so the body has
-    /// nothing left to do.
+    /// is judged by the kernel before the export runs — against the rule
+    /// stored in the cell this method's own declaration reads — so the
+    /// body has nothing left to do.
     export authorize: func();
+
+    /// Create the stored-authority cell with the caller's rule as every
+    /// role. The cell existing is this body's own refusal: nothing
+    /// deletes one, so the transition off the address-derived rule is
+    /// one-way.
+    export securify: func(cell: borrow<write-cell>, rule: list<u8>);
 }

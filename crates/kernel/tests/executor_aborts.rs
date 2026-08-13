@@ -646,7 +646,7 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
                         .write_cell_set(rep, encode_amount(10).to_vec())
                         .unwrap();
                 }
-                Capability::Reserve { key: _, .. } => {
+                Capability::Reserve { .. } => {
                     session.reserve_amount(rep).unwrap();
                 }
                 _ => {}

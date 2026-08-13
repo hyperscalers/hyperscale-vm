@@ -10,11 +10,13 @@
 //! with either the export's bytes or a trap. An embedder can get engine
 //! embedding wrong; it cannot get manifest semantics wrong.
 
-use hyperscale_vm_effects::{Address, CallArg, EDGE_CELL_BYTES, NodeCall, PackageHash};
+use hyperscale_vm_effects::{
+    Address, AuthorityGate, CallArg, EDGE_CELL_BYTES, NodeCall, PackageHash, Rule,
+};
 
 use crate::executor::{BatchTx, GuestRunner, RunResult};
 use crate::modes::decode_amount;
-use crate::session::{Capability, KernelSession, Outcome};
+use crate::session::{Capability, KernelSession, Outcome, SessionTrap};
 
 /// Which handle type a rep names — the kernel's mode lattice as the
 /// runtimes' resource types.
@@ -188,9 +190,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
         // the whole transaction and cannot tell whose call is running.
         session.enter_invocation(call.target);
 
-        if !authorized(call) {
-            return Err(fail(session, Outcome::Unauthorized { node }, 0));
-        }
+        let session = gated(call, node, session)?;
 
         // Every signed edge bound this node consumes, before anything
         // runs. The check is the node's, not the callee's: a producer
@@ -308,14 +308,46 @@ fn edge_cell(outputs: &[Vec<Vec<u8>>], source: u32, output: u32) -> Option<&[u8]
         .map(Vec::as_slice)
 }
 
-/// Whether a call presents the identity its target requires.
+/// Judge a call's gate, returning the session to whichever path owns it
+/// next.
+fn gated(
+    call: &NodeCall,
+    node: u32,
+    mut session: KernelSession,
+) -> Result<KernelSession, NodeFailure> {
+    match authorized(call, &mut session) {
+        Ok(true) => Ok(session),
+        Ok(false) => Err(fail(session, Outcome::Unauthorized { node }, 0)),
+        Err(trap) => Err(composition_defect(
+            session,
+            format!("the authority gate's cell read failed: {trap}"),
+        )),
+    }
+}
+
+/// Whether a call's presented identities satisfy its gate.
 ///
 /// Admission has already checked that a guarded call presents something;
-/// what remains is whether it presents *this*, which is the target's own
-/// question and is asked where the target is.
-fn authorized(call: &NodeCall) -> bool {
-    call.authority
-        .is_none_or(|required| call.evidence.contains(&required))
+/// what remains is whether it presents *enough*, which is the target's
+/// own question and is asked where the target is. An identity gate is a
+/// pure match. A stored-rule gate reads the target's cell — declared by
+/// the method itself, so provisioned wherever this runs — and dispatches
+/// on presence: absent is the virtual rule, the identity the target's
+/// address derives; present is the stored primary. A stored cell that
+/// does not decode admits nobody: the write path refuses such bytes, so
+/// one here is not a rule, and a gate that cannot be read fails closed.
+fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, SessionTrap> {
+    match call.authority {
+        None => Ok(true),
+        Some(AuthorityGate::Identity(required)) => Ok(call.evidence.contains(&required)),
+        Some(AuthorityGate::StoredRule { cell }) => {
+            let bytes = session.declared_cell(cell)?;
+            if bytes.is_empty() {
+                return Ok(call.evidence.contains(&call.target));
+            }
+            Ok(Rule::from_slice(&bytes).is_ok_and(|stored| stored.satisfied_by(&call.evidence)))
+        }
+    }
 }
 
 /// Split an export's returned blob into one cell per output edge.
@@ -338,8 +370,10 @@ fn split_outputs(returned: Option<&[u8]>, outputs: u32) -> Option<Vec<Vec<u8>>> 
     }
     Some(
         bytes
-            .chunks_exact(EDGE_CELL_BYTES)
-            .map(<[u8]>::to_vec)
+            .as_chunks::<EDGE_CELL_BYTES>()
+            .0
+            .iter()
+            .map(|cell| cell.to_vec())
             .collect(),
     )
 }

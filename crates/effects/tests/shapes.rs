@@ -8,8 +8,8 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 
 use common::{
-    ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, book, claims, config_leaf, effect_set,
-    pkg, pool, resolver, shard_of, vault, wide_account_metadata, world,
+    ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, auth, book, claims, config_leaf,
+    effect_set, pkg, pool, resolver, shard_of, vault, wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
     EdgeRef, Effect, EffectTarget, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
@@ -60,10 +60,16 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
     let expected = BTreeMap::from([
         (
             shard_of(ALICE),
-            effect_set(&[Effect {
-                target: EffectTarget::Point(vault(ALICE, usdc)),
-                mode: Mode::Reserve { amount: 100 },
-            }]),
+            effect_set(&[
+                Effect {
+                    target: EffectTarget::Point(auth(ALICE)),
+                    mode: Mode::Read,
+                },
+                Effect {
+                    target: EffectTarget::Point(vault(ALICE, usdc)),
+                    mode: Mode::Reserve { amount: 100 },
+                },
+            ]),
         ),
         (
             shard_of(BOB),
@@ -124,6 +130,10 @@ fn swap_writes_both_reserves_and_reads_the_locked_config() {
         (
             shard_of(ALICE),
             effect_set(&[
+                Effect {
+                    target: EffectTarget::Point(auth(ALICE)),
+                    mode: Mode::Read,
+                },
                 Effect {
                     target: EffectTarget::Point(vault(ALICE, RES_X)),
                     mode: Mode::Reserve { amount: 500 },
@@ -194,10 +204,16 @@ fn order_book_place_inserts_at_a_computed_entry() {
     let expected = BTreeMap::from([
         (
             shard_of(ALICE),
-            effect_set(&[Effect {
-                target: EffectTarget::Point(vault(ALICE, BASE)),
-                mode: Mode::Reserve { amount: 10 },
-            }]),
+            effect_set(&[
+                Effect {
+                    target: EffectTarget::Point(auth(ALICE)),
+                    mode: Mode::Read,
+                },
+                Effect {
+                    target: EffectTarget::Point(vault(ALICE, BASE)),
+                    mode: Mode::Reserve { amount: 10 },
+                },
+            ]),
         ),
         (
             shard_of(book()),
@@ -273,6 +289,10 @@ fn order_book_fill_declares_a_capped_price_interval() {
         (
             shard_of(BOB),
             effect_set(&[
+                Effect {
+                    target: EffectTarget::Point(auth(BOB)),
+                    mode: Mode::Read,
+                },
                 Effect {
                     target: EffectTarget::Point(vault(BOB, QUOTE)),
                     mode: Mode::Reserve { amount: 1000 },

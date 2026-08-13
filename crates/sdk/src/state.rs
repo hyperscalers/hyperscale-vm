@@ -255,3 +255,9 @@ pub const fn pack(hi: u64, lo: u64) -> Amount {
 pub fn fresh_id() -> u64 {
     unimplemented!("{OFF_HOST}")
 }
+
+/// An authority rule parameter, as a contract signature names it. Off
+/// guest it is a marker: the rule arrives as canonical bytes the
+/// admission gate already decoded under the vocabulary caps.
+#[derive(Clone, Debug, Default)]
+pub struct Rule(pub Vec<u8>);

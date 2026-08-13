@@ -32,7 +32,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod account {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed};
+    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed, Rule};
 
     #[state]
     struct Account {
@@ -42,6 +42,8 @@ mod account {
         claims: Keyed<Amount>,
         #[role(5)]
         entropy: Cell<u64>,
+        #[role(9)]
+        auth: Cell<u64>,
     }
 
     impl Account {
@@ -62,10 +64,19 @@ mod account {
             self.entropy.set(0);
         }
 
-        /// Nothing but its own gate, which is accessibility — a claim no
-        /// body carries.
-        #[allow(clippy::unused_self, clippy::missing_const_for_fn)] // a contract body, deliberately empty
-        pub fn authorize(&mut self) {}
+        /// The sign-in's whole body is its gate's read: the cell the
+        /// account's stored rule lives in.
+        pub fn authorize(&mut self) {
+            let _ = self.auth.get();
+        }
+
+        /// Create the stored-authority cell; an existing one is the
+        /// body's refusal.
+        #[allow(clippy::needless_pass_by_value)] // the contract consumes the rule it stores
+        pub fn securify(&mut self, rule: Rule) {
+            let _ = rule;
+            self.auth.set(0);
+        }
     }
 }
 

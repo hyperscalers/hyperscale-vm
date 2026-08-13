@@ -13,7 +13,7 @@
 //! actually returned. So a lowered argument is either a settled value, a
 //! table position, or an edge to read once its producer has run.
 
-use crate::manifest::Bounds;
+use crate::manifest::{AuthorityGate, Bounds};
 use crate::metadata::PackageHash;
 use crate::types::Address;
 
@@ -98,7 +98,8 @@ pub struct NodeCall {
     /// The identities this call presents, resolved from the signed
     /// evidence the manifest node names.
     pub evidence: Vec<Address>,
-    /// The identity a guarded call must present. `None` for a method
-    /// admitting anyone, and then the presented set is empty too.
-    pub authority: Option<Address>,
+    /// The gate the presented identities are judged against. `None` for
+    /// a method admitting anyone, and then the presented set is empty
+    /// too.
+    pub authority: Option<AuthorityGate>,
 }

@@ -12,7 +12,7 @@ wit_bindgen::generate!({
 use hyperscale::kernel::env::randomness;
 use hyperscale::kernel::events::emit;
 use hyperscale::kernel::state::{
-    delta_cell_add, reserve_cell_amount, write_cell_set,
+    delta_cell_add, reserve_cell_amount, write_cell_get, write_cell_set,
 };
 
 struct Account;
@@ -41,6 +41,16 @@ impl Guest for Account {
 
     fn authorize() {
         // The gate is the kernel's; a body would have nothing to say.
+    }
+
+    fn securify(cell: &WriteCell, rule: Vec<u8>) {
+        // The admission gate decoded the rule under the vocabulary caps;
+        // what is left to judge here is the one-way door.
+        assert!(
+            write_cell_get(cell).is_empty(),
+            "the account is already securified"
+        );
+        write_cell_set(cell, &rule);
     }
 }
 

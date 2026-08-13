@@ -80,14 +80,16 @@ pub enum Outcome {
         /// What the edge actually carried.
         amount: u128,
     },
-    /// A guarded call whose presented evidence is not the identity its
-    /// target requires.
+    /// A guarded call whose presented evidence does not satisfy its
+    /// target's gate.
     ///
-    /// The signer's own fault and priced as such: what a node presents
-    /// and what its target requires are both signed content, so a
-    /// composer could have known — while whether the target still admits
-    /// that identity is the target's state, which is why the verdict is
-    /// reached here rather than at admission.
+    /// Priced with [`Outcome::Infeasible`] rather than as a defect: a
+    /// stored rule can change between signing and execution, so
+    /// presented authority a target no longer admits is a stale
+    /// declaration — the class a spent nullifier occupies for the same
+    /// reason. Whether the gate still admits the presentation is the
+    /// target's state, which is why the verdict is reached here rather
+    /// than at admission.
     Unauthorized {
         /// The calling node.
         node: u32,

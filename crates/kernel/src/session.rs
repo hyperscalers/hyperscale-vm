@@ -478,6 +478,19 @@ impl KernelSession {
             .ok_or(SessionTrap::UnknownHandle(rep))
     }
 
+    /// The current value of a declared cell, for the kernel's own gate
+    /// reads — the same view a read capability serves, empty meaning
+    /// absent. The key comes from the gate admission lowered, which is
+    /// the same evaluation that materialized the cell's capability, so
+    /// it is declared by construction.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`] the store raises.
+    pub fn declared_cell(&mut self, key: SubstateKey) -> Result<Vec<u8>, SessionTrap> {
+        Ok(self.store.read(key)?.unwrap_or_default())
+    }
+
     /// A fresh read through a read capability.
     ///
     /// # Errors

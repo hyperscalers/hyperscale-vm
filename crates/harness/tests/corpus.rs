@@ -12,14 +12,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{
-    ASKS, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
+    ASKS, AUTH, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
 };
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, Address, Clause, ComponentAddr, Constraint, Effect, EffectSet,
     EffectTarget, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
     MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata, ParamType,
-    PrefixShardResolver, PrincipalAddr, ResourceAddr, RoleId, Routing, ShardId, ShardResolver,
-    SubstateKey, TargetExpr, TestHasher, Value, admit, child_key, fresh_id, route,
+    PrefixShardResolver, PrincipalAddr, ResourceAddr, RoleId, Routing, Rule, ShardId,
+    ShardResolver, SubstateKey, TargetExpr, TestHasher, Value, admit, child_key, fresh_id, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -87,6 +87,11 @@ fn claims(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKe
 
 fn config_leaf(owner: impl Into<Address>) -> SubstateKey {
     child_key(&TestHasher, owner, CONFIG, &[])
+}
+
+/// An account's stored-authority cell — what its sign-in reads.
+fn auth(owner: impl Into<Address>) -> SubstateKey {
+    child_key(&TestHasher, owner, AUTH, &[])
 }
 
 fn world() -> (MetadataCache, InstanceRegistry) {
@@ -700,13 +705,16 @@ fn transfer_profile_and_provision_shape_are_exact() {
     let world = world();
     let routing = sharded_routing(&world, &transfer_graph());
 
-    // The walkthrough's profile: one reservation at the sender, the vault
-    // and claims deltas at the recipient — the balance cells and nothing
-    // else.
+    // The walkthrough's profile: the sign-in's rule-cell read and one
+    // reservation at the sender, the vault and claims deltas at the
+    // recipient.
     let expected: BTreeMap<ShardId, EffectSet> = BTreeMap::from([
         (
             shard_of(ALICE),
-            set(&[point(vault(ALICE, RES_X), Mode::Reserve { amount: 100 })]),
+            set(&[
+                point(auth(ALICE), Mode::Read),
+                point(vault(ALICE, RES_X), Mode::Reserve { amount: 100 }),
+            ]),
         ),
         (
             shard_of(BOB),
@@ -718,11 +726,19 @@ fn transfer_profile_and_provision_shape_are_exact() {
     ]);
     assert_eq!(routing.per_shard, expected);
 
-    // The acceptance test, executable: a commutative-only transfer
-    // provisions nothing at all — on either side.
-    for set in routing.per_shard.values() {
-        assert!(set.provision_targets().is_empty());
-    }
+    // The acceptance test, executable: the balance movement stays
+    // commutative on both sides, and what provisions is exactly the
+    // sender's rule cell — absent for a virtual account, and the read
+    // is what carries that absence to the counterpart.
+    assert_eq!(
+        routing.per_shard[&shard_of(ALICE)].provision_targets(),
+        std::iter::once(EffectTarget::Point(auth(ALICE))).collect()
+    );
+    assert!(
+        routing.per_shard[&shard_of(BOB)]
+            .provision_targets()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -875,6 +891,98 @@ fn a_refused_authorization_takes_its_consumers_with_it() -> Result<()> {
     Ok(())
 }
 
+/// Sign in and hand the account to Bob's rule.
+fn securify_graph(rule: Rule) -> ManifestGraph {
+    graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        account::securify(b, alice, rule)
+    })
+}
+
+/// The whole one-way door, end to end on both runtimes: an account
+/// securifies to another principal's rule; its old key stops opening
+/// its own sign-in, the new rule's key does, and a second securify
+/// refuses.
+#[test]
+fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    store.clear_log();
+
+    // Alice's last act under the virtual rule: signing in for its
+    // retirement. Everything she stores from here is governed by Bob.
+    let securify = securify_graph(Rule::Require(BOB.address()));
+    let (results, store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[(&securify, TxHash(Hash32([0x51; 32])))],
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("securify must complete; got {:?}", results[0]);
+    };
+    let rule_bytes = Rule::Require(BOB.address()).to_bytes().unwrap();
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(rule_bytes)),
+        "the cell stores exactly the rule securify was handed"
+    );
+
+    // The old key still derives Alice's address, and that identity is
+    // exactly what her rule no longer admits: her own sign-in refuses,
+    // and everything behind it is unreachable.
+    let transfer = authorized_transfer_graph();
+    let (results, store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[(&transfer, TxHash(Hash32([0x52; 32])))],
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::Unauthorized { node: 0 })],
+        "the retired key must not open the account"
+    );
+
+    // Bob's signature carries Bob's identity, the stored rule admits
+    // it, and the minted proof opens Alice's guarded methods.
+    let (results, mut store) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&transfer, TxHash(Hash32([0x53; 32])))],
+        Some(BOB),
+    );
+    assert!(
+        matches!(&results[0], TxResult::Completed(_)),
+        "the installed rule must govern; got {:?}",
+        results[0]
+    );
+    assert_eq!(amount_of(&mut store, vault(ALICE, RES_X)), 50);
+    assert_eq!(amount_of(&mut store, vault(BOB, RES_X)), 100);
+
+    // Nothing re-securifies: the guest's one-way door traps, whoever
+    // holds the current rule.
+    let again = securify_graph(Rule::Require(BOB.address()));
+    let (results, _) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&again, TxHash(Hash32([0x54; 32])))],
+        Some(BOB),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Trapped],
+        "securifying a securified account is the guest's own refusal"
+    );
+    Ok(())
+}
+
 fn swap_graph(min_out: u128) -> ManifestGraph {
     graph(|b| {
         let alice = account::authorize(b, ALICE)?;
@@ -929,11 +1037,11 @@ fn swap_profile_and_provision_shape_are_exact() {
         .into_iter()
         .collect()
     );
-    // The user's commutative side provisions nothing.
-    assert!(
-        routing.per_shard[&shard_of(ALICE)]
-            .provision_targets()
-            .is_empty()
+    // The user's side provisions exactly the sign-in's rule cell; her
+    // balance movement stays commutative.
+    assert_eq!(
+        routing.per_shard[&shard_of(ALICE)].provision_targets(),
+        std::iter::once(EffectTarget::Point(auth(ALICE))).collect()
     );
 }
 

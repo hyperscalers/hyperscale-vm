@@ -17,7 +17,7 @@ use hyperscale_vm_effects::stdlib::{
 };
 use hyperscale_vm_effects::{
     ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
-    PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr, TestHasher, Value, admit,
+    PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr, Rule, TestHasher, Value, admit,
     resource_address,
 };
 use hyperscale_vm_manifest_builder::native::{account, amm, book, splitter, staking};
@@ -107,9 +107,10 @@ fn the_account_wrappers_match_their_signatures() {
         let alice = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice, BASE, 100)?;
         account::deposit(b, BOB, funds)?;
-        account::stamp_entropy(b, alice)
+        account::stamp_entropy(b, alice)?;
+        account::securify(b, alice, Rule::Require(BOB.address()))
     });
-    assert_eq!(graph.nodes.len(), 4);
+    assert_eq!(graph.nodes.len(), 5);
 }
 
 #[test]
@@ -192,7 +193,13 @@ fn every_stdlib_method_has_a_wrapper() {
     let wrapped: Vec<(&str, &[&str])> = vec![
         (
             "account",
-            &["authorize", "deposit", "stamp-entropy", "withdraw"],
+            &[
+                "authorize",
+                "deposit",
+                "securify",
+                "stamp-entropy",
+                "withdraw",
+            ],
         ),
         ("amm", &["swap"]),
         ("book", &["fill-asks", "place-ask"]),

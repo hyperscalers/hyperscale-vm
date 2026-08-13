@@ -65,7 +65,7 @@ pub struct TestHasher;
 impl Hasher for TestHasher {
     fn hash(&self, domain: &[u8], parts: &[&[u8]]) -> Hash32 {
         let mut out = [0u8; 32];
-        for (lane, chunk) in out.chunks_exact_mut(8).enumerate() {
+        for (lane, chunk) in out.as_chunks_mut::<8>().0.iter_mut().enumerate() {
             let mut state =
                 0xcbf2_9ce4_8422_2325_u64 ^ (lane as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
             feed(&mut state, domain);

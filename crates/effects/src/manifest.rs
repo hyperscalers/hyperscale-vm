@@ -8,7 +8,7 @@
 //! bound inputs. Amounts are dynamic; types are static.
 
 use crate::hash::Hash32;
-use crate::types::{Address, Value};
+use crate::types::{Address, SubstateKey, Value};
 
 /// A consumer's signed amount bounds on an edge, folded to their
 /// conjunction: the greatest declared lower bound and the least declared
@@ -81,13 +81,34 @@ pub struct Node {
     /// The identities this call presents, resolved from the signed
     /// evidence the node names. Empty for a call requiring none.
     pub evidence: Vec<Address>,
-    /// The identity a guarded call must present, evaluated from what the
-    /// target itself names. `None` for a method admitting anyone.
+    /// The gate this call's presented evidence is judged against.
+    /// `None` for a method admitting anyone.
     ///
     /// Admission has already checked that a guarded call presents
-    /// *something*; whether what it presents is *this* is answered at
-    /// execution, against the target.
-    pub authority: Option<Address>,
+    /// *something*; whether what it presents satisfies the gate is
+    /// answered at execution, against the target.
+    pub authority: Option<AuthorityGate>,
+}
+
+/// The gate a call's presented evidence is judged against at execution.
+///
+/// The arm set is open by construction: a custody gate — vault
+/// non-empty, minting a configured identity — joins later without
+/// reshaping these two.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthorityGate {
+    /// The presented set must carry this identity — what the target
+    /// itself named, evaluated at admission.
+    Identity(Address),
+    /// The presented set must satisfy the target's stored rule at this
+    /// cell — or, while the cell is absent, carry the identity the
+    /// target's address derives. The cell is the authorizing method's
+    /// own declared point read, so it is provisioned wherever the call
+    /// runs.
+    StoredRule {
+        /// The cell the target's rules live in.
+        cell: SubstateKey,
+    },
 }
 
 /// A manifest: invocation nodes in topological order.

@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 use hyperscale_hbor::{EncodeError, Hbor, to_vec};
 use thiserror::Error;
 
-use crate::dsl::{Clause, Expr, TargetExpr};
+use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::hash::{Hash32, Hasher};
+use crate::rule::Rule;
 use crate::types::{
     Address, CallTarget, ComponentAddr, RoleId, SubstateKey, Value, child_key, component_address,
     config_hash,
@@ -76,6 +77,10 @@ pub enum ParamType {
     Address,
     /// A value edge; its resource type is static, its amount dynamic.
     Bucket,
+    /// An authority rule, carried as its canonical bytes and decoded
+    /// under the vocabulary caps at admission — so a rule past either
+    /// cap is refused before anything signs.
+    Rule,
 }
 
 impl ParamType {
@@ -88,20 +93,23 @@ impl ParamType {
             Self::Bytes => "bytes",
             Self::Address => "address",
             Self::Bucket => "bucket",
+            Self::Rule => "rule",
         }
     }
 
     /// Whether a literal value has this kind. Buckets are never literals —
-    /// they arrive only as edges.
+    /// they arrive only as edges, and a rule is bytes that decode under
+    /// the vocabulary caps.
     #[must_use]
-    pub const fn admits(self, value: &Value) -> bool {
-        matches!(
-            (self, value),
+    pub fn admits(self, value: &Value) -> bool {
+        match (self, value) {
             (Self::U64, Value::U64(_))
-                | (Self::U128, Value::U128(_))
-                | (Self::Bytes, Value::Bytes(_))
-                | (Self::Address, Value::Address(_))
-        )
+            | (Self::U128, Value::U128(_))
+            | (Self::Bytes, Value::Bytes(_))
+            | (Self::Address, Value::Address(_)) => true,
+            (Self::Rule, Value::Bytes(bytes)) => Rule::from_slice(bytes).is_ok(),
+            _ => false,
+        }
     }
 }
 
@@ -211,6 +219,11 @@ pub struct MethodSignature {
 /// cache without one.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AbiError {
+    /// An authorizing method whose declaration is not exactly one point
+    /// read — the cell its stored rule lives in, which the gate
+    /// evaluates and the read provisions.
+    #[error("an authorizing method declares exactly one point read: its rule cell")]
+    AuthorizingShape,
     /// A handle binding naming an effect clause the signature does not
     /// declare.
     #[error("ABI parameter {position} names effect clause {clause}, past the {declared} declared")]
@@ -287,6 +300,20 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
         && identity.reads_call_inputs()
     {
         return Err(AbiError::CallerNamedAuthority);
+    }
+    // An authorizing method's whole declaration is the cell its stored
+    // rule lives in: one point read, which is what the gate evaluates at
+    // admission and what provisions the cell to every participant.
+    if matches!(signature.accessibility, Accessibility::Authorizing)
+        && !matches!(
+            signature.effects.as_slice(),
+            [Clause::Effect {
+                target: TargetExpr::Point(_),
+                mode: ModeExpr::Read,
+            }]
+        )
+    {
+        return Err(AbiError::AuthorizingShape);
     }
     let bound = |count: usize| u32::try_from(count).unwrap_or(u32::MAX);
     let mut carried = vec![0u32; signature.params.len()];
@@ -966,6 +993,11 @@ mod tests {
         let expected = [
             ("account", "authorize", Accessibility::Authorizing),
             ("account", "deposit", Accessibility::Public),
+            (
+                "account",
+                "securify",
+                Accessibility::Guarded(Expr::SelfAddr),
+            ),
             (
                 "account",
                 "stamp-entropy",

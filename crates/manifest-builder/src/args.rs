@@ -10,7 +10,7 @@
 
 use hyperscale_vm_effects::{
     Address, CallTarget, ComponentAddr, GraphArg, NativeAddr, PackageAddr, PrincipalAddr,
-    ResourceAddr, ResourceRef, Value,
+    ResourceAddr, ResourceRef, Rule, Value,
 };
 
 use crate::builder::{Bucket, GraphBuilder, Param};
@@ -105,6 +105,22 @@ impl sealed::Sealed for Value {}
 impl Arg for Value {
     fn bind(self, _builder: &GraphBuilder) -> GraphArg {
         GraphArg::Literal(self)
+    }
+}
+
+impl sealed::Sealed for Rule {}
+impl Arg for Rule {
+    /// A rule binds as its canonical bytes — the form admission decodes
+    /// under the vocabulary caps.
+    ///
+    /// # Panics
+    ///
+    /// On a rule past the vocabulary's own caps, which no admission path
+    /// would accept; the compose site is where its author can fix it.
+    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+        GraphArg::Literal(Value::Bytes(
+            self.to_bytes().expect("a rule within the caps encodes"),
+        ))
     }
 }
 

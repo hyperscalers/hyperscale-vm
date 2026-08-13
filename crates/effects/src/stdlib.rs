@@ -32,6 +32,9 @@ pub const UNBONDING: RoleId = RoleId(6);
 pub const VALIDATORS: RoleId = RoleId(7);
 /// A stake pool's one active network-parameter vote.
 pub const VOTE: RoleId = RoleId(8);
+/// An account's stored authority: the cell `authorize` reads and
+/// `securify` creates. Absent for a virtual account.
+pub const AUTH: RoleId = RoleId(9);
 
 /// The entry cap the book's fill range declares.
 pub const FILL_CAP: u32 = 64;
@@ -53,7 +56,9 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 /// draw into the account's entropy leaf. `authorize()`: nothing but its
 /// own gate — naming it mints the account's identity as evidence for
 /// later nodes of the intent, which is how an account acts through calls
-/// its own signature proof would not open.
+/// its own signature proof would not open. `securify(rule)`: create the
+/// stored-authority cell `authorize` reads, refusing one that already
+/// exists — the transition off the address-derived rule, one-way.
 ///
 /// Spending and writing require the account's own authority; being paid
 /// does not. Anyone may credit you, and a transfer therefore still
@@ -116,7 +121,32 @@ pub fn account_metadata() -> PackageMetadata {
             params: vec![],
             abi: vec![],
             outputs: vec![],
-            effects: vec![],
+            // The one clause an authorizing method declares: the cell its
+            // stored rule lives in. The read is what provisions the cell
+            // — or its absence — to every participant, and reads share,
+            // so concurrent sign-ins as one account never conflict.
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(self_child(AUTH, vec![])),
+                mode: ModeExpr::Read,
+            }],
+            calls: vec![],
+        },
+    );
+    methods.methods.insert(
+        "securify".into(),
+        MethodSignature {
+            accessibility: Accessibility::Guarded(Expr::SelfAddr),
+            params: vec![ParamType::Rule],
+            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
+            outputs: vec![],
+            // An exclusive read-modify-write: the body refuses a cell
+            // that already exists, and the write conflicts with every
+            // concurrent sign-in's read — retiring a rule and acting
+            // under it never share a wave.
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(self_child(AUTH, vec![])),
+                mode: ModeExpr::Write,
+            }],
             calls: vec![],
         },
     );

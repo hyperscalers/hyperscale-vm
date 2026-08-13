@@ -261,9 +261,8 @@ impl RefModule {
                 }
             }
             unreachable!("func index within imported range");
-        } else {
-            self.funcs[func as usize - imported].ty
         }
+        self.funcs[func as usize - imported].ty
     }
 
     /// The type of a function by its global index.
