@@ -824,9 +824,12 @@ pub fn registry_metadata() -> PackageMetadata {
 /// holdings interval.
 ///
 /// `mint` derives one fresh id, writes its `INSTANCE` data cell, and
-/// produces the one-id edge; `deposit` files an arriving edge's ids as
-/// entries at their ids; `withdraw` removes named ids — one not held is
-/// a trap — and produces their edge; `burn` consumes an edge outright.
+/// produces the one-id edge — ungated, because this package is the
+/// harness's demo issuer; what gates a real issuer's mint is its
+/// author's declaration, not this vocabulary's. `deposit` files an
+/// arriving edge's ids as entries at their ids; `withdraw` removes named
+/// ids — one not held is a trap — and produces their edge; `burn`
+/// consumes an edge outright.
 /// Holdings are declared as the whole `(NF_VAULT, resource)` interval at
 /// [`NF_MOVE_CAP`], the guest reaching each id's entry through the one
 /// range capability.

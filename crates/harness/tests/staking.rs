@@ -114,9 +114,10 @@ fn staking_pkg() -> PackageHash {
 }
 
 /// Two packages, two kinds of instance: the account, and the pool with its
-/// creation-fixed configuration — the resource it stakes, the one it
-/// issues, and the operator its validator surface admits. Nothing
-/// configures which pool it is; the emitter answers that.
+/// creation-fixed configuration — the resource it stakes. The units it
+/// issues and the badge its operator surface admits derive from the pool's
+/// own address; nothing configures which pool it is, the emitter answers
+/// that.
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
     cache.publish(account_pkg(), account_metadata());

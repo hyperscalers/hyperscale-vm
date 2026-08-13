@@ -618,9 +618,9 @@ pub(crate) fn admit_intents(
     let mut outputs: Vec<Vec<(Address, EdgeContent)>> = Vec::with_capacity(total);
     let mut consumed: Vec<Vec<u32>> = Vec::with_capacity(total);
     let mut lowered: Vec<Node> = Vec::with_capacity(total);
-    // The identity each node mints, indexed by flattened position: `Some`
-    // exactly for an authorizing method — its declared minted identity,
-    // or the target itself when the metadata names none.
+    // The identity each node mints, indexed by flattened position:
+    // an authorizing method's target, a custodial method's badge, and
+    // `None` from anything else.
     let mut minted: Vec<Option<Address>> = Vec::with_capacity(total);
 
     for &(intent_index, local_index) in &order {

@@ -7,14 +7,13 @@
 //! does not fail loudly — it fabricates a balance for a cell this shard
 //! holds none of, and every later reader of the overlay believes it.
 //!
-//! Every consumer of a receipt walks the same four maps, and each one used
-//! to carry its own copy of the filter — the batch's apply pass, the
-//! session's own fold, and the embedder's fold into committed state, which
-//! is the copy furthest from this crate and the one that reaches real
-//! state. [`StateDelta::owned`] is the single implementation they share: it
-//! yields the entries this shard owns and nothing else, so the question
-//! stops being whether a walk remembered to filter and becomes which walk
-//! it is.
+//! Every consumer of a receipt walks the same four maps — the batch's
+//! apply pass, the session's own fold, and the embedder's fold into
+//! committed state, the walk furthest from this crate and the one that
+//! reaches real state. [`StateDelta::owned`] is the single filter they
+//! share: it yields the entries this shard owns and nothing else, so the
+//! question stops being whether a walk remembered to filter and becomes
+//! which walk it is.
 
 use std::sync::Arc;
 
