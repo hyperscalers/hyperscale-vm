@@ -23,6 +23,7 @@
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 
 use crate::rule::{MAX_RULE_WIRE_DEPTH, Rule};
+use crate::types::Address;
 
 /// The decoder cap that admits exactly the role sets within the rule
 /// vocabulary's caps.
@@ -237,6 +238,37 @@ impl AuthCell {
             _ => &self.base,
         }
     }
+
+    /// The stored-rule verdict, whole: whether the identities presented
+    /// to `target`'s cell satisfy the rule `role` selects at `clock_ms`.
+    ///
+    /// This is the one judgment both readers share — the kernel's gate
+    /// asks it with a call's evidence, the payer shard's binding verdict
+    /// with the envelope signer alone and the primary, since paying is
+    /// governed by whatever governs `authorize`. An empty `stored` is an
+    /// account that never securified: the virtual rule, the identity the
+    /// target's address derives, whichever role asks. Stored bytes that
+    /// do not decode admit nobody — the write path refuses such bytes,
+    /// so these are not a rule, and a cell that cannot be read fails
+    /// closed.
+    #[must_use]
+    pub fn admits(
+        stored: &[u8],
+        target: Address,
+        role: AuthRole,
+        evidence: &[Address],
+        clock_ms: u64,
+    ) -> bool {
+        if stored.is_empty() {
+            return evidence.contains(&target);
+        }
+        Self::from_slice(stored).is_ok_and(|cell| {
+            cell.governing(clock_ms)
+                .roles
+                .rule(role)
+                .satisfied_by(evidence)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -424,5 +456,76 @@ mod tests {
             confirmation: WideRule::Require(identity(1)),
         };
         assert!(RoleSet::from_slice(&to_vec(&wide).unwrap()).is_err());
+    }
+
+    /// The verdict both readers share, whole: absent is the virtual
+    /// rule for every role, stored is the named role's rule from the
+    /// base the clock picks, and bytes that are not a cell admit
+    /// nobody.
+    #[test]
+    fn the_shared_verdict_dispatches_on_presence_role_and_clock() {
+        let target = identity(1);
+
+        // Absent: the identity the target's address derives, whichever
+        // role asks, whatever the clock says.
+        assert!(AuthCell::admits(
+            &[],
+            target,
+            AuthRole::Primary,
+            &[target],
+            0
+        ));
+        assert!(AuthCell::admits(
+            &[],
+            target,
+            AuthRole::Recovery,
+            &[target],
+            u64::MAX
+        ));
+        assert!(!AuthCell::admits(
+            &[],
+            target,
+            AuthRole::Primary,
+            &[identity(2)],
+            0
+        ));
+
+        // Stored, with a proposal pending: each role selects its own
+        // rule, the target's own identity is no longer one of them, and
+        // the verdict flips at the instant with nothing applying it.
+        let cell = AuthCell {
+            base: AuthBase {
+                recovery_delay_ms: 1_000,
+                roles: RoleSet {
+                    primary: Rule::Require(identity(2)),
+                    recovery: Rule::Require(identity(3)),
+                    confirmation: Rule::Require(identity(4)),
+                },
+            },
+            proposal: Some(Proposal {
+                effective_at_ms: 500,
+                base: base(5, 1_000),
+            }),
+        }
+        .to_bytes()
+        .unwrap();
+        let admits =
+            |role, who: u8, clock| AuthCell::admits(&cell, target, role, &[identity(who)], clock);
+        assert!(admits(AuthRole::Primary, 2, 499));
+        assert!(!admits(AuthRole::Primary, 1, 499));
+        assert!(admits(AuthRole::Recovery, 3, 499));
+        assert!(!admits(AuthRole::Recovery, 2, 499));
+        assert!(admits(AuthRole::Confirmation, 4, 499));
+        assert!(admits(AuthRole::Primary, 5, 500));
+        assert!(!admits(AuthRole::Primary, 2, 500));
+
+        // Bytes no cell decodes from admit nobody.
+        assert!(!AuthCell::admits(
+            &[0xFF, 0xFF],
+            target,
+            AuthRole::Primary,
+            &[target],
+            0
+        ));
     }
 }

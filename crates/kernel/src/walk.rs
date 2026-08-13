@@ -331,31 +331,23 @@ fn gated(
 /// what remains is whether it presents *enough*, which is the target's
 /// own question and is asked where the target is. An identity gate is a
 /// pure match. A stored-rule gate reads the target's cell — declared by
-/// the method itself, so provisioned wherever this runs — and dispatches
-/// on presence: absent is the virtual rule, the identity the target's
-/// address derives, whichever role asks; present is the stored role the
-/// gate names, picked from the role set that governs at the transaction
-/// clock — so a matured proposal judges here with nothing applying it.
-/// A stored cell that does not decode admits nobody: the write path
-/// refuses such bytes, so one here is not a rule, and a gate that
-/// cannot be read fails closed.
+/// the method itself, so provisioned wherever this runs — and hands the
+/// bytes to [`AuthCell::admits`], the verdict this gate shares with the
+/// payer shard's binding check, judged at the transaction clock.
 fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, SessionTrap> {
     match call.authority {
         None => Ok(true),
         Some(AuthorityGate::Identity(required)) => Ok(call.evidence.contains(&required)),
         Some(AuthorityGate::StoredRule { cell, role }) => {
             let bytes = session.declared_cell(cell)?;
-            if bytes.is_empty() {
-                return Ok(call.evidence.contains(&call.target));
-            }
             let clock = session.clock_ms();
-            Ok(AuthCell::from_slice(&bytes).is_ok_and(|stored| {
-                stored
-                    .governing(clock)
-                    .roles
-                    .rule(role)
-                    .satisfied_by(&call.evidence)
-            }))
+            Ok(AuthCell::admits(
+                &bytes,
+                call.target,
+                role,
+                &call.evidence,
+                clock,
+            ))
         }
     }
 }
