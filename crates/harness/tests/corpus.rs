@@ -16,12 +16,12 @@ use hyperscale_vm_effects::stdlib::{
     book_metadata, nf_metadata, registry_metadata,
 };
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, Address, AuthBase, AuthCell, Clause, CollectionId, ComponentAddr,
-    Constraint, Effect, EffectSet, EffectTarget, Expr, Hash32, Hasher, InstanceMeta,
-    InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash,
-    PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, Proposal, ResourceAddr, RoleId,
-    RoleSet, Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value,
-    admit, child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
+    AbiParam, Address, AuthBase, AuthCell, Clause, CollectionId, ComponentAddr, Constraint, Effect,
+    EffectSet, EffectTarget, EvidenceRef, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry,
+    ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
+    ParamType, PrefixShardResolver, PrincipalAddr, Proposal, ResourceAddr, RoleId, RoleSet,
+    Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value, admit,
+    child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
     resource_address, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
@@ -125,6 +125,8 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     instances.create(&TestHasher, nf_issuer_meta());
     instances.create(&TestHasher, nf_holder_meta(7));
     instances.create(&TestHasher, nf_holder_meta(8));
+    instances.create(&TestHasher, gated_meta(nf_resource().address(), 9));
+    instances.create(&TestHasher, gated_meta(RES_X.address(), 10));
     (cache, instances)
 }
 
@@ -202,6 +204,21 @@ fn nf_holder_meta(salt: u8) -> InstanceMeta {
 /// A non-fungible holder instance.
 fn nf_holder(salt: u8) -> ComponentAddr {
     nf_holder_meta(salt).address(&TestHasher)
+}
+
+/// A badge-gated instance: its one config slot names the badge resource
+/// its operator surface opens for.
+fn gated_meta(badge: Address, salt: u8) -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("nf"),
+        config: vec![Value::Address(badge)],
+        salt: Hash32([salt; 32]),
+    }
+}
+
+/// The instance gated on `badge`.
+fn gated_by(badge: Address, salt: u8) -> ComponentAddr {
+    gated_meta(badge, salt).address(&TestHasher)
 }
 
 fn mirror_meta() -> InstanceMeta {
@@ -389,33 +406,19 @@ enum TxResult {
 
 /// Whose signature a corpus graph rides.
 ///
-/// An intent carries one signature, so every guarded or authorizing node
-/// in one names the same account — which is a property of these fixtures
-/// rather than of manifests generally, and worth asserting where it is
-/// relied on. A node presenting a minted proof still names its target
-/// here: the proof's producer targets the same account, so the union is
-/// unchanged.
-fn composer(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> PrincipalAddr {
-    let (cache, instances) = world;
+/// An intent carries one signature, so every node presenting it names
+/// the same account — which is a property of these fixtures rather than
+/// of manifests generally, and worth asserting where it is relied on.
+/// Nodes presenting minted proofs contribute nothing: their proofs chain
+/// back to a signature-presenting node of the same graph.
+fn composer(graph: &ManifestGraph) -> PrincipalAddr {
     let mut signer = None;
     for node in &graph.nodes {
-        let guarded = instances
-            .get(node.target)
-            .and_then(|meta| cache.get(meta.package))
-            .and_then(|package| package.methods.get(&node.method))
-            .is_some_and(|signature| {
-                matches!(
-                    signature.accessibility,
-                    Accessibility::Guarded(_)
-                        | Accessibility::Authorizing
-                        | Accessibility::RoleGated(_)
-                )
-            });
-        if !guarded {
+        if !node.evidence.contains(&EvidenceRef::IntentSignature) {
             continue;
         }
         let principal = PrincipalAddr::try_from(node.target.address())
-            .expect("a guarded corpus node targets an account");
+            .expect("a signing corpus node targets an account");
         assert!(
             signer.is_none_or(|seen| seen == principal),
             "one intent, one signature: this graph needs two"
@@ -535,8 +538,7 @@ fn shard_of(address: impl Into<Address>) -> ShardId {
 
 fn sharded_routing(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> Routing {
     let (cache, instances) = world;
-    let admitted =
-        admit(graph, composer(world, graph), cache, instances, &TestHasher).expect("admits");
+    let admitted = admit(graph, composer(graph), cache, instances, &TestHasher).expect("admits");
     let first = route(
         &admitted,
         cache,
@@ -595,7 +597,7 @@ fn run_both_at(
         for (graph, tx) in transactions {
             let under = Signing {
                 tx: *tx,
-                signer: signer.unwrap_or_else(|| composer(world, graph)),
+                signer: signer.unwrap_or_else(|| composer(graph)),
                 clock_ms,
             };
             let (result, next) =
@@ -1931,6 +1933,137 @@ fn the_registry_binds_checks_and_drains_hashed_entries() -> Result<()> {
         store.collection_entries().count(),
         0,
         "the drain left nothing"
+    );
+    Ok(())
+}
+
+#[test]
+fn custody_opens_for_the_holder_and_only_the_holder() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let store = MemoryStore::new();
+
+    let badge = nf_resource();
+    let gated = gated_by(badge.address(), 9);
+    let operate_as = |who: PrincipalAddr| {
+        graph(|b| {
+            let held = account::present_badge(b, who, badge)?;
+            nf::operate(b, gated, held)
+        })
+    };
+
+    // Seat the badge: one minted instance into Alice's holdings.
+    let seat = graph(|b| {
+        let minted = nf::mint(b, nf_issuer())?;
+        account::deposit_nf(b, ALICE, minted)
+    });
+    let (results, store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[(&seat, TxHash(Hash32([0x71; 32])))],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    let held = |store: &MemoryStore| -> Vec<u64> {
+        store
+            .collection_entries()
+            .filter(|((owner, collection, _), _)| {
+                (*owner, *collection)
+                    == (
+                        ALICE.address(),
+                        holdings_collection(&TestHasher, ALICE, badge),
+                    )
+            })
+            .map(|((.., order), _)| u64::try_from(order).unwrap())
+            .collect()
+    };
+    let id = held(&store)[0];
+
+    // The holder operates; a non-holder's own custody refuses on
+    // possession; and the holder's custody presented by somebody else
+    // refuses on the rule — holding is the holder's to present.
+    let (results, store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[
+            (&operate_as(ALICE), TxHash(Hash32([0x72; 32]))),
+            (&operate_as(BOB), TxHash(Hash32([0x73; 32]))),
+        ],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    assert_eq!(
+        results[1],
+        TxResult::Refused(Outcome::Unauthorized { node: 0 })
+    );
+    let (results, store) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&operate_as(ALICE), TxHash(Hash32([0x74; 32])))],
+        Some(BOB),
+    );
+    assert_eq!(
+        results[0],
+        TxResult::Refused(Outcome::Unauthorized { node: 0 })
+    );
+
+    // The badge moves to Bob: operatorship moves with it, and the
+    // seller's custody opens nothing.
+    let transfer = graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let moved = account::withdraw_nf(b, alice, badge, &[id])?;
+        account::deposit_nf(b, BOB, moved)
+    });
+    let (results, _) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[
+            (&transfer, TxHash(Hash32([0x75; 32]))),
+            (&operate_as(BOB), TxHash(Hash32([0x76; 32]))),
+            (&operate_as(ALICE), TxHash(Hash32([0x77; 32]))),
+        ],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    assert!(matches!(results[1], TxResult::Completed(_)));
+    assert_eq!(
+        results[2],
+        TxResult::Refused(Outcome::Unauthorized { node: 0 })
+    );
+
+    Ok(())
+}
+
+#[test]
+fn a_fungible_badge_is_custody_while_the_vault_is_funded() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(1).to_vec())
+        .unwrap();
+
+    let gated = gated_by(RES_X.address(), 10);
+    let operate_as = |who: PrincipalAddr| {
+        graph(|b| {
+            let held = account::present_badge(b, who, RES_X)?;
+            nf::operate(b, gated, held)
+        })
+    };
+    let (results, _) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[
+            (&operate_as(ALICE), TxHash(Hash32([0x78; 32]))),
+            (&operate_as(BOB), TxHash(Hash32([0x79; 32]))),
+        ],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    assert_eq!(
+        results[1],
+        TxResult::Refused(Outcome::Unauthorized { node: 0 })
     );
     Ok(())
 }

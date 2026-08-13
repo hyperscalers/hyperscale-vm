@@ -29,6 +29,8 @@ use crate::typed::{Proof, TypedBuilder, TypedError};
 
 /// The fungible account: every principal answers these.
 pub mod account {
+    use hyperscale_vm_effects::Value;
+
     use super::{
         Bucket, BucketArg, PrincipalAddr, Proof, ResourceRef, RoleSet, Rule, TypedBuilder,
         TypedError,
@@ -180,6 +182,54 @@ pub mod account {
     /// Any [`TypedError`] the call does not type against `confirm`.
     pub fn confirm(builder: &mut TypedBuilder<'_>, who: PrincipalAddr) -> Result<(), TypedError> {
         builder.call(who, "confirm", ())?.none()
+    }
+
+    /// File `funds`' instances as entries of `who`'s holdings. Anyone
+    /// may, exactly as with the fungible deposit.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `deposit-nf`.
+    pub fn deposit_nf(
+        builder: &mut TypedBuilder<'_>,
+        who: PrincipalAddr,
+        funds: impl BucketArg,
+    ) -> Result<(), TypedError> {
+        builder.call(who, "deposit-nf", (funds,))?.none()
+    }
+
+    /// Remove the named `ids` of `resource` from the proof holder's
+    /// holdings, producing their edge; an id not held traps at
+    /// execution.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `withdraw-nf`.
+    pub fn withdraw_nf(
+        builder: &mut TypedBuilder<'_>,
+        proof: Proof,
+        resource: impl Into<ResourceRef>,
+        ids: &[u64],
+    ) -> Result<Bucket, TypedError> {
+        let ids = Value::List(ids.iter().copied().map(Value::U64).collect());
+        builder
+            .call_as(proof, proof.target(), "withdraw-nf", (resource.into(), ids))?
+            .one()
+    }
+
+    /// Present `who`'s custody of `badge`: the holder's own rule plus
+    /// possession, minting the badge's address as evidence for later
+    /// nodes of the same intent.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `present-badge`.
+    pub fn present_badge(
+        builder: &mut TypedBuilder<'_>,
+        who: PrincipalAddr,
+        badge: impl Into<ResourceRef>,
+    ) -> Result<Proof, TypedError> {
+        builder.call_minting_args(who, "present-badge", (badge.into(),))
     }
 }
 
@@ -486,6 +536,20 @@ pub mod nf {
         funds: impl BucketArg,
     ) -> Result<(), TypedError> {
         builder.call(issuer, "burn", (funds,))?.none()
+    }
+
+    /// Act on the badge-gated instance, presenting the badge identity a
+    /// custody gate minted.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `operate`.
+    pub fn operate(
+        builder: &mut TypedBuilder<'_>,
+        gated: ComponentAddr,
+        proof: super::Proof,
+    ) -> Result<(), TypedError> {
+        builder.call_as(proof, gated, "operate", ())?.none()
     }
 }
 

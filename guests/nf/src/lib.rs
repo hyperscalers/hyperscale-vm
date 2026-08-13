@@ -57,6 +57,10 @@ impl Guest for Nf {
     fn burn(funds: Vec<u8>) {
         let _ = cell_ids(&funds);
     }
+
+    fn operate() {
+        // The gate is the kernel's; a body would have nothing to say.
+    }
 }
 
 export!(Nf);

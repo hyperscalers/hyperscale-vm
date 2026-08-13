@@ -8,13 +8,13 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
-use hyperscale_vm_effects::stdlib::AUTH;
+use hyperscale_vm_effects::stdlib::{AUTH, NF_VAULT, VAULT};
 use hyperscale_vm_effects::{
     Accessibility, Address, AddressClass, AdmissionError, AuthRole, AuthorityGate, Clause,
     ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget, EvidenceRef, Expr, GraphArg,
     GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph,
     MetadataCache, MethodSignature, Mode, ModeExpr, PackageMetadata, TargetExpr, TestHasher, Value,
-    admit, child_key, fresh_id, route,
+    admit, child_key, fresh_id, holdings_collection, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -250,23 +250,50 @@ fn a_minted_proof_resolves_to_its_producers_target() {
 /// its metadata names, and a guarded method opening for the configured
 /// one.
 fn custodian_world(
+    accessibility: Accessibility,
     mints: Option<Expr>,
     config: Vec<Value>,
 ) -> (MetadataCache, InstanceRegistry, ComponentAddr) {
+    let rule = Clause::Effect {
+        target: TargetExpr::Point(Expr::ChildKey {
+            owner: Box::new(Expr::SelfAddr),
+            role: AUTH,
+            material: vec![],
+        }),
+        mode: ModeExpr::Read,
+    };
+    let effects = match accessibility {
+        Accessibility::Custodial => vec![
+            rule,
+            Clause::Effect {
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    role: VAULT,
+                    material: vec![Expr::Config(0)],
+                }),
+                mode: ModeExpr::Read,
+            },
+            Clause::Effect {
+                target: TargetExpr::Range {
+                    owner: Expr::SelfAddr,
+                    collection: NF_VAULT,
+                    material: vec![Expr::Config(0)],
+                    lo: Expr::Literal(Value::U128(0)),
+                    hi: Expr::Literal(Value::U128(u128::MAX)),
+                    cap: 1,
+                },
+                mode: ModeExpr::Read,
+            },
+        ],
+        _ => vec![rule],
+    };
     let mut package = PackageMetadata::default();
     package.methods.insert(
         "present".into(),
         MethodSignature {
-            accessibility: Accessibility::Authorizing,
+            accessibility,
             mints,
-            effects: vec![Clause::Effect {
-                target: TargetExpr::Point(Expr::ChildKey {
-                    owner: Box::new(Expr::SelfAddr),
-                    role: AUTH,
-                    material: vec![],
-                }),
-                mode: ModeExpr::Read,
-            }],
+            effects,
             ..MethodSignature::default()
         },
     );
@@ -308,16 +335,18 @@ fn custodian_graph(custodian: ComponentAddr) -> ManifestGraph {
     }
 }
 
-/// The minted identity is the metadata's statement: absent means the
-/// target itself, present names something else — the badge a custody
-/// gate mints — and never anything the caller feeds or a value that is
-/// not an address.
+/// A custodial mint is the badge its shape ties the gate to; an
+/// authorizing mint is the target and nothing else; and no other
+/// accessibility mints at all.
 #[test]
-fn a_minting_method_mints_what_its_metadata_names() {
+fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     let badge = Address::new([0xB0; 31], AddressClass::Resource);
 
-    let (cache, instances, custodian) =
-        custodian_world(Some(Expr::Config(0)), vec![Value::Address(badge)]);
+    let (cache, instances, custodian) = custodian_world(
+        Accessibility::Custodial,
+        Some(Expr::Config(0)),
+        vec![Value::Address(badge)],
+    );
     let admitted = admit(
         &custodian_graph(custodian),
         ALICE,
@@ -326,16 +355,38 @@ fn a_minting_method_mints_what_its_metadata_names() {
         &TestHasher,
     )
     .expect("admits");
+    let present = &admitted.manifest().nodes[0];
+    assert_eq!(
+        present.authority,
+        Some(AuthorityGate::Custody {
+            cell: child_key(&TestHasher, custodian, AUTH, &[]),
+            vault: child_key(
+                &TestHasher,
+                custodian,
+                VAULT,
+                &[Value::Address(badge).canonical_bytes()],
+            ),
+            owner: custodian.into(),
+            holdings: holdings_collection(&TestHasher, custodian, badge),
+        }),
+        "the gate is the holder's rule plus the badge-keyed possession reads"
+    );
     let operate = &admitted.manifest().nodes[1];
     assert_eq!(
         operate.evidence,
         vec![badge],
-        "the proof presents the named identity, not the producer's address"
+        "the proof presents the badge, not the producer's address"
     );
     assert_eq!(operate.authority, Some(AuthorityGate::Identity(badge)));
 
-    // Absent means the target itself: exactly the sign-in's shape.
-    let (cache, instances, custodian) = custodian_world(None, vec![Value::Address(badge)]);
+    // An authorizing sign-in still mints the target itself, and naming
+    // anything else is refused — satisfying one's own rule is no feat,
+    // so a named mint there would be forgeable identity.
+    let (cache, instances, custodian) = custodian_world(
+        Accessibility::Authorizing,
+        None,
+        vec![Value::Address(badge)],
+    );
     let admitted = admit(
         &custodian_graph(custodian),
         ALICE,
@@ -348,10 +399,11 @@ fn a_minting_method_mints_what_its_metadata_names() {
         admitted.manifest().nodes[1].evidence,
         vec![custodian.address()]
     );
-
-    // A minted identity the caller names, and one that is not an address.
-    let (cache, instances, custodian) =
-        custodian_world(Some(Expr::Arg(0)), vec![Value::Address(badge)]);
+    let (cache, instances, custodian) = custodian_world(
+        Accessibility::Authorizing,
+        Some(Expr::Config(0)),
+        vec![Value::Address(badge)],
+    );
     assert_eq!(
         admit(
             &custodian_graph(custodian),
@@ -360,9 +412,19 @@ fn a_minting_method_mints_what_its_metadata_names() {
             &instances,
             &TestHasher
         ),
-        Err(AdmissionError::CallerNamedMint { node: 0 })
+        Err(AdmissionError::MintWithoutGate { node: 0 })
     );
-    let (cache, instances, custodian) = custodian_world(Some(Expr::Config(0)), vec![Value::U64(7)]);
+
+    // A badge that is not a resource address has nothing possessable
+    // behind it.
+    let (cache, instances, custodian) = custodian_world(
+        Accessibility::Custodial,
+        Some(Expr::Config(0)),
+        vec![Value::Address(Address::new(
+            [0xB0; 31],
+            AddressClass::Component,
+        ))],
+    );
     assert_eq!(
         admit(
             &custodian_graph(custodian),

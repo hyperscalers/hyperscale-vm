@@ -341,7 +341,26 @@ impl<'a> TypedBuilder<'a> {
         target: impl Into<CallTarget>,
         method: &str,
     ) -> Result<Proof, TypedError> {
-        self.mint(target.into(), method, None)
+        self.mint(target.into(), method, (), None)
+    }
+
+    /// A minting call with arguments — a custodial method takes the
+    /// badge it presents, where a sign-in takes nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`call_minting`](Self::call_minting).
+    ///
+    /// # Panics
+    ///
+    /// As [`call`](Self::call).
+    pub fn call_minting_args<A: Args>(
+        &mut self,
+        target: impl Into<CallTarget>,
+        method: &str,
+        args: A,
+    ) -> Result<Proof, TypedError> {
+        self.mint(target.into(), method, args, None)
     }
 
     /// The same sign-in, presenting `proof` instead of the intent's
@@ -363,22 +382,26 @@ impl<'a> TypedBuilder<'a> {
         target: impl Into<CallTarget>,
         method: &str,
     ) -> Result<Proof, TypedError> {
-        self.mint(target.into(), method, Some(proof))
+        self.mint(target.into(), method, (), Some(proof))
     }
 
-    fn mint(
+    fn mint<A: Args>(
         &mut self,
         target: CallTarget,
         method: &str,
+        args: A,
         proof: Option<Proof>,
     ) -> Result<Proof, TypedError> {
         let (_, signature) = self.resolve(target, method)?;
-        if !matches!(signature.accessibility, Accessibility::Authorizing) {
+        if !matches!(
+            signature.accessibility,
+            Accessibility::Authorizing | Accessibility::Custodial
+        ) {
             return Err(TypedError::UnmintingProof {
                 method: method.to_owned(),
             });
         }
-        let (node, outputs) = self.append(target, method, (), proof)?;
+        let (node, outputs) = self.append(target, method, args, proof)?;
         outputs.none()?;
         Ok(Proof { node, target })
     }
@@ -447,9 +470,10 @@ impl<'a> TypedBuilder<'a> {
                     method: method.to_owned(),
                 });
             }
-            (Accessibility::Authorizing | Accessibility::RoleGated(_), None) => {
-                BTreeSet::from([EvidenceRef::IntentSignature])
-            }
+            (
+                Accessibility::Authorizing | Accessibility::RoleGated(_) | Accessibility::Custodial,
+                None,
+            ) => BTreeSet::from([EvidenceRef::IntentSignature]),
             (Accessibility::Guarded(_), None) => {
                 return Err(TypedError::SignatureForGuarded {
                     method: method.to_owned(),
@@ -458,7 +482,8 @@ impl<'a> TypedBuilder<'a> {
             (
                 Accessibility::Guarded(_)
                 | Accessibility::Authorizing
-                | Accessibility::RoleGated(_),
+                | Accessibility::RoleGated(_)
+                | Accessibility::Custodial,
                 Some(proof),
             ) => BTreeSet::from([EvidenceRef::Node(proof.node)]),
         };

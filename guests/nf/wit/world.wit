@@ -23,4 +23,8 @@ world nf {
 
     /// Consume the edge; the instances stop being held anywhere.
     export burn: func(funds: list<u8>);
+
+    /// Nothing but its own gate: opens for whoever presents the identity
+    /// the configured badge resource names.
+    export operate: func();
 }

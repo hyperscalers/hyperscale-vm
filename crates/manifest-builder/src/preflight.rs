@@ -65,6 +65,10 @@ pub enum Authority {
     /// configured slot holding one. Nothing signs for a hash of what an
     /// object is, so a method requiring one cannot be named by anyone.
     TargetHasNoKey,
+    /// The target's stored primary plus possession of the badge its
+    /// method names — the custody gate; only state knows whether the
+    /// badge is held.
+    Custody,
 }
 
 /// What one node of the flattened manifest requires of a signature.
@@ -160,7 +164,9 @@ impl Report {
             .iter()
             .filter_map(|required| match required.authority {
                 Authority::Signature(principal) => Some(principal),
-                Authority::StoredRule(_) => PrincipalAddr::try_from(required.target).ok(),
+                Authority::StoredRule(_) | Authority::Custody => {
+                    PrincipalAddr::try_from(required.target).ok()
+                }
                 Authority::Anyone | Authority::TargetHasNoKey => None,
             })
             .chain(self.subintents.iter().map(|record| record.signer))
@@ -250,6 +256,7 @@ fn report(
             Some(AuthorityGate::Identity(identity)) => PrincipalAddr::try_from(*identity)
                 .map_or(Authority::TargetHasNoKey, Authority::Signature),
             Some(AuthorityGate::StoredRule { role, .. }) => Authority::StoredRule(*role),
+            Some(AuthorityGate::Custody { .. }) => Authority::Custody,
         };
         authority.push(Required {
             node: u32::try_from(index).unwrap_or(u32::MAX),

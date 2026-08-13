@@ -20,8 +20,23 @@ wit_bindgen::generate!({
 use hyperscale::kernel::env::{clock, randomness};
 use hyperscale::kernel::events::emit;
 use hyperscale::kernel::state::{
-    delta_cell_add, reserve_cell_amount, write_cell_get, write_cell_set,
+    delta_cell_add, range_write_count, range_write_insert, range_write_order, range_write_remove,
+    reserve_cell_amount, write_cell_get, write_cell_set,
 };
+
+/// The ids a count-prefixed edge cell carries; traps on any other shape.
+fn cell_ids(cell: &[u8]) -> Vec<u64> {
+    let (&count, ids) = cell.split_first().expect("an id cell has a count");
+    assert!(ids.len() == usize::from(count) * 8, "malformed id cell");
+    ids.chunks_exact(8)
+        .map(|id| u64::from_le_bytes(id.try_into().unwrap()))
+        .collect()
+}
+
+/// An id's position in the holdings interval's order-key space.
+fn order_cell(id: u64) -> [u8; 16] {
+    u128::from(id).to_le_bytes()
+}
 
 struct Account;
 
@@ -97,6 +112,28 @@ impl Guest for Account {
 
     fn authorize() {
         // The gate is the kernel's; a body would have nothing to say.
+    }
+
+    fn deposit_nf(holdings: &RangeWrite, funds: Vec<u8>) {
+        for id in cell_ids(&funds) {
+            range_write_insert(holdings, &order_cell(id), &[1]);
+        }
+    }
+
+    fn withdraw_nf(holdings: &RangeWrite, ids: Vec<u8>) -> Vec<u8> {
+        for id in cell_ids(&ids) {
+            let order = order_cell(id);
+            let held = (0..range_write_count(holdings))
+                .find(|&index| range_write_order(holdings, index) == order)
+                .expect("id not held");
+            range_write_remove(holdings, held);
+        }
+        ids
+    }
+
+    fn present_badge() {
+        // The gate is the kernel's, possession included; a body would
+        // have nothing to say.
     }
 
     fn securify(cell: &WriteCell, roles: Vec<u8>, delay_ms: u64) {

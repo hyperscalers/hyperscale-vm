@@ -75,6 +75,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
         ("amm", pair_config()),
         ("book", pair_config()),
         ("nf", vec![]),
+        ("nf", vec![Value::Address(BASE.address())]),
         ("registry", vec![]),
         ("splitter", vec![]),
     ] {
@@ -288,6 +289,21 @@ fn the_nf_wrappers_match_their_signatures() {
 }
 
 #[test]
+fn the_custody_wrappers_match_their_signatures() {
+    let issuer = address("nf", vec![]);
+    let resource = resource_address(&TestHasher, issuer.address(), &[]);
+    let gated = address("nf", vec![Value::Address(BASE.address())]);
+    admits(|b| {
+        let minted = nf::mint(b, issuer)?;
+        account::deposit_nf(b, ALICE, minted)?;
+        let badge = account::present_badge(b, ALICE, BASE)?;
+        nf::operate(b, gated, badge)?;
+        let moved = account::withdraw_nf(b, badge, resource, &[7])?;
+        account::deposit_nf(b, BOB, moved)
+    });
+}
+
+#[test]
 fn every_stdlib_method_has_a_wrapper() {
     // The one drift a call site cannot catch: a method added to a package
     // that no wrapper names. Exhaustive on purpose — adding a method
@@ -300,15 +316,18 @@ fn every_stdlib_method_has_a_wrapper() {
                 "cancel",
                 "confirm",
                 "deposit",
+                "deposit-nf",
+                "present-badge",
                 "propose",
                 "securify",
                 "stamp-entropy",
                 "withdraw",
+                "withdraw-nf",
             ],
         ),
         ("amm", &["swap"]),
         ("book", &["fill-asks", "place-ask"]),
-        ("nf", &["burn", "deposit", "mint", "withdraw"]),
+        ("nf", &["burn", "deposit", "mint", "operate", "withdraw"]),
         ("registry", &["bind", "check", "drain"]),
         ("splitter", &["take"]),
         (

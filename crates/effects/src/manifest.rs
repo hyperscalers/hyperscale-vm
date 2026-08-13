@@ -9,7 +9,7 @@
 
 use crate::auth::AuthRole;
 use crate::hash::Hash32;
-use crate::types::{Address, EdgeContent, SubstateKey, Value};
+use crate::types::{Address, CollectionId, EdgeContent, SubstateKey, Value};
 
 /// A consumer's signed amount bounds on an edge, folded to their
 /// conjunction: the greatest declared lower bound and the least declared
@@ -95,10 +95,6 @@ pub struct Node {
 }
 
 /// The gate a call's presented evidence is judged against at execution.
-///
-/// The arm set is open by construction: a custody gate — vault
-/// non-empty, minting a configured identity — joins later without
-/// reshaping these two.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthorityGate {
     /// The presented set must carry this identity — what the target
@@ -118,6 +114,23 @@ pub enum AuthorityGate {
         cell: SubstateKey,
         /// The stored rule the presented set must satisfy.
         role: AuthRole,
+    },
+    /// The presented set must satisfy the target's stored primary at
+    /// `cell` — the holder acts, nobody else presents its badges — and
+    /// the target must hold the badge: a non-zero amount in the
+    /// badge-keyed vault, or any entry in the badge-keyed holdings
+    /// interval. Both reads are the method's own declared clauses, keyed
+    /// by the same expression the mint names, so what this gate verifies
+    /// possession of is exactly the identity it mints.
+    Custody {
+        /// The cell the holder's rules live in; judged as the primary.
+        cell: SubstateKey,
+        /// The badge-keyed vault cell: held when its amount is non-zero.
+        vault: SubstateKey,
+        /// The holdings interval's owner — the holder itself.
+        owner: Address,
+        /// The badge-keyed holdings collection: held when any entry is.
+        holdings: CollectionId,
     },
 }
 

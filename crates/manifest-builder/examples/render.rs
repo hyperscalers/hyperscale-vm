@@ -227,7 +227,10 @@ fn summarise(graph: &ManifestGraph, cache: &MetadataCache, instances: &InstanceR
     for required in report.unsatisfiable() {
         let reason = match required.authority {
             Authority::TargetHasNoKey => "an identity no key derives",
-            Authority::Anyone | Authority::Signature(_) | Authority::StoredRule(_) => {
+            Authority::Anyone
+            | Authority::Signature(_)
+            | Authority::StoredRule(_)
+            | Authority::Custody => {
                 unreachable!("satisfiable")
             }
         };

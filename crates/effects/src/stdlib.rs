@@ -102,6 +102,7 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 pub fn account_metadata() -> PackageMetadata {
     let mut methods = PackageMetadata::default();
     funds_methods(&mut methods);
+    holdings_methods(&mut methods);
     authority_methods(&mut methods);
     // Index order is the contract: the guest emits 0 and 1, and these are
     // what those indexes mean.
@@ -166,6 +167,81 @@ fn funds_methods(methods: &mut PackageMetadata) {
                 target: TargetExpr::Point(self_child(ENTROPY, vec![])),
                 mode: ModeExpr::Write,
             }],
+            calls: vec![],
+        },
+    );
+}
+
+/// `deposit-nf` and `withdraw-nf`: the account holding instances — the
+/// entries of its per-resource holdings interval, created at deposit and
+/// removed at withdrawal, gated exactly as the fungible pair is.
+fn holdings_methods(methods: &mut PackageMetadata) {
+    let holdings = |resource: Expr, cap: u32| TargetExpr::Range {
+        owner: Expr::SelfAddr,
+        collection: NF_VAULT,
+        material: vec![resource],
+        lo: Expr::Literal(Value::U128(0)),
+        hi: Expr::Literal(Value::U128(u128::MAX)),
+        cap,
+    };
+    methods.methods.insert(
+        "deposit-nf".into(),
+        MethodSignature {
+            accessibility: Accessibility::Public,
+            mints: None,
+            params: vec![ParamType::Bucket],
+            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
+            outputs: vec![],
+            effects: vec![Clause::Effect {
+                target: holdings(Expr::ResourceOf(Box::new(Expr::Arg(0))), NF_MOVE_CAP),
+                mode: ModeExpr::Write,
+            }],
+            calls: vec![],
+        },
+    );
+    methods.methods.insert(
+        "withdraw-nf".into(),
+        MethodSignature {
+            accessibility: Accessibility::Guarded(Expr::SelfAddr),
+            mints: None,
+            params: vec![ParamType::Address, ParamType::Ids],
+            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
+            outputs: vec![Expr::NfBucket {
+                resource: Box::new(Expr::Arg(0)),
+                ids: Box::new(Expr::Arg(1)),
+            }],
+            effects: vec![Clause::Effect {
+                target: holdings(Expr::Arg(0), NF_MOVE_CAP),
+                mode: ModeExpr::Write,
+            }],
+            calls: vec![],
+        },
+    );
+    // The custody gate: the holder's own rule — the holder acts, nobody
+    // else presents its badges — plus possession of the named badge,
+    // fungible or not, minting the badge's address as evidence.
+    methods.methods.insert(
+        "present-badge".into(),
+        MethodSignature {
+            accessibility: Accessibility::Custodial,
+            mints: Some(Expr::Arg(0)),
+            params: vec![ParamType::Address],
+            abi: vec![],
+            outputs: vec![],
+            effects: vec![
+                Clause::Effect {
+                    target: TargetExpr::Point(self_child(AUTH, vec![])),
+                    mode: ModeExpr::Read,
+                },
+                Clause::Effect {
+                    target: TargetExpr::Point(self_child(VAULT, vec![Expr::Arg(0)])),
+                    mode: ModeExpr::Read,
+                },
+                Clause::Effect {
+                    target: holdings(Expr::Arg(0), 1),
+                    mode: ModeExpr::Read,
+                },
+            ],
             calls: vec![],
         },
     );
@@ -819,6 +895,17 @@ pub fn nf_metadata() -> PackageMetadata {
             mints: None,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Bucket(0)],
+            ..MethodSignature::default()
+        },
+    );
+    // The badge-gated consumer: opens for whoever presents the identity
+    // the configured badge resource names — the whole consumer side of
+    // custody, one config slot.
+    methods.methods.insert(
+        "operate".into(),
+        MethodSignature {
+            accessibility: Accessibility::Guarded(Expr::Config(0)),
+            mints: None,
             ..MethodSignature::default()
         },
     );

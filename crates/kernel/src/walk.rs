@@ -11,8 +11,8 @@
 //! embedding wrong; it cannot get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
-    Address, AuthCell, AuthorityGate, CallArg, EDGE_CELL_BYTES, EdgeKind, MAX_IDS_PER_EDGE,
-    NodeCall, PackageHash, cell_ids,
+    Address, AuthCell, AuthRole, AuthorityGate, CallArg, EDGE_CELL_BYTES, EdgeKind,
+    MAX_IDS_PER_EDGE, NodeCall, PackageHash, cell_ids,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult};
@@ -366,6 +366,33 @@ fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, Sess
                 &call.evidence,
                 clock,
             ))
+        }
+        Some(AuthorityGate::Custody {
+            cell,
+            vault,
+            owner,
+            holdings,
+        }) => {
+            // The holder acts — its stored primary judges the presented
+            // set exactly as a sign-in would — and the holder holds:
+            // value in the badge-keyed vault, or any instance in the
+            // badge-keyed holdings. Anything but a well-formed non-zero
+            // amount cell reads as not held; a corrupt vault grants
+            // nothing.
+            let bytes = session.declared_cell(cell)?;
+            let clock = session.clock_ms();
+            if !AuthCell::admits(
+                &bytes,
+                call.target,
+                AuthRole::Primary,
+                &call.evidence,
+                clock,
+            ) {
+                return Ok(false);
+            }
+            let amount = session.declared_cell(vault)?;
+            let funded = decode_amount(&amount).is_ok_and(|held| held > 0);
+            Ok(funded || session.declared_holdings_non_empty(owner, holdings)?)
         }
     }
 }
