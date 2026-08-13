@@ -9,8 +9,8 @@
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 
 use crate::hash::Hasher;
-pub use crate::stdlib::RESOURCE;
-use crate::types::{Address, SubstateKey, Value, child_key};
+pub use crate::stdlib::{INSTANCE, NF_VAULT, RESOURCE};
+use crate::types::{Address, CollectionId, SubstateKey, Value, child_key, collection_id};
 
 /// The decoder cap for a record cell: a flat two-field struct, one level
 /// of body over the frame.
@@ -82,11 +82,58 @@ pub fn resource_record_key(
     )
 }
 
+/// The holdings sub-collection for `resource` under `holder`: the
+/// `(NF_VAULT, resource)` fold whose entries, at the instance's id as
+/// the order key, are the instances the holder has.
+///
+/// The declaring side spells the same fold as an entry target with the
+/// resource as its collection material; this is that identity for
+/// everything that consults holdings directly — the custody gate's
+/// possession read, the linearity oracle's scan.
+#[must_use]
+pub fn holdings_collection(
+    hasher: &dyn Hasher,
+    holder: impl Into<Address>,
+    resource: impl Into<Address>,
+) -> CollectionId {
+    collection_id(
+        hasher,
+        holder.into(),
+        NF_VAULT,
+        &[Value::Address(resource.into()).canonical_bytes()],
+    )
+}
+
+/// The data cell for one instance of `resource` under `issuer`, keyed by
+/// the resource and the instance's id: written at mint, immutable after.
+///
+/// Under the issuer rather than the holder, so the cell never moves — a
+/// transfer renames a holdings entry and touches no data.
+#[must_use]
+pub fn instance_data_key(
+    hasher: &dyn Hasher,
+    issuer: impl Into<Address>,
+    resource: impl Into<Address>,
+    id: u64,
+) -> SubstateKey {
+    child_key(
+        hasher,
+        issuer,
+        INSTANCE,
+        &[
+            Value::Address(resource.into()).canonical_bytes(),
+            Value::U64(id).canonical_bytes(),
+        ],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::assert_canonical;
 
-    use super::{Fungibility, ResourceRecord, resource_record_key};
+    use super::{
+        Fungibility, ResourceRecord, holdings_collection, instance_data_key, resource_record_key,
+    };
     use crate::hash::TestHasher;
     use crate::stdlib::{GENESIS_PUBLISHER, XRD};
     use crate::types::{Address, AddressClass, native_address};
@@ -124,6 +171,51 @@ mod tests {
         assert_ne!(
             key,
             resource_record_key(&TestHasher, publisher, other_resource),
+            "another resource is another cell"
+        );
+    }
+
+    #[test]
+    fn holdings_collections_separate_by_holder_and_resource() {
+        let holder = Address::new([1; 31], AddressClass::Component);
+        let other_holder = Address::new([2; 31], AddressClass::Component);
+        let resource = Address::new([3; 31], AddressClass::Resource);
+        let other_resource = Address::new([4; 31], AddressClass::Resource);
+
+        let collection = holdings_collection(&TestHasher, holder, resource);
+        assert_eq!(
+            collection,
+            holdings_collection(&TestHasher, holder, resource),
+            "the fold is a pure derivation"
+        );
+        assert_ne!(
+            collection,
+            holdings_collection(&TestHasher, other_holder, resource),
+            "another holder holds elsewhere"
+        );
+        assert_ne!(
+            collection,
+            holdings_collection(&TestHasher, holder, other_resource),
+            "another resource is another sub-collection"
+        );
+    }
+
+    #[test]
+    fn instance_data_keys_separate_by_resource_and_id() {
+        let issuer = Address::new([1; 31], AddressClass::Component);
+        let resource = Address::new([3; 31], AddressClass::Resource);
+        let other_resource = Address::new([4; 31], AddressClass::Resource);
+
+        let key = instance_data_key(&TestHasher, issuer, resource, 7);
+        assert_eq!(key.owner, issuer, "instance data lives at the issuer");
+        assert_ne!(
+            key,
+            instance_data_key(&TestHasher, issuer, resource, 8),
+            "another instance is another cell"
+        );
+        assert_ne!(
+            key,
+            instance_data_key(&TestHasher, issuer, other_resource, 7),
             "another resource is another cell"
         );
     }

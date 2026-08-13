@@ -8,9 +8,11 @@
 //! cap. A declared write permits the reads its read-modify-write implies;
 //! every other mode permits exactly itself.
 
-use hyperscale_vm_effects::{EffectSet, EffectTarget, ModeKind};
+use std::collections::BTreeMap;
 
-use crate::store::Access;
+use hyperscale_vm_effects::{Address, CollectionId, EffectSet, EffectTarget, ModeKind};
+
+use crate::store::{Access, Base};
 
 /// Whether a declared mode kind permits an access of the given kind.
 #[must_use]
@@ -135,15 +137,40 @@ pub fn undeclared_accesses(trace: &[Access], declared: &EffectSet) -> Vec<Access
         .collect()
 }
 
+/// The instance ids held in more than one place, per-id linearity's
+/// verdict: this must be empty after every wave, permanently.
+///
+/// Scans each given holdings collection in the committed store and
+/// reports every order key present under two or more of them.
+///
+/// Asserted over settled state rather than over per-receipt changes,
+/// because that is what the invariant says: a transfer chain inside one
+/// wave creates an entry it later removes and nets to a single holding,
+/// while an id genuinely landing twice is two entries no netting erases.
+#[must_use]
+pub fn multiply_held_ids(store: &dyn Base, holdings: &[(Address, CollectionId)]) -> Vec<u128> {
+    let mut holders: BTreeMap<u128, usize> = BTreeMap::new();
+    for &(holder, collection) in holdings {
+        for (order, _) in store.entries_in_range(holder, collection, 0, u128::MAX, usize::MAX) {
+            *holders.entry(order).or_default() += 1;
+        }
+    }
+    holders
+        .into_iter()
+        .filter(|&(_, count)| count > 1)
+        .map(|(order, _)| order)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
         Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, ModeKind,
-        RoleId, TestHasher, child_key,
+        RoleId, TestHasher, child_key, collection_id,
     };
 
-    use super::undeclared_accesses;
-    use crate::store::Access;
+    use super::{multiply_held_ids, undeclared_accesses};
+    use crate::store::{Access, MemoryStore, SubstateStore};
 
     fn declared(effects: &[Effect]) -> EffectSet {
         let mut set = EffectSet::new();
@@ -327,5 +354,45 @@ mod tests {
                 "{escape:?} must be caught"
             );
         }
+    }
+
+    #[test]
+    fn an_id_held_twice_is_the_linearity_verdict() {
+        let resource_material = [7u8];
+        let holdings: Vec<(Address, CollectionId)> = [1u8, 2]
+            .into_iter()
+            .map(|byte| {
+                let holder = Address::new([byte; 31], AddressClass::Component);
+                let collection = collection_id(
+                    &TestHasher,
+                    holder,
+                    RoleId(12),
+                    &[resource_material.to_vec()],
+                );
+                (holder, collection)
+            })
+            .collect();
+
+        let mut store = MemoryStore::new();
+        let write = |store: &mut MemoryStore, slot: usize, order: u128| {
+            let (holder, collection) = holdings[slot];
+            store
+                .entry_write(holder, collection, order, vec![1])
+                .unwrap();
+        };
+        write(&mut store, 0, 7);
+        write(&mut store, 1, 9);
+        assert_eq!(
+            multiply_held_ids(&store, &holdings),
+            Vec::<u128>::new(),
+            "disjoint holdings are linear"
+        );
+
+        write(&mut store, 1, 7);
+        assert_eq!(
+            multiply_held_ids(&store, &holdings),
+            vec![7],
+            "the same id in two holdings collections is the violation"
+        );
     }
 }

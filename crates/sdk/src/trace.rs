@@ -447,6 +447,16 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
             hi: Box::new(rebind(*hi, depth)),
             lo: Box::new(rebind(*lo, depth)),
         },
+        Expr::NfBucket { resource, ids } => Expr::NfBucket {
+            resource: Box::new(rebind(*resource, depth)),
+            ids: Box::new(rebind(*ids, depth)),
+        },
+        Expr::List(elements) => Expr::List(
+            elements
+                .into_iter()
+                .map(|element| rebind(element, depth))
+                .collect(),
+        ),
         Expr::SelfResource { material } => Expr::SelfResource {
             material: material
                 .into_iter()

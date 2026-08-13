@@ -11,13 +11,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::admission::Admitted;
 use crate::dsl::{Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr};
 use crate::hash::Hasher;
-use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall};
+use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, ids_cell};
 use crate::manifest::{ManifestHash, Node, NodeInput};
 use crate::metadata::{
     AbiError, AbiParam, Accessibility, CallSite, InstanceMeta, InstanceRegistry, MetadataCache,
     MethodSignature, PackageHash, check_abi,
 };
-use crate::types::{Address, CallTarget, Effect, EffectSet, ShardId, Value};
+use crate::types::{Address, CallTarget, Effect, EffectSet, MAX_IDS_PER_EDGE, ShardId, Value};
 
 /// Resolves an owner prefix to the shard holding it.
 pub trait ShardResolver {
@@ -676,16 +676,31 @@ fn edge_bounds(node_inputs: &[NodeInput]) -> Vec<EdgeBound> {
 }
 
 /// A derived value's guest form. Amounts and addresses cross as their
-/// canonical fixed-width bytes; the compound kinds have no ABI shape and
-/// refuse rather than picking an encoding the two runtimes would have to
-/// agree on separately.
+/// canonical fixed-width bytes, and an id set crosses as the same
+/// count-prefixed cell an edge carries — one framing wherever ids move.
+/// The remaining compound kinds have no ABI shape and refuse rather than
+/// picking an encoding the two runtimes would have to agree on
+/// separately.
 fn guest_arg(value: &Value) -> Option<CallArg> {
     match value {
         Value::U64(scalar) => Some(CallArg::U64(*scalar)),
         Value::U128(amount) => Some(CallArg::Bytes(amount.to_le_bytes().to_vec())),
         Value::Address(address) => Some(CallArg::Bytes(address.to_bytes().to_vec())),
         Value::Bytes(bytes) => Some(CallArg::Bytes(bytes.clone())),
-        Value::Key(_) | Value::Bucket { .. } | Value::Tuple(_) | Value::List(_) => None,
+        Value::List(elements) => {
+            if elements.len() > MAX_IDS_PER_EDGE {
+                return None;
+            }
+            let ids = elements
+                .iter()
+                .map(|element| match element {
+                    Value::U64(id) => Some(*id),
+                    _ => None,
+                })
+                .collect::<Option<Vec<u64>>>()?;
+            Some(CallArg::Bytes(ids_cell(&ids)))
+        }
+        Value::Key(_) | Value::Bucket { .. } | Value::Tuple(_) => None,
     }
 }
 
@@ -917,8 +932,8 @@ mod tests {
         PackageMetadata, ParamType,
     };
     use crate::types::{
-        Address, AddressClass, ComponentAddr, EdgeContent, Effect, EffectSet, EffectTarget, Mode,
-        RoleId, ShardId, Value, child_key, collection_id,
+        Address, AddressClass, ComponentAddr, EdgeContent, Effect, EffectSet, EffectTarget,
+        MAX_IDS_PER_EDGE, Mode, RoleId, ShardId, Value, child_key, collection_id,
     };
 
     fn pkg(name: &str) -> PackageHash {
@@ -1869,6 +1884,23 @@ mod tests {
             ),
             "unexpected refusal: {error:?}"
         );
+    }
+
+    #[test]
+    fn an_id_list_crosses_the_abi_as_the_edge_cell_framing() {
+        use super::guest_arg;
+        use crate::invoke::ids_cell;
+
+        assert_eq!(
+            guest_arg(&Value::List(vec![Value::U64(3), Value::U64(9)])),
+            Some(CallArg::Bytes(ids_cell(&[3, 9]))),
+        );
+        // A list of anything else has no guest representation.
+        assert_eq!(guest_arg(&Value::List(vec![Value::U128(3)])), None);
+        let over_cap: Vec<Value> = (0..=u64::try_from(MAX_IDS_PER_EDGE).unwrap())
+            .map(Value::U64)
+            .collect();
+        assert_eq!(guest_arg(&Value::List(over_cap)), None);
     }
 
     #[test]

@@ -262,6 +262,8 @@ pub fn expr_depth(expr: &Expr) -> usize {
         Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) => expr_depth(inner),
         Expr::Lookup { map, key } => expr_depth(map).max(expr_depth(key)),
         Expr::Pack { hi, lo } => expr_depth(hi).max(expr_depth(lo)),
+        Expr::NfBucket { resource, ids } => expr_depth(resource).max(expr_depth(ids)),
+        Expr::List(elements) => elements.iter().map(expr_depth).max().unwrap_or(0),
         Expr::SelfResource { material } => material.iter().map(expr_depth).max().unwrap_or(0),
         Expr::ChildKey {
             owner, material, ..

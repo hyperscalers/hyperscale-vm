@@ -35,7 +35,7 @@ pub use modes::{
     AMOUNT_CELL_BYTES, DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount,
     encode_amount, fold_deltas, judge,
 };
-pub use oracle::{covered, permits, target_covers, undeclared_accesses};
+pub use oracle::{covered, multiply_held_ids, permits, target_covers, undeclared_accesses};
 pub use overlay::OverlayStore;
 pub use ownership::{CreationContext, MoveError, move_object};
 pub use session::{

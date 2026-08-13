@@ -11,8 +11,8 @@ use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::hash::{Hash32, Hasher};
 use crate::rule::Rule;
 use crate::types::{
-    Address, CallTarget, ComponentAddr, RoleId, SubstateKey, Value, child_key, component_address,
-    config_hash,
+    Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, RoleId, SubstateKey, Value, child_key,
+    component_address, config_hash,
 };
 
 /// A published package's identity: the hash of its artifact, which covers
@@ -85,6 +85,11 @@ pub enum ParamType {
     /// A full role set — three rules, canonical bytes — decoded as the
     /// vocabulary at admission, for the same reason.
     RoleSet,
+    /// A set of non-fungible instance ids: a list of distinct `u64`s
+    /// within the per-edge cap. Signed manifest content — a transfer
+    /// names the ids it moves; nothing about an instance is resolved at
+    /// execution.
+    Ids,
 }
 
 impl ParamType {
@@ -99,6 +104,7 @@ impl ParamType {
             Self::Bucket => "bucket",
             Self::Rule => "rule",
             Self::RoleSet => "role-set",
+            Self::Ids => "ids",
         }
     }
 
@@ -114,6 +120,12 @@ impl ParamType {
             | (Self::Address, Value::Address(_)) => true,
             (Self::Rule, Value::Bytes(bytes)) => Rule::from_slice(bytes).is_ok(),
             (Self::RoleSet, Value::Bytes(bytes)) => RoleSet::from_slice(bytes).is_ok(),
+            (Self::Ids, Value::List(elements)) => {
+                elements.len() <= MAX_IDS_PER_EDGE
+                    && elements.iter().enumerate().all(|(position, element)| {
+                        matches!(element, Value::U64(_)) && !elements[..position].contains(element)
+                    })
+            }
             _ => false,
         }
     }
@@ -711,6 +723,21 @@ mod tests {
     use super::*;
     use crate::hash::TestHasher;
     use crate::types::PrincipalAddr;
+
+    #[test]
+    fn an_ids_parameter_admits_only_a_bounded_duplicate_free_id_list() {
+        let ids = |raw: &[u64]| Value::List(raw.iter().copied().map(Value::U64).collect());
+        assert!(ParamType::Ids.admits(&ids(&[])));
+        assert!(ParamType::Ids.admits(&ids(&[7, 9])));
+        assert!(!ParamType::Ids.admits(&ids(&[7, 7])), "a duplicate id");
+        let over_cap: Vec<u64> = (0..=MAX_IDS_PER_EDGE as u64).collect();
+        assert!(!ParamType::Ids.admits(&ids(&over_cap)), "past the cap");
+        assert!(
+            !ParamType::Ids.admits(&Value::List(vec![Value::U128(7)])),
+            "an element that is not an id"
+        );
+        assert!(!ParamType::Ids.admits(&Value::U64(7)), "not a list at all");
+    }
 
     #[test]
     fn a_record_is_admitted_only_at_the_address_it_derives() {

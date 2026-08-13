@@ -13,9 +13,9 @@ use hyperscale_hbor::Hbor;
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::types::{
-    Address, CollectionId, EdgeContent, Effect, EffectSet, EffectTarget, LocalKey, Mode,
-    ReserveOverflow, RoleId, SubstateKey, Value, child_key, collection_id, order_key,
-    resource_address,
+    Address, CollectionId, EdgeContent, Effect, EffectSet, EffectTarget, LocalKey,
+    MAX_IDS_PER_EDGE, Mode, ReserveOverflow, RoleId, SubstateKey, Value, child_key, collection_id,
+    order_key, resource_address,
 };
 
 /// The bound on any collection a `for-each` clause maps over. Keeps
@@ -58,6 +58,23 @@ pub enum Expr {
     ResourceOf(Box<Self>),
     /// The static id set of a non-fungible bucket edge, as a list.
     IdsOf(Box<Self>),
+    /// A list built element by element — the dual of [`Expr::IdsOf`],
+    /// for the producing side: a mint's id set is a list of fresh ids,
+    /// each an expression of its own.
+    List(Vec<Self>),
+    /// A non-fungible bucket projection: the resource and the named
+    /// instances an output edge carries.
+    ///
+    /// The one constructor of non-fungible edge content, so the id-set
+    /// discipline is judged here and nowhere else: at most
+    /// [`MAX_IDS_PER_EDGE`](crate::types::MAX_IDS_PER_EDGE) ids, each
+    /// distinct — a duplicate would be one instance landing twice.
+    NfBucket {
+        /// The resource the edge carries.
+        resource: Box<Self>,
+        /// The instance ids; must evaluate to a list of `u64`s.
+        ids: Box<Self>,
+    },
     /// Keyed lookup over a list of `(key, value)` pair tuples; yields the
     /// value of the first pair whose key matches.
     Lookup {
@@ -143,6 +160,10 @@ impl Expr {
             }
             Self::Lookup { map, key } => map.reads_call_inputs() || key.reads_call_inputs(),
             Self::Pack { hi, lo } => hi.reads_call_inputs() || lo.reads_call_inputs(),
+            Self::NfBucket { resource, ids } => {
+                resource.reads_call_inputs() || ids.reads_call_inputs()
+            }
+            Self::List(elements) => elements.iter().any(Self::reads_call_inputs),
             Self::SelfResource { material } => material.iter().any(Self::reads_call_inputs),
             Self::ChildKey {
                 owner, material, ..
@@ -277,6 +298,19 @@ pub enum EvalError {
     /// A range whose lower bound exceeds its upper bound.
     #[error("range bounds inverted: lo > hi")]
     InvalidRange,
+    /// An id set past the per-edge cap.
+    #[error("{len} instance ids exceed the {MAX_IDS_PER_EDGE} per-edge cap")]
+    TooManyIds {
+        /// The set's length.
+        len: usize,
+    },
+    /// An id named twice in one set — one instance landing twice off a
+    /// single edge.
+    #[error("instance id {id} appears twice in one id set")]
+    DuplicateId {
+        /// The repeated id.
+        id: u64,
+    },
     /// Folded reserve amounts overflowing `u128`.
     #[error("declared reserve amounts overflow")]
     ReserveOverflow,
@@ -712,13 +746,7 @@ fn eval_expr(
         Expr::SelfAddr => Ok(Value::Address(inputs.self_addr)),
         Expr::Field(tuple, index) => {
             let fields = as_tuple(eval_expr(tuple, inputs, hasher, bindings, deeper)?)?;
-            let arity = fields.len();
-            indexed(&fields, *index)
-                .cloned()
-                .ok_or(EvalError::FieldOutOfRange {
-                    index: *index,
-                    arity,
-                })
+            field(&fields, *index)
         }
         Expr::ResourceOf(bucket) => {
             let (resource, _) = bucket_parts(eval_expr(bucket, inputs, hasher, bindings, deeper)?)?;
@@ -731,18 +759,7 @@ fn eval_expr(
         Expr::Lookup { map, key } => {
             let pairs = as_list(eval_expr(map, inputs, hasher, bindings, deeper)?)?;
             let key = eval_expr(key, inputs, hasher, bindings, deeper)?;
-            for pair in pairs {
-                let Value::Tuple(fields) = pair else {
-                    return Err(EvalError::LookupNotPairs);
-                };
-                let [pair_key, pair_value] = fields.as_slice() else {
-                    return Err(EvalError::LookupNotPairs);
-                };
-                if *pair_key == key {
-                    return Ok(pair_value.clone());
-                }
-            }
-            Err(EvalError::LookupMiss)
+            lookup(pairs, &key)
         }
         Expr::SelfResource { material } => {
             let encoded = eval_material(material, inputs, hasher, bindings, deeper)?;
@@ -790,7 +807,67 @@ fn eval_expr(
             let lo = as_u64(eval_expr(lo, inputs, hasher, bindings, deeper)?)?;
             Ok(Value::U128((u128::from(hi) << 64) | u128::from(lo)))
         }
+        Expr::List(elements) => {
+            let mut values = Vec::with_capacity(elements.len());
+            for element in elements {
+                values.push(eval_expr(element, inputs, hasher, bindings, deeper)?);
+            }
+            Ok(Value::List(values))
+        }
+        Expr::NfBucket { resource, ids } => {
+            let resource = as_address(eval_expr(resource, inputs, hasher, bindings, deeper)?)?;
+            let ids = id_set(as_list(eval_expr(ids, inputs, hasher, bindings, deeper)?)?)?;
+            Ok(Value::Bucket {
+                resource,
+                content: EdgeContent::NonFungible { ids },
+            })
+        }
     }
+}
+
+/// One field of a tuple, by position.
+fn field(fields: &[Value], index: u32) -> Result<Value, EvalError> {
+    indexed(fields, index)
+        .cloned()
+        .ok_or(EvalError::FieldOutOfRange {
+            index,
+            arity: fields.len(),
+        })
+}
+
+/// The value of the first pair whose key matches, over a list of
+/// `(key, value)` tuples.
+fn lookup(pairs: Vec<Value>, key: &Value) -> Result<Value, EvalError> {
+    for pair in pairs {
+        let Value::Tuple(fields) = pair else {
+            return Err(EvalError::LookupNotPairs);
+        };
+        let [pair_key, pair_value] = fields.as_slice() else {
+            return Err(EvalError::LookupNotPairs);
+        };
+        if pair_key == key {
+            return Ok(pair_value.clone());
+        }
+    }
+    Err(EvalError::LookupMiss)
+}
+
+/// A well-formed instance id set: every element a `u64`, at most
+/// [`MAX_IDS_PER_EDGE`] of them, each distinct — a duplicate would be
+/// one instance landing twice off a single edge.
+fn id_set(values: Vec<Value>) -> Result<Vec<u64>, EvalError> {
+    if values.len() > MAX_IDS_PER_EDGE {
+        return Err(EvalError::TooManyIds { len: values.len() });
+    }
+    let mut ids = Vec::with_capacity(values.len());
+    for value in values {
+        let id = as_u64(value)?;
+        if ids.contains(&id) {
+            return Err(EvalError::DuplicateId { id });
+        }
+        ids.push(id);
+    }
+    Ok(ids)
 }
 
 fn indexed<T>(slice: &[T], index: u32) -> Option<&T> {
@@ -870,8 +947,8 @@ mod tests {
     use crate::hash::{Hash32, TestHasher};
     use crate::manifest::ManifestHash;
     use crate::types::{
-        Address, AddressClass, EdgeContent, Effect, EffectTarget, Mode, RoleId, Value, child_key,
-        collection_id, order_key,
+        Address, AddressClass, EdgeContent, Effect, EffectTarget, MAX_IDS_PER_EDGE, Mode, RoleId,
+        Value, child_key, collection_id, order_key,
     };
 
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
@@ -1321,6 +1398,84 @@ mod tests {
         // A fungible edge refuses the id read: kind is structural,
         // never an empty answer.
         assert!(evaluate_expr(&Expr::IdsOf(Box::new(Expr::Arg(1))), &ins, &TestHasher).is_err());
+    }
+
+    #[test]
+    fn nf_bucket_constructs_the_projection_ids_of_reads_back() {
+        let resource = Address::new([0xE1; 31], AddressClass::Resource);
+        // A mint's shape: the resource its own, the ids fresh.
+        let minted = Expr::NfBucket {
+            resource: Box::new(Expr::Arg(0)),
+            ids: Box::new(Expr::List(vec![
+                Expr::FreshId { slot: 0 },
+                Expr::FreshId { slot: 1 },
+            ])),
+        };
+        let args = [Value::Address(resource)];
+        let ins = inputs(&args, &[]);
+        let expected: Vec<u64> = (0..2)
+            .map(|slot| fresh_id(&TestHasher, ins.identity, ins.node_index, ins.frame, slot))
+            .collect();
+        assert_eq!(
+            evaluate_expr(&minted, &ins, &TestHasher),
+            Ok(Value::Bucket {
+                resource,
+                content: EdgeContent::NonFungible { ids: expected },
+            }),
+        );
+
+        // A transfer's shape: the ids named as a signed argument.
+        let named = Expr::NfBucket {
+            resource: Box::new(Expr::Arg(0)),
+            ids: Box::new(Expr::Arg(1)),
+        };
+        let args = [
+            Value::Address(resource),
+            Value::List(vec![Value::U64(7), Value::U64(9)]),
+        ];
+        let ins = inputs(&args, &[]);
+        let bucket = evaluate_expr(&named, &ins, &TestHasher).unwrap();
+        assert_eq!(
+            evaluate_expr(
+                &Expr::IdsOf(Box::new(Expr::Literal(bucket))),
+                &ins,
+                &TestHasher
+            ),
+            Ok(Value::List(vec![Value::U64(7), Value::U64(9)])),
+        );
+    }
+
+    #[test]
+    fn an_id_set_is_bounded_and_duplicate_free() {
+        let resource = Address::new([0xE1; 31], AddressClass::Resource);
+        let bucket = |ids: Vec<Value>| Expr::NfBucket {
+            resource: Box::new(Expr::Literal(Value::Address(resource))),
+            ids: Box::new(Expr::Literal(Value::List(ids))),
+        };
+        let ins = inputs(&[], &[]);
+
+        let over_cap: Vec<Value> = (0..=MAX_IDS_PER_EDGE as u64).map(Value::U64).collect();
+        assert_eq!(
+            evaluate_expr(&bucket(over_cap), &ins, &TestHasher),
+            Err(EvalError::TooManyIds {
+                len: MAX_IDS_PER_EDGE + 1
+            }),
+        );
+        assert_eq!(
+            evaluate_expr(
+                &bucket(vec![Value::U64(7), Value::U64(7)]),
+                &ins,
+                &TestHasher
+            ),
+            Err(EvalError::DuplicateId { id: 7 }),
+        );
+        // An element that is not an id, and an id set that is not a list.
+        assert!(evaluate_expr(&bucket(vec![Value::U128(7)]), &ins, &TestHasher).is_err());
+        let not_a_list = Expr::NfBucket {
+            resource: Box::new(Expr::Literal(Value::Address(resource))),
+            ids: Box::new(Expr::Literal(Value::U64(7))),
+        };
+        assert!(evaluate_expr(&not_a_list, &ins, &TestHasher).is_err());
     }
 
     #[test]

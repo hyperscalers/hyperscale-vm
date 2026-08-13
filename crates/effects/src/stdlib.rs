@@ -42,6 +42,13 @@ pub const NAMES: RoleId = RoleId(10);
 /// A resource's record cell under its issuer: kind and display
 /// quantization, keyed by the resource's own address.
 pub const RESOURCE: RoleId = RoleId(11);
+/// A holder's non-fungible instances: per resource, the entries of the
+/// holder's `(NF_VAULT, resource)` sub-collection at the instance's id —
+/// created at deposit, removed at withdrawal.
+pub const NF_VAULT: RoleId = RoleId(12);
+/// A non-fungible instance's data cell under its issuer, keyed by the
+/// resource and the instance's id: written at mint, immutable after.
+pub const INSTANCE: RoleId = RoleId(13);
 
 /// The entry cap the book's fill range declares.
 pub const FILL_CAP: u32 = 64;
