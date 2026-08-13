@@ -1,12 +1,13 @@
 //! What one transaction says about state.
 //!
 //! Two ways of saying it, because two kinds of access earn two kinds of
-//! answer. An exclusive write knows the value it leaves and reports it
-//! absolutely. A commutative access — a delta, a settled reservation —
-//! knows only what it moved, and reporting *that* is what keeps the
-//! answer true no matter what else touched the cell: an absolute
-//! computed against one baseline is wrong the moment a sibling the
-//! baseline excluded also lands, while a movement composes with it.
+//! answer. An exclusive write — a cell's value, an ordered-collection
+//! entry — knows the value it leaves and reports it absolutely. A
+//! commutative access — a delta, a settled reservation — knows only what
+//! it moved, and reporting *that* is what keeps the answer true no
+//! matter what else touched the cell: an absolute computed against one
+//! baseline is wrong the moment a sibling the baseline excluded also
+//! lands, while a movement composes with it.
 //!
 //! An embedder commits absolutes, so movements are folded down by
 //! [`StateWrites::resolve`] against whatever the cell holds when the
@@ -17,18 +18,71 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_hbor::{Hash32, Hbor, to_vec};
+use hyperscale_hbor::{Hash32, Hasher, Hbor, to_vec};
 
-use crate::address::SubstateKey;
+use crate::address::{Address, CollectionId, LocalKey, SubstateKey};
 use crate::amount::{amount_cell, read_amount};
 
 /// The bytes one committed cell value may carry — one bound for a cell
 /// wherever it travels, in a receipt or a provision.
 pub const MAX_CELL_VALUE_LEN: usize = 2 * 1024 * 1024;
 
+const DOMAIN_ENTRY: &[u8] = b"hyperscale-vm/entry-leaf";
+
+/// One ordered-collection entry's identity: the collection's owner, the
+/// collection, and the entry's position in its order space.
+///
+/// The derived `Ord` — owner, then collection, then order — is the
+/// canonical key order the writes maps encode in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+pub struct EntryKey {
+    /// The collection's owner; fixes the entry's shard.
+    pub owner: Address,
+    /// The collection under the owner.
+    pub collection: CollectionId,
+    /// The entry's order key within the collection.
+    pub order: u128,
+}
+
+/// The leaf key an entry commits under in the state tree: the owner's
+/// prefix followed by a digest of the collection and order.
+///
+/// Owner-prefixed like every leaf, so reshape's prefix-rooted model
+/// moves entries with their owner untouched. Domain-separated from every
+/// other local-half derivation, so an entry leaf never aliases a point
+/// cell.
+#[must_use]
+pub fn entry_leaf_key(hasher: &dyn Hasher, entry: EntryKey) -> SubstateKey {
+    let collection_bytes = entry.collection.0;
+    let order_bytes = entry.order.to_le_bytes();
+    let digest = hasher.hash(DOMAIN_ENTRY, &[&collection_bytes, &order_bytes]);
+    let mut local = [0u8; 16];
+    local.copy_from_slice(&digest.0[..16]);
+    SubstateKey {
+        owner: entry.owner,
+        local: LocalKey(local),
+    }
+}
+
+/// The self-describing value an entry's leaf carries.
+///
+/// The collection and order sit beside the entry value, so the ordered
+/// index is derivable from the leaves alone — a snap-sync import rebuilds
+/// it without any side channel, and two replicas with equal roots hold
+/// equal collections.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub struct EntryLeaf {
+    /// The collection under the leaf's owner prefix.
+    pub collection: CollectionId,
+    /// The entry's order key within the collection.
+    pub order: u128,
+    /// The entry value.
+    pub value: Vec<u8>,
+}
+
 /// One transaction's owned state change, keyed canonically.
 ///
-/// Both maps decode only in strictly ascending key order, so every
+/// Every map decodes only in strictly ascending key order, so every
 /// encoding is canonical by construction and equal writes hash equal on
 /// every replica.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
@@ -44,6 +98,13 @@ pub struct StateWrites {
     /// A cell never appears in both maps: an access is exclusive or it is
     /// commutative, and the capability that granted it decided which.
     pub movements: BTreeMap<SubstateKey, Movement>,
+    /// The committed value per exclusively written ordered-collection
+    /// entry, or `None` for a removal.
+    ///
+    /// Entries are exclusive writes like `cells` — the kernel grants only
+    /// range read/write capabilities over collections — so they carry no
+    /// movement form and nothing here resolves.
+    pub entries: BTreeMap<EntryKey, Option<Vec<u8>>>,
 }
 
 /// A commutative change to one amount cell: checked credit and debit
@@ -111,13 +172,16 @@ impl StateWrites {
             let after = movement.apply(before).unwrap_or(0);
             cells.insert(*key, amount_cell(after).map(|cell| cell.to_vec()));
         }
-        SettledWrites { cells }
+        SettledWrites {
+            cells,
+            entries: self.entries.clone(),
+        }
     }
 
     /// Whether nothing changed.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.cells.is_empty() && self.movements.is_empty()
+        self.cells.is_empty() && self.movements.is_empty() && self.entries.is_empty()
     }
 
     /// The canonical commitment to these writes: `hash_fn` over the
@@ -146,14 +210,28 @@ impl StateWrites {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SettledWrites {
     cells: BTreeMap<SubstateKey, Option<Vec<u8>>>,
+    entries: BTreeMap<EntryKey, Option<Vec<u8>>>,
 }
 
 impl SettledWrites {
-    /// Writes that are already values — genesis, a provision, a store's
-    /// own snapshot. Nothing here moved, so nothing needs resolving.
+    /// Cell writes that are already values — genesis, a provision, a
+    /// store's own snapshot. Nothing here moved, so nothing needs
+    /// resolving; entries are empty.
     #[must_use]
-    pub const fn from_absolutes(cells: BTreeMap<SubstateKey, Option<Vec<u8>>>) -> Self {
-        Self { cells }
+    pub const fn from_absolutes(cells: SettledCells) -> Self {
+        Self {
+            cells,
+            entries: BTreeMap::new(),
+        }
+    }
+
+    /// Both maps at once — the inverse of [`Self::into_parts`], for a
+    /// consumer that filtered or rebuilt a settled set and owns the
+    /// result. Entries were absolute all along, so nothing needs
+    /// resolving on either side.
+    #[must_use]
+    pub const fn from_parts(cells: SettledCells, entries: SettledEntries) -> Self {
+        Self { cells, entries }
     }
 
     /// The committed value per changed cell, or `None` for a removal.
@@ -162,27 +240,46 @@ impl SettledWrites {
         &self.cells
     }
 
+    /// The committed value per changed ordered-collection entry, or
+    /// `None` for a removal. Entries never move, so they were absolute
+    /// all along.
+    #[must_use]
+    pub const fn entries(&self) -> &BTreeMap<EntryKey, Option<Vec<u8>>> {
+        &self.entries
+    }
+
     /// Whether nothing changed.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.cells.is_empty()
+        self.cells.is_empty() && self.entries.is_empty()
     }
 
-    /// Take the cells, for a consumer that owns them from here.
+    /// Take both maps, for a consumer that owns them from here. A pair
+    /// rather than a cells accessor, so taking the values cannot silently
+    /// leave the entries behind.
     #[must_use]
-    pub fn into_cells(self) -> BTreeMap<SubstateKey, Option<Vec<u8>>> {
-        self.cells
+    pub fn into_parts(self) -> (SettledCells, SettledEntries) {
+        (self.cells, self.entries)
     }
 }
+
+/// The committed value per changed cell, `None` a removal.
+pub type SettledCells = BTreeMap<SubstateKey, Option<Vec<u8>>>;
+
+/// The committed value per changed ordered-collection entry, `None` a
+/// removal.
+pub type SettledEntries = BTreeMap<EntryKey, Option<Vec<u8>>>;
 
 impl From<SettledWrites> for StateWrites {
     /// Values are a receipt payload like any other — they are the half
     /// of one that never moved. The reverse needs a prior and so is
     /// [`StateWrites::resolve`], not a conversion.
     fn from(settled: SettledWrites) -> Self {
+        let (cells, entries) = settled.into_parts();
         Self {
-            cells: settled.into_cells(),
+            cells,
             movements: BTreeMap::new(),
+            entries,
         }
     }
 }
@@ -191,6 +288,7 @@ fn cell_values_fit(writes: &StateWrites) -> Result<(), &'static str> {
     if writes
         .cells
         .values()
+        .chain(writes.entries.values())
         .flatten()
         .all(|value| value.len() <= MAX_CELL_VALUE_LEN)
     {
@@ -202,10 +300,13 @@ fn cell_values_fit(writes: &StateWrites) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::hash::TestHasher;
     use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
 
-    use super::{MAX_CELL_VALUE_LEN, Movement, StateWrites};
-    use crate::address::{Address, AddressClass, LEAF_KEY_BYTES, LocalKey, SubstateKey};
+    use super::{EntryKey, EntryLeaf, MAX_CELL_VALUE_LEN, Movement, StateWrites, entry_leaf_key};
+    use crate::address::{
+        Address, AddressClass, CollectionId, LEAF_KEY_BYTES, LocalKey, SubstateKey,
+    };
     use crate::amount::{amount_cell, read_amount};
 
     fn key(owner: u8, local: u8) -> SubstateKey {
@@ -215,12 +316,22 @@ mod tests {
         }
     }
 
+    fn entry(owner: u8, collection: u8, order: u128) -> EntryKey {
+        EntryKey {
+            owner: Address::new([owner; 31], AddressClass::Component),
+            collection: CollectionId([collection; 16]),
+            order,
+        }
+    }
+
     #[test]
     fn writes_are_canonical() {
         let mut writes = StateWrites::default();
         writes.cells.insert(key(1, 1), Some(vec![7]));
         writes.cells.insert(key(1, 2), None);
         writes.cells.insert(key(2, 1), Some(vec![]));
+        writes.entries.insert(entry(1, 4, 7), Some(vec![9]));
+        writes.entries.insert(entry(1, 4, 8), None);
         assert_canonical(&writes);
         assert_canonical(&StateWrites::default());
     }
@@ -257,6 +368,74 @@ mod tests {
             from_slice::<StateWrites>(&bytes),
             Err(DecodeError::FailedValidation(_))
         ));
+    }
+
+    #[test]
+    fn an_oversized_entry_value_rejects_at_decode() {
+        // The cell cap bounds entry values too — an entry travels in the
+        // same receipts and provisions a cell does.
+        let mut writes = StateWrites::default();
+        writes
+            .entries
+            .insert(entry(1, 4, 7), Some(vec![0; MAX_CELL_VALUE_LEN + 1]));
+        let bytes = to_vec(&writes).unwrap();
+        assert!(matches!(
+            from_slice::<StateWrites>(&bytes),
+            Err(DecodeError::FailedValidation(_))
+        ));
+    }
+
+    /// The root covers entries: two writes maps differing only in an
+    /// entry hash differently, and an entries-only map is not empty.
+    #[test]
+    fn the_root_moves_when_entries_do() {
+        let hash_fn = |bytes: &[u8]| {
+            let mut out = [0u8; 32];
+            let digest = bytes.iter().fold(11u64, |acc, byte| {
+                acc.wrapping_mul(31).wrapping_add(u64::from(*byte))
+            });
+            out[..8].copy_from_slice(&digest.to_le_bytes());
+            out
+        };
+        let empty = StateWrites::default();
+        let mut written = StateWrites::default();
+        written.entries.insert(entry(1, 4, 7), Some(vec![9]));
+        assert_ne!(empty.root(hash_fn), written.root(hash_fn));
+        let mut removed = StateWrites::default();
+        removed.entries.insert(entry(1, 4, 7), None);
+        assert_ne!(written.root(hash_fn), removed.root(hash_fn));
+        assert!(!written.is_empty());
+    }
+
+    /// Entries pass through resolution untouched: they are exclusive
+    /// writes, so nothing about them depends on a prior value.
+    #[test]
+    fn entries_resolve_through_untouched() {
+        let mut writes = StateWrites::default();
+        writes.entries.insert(entry(1, 4, 7), Some(vec![9]));
+        writes.entries.insert(entry(1, 4, 8), None);
+        let settled = writes.resolve(&mut |_| panic!("no cell is read"));
+        assert_eq!(settled.entries(), &writes.entries);
+        assert!(!settled.is_empty());
+
+        let round_tripped = StateWrites::from(settled);
+        assert_eq!(round_tripped.entries, writes.entries);
+    }
+
+    /// An entry's leaf sits under its owner's prefix, distinct entries
+    /// take distinct leaves, and the leaf value describes itself.
+    #[test]
+    fn entry_leaves_stay_under_the_owner() {
+        let first = entry_leaf_key(&TestHasher, entry(1, 4, 7));
+        assert_eq!(first.owner, Address::new([1; 31], AddressClass::Component));
+        for other in [entry(1, 4, 8), entry(1, 5, 7)] {
+            assert_ne!(first.local, entry_leaf_key(&TestHasher, other).local);
+        }
+        assert_canonical(&EntryLeaf {
+            collection: CollectionId([4; 16]),
+            order: 7,
+            value: vec![9],
+        });
     }
 
     /// Two movements on one cell compose whichever order they resolve
@@ -346,11 +525,11 @@ mod tests {
         let sorted = to_vec(&writes).unwrap();
         // The cells map first — one length byte, then two equal-width
         // entries, which is the pair to swap — and the empty movements
-        // map contributing its own length byte at the end.
+        // and entries maps each contributing a length byte at the end.
         let mut swapped = sorted.clone();
         // key, Some tag, value length, one payload byte
         let entry_len = LEAF_KEY_BYTES + 3;
-        assert_eq!(sorted.len(), 1 + 2 * entry_len + 1);
+        assert_eq!(sorted.len(), 1 + 2 * entry_len + 2);
         for offset in 0..entry_len {
             swapped.swap(1 + offset, 1 + entry_len + offset);
         }

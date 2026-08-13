@@ -14,6 +14,19 @@ use thiserror::Error;
 #[hbor(transparent)]
 pub struct LocalKey(pub [u8; 16]);
 
+/// The identity of one ordered collection under an owner.
+///
+/// A collection is named by its role and its material together — the role
+/// says which kind of collection ("the asks book", "the unbonding queue"),
+/// the material separates instances of that kind ("for this resource",
+/// "for this market"). Both fold into one digest at evaluation, so
+/// everything downstream — conflict intervals, capabilities, the store,
+/// the receipt vocabulary — compares a single canonical identity rather
+/// than keeping two fields consistent by convention.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[hbor(transparent)]
+pub struct CollectionId(pub [u8; 16]);
+
 impl fmt::Debug for LocalKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "LocalKey(")?;

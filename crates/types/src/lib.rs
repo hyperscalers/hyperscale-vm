@@ -27,9 +27,9 @@ pub mod writes;
 
 pub use address::text::{NetworkWord, TextError};
 pub use address::{
-    Address, AddressClass, CallTarget, ComponentAddr, InvalidAddress, LEAF_KEY_BYTES, LocalKey,
-    NativeAddr, NotAResource, NotCallable, PackageAddr, PrincipalAddr, ResourceAddr, ResourceRef,
-    SubstateKey, WrongClass,
+    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, InvalidAddress, LEAF_KEY_BYTES,
+    LocalKey, NativeAddr, NotAResource, NotCallable, PackageAddr, PrincipalAddr, ResourceAddr,
+    ResourceRef, SubstateKey, WrongClass,
 };
 pub use amount::{AMOUNT_CELL_BYTES, amount_cell, encode_amount, read_amount};
 pub use envelope::{
@@ -45,4 +45,7 @@ pub use work::{
     AUTH_BYTE_WEIGHT, FOOTPRINT_WEIGHT, FUEL_WEIGHT, TX_UNITS, VERIFY_WEIGHT, declared_work,
     signature_work, work_units,
 };
-pub use writes::{MAX_CELL_VALUE_LEN, Movement, SettledWrites, StateWrites};
+pub use writes::{
+    EntryKey, EntryLeaf, MAX_CELL_VALUE_LEN, Movement, SettledCells, SettledEntries, SettledWrites,
+    StateWrites, entry_leaf_key,
+};

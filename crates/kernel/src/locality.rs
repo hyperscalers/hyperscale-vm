@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, CollectionId, EffectSet, StateWrites, SubstateKey, effect_units,
+    Address, CollectionId, EffectSet, EntryKey, StateWrites, SubstateKey, effect_units,
 };
 
 use crate::session::{Movement, StateDelta};
@@ -116,19 +116,26 @@ impl StateDelta {
     /// the delta draws between the two is about what authorized the
     /// change, and that question is closed by the time a receipt exists.
     ///
-    /// # Panics
-    ///
-    /// Panics on an ordered-collection entry, which has no cell form.
+    /// Ordered-collection entries project as the exclusive writes they
+    /// are: the kernel grants only range read/write capabilities over a
+    /// collection, so an entry has no movement form and nothing about it
+    /// resolves later.
     #[must_use]
     pub fn project(&self, locality: &Locality) -> StateWrites {
-        assert!(
-            self.entries.is_empty(),
-            "an ordered-collection entry has no cell form"
-        );
         let owned = self.owned(locality);
         let mut writes = StateWrites::default();
         for (key, change) in owned.cells() {
             writes.cells.insert(key, change.clone());
+        }
+        for ((owner, collection, order), change) in owned.entries() {
+            writes.entries.insert(
+                EntryKey {
+                    owner,
+                    collection,
+                    order,
+                },
+                change.clone(),
+            );
         }
         for (key, movement) in owned.movements() {
             let entry = writes.movements.entry(key).or_default();
@@ -199,7 +206,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{Address, AddressClass, Hash32, LocalKey, SubstateKey, TxHash};
+    use hyperscale_vm_effects::{
+        Address, AddressClass, CollectionId, EntryKey, Hash32, LocalKey, SubstateKey, TxHash,
+    };
 
     use super::Locality;
     use crate::modes::{decode_amount, encode_amount};
@@ -351,6 +360,47 @@ mod tests {
             .project(&Locality::All)
             .resolve(&mut |_| panic!("the receipt's own write answers this read"));
         assert_eq!(writes.cells()[&cell], Some(encode_amount(30).to_vec()));
+    }
+
+    /// Entries project as the exclusive writes they are — split by the
+    /// collection owner's shard, untouched by resolution — and removals
+    /// survive as removals.
+    #[test]
+    fn entries_project_by_owner_and_ride_resolution() {
+        let local_book = Address::new([1; 31], AddressClass::Component);
+        let remote_book = Address::new([2; 31], AddressClass::Component);
+        let asks = CollectionId([4; 16]);
+        let mut delta = StateDelta::default();
+        delta.entries.insert((local_book, asks, 7), Some(vec![9]));
+        delta.entries.insert((local_book, asks, 8), None);
+        delta.entries.insert((remote_book, asks, 7), Some(vec![5]));
+
+        let locality = Locality::Owned(Arc::new(move |owner: Address| owner == local_book));
+        let projected = delta.project(&locality);
+        assert_eq!(
+            projected.entries,
+            BTreeMap::from([
+                (
+                    EntryKey {
+                        owner: local_book,
+                        collection: asks,
+                        order: 7,
+                    },
+                    Some(vec![9]),
+                ),
+                (
+                    EntryKey {
+                        owner: local_book,
+                        collection: asks,
+                        order: 8,
+                    },
+                    None,
+                ),
+            ])
+        );
+
+        let settled = projected.resolve(&mut |_| None);
+        assert_eq!(settled.entries(), &projected.entries);
     }
 
     /// Remote keys stay in the receipt as the outbound record; the

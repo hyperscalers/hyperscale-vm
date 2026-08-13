@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::{
-    Address, AddressClass, CallTarget, ComponentAddr, InvalidAddress, LocalKey, Mode, ModeKind,
-    NativeAddr, NetworkWord, NotAResource, NotCallable, PackageAddr, PrincipalAddr, ResourceAddr,
-    ResourceRef, SchemeId, SubstateKey, TextError, WrongClass, compatible,
+    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, InvalidAddress, LocalKey, Mode,
+    ModeKind, NativeAddr, NetworkWord, NotAResource, NotCallable, PackageAddr, PrincipalAddr,
+    ResourceAddr, ResourceRef, SchemeId, SubstateKey, TextError, WrongClass, compatible,
 };
 
 use crate::hash::{Hash32, Hasher};
@@ -93,18 +93,6 @@ pub fn child_key(
         local: LocalKey(local),
     }
 }
-
-/// The identity of one ordered collection under an owner.
-///
-/// A collection is named by its role and its material together — the role
-/// says which kind of collection ("the asks book", "the unbonding queue"),
-/// the material separates instances of that kind ("for this resource",
-/// "for this market"). Both fold into one digest at evaluation, so
-/// everything downstream — conflict intervals, capabilities, the store —
-/// compares a single canonical identity rather than keeping two fields
-/// consistent by convention.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CollectionId(pub [u8; 16]);
 
 /// The collection identity for `role` and `material` under `owner`.
 ///
