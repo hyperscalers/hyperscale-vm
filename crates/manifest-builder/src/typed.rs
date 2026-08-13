@@ -27,9 +27,9 @@ use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
     Accessibility, Address, CallTarget, Constraint, EdgeRef, EvalInputs, EvidenceRef, Expr,
-    GraphArg, Hash32, Hasher, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash,
-    MetadataCache, MethodSignature, PackageHash, ParamType, PrincipalAddr, ResourceRef, Value,
-    evaluate_expr,
+    GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph,
+    ManifestHash, MetadataCache, MethodSignature, PackageHash, ParamType, PrincipalAddr,
+    ResourceRef, Value, evaluate_expr,
 };
 
 use crate::args::Args;
@@ -324,9 +324,9 @@ impl<'a> TypedBuilder<'a> {
     /// `target`, and return the proof it mints.
     ///
     /// The call presents the intent's signature proof to its own gate —
-    /// signing in starts from a signature. Acting as one account through
-    /// another's authorization is [`call_as`](Self::call_as) on the
-    /// authorizing call itself.
+    /// signing in starts from a signature. Signing in through an
+    /// identity minted earlier is
+    /// [`call_minting_as`](Self::call_minting_as).
     ///
     /// # Errors
     ///
@@ -341,7 +341,56 @@ impl<'a> TypedBuilder<'a> {
         target: impl Into<CallTarget>,
         method: &str,
     ) -> Result<Proof, TypedError> {
-        let target = target.into();
+        self.mint(target.into(), method, None)
+    }
+
+    /// The same sign-in, presenting `proof` instead of the intent's
+    /// signature — how a target whose stored rule names another
+    /// account's identity is signed into through that account's own
+    /// sign-in, and the only way in when the rule names no key the
+    /// intent could carry.
+    ///
+    /// # Errors
+    ///
+    /// As [`call_minting`](Self::call_minting).
+    ///
+    /// # Panics
+    ///
+    /// As [`call`](Self::call).
+    pub fn call_minting_as(
+        &mut self,
+        proof: Proof,
+        target: impl Into<CallTarget>,
+        method: &str,
+    ) -> Result<Proof, TypedError> {
+        self.mint(target.into(), method, Some(proof))
+    }
+
+    fn mint(
+        &mut self,
+        target: CallTarget,
+        method: &str,
+        proof: Option<Proof>,
+    ) -> Result<Proof, TypedError> {
+        let (_, signature) = self.resolve(target, method)?;
+        if !matches!(signature.accessibility, Accessibility::Authorizing) {
+            return Err(TypedError::UnmintingProof {
+                method: method.to_owned(),
+            });
+        }
+        let (node, outputs) = self.append(target, method, (), proof)?;
+        outputs.none()?;
+        Ok(Proof { node, target })
+    }
+
+    /// The instance and method signature `target` resolves to — the
+    /// lookup every typed verdict starts from, borrowing the caller's
+    /// tables rather than the builder so appending stays free.
+    fn resolve(
+        &self,
+        target: CallTarget,
+        method: &str,
+    ) -> Result<(&'a InstanceMeta, &'a MethodSignature), TypedError> {
         let meta = self
             .instances
             .get(target)
@@ -357,14 +406,7 @@ impl<'a> TypedBuilder<'a> {
                 package: meta.package,
                 method: method.to_owned(),
             })?;
-        if !matches!(signature.accessibility, Accessibility::Authorizing) {
-            return Err(TypedError::UnmintingProof {
-                method: method.to_owned(),
-            });
-        }
-        let (node, outputs) = self.append(target, method, (), None)?;
-        outputs.none()?;
-        Ok(Proof { node, target })
+        Ok((meta, signature))
     }
 
     fn append(
@@ -374,22 +416,8 @@ impl<'a> TypedBuilder<'a> {
         args: impl Args,
         proof: Option<Proof>,
     ) -> Result<(u32, Outputs), TypedError> {
-        // Copied out of `self` so the signature borrows the caller's
-        // tables rather than the builder, leaving it free to append.
-        let (cache, instances, hasher) = (self.cache, self.instances, self.hasher);
-        let meta = instances
-            .get(target)
-            .ok_or_else(|| TypedError::UnknownInstance(target.address()))?;
-        let package = cache
-            .get(meta.package)
-            .ok_or(TypedError::UnknownPackage(meta.package))?;
-        let signature = package
-            .methods
-            .get(method)
-            .ok_or_else(|| TypedError::UnknownMethod {
-                package: meta.package,
-                method: method.to_owned(),
-            })?;
+        let (meta, signature) = self.resolve(target, method)?;
+        let hasher = self.hasher;
 
         let args = args.bind_all(&self.graph);
         let inputs = type_args(method, &args, &signature.params)?;

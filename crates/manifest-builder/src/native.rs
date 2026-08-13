@@ -90,6 +90,21 @@ pub mod account {
         builder.call_minting(who, "authorize")
     }
 
+    /// Sign in as `who` through an identity minted earlier — the way in
+    /// when `who`'s stored rule names another account rather than a key
+    /// the intent could carry.
+    ///
+    /// # Errors
+    ///
+    /// Any [`TypedError`] the call does not type against `authorize`.
+    pub fn authorize_as(
+        builder: &mut TypedBuilder<'_>,
+        proof: Proof,
+        who: PrincipalAddr,
+    ) -> Result<Proof, TypedError> {
+        builder.call_minting_as(proof, who, "authorize")
+    }
+
     /// Create the proof holder's stored-authority cell — three roles
     /// and the recovery delay.
     ///

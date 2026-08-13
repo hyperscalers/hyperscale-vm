@@ -16,9 +16,9 @@ use hyperscale_vm_effects::stdlib::{
     account_metadata, amm_metadata, book_metadata, splitter_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
-    ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
-    PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr, RoleSet, Rule, TestHasher, Value,
-    admit, resource_address,
+    ComponentAddr, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
+    MetadataCache, PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr, RoleSet, Rule,
+    TestHasher, Value, admit, resource_address,
 };
 use hyperscale_vm_manifest_builder::native::{account, amm, book, splitter, staking};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -145,6 +145,45 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
             expected: "role-set",
             ..
         })
+    ));
+}
+
+/// A chained sign-in composes and admits: the second authorize presents
+/// the first's minted proof rather than the intent's signature.
+#[test]
+fn a_chained_sign_in_admits() {
+    let graph = admits(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let bob = account::authorize_as(b, alice, BOB)?;
+        let funds = account::withdraw(b, bob, BASE, 100)?;
+        account::deposit(b, ALICE, funds)
+    });
+    assert_eq!(
+        graph.nodes[1].evidence,
+        BTreeSet::from([EvidenceRef::Node(0)])
+    );
+}
+
+/// Misplaced evidence refuses at the call site, mirroring admission: a
+/// proof to a method admitting anyone, a bare signature to a guarded
+/// one, a minted proof asked of a method that mints nothing.
+#[test]
+fn misplaced_evidence_is_refused_at_the_call_site() {
+    let (cache, instances) = world();
+    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let alice = account::authorize(&mut b, ALICE).unwrap();
+    let funds = account::withdraw(&mut b, alice, BASE, 100).unwrap();
+    assert!(matches!(
+        b.call_as(alice, BOB, "deposit", (funds,)),
+        Err(TypedError::UnexpectedEvidence { .. })
+    ));
+    assert!(matches!(
+        b.call(ALICE, "withdraw", (BASE, 100_u128)),
+        Err(TypedError::SignatureForGuarded { .. })
+    ));
+    assert!(matches!(
+        b.call_minting(ALICE, "withdraw"),
+        Err(TypedError::UnmintingProof { .. })
     ));
 }
 

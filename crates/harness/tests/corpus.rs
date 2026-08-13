@@ -1031,6 +1031,126 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
     Ok(())
 }
 
+/// A store where entry to one account chains through another: Alice's
+/// rule names Bob's key, and the maker's rule names Alice's account —
+/// so the maker's funds move only through a proof minted inside the
+/// same transaction.
+fn chained_store() -> MemoryStore {
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(MAKER, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    store
+        .write(
+            auth(ALICE),
+            AuthCell::new(uniform_base(BOB.address()))
+                .to_bytes()
+                .unwrap(),
+        )
+        .unwrap();
+    store
+        .write(
+            auth(MAKER),
+            AuthCell::new(uniform_base(ALICE.address()))
+                .to_bytes()
+                .unwrap(),
+        )
+        .unwrap();
+    store.clear_log();
+    store
+}
+
+/// Two stored rules deep, on both runtimes: Bob's signature opens
+/// Alice's sign-in, and the proof it mints opens the maker's — an entry
+/// no signature reaches directly, since the maker's rule names an
+/// account rather than a key the intent could carry.
+#[test]
+fn a_chained_sign_in_acts_two_rules_deep() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let store = chained_store();
+
+    // The direct route refuses: Bob's own sign-in mints Bob's identity,
+    // and the maker's rule admits only Alice's.
+    let direct = graph(|b| {
+        let bob = account::authorize(b, BOB)?;
+        let maker = account::authorize_as(b, bob, MAKER)?;
+        let funds = account::withdraw(b, maker, RES_X, 100)?;
+        account::deposit(b, BOB, funds)
+    });
+    let (results, store) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&direct, TxHash(Hash32([0x61; 32])))],
+        Some(BOB),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::Unauthorized { node: 1 })],
+        "the maker's rule names Alice's account, not Bob's"
+    );
+
+    let transfer = graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let maker = account::authorize_as(b, alice, MAKER)?;
+        let funds = account::withdraw(b, maker, RES_X, 100)?;
+        account::deposit(b, BOB, funds)
+    });
+    let (results, mut store) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&transfer, TxHash(Hash32([0x62; 32])))],
+        Some(BOB),
+    );
+    assert!(
+        matches!(&results[0], TxResult::Completed(_)),
+        "the chain must open the maker's account; got {:?}",
+        results[0]
+    );
+    assert_eq!(amount_of(&mut store, vault(MAKER, RES_X)), 50);
+    assert_eq!(amount_of(&mut store, vault(BOB, RES_X)), 100);
+    Ok(())
+}
+
+/// A minted proof opens only its own account: presented at another's
+/// guarded method it refuses at that node's gate, however valid the
+/// sign-in that minted it.
+#[test]
+fn a_proof_opens_only_the_account_that_minted_it() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(BOB, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    store.clear_log();
+
+    // Alice signs in as herself, then aims her proof at Bob's vault —
+    // composable and admissible, and dead at Bob's gate.
+    let theft = graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let funds = b
+            .call_as(alice, BOB, "withdraw", (RES_X, 100_u128))?
+            .one()?;
+        account::deposit(b, ALICE, funds)
+    });
+    let (results, _) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&theft, TxHash(Hash32([0x63; 32])))],
+        Some(ALICE),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::Unauthorized { node: 1 })],
+        "a proof is its own account's identity and no other's"
+    );
+    Ok(())
+}
+
 /// The split-role setup every recovery test starts from: Alice holds
 /// primary, Bob recovery, the maker confirmation, and the corpus delay
 /// separates a proposal from its maturity.
