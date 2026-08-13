@@ -11,8 +11,8 @@
 //! embedding wrong; it cannot get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
-    Address, AuthCell, AuthRole, AuthorityGate, CallArg, EDGE_CELL_BYTES, EdgeKind,
-    MAX_IDS_PER_EDGE, NodeCall, PackageHash, cell_ids,
+    Address, AuthCell, AuthRole, AuthorityGate, CallArg, EDGE_CELL_BYTES, EdgeKind, NodeCall,
+    PackageHash, cell_ids, nf_cell_len,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult};
@@ -402,10 +402,10 @@ fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, Sess
 ///
 /// A method producing edges returns exactly their cells concatenated —
 /// a fungible cell is exactly [`EDGE_CELL_BYTES`], a non-fungible cell
-/// one count byte and that many ids, the count within
-/// [`MAX_IDS_PER_EDGE`] — and one producing none returns nothing at all.
-/// A blob of any other shape is a package whose code and signature
-/// disagree, which is its author's defect and its caller's trap.
+/// the framed shape [`cell_ids`] admits, its ids distinct — and one
+/// producing none returns nothing at all. A blob of any other shape is a
+/// package whose code and signature disagree, which is its author's
+/// defect and its caller's trap.
 fn split_outputs(returned: Option<&[u8]>, outputs: &[EdgeKind]) -> Option<Vec<Vec<u8>>> {
     let bytes = match (returned, outputs.is_empty()) {
         (None, true) => return Some(Vec::new()),
@@ -417,18 +417,15 @@ fn split_outputs(returned: Option<&[u8]>, outputs: &[EdgeKind]) -> Option<Vec<Ve
     for kind in outputs {
         let width = match kind {
             EdgeKind::Fungible => EDGE_CELL_BYTES,
-            EdgeKind::NonFungible => {
-                let count = usize::from(*rest.first()?);
-                if count > MAX_IDS_PER_EDGE {
-                    return None;
-                }
-                1 + count * 8
-            }
+            EdgeKind::NonFungible => nf_cell_len(rest)?,
         };
         if rest.len() < width {
             return None;
         }
         let (cell, remaining) = rest.split_at(width);
+        if matches!(kind, EdgeKind::NonFungible) {
+            cell_ids(cell)?;
+        }
         cells.push(cell.to_vec());
         rest = remaining;
     }
@@ -535,5 +532,15 @@ mod tests {
         let mut trailing = ids_cell(&[3]);
         trailing.push(0);
         assert_eq!(split_outputs(Some(&trailing), &[NON_FUNGIBLE]), None);
+    }
+
+    #[test]
+    fn a_produced_cell_with_a_repeated_id_is_refused() {
+        // Duplicates would count twice toward a consumer's bound: a
+        // producer returning [9, 9] must not satisfy "at least 2".
+        assert_eq!(
+            split_outputs(Some(&ids_cell(&[9, 9])), &[NON_FUNGIBLE]),
+            None
+        );
     }
 }

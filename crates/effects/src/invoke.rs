@@ -69,23 +69,45 @@ pub fn ids_cell(ids: &[u64]) -> Vec<u8> {
     cell
 }
 
+/// The frame width of the non-fungible cell at the head of `bytes`, or
+/// `None` for a missing or over-cap count byte.
+///
+/// The width covers the count byte and the ids it announces; the caller
+/// owns checking that many bytes exist. This is how a stream of
+/// concatenated cells is split without decoding: the count byte alone
+/// fixes where the next cell begins.
+#[must_use]
+pub fn nf_cell_len(bytes: &[u8]) -> Option<usize> {
+    let count = usize::from(*bytes.first()?);
+    (count <= MAX_IDS_PER_EDGE).then_some(1 + count * 8)
+}
+
 /// The ids a non-fungible cell carries, or `None` for bytes that are not
 /// exactly one well-formed cell: a missing or over-cap count, a width
-/// that disagrees with it.
+/// that disagrees with it, a repeated id.
+///
+/// An id set is distinct wherever it exists: evaluation's `id_set`
+/// refuses a repeated id in a declared set, and this decoder refuses one
+/// in a runtime cell — so an id count is an instance count everywhere it
+/// is judged, whatever bytes a guest returns.
 #[must_use]
 pub fn cell_ids(cell: &[u8]) -> Option<Vec<u64>> {
-    let (&count, ids) = cell.split_first()?;
-    let count = usize::from(count);
-    if count > MAX_IDS_PER_EDGE || ids.len() != count * 8 {
+    let width = nf_cell_len(cell)?;
+    if cell.len() != width {
         return None;
     }
-    Some(
-        ids.as_chunks::<8>()
-            .0
-            .iter()
-            .map(|id| u64::from_le_bytes(*id))
-            .collect(),
-    )
+    let ids: Vec<u64> = cell[1..]
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|id| u64::from_le_bytes(*id))
+        .collect();
+    for (index, id) in ids.iter().enumerate() {
+        if ids[..index].contains(id) {
+            return None;
+        }
+    }
+    Some(ids)
 }
 
 /// Where one ABI argument comes from.
@@ -204,5 +226,11 @@ mod tests {
         let mut trailing = ids_cell(&[7]);
         trailing.push(0);
         assert_eq!(cell_ids(&trailing), None);
+    }
+
+    #[test]
+    fn a_repeated_id_is_refused() {
+        assert_eq!(cell_ids(&ids_cell(&[7, 7])), None);
+        assert_eq!(cell_ids(&ids_cell(&[1, 2, 1])), None);
     }
 }
