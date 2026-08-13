@@ -19,13 +19,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{
-    UNBONDING, VALIDATORS, VAULT, VOTE, account_metadata, staking_metadata,
+    OWNER_BADGE, UNBONDING, VALIDATORS, VAULT, VOTE, account_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
     Address, ComponentAddr, EnvelopeTree, Fungibility, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
     PrincipalAddr, ResourceAddr, ResourceRecord, SubstateKey, TestHasher, Value, admit_tree,
-    child_key, resource_address, resource_record_key, route_tree,
+    child_key, holdings_collection, resource_address, resource_record_key, route_tree,
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -56,8 +56,35 @@ const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 fn unit() -> ResourceAddr {
     resource_address(&TestHasher, pool(), &[])
 }
-/// The principal this pool's validator surface admits: the identity a
-/// call to one of those methods has to present.
+/// The pool's owner badge — the same derivation the operator gate
+/// evaluates.
+fn badge() -> ResourceAddr {
+    resource_address(
+        &TestHasher,
+        pool(),
+        &[Value::Bytes(OWNER_BADGE.to_vec()).canonical_bytes()],
+    )
+}
+/// The badge instance the operator holds in these tests.
+const BADGE_ID: u128 = 1;
+
+/// A store where [`OPERATOR`] holds the pool's owner badge — what every
+/// operator-surface test starts from.
+fn operator_store() -> MemoryStore {
+    let mut store = MemoryStore::new();
+    store
+        .entry_write(
+            OPERATOR.address(),
+            holdings_collection(&TestHasher, OPERATOR, badge()),
+            BADGE_ID,
+            vec![1],
+        )
+        .unwrap();
+    store.clear_log();
+    store
+}
+/// The account holding the pool's owner badge: the operator surface
+/// admits whoever presents it, and these tests seed it here.
 const OPERATOR: PrincipalAddr = PrincipalAddr::new([0x0B; 31]);
 const FUEL: u64 = 1_000_000_000;
 
@@ -100,16 +127,13 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     (cache, instances)
 }
 
-/// The pool's record: what it stakes and whose signature its operator
-/// surface admits. The resource it *issues* is derived from the pool, so
-/// it is deliberately not here.
+/// The pool's record: what it stakes. The resource it *issues* and the
+/// owner badge its operator surface admits are both derived from the
+/// pool, so they are deliberately not here.
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: staking_pkg(),
-        config: vec![
-            Value::Address(XRD.address()),
-            Value::Address(OPERATOR.address()),
-        ],
+        config: vec![Value::Address(XRD.address())],
         salt: Hash32([2; 32]),
     }
 }
@@ -184,14 +208,14 @@ fn validator_leaf(pool: impl Into<Address>, validator: u64) -> SubstateKey {
 /// them behaving alike, which is not a shape a wrapper per method has.
 fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
     graph(|b| {
-        let operator = account::authorize(b, OPERATOR)?;
+        let operator = account::present_badge(b, OPERATOR, badge())?;
         b.call_as(operator, pool(), method, (validator,))?.none()
     })
 }
 
 fn register_graph(validator: u64) -> ManifestGraph {
     graph(|b| {
-        let operator = account::authorize(b, OPERATOR)?;
+        let operator = account::present_badge(b, OPERATOR, badge())?;
         staking::register_validator(
             b,
             operator,
@@ -580,7 +604,7 @@ fn pool_event(outcome: &BatchOutcome, entry: &BatchTx) -> (u32, Vec<u8>) {
 fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
-    let (outcome, end) = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&operator_store(), std::slice::from_ref(&entry))?;
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
         Outcome::Completed { .. }
@@ -606,7 +630,7 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
 
     // The leaf already holds a key, which is the state a first
     // registration leaves behind.
-    let mut store = MemoryStore::new();
+    let mut store = operator_store();
     store.write(validator_leaf(pool(), VALIDATOR), PUBKEY.to_vec())?;
     store.clear_log();
 
@@ -630,7 +654,7 @@ fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
     for method in ["deactivate-validator", "unjail"] {
         let graph = operator_graph(method, VALIDATOR);
         let entry = batch_entry(&world, &single_intent(graph), OPERATOR)?;
-        let (outcome, _) = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
+        let (outcome, _) = run_both(&operator_store(), std::slice::from_ref(&entry))?;
         assert!(
             !matches!(
                 outcome.receipts[&entry.tx].outcome,
@@ -645,7 +669,7 @@ fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
 #[test]
 fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
     let world = world();
-    let mut store = MemoryStore::new();
+    let mut store = operator_store();
     store.write(validator_leaf(pool(), VALIDATOR), PUBKEY.to_vec())?;
     store.clear_log();
 
@@ -685,7 +709,7 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
         &single_intent(register_graph(VALIDATOR + 1)),
         OPERATOR,
     )?;
-    let (outcome, end) = run_both(&MemoryStore::new(), &[first.clone(), second.clone()])?;
+    let (outcome, end) = run_both(&operator_store(), &[first.clone(), second.clone()])?;
 
     for entry in [&first, &second] {
         assert!(matches!(
@@ -725,7 +749,7 @@ fn cast_payload() -> Vec<u8> {
 
 fn cast_graph() -> ManifestGraph {
     graph(|b| {
-        let operator = account::authorize(b, OPERATOR)?;
+        let operator = account::present_badge(b, OPERATOR, badge())?;
         staking::cast_param_vote(
             b,
             operator,
@@ -741,7 +765,7 @@ fn cast_graph() -> ManifestGraph {
 fn a_cast_vote_is_held_on_the_pools_own_leaf_and_reported() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(cast_graph()), OPERATOR)?;
-    let (outcome, end) = run_both(&MemoryStore::new(), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&operator_store(), std::slice::from_ref(&entry))?;
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
         Outcome::Completed { .. }
@@ -757,12 +781,12 @@ fn a_cast_vote_is_held_on_the_pools_own_leaf_and_reported() -> Result<()> {
 #[test]
 fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     let world = world();
-    let mut store = MemoryStore::new();
+    let mut store = operator_store();
     store.write(vote_leaf(pool()), cast_payload())?;
     store.clear_log();
 
     let cleared = graph(|b| {
-        let operator = account::authorize(b, OPERATOR)?;
+        let operator = account::present_badge(b, OPERATOR, badge())?;
         staking::clear_param_vote(b, operator, pool())
     });
     let entry = batch_entry(&world, &single_intent(cleared), OPERATOR)?;
@@ -787,7 +811,7 @@ fn a_second_cast_replaces_the_first() -> Result<()> {
     // One pool, one vote: the network counts it once, so the leaf holds
     // the latest rather than accumulating.
     let world = world();
-    let mut store = MemoryStore::new();
+    let mut store = operator_store();
     store.write(vote_leaf(pool()), vec![0xAA; 24])?;
     store.clear_log();
 

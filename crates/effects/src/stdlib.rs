@@ -384,15 +384,18 @@ fn authority_methods(methods: &mut PackageMetadata) {
 /// adding a governed parameter is a protocol change, and the package
 /// that votes on them is versioned with them.
 ///
-/// Two creation-fixed fields configure an instance: the resource it stakes
-/// and the operator its validator surface admits. The resource it *issues*
-/// is not among them — it derives from the pool, which is what keeps the
-/// configuration writable at all, since a pool's address commits its
-/// configuration and a configured field naming a value derived from that
-/// address could not be written down. There is deliberately no field
+/// One creation-fixed field configures an instance: the resource it
+/// stakes. The resource it *issues* is not among them — it derives from
+/// the pool, which is what keeps the configuration writable at all,
+/// since a pool's address commits its configuration and a configured
+/// field naming a value derived from that address could not be written
+/// down. Neither is the operator: the operator surface admits whoever
+/// presents the pool's owner badge, itself derived from the pool, so
+/// selling the pool is transferring the badge rather than rewriting a
+/// configuration no instance can rewrite. There is deliberately no field
 /// naming the pool either, because a pool that named itself could name a
-/// different one: the kernel stamps an event's emitter, so the instance is
-/// the subject and nothing about it is the guest's to choose.
+/// different one: the kernel stamps an event's emitter, so the instance
+/// is the subject and nothing about it is the guest's to choose.
 ///
 /// `stake` and `unstake` are public, and that is not an oversight. A pool
 /// instance is owned by nobody; the authority behind a delegation is the
@@ -422,8 +425,9 @@ pub fn staking_metadata() -> PackageMetadata {
 
 /// The staked resource — what a delegation is denominated in.
 const STAKED_RESOURCE: u32 = 0;
-/// The principal whose signature the operator surface admits.
-const OPERATOR: u32 = 1;
+
+/// The material separating a pool's owner badge from the unit it issues.
+pub const OWNER_BADGE: &[u8] = b"owner-badge";
 
 /// The resource this pool issues against delegations.
 ///
@@ -433,6 +437,18 @@ const OPERATOR: u32 = 1;
 const fn unit_resource() -> Expr {
     Expr::SelfResource {
         material: Vec::new(),
+    }
+}
+
+/// The pool's owner badge — the identity its operator surface admits.
+///
+/// Derived like the unit and separated from it by material, and for the
+/// same reason it is not configured: a configured badge would cycle
+/// through the pool's own address. Holding it is operating the pool;
+/// `present-badge` is how the holder says so.
+fn owner_badge() -> Expr {
+    Expr::SelfResource {
+        material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
     }
 }
 
@@ -487,7 +503,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "register-validator".into(),
         MethodSignature {
-            accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
+            accessibility: Accessibility::Guarded(owner_badge()),
             mints: None,
             params: vec![ParamType::U64, ParamType::Bytes, ParamType::Bytes],
             abi: vec![
@@ -504,7 +520,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "deactivate-validator".into(),
         MethodSignature {
-            accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
+            accessibility: Accessibility::Guarded(owner_badge()),
             mints: None,
             params: vec![ParamType::U64],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
@@ -516,7 +532,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "unjail".into(),
         MethodSignature {
-            accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
+            accessibility: Accessibility::Guarded(owner_badge()),
             mints: None,
             params: vec![ParamType::U64],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
@@ -540,7 +556,7 @@ fn governance_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "cast-param-vote".into(),
         MethodSignature {
-            accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
+            accessibility: Accessibility::Guarded(owner_badge()),
             mints: None,
             params: vec![ParamType::U64, ParamType::U64, ParamType::U64],
             abi: vec![
@@ -557,7 +573,7 @@ fn governance_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "clear-param-vote".into(),
         MethodSignature {
-            accessibility: Accessibility::Guarded(Expr::Config(OPERATOR)),
+            accessibility: Accessibility::Guarded(owner_badge()),
             mints: None,
             params: vec![],
             abi: vec![AbiParam::Handle(0)],

@@ -954,7 +954,8 @@ mod tests {
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::hash::Hash32;
     use crate::stdlib::{
-        account_metadata, amm_metadata, book_metadata, splitter_metadata, staking_metadata,
+        OWNER_BADGE, account_metadata, amm_metadata, book_metadata, splitter_metadata,
+        staking_metadata,
     };
     use crate::types::AddressClass;
 
@@ -1386,25 +1387,39 @@ mod tests {
             (
                 "staking",
                 "cast-param-vote",
-                Accessibility::Guarded(Expr::Config(1)),
+                Accessibility::Guarded(Expr::SelfResource {
+                    material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
+                }),
             ),
             (
                 "staking",
                 "clear-param-vote",
-                Accessibility::Guarded(Expr::Config(1)),
+                Accessibility::Guarded(Expr::SelfResource {
+                    material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
+                }),
             ),
             (
                 "staking",
                 "deactivate-validator",
-                Accessibility::Guarded(Expr::Config(1)),
+                Accessibility::Guarded(Expr::SelfResource {
+                    material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
+                }),
             ),
             (
                 "staking",
                 "register-validator",
-                Accessibility::Guarded(Expr::Config(1)),
+                Accessibility::Guarded(Expr::SelfResource {
+                    material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
+                }),
             ),
             ("staking", "stake", Accessibility::Public),
-            ("staking", "unjail", Accessibility::Guarded(Expr::Config(1))),
+            (
+                "staking",
+                "unjail",
+                Accessibility::Guarded(Expr::SelfResource {
+                    material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
+                }),
+            ),
             ("staking", "unstake", Accessibility::Public),
         ];
         let packages = stdlib();

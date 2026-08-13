@@ -5,11 +5,12 @@
 //! matters is that composing them changed nothing: every quantity here is
 //! checked against the same call made directly.
 
-use hyperscale_vm_effects::stdlib::{account_metadata, staking_metadata};
+use hyperscale_vm_effects::stdlib::{OWNER_BADGE, account_metadata, staking_metadata};
 use hyperscale_vm_effects::{
     AuthRole, ComponentAddr, Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry,
     MetadataCache, PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId,
-    TestHasher, TextError, Value, admit, declared_work, footprint, route, signature_work,
+    TestHasher, TextError, Value, admit, declared_work, footprint, resource_address, route,
+    signature_work,
 };
 use hyperscale_vm_manifest_builder::native::{account, staking};
 use hyperscale_vm_manifest_builder::{
@@ -27,20 +28,25 @@ fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
 }
 
-/// A pool whose operator surface names a principal, and one whose names a
-/// slot its configuration does not have.
-fn pool_meta(operator: Option<PrincipalAddr>) -> InstanceMeta {
-    let mut config = vec![Value::Address(RES_X.address())];
-    config.extend(operator.map(|operator| Value::Address(operator.address())));
+fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("staking"),
-        config,
+        config: vec![Value::Address(RES_X.address())],
         salt: Hash32([2; 32]),
     }
 }
 
-fn pool(operator: Option<PrincipalAddr>) -> ComponentAddr {
-    pool_meta(operator).address(&TestHasher)
+fn pool() -> ComponentAddr {
+    pool_meta().address(&TestHasher)
+}
+
+/// The pool's owner badge — the identity its operator surface admits.
+fn badge() -> ResourceAddr {
+    resource_address(
+        &TestHasher,
+        pool(),
+        &[Value::Bytes(OWNER_BADGE.to_vec()).canonical_bytes()],
+    )
 }
 
 fn world() -> (MetadataCache, InstanceRegistry) {
@@ -49,8 +55,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     cache.publish(pkg("staking"), staking_metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
-    instances.create(&TestHasher, pool_meta(Some(OPERATOR)));
-    instances.create(&TestHasher, pool_meta(None));
+    instances.create(&TestHasher, pool_meta());
     (cache, instances)
 }
 
@@ -137,11 +142,11 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
 }
 
 #[test]
-fn a_configured_operator_is_the_signature_its_surface_names() {
+fn the_operator_surface_is_the_badge_holders_custody() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    let operator = account::authorize(&mut b, OPERATOR).unwrap();
-    staking::unjail(&mut b, operator, pool(Some(OPERATOR)), 42).unwrap();
+    let operator = account::present_badge(&mut b, OPERATOR, badge()).unwrap();
+    staking::unjail(&mut b, operator, pool(), 42).unwrap();
     let graph = b.build().unwrap();
     let report = preflight(
         &graph,
@@ -154,43 +159,13 @@ fn a_configured_operator_is_the_signature_its_surface_names() {
     )
     .unwrap();
 
-    // A pool is owned by nobody, so its operator surface names the
-    // principal its configuration carries rather than the pool. The
-    // sign-in is rule-judged; the surface itself is the configured
-    // identity.
-    assert_eq!(
-        report.authority[0].authority,
-        Authority::StoredRule(AuthRole::Primary)
-    );
-    assert_eq!(
-        report.authority[1].authority,
-        Authority::Signature(OPERATOR)
-    );
+    // A pool is owned by nobody, so its operator surface admits whoever
+    // presents the pool's own badge: custody at the presentation, and an
+    // identity no key derives at the surface — reachable only through
+    // that presentation, which is the point.
+    assert_eq!(report.authority[0].authority, Authority::Custody);
+    assert_eq!(report.authority[1].authority, Authority::TargetHasNoKey);
     assert_eq!(report.signers(), std::iter::once(OPERATOR).collect());
-}
-
-/// A method requiring an identity the instance does not configure is
-/// unsatisfiable by construction, and admission says so from the
-/// signature and the creation-fixed record alone.
-#[test]
-fn a_slot_naming_no_principal_is_refused() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    let operator = account::authorize(&mut b, OPERATOR).unwrap();
-    staking::unjail(&mut b, operator, pool(None), 42).unwrap();
-    let graph = b.build().unwrap();
-    assert!(matches!(
-        preflight(
-            &graph,
-            ALICE,
-            &cache,
-            &instances,
-            &TestHasher,
-            &SHARDS,
-            NETWORK
-        ),
-        Err(PreflightError::Admission(_))
-    ));
 }
 
 #[test]
