@@ -22,10 +22,10 @@ use hyperscale_vm_effects::stdlib::{
     UNBONDING, VALIDATORS, VAULT, VOTE, account_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
-    Address, ComponentAddr, EnvelopeTree, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, PrincipalAddr,
-    ResourceAddr, SubstateKey, TestHasher, Value, admit_tree, child_key, resource_address,
-    route_tree,
+    Address, ComponentAddr, EnvelopeTree, Fungibility, Hash32, Hasher, InstanceMeta,
+    InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
+    PrincipalAddr, ResourceAddr, ResourceRecord, SubstateKey, TestHasher, Value, admit_tree,
+    child_key, resource_address, resource_record_key, route_tree,
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -358,8 +358,19 @@ fn ref_arg(arg: &GuestArg<'_>) -> CVal {
     }
 }
 
+/// The record the pool's instantiation writes for the unit it issues.
+const UNIT_RECORD: ResourceRecord = ResourceRecord {
+    kind: Fungibility::Fungible { divisibility: 18 },
+};
+
 fn seeded_store(xrd: u128, units: u128) -> MemoryStore {
     let mut store = MemoryStore::new();
+    store
+        .write(
+            resource_record_key(&TestHasher, pool(), unit()),
+            UNIT_RECORD.to_cell().unwrap(),
+        )
+        .unwrap();
     store
         .write(vault(ALICE, XRD), encode_amount(xrd).to_vec())
         .unwrap();

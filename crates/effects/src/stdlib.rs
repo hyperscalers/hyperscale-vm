@@ -39,6 +39,9 @@ pub const AUTH: RoleId = RoleId(9);
 
 /// The registry's bindings: an unordered collection keyed by hashed name.
 pub const NAMES: RoleId = RoleId(10);
+/// A resource's record cell under its issuer: kind and display
+/// quantization, keyed by the resource's own address.
+pub const RESOURCE: RoleId = RoleId(11);
 
 /// The entry cap the book's fill range declares.
 pub const FILL_CAP: u32 = 64;

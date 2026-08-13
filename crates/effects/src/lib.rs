@@ -29,6 +29,7 @@ pub mod hash;
 pub mod invoke;
 pub mod manifest;
 pub mod metadata;
+pub mod resource;
 pub mod route;
 pub mod rule;
 pub mod stdlib;
@@ -70,6 +71,7 @@ pub use metadata::{
     MetadataCache, MethodSignature, PACKAGE_ROLE, PackageHash, PackageMetadata, ParamType,
     check_abi, check_declarations, package_hash, package_key,
 };
+pub use resource::{Fungibility, ResourceRecord, resource_record_key};
 pub use route::{
     CallEdge, CallGraph, FrameDeclaration, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef,
     PrefixShardResolver, RouteError, Routing, ShardResolver, route,
