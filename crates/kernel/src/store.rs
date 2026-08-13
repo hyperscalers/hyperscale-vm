@@ -17,7 +17,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{Address, CollectionId, EffectTarget, ModeKind, SubstateKey};
+use hyperscale_vm_effects::{Address, CollectionId, EffectTarget, EntryKey, ModeKind, SubstateKey};
 
 use crate::modes::{
     DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount, fold_deltas, judge,
@@ -357,15 +357,18 @@ impl MemoryStore {
     }
 
     /// Every ordered-collection entry, in canonical order.
-    pub fn collection_entries(
-        &self,
-    ) -> impl Iterator<Item = ((Address, CollectionId, u128), &[u8])> + '_ {
+    pub fn collection_entries(&self) -> impl Iterator<Item = (EntryKey, &[u8])> + '_ {
         self.entries
             .iter()
             .flat_map(|((owner, collection), entries)| {
-                entries
-                    .iter()
-                    .map(|(order, value)| ((*owner, *collection, *order), value.as_slice()))
+                entries.iter().map(|(order, value)| {
+                    let key = EntryKey {
+                        owner: *owner,
+                        collection: *collection,
+                        order: *order,
+                    };
+                    (key, value.as_slice())
+                })
             })
     }
 

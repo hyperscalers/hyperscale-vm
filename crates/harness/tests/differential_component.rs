@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    RoleId, SubstateKey, TestHasher, child_key,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Hash32, Hasher,
+    Mode, RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -407,19 +407,18 @@ fn reads_and_writes_agree_across_the_new_surface() -> Result<()> {
     let (fill, ..) = both(&fx, "fill")?;
     assert_eq!(fill, LaneOutcome::Value(3));
     let receipt = receipts_agree(&fx, "fill")?;
-    assert_eq!(
-        receipt.delta.entries.get(&(fx.book, ASKS, 10)),
-        Some(&Some(vec![9, 9]))
-    );
-    assert_eq!(receipt.delta.entries.get(&(fx.book, ASKS, 30)), Some(&None));
+    let ask = |order: u128| EntryKey {
+        owner: fx.book,
+        collection: ASKS,
+        order,
+    };
+    assert_eq!(receipt.delta.entries.get(&ask(10)), Some(&Some(vec![9, 9])));
+    assert_eq!(receipt.delta.entries.get(&ask(30)), Some(&None));
 
     let (place, ..) = both(&fx, "place")?;
     assert_eq!(place, LaneOutcome::Value(4));
     let receipt = receipts_agree(&fx, "place")?;
-    assert_eq!(
-        receipt.delta.entries.get(&(fx.book, ASKS, 42)),
-        Some(&Some(vec![7]))
-    );
+    assert_eq!(receipt.delta.entries.get(&ask(42)), Some(&Some(vec![7])));
     Ok(())
 }
 

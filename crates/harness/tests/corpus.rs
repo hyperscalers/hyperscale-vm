@@ -17,11 +17,11 @@ use hyperscale_vm_effects::stdlib::{
 };
 use hyperscale_vm_effects::{
     AbiParam, Address, AuthBase, AuthCell, Clause, CollectionId, ComponentAddr, Constraint, Effect,
-    EffectSet, EffectTarget, EvidenceRef, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
-    ParamType, PrefixShardResolver, PrincipalAddr, Proposal, ResourceAddr, RoleId, RoleSet,
-    Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value, admit,
-    child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
+    EffectSet, EffectTarget, EntryKey, EvidenceRef, Expr, Hash32, Hasher, InstanceMeta,
+    InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash,
+    PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, Proposal, ResourceAddr, RoleId,
+    RoleSet, Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value,
+    admit, child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
     resource_address, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
@@ -614,7 +614,7 @@ fn run_both_at(
         store.cells().map(|(k, v)| (k, v.to_vec())).collect()
     };
     assert_eq!(cells(&blessed_store), cells(&ref_store), "state diverged");
-    let entries = |store: &MemoryStore| -> BTreeMap<(Address, CollectionId, u128), Vec<u8>> {
+    let entries = |store: &MemoryStore| -> BTreeMap<EntryKey, Vec<u8>> {
         store
             .collection_entries()
             .map(|(k, v)| (k, v.to_vec()))
@@ -1791,22 +1791,20 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
     // The placed ask landed at the declared fresh sequence.
     let admitted = admit(&place, MAKER, &world.0, &world.1, &TestHasher).unwrap();
     let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0, 0);
-    let placed_order = (3u128 << 64) | u128::from(seq);
+    let placed_ask = EntryKey {
+        owner: book().address(),
+        collection: asks(),
+        order: (3u128 << 64) | u128::from(seq),
+    };
     assert_eq!(
-        place_receipt
-            .delta
-            .entries
-            .get(&(book().address(), asks(), placed_order)),
+        place_receipt.delta.entries.get(&placed_ask),
         Some(&Some(encode_amount(50).to_vec()))
     );
 
     // The fill: budget 100 at price 3 buys 33 (cost 99), leaving change 1;
     // the price-5 ask is untouched. Partial fill rewrote the entry.
     assert_eq!(
-        fill_receipt
-            .delta
-            .entries
-            .get(&(book().address(), asks(), placed_order)),
+        fill_receipt.delta.entries.get(&placed_ask),
         Some(&Some(encode_amount(17).to_vec()))
     );
     assert_eq!(
@@ -1837,12 +1835,12 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
         .collection_entries()
         .map(|(k, v)| (k, v.to_vec()))
         .collect();
+    assert_eq!(entries.get(&placed_ask), Some(&encode_amount(17).to_vec()));
     assert_eq!(
-        entries.get(&(book().address(), asks(), placed_order)),
-        Some(&encode_amount(17).to_vec())
-    );
-    assert_eq!(
-        entries.get(&(book().address(), asks(), (5u128 << 64) | 7)),
+        entries.get(&EntryKey {
+            order: (5u128 << 64) | 7,
+            ..placed_ask
+        }),
         Some(&encode_amount(10).to_vec())
     );
     Ok(())
@@ -1909,10 +1907,8 @@ fn the_registry_binds_checks_and_drains_hashed_entries() -> Result<()> {
     };
     let entries: BTreeMap<u128, Vec<u8>> = store
         .collection_entries()
-        .filter(|((owner, collection, _), _)| {
-            (*owner, *collection) == (registry_addr().into(), names)
-        })
-        .map(|((.., order), value)| (order, value.to_vec()))
+        .filter(|(key, _)| (key.owner, key.collection) == (registry_addr().into(), names))
+        .map(|(key, value)| (key.order, value.to_vec()))
         .collect();
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[&order_of(7)], 701u128.to_le_bytes().to_vec());
@@ -1967,14 +1963,14 @@ fn custody_opens_for_the_holder_and_only_the_holder() -> Result<()> {
     let held = |store: &MemoryStore| -> Vec<u64> {
         store
             .collection_entries()
-            .filter(|((owner, collection, _), _)| {
-                (*owner, *collection)
+            .filter(|(key, _)| {
+                (key.owner, key.collection)
                     == (
                         ALICE.address(),
                         holdings_collection(&TestHasher, ALICE, badge),
                     )
             })
-            .map(|((.., order), _)| u64::try_from(order).unwrap())
+            .map(|(key, _)| u64::try_from(key.order).unwrap())
             .collect()
     };
     let id = held(&store)[0];
@@ -2083,8 +2079,8 @@ fn non_fungibles_mint_transfer_and_burn_end_to_end() -> Result<()> {
     let held = |store: &MemoryStore, collection: CollectionId| -> Vec<u64> {
         store
             .collection_entries()
-            .filter(|((_, held_in, _), _)| *held_in == collection)
-            .map(|((.., order), _)| u64::try_from(order).unwrap())
+            .filter(|(key, _)| key.collection == collection)
+            .map(|(key, _)| u64::try_from(key.order).unwrap())
             .collect()
     };
 

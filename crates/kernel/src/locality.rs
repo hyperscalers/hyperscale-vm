@@ -18,9 +18,7 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{
-    Address, CollectionId, EffectSet, EntryKey, StateWrites, SubstateKey, effect_units,
-};
+use hyperscale_vm_effects::{Address, EffectSet, EntryKey, StateWrites, SubstateKey, effect_units};
 
 use crate::session::{Movement, StateDelta};
 
@@ -127,15 +125,8 @@ impl StateDelta {
         for (key, change) in owned.cells() {
             writes.cells.insert(key, change.clone());
         }
-        for ((owner, collection, order), change) in owned.entries() {
-            writes.entries.insert(
-                EntryKey {
-                    owner,
-                    collection,
-                    order,
-                },
-                change.clone(),
-            );
+        for (key, change) in owned.entries() {
+            writes.entries.insert(key, change.clone());
         }
         for (key, movement) in owned.movements() {
             let entry = writes.movements.entry(key).or_default();
@@ -169,15 +160,12 @@ impl<'a> OwnedDelta<'a> {
     }
 
     /// Changed entries of owned ordered collections.
-    pub fn entries(
-        &self,
-    ) -> impl Iterator<Item = ((Address, CollectionId, u128), &'a Option<Vec<u8>>)> + use<'a, '_>
-    {
+    pub fn entries(&self) -> impl Iterator<Item = (EntryKey, &'a Option<Vec<u8>>)> + use<'a, '_> {
         self.delta
             .entries
             .iter()
-            .filter(|((owner, ..), _)| self.locality.is_local(*owner))
-            .map(|(slot, change)| (*slot, change))
+            .filter(|(key, _)| self.locality.is_local(key.owner))
+            .map(|(key, change)| (*key, change))
     }
 
     /// Movements on owned amount cells. A movement on a key another shard
@@ -370,32 +358,23 @@ mod tests {
         let local_book = Address::new([1; 31], AddressClass::Component);
         let remote_book = Address::new([2; 31], AddressClass::Component);
         let asks = CollectionId([4; 16]);
+        let entry = |owner: Address, order: u128| EntryKey {
+            owner,
+            collection: asks,
+            order,
+        };
         let mut delta = StateDelta::default();
-        delta.entries.insert((local_book, asks, 7), Some(vec![9]));
-        delta.entries.insert((local_book, asks, 8), None);
-        delta.entries.insert((remote_book, asks, 7), Some(vec![5]));
+        delta.entries.insert(entry(local_book, 7), Some(vec![9]));
+        delta.entries.insert(entry(local_book, 8), None);
+        delta.entries.insert(entry(remote_book, 7), Some(vec![5]));
 
         let locality = Locality::Owned(Arc::new(move |owner: Address| owner == local_book));
         let projected = delta.project(&locality);
         assert_eq!(
             projected.entries,
             BTreeMap::from([
-                (
-                    EntryKey {
-                        owner: local_book,
-                        collection: asks,
-                        order: 7,
-                    },
-                    Some(vec![9]),
-                ),
-                (
-                    EntryKey {
-                        owner: local_book,
-                        collection: asks,
-                        order: 8,
-                    },
-                    None,
-                ),
+                (entry(local_book, 7), Some(vec![9])),
+                (entry(local_book, 8), None),
             ])
         );
 

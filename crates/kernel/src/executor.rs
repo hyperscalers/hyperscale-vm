@@ -873,11 +873,13 @@ fn apply_completed(
             }
         }
     }
-    for ((owner, collection, order), change) in owned.entries() {
+    for (key, change) in owned.entries() {
         match change {
-            Some(value) => store.entry_write(owner, collection, order, value.clone())?,
+            Some(value) => {
+                store.entry_write(key.owner, key.collection, key.order, value.clone())?;
+            }
             None => {
-                store.entry_remove(owner, collection, order)?;
+                store.entry_remove(key.owner, key.collection, key.order)?;
             }
         }
     }

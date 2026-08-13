@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Address, CollectionId, EffectTarget, ModeKind, SubstateKey};
+use hyperscale_vm_effects::{Address, CollectionId, EffectTarget, EntryKey, ModeKind, SubstateKey};
 
 use crate::modes::{
     DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount, fold_deltas, judge,
@@ -174,16 +174,19 @@ impl OverlayStore {
 
     /// The active layer's entry changes, in canonical order; `None` is a
     /// removal.
-    pub fn active_entries(
-        &self,
-    ) -> impl Iterator<Item = ((Address, CollectionId, u128), Option<&[u8]>)> + '_ {
+    pub fn active_entries(&self) -> impl Iterator<Item = (EntryKey, Option<&[u8]>)> + '_ {
         self.active
             .entries
             .iter()
             .flat_map(|((owner, collection), entries)| {
-                entries
-                    .iter()
-                    .map(|(order, change)| ((*owner, *collection, *order), change.as_deref()))
+                entries.iter().map(|(order, change)| {
+                    let key = EntryKey {
+                        owner: *owner,
+                        collection: *collection,
+                        order: *order,
+                    };
+                    (key, change.as_deref())
+                })
             })
     }
 

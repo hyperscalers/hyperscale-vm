@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{
-    Address, CollectionId, Effect, EffectSet, EffectTarget, Mode, ModeKind, SubstateKey,
+    Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Mode, ModeKind, SubstateKey,
 };
 
 use crate::locality::Locality;
@@ -192,7 +192,7 @@ pub struct StateDelta {
     /// Cells changed under exclusive write capabilities.
     pub cells: DeltaMap<SubstateKey, Option<Vec<u8>>>,
     /// Changed ordered-collection entries.
-    pub entries: DeltaMap<(Address, CollectionId, u128), Option<Vec<u8>>>,
+    pub entries: DeltaMap<EntryKey, Option<Vec<u8>>>,
     /// Delta movements per amount cell.
     pub movements: DeltaMap<SubstateKey, Movement>,
     /// Settled reservation amounts per cell.
@@ -1201,11 +1201,13 @@ fn diff(store: &OverlayStore) -> StateDelta {
             delta.cells.insert(key, after.map(<[u8]>::to_vec));
         }
     }
-    for ((owner, collection, order), after) in store.active_entries() {
-        if store.pre_active_entry(owner, collection, order).as_deref() != after {
-            delta
-                .entries
-                .insert((owner, collection, order), after.map(<[u8]>::to_vec));
+    for (key, after) in store.active_entries() {
+        if store
+            .pre_active_entry(key.owner, key.collection, key.order)
+            .as_deref()
+            != after
+        {
+            delta.entries.insert(key, after.map(<[u8]>::to_vec));
         }
     }
     delta

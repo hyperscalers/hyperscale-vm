@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    RoleId, SubstateKey, TestHasher, child_key,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Hash32, Hasher,
+    Mode, RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore,
@@ -319,7 +319,7 @@ fn funded() -> MemoryStore {
 #[derive(Debug, PartialEq, Eq)]
 struct EndState {
     cells: BTreeMap<SubstateKey, Vec<u8>>,
-    entries: BTreeMap<(Address, CollectionId, u128), Vec<u8>>,
+    entries: BTreeMap<EntryKey, Vec<u8>>,
     holds: BTreeMap<(SubstateKey, TxHash), u128>,
 }
 
