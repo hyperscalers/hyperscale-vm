@@ -225,6 +225,39 @@ pub struct MethodSignature {
     pub calls: Vec<CallSite>,
 }
 
+impl MethodSignature {
+    /// A rule-reading gate's whole declaration: the cell expression its
+    /// stored rule lives at, and the role judging it — the primary for
+    /// an authorizing method, the named role for a role-gated one.
+    ///
+    /// `Some` exactly when the accessibility reads a rule and the
+    /// declaration is the pinned shape: one point clause, read for a
+    /// sign-in — which is what provisions the cell to every participant
+    /// — and exclusively written for a recovery op, which keeps a role
+    /// rewrite out of any wave that signs in under the roles it
+    /// replaces. Every judge of the shape asks here, so none can drift:
+    /// the publish check refuses a rule-reading signature this returns
+    /// `None` for, and admission re-asks so a cached package that never
+    /// passed one refuses rather than lowering an ungated node.
+    #[must_use]
+    pub fn rule_cell(&self) -> Option<(&Expr, AuthRole)> {
+        let (role, mode) = match &self.accessibility {
+            Accessibility::Authorizing => (AuthRole::Primary, ModeExpr::Read),
+            Accessibility::RoleGated(role) => (*role, ModeExpr::Write),
+            Accessibility::Public | Accessibility::Guarded(_) => return None,
+        };
+        match self.effects.as_slice() {
+            [
+                Clause::Effect {
+                    target: TargetExpr::Point(cell),
+                    mode: declared,
+                },
+            ] if *declared == mode => Some((cell, role)),
+            _ => None,
+        }
+    }
+}
+
 /// Why a signature's ABI binding cannot be honoured.
 ///
 /// Every clause is a pure function of the metadata, so the verdict is the
@@ -321,34 +354,14 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
     {
         return Err(AbiError::CallerNamedAuthority);
     }
-    // An authorizing method's whole declaration is the cell its stored
-    // rule lives in: one point read, which is what the gate evaluates at
-    // admission and what provisions the cell to every participant.
-    if matches!(signature.accessibility, Accessibility::Authorizing)
-        && !matches!(
-            signature.effects.as_slice(),
-            [Clause::Effect {
-                target: TargetExpr::Point(_),
-                mode: ModeExpr::Read,
-            }]
-        )
-    {
-        return Err(AbiError::AuthorizingShape);
-    }
-    // A role-gated method's whole declaration is the same cell as an
-    // exclusive write: the gate reads it, the body rewrites it, and the
-    // exclusivity keeps a role rewrite out of any wave that signs in
-    // under the roles it replaces.
-    if matches!(signature.accessibility, Accessibility::RoleGated(_))
-        && !matches!(
-            signature.effects.as_slice(),
-            [Clause::Effect {
-                target: TargetExpr::Point(_),
-                mode: ModeExpr::Write,
-            }]
-        )
-    {
-        return Err(AbiError::RoleGatedShape);
+    // A rule-reading method's whole declaration is the cell its gate
+    // judges at, in the shape `rule_cell` pins.
+    if signature.rule_cell().is_none() {
+        match signature.accessibility {
+            Accessibility::Authorizing => return Err(AbiError::AuthorizingShape),
+            Accessibility::RoleGated(_) => return Err(AbiError::RoleGatedShape),
+            Accessibility::Public | Accessibility::Guarded(_) => {}
+        }
     }
     let bound = |count: usize| u32::try_from(count).unwrap_or(u32::MAX);
     let mut carried = vec![0u32; signature.params.len()];
@@ -863,6 +876,66 @@ mod tests {
             check_abi(&signature(vec![], vec![AbiParam::Bucket(3)])),
             Err(AbiError::NoSuchParam { param: 3, .. })
         ));
+    }
+
+    /// A rule-reading method's whole declaration is the cell its gate
+    /// judges at: one point clause, read for a sign-in, exclusively
+    /// written for a recovery op. Anything else is refused where the
+    /// package publishes, under the accessibility's own error.
+    #[test]
+    fn a_rule_reading_method_declares_exactly_its_cell() {
+        let shaped = |accessibility, mode| MethodSignature {
+            accessibility,
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(Expr::SelfAddr),
+                mode,
+            }],
+            ..MethodSignature::default()
+        };
+        assert_eq!(
+            check_abi(&shaped(Accessibility::Authorizing, ModeExpr::Read)),
+            Ok(())
+        );
+        assert_eq!(
+            check_abi(&shaped(
+                Accessibility::RoleGated(AuthRole::Recovery),
+                ModeExpr::Write
+            )),
+            Ok(())
+        );
+
+        // The right clause under the wrong mode, and no clause at all.
+        assert_eq!(
+            check_abi(&shaped(Accessibility::Authorizing, ModeExpr::Write)),
+            Err(AbiError::AuthorizingShape)
+        );
+        assert_eq!(
+            check_abi(&shaped(
+                Accessibility::RoleGated(AuthRole::Primary),
+                ModeExpr::Read
+            )),
+            Err(AbiError::RoleGatedShape)
+        );
+        assert_eq!(
+            check_abi(&MethodSignature {
+                accessibility: Accessibility::Authorizing,
+                ..MethodSignature::default()
+            }),
+            Err(AbiError::AuthorizingShape)
+        );
+
+        // The accessor itself names the judging role.
+        let sign_in = shaped(Accessibility::Authorizing, ModeExpr::Read);
+        assert!(matches!(sign_in.rule_cell(), Some((_, AuthRole::Primary))));
+        let confirm = shaped(
+            Accessibility::RoleGated(AuthRole::Confirmation),
+            ModeExpr::Write,
+        );
+        assert!(matches!(
+            confirm.rule_cell(),
+            Some((_, AuthRole::Confirmation))
+        ));
+        assert_eq!(MethodSignature::default().rule_cell(), None);
     }
 
     /// A method requiring an identity its own caller names admits

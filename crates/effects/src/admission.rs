@@ -14,8 +14,7 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
-use crate::auth::AuthRole;
-use crate::dsl::{Clause, EvalError, EvalInputs, TargetExpr, evaluate_expr};
+use crate::dsl::{EvalError, EvalInputs, evaluate_expr};
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
 use crate::hash::Hasher;
@@ -769,15 +768,15 @@ pub(crate) fn admit_intents(
             }
         };
         // A rule-reading gate is its target's stored rule, at the cell
-        // the method's own single point clause names — the shape the
-        // publish check pins, re-derived here so a cached package that
-        // never passed one is a refusal rather than a panic. Which
-        // stored rule judges the call is the accessibility's business:
-        // the primary for an authorizing method, the named role for a
-        // role-gated one.
+        // the method's own declaration names — asked of the signature
+        // itself, so a cached package that never passed the publish
+        // check is a refusal rather than an ungated node.
         let rule_cell = match &signature.accessibility {
-            Accessibility::Authorizing => Some((&signature.effects, AuthRole::Primary)),
-            Accessibility::RoleGated(role) => Some((&signature.effects, *role)),
+            Accessibility::Authorizing | Accessibility::RoleGated(_) => Some(
+                signature
+                    .rule_cell()
+                    .ok_or(AdmissionError::RuleCell { node: node_index })?,
+            ),
             Accessibility::Public | Accessibility::Guarded(_) => None,
         };
         // A proof is scoped to the intent that produced it — a signature
@@ -864,16 +863,7 @@ pub(crate) fn admit_intents(
                     _ => return Err(AdmissionError::AuthorityType { node: node_index }),
                 }
             }
-            (None, Some((effects, role))) => {
-                let [
-                    Clause::Effect {
-                        target: TargetExpr::Point(target),
-                        ..
-                    },
-                ] = effects.as_slice()
-                else {
-                    return Err(AdmissionError::RuleCell { node: node_index });
-                };
+            (None, Some((target, role))) => {
                 let value = evaluate_expr(target, &eval_inputs, hasher).map_err(|source| {
                     AdmissionError::Eval {
                         node: node_index,
