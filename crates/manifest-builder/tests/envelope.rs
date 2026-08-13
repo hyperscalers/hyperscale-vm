@@ -55,15 +55,15 @@ fn swap(pay_x: u128, pay_y: u128) -> Result<EnvelopeTree, EnvelopeError> {
     let (mut env, mut root) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
 
     let taken_y = root.declare(RES_Y, [Constraint::MinAmount(pay_y)]);
-    let alice_badge = account::authorize(&mut root, ALICE)?;
-    let funds = account::withdraw(&mut root, alice_badge, RES_X, pay_x)?;
+    let alice_proof = account::authorize(&mut root, ALICE)?;
+    let funds = account::withdraw(&mut root, alice_proof, RES_X, pay_x)?;
     let paid_x = root.export(funds);
     account::deposit(&mut root, ALICE, taken_y)?;
 
     let mut sub = env.subintent(BOB);
     let taken_x = sub.declare(RES_X, [Constraint::MinAmount(pay_x)]);
-    let bob_badge = account::authorize(&mut sub, BOB)?;
-    let funds = account::withdraw(&mut sub, bob_badge, RES_Y, pay_y)?;
+    let bob_proof = account::authorize(&mut sub, BOB)?;
+    let funds = account::withdraw(&mut sub, bob_proof, RES_Y, pay_y)?;
     let paid_y = sub.export(funds);
     account::deposit(&mut sub, BOB, taken_x)?;
 
@@ -104,8 +104,8 @@ fn a_presented_declaration_is_carried_verbatim() {
 
     let (cache, instances) = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
-    let alice_badge = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_badge, RES_X, 100).unwrap();
+    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
+    let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
     let paid = root.export(funds);
     let wants = only(env.present(BOB, request).unwrap());
     env.seal(root).unwrap();
@@ -124,8 +124,8 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
     let (mut env, mut root) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
     // The composer took the request and then routed nothing to it.
     let _wants = env.present(BOB, payment_request(100)).unwrap();
-    let alice_badge = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_badge, RES_X, 100).unwrap();
+    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
+    let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
     account::deposit(&mut root, ALICE, funds).unwrap();
     env.seal(root).unwrap();
     assert_eq!(
@@ -163,8 +163,8 @@ fn a_hole_the_graph_never_consumes_is_refused() {
     // Declared and then dropped: the yielded bucket would arrive with
     // nothing to receive it.
     let _taken = root.declare(RES_Y, []);
-    let alice_badge = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_badge, RES_X, 100).unwrap();
+    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
+    let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
     account::deposit(&mut root, ALICE, funds).unwrap();
     assert!(matches!(
         env.seal(root),
@@ -229,8 +229,8 @@ fn a_hole_the_composition_never_bound_is_refused() {
 fn an_intent_still_under_construction_is_refused() {
     let (cache, instances) = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
-    let alice_badge = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_badge, RES_X, 100).unwrap();
+    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
+    let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
     account::deposit(&mut root, BOB, funds).unwrap();
     let _sub = env.subintent(BOB);
     env.seal(root).unwrap();
@@ -250,8 +250,8 @@ fn a_handle_from_another_envelope_is_refused() {
     let wants = only(mine.seal(root).unwrap());
 
     let (_theirs, mut other) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
-    let bob_badge = account::authorize(&mut other, BOB).unwrap();
-    let funds = account::withdraw(&mut other, bob_badge, RES_X, 100).unwrap();
+    let bob_proof = account::authorize(&mut other, BOB).unwrap();
+    let funds = account::withdraw(&mut other, bob_proof, RES_X, 100).unwrap();
     let elsewhere = other.export(funds);
     mine.bind(wants, elsewhere);
 }
@@ -270,8 +270,8 @@ proptest! {
         let mut paid = Vec::with_capacity(legs.len());
         for (pay, _) in &legs {
             let taken = root.declare(RES_Y, [Constraint::MinAmount(1)]);
-            let alice_badge = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_badge, RES_X, *pay).unwrap();
+            let alice_proof = account::authorize(&mut root, ALICE).unwrap();
+    let funds = account::withdraw(&mut root, alice_proof, RES_X, *pay).unwrap();
             paid.push(root.export(funds));
             account::deposit(&mut root, ALICE, taken).unwrap();
         }
@@ -281,8 +281,8 @@ proptest! {
             let signer = PrincipalAddr::new([u8::try_from(index).unwrap() + 1; 31]);
             let mut leg = env.subintent(signer);
             let taken = leg.declare(RES_X, [Constraint::MinAmount(1)]);
-            let signer_badge = account::authorize(&mut leg, signer).unwrap();
-    let funds = account::withdraw(&mut leg, signer_badge, RES_Y, *receive).unwrap();
+            let signer_proof = account::authorize(&mut leg, signer).unwrap();
+    let funds = account::withdraw(&mut leg, signer_proof, RES_Y, *receive).unwrap();
             let yielded = leg.export(funds);
             account::deposit(&mut leg, signer, taken).unwrap();
             let wants = only(env.seal(leg).unwrap());

@@ -319,8 +319,8 @@ enum TxResult {
 /// An intent carries one signature, so every guarded or authorizing node
 /// in one names the same account — which is a property of these fixtures
 /// rather than of manifests generally, and worth asserting where it is
-/// relied on. A node presenting a minted badge still names its target
-/// here: the badge's producer targets the same account, so the union is
+/// relied on. A node presenting a minted proof still names its target
+/// here: the proof's producer targets the same account, so the union is
 /// unchanged.
 fn composer(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> PrincipalAddr {
     let (cache, instances) = world;
@@ -793,20 +793,20 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
 }
 
 /// The same transfer, signed in rather than signed per call: authorize
-/// mints Alice's identity and the withdrawal presents that badge instead
+/// mints Alice's identity and the withdrawal presents that proof instead
 /// of the intent's signature.
 fn authorized_transfer_graph() -> ManifestGraph {
     graph(|b| {
-        let badge = account::authorize(b, ALICE)?;
+        let proof = account::authorize(b, ALICE)?;
         let funds = b
-            .call_as(badge, ALICE, "withdraw", (RES_X, 100u128))?
+            .call_as(proof, ALICE, "withdraw", (RES_X, 100u128))?
             .one()?;
         account::deposit(b, BOB, funds)
     })
 }
 
 #[test]
-fn a_transfer_on_a_minted_badge_settles_like_one_on_the_signature() -> Result<()> {
+fn a_transfer_on_a_minted_proof_settles_like_one_on_the_signature() -> Result<()> {
     let world = world();
     let engines = Engines::build()?;
     let mut store = MemoryStore::new();
@@ -825,7 +825,7 @@ fn a_transfer_on_a_minted_badge_settles_like_one_on_the_signature() -> Result<()
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("the authorized transfer must complete");
     };
-    // The badge changes where the withdrawal's authority came from and
+    // The proof changes where the withdrawal's authority came from and
     // nothing about what it did.
     assert_eq!(receipt.delta.settles.get(&vault(ALICE, RES_X)), Some(&100));
     assert_eq!(
@@ -856,7 +856,7 @@ fn a_refused_authorization_takes_its_consumers_with_it() -> Result<()> {
     // evidence is present, and whether it satisfies the target is the
     // target's question — and the authorizing node's own gate refuses at
     // execution, taking the whole transaction with it. This is what
-    // makes the minted badge sound with nothing checking it later: the
+    // makes the minted proof sound with nothing checking it later: the
     // withdrawal that would have spent on it never runs.
     let graph = authorized_transfer_graph();
     let (results, mut final_store) = run_both_signed(

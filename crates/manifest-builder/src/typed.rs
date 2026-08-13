@@ -112,29 +112,29 @@ pub enum TypedError {
         /// The arity the caller unpacked into.
         claimed: usize,
     },
-    /// A badge presented to a method that admits anyone — admission's
+    /// A proof presented to a method that admits anyone — admission's
     /// same-named verdict, reached at the call site.
-    #[error("`{method}` admits anyone and reads no badge")]
+    #[error("`{method}` admits anyone and reads no proof")]
     UnexpectedEvidence {
         /// The method called.
         method: String,
     },
-    /// A guarded call composed without a badge — admission's
+    /// A guarded call composed without a proof — admission's
     /// [`SignatureForGuarded`](hyperscale_vm_effects::AdmissionError::SignatureForGuarded)
     /// verdict, reached at the call site. A signature signs in through
     /// an authorizing method; what it mints there is what a guarded
     /// method takes.
-    #[error("`{method}` takes a minted badge; a signature only signs in")]
+    #[error("`{method}` takes a minted proof; a signature only signs in")]
     SignatureForGuarded {
         /// The method called.
         method: String,
     },
-    /// A badge requested from a method that does not mint — admission's
-    /// [`UnmintingBadge`](hyperscale_vm_effects::AdmissionError::UnmintingBadge)
-    /// verdict, reached where the badge is requested rather than where it
+    /// A proof requested from a method that does not mint — admission's
+    /// [`UnmintingProof`](hyperscale_vm_effects::AdmissionError::UnmintingProof)
+    /// verdict, reached where the proof is requested rather than where it
     /// would be presented.
     #[error("`{method}` mints no identity")]
-    UnmintingBadge {
+    UnmintingProof {
         /// The method called.
         method: String,
     },
@@ -148,20 +148,20 @@ pub enum TypedError {
 ///
 /// A node reference rather than a value edge: nothing is conserved, and
 /// presenting it twice says nothing presenting it once does not. It
-/// carries authority only downward — admission refuses a badge drawn
+/// carries authority only downward — admission refuses a proof drawn
 /// from a node that is not earlier.
 ///
-/// The badge remembers whose identity it carries, so a call acting *as*
-/// that identity names no target of its own: the badge is the actor.
+/// The proof remembers whose identity it carries, so a call acting *as*
+/// that identity names no target of its own: the proof is the actor.
 #[derive(Clone, Copy, Debug)]
-#[must_use = "an unpresented badge authorizes nothing"]
-pub struct Badge {
+#[must_use = "an unpresented proof authorizes nothing"]
+pub struct Proof {
     node: u32,
     target: CallTarget,
 }
 
-impl Badge {
-    /// The instance whose identity this badge carries — the authorizing
+impl Proof {
+    /// The instance whose identity this proof carries — the authorizing
     /// node's target.
     #[must_use]
     pub const fn target(&self) -> CallTarget {
@@ -297,8 +297,8 @@ impl<'a> TypedBuilder<'a> {
             .map(|(_, outputs)| outputs)
     }
 
-    /// The same call, presenting `badge` instead of the intent's
-    /// signature badge — how a call acts as the account an earlier
+    /// The same call, presenting `proof` instead of the intent's
+    /// signature proof — how a call acts as the account an earlier
     /// authorizing node signed in.
     ///
     /// # Errors
@@ -311,26 +311,26 @@ impl<'a> TypedBuilder<'a> {
     /// As [`call`](Self::call).
     pub fn call_as(
         &mut self,
-        badge: Badge,
+        proof: Proof,
         target: impl Into<CallTarget>,
         method: &str,
         args: impl Args,
     ) -> Result<Outputs, TypedError> {
-        self.append(target.into(), method, args, Some(badge))
+        self.append(target.into(), method, args, Some(proof))
             .map(|(_, outputs)| outputs)
     }
 
     /// Append an invocation of `method`, an authorizing method of
-    /// `target`, and return the badge it mints.
+    /// `target`, and return the proof it mints.
     ///
-    /// The call presents the intent's signature badge to its own gate —
+    /// The call presents the intent's signature proof to its own gate —
     /// signing in starts from a signature. Acting as one account through
     /// another's authorization is [`call_as`](Self::call_as) on the
     /// authorizing call itself.
     ///
     /// # Errors
     ///
-    /// [`TypedError::UnmintingBadge`] when the method's accessibility
+    /// [`TypedError::UnmintingProof`] when the method's accessibility
     /// does not mint, and everything [`call`](Self::call) refuses.
     ///
     /// # Panics
@@ -340,7 +340,7 @@ impl<'a> TypedBuilder<'a> {
         &mut self,
         target: impl Into<CallTarget>,
         method: &str,
-    ) -> Result<Badge, TypedError> {
+    ) -> Result<Proof, TypedError> {
         let target = target.into();
         let meta = self
             .instances
@@ -358,13 +358,13 @@ impl<'a> TypedBuilder<'a> {
                 method: method.to_owned(),
             })?;
         if !matches!(signature.accessibility, Accessibility::Authorizing) {
-            return Err(TypedError::UnmintingBadge {
+            return Err(TypedError::UnmintingProof {
                 method: method.to_owned(),
             });
         }
         let (node, outputs) = self.append(target, method, (), None)?;
         outputs.none()?;
-        Ok(Badge { node, target })
+        Ok(Proof { node, target })
     }
 
     fn append(
@@ -372,7 +372,7 @@ impl<'a> TypedBuilder<'a> {
         target: CallTarget,
         method: &str,
         args: impl Args,
-        badge: Option<Badge>,
+        proof: Option<Proof>,
     ) -> Result<(u32, Outputs), TypedError> {
         // Copied out of `self` so the signature borrows the caller's
         // tables rather than the builder, leaving it free to append.
@@ -411,8 +411,8 @@ impl<'a> TypedBuilder<'a> {
 
         // The signature says which methods take evidence at all, so no
         // call site has to. Signing in starts from the intent's
-        // signature; everything guarded takes a badge minted earlier.
-        let evidence = match (&signature.accessibility, badge) {
+        // signature; everything guarded takes a proof minted earlier.
+        let evidence = match (&signature.accessibility, proof) {
             (Accessibility::Public, None) => BTreeSet::new(),
             (Accessibility::Public, Some(_)) => {
                 return Err(TypedError::UnexpectedEvidence {
@@ -425,8 +425,8 @@ impl<'a> TypedBuilder<'a> {
                     method: method.to_owned(),
                 });
             }
-            (Accessibility::Guarded(_) | Accessibility::Authorizing, Some(badge)) => {
-                BTreeSet::from([EvidenceRef::Node(badge.node)])
+            (Accessibility::Guarded(_) | Accessibility::Authorizing, Some(proof)) => {
+                BTreeSet::from([EvidenceRef::Node(proof.node)])
             }
         };
         let outputs = resources.len();

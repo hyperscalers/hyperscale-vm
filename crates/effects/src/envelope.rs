@@ -225,7 +225,7 @@ pub fn encode_tree(tree: &EnvelopeTree) -> Vec<u8> {
 /// `identity` is the signed envelope's hash — the root of every fresh
 /// derivation. Distinct signed envelopes never mint the same fresh key,
 /// even when they carry the same tree. `composer` is who signed the root
-/// intent, and so whose identity the root's badge names; each subintent
+/// intent, and so whose identity the root's proof names; each subintent
 /// names its own signer.
 ///
 /// # Errors

@@ -117,7 +117,7 @@ fn the_staking_wrappers_match_their_signatures() {
     let pool = address("staking", pool_config());
     let graph = admits(|b| {
         // One sign-in acts for the whole graph: the delegation round
-        // trip and the operator surface both present Alice's badge.
+        // trip and the operator surface both present Alice's proof.
         let alice = account::authorize(b, ALICE)?;
 
         // The delegation round trip: funds in, the pool's own units out
@@ -150,8 +150,8 @@ fn the_amm_wrapper_matches_its_signature() {
     admits(|b| {
         // The pool's output is typed by its second configured resource,
         // so what comes back is quote against a base input.
-        let alice_badge = account::authorize(b, ALICE)?;
-        let input = account::withdraw(b, alice_badge, BASE, 100)?;
+        let alice_proof = account::authorize(b, ALICE)?;
+        let input = account::withdraw(b, alice_proof, BASE, 100)?;
         let proceeds = amm::swap(b, pool, input, 1)?;
         account::deposit(b, ALICE, proceeds)
     });
@@ -161,11 +161,11 @@ fn the_amm_wrapper_matches_its_signature() {
 fn the_book_wrappers_match_their_signatures() {
     let book = address("book", pair_config());
     admits(|b| {
-        let alice_badge = account::authorize(b, ALICE)?;
-        let offered = account::withdraw(b, alice_badge, BASE, 100)?;
+        let alice_proof = account::authorize(b, ALICE)?;
+        let offered = account::withdraw(b, alice_proof, BASE, 100)?;
         book::place_ask(b, book, 10, offered)?;
-        let bob_badge = account::authorize(b, BOB)?;
-        let payment = account::withdraw(b, bob_badge, QUOTE, 50)?;
+        let bob_proof = account::authorize(b, BOB)?;
+        let payment = account::withdraw(b, bob_proof, QUOTE, 50)?;
         let [bought, unspent] = book::fill_asks(b, book, 1, 20, payment)?;
         account::deposit(b, BOB, bought)?;
         account::deposit(b, BOB, unspent)
@@ -176,8 +176,8 @@ fn the_book_wrappers_match_their_signatures() {
 fn the_splitter_wrapper_matches_its_signature() {
     let splitter = address("splitter", vec![]);
     admits(|b| {
-        let alice_badge = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice_badge, BASE, 100)?;
+        let alice_proof = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice_proof, BASE, 100)?;
         let [taken, rest] = splitter::take(b, splitter, funds, 30)?;
         account::deposit(b, BOB, taken)?;
         account::deposit(b, ALICE, rest)

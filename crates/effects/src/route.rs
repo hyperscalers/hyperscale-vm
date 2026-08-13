@@ -266,7 +266,7 @@ pub enum RouteError {
     /// A static call site naming a guarded method.
     ///
     /// Authority does not propagate through a call: a callee frame holds
-    /// no badge, so a method requiring one is unreachable from a call
+    /// no proof, so a method requiring one is unreachable from a call
     /// site, however the caller itself was authorized.
     #[error("node {node} reaches `{method}`, which is guarded, through a call site")]
     GuardedCallSite {
@@ -485,10 +485,10 @@ fn own_prefix_only(
 /// Refuse a static call site naming a method that takes evidence.
 ///
 /// Authority does not propagate through a call: a callee frame presents
-/// nothing — its caller's badge was handed to the caller, not through it
+/// nothing — its caller's proof was handed to the caller, not through it
 /// — so a guarded method is unreachable from one, and reaching for it is
 /// a refusal rather than a silent pass. An authorizing method is doubly
-/// so: what it mints is a badge admission judged, and admission never
+/// so: what it mints is a proof admission judged, and admission never
 /// saw a callee frame.
 fn reachable_from_a_call_site(
     is_callee: bool,
@@ -2125,7 +2125,7 @@ mod tests {
             &TestHasher,
             &resolver(),
         )
-        .expect_err("a call site holds no badge");
+        .expect_err("a call site holds no proof");
         assert!(
             matches!(error, RouteError::GuardedCallSite { node: 0, .. }),
             "unexpected refusal: {error:?}"

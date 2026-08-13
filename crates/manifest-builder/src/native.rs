@@ -25,27 +25,27 @@ use hyperscale_vm_effects::{ComponentAddr, PrincipalAddr, ResourceRef};
 
 use crate::args::BucketArg;
 use crate::builder::Bucket;
-use crate::typed::{Badge, TypedBuilder, TypedError};
+use crate::typed::{Proof, TypedBuilder, TypedError};
 
 /// The fungible account: every principal answers these.
 pub mod account {
-    use super::{Badge, Bucket, BucketArg, PrincipalAddr, ResourceRef, TypedBuilder, TypedError};
+    use super::{Bucket, BucketArg, PrincipalAddr, Proof, ResourceRef, TypedBuilder, TypedError};
 
-    /// Reserve `amount` of `resource` on the badge holder's vault,
+    /// Reserve `amount` of `resource` on the proof holder's vault,
     /// producing it as an edge typed by the resource named here. The
-    /// badge is the actor: the withdrawal is from whoever authorized.
+    /// proof is the actor: the withdrawal is from whoever authorized.
     ///
     /// # Errors
     ///
     /// Any [`TypedError`] the call does not type against `withdraw`.
     pub fn withdraw(
         builder: &mut TypedBuilder<'_>,
-        badge: Badge,
+        proof: Proof,
         resource: impl Into<ResourceRef>,
         amount: u128,
     ) -> Result<Bucket, TypedError> {
         builder
-            .call_as(badge, badge.target(), "withdraw", (resource.into(), amount))?
+            .call_as(proof, proof.target(), "withdraw", (resource.into(), amount))?
             .one()
     }
 
@@ -62,19 +62,19 @@ pub mod account {
         builder.call(who, "deposit", (funds,))?.none()
     }
 
-    /// Write the transaction's randomness draw into the badge holder's
+    /// Write the transaction's randomness draw into the proof holder's
     /// entropy leaf.
     ///
     /// # Errors
     ///
     /// Any [`TypedError`] the call does not type against `stamp-entropy`.
-    pub fn stamp_entropy(builder: &mut TypedBuilder<'_>, badge: Badge) -> Result<(), TypedError> {
+    pub fn stamp_entropy(builder: &mut TypedBuilder<'_>, proof: Proof) -> Result<(), TypedError> {
         builder
-            .call_as(badge, badge.target(), "stamp-entropy", ())?
+            .call_as(proof, proof.target(), "stamp-entropy", ())?
             .none()
     }
 
-    /// Sign in as `who`: mint the account's identity as a badge later
+    /// Sign in as `who`: mint the account's identity as a proof later
     /// calls of the same graph present.
     ///
     /// # Errors
@@ -83,15 +83,15 @@ pub mod account {
     pub fn authorize(
         builder: &mut TypedBuilder<'_>,
         who: PrincipalAddr,
-    ) -> Result<Badge, TypedError> {
+    ) -> Result<Proof, TypedError> {
         builder.call_minting(who, "authorize")
     }
 }
 
 /// The stake pool: a delegation surface anyone may use, and an operator
-/// surface for whoever presents the configured operator's badge.
+/// surface for whoever presents the configured operator's proof.
 pub mod staking {
-    use super::{Badge, Bucket, BucketArg, ComponentAddr, TypedBuilder, TypedError};
+    use super::{Bucket, BucketArg, ComponentAddr, Proof, TypedBuilder, TypedError};
 
     /// Delegate `funds` to `pool`, receiving the pool's own stake units —
     /// an edge typed by the pool rather than by what was staked.
@@ -129,7 +129,7 @@ pub mod staking {
     /// `register-validator`.
     pub fn register_validator(
         builder: &mut TypedBuilder<'_>,
-        operator: Badge,
+        operator: Proof,
         pool: ComponentAddr,
         validator: u64,
         key: Vec<u8>,
@@ -153,7 +153,7 @@ pub mod staking {
     /// `deactivate-validator`.
     pub fn deactivate_validator(
         builder: &mut TypedBuilder<'_>,
-        operator: Badge,
+        operator: Proof,
         pool: ComponentAddr,
         validator: u64,
     ) -> Result<(), TypedError> {
@@ -169,7 +169,7 @@ pub mod staking {
     /// Any [`TypedError`] the call does not type against `unjail`.
     pub fn unjail(
         builder: &mut TypedBuilder<'_>,
-        operator: Badge,
+        operator: Proof,
         pool: ComponentAddr,
         validator: u64,
     ) -> Result<(), TypedError> {
@@ -188,7 +188,7 @@ pub mod staking {
     /// `cast-param-vote`.
     pub fn cast_param_vote(
         builder: &mut TypedBuilder<'_>,
-        operator: Badge,
+        operator: Proof,
         pool: ComponentAddr,
         split_bytes: u64,
         impound_epochs: u64,
@@ -212,7 +212,7 @@ pub mod staking {
     /// `clear-param-vote`.
     pub fn clear_param_vote(
         builder: &mut TypedBuilder<'_>,
-        operator: Badge,
+        operator: Proof,
         pool: ComponentAddr,
     ) -> Result<(), TypedError> {
         builder

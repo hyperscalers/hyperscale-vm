@@ -65,24 +65,24 @@ pub enum GraphArg {
 /// The bound on identities one call may present as evidence.
 pub const MAX_EVIDENCE_PER_NODE: usize = 8;
 
-/// Where a presented badge comes from.
+/// Where a presented proof comes from.
 ///
 /// Evidence is presented, never ambient: a node names what it hands its
 /// callee, so a call into one package cannot carry authority the author
 /// meant for another. Both sources are scoped to the node's own intent:
-/// a signature badge to the intent whose signature produced it, a node
-/// badge to the intent whose node minted it.
+/// a signature proof to the intent whose signature produced it, a node
+/// proof to the intent whose node minted it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum EvidenceRef {
-    /// The badge the enclosing intent's own signature produces, carrying
+    /// The proof the enclosing intent's own signature produces, carrying
     /// the identity of whoever signed that intent.
     IntentSignature,
-    /// The badge an earlier node of the same intent minted, carrying the
+    /// The proof an earlier node of the same intent minted, carrying the
     /// identity of that node's target.
     ///
     /// Admission resolves the index against the intent's own node list
     /// and refuses one that is not earlier or whose method does not mint.
-    /// Nothing checks the badge later: if the producing node's own gate
+    /// Nothing checks the proof later: if the producing node's own gate
     /// refuses, that node aborts the transaction, so a consumer only ever
     /// runs in a world where the producer succeeded.
     Node(u32),
@@ -126,7 +126,7 @@ impl GraphNode {
         }
     }
 
-    /// A call presenting the enclosing intent's signature badge — what
+    /// A call presenting the enclosing intent's signature proof — what
     /// an authorizing method takes.
     #[must_use]
     pub fn signed(
@@ -140,7 +140,7 @@ impl GraphNode {
         }
     }
 
-    /// A call presenting the badge the intent's node `producer` minted —
+    /// A call presenting the proof the intent's node `producer` minted —
     /// what a guarded method takes.
     #[must_use]
     pub fn bearing(

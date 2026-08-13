@@ -251,7 +251,7 @@ impl GraphBuilder {
         self.call_presenting(target, method, args, BTreeSet::new())
     }
 
-    /// The same call, presenting the enclosing intent's signature badge —
+    /// The same call, presenting the enclosing intent's signature proof —
     /// what an authorizing method takes.
     ///
     /// The typed builder reads which methods need this off their
@@ -276,7 +276,7 @@ impl GraphBuilder {
         )
     }
 
-    /// The same call, presenting the badge node `producer` minted — what
+    /// The same call, presenting the proof node `producer` minted — what
     /// a guarded method takes.
     ///
     /// The author also says which node mints, for the same reason they
@@ -380,7 +380,7 @@ impl GraphBuilder {
 
     /// How many nodes have been appended — the index the next call takes,
     /// which is what admission will number it by. A bare author presenting
-    /// a badge reads the producer's index off this, since a call with no
+    /// a proof reads the producer's index off this, since a call with no
     /// outputs hands back nothing that names it.
     ///
     /// # Panics

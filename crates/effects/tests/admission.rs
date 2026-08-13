@@ -166,7 +166,7 @@ fn evidence_is_presented_exactly_where_it_is_required() {
         Err(AdmissionError::MissingEvidence { node: 1 })
     );
 
-    // And the badge rule itself: a signature signs in, so presenting it
+    // And the proof rule itself: a signature signs in, so presenting it
     // to the guarded withdrawal is refused whoever signed.
     let mut signature = valid_graph();
     signature.nodes[1].evidence = [EvidenceRef::IntentSignature].into();
@@ -176,9 +176,9 @@ fn evidence_is_presented_exactly_where_it_is_required() {
     );
 }
 
-/// Authorize Alice, withdraw on her badge rather than on the signature,
-/// deposit to Bob — the minted-badge shape, fully consumed.
-fn badge_graph() -> ManifestGraph {
+/// Authorize Alice, withdraw on her proof rather than on the signature,
+/// deposit to Bob — the minted-proof shape, fully consumed.
+fn proof_graph() -> ManifestGraph {
     ManifestGraph {
         nodes: vec![
             GraphNode {
@@ -212,13 +212,13 @@ fn badge_graph() -> ManifestGraph {
     }
 }
 
-/// A minted badge resolves at admission to its producer's target — the
+/// A minted proof resolves at admission to its producer's target — the
 /// same address set an intent signature would have produced for a
 /// virtual account, reached through the authorizing node instead.
 #[test]
-fn a_minted_badge_resolves_to_its_producers_target() {
+fn a_minted_proof_resolves_to_its_producers_target() {
     let (cache, instances) = setup();
-    let admitted = admit(&badge_graph(), ALICE, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&proof_graph(), ALICE, &cache, &instances, &TestHasher).expect("admits");
 
     let authorize = &admitted.manifest().nodes[0];
     assert_eq!(authorize.evidence, vec![ALICE.address()]);
@@ -233,29 +233,29 @@ fn a_minted_badge_resolves_to_its_producers_target() {
     route(&admitted, &cache, &instances, &TestHasher, &resolver()).expect("routes");
 }
 
-/// A badge consumer never runs ahead of its producer, and never draws
+/// A proof consumer never runs ahead of its producer, and never draws
 /// authority from a method that merely does something.
 #[test]
-fn a_badge_is_drawn_from_an_earlier_minting_node_or_refused() {
+fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     let (cache, instances) = setup();
 
     // Its own node: not earlier.
-    let mut own = badge_graph();
+    let mut own = proof_graph();
     own.nodes[1].evidence = [EvidenceRef::Node(1)].into();
     assert_eq!(
         admit(&own, ALICE, &cache, &instances, &TestHasher),
-        Err(AdmissionError::ForwardBadge {
+        Err(AdmissionError::ForwardProof {
             node: 1,
             producer: 1
         })
     );
 
     // A later node, which is also every out-of-range index.
-    let mut later = badge_graph();
+    let mut later = proof_graph();
     later.nodes[1].evidence = [EvidenceRef::Node(2)].into();
     assert_eq!(
         admit(&later, ALICE, &cache, &instances, &TestHasher),
-        Err(AdmissionError::ForwardBadge {
+        Err(AdmissionError::ForwardProof {
             node: 1,
             producer: 2
         })
@@ -265,7 +265,7 @@ fn a_badge_is_drawn_from_an_earlier_minting_node_or_refused() {
     // something, and doing something is not authorizing. The error
     // precedes linearity, so the appended node's dangling output never
     // gets judged.
-    let mut unminting = badge_graph();
+    let mut unminting = proof_graph();
     unminting.nodes.push(GraphNode {
         target: ALICE.into(),
         method: "withdraw".into(),
@@ -277,14 +277,14 @@ fn a_badge_is_drawn_from_an_earlier_minting_node_or_refused() {
     });
     assert_eq!(
         admit(&unminting, ALICE, &cache, &instances, &TestHasher),
-        Err(AdmissionError::UnmintingBadge {
+        Err(AdmissionError::UnmintingProof {
             node: 3,
             producer: 2
         })
     );
 
     // The authorizing node's own gate takes evidence like any other.
-    let mut unsigned = badge_graph();
+    let mut unsigned = proof_graph();
     unsigned.nodes[0].evidence.clear();
     assert_eq!(
         admit(&unsigned, ALICE, &cache, &instances, &TestHasher),

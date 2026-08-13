@@ -1,8 +1,8 @@
 //! The authority rule vocabulary.
 //!
 //! A rule names which identities may act as the object that stores it: a
-//! single identity, or a threshold over sub-rules. `Threshold(1, …)` is
-//! disjunction and a threshold requiring every branch is conjunction, so
+//! single identity, or a count over sub-rules. `CountOf(1, …)` is
+//! disjunction and a count requiring every branch is conjunction, so
 //! one constructor covers "this key", "any of these three", and "two of
 //! these five" without a second form.
 //!
@@ -46,17 +46,17 @@ pub const MAX_RULE_WIRE_DEPTH: usize = 2 * MAX_RULE_DEPTH;
 
 /// An authority rule: a threshold over identities.
 ///
-/// Badge resources, amounts, and holder-presented custody are
+/// Proof resources, amounts, and holder-presented custody are
 /// deliberately absent — a rule asks which identities are present, and
 /// nothing else.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum Rule {
     /// Satisfied when this identity is among those presented.
-    Identity(Address),
+    Require(Address),
     /// Satisfied when enough branches are.
-    Threshold {
+    CountOf {
         /// How many of `rules` must be satisfied.
-        required: u8,
+        count: u8,
         /// The branches, each judged independently over the same
         /// identity set.
         #[hbor(max = MAX_RULE_BRANCHES)]
@@ -76,13 +76,13 @@ impl Rule {
     #[must_use]
     pub fn satisfied_by(&self, identities: &[Address]) -> bool {
         match self {
-            Self::Identity(identity) => identities.contains(identity),
-            Self::Threshold { required, rules } => {
+            Self::Require(identity) => identities.contains(identity),
+            Self::CountOf { count, rules } => {
                 let met = rules
                     .iter()
                     .filter(|rule| rule.satisfied_by(identities))
                     .count();
-                met >= usize::from(*required)
+                met >= usize::from(*count)
             }
         }
     }
@@ -96,7 +96,7 @@ impl Rule {
         let mut stack: Vec<(&Self, usize)> = vec![(self, 1)];
         while let Some((rule, depth)) = stack.pop() {
             deepest = deepest.max(depth);
-            if let Self::Threshold { rules, .. } = rule {
+            if let Self::CountOf { rules, .. } = rule {
                 stack.extend(rules.iter().map(|branch| (branch, depth + 1)));
             }
         }
@@ -142,15 +142,15 @@ mod tests {
     /// a compliant encoder refuses to produce.
     #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
     enum Wide {
-        Identity(Address),
-        Threshold { required: u8, rules: Vec<Self> },
+        Require(Address),
+        CountOf { count: u8, rules: Vec<Self> },
     }
 
     fn wide_chain(levels: usize) -> Wide {
-        let mut rule = Wide::Identity(identity(1));
+        let mut rule = Wide::Require(identity(1));
         for _ in 0..levels {
-            rule = Wide::Threshold {
-                required: 1,
+            rule = Wide::CountOf {
+                count: 1,
                 rules: vec![rule],
             };
         }
@@ -159,12 +159,12 @@ mod tests {
 
     #[test]
     fn a_threshold_is_satisfied_at_its_count_and_not_below() {
-        let two_of_three = Rule::Threshold {
-            required: 2,
+        let two_of_three = Rule::CountOf {
+            count: 2,
             rules: vec![
-                Rule::Identity(identity(1)),
-                Rule::Identity(identity(2)),
-                Rule::Identity(identity(3)),
+                Rule::Require(identity(1)),
+                Rule::Require(identity(2)),
+                Rule::Require(identity(3)),
             ],
         };
         assert!(two_of_three.satisfied_by(&[identity(1), identity(3)]));
@@ -175,13 +175,13 @@ mod tests {
 
         // A nested branch counts as one branch however many identities
         // satisfy its inside.
-        let key_or_guardians = Rule::Threshold {
-            required: 1,
+        let key_or_guardians = Rule::CountOf {
+            count: 1,
             rules: vec![
-                Rule::Identity(identity(1)),
-                Rule::Threshold {
-                    required: 2,
-                    rules: vec![Rule::Identity(identity(2)), Rule::Identity(identity(3))],
+                Rule::Require(identity(1)),
+                Rule::CountOf {
+                    count: 2,
+                    rules: vec![Rule::Require(identity(2)), Rule::Require(identity(3))],
                 },
             ],
         };
@@ -193,38 +193,38 @@ mod tests {
     #[test]
     fn evaluation_is_total_over_degenerate_forms() {
         // Requiring nothing is satisfied by anyone, including no one.
-        let vacuous = Rule::Threshold {
-            required: 0,
+        let vacuous = Rule::CountOf {
+            count: 0,
             rules: vec![],
         };
         assert!(vacuous.satisfied_by(&[]));
 
         // Requiring more than the branches offer is satisfied by no one.
-        let unsatisfiable = Rule::Threshold {
-            required: 2,
-            rules: vec![Rule::Identity(identity(1))],
+        let unsatisfiable = Rule::CountOf {
+            count: 2,
+            rules: vec![Rule::Require(identity(1))],
         };
         assert!(!unsatisfiable.satisfied_by(&[identity(1), identity(2)]));
 
         // A repeated branch counts once per appearance.
-        let doubled = Rule::Threshold {
-            required: 2,
-            rules: vec![Rule::Identity(identity(1)), Rule::Identity(identity(1))],
+        let doubled = Rule::CountOf {
+            count: 2,
+            rules: vec![Rule::Require(identity(1)), Rule::Require(identity(1))],
         };
         assert!(doubled.satisfied_by(&[identity(1)]));
     }
 
     #[test]
     fn the_wire_form_is_canonical_and_round_trips() {
-        let rule = Rule::Threshold {
-            required: 2,
+        let rule = Rule::CountOf {
+            count: 2,
             rules: vec![
-                Rule::Identity(identity(1)),
-                Rule::Threshold {
-                    required: 1,
-                    rules: vec![Rule::Identity(identity(2)), Rule::Identity(identity(3))],
+                Rule::Require(identity(1)),
+                Rule::CountOf {
+                    count: 1,
+                    rules: vec![Rule::Require(identity(2)), Rule::Require(identity(3))],
                 },
-                Rule::Identity(identity(4)),
+                Rule::Require(identity(4)),
             ],
         };
         assert_canonical(&rule);
@@ -239,10 +239,10 @@ mod tests {
     #[test]
     fn the_wire_depth_cap_matches_the_rule_depth_gate() {
         let chain = |levels: usize| {
-            let mut rule = Rule::Identity(identity(1));
+            let mut rule = Rule::Require(identity(1));
             for _ in 0..levels {
-                rule = Rule::Threshold {
-                    required: 1,
+                rule = Rule::CountOf {
+                    count: 1,
                     rules: vec![rule],
                 };
             }
@@ -266,10 +266,10 @@ mod tests {
 
     #[test]
     fn a_branch_list_past_the_cap_is_refused_at_decode() {
-        let branches = |count: usize| Wide::Threshold {
-            required: 1,
+        let branches = |count: usize| Wide::CountOf {
+            count: 1,
             rules: (0..count)
-                .map(|i| Wide::Identity(identity(u8::try_from(i).unwrap())))
+                .map(|i| Wide::Require(identity(u8::try_from(i).unwrap())))
                 .collect(),
         };
 

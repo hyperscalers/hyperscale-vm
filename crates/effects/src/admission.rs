@@ -133,38 +133,38 @@ pub enum AdmissionError {
         /// The offending node.
         node: u32,
     },
-    /// A badge drawn from an intent signature in an unsigned graph.
-    #[error("node {node} presents a signature badge, and its intent is unsigned")]
+    /// A proof drawn from an intent signature in an unsigned graph.
+    #[error("node {node} presents a signature proof, and its intent is unsigned")]
     UnsignedEvidence {
         /// The offending node.
         node: u32,
     },
-    /// A signature badge presented to a method that only minted badges
+    /// A signature proof presented to a method that only minted proofs
     /// open.
     ///
-    /// A signature signs in; a badge acts. The identity a signature
-    /// badge carries is the address its key derives, and whether that
+    /// A signature signs in; a proof acts. The identity a signature
+    /// proof carries is the address its key derives, and whether that
     /// address still holds its account's authority is state only the
     /// account's rule knows — so the one gate a signature may reach is
     /// an authorizing one, where that rule is read.
-    #[error("node {node} presents a signature badge to a method only a minted badge opens")]
+    #[error("node {node} presents a signature proof to a method only a minted proof opens")]
     SignatureForGuarded {
         /// The offending node.
         node: u32,
     },
-    /// A badge drawn from a node that is not an earlier node of the same
-    /// intent — the badge's producer must have run, and aborted the
+    /// A proof drawn from a node that is not an earlier node of the same
+    /// intent — the proof's producer must have run, and aborted the
     /// transaction if its own gate refused, before anything consumes it.
-    #[error("node {node} draws a badge from node {producer}, which is not earlier")]
-    ForwardBadge {
+    #[error("node {node} draws a proof from node {producer}, which is not earlier")]
+    ForwardProof {
         /// The consuming node, flattened.
         node: u32,
         /// The claimed producer, in the intent's own node order.
         producer: u32,
     },
-    /// A badge drawn from a node whose method mints no identity.
-    #[error("node {node} draws a badge from node {producer}, whose method does not mint")]
-    UnmintingBadge {
+    /// A proof drawn from a node whose method mints no identity.
+    #[error("node {node} draws a proof from node {producer}, whose method does not mint")]
+    UnmintingProof {
         /// The consuming node, flattened.
         node: u32,
         /// The producer named, in the intent's own node order.
@@ -449,7 +449,7 @@ pub(crate) struct IntentView<'a> {
     pub params: &'a [YieldParam],
     pub bindings: &'a [YieldBinding],
     /// Whose signature this intent carries, and so whose identity its
-    /// badge names. A bare graph is unsigned and produces none.
+    /// proof names. A bare graph is unsigned and produces none.
     pub signer: Option<Address>,
 }
 
@@ -763,16 +763,16 @@ pub(crate) fn admit_intents(
                 Some(VIRTUAL_RULE)
             }
         };
-        // A badge is scoped to the intent that produced it — a signature
-        // badge to the intent whose signature, a node badge to the intent
+        // A proof is scoped to the intent that produced it — a signature
+        // proof to the intent whose signature, a node proof to the intent
         // whose node — so the identities resolve against this node's own
         // intent and no other.
         let mut evidence = Vec::with_capacity(node.evidence.len());
         for reference in &node.evidence {
             match reference {
                 EvidenceRef::IntentSignature => {
-                    // A signature signs in; a badge acts. Whether the
-                    // key behind this badge still holds its account's
+                    // A signature signs in; a proof acts. Whether the
+                    // key behind this proof still holds its account's
                     // authority is the account's rule, so the only gate
                     // it may reach is the one that reads a rule.
                     if !matches!(signature.accessibility, Accessibility::Authorizing) {
@@ -788,7 +788,7 @@ pub(crate) fn admit_intents(
                         .ok()
                         .filter(|&earlier| earlier < local_index)
                         .and_then(|earlier| intent.graph.nodes.get(earlier))
-                        .ok_or(AdmissionError::ForwardBadge {
+                        .ok_or(AdmissionError::ForwardProof {
                             node: node_index,
                             producer: *producer,
                         })?;
@@ -806,7 +806,7 @@ pub(crate) fn admit_intents(
                                 matches!(signature.accessibility, Accessibility::Authorizing)
                             });
                     if !minting {
-                        return Err(AdmissionError::UnmintingBadge {
+                        return Err(AdmissionError::UnmintingProof {
                             node: node_index,
                             producer: *producer,
                         });

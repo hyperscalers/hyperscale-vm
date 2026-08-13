@@ -53,7 +53,7 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 /// draw into the account's entropy leaf. `authorize()`: nothing but its
 /// own gate — naming it mints the account's identity as evidence for
 /// later nodes of the intent, which is how an account acts through calls
-/// its own signature badge would not open.
+/// its own signature proof would not open.
 ///
 /// Spending and writing require the account's own authority; being paid
 /// does not. Anyone may credit you, and a transfer therefore still
