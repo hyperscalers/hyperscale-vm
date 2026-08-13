@@ -91,7 +91,8 @@ fn transfer_graph(
     from: PrincipalAddr,
 ) -> ManifestGraph {
     let mut b = TypedBuilder::new(cache, instances, &TestHasher);
-    let funds = account::withdraw(&mut b, from, RES, AMOUNT).expect("withdraw types");
+    let badge = account::authorize(&mut b, from).expect("sign-in types");
+    let funds = account::withdraw(&mut b, badge, RES, AMOUNT).expect("withdraw types");
     account::deposit(&mut b, RECIPIENT, funds).expect("deposit types");
     b.build().expect("every output is consumed")
 }

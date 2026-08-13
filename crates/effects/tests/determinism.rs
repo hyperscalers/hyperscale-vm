@@ -131,18 +131,24 @@ proptest! {
             nodes: vec![
                 GraphNode {
                     target: sender.into(),
+                    method: "authorize".into(),
+                    args: vec![],
+                    evidence: [EvidenceRef::IntentSignature].into(),
+                },
+                GraphNode {
+                    target: sender.into(),
                     method: "withdraw".into(),
                     args: vec![
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(amount)),
                     ],
-                    evidence: [EvidenceRef::IntentSignature].into(),
+                    evidence: [EvidenceRef::Node(0)].into(),
                 },
                 GraphNode {
                     target: recipient.into(),
                     method: "deposit".into(),
                     args: vec![GraphArg::Edge {
-                        edge: EdgeRef { producer: 0, output: 0 },
+                        edge: EdgeRef { producer: 1, output: 0 },
                         constraints: vec![],
                     }],
                     evidence: BTreeSet::new(),
@@ -199,12 +205,18 @@ proptest! {
             nodes: vec![
                 GraphNode {
                     target: sender.into(),
+                    method: "authorize".into(),
+                    args: vec![],
+                    evidence: [EvidenceRef::IntentSignature].into(),
+                },
+                GraphNode {
+                    target: sender.into(),
                     method: "withdraw".into(),
                     args: vec![
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(1)),
                     ],
-                    evidence: [EvidenceRef::IntentSignature].into(),
+                    evidence: [EvidenceRef::Node(0)].into(),
                 },
                 GraphNode {
                     target: router.into(),
@@ -212,7 +224,7 @@ proptest! {
                     args: vec![
                         GraphArg::Literal(Value::Address(recipient.into())),
                         GraphArg::Edge {
-                            edge: EdgeRef { producer: 0, output: 0 },
+                            edge: EdgeRef { producer: 1, output: 0 },
                             constraints: vec![],
                         },
                     ],

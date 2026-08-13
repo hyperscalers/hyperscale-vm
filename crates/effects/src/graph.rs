@@ -126,8 +126,8 @@ impl GraphNode {
         }
     }
 
-    /// A call presenting the enclosing intent's signature badge — what a
-    /// guarded method takes.
+    /// A call presenting the enclosing intent's signature badge — what
+    /// an authorizing method takes.
     #[must_use]
     pub fn signed(
         target: impl Into<CallTarget>,
@@ -136,6 +136,21 @@ impl GraphNode {
     ) -> Self {
         Self {
             evidence: BTreeSet::from([EvidenceRef::IntentSignature]),
+            ..Self::new(target, method, args)
+        }
+    }
+
+    /// A call presenting the badge the intent's node `producer` minted —
+    /// what a guarded method takes.
+    #[must_use]
+    pub fn bearing(
+        target: impl Into<CallTarget>,
+        method: impl Into<String>,
+        args: Vec<GraphArg>,
+        producer: u32,
+    ) -> Self {
+        Self {
+            evidence: BTreeSet::from([EvidenceRef::Node(producer)]),
             ..Self::new(target, method, args)
         }
     }

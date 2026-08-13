@@ -104,33 +104,38 @@ fn admits(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -
 #[test]
 fn the_account_wrappers_match_their_signatures() {
     let graph = admits(|b| {
-        let funds = account::withdraw(b, ALICE, BASE, 100)?;
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, BASE, 100)?;
         account::deposit(b, BOB, funds)?;
-        account::stamp_entropy(b, ALICE)
+        account::stamp_entropy(b, alice)
     });
-    assert_eq!(graph.nodes.len(), 3);
+    assert_eq!(graph.nodes.len(), 4);
 }
 
 #[test]
 fn the_staking_wrappers_match_their_signatures() {
     let pool = address("staking", pool_config());
     let graph = admits(|b| {
+        // One sign-in acts for the whole graph: the delegation round
+        // trip and the operator surface both present Alice's badge.
+        let alice = account::authorize(b, ALICE)?;
+
         // The delegation round trip: funds in, the pool's own units out
         // and into an account, then units back to the pool.
-        let funds = account::withdraw(b, ALICE, BASE, 100)?;
+        let funds = account::withdraw(b, alice, BASE, 100)?;
         let units = staking::stake(b, pool, funds)?;
         account::deposit(b, ALICE, units)?;
-        let returned = account::withdraw(b, ALICE, staking_units(pool), 40)?;
+        let returned = account::withdraw(b, alice, staking_units(pool), 40)?;
         staking::unstake(b, pool, returned)?;
 
         // The operator surface, which supplies no funds and produces none.
-        staking::register_validator(b, pool, 7, vec![0xAA; 48], vec![0xBB; 96])?;
-        staking::deactivate_validator(b, pool, 7)?;
-        staking::unjail(b, pool, 7)?;
-        staking::cast_param_vote(b, pool, 9_000, 30, 12)?;
-        staking::clear_param_vote(b, pool)
+        staking::register_validator(b, alice, pool, 7, vec![0xAA; 48], vec![0xBB; 96])?;
+        staking::deactivate_validator(b, alice, pool, 7)?;
+        staking::unjail(b, alice, pool, 7)?;
+        staking::cast_param_vote(b, alice, pool, 9_000, 30, 12)?;
+        staking::clear_param_vote(b, alice, pool)
     });
-    assert_eq!(graph.nodes.len(), 10);
+    assert_eq!(graph.nodes.len(), 11);
 }
 
 /// The resource a pool issues, which its `stake` output derives from the
@@ -145,7 +150,8 @@ fn the_amm_wrapper_matches_its_signature() {
     admits(|b| {
         // The pool's output is typed by its second configured resource,
         // so what comes back is quote against a base input.
-        let input = account::withdraw(b, ALICE, BASE, 100)?;
+        let alice_badge = account::authorize(b, ALICE)?;
+        let input = account::withdraw(b, alice_badge, BASE, 100)?;
         let proceeds = amm::swap(b, pool, input, 1)?;
         account::deposit(b, ALICE, proceeds)
     });
@@ -155,9 +161,11 @@ fn the_amm_wrapper_matches_its_signature() {
 fn the_book_wrappers_match_their_signatures() {
     let book = address("book", pair_config());
     admits(|b| {
-        let offered = account::withdraw(b, ALICE, BASE, 100)?;
+        let alice_badge = account::authorize(b, ALICE)?;
+        let offered = account::withdraw(b, alice_badge, BASE, 100)?;
         book::place_ask(b, book, 10, offered)?;
-        let payment = account::withdraw(b, BOB, QUOTE, 50)?;
+        let bob_badge = account::authorize(b, BOB)?;
+        let payment = account::withdraw(b, bob_badge, QUOTE, 50)?;
         let [bought, unspent] = book::fill_asks(b, book, 1, 20, payment)?;
         account::deposit(b, BOB, bought)?;
         account::deposit(b, BOB, unspent)
@@ -168,7 +176,8 @@ fn the_book_wrappers_match_their_signatures() {
 fn the_splitter_wrapper_matches_its_signature() {
     let splitter = address("splitter", vec![]);
     admits(|b| {
-        let funds = account::withdraw(b, ALICE, BASE, 100)?;
+        let alice_badge = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice_badge, BASE, 100)?;
         let [taken, rest] = splitter::take(b, splitter, funds, 30)?;
         account::deposit(b, BOB, taken)?;
         account::deposit(b, ALICE, rest)

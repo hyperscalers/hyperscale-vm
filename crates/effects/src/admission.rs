@@ -139,6 +139,19 @@ pub enum AdmissionError {
         /// The offending node.
         node: u32,
     },
+    /// A signature badge presented to a method that only minted badges
+    /// open.
+    ///
+    /// A signature signs in; a badge acts. The identity a signature
+    /// badge carries is the address its key derives, and whether that
+    /// address still holds its account's authority is state only the
+    /// account's rule knows — so the one gate a signature may reach is
+    /// an authorizing one, where that rule is read.
+    #[error("node {node} presents a signature badge to a method only a minted badge opens")]
+    SignatureForGuarded {
+        /// The offending node.
+        node: u32,
+    },
     /// A badge drawn from a node that is not an earlier node of the same
     /// intent — the badge's producer must have run, and aborted the
     /// transaction if its own gate refused, before anything consumes it.
@@ -758,6 +771,13 @@ pub(crate) fn admit_intents(
         for reference in &node.evidence {
             match reference {
                 EvidenceRef::IntentSignature => {
+                    // A signature signs in; a badge acts. Whether the
+                    // key behind this badge still holds its account's
+                    // authority is the account's rule, so the only gate
+                    // it may reach is the one that reads a rule.
+                    if !matches!(signature.accessibility, Accessibility::Authorizing) {
+                        return Err(AdmissionError::SignatureForGuarded { node: node_index });
+                    }
                     let signer = intent
                         .signer
                         .ok_or(AdmissionError::UnsignedEvidence { node: node_index })?;

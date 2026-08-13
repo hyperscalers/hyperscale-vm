@@ -60,7 +60,8 @@ const SHARDS: PrefixShardResolver = PrefixShardResolver { bits: 2 };
 fn a_report_is_what_the_chain_derives() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
+    let alice_badge = account::authorize(&mut b, ALICE).unwrap();
+    let funds = account::withdraw(&mut b, alice_badge, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
 
@@ -106,7 +107,8 @@ fn a_report_is_what_the_chain_derives() {
 fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
+    let alice_badge = account::authorize(&mut b, ALICE).unwrap();
+    let funds = account::withdraw(&mut b, alice_badge, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     let report = preflight(
@@ -121,9 +123,11 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
     .unwrap();
 
     // Spending is the sender's; being paid is nobody's to refuse, so a
-    // transfer composes under one signature.
+    // transfer composes under one signature — presented once, at the
+    // sign-in, and carried to the withdrawal as its badge.
     assert_eq!(report.authority[0].authority, Authority::Signature(ALICE));
-    assert_eq!(report.authority[1].authority, Authority::Anyone);
+    assert_eq!(report.authority[1].authority, Authority::Signature(ALICE));
+    assert_eq!(report.authority[2].authority, Authority::Anyone);
     assert_eq!(report.signers(), std::iter::once(ALICE).collect());
     assert_eq!(report.unsatisfiable().count(), 0);
 }
@@ -132,7 +136,8 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
 fn a_configured_operator_is_the_signature_its_surface_names() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    staking::unjail(&mut b, pool(Some(OPERATOR)), 42).unwrap();
+    let operator = account::authorize(&mut b, OPERATOR).unwrap();
+    staking::unjail(&mut b, operator, pool(Some(OPERATOR)), 42).unwrap();
     let graph = b.build().unwrap();
     let report = preflight(
         &graph,
@@ -161,7 +166,8 @@ fn a_configured_operator_is_the_signature_its_surface_names() {
 fn a_slot_naming_no_principal_is_refused() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    staking::unjail(&mut b, pool(None), 42).unwrap();
+    let operator = account::authorize(&mut b, OPERATOR).unwrap();
+    staking::unjail(&mut b, operator, pool(None), 42).unwrap();
     let graph = b.build().unwrap();
     assert!(matches!(
         preflight(
@@ -181,7 +187,8 @@ fn a_slot_naming_no_principal_is_refused() {
 fn every_address_the_report_names_is_named_for_the_network() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
+    let alice_badge = account::authorize(&mut b, ALICE).unwrap();
+    let funds = account::withdraw(&mut b, alice_badge, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     let report = preflight(
@@ -221,7 +228,8 @@ fn every_address_the_report_names_is_named_for_the_network() {
 fn a_network_word_the_encoding_refuses_fails_once() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
+    let alice_badge = account::authorize(&mut b, ALICE).unwrap();
+    let funds = account::withdraw(&mut b, alice_badge, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     assert!(matches!(
@@ -248,13 +256,15 @@ fn a_composition_names_every_signer_it_needs() {
     let (mut env, mut root) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
 
     let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
-    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
+    let alice_badge = account::authorize(&mut root, ALICE).unwrap();
+    let funds = account::withdraw(&mut root, alice_badge, RES_X, 100).unwrap();
     let paid_x = root.export(funds);
     account::deposit(&mut root, ALICE, taken).unwrap();
 
     let mut sub = env.subintent(BOB);
     let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
-    let funds = account::withdraw(&mut sub, BOB, RES_Y, 10).unwrap();
+    let bob_badge = account::authorize(&mut sub, BOB).unwrap();
+    let funds = account::withdraw(&mut sub, bob_badge, RES_Y, 10).unwrap();
     let paid_y = sub.export(funds);
     account::deposit(&mut sub, BOB, taken).unwrap();
 

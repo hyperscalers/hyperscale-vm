@@ -92,7 +92,9 @@ proptest! {
         let (cache, instances) = world();
         let mut b = GraphBuilder::new();
         for t in &transfers {
-            let [funds] = b.call_signed(ACCOUNTS[t.from], "withdraw", (RES, t.amount));
+            let sign_in = b.len();
+            let [] = b.call_signed(ACCOUNTS[t.from], "authorize", ());
+            let [funds] = b.call_bearing(ACCOUNTS[t.from], "withdraw", (RES, t.amount), sign_in);
             let mut funds = funds.resource_is(RES);
             if let Some((min, max)) = t.bounds {
                 funds = funds.min(min).max(max);
@@ -117,7 +119,8 @@ proptest! {
             // No `resource_is` anywhere below: `withdraw` declares its
             // output's type and `take` carries it, so the assertions are
             // the signatures' rather than the author's.
-            let mut funds = b.call(ACCOUNTS[t.from], "withdraw", (RES, t.amount)).unwrap().one().unwrap();
+            let badge = b.call_minting(ACCOUNTS[t.from], "authorize").unwrap();
+            let mut funds = b.call_as(badge, ACCOUNTS[t.from], "withdraw", (RES, t.amount)).unwrap().one().unwrap();
             if let Some((min, max)) = t.bounds {
                 funds = funds.min(min).max(max);
             }
@@ -150,9 +153,10 @@ proptest! {
 fn the_walkthrough_transfer_admits() {
     let (cache, instances) = world();
     let mut b = GraphBuilder::new();
-    let [funds] = b.call_signed(ACCOUNTS[0], "withdraw", (RES, 100u128));
+    let [] = b.call_signed(ACCOUNTS[0], "authorize", ());
+    let [funds] = b.call_bearing(ACCOUNTS[0], "withdraw", (RES, 100u128), 0);
     let [] = b.call(ACCOUNTS[1], "deposit", (funds.resource_is(RES),));
     let graph = b.build().unwrap();
     let admitted = admit(&graph, ACCOUNTS[0], &cache, &instances, &TestHasher).unwrap();
-    assert_eq!(admitted.manifest().nodes.len(), 2);
+    assert_eq!(admitted.manifest().nodes.len(), 3);
 }

@@ -252,7 +252,7 @@ impl GraphBuilder {
     }
 
     /// The same call, presenting the enclosing intent's signature badge —
-    /// what a guarded method takes.
+    /// what an authorizing method takes.
     ///
     /// The typed builder reads which methods need this off their
     /// signatures; here the author says so, because a bare graph builder
@@ -273,6 +273,33 @@ impl GraphBuilder {
             method,
             args,
             BTreeSet::from([EvidenceRef::IntentSignature]),
+        )
+    }
+
+    /// The same call, presenting the badge node `producer` minted — what
+    /// a guarded method takes.
+    ///
+    /// The author also says which node mints, for the same reason they
+    /// say anything here: a bare graph builder has no metadata to
+    /// consult. Whether the named producer actually mints is admission's
+    /// verdict.
+    ///
+    /// # Panics
+    ///
+    /// As [`call`](Self::call).
+    #[must_use = "every minted output must be consumed for the graph to build"]
+    pub fn call_bearing<const N: usize>(
+        &mut self,
+        target: impl Into<CallTarget>,
+        method: impl Into<String>,
+        args: impl Args,
+        producer: u32,
+    ) -> [Bucket; N] {
+        self.call_presenting(
+            target,
+            method,
+            args,
+            BTreeSet::from([EvidenceRef::Node(producer)]),
         )
     }
 
@@ -352,9 +379,22 @@ impl GraphBuilder {
     }
 
     /// How many nodes have been appended — the index the next call takes,
-    /// which is what admission will number it by.
-    pub(crate) fn len(&self) -> u32 {
+    /// which is what admission will number it by. A bare author presenting
+    /// a badge reads the producer's index off this, since a call with no
+    /// outputs hands back nothing that names it.
+    ///
+    /// # Panics
+    ///
+    /// Past `u32::MAX` nodes — far beyond what admission admits.
+    #[must_use]
+    pub fn len(&self) -> u32 {
         u32::try_from(self.nodes.len()).expect("more nodes than an edge can name")
+    }
+
+    /// Whether nothing has been appended.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
     }
 
     /// Refuse a handle this builder did not mint, whose indices its tables

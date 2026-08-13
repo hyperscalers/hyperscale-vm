@@ -528,7 +528,8 @@ fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) ->
 
 fn transfer_graph() -> ManifestGraph {
     graph(|b| {
-        let funds = account::withdraw(b, ALICE, RES_X, 100)?;
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, RES_X, 100)?;
         account::deposit(b, BOB, funds)
     })
 }
@@ -592,7 +593,8 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
         // deposit is the one this test published rather than the account's.
         let (cache, instances) = &world;
         let mut b = TypedBuilder::new(cache, instances, &TestHasher);
-        let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
+        let alice = account::authorize(&mut b, ALICE).unwrap();
+        let funds = account::withdraw(&mut b, alice, RES_X, 100).unwrap();
         b.call(dana, "deposit", (funds,)).unwrap().none().unwrap();
         b.build().expect("every output is consumed")
     };
@@ -625,7 +627,8 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
 /// cannot meet.
 fn bounded_transfer_graph(constraint: Constraint) -> ManifestGraph {
     graph(|b| {
-        let funds = account::withdraw(b, ALICE, RES_X, 100)?;
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, RES_X, 100)?;
         account::deposit(b, BOB, funds.constrain(constraint))
     })
 }
@@ -658,7 +661,7 @@ fn a_missed_edge_bound_aborts_identically_on_both_runtimes() -> Result<()> {
         assert_eq!(
             results[0],
             TxResult::Refused(Outcome::ConstraintUnmet {
-                node: 1,
+                node: 2,
                 param: 0,
                 amount: 100,
             }),
@@ -874,7 +877,8 @@ fn a_refused_authorization_takes_its_consumers_with_it() -> Result<()> {
 
 fn swap_graph(min_out: u128) -> ManifestGraph {
     graph(|b| {
-        let funds = account::withdraw(b, ALICE, RES_X, 500)?;
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, RES_X, 500)?;
         let out = amm::swap(b, pool(), funds, min_out)?;
         account::deposit(b, ALICE, out)
     })
@@ -994,14 +998,16 @@ fn a_violated_output_floor_traps_identically() -> Result<()> {
 
 fn place_graph() -> ManifestGraph {
     graph(|b| {
-        let funds = account::withdraw(b, MAKER, BASE, 50)?;
+        let maker = account::authorize(b, MAKER)?;
+        let funds = account::withdraw(b, maker, BASE, 50)?;
         book::place_ask(b, book(), 3, funds)
     })
 }
 
 fn fill_graph() -> ManifestGraph {
     graph(|b| {
-        let payment = account::withdraw(b, TAKER, QUOTE, 100)?;
+        let taker = account::authorize(b, TAKER)?;
+        let payment = account::withdraw(b, taker, QUOTE, 100)?;
         let [bought, refund] = book::fill_asks(b, book(), 3, 5, payment)?;
         account::deposit(b, TAKER, bought)?;
         account::deposit(b, TAKER, refund)
@@ -1074,7 +1080,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
 
     // The placed ask landed at the declared fresh sequence.
     let admitted = admit(&place, MAKER, &world.0, &world.1, &TestHasher).unwrap();
-    let seq = fresh_id(&TestHasher, admitted.identity(), 1, 0, 0);
+    let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0, 0);
     let placed_order = (3u128 << 64) | u128::from(seq);
     assert_eq!(
         place_receipt

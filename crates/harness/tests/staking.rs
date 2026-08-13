@@ -151,7 +151,8 @@ fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) ->
 /// delegation goes in and the position comes back as an ordinary balance.
 fn stake_graph(amount: u128) -> ManifestGraph {
     graph(|b| {
-        let funds = account::withdraw(b, ALICE, XRD, amount)?;
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, XRD, amount)?;
         let units = staking::stake(b, pool(), funds)?;
         account::deposit(b, ALICE, units)
     })
@@ -162,7 +163,8 @@ fn stake_graph(amount: u128) -> ManifestGraph {
 /// not built.
 fn unstake_graph(amount: u128) -> ManifestGraph {
     graph(|b| {
-        let units = account::withdraw(b, ALICE, unit(), amount)?;
+        let alice = account::authorize(b, ALICE)?;
+        let units = account::withdraw(b, alice, unit(), amount)?;
         staking::unstake(b, pool(), units)
     })
 }
@@ -181,13 +183,18 @@ fn validator_leaf(pool: impl Into<Address>, validator: u64) -> SubstateKey {
 /// The method is a parameter because the tests below are about two of
 /// them behaving alike, which is not a shape a wrapper per method has.
 fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
-    graph(|b| b.call(pool(), method, (validator,))?.none())
+    graph(|b| {
+        let operator = account::authorize(b, OPERATOR)?;
+        b.call_as(operator, pool(), method, (validator,))?.none()
+    })
 }
 
 fn register_graph(validator: u64) -> ManifestGraph {
     graph(|b| {
+        let operator = account::authorize(b, OPERATOR)?;
         staking::register_validator(
             b,
+            operator,
             pool(),
             validator,
             PUBKEY.to_vec(),
@@ -707,7 +714,17 @@ fn cast_payload() -> Vec<u8> {
 }
 
 fn cast_graph() -> ManifestGraph {
-    graph(|b| staking::cast_param_vote(b, pool(), SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT))
+    graph(|b| {
+        let operator = account::authorize(b, OPERATOR)?;
+        staking::cast_param_vote(
+            b,
+            operator,
+            pool(),
+            SPLIT_BYTES,
+            IMPOUND_EPOCHS,
+            ACTIVATE_AT,
+        )
+    })
 }
 
 #[test]
@@ -737,7 +754,10 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     store.write(vote_leaf(pool()), cast_payload())?;
     store.clear_log();
 
-    let cleared = graph(|b| staking::clear_param_vote(b, pool()));
+    let cleared = graph(|b| {
+        let operator = account::authorize(b, OPERATOR)?;
+        staking::clear_param_vote(b, operator, pool())
+    });
     let entry = batch_entry(&world, &single_intent(cleared), OPERATOR)?;
     let outcome = run_both(&store, std::slice::from_ref(&entry))?;
     assert!(matches!(

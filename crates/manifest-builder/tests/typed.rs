@@ -88,14 +88,15 @@ fn a_typed_edge_asserts_its_own_resource() {
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
     // Nothing here says the withdrawal produces `RES`; `withdraw`'s
     // declared output does, and the deposit carries the assertion.
+    let alice = b.call_minting(ALICE, "authorize").unwrap();
     let funds = b
-        .call(ALICE, "withdraw", (RES, 100u128))
+        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
     b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
-    assert_eq!(asserted(&graph, 1), vec![Some(RES.into())]);
+    assert_eq!(asserted(&graph, 2), vec![Some(RES.into())]);
     admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
@@ -103,8 +104,9 @@ fn a_typed_edge_asserts_its_own_resource() {
 fn a_split_of_a_typed_edge_is_two_typed_edges() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let alice = b.call_minting(ALICE, "authorize").unwrap();
     let funds = b
-        .call(ALICE, "withdraw", (RES, 100u128))
+        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -125,10 +127,10 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
     let graph = b.build().unwrap();
     // The derived assertion leads, and the author's bound follows it.
     assert_eq!(
-        graph.nodes[3].args,
+        graph.nodes[4].args,
         vec![GraphArg::Edge {
             edge: EdgeRef {
-                producer: 1,
+                producer: 2,
                 output: 1
             },
             constraints: vec![Constraint::ResourceIs(RES.into()), Constraint::MinAmount(1)],
@@ -141,8 +143,9 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
 fn a_pool_types_its_units_by_itself() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let alice = b.call_minting(ALICE, "authorize").unwrap();
     let funds = b
-        .call(ALICE, "withdraw", (RES, 100u128))
+        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -152,7 +155,7 @@ fn a_pool_types_its_units_by_itself() {
     assert_eq!(units.resource(), Some(unit().into()));
     b.call(ALICE, "deposit", (units,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
-    assert_eq!(asserted(&graph, 2), vec![Some(unit().into())]);
+    assert_eq!(asserted(&graph, 3), vec![Some(unit().into())]);
     admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
@@ -163,7 +166,11 @@ fn an_edge_nothing_typed_stays_untyped() {
     // The untyped path mints an edge with no declared type behind it.
     // `take` types its outputs by that edge, so neither output can be
     // typed either — and the layer leaves them alone rather than guessing.
-    let [funds] = b.untyped().call_signed(ALICE, "withdraw", (RES, 100u128));
+    let sign_in = b.untyped().len();
+    let [] = b.untyped().call_signed(ALICE, "authorize", ());
+    let [funds] = b
+        .untyped()
+        .call_bearing(ALICE, "withdraw", (RES, 100u128), sign_in);
     let [taken, rest] = b
         .call(splitter(), "take", (funds, 30u128))
         .unwrap()
@@ -174,7 +181,7 @@ fn an_edge_nothing_typed_stays_untyped() {
     b.call(BOB, "deposit", (taken,)).unwrap().none().unwrap();
     b.call(ALICE, "deposit", (rest,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
-    assert_eq!(asserted(&graph, 2), vec![None]);
+    assert_eq!(asserted(&graph, 3), vec![None]);
     // Untyped is not unadmitted: admission evaluates the same output
     // expressions against the graph it can see whole.
     admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
@@ -186,7 +193,11 @@ fn an_asserted_type_carries_through_the_untyped_path() {
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
     // An author who types the edge by hand tells the layer as much as a
     // signature would, and the type propagates from the assertion.
-    let [funds] = b.untyped().call_signed(ALICE, "withdraw", (RES, 100u128));
+    let sign_in = b.untyped().len();
+    let [] = b.untyped().call_signed(ALICE, "authorize", ());
+    let [funds] = b
+        .untyped()
+        .call_bearing(ALICE, "withdraw", (RES, 100u128), sign_in);
     let [taken, rest] = b
         .call(splitter(), "take", (funds.resource_is(RES), 30u128))
         .unwrap()
@@ -201,8 +212,9 @@ fn an_asserted_type_carries_through_the_untyped_path() {
 fn a_typed_edge_refuses_a_contradicting_assertion() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let alice = b.call_minting(ALICE, "authorize").unwrap();
     let funds = b
-        .call(ALICE, "withdraw", (RES, 100u128))
+        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -236,13 +248,14 @@ fn a_call_is_typed_against_the_signature_it_names() {
         b.call(ALICE, "deposit", (100u128,)),
         Err(TypedError::LiteralForBucketParam { param: 0, .. })
     ));
+    let alice = b.call_minting(ALICE, "authorize").unwrap();
     let one = b
-        .call(ALICE, "withdraw", (RES, 100u128))
+        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
     let two = b
-        .call(ALICE, "withdraw", (RES, 100u128))
+        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -256,8 +269,9 @@ fn a_call_is_typed_against_the_signature_it_names() {
 fn a_refused_call_appends_nothing() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let alice = b.call_minting(ALICE, "authorize").unwrap();
     let funds = b
-        .call(ALICE, "withdraw", (RES, 100u128))
+        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -269,7 +283,7 @@ fn a_refused_call_appends_nothing() {
     // still describes exactly the graph its accepted calls built.
     b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
-    assert_eq!(graph.nodes.len(), 2);
+    assert_eq!(graph.nodes.len(), 3);
     admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
@@ -293,7 +307,8 @@ fn outputs_unpack_only_into_the_arity_the_method_declares() {
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
     // Naming a slot the producer does not have takes stating an arity,
     // and the signature is what an arity is checked against.
-    let outputs = b.call(ALICE, "withdraw", (RES, 100u128)).unwrap();
+    let alice = b.call_minting(ALICE, "authorize").unwrap();
+    let outputs = b.call_as(alice, ALICE, "withdraw", (RES, 100u128)).unwrap();
     assert_eq!(outputs.len(), 1);
     assert!(matches!(
         outputs.into_array::<2>(),

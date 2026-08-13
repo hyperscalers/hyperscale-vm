@@ -30,18 +30,23 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     (cache, instances)
 }
 
+fn authorize(target: impl Into<CallTarget>) -> GraphNode {
+    GraphNode::signed(target, "authorize", vec![])
+}
+
 fn withdraw(
     target: impl Into<CallTarget>,
     resource: impl Into<Address>,
     amount: u128,
 ) -> GraphNode {
-    GraphNode::signed(
+    GraphNode::bearing(
         target,
         "withdraw",
         vec![
             GraphArg::Literal(Value::Address(resource.into())),
             GraphArg::Literal(Value::U128(amount)),
         ],
+        0,
     )
 }
 
@@ -55,7 +60,11 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
             graph: ManifestGraph {
-                nodes: vec![withdraw(ALICE, RES_X, pay), deposit_param(ALICE, 0)],
+                nodes: vec![
+                    authorize(ALICE),
+                    withdraw(ALICE, RES_X, pay),
+                    deposit_param(ALICE, 0),
+                ],
             },
             params: vec![YieldParam {
                 resource: RES_Y.into(),
@@ -65,14 +74,18 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
         root_bindings: vec![YieldBinding {
             intent: 1,
             edge: EdgeRef {
-                producer: 0,
+                producer: 1,
                 output: 0,
             },
         }],
         subintents: vec![Subintent {
             decl: IntentDecl {
                 graph: ManifestGraph {
-                    nodes: vec![withdraw(BOB, RES_Y, 10), deposit_param(BOB, 0)],
+                    nodes: vec![
+                        authorize(BOB),
+                        withdraw(BOB, RES_Y, 10),
+                        deposit_param(BOB, 0),
+                    ],
                 },
                 params: vec![YieldParam {
                     resource: RES_X.into(),
@@ -83,7 +96,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
             bindings: vec![YieldBinding {
                 intent: 0,
                 edge: EdgeRef {
-                    producer: 0,
+                    producer: 1,
                     output: 0,
                 },
             }],
@@ -103,9 +116,9 @@ fn a_composed_tree_flattens_deterministically() {
     let admitted = admit_composed(&tree).unwrap();
     let manifest = admitted.admitted.manifest();
 
-    // Root nodes lead where ready, yields interleave the rest: the
-    // composer's withdraw, the subintent's withdraw, then the two
-    // deposits consuming each other's yields.
+    // Root nodes lead where ready, yields interleave the rest: each
+    // intent's sign-in and withdraw, then the two deposits consuming
+    // each other's yields.
     let shape: Vec<(Address, &str)> = manifest
         .nodes
         .iter()
@@ -114,16 +127,18 @@ fn a_composed_tree_flattens_deterministically() {
     assert_eq!(
         shape,
         vec![
+            (ALICE.address(), "authorize"),
             (ALICE.address(), "withdraw"),
+            (BOB.address(), "authorize"),
             (BOB.address(), "withdraw"),
             (ALICE.address(), "deposit"),
             (BOB.address(), "deposit"),
         ]
     );
     assert_eq!(
-        manifest.nodes[2].inputs,
+        manifest.nodes[4].inputs,
         vec![NodeInput::Edge {
-            source: 1,
+            source: 3,
             output: 0,
             resource: RES_Y.address(),
             bounds: Bounds {
@@ -133,9 +148,9 @@ fn a_composed_tree_flattens_deterministically() {
         }]
     );
     assert_eq!(
-        manifest.nodes[3].inputs,
+        manifest.nodes[5].inputs,
         vec![NodeInput::Edge {
-            source: 0,
+            source: 1,
             output: 0,
             resource: RES_X.address(),
             bounds: Bounds {
@@ -226,6 +241,8 @@ fn mutual_yields_with_no_order_are_a_cycle() {
     let mut tree = composed_tree(100);
     tree.root.graph.nodes = vec![deposit_param(ALICE, 0)];
     tree.subintents[0].decl.graph.nodes = vec![deposit_param(BOB, 0)];
+    tree.root_bindings[0].edge.producer = 0;
+    tree.subintents[0].bindings[0].edge.producer = 0;
     assert_eq!(admit_composed(&tree), Err(AdmissionError::CyclicYields));
 }
 
@@ -245,7 +262,7 @@ fn a_yielded_resource_must_match_the_declared_type() {
 #[test]
 fn param_consumption_is_exactly_once() {
     let mut unused = composed_tree(100);
-    unused.subintents[0].decl.graph.nodes[1] = withdraw(BOB, RES_Y, 1);
+    unused.subintents[0].decl.graph.nodes[2] = withdraw(BOB, RES_Y, 1);
     assert_eq!(
         admit_composed(&unused),
         Err(AdmissionError::UnusedYieldParam {
@@ -301,14 +318,14 @@ fn two_bindings_cannot_consume_one_output() {
     let mut tree = composed_tree(100);
     let mut second = tree.subintents[0].clone();
     second.signer = second_signer;
-    second.decl.graph.nodes[0] = withdraw(BOB, RES_Y, 11);
+    second.decl.graph.nodes[1] = withdraw(BOB, RES_Y, 11);
     tree.subintents.push(second);
     let identity = tree.hash(&TestHasher);
     let result = admit_tree(&tree, ALICE, identity, &cache, &instances, &TestHasher);
     assert_eq!(
         result,
         Err(AdmissionError::DoubleConsumption {
-            producer: 0,
+            producer: 1,
             output: 0,
         })
     );
@@ -349,14 +366,15 @@ fn a_yield_param_cannot_bind_a_value_parameter() {
     // into it is a parameter defect — not the edge defect the shared
     // arity check would otherwise report.
     let mut tree = composed_tree(100);
-    tree.subintents[0].decl.graph.nodes[1] = GraphNode::signed(
+    tree.subintents[0].decl.graph.nodes[2] = GraphNode::bearing(
         BOB,
         "withdraw",
         vec![GraphArg::Param(0), GraphArg::Literal(Value::U128(1))],
+        0,
     );
     assert_eq!(
         admit_composed(&tree),
-        Err(AdmissionError::ParamForValueParam { node: 3, param: 0 })
+        Err(AdmissionError::ParamForValueParam { node: 5, param: 0 })
     );
 }
 
@@ -432,7 +450,7 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
     let tree = composed_tree(100);
     let mut rebound = tree.clone();
     rebound.root_bindings[0].edge = EdgeRef {
-        producer: 1,
+        producer: 2,
         output: 0,
     };
     assert_ne!(tree.hash(&TestHasher), rebound.hash(&TestHasher));
@@ -447,7 +465,7 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
 
     let mut rebound_subintent = tree.clone();
     rebound_subintent.subintents[0].bindings[0].edge = EdgeRef {
-        producer: 1,
+        producer: 2,
         output: 0,
     };
     assert_ne!(tree.hash(&TestHasher), rebound_subintent.hash(&TestHasher));

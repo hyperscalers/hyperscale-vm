@@ -119,6 +119,16 @@ pub enum TypedError {
         /// The method called.
         method: String,
     },
+    /// A guarded call composed without a badge — admission's
+    /// [`SignatureForGuarded`](hyperscale_vm_effects::AdmissionError::SignatureForGuarded)
+    /// verdict, reached at the call site. A signature signs in through
+    /// an authorizing method; what it mints there is what a guarded
+    /// method takes.
+    #[error("`{method}` takes a minted badge; a signature only signs in")]
+    SignatureForGuarded {
+        /// The method called.
+        method: String,
+    },
     /// A badge requested from a method that does not mint — admission's
     /// [`UnmintingBadge`](hyperscale_vm_effects::AdmissionError::UnmintingBadge)
     /// verdict, reached where the badge is requested rather than where it
@@ -140,10 +150,23 @@ pub enum TypedError {
 /// presenting it twice says nothing presenting it once does not. It
 /// carries authority only downward — admission refuses a badge drawn
 /// from a node that is not earlier.
+///
+/// The badge remembers whose identity it carries, so a call acting *as*
+/// that identity names no target of its own: the badge is the actor.
 #[derive(Clone, Copy, Debug)]
 #[must_use = "an unpresented badge authorizes nothing"]
 pub struct Badge {
     node: u32,
+    target: CallTarget,
+}
+
+impl Badge {
+    /// The instance whose identity this badge carries — the authorizing
+    /// node's target.
+    #[must_use]
+    pub const fn target(&self) -> CallTarget {
+        self.target
+    }
 }
 
 /// The output edges of one typed call, in slot order.
@@ -341,7 +364,7 @@ impl<'a> TypedBuilder<'a> {
         }
         let (node, outputs) = self.append(target, method, (), None)?;
         outputs.none()?;
-        Ok(Badge { node })
+        Ok(Badge { node, target })
     }
 
     fn append(
@@ -386,10 +409,9 @@ impl<'a> TypedBuilder<'a> {
             hasher,
         );
 
-        // A guarded or authorizing method takes the intent's signature
-        // badge unless the caller presents a minted one; the signature
-        // says which methods take evidence at all, so no call site has
-        // to.
+        // The signature says which methods take evidence at all, so no
+        // call site has to. Signing in starts from the intent's
+        // signature; everything guarded takes a badge minted earlier.
         let evidence = match (&signature.accessibility, badge) {
             (Accessibility::Public, None) => BTreeSet::new(),
             (Accessibility::Public, Some(_)) => {
@@ -397,8 +419,11 @@ impl<'a> TypedBuilder<'a> {
                     method: method.to_owned(),
                 });
             }
-            (Accessibility::Guarded(_) | Accessibility::Authorizing, None) => {
-                BTreeSet::from([EvidenceRef::IntentSignature])
+            (Accessibility::Authorizing, None) => BTreeSet::from([EvidenceRef::IntentSignature]),
+            (Accessibility::Guarded(_), None) => {
+                return Err(TypedError::SignatureForGuarded {
+                    method: method.to_owned(),
+                });
             }
             (Accessibility::Guarded(_) | Accessibility::Authorizing, Some(badge)) => {
                 BTreeSet::from([EvidenceRef::Node(badge.node)])

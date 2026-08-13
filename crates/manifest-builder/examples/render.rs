@@ -113,14 +113,16 @@ fn main() {
         (
             "a transfer",
             build(&|b| {
-                let funds = account::withdraw(b, ALICE, XRD, 100)?;
+                let alice = account::authorize(b, ALICE)?;
+                let funds = account::withdraw(b, alice, XRD, 100)?;
                 account::deposit(b, BOB, funds)
             }),
         ),
         (
             "a swap",
             build(&|b| {
-                let funds = account::withdraw(b, ALICE, XRD, 100)?;
+                let alice = account::authorize(b, ALICE)?;
+                let funds = account::withdraw(b, alice, XRD, 100)?;
                 let proceeds = amm::swap(b, pool(), funds, 90)?;
                 account::deposit(b, ALICE, proceeds)
             }),
@@ -129,7 +131,8 @@ fn main() {
             "a split, with the change routed by policy",
             build(&|b| {
                 b.rest_to(ALICE);
-                let funds = account::withdraw(b, ALICE, XRD, 100)?;
+                let alice = account::authorize(b, ALICE)?;
+                let funds = account::withdraw(b, alice, XRD, 100)?;
                 let [taken, _change] = splitter::take(b, splitter(), funds, 30)?;
                 account::deposit(b, BOB, taken.min(30))
             }),
@@ -137,10 +140,11 @@ fn main() {
         (
             "a delegation, and the operator surface beside it",
             build(&|b| {
-                let funds = account::withdraw(b, ALICE, XRD, 1_000)?;
+                let alice = account::authorize(b, ALICE)?;
+                let funds = account::withdraw(b, alice, XRD, 1_000)?;
                 let position = staking::stake(b, stake_pool(), funds)?;
                 account::deposit(b, ALICE, position)?;
-                staking::unjail(b, stake_pool(), 42)
+                staking::unjail(b, alice, stake_pool(), 42)
             }),
         ),
     ];
