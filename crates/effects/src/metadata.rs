@@ -78,12 +78,12 @@ pub enum ParamType {
     Address,
     /// A value edge; its resource type is static, its amount dynamic.
     Bucket,
-    /// An authority rule, carried as its canonical bytes and decoded
-    /// under the vocabulary caps at admission — so a rule past either
-    /// cap is refused before anything signs.
+    /// An authority rule, carried as its canonical bytes and decoded as
+    /// the vocabulary at admission — so a rule past a cap, or with a
+    /// degenerate threshold, is refused before anything signs.
     Rule,
-    /// A full role set — three rules, canonical bytes — decoded under
-    /// the same vocabulary caps at admission, for the same reason.
+    /// A full role set — three rules, canonical bytes — decoded as the
+    /// vocabulary at admission, for the same reason.
     RoleSet,
 }
 
@@ -103,8 +103,8 @@ impl ParamType {
     }
 
     /// Whether a literal value has this kind. Buckets are never literals —
-    /// they arrive only as edges, and a rule is bytes that decode under
-    /// the vocabulary caps.
+    /// they arrive only as edges, and a rule is bytes that decode as the
+    /// vocabulary.
     #[must_use]
     pub fn admits(self, value: &Value) -> bool {
         match (self, value) {

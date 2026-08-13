@@ -121,6 +121,33 @@ fn the_account_wrappers_match_their_signatures() {
     assert_eq!(graph.nodes.len(), 8);
 }
 
+/// A rule literal is judged by decoding it as the vocabulary — the same
+/// predicate admission runs — so the vacuous threshold, the one that
+/// would hand the account to anyone, is refused at the call site that
+/// writes it.
+#[test]
+fn a_degenerate_rule_is_refused_where_it_is_written() {
+    let (cache, instances) = world();
+    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let alice = account::authorize(&mut b, ALICE).unwrap();
+    let refused = account::securify_uniform(
+        &mut b,
+        alice,
+        Rule::CountOf {
+            count: 0,
+            rules: vec![],
+        },
+        86_400_000,
+    );
+    assert!(matches!(
+        refused,
+        Err(TypedError::ParamKind {
+            expected: "role-set",
+            ..
+        })
+    ));
+}
+
 #[test]
 fn the_staking_wrappers_match_their_signatures() {
     let pool = address("staking", pool_config());

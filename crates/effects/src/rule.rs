@@ -6,10 +6,13 @@
 //! one constructor covers "this key", "any of these three", and "two of
 //! these five" without a second form.
 //!
-//! The caps bound a rule before anything evaluates it. Depth and branch
-//! width are refused at decode — where a rule is written, never at
-//! evaluation — so [`Rule::satisfied_by`] walks a structure whose size is
-//! a constant of the vocabulary, not of the input.
+//! The caps bound a rule before anything evaluates it. Depth, branch
+//! width, and degenerate thresholds — a count of zero, which anyone
+//! satisfies, or one past the branch count, which no one does — are
+//! refused at decode — where a rule is written, never at evaluation — so
+//! [`Rule::satisfied_by`] walks a structure whose size is a constant of
+//! the vocabulary, not of the input, and a stored rule always names
+//! someone it admits and someone it refuses.
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 
@@ -50,12 +53,14 @@ pub const MAX_RULE_WIRE_DEPTH: usize = 2 * MAX_RULE_DEPTH;
 /// deliberately absent — a rule asks which identities are present, and
 /// nothing else.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[hbor(validate = well_formed)]
 pub enum Rule {
     /// Satisfied when this identity is among those presented.
     Require(Address),
     /// Satisfied when enough branches are.
     CountOf {
-        /// How many of `rules` must be satisfied.
+        /// How many of `rules` must be satisfied. At least one, at most
+        /// the branch count — the decode gate refuses the rest.
         count: u8,
         /// The branches, each judged independently over the same
         /// identity set.
@@ -64,15 +69,34 @@ pub enum Rule {
     },
 }
 
+/// The decode gate on one threshold: a count of one through the branch
+/// count, so the vocabulary holds no rule that admits everyone or no
+/// one. Runs as each value decodes, so branches judge themselves and
+/// the check never recurses.
+fn well_formed(rule: &Rule) -> Result<(), &'static str> {
+    match rule {
+        Rule::Require(_) => Ok(()),
+        Rule::CountOf { count, rules } => {
+            if *count == 0 {
+                Err("a threshold requiring nothing would admit anyone")
+            } else if usize::from(*count) > rules.len() {
+                Err("a threshold requiring more branches than it has would admit no one")
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
 impl Rule {
     /// Whether the presented identities satisfy this rule.
     ///
-    /// Total over any identity set: a threshold requiring nothing is
-    /// satisfied by anyone, and one requiring more than its branch count
-    /// by no one. Whether either belongs in a stored rule is judged where
-    /// the rule is written, not here. Recursion is bounded by the decode
-    /// gate: a rule this crate decoded nests at most [`MAX_RULE_DEPTH`]
-    /// deep.
+    /// Total over any identity set, including degenerate thresholds
+    /// built in memory: one requiring nothing is satisfied by anyone,
+    /// and one requiring more than its branch count by no one — though
+    /// neither survives decode, so no stored rule holds either form.
+    /// Recursion is bounded by the decode gate: a rule this crate
+    /// decoded nests at most [`MAX_RULE_DEPTH`] deep.
     #[must_use]
     pub fn satisfied_by(&self, identities: &[Address]) -> bool {
         match self {
@@ -106,7 +130,9 @@ impl Rule {
     /// The rule's canonical wire bytes.
     ///
     /// Encoded under the same caps the decoder enforces, so a writer
-    /// cannot produce bytes a reader refuses.
+    /// cannot exceed a bound a reader refuses. Degenerate thresholds are
+    /// construction's to avoid: they encode, and the bytes are refused
+    /// where they land.
     ///
     /// # Errors
     ///
@@ -120,8 +146,8 @@ impl Rule {
     ///
     /// # Errors
     ///
-    /// [`DecodeError`] on trailing bytes, a non-canonical form, or a rule
-    /// past either cap.
+    /// [`DecodeError`] on trailing bytes, a non-canonical form, a rule
+    /// past either cap, or a degenerate threshold.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, DecodeError> {
         from_slice_with_depth(bytes, MAX_RULE_WIRE_DEPTH)
     }
@@ -212,6 +238,71 @@ mod tests {
             rules: vec![Rule::Require(identity(1)), Rule::Require(identity(1))],
         };
         assert!(doubled.satisfied_by(&[identity(1)]));
+    }
+
+    /// A stored rule must name someone it admits and someone it refuses:
+    /// the vacuous threshold would hand the account to anyone, and the
+    /// unsatisfiable one would lock every role for good — securify is
+    /// one-way, so no rule could undo either. Construction and encoding
+    /// stay total; the bytes are refused where they land.
+    #[test]
+    fn a_degenerate_threshold_is_refused_at_decode() {
+        let refused = |rule: Rule, why: &'static str| {
+            let bytes = rule.to_bytes().unwrap();
+            assert_eq!(
+                Rule::from_slice(&bytes),
+                Err(DecodeError::FailedValidation(why))
+            );
+        };
+
+        refused(
+            Rule::CountOf {
+                count: 0,
+                rules: vec![],
+            },
+            "a threshold requiring nothing would admit anyone",
+        );
+        refused(
+            Rule::CountOf {
+                count: 0,
+                rules: vec![Rule::Require(identity(1))],
+            },
+            "a threshold requiring nothing would admit anyone",
+        );
+        refused(
+            Rule::CountOf {
+                count: 2,
+                rules: vec![Rule::Require(identity(1))],
+            },
+            "a threshold requiring more branches than it has would admit no one",
+        );
+
+        // A branch judges itself as it decodes, so a well-formed
+        // threshold cannot smuggle a degenerate one inside.
+        refused(
+            Rule::CountOf {
+                count: 1,
+                rules: vec![
+                    Rule::Require(identity(1)),
+                    Rule::CountOf {
+                        count: 0,
+                        rules: vec![],
+                    },
+                ],
+            },
+            "a threshold requiring nothing would admit anyone",
+        );
+
+        // The gate's whole boundary: count one and count == branches
+        // both decode.
+        for count in [1, 2] {
+            let rule = Rule::CountOf {
+                count,
+                rules: vec![Rule::Require(identity(1)), Rule::Require(identity(2))],
+            };
+            let bytes = rule.to_bytes().unwrap();
+            assert_eq!(Rule::from_slice(&bytes).unwrap(), rule);
+        }
     }
 
     #[test]

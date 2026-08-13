@@ -89,8 +89,8 @@ impl RoleSet {
     ///
     /// # Errors
     ///
-    /// [`DecodeError`] on trailing bytes, a non-canonical form, or a
-    /// rule past either vocabulary cap.
+    /// [`DecodeError`] on trailing bytes, a non-canonical form, a rule
+    /// past either vocabulary cap, or a degenerate threshold.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, DecodeError> {
         from_slice_with_depth(bytes, MAX_ROLESET_WIRE_DEPTH)
     }
@@ -153,7 +153,8 @@ pub enum AuthCellError {
     /// The frame ends before a length or instant it promises.
     #[error("the frame ends before a field it promises")]
     Truncated,
-    /// A role set that does not decode under the vocabulary caps.
+    /// A role set that does not decode as the vocabulary: past a cap,
+    /// non-canonical, or holding a degenerate threshold.
     #[error(transparent)]
     Roles(#[from] DecodeError),
 }
@@ -173,7 +174,7 @@ impl AuthCell {
     /// # Errors
     ///
     /// [`AuthCellError`] on a truncated frame, trailing bytes, or a
-    /// role set past the vocabulary caps.
+    /// role set that does not decode as the vocabulary.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, AuthCellError> {
         let (len, rest) = bytes
             .split_first_chunk::<4>()
