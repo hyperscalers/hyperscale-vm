@@ -647,6 +647,11 @@ fn check_signature_bounds(signature: &MethodSignature) -> Result<(), MetadataBou
     for output in &signature.outputs {
         check_expr_bounds(output, 0)?;
     }
+    for param in &signature.abi {
+        if let AbiParam::Derived(expr) = param {
+            check_expr_bounds(expr, 0)?;
+        }
+    }
     for call in &signature.calls {
         check_expr_bounds(&call.target, 0)?;
         for arg in &call.args {
@@ -1016,6 +1021,136 @@ mod tests {
     use super::*;
     use crate::hash::TestHasher;
     use crate::types::PrincipalAddr;
+
+    /// A signature whose only effect points at `expr`.
+    fn signature_over(expr: Expr) -> MethodSignature {
+        MethodSignature {
+            effects: vec![Clause::Effect {
+                target: TargetExpr::Point(expr),
+                mode: ModeExpr::Write,
+            }],
+            ..MethodSignature::default()
+        }
+    }
+
+    fn one_method(signature: MethodSignature) -> PackageMetadata {
+        let mut metadata = PackageMetadata::default();
+        metadata.methods.insert("m".into(), signature);
+        metadata
+    }
+
+    /// Both sides of a bound: the structure at it is admitted, the one
+    /// past it refused.
+    fn assert_bounded(admitted: &PackageMetadata, refused: &PackageMetadata) {
+        assert_eq!(check_metadata(admitted), Ok(()));
+        assert!(
+            check_metadata(refused).is_err(),
+            "the checker admitted a structure past the bound"
+        );
+    }
+
+    /// A left-nested projection chain, the shape the evaluator's own
+    /// depth test uses.
+    fn nested_projection(depth: usize) -> Expr {
+        let mut expr = Expr::Arg(0);
+        for _ in 0..depth {
+            expr = Expr::Field(Box::new(expr), 0);
+        }
+        expr
+    }
+
+    fn nested_foreach(depth: usize) -> Clause {
+        let mut clause = Clause::Effect {
+            target: TargetExpr::Point(Expr::SelfAddr),
+            mode: ModeExpr::Read,
+        };
+        for _ in 0..depth {
+            clause = Clause::ForEach {
+                list: Expr::Arg(0),
+                body: vec![clause],
+            };
+        }
+        clause
+    }
+
+    #[test]
+    fn expression_nesting_is_bounded_where_the_evaluator_bounds_it() {
+        assert_bounded(
+            &one_method(signature_over(nested_projection(MAX_EXPR_DEPTH))),
+            &one_method(signature_over(nested_projection(MAX_EXPR_DEPTH + 1))),
+        );
+    }
+
+    #[test]
+    fn abi_expressions_are_bounded_like_every_other_walk() {
+        let derived = |depth: usize| MethodSignature {
+            abi: vec![AbiParam::Derived(nested_projection(depth))],
+            ..MethodSignature::default()
+        };
+        assert_bounded(
+            &one_method(derived(MAX_EXPR_DEPTH)),
+            &one_method(derived(MAX_EXPR_DEPTH + 1)),
+        );
+    }
+
+    #[test]
+    fn clause_nesting_is_bounded_where_the_evaluator_bounds_it() {
+        assert_bounded(
+            &one_method(MethodSignature {
+                effects: vec![nested_foreach(MAX_CLAUSE_DEPTH)],
+                ..MethodSignature::default()
+            }),
+            &one_method(MethodSignature {
+                effects: vec![nested_foreach(MAX_CLAUSE_DEPTH + 1)],
+                ..MethodSignature::default()
+            }),
+        );
+    }
+
+    #[test]
+    fn a_clause_tree_wider_than_a_signature_can_declare_is_refused() {
+        let effect = Clause::Effect {
+            target: TargetExpr::Point(Expr::SelfAddr),
+            mode: ModeExpr::Read,
+        };
+        let with = |count: usize| {
+            one_method(MethodSignature {
+                effects: vec![effect.clone(); count],
+                ..MethodSignature::default()
+            })
+        };
+        assert_bounded(
+            &with(MAX_EFFECTS_PER_SIGNATURE),
+            &with(MAX_EFFECTS_PER_SIGNATURE + 1),
+        );
+    }
+
+    #[test]
+    fn literal_nesting_is_bounded_where_admission_bounds_it() {
+        let literal = |depth: usize| {
+            let mut value = Value::U64(0);
+            for _ in 1..depth {
+                value = Value::Tuple(vec![value]);
+            }
+            Expr::Literal(value)
+        };
+        assert_bounded(
+            &one_method(signature_over(literal(MAX_VALUE_DEPTH))),
+            &one_method(signature_over(literal(MAX_VALUE_DEPTH + 1))),
+        );
+    }
+
+    #[test]
+    fn an_event_table_past_the_index_the_kernel_accepts_is_refused() {
+        let table = |len: usize| PackageMetadata {
+            methods: BTreeMap::new(),
+            events: vec![String::new(); len],
+        };
+        assert_bounded(
+            &table(MAX_EVENT_TYPES as usize),
+            &table(MAX_EVENT_TYPES as usize + 1),
+        );
+    }
 
     #[test]
     fn an_ids_parameter_admits_only_a_bounded_duplicate_free_id_list() {
