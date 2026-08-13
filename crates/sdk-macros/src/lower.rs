@@ -42,6 +42,8 @@ pub enum FieldKind {
     Keyed,
     /// An ordered collection.
     Ordered,
+    /// An unordered collection: entries keyed by hash.
+    Unordered,
 }
 
 /// One declared field of the component's state.
@@ -78,6 +80,22 @@ pub enum Target {
         lo: Term,
         /// Inclusive upper bound.
         hi: Term,
+        /// The entry cap.
+        cap: u32,
+    },
+    /// One unordered-collection entry, at the hash of a logical key.
+    KeyedEntry {
+        /// The collection's role.
+        role: u16,
+        /// The logical key, hashed into the entry's order.
+        key: Term,
+    },
+    /// An unordered collection's tail from a cursor.
+    Sweep {
+        /// The collection's role.
+        role: u16,
+        /// The inclusive lower bound.
+        cursor: Term,
         /// The entry cap.
         cap: u32,
     },
@@ -926,6 +944,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // single dispatch over (field kind, accessor) pairs
     fn on_field(
         &mut self,
         field: &Field,
@@ -977,6 +996,46 @@ impl<'a> Lowerer<'a> {
                         call.args.span(),
                         "this order key is not derivable from the method's arguments or the \
                      component's configuration",
+                    );
+                    Val::Opaque
+                }
+            }
+
+            // One unordered-collection entry, at the hash of its key.
+            (FieldKind::Unordered, "at") => {
+                if let Some(Val::Term(key)) = args.first() {
+                    Val::Handle(self.open(Target::KeyedEntry {
+                        role,
+                        key: key.clone(),
+                    }))
+                } else {
+                    self.error(
+                        call.args.span(),
+                        "this key is not derivable from the method's arguments or the \
+                     component's configuration. Routing evaluates a declaration before \
+                     execution and never reads state, so a key computed from a substate \
+                     value cannot be declared — pass it as a parameter instead",
+                    );
+                    Val::Opaque
+                }
+            }
+
+            // An unordered collection's tail from a cursor.
+            (FieldKind::Unordered, "sweep") => {
+                if let (Some(Val::Term(cursor)), Some(Val::Term(Term::LitU64(cap)))) =
+                    (args.first(), args.get(1))
+                {
+                    Val::Handle(self.open(Target::Sweep {
+                        role,
+                        cursor: cursor.clone(),
+                        cap: u32::try_from(*cap).unwrap_or(u32::MAX),
+                    }))
+                } else {
+                    self.error(
+                        call.args.span(),
+                        "a sweep's cursor must be derivable from the arguments, and its entry \
+                     cap must be a literal — the cap bounds the work execution may do, so \
+                     it is declaration, not data",
                     );
                     Val::Opaque
                 }

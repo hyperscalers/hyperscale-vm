@@ -78,6 +78,31 @@ fn target(target: &Target) -> TokenStream {
                 );
             )
         }
+        Target::KeyedEntry { role, key } => {
+            let key = key.emit();
+            quote!(
+                let __owner = __t.self_addr();
+                let __key = #key;
+                let __access = __t.keyed_entry(
+                    &__owner,
+                    ::hyperscale_vm_sdk::RoleId(#role),
+                    &__key,
+                );
+            )
+        }
+        Target::Sweep { role, cursor, cap } => {
+            let cursor = cursor.emit();
+            quote!(
+                let __owner = __t.self_addr();
+                let __cursor = #cursor.cast::<::hyperscale_vm_sdk::Amount>();
+                let __access = __t.sweep(
+                    &__owner,
+                    ::hyperscale_vm_sdk::RoleId(#role),
+                    &__cursor,
+                    #cap,
+                );
+            )
+        }
         Target::Range { role, lo, hi, cap } => {
             let lo = lo.emit();
             let hi = hi.emit();

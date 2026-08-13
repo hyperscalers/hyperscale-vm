@@ -50,6 +50,7 @@ pub struct NativeRole(pub u16);
 
 const DOMAIN_CHILD: &[u8] = b"hyperscale-vm/child-key";
 const DOMAIN_COLLECTION: &[u8] = b"hyperscale-vm/collection-id";
+const DOMAIN_ORDER: &[u8] = b"hyperscale-vm/order-key";
 const DOMAIN_PRINCIPAL: &[u8] = b"hyperscale-vm/principal-address";
 const DOMAIN_COMPONENT: &[u8] = b"hyperscale-vm/component-address";
 const DOMAIN_PACKAGE: &[u8] = b"hyperscale-vm/package-address";
@@ -129,6 +130,34 @@ pub fn collection_id(
     let mut id = [0u8; 16];
     id.copy_from_slice(&digest.0[..16]);
     CollectionId(id)
+}
+
+/// The order key for `material` in the collection at `role` under `owner`
+/// — where a hashed key lands in a collection's order space.
+///
+/// This is what makes a collection *unordered*: hashing the logical key
+/// gives it an arbitrary-but-canonical position, so point access stays
+/// pure computation and a capped range walks the entries in an order
+/// nobody chose. Owner-and-role-salted and truncated to sixteen bytes for
+/// the same reasons as [`collection_id`], and domain-separated from it, so
+/// a key's position never aliases a collection's identity.
+#[must_use]
+pub fn order_key(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    role: RoleId,
+    material: &[Vec<u8>],
+) -> u128 {
+    let owner_bytes = owner.into().to_bytes();
+    let role_bytes = role.0.to_le_bytes();
+    let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
+    parts.push(&owner_bytes);
+    parts.push(&role_bytes);
+    parts.extend(material.iter().map(Vec::as_slice));
+    let digest = hasher.hash(DOMAIN_ORDER, &parts);
+    let mut order = [0u8; 16];
+    order.copy_from_slice(&digest.0[..16]);
+    u128::from_be_bytes(order)
 }
 
 /// An address body: the leading 31 bytes of `digest`.

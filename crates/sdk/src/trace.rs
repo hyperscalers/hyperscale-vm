@@ -31,7 +31,7 @@
 
 use hyperscale_vm_effects::{
     CallSite, Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr,
-    ParamType, RoleId, TargetExpr,
+    ParamType, RoleId, TargetExpr, Value,
 };
 
 use crate::sym::{Addr, Amount, Key, Kind, Num, Opaque, Seq, Sym, expr_depth};
@@ -192,6 +192,61 @@ impl Trace {
             collection,
             material: vec![],
             order: self.lower(order.expr().clone()),
+        };
+        Access {
+            trace: self,
+            target,
+        }
+    }
+
+    /// Declare accesses to one unordered-collection entry: the entry at
+    /// the hash of `key`, salted by the collection's owner and role.
+    #[must_use]
+    pub fn keyed_entry(
+        &mut self,
+        owner: &Sym<Addr>,
+        collection: RoleId,
+        key: &Sym<Opaque>,
+    ) -> Access<'_> {
+        let owner_expr = self.lower(owner.expr().clone());
+        let target = TargetExpr::Entry {
+            owner: owner_expr.clone(),
+            collection,
+            material: vec![],
+            order: Expr::OrderKey {
+                owner: Box::new(owner_expr),
+                role: collection,
+                material: vec![self.lower(key.expr().clone())],
+            },
+        };
+        Access {
+            trace: self,
+            target,
+        }
+    }
+
+    /// Declare accesses to an unordered collection's tail from `cursor`:
+    /// the interval `[cursor, u128::MAX]`, capped at `cap` entries.
+    ///
+    /// Hash order is arbitrary but canonical, so walking it from a cursor
+    /// visits every entry exactly once across resumptions — the
+    /// pagination-crank shape. The caller passes the cursor as an
+    /// argument; `0` starts the walk.
+    #[must_use]
+    pub fn sweep(
+        &mut self,
+        owner: &Sym<Addr>,
+        collection: RoleId,
+        cursor: &Sym<Amount>,
+        cap: u32,
+    ) -> Access<'_> {
+        let target = TargetExpr::Range {
+            owner: self.lower(owner.expr().clone()),
+            collection,
+            material: vec![],
+            lo: self.lower(cursor.expr().clone()),
+            hi: Expr::Literal(Value::U128(u128::MAX)),
+            cap,
         };
         Access {
             trace: self,
@@ -402,6 +457,15 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
             role,
             material,
         } => Expr::ChildKey {
+            owner: Box::new(rebind(*owner, depth)),
+            role,
+            material: material.into_iter().map(|m| rebind(m, depth)).collect(),
+        },
+        Expr::OrderKey {
+            owner,
+            role,
+            material,
+        } => Expr::OrderKey {
             owner: Box::new(rebind(*owner, depth)),
             role,
             material: material.into_iter().map(|m| rebind(m, depth)).collect(),

@@ -137,12 +137,13 @@ fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
         "Cell" => FieldKind::Cell,
         "Keyed" => FieldKind::Keyed,
         "Ordered" => FieldKind::Ordered,
+        "Unordered" => FieldKind::Unordered,
         _ => {
             return Err(syn::Error::new(
                 field.ty.span(),
-                "a state field must be `Locked<_>`, `Cell<_>`, `Keyed<_>`, or `Ordered<_>` — \
-                 state is reachable only through these, which is what makes the access mode \
-                 derivable from the body",
+                "a state field must be `Locked<_>`, `Cell<_>`, `Keyed<_>`, `Ordered<_>`, or \
+                 `Unordered<_>` — state is reachable only through these, which is what makes \
+                 the access mode derivable from the body",
             ));
         }
     };

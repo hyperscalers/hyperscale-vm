@@ -675,6 +675,9 @@ fn resolvable(expr: &Expr, known: &[bool], depth: usize) -> bool {
         Expr::SelfResource { material } => material.iter().all(deeper),
         Expr::ChildKey {
             owner, material, ..
+        }
+        | Expr::OrderKey {
+            owner, material, ..
         } => deeper(owner) && material.iter().all(deeper),
     }
 }

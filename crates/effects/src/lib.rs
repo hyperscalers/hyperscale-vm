@@ -81,5 +81,5 @@ pub use types::{
     NativeRole, NetworkWord, NotAResource, NotCallable, PackageAddr, PrincipalAddr,
     ReserveOverflow, ResourceAddr, ResourceRef, RoleId, SchemeId, ShardId, SubstateKey, TextError,
     Value, WrongClass, child_key, collection_id, compatible, component_address, config_hash,
-    native_address, package_address, principal_address, resource_address,
+    native_address, order_key, package_address, principal_address, resource_address,
 };

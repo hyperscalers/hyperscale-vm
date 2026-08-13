@@ -83,6 +83,13 @@ fn arb_expr() -> impl Strategy<Value = Expr> {
                     material,
                 }
             ),
+            (inner.clone(), 0u16..4, vec(inner.clone(), 0..3)).prop_map(
+                |(owner, role, material)| Expr::OrderKey {
+                    owner: Box::new(owner),
+                    role: RoleId(role),
+                    material,
+                }
+            ),
             (inner.clone(), inner).prop_map(|(hi, lo)| Expr::Pack {
                 hi: Box::new(hi),
                 lo: Box::new(lo),

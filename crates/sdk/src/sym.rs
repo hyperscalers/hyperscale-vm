@@ -265,6 +265,9 @@ pub fn expr_depth(expr: &Expr) -> usize {
         Expr::SelfResource { material } => material.iter().map(expr_depth).max().unwrap_or(0),
         Expr::ChildKey {
             owner, material, ..
+        }
+        | Expr::OrderKey {
+            owner, material, ..
         } => material
             .iter()
             .map(expr_depth)

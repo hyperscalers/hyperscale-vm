@@ -200,6 +200,43 @@ impl<T> Ordered<T> {
     }
 }
 
+/// An unordered collection under one role: entries keyed by hash.
+///
+/// The same kernel kind as [`Ordered`], with the order key derived by
+/// hashing the logical key — arbitrary-but-canonical placement, which is
+/// what "unordered" means operationally. Point access by key stays pure
+/// computation; [`Self::sweep`] walks the hash order from a cursor, so
+/// iteration is a paginated crank rather than an unbounded scan.
+///
+/// A sweep yields entries, not keys — the order key is a truncated hash
+/// and cannot be inverted — so a collection whose sweeps need the logical
+/// key stores it inside the entry value.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Unordered<T>(core::marker::PhantomData<fn() -> T>);
+
+impl<T> Unordered<T> {
+    /// The entry at `key`. The key must be derivable from the method's
+    /// arguments or the component's configuration, like any declared
+    /// target.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
+    pub fn at<K>(&self, key: K) -> Slot<T> {
+        let _ = key;
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// Up to `cap` entries from `cursor`, in hash order.
+    ///
+    /// Resume by passing the last visited order key plus one as the next
+    /// call's cursor; `0` starts the walk. `cap` must be a literal — it is
+    /// the work bound, so it is declaration rather than data.
+    #[must_use]
+    pub fn sweep(&self, cursor: Amount, cap: u32) -> Interval<T> {
+        let _ = (cursor, cap);
+        unimplemented!("{OFF_HOST}")
+    }
+}
+
 /// An open handle on a declared interval.
 #[derive(Clone, Copy, Debug)]
 pub struct Interval<T>(core::marker::PhantomData<fn() -> T>);

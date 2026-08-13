@@ -303,3 +303,82 @@ fn every_spelling_of_a_conditional_declares_the_same_accesses() {
     assert_eq!(effects("scrutinised"), effects("read"), "if-let scrutinee");
     assert_eq!(effects("guarded"), effects("plain"), "let-else diverge");
 }
+
+/// The unordered surface: point access by hashed key, capped sweeps from a
+/// cursor. What the test pins is the lowered shape — the entry's order is
+/// an `OrderKey` over the argument, salted by the collection's owner and
+/// role, and a sweep is a range to the top of the order space.
+#[blueprint]
+mod registry {
+    use hyperscale_vm_sdk::state::Unordered;
+
+    #[state]
+    struct Registry {
+        #[role(2)]
+        names: Unordered<u128>,
+    }
+
+    impl Registry {
+        /// Bind `name` to `value`.
+        pub fn bind(&mut self, name: u64, value: u128) {
+            let _ = value;
+            self.names.at(name).set(0);
+        }
+
+        /// Read the binding for `name`.
+        pub fn resolve(&mut self, name: u64) -> u128 {
+            self.names.at(name).get()
+        }
+
+        /// One crank of a paginated walk over everything held.
+        pub fn sweep(&mut self, cursor: u128) {
+            let entries = self.names.sweep(cursor, 8);
+            let _ = entries.count();
+        }
+    }
+}
+
+#[test]
+fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
+    use hyperscale_vm_effects::{Clause, Expr, ModeExpr, RoleId, TargetExpr, Value};
+
+    let metadata = registry::blueprint().metadata();
+    let hashed_entry = || TargetExpr::Entry {
+        owner: Expr::SelfAddr,
+        collection: RoleId(2),
+        material: vec![],
+        order: Expr::OrderKey {
+            owner: Box::new(Expr::SelfAddr),
+            role: RoleId(2),
+            material: vec![Expr::Arg(0)],
+        },
+    };
+    assert_eq!(
+        metadata.methods["bind"].effects,
+        vec![Clause::Effect {
+            target: hashed_entry(),
+            mode: ModeExpr::Write,
+        }],
+    );
+    assert_eq!(
+        metadata.methods["resolve"].effects,
+        vec![Clause::Effect {
+            target: hashed_entry(),
+            mode: ModeExpr::Read,
+        }],
+    );
+    assert_eq!(
+        metadata.methods["sweep"].effects,
+        vec![Clause::Effect {
+            target: TargetExpr::Range {
+                owner: Expr::SelfAddr,
+                collection: RoleId(2),
+                material: vec![],
+                lo: Expr::Arg(0),
+                hi: Expr::Literal(Value::U128(u128::MAX)),
+                cap: 8,
+            },
+            mode: ModeExpr::Read,
+        }],
+    );
+}

@@ -14,7 +14,7 @@ use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::types::{
     Address, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode, ReserveOverflow,
-    RoleId, SubstateKey, Value, child_key, collection_id, resource_address,
+    RoleId, SubstateKey, Value, child_key, collection_id, order_key, resource_address,
 };
 
 /// The bound on any collection a `for-each` clause maps over. Keeps
@@ -106,6 +106,18 @@ pub enum Expr {
         /// The low half — the tiebreaker (a sequence id).
         lo: Box<Self>,
     },
+    /// A 128-bit order key hashed from material: where a logical key lands
+    /// in an unordered collection's order space. Salted by the owner and
+    /// the collection's role, like [`Expr::ChildKey`], so a ground
+    /// collision is confined to the one collection it could hurt.
+    OrderKey {
+        /// The collection's owner.
+        owner: Box<Self>,
+        /// The collection's role under the owner.
+        role: RoleId,
+        /// The logical key, canonically encoded into the hash.
+        material: Vec<Self>,
+    },
 }
 
 impl Expr {
@@ -128,6 +140,9 @@ impl Expr {
             Self::Pack { hi, lo } => hi.reads_call_inputs() || lo.reads_call_inputs(),
             Self::SelfResource { material } => material.iter().any(Self::reads_call_inputs),
             Self::ChildKey {
+                owner, material, ..
+            }
+            | Self::OrderKey {
                 owner, material, ..
             } => owner.reads_call_inputs() || material.iter().any(Self::reads_call_inputs),
         }
@@ -600,10 +615,7 @@ fn eval_collection(
     hasher: &dyn Hasher,
     bindings: &[Value],
 ) -> Result<CollectionId, EvalError> {
-    let mut encoded = Vec::with_capacity(material.len());
-    for expr in material {
-        encoded.push(eval_expr(expr, inputs, hasher, bindings, 0)?.canonical_bytes());
-    }
+    let encoded = eval_material(material, inputs, hasher, bindings, 0)?;
     Ok(collection_id(hasher, owner, role, &encoded))
 }
 
@@ -623,6 +635,22 @@ fn eval_mode(
         }
         ModeExpr::Write => Ok(Mode::Write),
     }
+}
+
+/// Evaluate material expressions to their canonical encodings — the form
+/// every derivation hashes.
+fn eval_material(
+    material: &[Expr],
+    inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    bindings: &[Value],
+    depth: usize,
+) -> Result<Vec<Vec<u8>>, EvalError> {
+    let mut encoded = Vec::with_capacity(material.len());
+    for expr in material {
+        encoded.push(eval_expr(expr, inputs, hasher, bindings, depth)?.canonical_bytes());
+    }
+    Ok(encoded)
 }
 
 fn eval_expr(
@@ -685,10 +713,7 @@ fn eval_expr(
             Err(EvalError::LookupMiss)
         }
         Expr::SelfResource { material } => {
-            let mut encoded = Vec::with_capacity(material.len());
-            for expr in material {
-                encoded.push(eval_expr(expr, inputs, hasher, bindings, deeper)?.canonical_bytes());
-            }
+            let encoded = eval_material(material, inputs, hasher, bindings, deeper)?;
             Ok(Value::Address(
                 resource_address(hasher, inputs.self_addr, &encoded).into(),
             ))
@@ -699,11 +724,17 @@ fn eval_expr(
             material,
         } => {
             let owner = as_address(eval_expr(owner, inputs, hasher, bindings, deeper)?)?;
-            let mut encoded = Vec::with_capacity(material.len());
-            for expr in material {
-                encoded.push(eval_expr(expr, inputs, hasher, bindings, deeper)?.canonical_bytes());
-            }
+            let encoded = eval_material(material, inputs, hasher, bindings, deeper)?;
             Ok(Value::Key(child_key(hasher, owner, *role, &encoded)))
+        }
+        Expr::OrderKey {
+            owner,
+            role,
+            material,
+        } => {
+            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, deeper)?)?;
+            let encoded = eval_material(material, inputs, hasher, bindings, deeper)?;
+            Ok(Value::U128(order_key(hasher, owner, *role, &encoded)))
         }
         Expr::FreshId { slot } => Ok(Value::U64(fresh_id(
             hasher,
@@ -808,6 +839,7 @@ mod tests {
     use crate::manifest::ManifestHash;
     use crate::types::{
         Address, AddressClass, Effect, EffectTarget, Mode, RoleId, Value, child_key, collection_id,
+        order_key,
     };
 
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
@@ -1177,6 +1209,64 @@ mod tests {
         assert_ne!(
             collection_id(&TestHasher, ins.self_addr, RoleId(4), &[]),
             collection_id(&TestHasher, other, RoleId(4), &[]),
+        );
+    }
+
+    #[test]
+    fn order_keys_hash_the_logical_key_under_the_collections_salt() {
+        let name_a = Value::U64(7);
+        let name_b = Value::U64(8);
+        let args = [name_a.clone(), name_b.clone()];
+        let ins = inputs(&args, &[]);
+        let entry_for = |slot: u32| Clause::Effect {
+            target: TargetExpr::Entry {
+                owner: Expr::SelfAddr,
+                collection: RoleId(2),
+                material: vec![],
+                order: Expr::OrderKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    role: RoleId(2),
+                    material: vec![Expr::Arg(slot)],
+                },
+            },
+            mode: ModeExpr::Write,
+        };
+        let set = evaluate_effects(&[entry_for(0), entry_for(1)], &ins, &TestHasher).unwrap();
+        let order_for = |name: &Value| {
+            order_key(
+                &TestHasher,
+                ins.self_addr,
+                RoleId(2),
+                &[name.canonical_bytes()],
+            )
+        };
+        assert_eq!(set.len(), 2, "distinct keys land at distinct orders");
+        for name in [&name_a, &name_b] {
+            assert!(set.contains(&Effect {
+                target: EffectTarget::Entry {
+                    owner: ins.self_addr,
+                    collection: collection_id(&TestHasher, ins.self_addr, RoleId(2), &[]),
+                    order: order_for(name),
+                },
+                mode: Mode::Write,
+            }));
+        }
+
+        // Each salt arm moves the key; the domain keeps an order key from
+        // ever reading as a collection identity.
+        assert_ne!(order_for(&name_a), order_for(&name_b));
+        assert_ne!(
+            order_key(&TestHasher, ins.self_addr, RoleId(2), &[]),
+            order_key(&TestHasher, ins.self_addr, RoleId(3), &[]),
+        );
+        let other = Address::new([8; 31], AddressClass::Component);
+        assert_ne!(
+            order_key(&TestHasher, ins.self_addr, RoleId(2), &[]),
+            order_key(&TestHasher, other, RoleId(2), &[]),
+        );
+        assert_ne!(
+            order_key(&TestHasher, ins.self_addr, RoleId(2), &[]).to_be_bytes(),
+            collection_id(&TestHasher, ins.self_addr, RoleId(2), &[]).0,
         );
     }
 
