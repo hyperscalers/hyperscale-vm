@@ -23,11 +23,10 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    Accessibility, Address, AdmissionError, Admitted, CallTarget, EnvelopeTree, EvalInputs, Expr,
-    Hash32, Hasher, InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache,
-    NetworkWord, PrincipalAddr, RouteError, Routing, SchemeId, ShardId, ShardResolver,
-    SubintentRecord, TextError, Value, admit, admit_tree, declared_work, evaluate_expr, footprint,
-    route, route_tree, signature_work,
+    Address, AdmissionError, Admitted, AuthRole, AuthorityGate, EnvelopeTree, Hasher,
+    InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache, NetworkWord,
+    PrincipalAddr, RouteError, Routing, SchemeId, ShardId, ShardResolver, SubintentRecord,
+    TextError, admit, admit_tree, declared_work, footprint, route, route_tree, signature_work,
 };
 
 /// Why a transaction could not be preflighted.
@@ -46,9 +45,10 @@ pub enum PreflightError {
 
 /// Whose signature naming one node requires.
 ///
-/// Read off the target package's declared [`Accessibility`], which is the
-/// only thing that knows: an address is a hash, so nothing about a target
-/// can be read from the address itself.
+/// Read off the authority gate admission resolved for the node — the
+/// same verdict execution judges, over the same bound inputs — which is
+/// the only thing that knows: an address is a hash, so nothing about a
+/// target can be read from the address itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Authority {
     /// Anyone may name this method on this target. What the caller
@@ -56,6 +56,11 @@ pub enum Authority {
     Anyone,
     /// A signature this principal's address derives.
     Signature(PrincipalAddr),
+    /// The target's stored rule for this role. While nothing is stored,
+    /// that is the identity the target's address derives — its own
+    /// signature — but once the target is securified the stored role
+    /// set governs, and only state knows its shape.
+    StoredRule(AuthRole),
     /// An identity no key derives — an instance's own address, or a
     /// configured slot holding one. Nothing signs for a hash of what an
     /// object is, so a method requiring one cannot be named by anyone.
@@ -144,13 +149,18 @@ impl Report {
     }
 
     /// Every signature the transaction needs: what its nodes' declared
-    /// access requires, plus the signer of every bound subintent.
+    /// access requires, plus the signer of every bound subintent. A
+    /// rule-judged node contributes its target's own key — the identity
+    /// that satisfies the rule while nothing is stored; a securified
+    /// target's stored rules name their signers in state, which no
+    /// report reads.
     #[must_use]
     pub fn signers(&self) -> BTreeSet<PrincipalAddr> {
         self.authority
             .iter()
             .filter_map(|required| match required.authority {
                 Authority::Signature(principal) => Some(principal),
+                Authority::StoredRule(_) => PrincipalAddr::try_from(required.target).ok(),
                 Authority::Anyone | Authority::TargetHasNoKey => None,
             })
             .chain(self.subintents.iter().map(|record| record.signer))
@@ -190,15 +200,7 @@ pub fn preflight(
 ) -> Result<Report, PreflightError> {
     let admitted = admit(graph, composer, cache, instances, hasher)?;
     let routing = route(&admitted, cache, instances, hasher, shards)?;
-    report(
-        admitted,
-        routing,
-        Vec::new(),
-        instances,
-        cache,
-        hasher,
-        network,
-    )
+    report(admitted, routing, Vec::new(), network)
 }
 
 /// The same verdict on a composed envelope, whose subintent records name
@@ -219,15 +221,7 @@ pub fn preflight_tree(
     let identity = tree.hash(hasher);
     let admitted = admit_tree(tree, composer, identity, cache, instances, hasher)?;
     let routing = route_tree(&admitted, cache, instances, hasher, shards)?;
-    report(
-        admitted.admitted,
-        routing,
-        admitted.subintents,
-        instances,
-        cache,
-        hasher,
-        network,
-    )
+    report(admitted.admitted, routing, admitted.subintents, network)
 }
 
 /// Assemble the report both entry points answer with.
@@ -235,9 +229,6 @@ fn report(
     admitted: Admitted,
     routing: Routing,
     subintents: Vec<SubintentRecord>,
-    instances: &InstanceRegistry,
-    cache: &MetadataCache,
-    hasher: &dyn Hasher,
     network: &str,
 ) -> Result<Report, PreflightError> {
     let footprints = routing
@@ -246,14 +237,25 @@ fn report(
         .map(|(shard, declared)| (*shard, footprint(declared)))
         .collect();
 
+    // The authority gate admission resolved for each node, read back
+    // rather than re-derived: the report answers with the verdict
+    // execution will judge, over the node's real bound inputs. A
+    // principal's address derives from its key material, so its own
+    // authority is a signature; every other class derives from a hash of
+    // what it is, and nothing signs for that.
     let mut authority = Vec::with_capacity(admitted.manifest().nodes.len());
     for (index, node) in admitted.manifest().nodes.iter().enumerate() {
-        let node_index = u32::try_from(index).unwrap_or(u32::MAX);
+        let required = match &node.authority {
+            None => Authority::Anyone,
+            Some(AuthorityGate::Identity(identity)) => PrincipalAddr::try_from(*identity)
+                .map_or(Authority::TargetHasNoKey, Authority::Signature),
+            Some(AuthorityGate::StoredRule { role, .. }) => Authority::StoredRule(*role),
+        };
         authority.push(Required {
-            node: node_index,
+            node: u32::try_from(index).unwrap_or(u32::MAX),
             target: node.target,
             method: node.method.clone(),
-            authority: required_authority(node.target, &node.method, instances, cache, hasher),
+            authority: required,
         });
     }
 
@@ -287,52 +289,4 @@ fn report(
         subintents,
         named,
     })
-}
-
-/// Whose authority naming `method` on `target` requires.
-///
-/// The target resolved at admission, so anything unresolvable here is a
-/// manifest that could not have been admitted — reported as an authority
-/// nothing satisfies rather than by refusing a report that already stands.
-fn required_authority(
-    target: Address,
-    method: &str,
-    instances: &InstanceRegistry,
-    cache: &MetadataCache,
-    hasher: &dyn Hasher,
-) -> Authority {
-    let declared = CallTarget::try_from(target)
-        .ok()
-        .and_then(|target| instances.get(target))
-        .and_then(|meta| Some((meta, cache.get(meta.package)?)))
-        .and_then(|(meta, package)| Some((meta, package.methods.get(method)?)));
-    let Some((meta, signature)) = declared else {
-        return Authority::TargetHasNoKey;
-    };
-    let identity = match &signature.accessibility {
-        Accessibility::Public => return Authority::Anyone,
-        Accessibility::Guarded(identity) => identity,
-        // A rule-reading method's rule, while nothing is stored, is the
-        // virtual one — the identity its target's address derives.
-        Accessibility::Authorizing | Accessibility::RoleGated(_) => &Expr::SelfAddr,
-    };
-    // An authority expression reads nothing the caller supplies, so the
-    // target and its configuration are the whole evaluation.
-    let inputs = EvalInputs {
-        self_addr: target,
-        args: &[],
-        config: &meta.config,
-        node_index: 0,
-        frame: 0,
-        identity: ManifestHash(Hash32([0; 32])),
-    };
-    // A principal's address derives from its key material, so its own
-    // authority is a signature. Every other class derives from a hash of
-    // what it is, and nothing signs for that.
-    match evaluate_expr(identity, &inputs, hasher) {
-        Ok(Value::Address(address)) => {
-            PrincipalAddr::try_from(address).map_or(Authority::TargetHasNoKey, Authority::Signature)
-        }
-        _ => Authority::TargetHasNoKey,
-    }
 }

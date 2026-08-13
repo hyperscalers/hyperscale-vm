@@ -7,9 +7,9 @@
 
 use hyperscale_vm_effects::stdlib::{account_metadata, staking_metadata};
 use hyperscale_vm_effects::{
-    ComponentAddr, Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache,
-    PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId, TestHasher, TextError,
-    Value, admit, declared_work, footprint, route, signature_work,
+    AuthRole, ComponentAddr, Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry,
+    MetadataCache, PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId,
+    TestHasher, TextError, Value, admit, declared_work, footprint, route, signature_work,
 };
 use hyperscale_vm_manifest_builder::native::{account, staking};
 use hyperscale_vm_manifest_builder::{
@@ -124,8 +124,12 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
 
     // Spending is the sender's; being paid is nobody's to refuse, so a
     // transfer composes under one signature — presented once, at the
-    // sign-in, and carried to the withdrawal as its proof.
-    assert_eq!(report.authority[0].authority, Authority::Signature(ALICE));
+    // sign-in, judged by the account's stored primary rule, and carried
+    // to the withdrawal as its proof.
+    assert_eq!(
+        report.authority[0].authority,
+        Authority::StoredRule(AuthRole::Primary)
+    );
     assert_eq!(report.authority[1].authority, Authority::Signature(ALICE));
     assert_eq!(report.authority[2].authority, Authority::Anyone);
     assert_eq!(report.signers(), std::iter::once(ALICE).collect());
@@ -151,9 +155,15 @@ fn a_configured_operator_is_the_signature_its_surface_names() {
     .unwrap();
 
     // A pool is owned by nobody, so its operator surface names the
-    // principal its configuration carries rather than the pool.
+    // principal its configuration carries rather than the pool. The
+    // sign-in is rule-judged; the surface itself is the configured
+    // identity.
     assert_eq!(
         report.authority[0].authority,
+        Authority::StoredRule(AuthRole::Primary)
+    );
+    assert_eq!(
+        report.authority[1].authority,
         Authority::Signature(OPERATOR)
     );
     assert_eq!(report.signers(), std::iter::once(OPERATOR).collect());

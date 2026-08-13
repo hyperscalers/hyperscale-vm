@@ -144,7 +144,11 @@ fn main() {
                 let funds = account::withdraw(b, alice, XRD, 1_000)?;
                 let position = staking::stake(b, stake_pool(), funds)?;
                 account::deposit(b, ALICE, position)?;
-                staking::unjail(b, alice, stake_pool(), 42)
+                // The operator surface is the configured operator's, so
+                // it acts under the operator's own sign-in beside
+                // Alice's.
+                let operator = account::authorize(b, OPERATOR)?;
+                staking::unjail(b, operator, stake_pool(), 42)
             }),
         ),
     ];
@@ -223,7 +227,9 @@ fn summarise(graph: &ManifestGraph, cache: &MetadataCache, instances: &InstanceR
     for required in report.unsatisfiable() {
         let reason = match required.authority {
             Authority::TargetHasNoKey => "an identity no key derives",
-            Authority::Anyone | Authority::Signature(_) => unreachable!("satisfiable"),
+            Authority::Anyone | Authority::Signature(_) | Authority::StoredRule(_) => {
+                unreachable!("satisfiable")
+            }
         };
         println!(
             "   UNSIGNABLE `{}` on node {} needs {reason}",
