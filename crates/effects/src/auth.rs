@@ -276,12 +276,8 @@ mod tests {
     use hyperscale_hbor::{Hbor, to_vec};
 
     use super::{AuthBase, AuthCell, AuthCellError, AuthRole, Proposal, RoleSet};
+    use crate::rule::testing::{WideRule, chain, identity, wide_chain};
     use crate::rule::{MAX_RULE_DEPTH, Rule};
-    use crate::types::{Address, AddressClass};
-
-    fn identity(byte: u8) -> Address {
-        Address::new([byte; 31], AddressClass::Principal)
-    }
 
     fn base(byte: u8, delay: u64) -> AuthBase {
         AuthBase {
@@ -405,27 +401,10 @@ mod tests {
     /// The same wire form as [`RoleSet`], with no caps: the source of
     /// bytes a compliant encoder refuses to produce.
     #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-    enum WideRule {
-        Require(Address),
-        CountOf { count: u8, rules: Vec<Self> },
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
     struct WideSet {
         primary: WideRule,
         recovery: WideRule,
         confirmation: WideRule,
-    }
-
-    fn wide_chain(levels: usize) -> WideRule {
-        let mut rule = WideRule::Require(identity(1));
-        for _ in 0..levels {
-            rule = WideRule::CountOf {
-                count: 1,
-                rules: vec![rule],
-            };
-        }
-        rule
     }
 
     /// The role-set cap admits exactly the rules the rule vocabulary
@@ -433,16 +412,6 @@ mod tests {
     /// no more.
     #[test]
     fn the_roleset_wire_depth_tracks_the_rule_caps() {
-        let chain = |levels: usize| {
-            let mut rule = Rule::Require(identity(1));
-            for _ in 0..levels {
-                rule = Rule::CountOf {
-                    count: 1,
-                    rules: vec![rule],
-                };
-            }
-            rule
-        };
         let deepest = RoleSet::uniform(chain(MAX_RULE_DEPTH - 1));
         let bytes = deepest.to_bytes().unwrap();
         assert_eq!(RoleSet::from_slice(&bytes).unwrap(), deepest);

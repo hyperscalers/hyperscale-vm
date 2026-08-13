@@ -108,37 +108,28 @@ impl Arg for Value {
     }
 }
 
-impl sealed::Sealed for Rule {}
-impl Arg for Rule {
-    /// A rule binds as its canonical bytes — the form admission decodes
-    /// under the vocabulary caps.
-    ///
-    /// # Panics
-    ///
-    /// On a rule past the vocabulary's own caps, which no admission path
-    /// would accept; the compose site is where its author can fix it.
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
-        GraphArg::Literal(Value::Bytes(
-            self.to_bytes().expect("a rule within the caps encodes"),
-        ))
-    }
+/// A vocabulary value binds as its canonical bytes — the form admission
+/// decodes as the vocabulary.
+///
+/// Binding panics on a value past the vocabulary's own caps, which no
+/// admission path would accept; the compose site is where its author
+/// can fix it.
+macro_rules! canonical_bytes_arg {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            impl sealed::Sealed for $name {}
+            impl Arg for $name {
+                fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+                    GraphArg::Literal(Value::Bytes(
+                        self.to_bytes().expect("a value within the caps encodes"),
+                    ))
+                }
+            }
+        )+
+    };
 }
 
-impl sealed::Sealed for RoleSet {}
-impl Arg for RoleSet {
-    /// A role set binds as its canonical bytes — the form admission
-    /// decodes under the vocabulary caps.
-    ///
-    /// # Panics
-    ///
-    /// On a rule past the vocabulary's own caps, which no admission path
-    /// would accept; the compose site is where its author can fix it.
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
-        GraphArg::Literal(Value::Bytes(
-            self.to_bytes().expect("a role set within the caps encodes"),
-        ))
-    }
-}
+canonical_bytes_arg!(Rule, RoleSet);
 
 impl sealed::Sealed for Bucket {}
 impl Arg for Bucket {

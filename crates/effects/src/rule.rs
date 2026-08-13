@@ -111,22 +111,6 @@ impl Rule {
         }
     }
 
-    /// The rule's nesting depth: an identity is one, a threshold one more
-    /// than its deepest branch. Measured over an explicit stack, so
-    /// measurement is total even where evaluation would not be.
-    #[must_use]
-    pub fn depth(&self) -> usize {
-        let mut deepest = 0;
-        let mut stack: Vec<(&Self, usize)> = vec![(self, 1)];
-        while let Some((rule, depth)) = stack.pop() {
-            deepest = deepest.max(depth);
-            if let Self::CountOf { rules, .. } = rule {
-                stack.extend(rules.iter().map(|branch| (branch, depth + 1)));
-            }
-        }
-        deepest
-    }
-
     /// The rule's canonical wire bytes.
     ///
     /// Encoded under the same caps the decoder enforces, so a writer
@@ -153,35 +137,60 @@ impl Rule {
     }
 }
 
+/// Scaffolding the vocabulary's boundary tests share, here and in the
+/// role-set tests beside them: the uncapped wire twin — the source of
+/// bytes a compliant encoder refuses to produce — and the chain
+/// builders that walk the depth caps.
 #[cfg(test)]
-mod tests {
-    use hyperscale_hbor::{DecodeError, Hbor, assert_canonical, to_vec};
+pub(crate) mod testing {
+    use hyperscale_hbor::Hbor;
 
-    use super::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule};
+    use super::Rule;
     use crate::types::{Address, AddressClass};
 
-    fn identity(byte: u8) -> Address {
-        Address::new([byte; 31], AddressClass::Principal)
-    }
-
-    /// The same wire form as [`Rule`], with no caps: the source of bytes
-    /// a compliant encoder refuses to produce.
+    /// The same wire form as [`Rule`], with no caps.
     #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-    enum Wide {
+    pub enum WideRule {
         Require(Address),
         CountOf { count: u8, rules: Vec<Self> },
     }
 
-    fn wide_chain(levels: usize) -> Wide {
-        let mut rule = Wide::Require(identity(1));
+    /// A test identity from one byte.
+    pub fn identity(byte: u8) -> Address {
+        Address::new([byte; 31], AddressClass::Principal)
+    }
+
+    /// `levels` thresholds over one identity: nests `levels + 1` deep.
+    pub fn chain(levels: usize) -> Rule {
+        let mut rule = Rule::Require(identity(1));
         for _ in 0..levels {
-            rule = Wide::CountOf {
+            rule = Rule::CountOf {
                 count: 1,
                 rules: vec![rule],
             };
         }
         rule
     }
+
+    /// The same chain through the uncapped twin.
+    pub fn wide_chain(levels: usize) -> WideRule {
+        let mut rule = WideRule::Require(identity(1));
+        for _ in 0..levels {
+            rule = WideRule::CountOf {
+                count: 1,
+                rules: vec![rule],
+            };
+        }
+        rule
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hyperscale_hbor::{DecodeError, assert_canonical, to_vec};
+
+    use super::testing::{WideRule, chain, identity, wide_chain};
+    use super::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule};
 
     #[test]
     fn a_threshold_is_satisfied_at_its_count_and_not_below() {
@@ -326,41 +335,28 @@ mod tests {
     /// The wire cap admits exactly the admissible depths, at both
     /// boundaries: one threshold level costs two decoder levels and a
     /// terminal one more, so the relation is a constant, not a
-    /// heuristic.
+    /// heuristic. A chain of `levels` thresholds over one identity
+    /// nests `levels + 1` deep.
     #[test]
     fn the_wire_depth_cap_matches_the_rule_depth_gate() {
-        let chain = |levels: usize| {
-            let mut rule = Rule::Require(identity(1));
-            for _ in 0..levels {
-                rule = Rule::CountOf {
-                    count: 1,
-                    rules: vec![rule],
-                };
-            }
-            rule
-        };
-
         // Depth MAX encodes and decodes.
         let deepest = chain(MAX_RULE_DEPTH - 1);
-        assert_eq!(deepest.depth(), MAX_RULE_DEPTH);
         let bytes = deepest.to_bytes().unwrap();
         assert_eq!(Rule::from_slice(&bytes).unwrap(), deepest);
 
         // Depth MAX + 1 is refused at encode, and its bytes — produced
         // through the uncapped twin — at decode.
-        let deeper = chain(MAX_RULE_DEPTH);
-        assert_eq!(deeper.depth(), MAX_RULE_DEPTH + 1);
-        assert!(deeper.to_bytes().is_err());
+        assert!(chain(MAX_RULE_DEPTH).to_bytes().is_err());
         let bytes = to_vec(&wide_chain(MAX_RULE_DEPTH)).unwrap();
         assert!(Rule::from_slice(&bytes).is_err());
     }
 
     #[test]
     fn a_branch_list_past_the_cap_is_refused_at_decode() {
-        let branches = |count: usize| Wide::CountOf {
+        let branches = |count: usize| WideRule::CountOf {
             count: 1,
             rules: (0..count)
-                .map(|i| Wide::Require(identity(u8::try_from(i).unwrap())))
+                .map(|i| WideRule::Require(identity(u8::try_from(i).unwrap())))
                 .collect(),
         };
 

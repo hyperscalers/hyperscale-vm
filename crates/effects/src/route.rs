@@ -263,16 +263,17 @@ pub enum RouteError {
         /// The prefix it reached for.
         owner: Address,
     },
-    /// A static call site naming a guarded method.
+    /// A static call site naming a method that is not public.
     ///
     /// Authority does not propagate through a call: a callee frame holds
-    /// no proof, so a method requiring one is unreachable from a call
-    /// site, however the caller itself was authorized.
-    #[error("node {node} reaches `{method}`, which is guarded, through a call site")]
-    GuardedCallSite {
+    /// no proof and no signature, so a method requiring either — guarded,
+    /// authorizing, or role-gated — is unreachable from a call site,
+    /// however the caller itself was authorized.
+    #[error("node {node} reaches `{method}`, which needs evidence no call site holds")]
+    GatedCallSite {
         /// The manifest node whose fold reached it.
         node: u32,
-        /// The guarded method reached.
+        /// The gated method reached.
         method: String,
     },
     /// A handle binding naming a clause that did not evaluate to exactly
@@ -497,7 +498,7 @@ fn reachable_from_a_call_site(
     method: &str,
 ) -> Result<(), RouteError> {
     if is_callee && !matches!(signature.accessibility, Accessibility::Public) {
-        return Err(RouteError::GuardedCallSite {
+        return Err(RouteError::GatedCallSite {
             node: node_index,
             method: method.to_owned(),
         });
@@ -2127,7 +2128,7 @@ mod tests {
         )
         .expect_err("a call site holds no proof");
         assert!(
-            matches!(error, RouteError::GuardedCallSite { node: 0, .. }),
+            matches!(error, RouteError::GatedCallSite { node: 0, .. }),
             "unexpected refusal: {error:?}"
         );
     }
