@@ -6,7 +6,9 @@
 //! collection entries live in disjoint key spaces, entries sit inside
 //! ranges by order-key membership, and ranges overlap by interval
 //! intersection. Caps never influence overlap — they bound execution, not
-//! the declared key space.
+//! the declared key space. An interval naming nothing overlaps nothing,
+//! which is what every other reader of one already does: routing refuses
+//! it, a scan of it is empty, and an insert into it is refused.
 
 use hyperscale_vm_effects::{Effect, EffectTarget, compatible};
 
@@ -79,7 +81,15 @@ pub fn targets_overlap(a: &EffectTarget, b: &EffectTarget) -> bool {
                 ..
             },
         ) => {
-            left_owner == right_owner
+            // An inverted interval names nothing — the store scans it
+            // empty and an insert into it is refused whatever the order —
+            // so it can alias nothing, including another inverted one.
+            // Without this the arithmetic reads an interval's *gap* as its
+            // extent and reports two claims meeting where neither can
+            // touch a single entry.
+            left_lo <= left_hi
+                && right_lo <= right_hi
+                && left_owner == right_owner
                 && left_collection == right_collection
                 && left_lo <= right_hi
                 && right_lo <= left_hi
@@ -216,6 +226,15 @@ mod tests {
         // Point keys and collection targets can never alias.
         assert!(!targets_overlap(&point(1), &entry(10)));
         assert!(!targets_overlap(&point(1), &range(0, u128::MAX)));
+
+        // An interval naming nothing overlaps nothing. The arithmetic
+        // alone would read [1, 0] as meeting [0, 3] — its bounds straddle
+        // theirs — though no entry exists that both could touch.
+        assert!(!targets_overlap(&range(1, 0), &range(0, 3)));
+        assert!(!targets_overlap(&range(0, 3), &range(1, 0)));
+        assert!(!targets_overlap(&range(1, 0), &range(1, 0)));
+        assert!(!targets_overlap(&range(20, 5), &entry(10)));
+        assert!(!targets_overlap(&entry(10), &range(20, 5)));
 
         // Overlapping exclusive writes conflict; a locked range rides
         // along with anything.
