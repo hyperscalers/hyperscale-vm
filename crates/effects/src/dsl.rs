@@ -30,11 +30,15 @@ pub const MAX_EXPR_DEPTH: usize = 32;
 /// The bound on `for-each` nesting within one signature.
 pub const MAX_CLAUSE_DEPTH: usize = 4;
 
-/// The bound on the effects one signature evaluation may declare.
+/// The bound on the work one signature evaluation may do — effects
+/// declared and `for-each` iterations alike.
 ///
 /// Width and nesting compose multiplicatively — nested `for-each` clauses
 /// at [`MAX_FOREACH_ELEMENTS`] each reach `1024^depth` — so the depth bound
-/// alone is not a bound on work. This is.
+/// alone is not a bound on work. This is, and it counts the iterations
+/// rather than only the effects they land: an empty-bodied loop declares
+/// nothing yet still runs its list, so an effect count would leave a nest
+/// of empty loops unbounded.
 pub const MAX_EFFECTS_PER_SIGNATURE: usize = 4096;
 
 /// An expression over a method's inputs.
@@ -292,8 +296,10 @@ pub enum EvalError {
     /// `for-each` clauses nested past [`MAX_CLAUSE_DEPTH`].
     #[error("for-each clauses nest deeper than {MAX_CLAUSE_DEPTH}")]
     ClausesTooDeep,
-    /// A signature declaring more than [`MAX_EFFECTS_PER_SIGNATURE`].
-    #[error("signature declares more than {MAX_EFFECTS_PER_SIGNATURE} effects")]
+    /// A signature whose evaluation exceeds [`MAX_EFFECTS_PER_SIGNATURE`]
+    /// units of work — effects declared plus `for-each` iterations, since
+    /// an empty-bodied loop declares nothing yet still iterates.
+    #[error("signature evaluation exceeds {MAX_EFFECTS_PER_SIGNATURE} effects or iterations")]
     TooManyEffects,
     /// A range whose lower bound exceeds its upper bound.
     #[error("range bounds inverted: lo > hi")]
@@ -526,11 +532,32 @@ pub fn evaluate_declaration(
 }
 
 /// One signature evaluation's structural allowance: how deep the clause
-/// nesting has gone and how much it has declared so far.
+/// nesting has gone, and how much work — effects declared plus `for-each`
+/// iterations — it has done so far.
+///
+/// Counting effects alone is not a bound on work: an empty `for-each`
+/// body declares nothing yet still iterates its list, so a nest of empty
+/// loops would run `MAX_FOREACH_ELEMENTS` to the nesting depth while the
+/// effect count never moves. Charging each iteration is what bounds that,
+/// and it bounds effect-declaring loops on the same budget — the count of
+/// landed effects can only be smaller than the iterations that produced
+/// them.
 #[derive(Default)]
 struct Budget {
     clause_depth: usize,
-    declared: usize,
+    work: usize,
+}
+
+impl Budget {
+    /// Charge one unit of evaluation work, refusing past the per-signature
+    /// bound. Deterministic, so every node reaches the same verdict.
+    const fn charge(&mut self) -> Result<(), EvalError> {
+        self.work += 1;
+        if self.work > MAX_EFFECTS_PER_SIGNATURE {
+            return Err(EvalError::TooManyEffects);
+        }
+        Ok(())
+    }
 }
 
 /// Evaluate one expression with no enclosing `for-each` bindings.
@@ -563,10 +590,7 @@ fn eval_clauses(
             Clause::Effect { target, mode } => {
                 let target = eval_target(target, inputs, hasher, bindings)?;
                 let mode = eval_mode(mode, inputs, hasher, bindings)?;
-                budget.declared += 1;
-                if budget.declared > MAX_EFFECTS_PER_SIGNATURE {
-                    return Err(EvalError::TooManyEffects);
-                }
+                budget.charge()?;
                 let effect = Effect { target, mode };
                 out.set.insert(effect)?;
                 out.ordered.push(effect);
@@ -578,6 +602,10 @@ fn eval_clauses(
                 }
                 budget.clause_depth += 1;
                 for item in items {
+                    // The iteration is work whether or not the body declares
+                    // anything, so a nest of empty loops is bounded here
+                    // rather than running the product of its levels' widths.
+                    budget.charge()?;
                     bindings.push(item);
                     let result = eval_clauses(body, inputs, hasher, bindings, out, budget);
                     bindings.pop();
@@ -1208,6 +1236,57 @@ mod tests {
                 len: MAX_FOREACH_ELEMENTS + 1
             })
         );
+    }
+
+    #[test]
+    fn empty_for_each_bodies_are_bounded_by_iteration_work() {
+        // A nest of empty `for-each` loops declares no effect, so an effect
+        // counter never moves — but each level still iterates its list, and
+        // the product is the work. Without an iteration bound this runs
+        // `MAX_FOREACH_ELEMENTS` to the nesting depth; with one it refuses
+        // after a constant number of iterations.
+        let wide = [Value::List(vec![Value::U64(0); MAX_FOREACH_ELEMENTS])];
+        let ins = inputs(&wide, &[]);
+        let mut clause = Clause::ForEach {
+            list: Expr::Arg(0),
+            body: Vec::new(),
+        };
+        for _ in 1..MAX_CLAUSE_DEPTH {
+            clause = Clause::ForEach {
+                list: Expr::Arg(0),
+                body: vec![clause],
+            };
+        }
+        assert_eq!(
+            evaluate_effects(&[clause], &ins, &TestHasher),
+            Err(EvalError::TooManyEffects),
+        );
+    }
+
+    #[test]
+    fn a_deep_nest_over_short_lists_still_evaluates() {
+        // The iteration bound is config-aware: the same structure that is
+        // refused over full lists routes fine over short ones, because the
+        // work is the product of the actual list lengths, not the widest
+        // they could be. A signature is not rejected for a shape whose cost
+        // depends on the configuration it runs under.
+        let short = [Value::List(vec![Value::U64(0), Value::U64(1)])];
+        let ins = inputs(&short, &[]);
+        let mut clause = Clause::Effect {
+            target: TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                role: RoleId(1),
+                material: vec![],
+            }),
+            mode: ModeExpr::Read,
+        };
+        for _ in 0..MAX_CLAUSE_DEPTH {
+            clause = Clause::ForEach {
+                list: Expr::Arg(0),
+                body: vec![clause],
+            };
+        }
+        assert!(evaluate_effects(&[clause], &ins, &TestHasher).is_ok());
     }
 
     #[test]
