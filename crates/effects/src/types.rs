@@ -53,7 +53,7 @@ const DOMAIN_COLLECTION: &[u8] = b"hyperscale-vm/collection-id";
 const DOMAIN_ORDER: &[u8] = b"hyperscale-vm/order-key";
 const DOMAIN_PRINCIPAL: &[u8] = b"hyperscale-vm/principal-address";
 const DOMAIN_COMPONENT: &[u8] = b"hyperscale-vm/component-address";
-const DOMAIN_PACKAGE: &[u8] = b"hyperscale-vm/package-address";
+const DOMAIN_PACKAGE_ADDRESS: &[u8] = b"hyperscale-vm/package-address";
 const DOMAIN_RESOURCE: &[u8] = b"hyperscale-vm/resource-address";
 const DOMAIN_NATIVE: &[u8] = b"hyperscale-vm/native-address";
 const DOMAIN_INSTANCE_CONFIG: &[u8] = b"hyperscale-vm/instance-config";
@@ -210,7 +210,7 @@ pub fn component_address(
 /// exists.
 #[must_use]
 pub fn package_address(hasher: &dyn Hasher, package: PackageHash) -> PackageAddr {
-    PackageAddr::new(body(hasher.hash(DOMAIN_PACKAGE, &[&package.0.0])))
+    PackageAddr::new(body(hasher.hash(DOMAIN_PACKAGE_ADDRESS, &[&package.0.0])))
 }
 
 /// The address of a resource minted under `minter`.

@@ -56,7 +56,8 @@ fn run_blessed(bytes: &[u8]) -> Result<Error> {
 
 fn run_ref(bytes: &[u8]) -> Result<ExecError> {
     let comp = RefComponent::decode(bytes)?;
-    let mut instance = RefComponentInstance::instantiate(&comp, SessionHost(session()))?;
+    let mut instance = RefComponentInstance::instantiate(&comp, SessionHost(session()))
+        .map_err(|(_, error)| error)?;
     instance.set_fuel_limit(FUEL);
     Ok(instance
         .invoke("draw", &[])?

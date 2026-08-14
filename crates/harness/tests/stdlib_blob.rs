@@ -195,7 +195,8 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
             amount: AMOUNT,
         },
     );
-    let mut instance = RefComponentInstance::instantiate(&component, host)?;
+    let mut instance =
+        RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(
         "withdraw",
         &[
@@ -214,7 +215,8 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
     let host = entering(instance.into_host(), RECIPIENT);
 
     let recipient_rep = rep_of(&host.0, &Capability::Delta(recipient));
-    let mut instance = RefComponentInstance::instantiate(&component, host)?;
+    let mut instance =
+        RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(
         "deposit",
         &[
@@ -227,7 +229,8 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
     let host = entering(instance.into_host(), SENDER);
 
     let entropy_rep = rep_of(&host.0, &Capability::Write(entropy_key()));
-    let mut instance = RefComponentInstance::instantiate(&component, host)?;
+    let mut instance =
+        RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(
         "stamp-entropy",
         &[CVal::Borrow(entropy_rep, ResourceKind::WriteCell)],

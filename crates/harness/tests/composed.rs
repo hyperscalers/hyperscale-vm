@@ -194,6 +194,7 @@ impl GuestBackend for RefComposed {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
         let args: Vec<CVal> = call.args.iter().map(ref_arg).collect();
         let mut instance = RefComponentInstance::instantiate(&self.component, SessionHost(session))
+            .map_err(|(_, error)| error)
             .expect("instantiate");
         instance.set_fuel_limit(call.fuel_budget.min(FUEL));
         let outcome = instance.invoke(call.export, &args).expect("invoke");

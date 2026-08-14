@@ -85,9 +85,8 @@ pub fn staking_artifact() -> &'static [u8] {
     &STAKING_ARTIFACT
 }
 
-/// The protocol-defined genesis flash: the stdlib account package as a
-/// committed cell, under the same content address a publish would place
-/// it at.
+/// The protocol-defined genesis flash: each stdlib package as a committed
+/// cell, under the same content address a publish would place it at.
 ///
 /// Genesis is then the package cache's cold start in the literal sense —
 /// the same projection of committed state every later block extends,
@@ -95,11 +94,12 @@ pub fn staking_artifact() -> &'static [u8] {
 /// embedder commits these writes beside its own network's allocations.
 #[must_use]
 pub fn genesis_writes(hasher: &dyn Hasher) -> StateWrites {
-    let artifact = account_artifact();
-    let package = package_hash(hasher, artifact);
-    let cell = package_key(hasher, genesis_publisher(hasher), package);
     let mut writes = StateWrites::default();
-    writes.cells.insert(cell, Some(artifact.to_vec()));
+    for artifact in [account_artifact(), staking_artifact()] {
+        let package = package_hash(hasher, artifact);
+        let cell = package_key(hasher, genesis_publisher(hasher), package);
+        writes.cells.insert(cell, Some(artifact.to_vec()));
+    }
     writes
 }
 
@@ -110,24 +110,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_genesis_flash_is_one_package_cell_under_the_publisher() {
+    fn the_genesis_flash_is_one_package_cell_per_stdlib_package() {
         let writes = genesis_writes(&TestHasher);
-        assert_eq!(writes.cells.len(), 1);
-        let (cell, value) = writes.cells.iter().next().unwrap();
-        assert_eq!(cell.owner, genesis_publisher(&TestHasher));
-        assert_eq!(
-            cell,
-            &package_key(
+        assert_eq!(writes.cells.len(), 2);
+        for (artifact, metadata) in [
+            (account_artifact(), account_metadata()),
+            (staking_artifact(), staking_metadata()),
+        ] {
+            let cell = package_key(
                 &TestHasher,
                 genesis_publisher(&TestHasher),
-                package_hash(&TestHasher, account_artifact()),
-            )
-        );
-        let artifact = value.as_deref().expect("the flash writes, never removes");
-        assert_eq!(
-            extract_metadata(artifact).unwrap(),
-            Some(account_metadata())
-        );
+                package_hash(&TestHasher, artifact),
+            );
+            assert_eq!(cell.owner, genesis_publisher(&TestHasher));
+            let value = writes
+                .cells
+                .get(&cell)
+                .expect("the package cell is written");
+            let bytes = value.as_deref().expect("the flash writes, never removes");
+            assert_eq!(extract_metadata(bytes).unwrap(), Some(metadata));
+        }
         assert_eq!(genesis_writes(&TestHasher), writes);
     }
 }

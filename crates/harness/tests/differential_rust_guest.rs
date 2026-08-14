@@ -161,7 +161,8 @@ fn reference(
     let comp = RefComponent::decode(component)?;
     let host = SessionHost(session(committed, reserve));
     let (sender_rep, recipient_rep) = reps(&host.0);
-    let mut instance = RefComponentInstance::instantiate(&comp, host)?;
+    let mut instance =
+        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
     let outcome = match instance.invoke(
         "run",
         &[

@@ -655,15 +655,40 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
     ///
     /// # Errors
     ///
-    /// [`DecodeError`] for unresolvable structure; a trap if an active
-    /// segment is out of bounds at core instantiation.
+    /// [`DecodeError`] for unresolvable structure, or a trap at core
+    /// instantiation from an out-of-bounds active segment — with the
+    /// host handed back, since an embedder's session must survive a
+    /// refused instantiation.
     ///
     /// # Panics
     ///
     /// Only on index-space overflow past `u32`, which the profile's
     /// structural limits exclude.
+    pub fn instantiate(comp: &'c RefComponent, host: H) -> Result<Self, (H, DecodeError)> {
+        let (store, resolved_core_funcs, resolved_memories) = match Self::resolve(comp) {
+            Ok(parts) => parts,
+            Err(error) => return Err((host, error)),
+        };
+        Ok(Self {
+            comp,
+            store,
+            canon: KernelCanon {
+                comp,
+                resolved_core_funcs,
+                resolved_memories,
+                handles: vec![RESERVED_HANDLE],
+                free: Vec::new(),
+                boundary_bytes: 0,
+                may_leave: true,
+                host,
+            },
+        })
+    }
+
+    /// The host-free half of instantiation: core instances built, index
+    /// spaces resolved, active segments applied.
     #[allow(clippy::too_many_lines)] // the instantiation walk is one pass over defs
-    pub fn instantiate(comp: &'c RefComponent, host: H) -> Result<Self, DecodeError> {
+    fn resolve(comp: &'c RefComponent) -> Result<(Store, Vec<FuncAddr>, Vec<u32>), DecodeError> {
         let modules: Vec<&RefModule> = comp.modules.iter().collect();
         let mut store = Store::default();
         // Core instance index -> resolved export map.
@@ -802,20 +827,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
             )?);
         }
 
-        Ok(Self {
-            comp,
-            store,
-            canon: KernelCanon {
-                comp,
-                resolved_core_funcs,
-                resolved_memories: resolved_memories_by_alias,
-                handles: vec![RESERVED_HANDLE],
-                free: Vec::new(),
-                boundary_bytes: 0,
-                may_leave: true,
-                host,
-            },
-        })
+        Ok((store, resolved_core_funcs, resolved_memories_by_alias))
     }
 
     /// Invokes a component export.

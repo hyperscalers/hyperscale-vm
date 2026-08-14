@@ -3,13 +3,17 @@
 //! Effect metadata rides the component as a wasm custom section, so the
 //! code and the signatures it declares are one content-addressed artifact
 //! and cannot drift apart. This module owns the section's name, its
-//! payload codec — canonical HBOR of [`PackageMetadata`] — and the framing
-//! walk that finds it. Judging what an artifact may publish is the
-//! embedder's policy, layered on top of these.
+//! payload codec — canonical HBOR of [`PackageMetadata`], decoded at the
+//! vocabulary's own nesting bound and judged by [`check_metadata`], so
+//! canonical means within bounds — and the framing walk that finds it.
+//! Judging what an artifact may publish beyond that — a byte budget, a
+//! profile — is the embedder's policy, layered on top of these.
 
-use hyperscale_hbor::{from_slice, to_vec};
+use hyperscale_hbor::{from_slice_with_depth, to_vec_with_depth};
 
-use crate::metadata::PackageMetadata;
+use crate::dsl::{MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH};
+use crate::metadata::{PackageMetadata, check_metadata};
+use crate::types::MAX_VALUE_DEPTH;
 
 /// The custom section effect metadata rides in.
 pub const METADATA_SECTION: &str = "hyperscale:effect-metadata";
@@ -20,6 +24,17 @@ const CUSTOM_SECTION_ID: u8 = 0;
 /// The magic and version word every module and component opens with.
 const WASM_MAGIC: [u8; 4] = *b"\0asm";
 const PREAMBLE_LEN: usize = 8;
+
+/// The nesting cap the section codec encodes and decodes at.
+///
+/// A vocabulary layer costs at most two decoder levels — a collection
+/// field and its hoisted element body — so the clause, expression, and
+/// value bounds translate at two apiece, over a fixed prefix for the
+/// record, its method table, a method, and a clause's target and mode.
+/// The cap admits everything [`check_metadata`] accepts; the checks are
+/// what decide.
+pub const METADATA_WIRE_DEPTH: usize =
+    16 + 2 * (MAX_CLAUSE_DEPTH + MAX_EXPR_DEPTH + MAX_VALUE_DEPTH);
 
 /// Why an artifact's metadata section could not be read or written.
 ///
@@ -51,6 +66,34 @@ pub enum ArtifactError {
     /// The section's payload is not canonical metadata.
     #[error("metadata payload is not canonical: {0}")]
     Payload(String),
+    /// The metadata is past a bound the vocabulary fixes.
+    #[error("metadata is past a vocabulary bound: {0}")]
+    Bounds(String),
+}
+
+/// Encode package metadata into its canonical section bytes.
+///
+/// # Errors
+///
+/// [`ArtifactError`] if the metadata is past a bound decode enforces, so
+/// that whatever this returns decodes back to an equal value.
+pub fn encode_metadata(metadata: &PackageMetadata) -> Result<Vec<u8>, ArtifactError> {
+    check_metadata(metadata).map_err(|error| ArtifactError::Bounds(error.0))?;
+    to_vec_with_depth(metadata, METADATA_WIRE_DEPTH)
+        .map_err(|error| ArtifactError::Payload(error.to_string()))
+}
+
+/// Decode a metadata section's canonical bytes.
+///
+/// # Errors
+///
+/// [`ArtifactError`] on malformed or non-canonical bytes, or a structure
+/// past a bound the vocabulary fixes.
+pub fn decode_metadata(bytes: &[u8]) -> Result<PackageMetadata, ArtifactError> {
+    let metadata: PackageMetadata = from_slice_with_depth(bytes, METADATA_WIRE_DEPTH)
+        .map_err(|error| ArtifactError::Payload(error.to_string()))?;
+    check_metadata(&metadata).map_err(|error| ArtifactError::Bounds(error.0))?;
+    Ok(metadata)
 }
 
 /// Attach `metadata` to a component artifact as its metadata section.
@@ -67,10 +110,10 @@ pub fn attach_metadata(
     artifact: &[u8],
     metadata: &PackageMetadata,
 ) -> Result<Vec<u8>, ArtifactError> {
-    if find_section(artifact)?.is_some() {
+    if metadata_section(artifact)?.is_some() {
         return Err(ArtifactError::AlreadyAttached);
     }
-    let payload = to_vec(metadata).map_err(|error| ArtifactError::Payload(error.to_string()))?;
+    let payload = encode_metadata(metadata)?;
 
     let mut content = Vec::with_capacity(METADATA_SECTION.len() + payload.len() + 8);
     write_uleb128(METADATA_SECTION.len(), &mut content);
@@ -93,19 +136,22 @@ pub fn attach_metadata(
 /// declares the metadata section more than once, or if the section's
 /// payload is not canonical metadata.
 pub fn extract_metadata(artifact: &[u8]) -> Result<Option<PackageMetadata>, ArtifactError> {
-    find_section(artifact)?
-        .map(|payload| {
-            from_slice(payload).map_err(|error| ArtifactError::Payload(error.to_string()))
-        })
-        .transpose()
+    metadata_section(artifact)?.map(decode_metadata).transpose()
 }
 
 /// The metadata section's payload, walking the artifact's sections.
 ///
-/// Every step is checked against the bytes that remain, so a truncated
-/// length, a section running past the artifact, or a name running past
-/// its own section is a refusal rather than a panic.
-fn find_section(artifact: &[u8]) -> Result<Option<&[u8]>, ArtifactError> {
+/// The framing walk alone, for an embedder whose policy judges the raw
+/// payload — a byte budget, say — before it decodes. Every step is
+/// checked against the bytes that remain, so a truncated length, a
+/// section running past the artifact, or a name running past its own
+/// section is a refusal rather than a panic.
+///
+/// # Errors
+///
+/// [`ArtifactError`] if the artifact's section framing is malformed or it
+/// declares the metadata section more than once.
+pub fn metadata_section(artifact: &[u8]) -> Result<Option<&[u8]>, ArtifactError> {
     if artifact.len() < PREAMBLE_LEN || artifact[..WASM_MAGIC.len()] != WASM_MAGIC {
         return Err(ArtifactError::NotWasm);
     }
@@ -155,27 +201,39 @@ fn write_uleb128(mut value: usize, out: &mut Vec<u8>) {
     }
 }
 
+/// Read one wasm `u32` length, capped at the five bytes the encoding
+/// admits so a padded run cannot spin.
 fn read_uleb128(bytes: &[u8], pos: &mut usize) -> Result<usize, ArtifactError> {
-    let mut value = 0usize;
+    let mut value = 0u64;
     let mut shift = 0u32;
     loop {
         let byte = *bytes.get(*pos).ok_or(ArtifactError::BadLength)?;
         *pos += 1;
-        value |= ((byte & 0x7F) as usize) << shift;
+        value |= u64::from(byte & 0x7F) << shift;
         if byte < 0x80 {
-            return Ok(value);
+            break;
         }
         shift += 7;
         if shift >= 32 {
             return Err(ArtifactError::BadLength);
         }
     }
+    if value > u64::from(u32::MAX) {
+        return Err(ArtifactError::BadLength);
+    }
+    usize::try_from(value).map_err(|_| ArtifactError::BadLength)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ArtifactError, METADATA_SECTION, attach_metadata, extract_metadata};
-    use crate::metadata::PackageMetadata;
+    use hyperscale_hbor::to_vec_with_depth;
+
+    use super::{
+        ArtifactError, CUSTOM_SECTION_ID, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata,
+        extract_metadata, write_uleb128,
+    };
+    use crate::dsl::{Clause, Expr, MAX_EXPR_DEPTH, ModeExpr, TargetExpr};
+    use crate::metadata::{MethodSignature, PackageMetadata};
 
     fn empty_component() -> Vec<u8> {
         let mut artifact = b"\0asm".to_vec();
@@ -220,11 +278,120 @@ mod tests {
         );
     }
 
+    /// The codec is where the vocabulary's bounds hold, so no path — not
+    /// attach, not extract — carries a structure past them, and the two
+    /// sides refuse the same structures.
     #[test]
-    fn a_truncated_artifact_refuses_rather_than_panics() {
-        assert_eq!(extract_metadata(b"\0as"), Err(ArtifactError::NotWasm));
-        let published = attach_metadata(&empty_component(), &PackageMetadata::default()).unwrap();
-        let truncated = &published[..published.len() - 1];
+    fn metadata_past_a_vocabulary_bound_refuses_on_both_sides() {
+        let mut expr = Expr::Arg(0);
+        for _ in 0..=MAX_EXPR_DEPTH {
+            expr = Expr::Field(Box::new(expr), 0);
+        }
+        let mut metadata = PackageMetadata::default();
+        metadata.methods.insert(
+            "m".into(),
+            MethodSignature {
+                effects: vec![Clause::Effect {
+                    target: TargetExpr::Point(expr),
+                    mode: ModeExpr::Write,
+                }],
+                ..MethodSignature::default()
+            },
+        );
+        assert!(matches!(
+            attach_metadata(&empty_component(), &metadata),
+            Err(ArtifactError::Bounds(_))
+        ));
+
+        // The same structure framed by hand — what a hostile publisher
+        // writes — refuses at extract rather than decoding unchecked.
+        let payload = to_vec_with_depth(&metadata, METADATA_WIRE_DEPTH)
+            .expect("the structure encodes within the wire depth");
+        let mut content = Vec::new();
+        write_uleb128(METADATA_SECTION.len(), &mut content);
+        content.extend_from_slice(METADATA_SECTION.as_bytes());
+        content.extend_from_slice(&payload);
+        let mut artifact = empty_component();
+        artifact.push(CUSTOM_SECTION_ID);
+        write_uleb128(content.len(), &mut artifact);
+        artifact.extend_from_slice(&content);
+        assert!(matches!(
+            extract_metadata(&artifact),
+            Err(ArtifactError::Bounds(_))
+        ));
+    }
+
+    #[test]
+    fn the_section_is_found_past_other_custom_sections() {
+        // A real component carries name and producers sections; the walk
+        // has to skip custom sections it does not know, and must not
+        // match on a prefix of the name either.
+        let metadata = PackageMetadata::default();
+        let mut plain = empty_component();
+        for name in ["name", "producers", "hyperscale:effect-metadata-x"] {
+            let mut content = Vec::new();
+            write_uleb128(name.len(), &mut content);
+            content.extend_from_slice(name.as_bytes());
+            content.extend_from_slice(b"payload");
+            plain.push(CUSTOM_SECTION_ID);
+            write_uleb128(content.len(), &mut plain);
+            plain.extend_from_slice(&content);
+        }
+        assert_eq!(extract_metadata(&plain).unwrap(), None);
+
+        let artifact = attach_metadata(&plain, &metadata).unwrap();
+        assert_eq!(extract_metadata(&artifact).unwrap(), Some(metadata));
+    }
+
+    #[test]
+    fn malformed_framing_is_refused_rather_than_walked() {
+        let artifact = attach_metadata(&empty_component(), &PackageMetadata::default()).unwrap();
+
+        // No preamble at all, and a preamble that is not wasm's.
+        assert_eq!(extract_metadata(b""), Err(ArtifactError::NotWasm));
+        assert_eq!(
+            extract_metadata(&artifact[..4]),
+            Err(ArtifactError::NotWasm)
+        );
+        assert!(extract_metadata(&[0u8; 16]).is_err());
+
+        // A section claiming more bytes than the artifact holds.
+        let mut overrun = empty_component();
+        overrun.push(1);
+        write_uleb128(64, &mut overrun);
+        overrun.extend_from_slice(b"short");
+        assert_eq!(
+            extract_metadata(&overrun),
+            Err(ArtifactError::SectionOverrun)
+        );
+
+        // A length that never terminates, and one padded past 32 bits.
+        let mut truncated = empty_component();
+        truncated.extend_from_slice(&[1, 0x80]);
+        assert_eq!(extract_metadata(&truncated), Err(ArtifactError::BadLength));
+        let mut oversized = empty_component();
+        oversized.extend_from_slice(&[1, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00]);
+        assert_eq!(extract_metadata(&oversized), Err(ArtifactError::BadLength));
+
+        // A custom section with no room for its own name.
+        let mut nameless = empty_component();
+        nameless.push(CUSTOM_SECTION_ID);
+        write_uleb128(0, &mut nameless);
+        assert!(extract_metadata(&nameless).is_err());
+
+        // A name longer than the section that carries it.
+        let mut overlong = empty_component();
+        let mut content = Vec::new();
+        write_uleb128(64, &mut content);
+        content.extend_from_slice(b"name");
+        overlong.push(CUSTOM_SECTION_ID);
+        write_uleb128(content.len(), &mut overlong);
+        overlong.extend_from_slice(&content);
+        assert_eq!(extract_metadata(&overlong), Err(ArtifactError::NameOverrun));
+
+        // Truncating the payload leaves the framing intact and the
+        // metadata undecodable, which is a refusal and not a None.
+        let truncated = &artifact[..artifact.len() - 1];
         assert!(extract_metadata(truncated).is_err());
     }
 }

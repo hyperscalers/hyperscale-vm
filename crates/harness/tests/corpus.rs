@@ -327,6 +327,7 @@ impl GuestBackend for ReferenceBackend<'_> {
         let args: Vec<CVal> = call.args.iter().map(ref_arg).collect();
         let component = &self.engines.reference[self.engines.guest_for(call.package)];
         let mut instance = RefComponentInstance::instantiate(component, SessionHost(session))
+            .map_err(|(_, error)| error)
             .expect("instantiate");
         instance.set_fuel_limit(call.fuel_budget.min(FUEL));
         let outcome = instance.invoke(call.export, &args).expect("invoke");

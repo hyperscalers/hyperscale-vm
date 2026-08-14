@@ -287,8 +287,9 @@ impl GuestRunner for RefRunner {
                 )],
             ),
         };
-        let mut instance =
-            RefComponentInstance::instantiate(&self.comp, SessionHost(session)).expect("decode");
+        let mut instance = RefComponentInstance::instantiate(&self.comp, SessionHost(session))
+            .map_err(|(_, error)| error)
+            .expect("decode");
         let outcome = instance.invoke(export, &args).expect("invoke").map_or_else(
             |_| Outcome::UserError {
                 reason: "guest trap".into(),
