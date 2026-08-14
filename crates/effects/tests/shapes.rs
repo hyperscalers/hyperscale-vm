@@ -12,9 +12,9 @@ use common::{
     effect_set, pkg, pool, resolver, shard_of, vault, wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
-    EdgeRef, Effect, EffectTarget, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
-    InstanceRegistry, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit, collection_id,
-    fresh_id, route,
+    AdmissionError, EdgeRef, Effect, EffectTarget, EvidenceRef, GraphArg, GraphNode, Hash32,
+    InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit,
+    collection_id, fresh_id, route,
 };
 
 /// One consumed output edge, unconstrained.
@@ -386,4 +386,71 @@ fn a_declared_superset_evaluates_without_error() {
         mode: Mode::Reserve { amount: 1 },
     }));
     assert_eq!(set.len(), 4);
+}
+
+/// A presented instance record is the whole of instantiation: the swap
+/// that resolves against a registry holding the pool resolves
+/// identically against a bare registry composed with the pool's record —
+/// and against nothing else.
+#[test]
+fn a_presented_record_is_the_whole_of_instantiation() {
+    let (cache, registered) = world();
+    let mut bare = InstanceRegistry::new();
+    bare.serve_principals(pkg("account"));
+
+    let graph = ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE.into(),
+                method: "authorize".into(),
+                args: vec![],
+                evidence: [EvidenceRef::IntentSignature].into(),
+            },
+            GraphNode {
+                target: ALICE.into(),
+                method: "withdraw".into(),
+                args: vec![
+                    GraphArg::Literal(Value::Address(RES_X.address())),
+                    GraphArg::Literal(Value::U128(500)),
+                ],
+                evidence: [EvidenceRef::Node(0)].into(),
+            },
+            GraphNode {
+                target: pool().into(),
+                method: "swap".into(),
+                args: vec![edge(1, 0), GraphArg::Literal(Value::U128(50))],
+                evidence: BTreeSet::new(),
+            },
+            GraphNode {
+                target: ALICE.into(),
+                method: "deposit".into(),
+                args: vec![edge(2, 0)],
+                evidence: BTreeSet::new(),
+            },
+        ],
+    };
+
+    // Unregistered and uncertified: the target is unresolvable.
+    assert!(matches!(
+        admit(&graph, ALICE, &cache, &bare, &TestHasher),
+        Err(AdmissionError::UnknownInstance(_))
+    ));
+
+    // A record for some other instance enables nothing at the pool.
+    let elsewhere = bare.with_instances(&[common::book_meta()], &TestHasher);
+    assert!(matches!(
+        admit(&graph, ALICE, &cache, &elsewhere, &TestHasher),
+        Err(AdmissionError::UnknownInstance(_))
+    ));
+
+    // The pool's own record resolves the call — to exactly the
+    // routing a pre-registered world derives.
+    let certified = bare.with_instances(&[common::pool_meta()], &TestHasher);
+    let admitted = admit(&graph, ALICE, &cache, &certified, &TestHasher).expect("admits");
+    let routing = route(&admitted, &cache, &certified, &TestHasher, &resolver()).expect("routes");
+
+    let reference = admit(&graph, ALICE, &cache, &registered, &TestHasher).expect("admits");
+    let reference =
+        route(&reference, &cache, &registered, &TestHasher, &resolver()).expect("routes");
+    assert_eq!(routing.per_shard, reference.per_shard);
 }

@@ -1002,6 +1002,24 @@ impl InstanceRegistry {
         address
     }
 
+    /// This registry extended by presented records, each registered at
+    /// exactly the address it derives.
+    ///
+    /// The per-envelope composition derivation runs over: the base is
+    /// what genesis serves, and a presented record can only enable calls
+    /// to the one address its own content derives — a "false" claim
+    /// registers a different instance, and the intended target stays
+    /// unresolvable. First registration wins, so a presented record
+    /// cannot displace a genesis one.
+    #[must_use]
+    pub fn with_instances(&self, records: &[InstanceMeta], hasher: &dyn Hasher) -> Self {
+        let mut composed = self.clone();
+        for meta in records {
+            composed.create(hasher, meta.clone());
+        }
+        composed
+    }
+
     /// Look up the creation-fixed record serving a call target.
     ///
     /// Both classes a target can carry are answered here and nothing else

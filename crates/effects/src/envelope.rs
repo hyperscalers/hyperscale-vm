@@ -25,13 +25,14 @@ use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 
 use crate::admission::{
-    AdmissionError, Admitted, IntentView, MAX_YIELD_PARAMS, admit_intents, check_value_depth,
+    AdmissionError, Admitted, IntentView, MAX_YIELD_PARAMS, admit_intents, check_instance_values,
+    check_value_depth,
 };
 use crate::graph::{Constraint, EdgeRef, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
-use crate::metadata::{InstanceRegistry, MetadataCache};
-use crate::route::{RouteError, Routing, ShardResolver, route};
+use crate::metadata::{InstanceMeta, InstanceRegistry, MetadataCache};
+use crate::route::{MAX_MANIFEST_NODES, RouteError, Routing, ShardResolver, route};
 use crate::types::{
     Address, Effect, EffectTarget, Mode, PrincipalAddr, ResourceRef, RoleId, SubstateKey, child_key,
 };
@@ -143,6 +144,15 @@ pub struct EnvelopeTree {
     /// The bound subintents, in envelope order.
     #[hbor(max = MAX_SUBINTENTS)]
     pub subintents: Vec<Subintent>,
+    /// The creation-fixed records of the component targets the tree
+    /// names beyond what the genesis registry serves — each registered,
+    /// at derivation, at exactly the address it derives.
+    ///
+    /// Inside the signed tree, so what an envelope's calls resolve
+    /// against is covered by its identity. A record no target names is
+    /// dead weight its composer paid to carry, not a refusal.
+    #[hbor(max = MAX_MANIFEST_NODES)]
+    pub instances: Vec<InstanceMeta>,
 }
 
 impl EnvelopeTree {
@@ -158,7 +168,7 @@ impl EnvelopeTree {
     /// requires of the literals the graph hashes feed on.
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> ManifestHash {
-        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(2 + 3 * self.subintents.len());
+        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(3 + 3 * self.subintents.len());
         parts.push(self.root.hash(hasher).0.0.to_vec());
         parts.push(to_vec(&self.root_bindings).expect("bindings are flat"));
         for subintent in &self.subintents {
@@ -166,6 +176,9 @@ impl EnvelopeTree {
             parts.push(subintent.signer.to_bytes().to_vec());
             parts.push(to_vec(&subintent.bindings).expect("bindings are flat"));
         }
+        // What the tree's calls resolve against is part of what was
+        // composed, so two trees differing only here are two identities.
+        parts.push(to_vec(&self.instances).expect("instance records are wire-bounded values"));
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
         ManifestHash(hasher.hash(DOMAIN_ENVELOPE_TREE, &refs))
     }
@@ -254,6 +267,7 @@ pub fn admit_tree(
     for subintent in &tree.subintents {
         check_value_depth(&subintent.decl.graph)?;
     }
+    check_instance_values(&tree.instances)?;
     let mut records = Vec::with_capacity(tree.subintents.len());
     let mut seen = BTreeSet::new();
     for (index, subintent) in tree.subintents.iter().enumerate() {

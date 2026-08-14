@@ -19,7 +19,9 @@ use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
 use crate::hash::Hasher;
 use crate::manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
-use crate::metadata::{Accessibility, InstanceRegistry, MetadataCache, PackageHash, ParamType};
+use crate::metadata::{
+    Accessibility, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash, ParamType,
+};
 use crate::resource::holdings_collection;
 use crate::route::MAX_MANIFEST_NODES;
 use crate::stdlib::VAULT;
@@ -335,6 +337,13 @@ pub enum AdmissionError {
         /// The parameter position.
         param: u32,
     },
+    /// A presented instance record's configuration value nested past
+    /// [`MAX_VALUE_DEPTH`].
+    #[error("instance record {instance}: configuration value nests deeper than {MAX_VALUE_DEPTH}")]
+    InstanceValueTooDeep {
+        /// Index of the record in the envelope's own order.
+        instance: u32,
+    },
     /// A literal nested past [`MAX_VALUE_DEPTH`].
     #[error("node {node} argument {param}: literal nests deeper than {MAX_VALUE_DEPTH}")]
     ValueTooDeep {
@@ -343,6 +352,25 @@ pub enum AdmissionError {
         /// The argument position.
         param: u32,
     },
+}
+
+/// Reject presented instance records whose configuration values nest
+/// past [`MAX_VALUE_DEPTH`] — the same bound graph literals clear,
+/// judged here so composing the per-envelope registry never meets a
+/// value the vocabulary's own encoders refuse.
+pub(crate) fn check_instance_values(records: &[InstanceMeta]) -> Result<(), AdmissionError> {
+    for (index, meta) in records.iter().enumerate() {
+        if meta
+            .config
+            .iter()
+            .any(|value| value.depth() > MAX_VALUE_DEPTH)
+        {
+            return Err(AdmissionError::InstanceValueTooDeep {
+                instance: u32::try_from(index).unwrap_or(u32::MAX),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Reject literals nested past [`MAX_VALUE_DEPTH`].

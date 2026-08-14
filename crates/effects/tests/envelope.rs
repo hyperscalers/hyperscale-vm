@@ -5,11 +5,11 @@
 use hyperscale_vm_effects::stdlib::account_metadata;
 use hyperscale_vm_effects::{
     Address, AdmissionError, AdmittedTree, Bounds, CallTarget, Constraint, EdgeContent, EdgeRef,
-    Effect, EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hasher, InstanceRegistry, IntentDecl,
-    MAX_SUBINTENTS, MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, Mode,
-    NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr,
-    RoleId, ShardResolver, Subintent, TestHasher, Value, YieldBinding, YieldParam, admit,
-    admit_tree, child_key, nullifier_key, route_tree,
+    Effect, EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta,
+    InstanceRegistry, IntentDecl, MAX_SUBINTENTS, MAX_VALUE_DEPTH, MAX_YIELD_PARAMS, ManifestGraph,
+    ManifestHash, MetadataCache, Mode, NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver,
+    PrincipalAddr, ResourceAddr, RoleId, ShardResolver, Subintent, TestHasher, Value, YieldBinding,
+    YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
 use proptest::prelude::{any, proptest};
 
@@ -101,6 +101,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
                 },
             }],
         }],
+        instances: Vec::new(),
     }
 }
 
@@ -514,4 +515,38 @@ proptest! {
         let second = admit_tree(&tree, ALICE, identity, &cache, &instances, &TestHasher);
         assert_eq!(first, second);
     }
+}
+
+/// The record a call resolves against is the composer's signed claim,
+/// so it rides inside the identity everything else derives from.
+#[test]
+fn presented_instances_are_covered_by_the_tree_identity() {
+    let mut tree = composed_tree(100);
+    let plain = tree.hash(&TestHasher);
+    tree.instances.push(InstanceMeta {
+        package: pkg(),
+        config: vec![Value::U64(1)],
+        salt: Hash32([9; 32]),
+    });
+    assert_ne!(tree.hash(&TestHasher), plain);
+}
+
+/// A presented record's configuration values clear the same nesting
+/// bound graph literals do, refused before any composition touches them.
+#[test]
+fn a_deep_instance_config_value_refuses_at_admission() {
+    let mut tree = composed_tree(100);
+    let mut value = Value::U64(0);
+    for _ in 0..MAX_VALUE_DEPTH {
+        value = Value::Tuple(vec![value]);
+    }
+    tree.instances.push(InstanceMeta {
+        package: pkg(),
+        config: vec![value],
+        salt: Hash32([9; 32]),
+    });
+    assert!(matches!(
+        admit_composed(&tree),
+        Err(AdmissionError::InstanceValueTooDeep { .. })
+    ));
 }

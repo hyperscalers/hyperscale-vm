@@ -33,9 +33,9 @@ use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
-    Constraint, EdgeRef, EnvelopeTree, GraphArg, Hasher, InstanceRegistry, IntentDecl,
-    MAX_SUBINTENTS, MAX_YIELD_PARAMS, ManifestGraph, MetadataCache, PrincipalAddr, ResourceRef,
-    Subintent, YieldBinding, YieldParam,
+    Constraint, EdgeRef, EnvelopeTree, GraphArg, Hasher, InstanceMeta, InstanceRegistry,
+    IntentDecl, MAX_SUBINTENTS, MAX_YIELD_PARAMS, ManifestGraph, MetadataCache, PrincipalAddr,
+    ResourceRef, Subintent, YieldBinding, YieldParam,
 };
 
 use crate::builder::{Bucket, Param};
@@ -257,6 +257,9 @@ pub struct EnvelopeBuilder<'a> {
     /// The bound source of each declared parameter, by intent and
     /// position.
     bindings: BTreeMap<(u32, u32), YieldBinding>,
+    /// The creation-fixed records the tree carries for targets beyond
+    /// the genesis registry.
+    presented: Vec<InstanceMeta>,
 }
 
 impl<'a> EnvelopeBuilder<'a> {
@@ -277,6 +280,7 @@ impl<'a> EnvelopeBuilder<'a> {
             signers: Vec::new(),
             intents: vec![None],
             bindings: BTreeMap::new(),
+            presented: Vec::new(),
         };
         let root = IntentBuilder {
             graph: TypedBuilder::new(cache, instances, hasher),
@@ -285,6 +289,17 @@ impl<'a> EnvelopeBuilder<'a> {
             params: Vec::new(),
         };
         (envelope, root)
+    }
+
+    /// Carry `meta` in the tree's instance section, registering the
+    /// component address it derives for this envelope's calls.
+    ///
+    /// The builder resolves targets against the registry it was given,
+    /// so a presenting build composes that registry with the same
+    /// records first — this records them in the tree, where admission
+    /// will compose identically.
+    pub fn instance(&mut self, meta: InstanceMeta) {
+        self.presented.push(meta);
     }
 
     /// A separately signed subintent, whose signer owns the nullifier
@@ -464,6 +479,7 @@ impl<'a> EnvelopeBuilder<'a> {
             root,
             root_bindings,
             subintents,
+            instances: self.presented,
         })
     }
 }
