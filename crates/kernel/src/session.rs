@@ -14,7 +14,7 @@
 //! reservations, verifies every recorded access against the declared set,
 //! and only then produces the receipt — outcome, state delta, fuel.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
     Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Mode, ModeKind, SubstateKey,
@@ -70,7 +70,10 @@ pub enum Capability {
         lo: u128,
         /// Inclusive upper order-key bound.
         hi: u128,
-        /// The declared entry cap.
+        /// The declared entry cap: a scan truncates at it, and it bounds
+        /// the distinct entries this interval may change — separately,
+        /// since a read-modify-write reaches its whole page and an insert
+        /// adds entries no scan returned.
         cap: u32,
     },
 }
@@ -141,6 +144,17 @@ pub enum SessionTrap {
     /// An insert order outside the declared interval.
     #[error("order outside the declared interval")]
     OrderOutsideInterval,
+    /// More distinct entries written through one interval than the cap it
+    /// declared. A scan truncates at the cap; a write has no natural
+    /// truncation, so passing it is a refusal rather than a silent
+    /// over-run of what the declaration claimed.
+    #[error("interval has written its declared cap of {cap} entries")]
+    WriteCapExceeded {
+        /// The interval's declared entry cap.
+        cap: u32,
+        /// The order the refused write would have added.
+        order: u128,
+    },
     /// A reservation the table promises but the store no longer holds —
     /// unreachable, kept honest.
     #[error("no reservation held")]
@@ -353,6 +367,16 @@ pub struct KernelSession {
     /// that walk quadratic in the interval and floods the access log with
     /// one record per step.
     scans: BTreeMap<u32, Vec<(u128, Vec<u8>)>>,
+    /// The distinct entries each write interval has changed, against the
+    /// cap that interval declared.
+    ///
+    /// A scan truncates at the cap, so reads are bounded by construction;
+    /// nothing truncates a write, so the budget is counted here or not at
+    /// all. Kept per handle rather than per collection because the cap is
+    /// a property of the declared interval, and cumulative across the
+    /// transaction rather than per scan — a write budget the invalidation
+    /// of a materialized interval must not refund.
+    written: BTreeMap<u32, BTreeSet<u128>>,
     /// The instance whose method is executing, set by the runner as it
     /// enters each manifest node. The capability table is per transaction
     /// and positional, so the session has no other way to know whose
@@ -446,6 +470,7 @@ impl KernelSession {
             hash_fn,
             locality: Locality::All,
             scans: BTreeMap::new(),
+            written: BTreeMap::new(),
             invocation: None,
             events: Vec::new(),
         })
@@ -645,6 +670,25 @@ impl KernelSession {
         Ok(())
     }
 
+    /// Charge one entry against `rep`'s declared write cap.
+    ///
+    /// The budget counts distinct orders rather than operations: writing
+    /// an entry this interval already changed is the same entry touched
+    /// again, and the cap bounds how much of the collection a declaration
+    /// reaches, not how many times a guest reaches it.
+    fn charge_write(&mut self, rep: u32, order: u128, cap: u32) -> Result<(), SessionTrap> {
+        let cap = usize::try_from(cap).unwrap_or(usize::MAX);
+        let written = self.written.entry(rep).or_default();
+        if !written.contains(&order) && written.len() >= cap {
+            return Err(SessionTrap::WriteCapExceeded {
+                cap: u32::try_from(cap).unwrap_or(u32::MAX),
+                order,
+            });
+        }
+        written.insert(order);
+        Ok(())
+    }
+
     /// Drop every materialized interval over a collection a write touched.
     fn invalidate(&mut self, owner: Address, collection: CollectionId) {
         let stale: Vec<u32> = self
@@ -699,12 +743,13 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), SessionTrap> {
-        let (owner, collection, _, _, _, writable) = self.range_of(rep)?;
+        let (owner, collection, _, _, cap, writable) = self.range_of(rep)?;
         if !writable {
             return Err(SessionTrap::WrongMode(rep));
         }
         self.scan(rep)?;
         let order = *indexed(&self.scans[&rep], index).map(|(order, _)| order)?;
+        self.charge_write(rep, order, cap)?;
         self.store.entry_write(owner, collection, order, value)?;
         self.invalidate(owner, collection);
         Ok(())
@@ -722,7 +767,7 @@ impl KernelSession {
         order: &[u8],
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
-        let (owner, collection, lo, hi, _, writable) = self.range_of(rep)?;
+        let (owner, collection, lo, hi, cap, writable) = self.range_of(rep)?;
         if !writable {
             return Err(SessionTrap::WrongMode(rep));
         }
@@ -730,6 +775,7 @@ impl KernelSession {
         if !(lo..=hi).contains(&order) {
             return Err(SessionTrap::OrderOutsideInterval);
         }
+        self.charge_write(rep, order, cap)?;
         self.store.entry_write(owner, collection, order, value)?;
         self.invalidate(owner, collection);
         Ok(())
@@ -741,12 +787,13 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), SessionTrap> {
-        let (owner, collection, _, _, _, writable) = self.range_of(rep)?;
+        let (owner, collection, _, _, cap, writable) = self.range_of(rep)?;
         if !writable {
             return Err(SessionTrap::WrongMode(rep));
         }
         self.scan(rep)?;
         let order = *indexed(&self.scans[&rep], index).map(|(order, _)| order)?;
+        self.charge_write(rep, order, cap)?;
         self.store.entry_remove(owner, collection, order)?;
         self.invalidate(owner, collection);
         Ok(())
@@ -1509,6 +1556,104 @@ mod tests {
         );
         assert_eq!(session.range_insert(0, &encode_amount(12), vec![2]), Ok(()));
         assert_eq!(session.range_count(0), Ok(2));
+    }
+
+    #[test]
+    fn a_write_interval_bounds_the_entries_it_adds_by_its_cap() {
+        // Nothing truncates a write the way a scan truncates a read, so
+        // the cap has to refuse: a declaration claiming two entries must
+        // not be able to grow the collection without bound.
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 2,
+            },
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(MemoryStore::new(), &set);
+
+        assert_eq!(session.range_insert(0, &encode_amount(10), vec![1]), Ok(()));
+        assert_eq!(session.range_insert(0, &encode_amount(20), vec![2]), Ok(()));
+        assert_eq!(
+            session.range_insert(0, &encode_amount(30), vec![3]),
+            Err(SessionTrap::WriteCapExceeded { cap: 2, order: 30 }),
+            "a third distinct entry is past the declared cap"
+        );
+
+        // Rewriting an entry the interval already changed is the same
+        // entry touched again, not a new one.
+        assert_eq!(session.range_insert(0, &encode_amount(10), vec![9]), Ok(()));
+    }
+
+    #[test]
+    fn the_write_budget_survives_a_scan_invalidation() {
+        // A write drops the materialized interval, and the budget must not
+        // come back with it — otherwise re-scanning between writes buys an
+        // unbounded number of them.
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 1,
+            },
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(MemoryStore::new(), &set);
+
+        assert_eq!(session.range_insert(0, &encode_amount(10), vec![1]), Ok(()));
+        assert_eq!(
+            session.range_count(0),
+            Ok(1),
+            "re-materializes the interval"
+        );
+        assert_eq!(
+            session.range_insert(0, &encode_amount(20), vec![2]),
+            Err(SessionTrap::WriteCapExceeded { cap: 1, order: 20 }),
+        );
+    }
+
+    #[test]
+    fn a_full_page_of_read_modify_writes_fits_its_cap() {
+        // The order book's fill: scan the cap and rewrite or remove every
+        // entry it returned. The write budget is the cap, and reads are
+        // truncated at it separately, so the pattern sits exactly inside
+        // the declaration rather than being refused by it.
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let mut store = MemoryStore::new();
+        for order in 0..4u128 {
+            store
+                .entry_write(owner, collection, order, vec![u8::try_from(order).unwrap()])
+                .unwrap();
+        }
+        store.clear_log();
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 4,
+            },
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(store, &set);
+
+        assert_eq!(session.range_count(0), Ok(4));
+        for index in 0..4 {
+            assert_eq!(session.range_set(0, index, vec![0xFF]), Ok(()));
+        }
+        // And removing what it just rewrote reaches no new entry.
+        assert_eq!(session.range_remove(0, 0), Ok(()));
     }
 
     #[test]
