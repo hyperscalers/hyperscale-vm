@@ -34,7 +34,6 @@ use hyperscale_vm_effects::{
     SubstateKey, compatible,
 };
 
-use crate::conflict::targets_overlap;
 use crate::locality::Locality;
 use crate::modes::{ModeError, TxHash};
 use crate::overlay::OverlayStore;
@@ -338,9 +337,153 @@ fn merge(component: &mut [usize], left: usize, right: usize) {
     component[a.max(b)] = a.min(b);
 }
 
-/// One collection's declarations: who declared it, over what interval, in
-/// what mode.
-type CollectionClaims = Vec<(usize, EffectTarget, ModeKind)>;
+/// Which side of the mode lattice a collection claim sits on.
+///
+/// The three classes the sweep distinguishes: a locked claim conflicts
+/// with nothing and never becomes one. Reads are compatible with reads and
+/// the commutative modes with each other; every other pairing conflicts —
+/// which is what lets the sweep decide conflict from the classes alone.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClaimClass {
+    Read,
+    Commutative,
+    Write,
+}
+
+impl ClaimClass {
+    /// Every class, in the order the sweep's active lists are indexed.
+    const ALL: [Self; 3] = [Self::Read, Self::Commutative, Self::Write];
+
+    /// The class of a mode kind, or `None` for one that conflicts with
+    /// nothing and so cannot join a group.
+    const fn of(kind: ModeKind) -> Option<Self> {
+        match kind {
+            ModeKind::Locked => None,
+            ModeKind::Read => Some(Self::Read),
+            ModeKind::Delta | ModeKind::Reserve => Some(Self::Commutative),
+            ModeKind::Write => Some(Self::Write),
+        }
+    }
+
+    /// A mode kind standing for this class.
+    ///
+    /// The commutative modes are interchangeable under [`compatible`], so
+    /// one of them speaks for both and conflict stays read off the lattice
+    /// rather than tabulated again beside it.
+    const fn kind(self) -> ModeKind {
+        match self {
+            Self::Read => ModeKind::Read,
+            Self::Commutative => ModeKind::Delta,
+            Self::Write => ModeKind::Write,
+        }
+    }
+
+    /// Which active list this class occupies.
+    const fn slot(self) -> usize {
+        match self {
+            Self::Read => 0,
+            Self::Commutative => 1,
+            Self::Write => 2,
+        }
+    }
+
+    const fn conflicts_with(self, other: Self) -> bool {
+        !compatible(self.kind(), other.kind())
+    }
+}
+
+/// One claim on a collection: who declared it, the interval it names, and
+/// its side of the lattice.
+struct CollectionClaim {
+    tx: usize,
+    lo: u128,
+    hi: u128,
+    class: ClaimClass,
+}
+
+/// One collection's claims, in declaration order until the sweep sorts
+/// them.
+type CollectionClaims = Vec<CollectionClaim>;
+
+/// The interval a collection target names, or `None` where it names
+/// nothing an overlap could land in.
+///
+/// An inverted range is empty — the store reads it as empty and the
+/// pairwise relation finds it overlapping nothing, itself included — so it
+/// joins no group and the sweep never sees it. That matters beyond
+/// tidiness: the sweep's invariant is that an active claim contains the
+/// sweep point, and an empty interval contains nothing.
+const fn claim_interval(target: &EffectTarget) -> Option<(u128, u128)> {
+    match target {
+        EffectTarget::Entry { order, .. } => Some((*order, *order)),
+        EffectTarget::Range { lo, hi, .. } if *lo <= *hi => Some((*lo, *hi)),
+        EffectTarget::Range { .. } | EffectTarget::Point(_) => None,
+    }
+}
+
+/// The claims of one class the sweep is still inside: how far each reaches,
+/// and a transaction standing for the component it belongs to.
+///
+/// Every entry contains the sweep point, so any two of them overlap and so
+/// does anything arriving next — which is why the sweep tests no intervals
+/// at all once the claims are ordered.
+type Active = Vec<(u128, usize)>;
+
+/// Merge `claim` with every unexpired entry of a conflicting class and
+/// collapse that class to the one component they now share, returning how
+/// far it reaches.
+///
+/// Collapsing is what keeps the sweep linear. Reads do not conflict with
+/// reads, so they pile up unmerged; the first commutative or exclusive
+/// claim to arrive conflicts with all of them at once, and afterwards they
+/// are one component that a single entry can speak for. Every entry is
+/// therefore drained at most once, and each drain leaves one behind.
+fn absorb(active: &mut Active, component: &mut [usize], claim: usize, lo: u128) -> Option<u128> {
+    let mut reach: Option<u128> = None;
+    for (hi, representative) in std::mem::take(active) {
+        // A claim the sweep has passed cannot overlap what comes next, and
+        // merging it here would group transactions that never met.
+        if hi < lo {
+            continue;
+        }
+        merge(component, claim, representative);
+        reach = Some(reach.map_or(hi, |far: u128| far.max(hi)));
+    }
+    reach
+}
+
+/// Group one collection's claims by interval overlap in a single ordered
+/// pass.
+///
+/// Sorting by interval start is what turns overlap into a question about
+/// the sweep point rather than about pairs: everything still active begins
+/// at or before the arriving claim and has not yet ended, so it overlaps.
+/// What remains is the lattice, which the classes answer.
+fn sweep_collection(claims: &mut CollectionClaims, component: &mut [usize]) {
+    // A total order over signed content, so every replica sweeps the same
+    // sequence and derives the same groups.
+    claims.sort_unstable_by_key(|claim| (claim.lo, claim.hi, claim.tx));
+    let mut active: [Active; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    for claim in claims.iter() {
+        let mut reach = claim.hi;
+        for class in ClaimClass::ALL {
+            if !claim.class.conflicts_with(class) {
+                continue;
+            }
+            let Some(far) = absorb(&mut active[class.slot()], component, claim.tx, claim.lo) else {
+                continue;
+            };
+            if class == claim.class {
+                // Its own class, so the component just collapsed is the one
+                // this claim leaves behind: its reach folds into the entry.
+                reach = reach.max(far);
+            } else {
+                active[class.slot()].push((far, claim.tx));
+            }
+        }
+        active[claim.class.slot()].push((reach, claim.tx));
+    }
+}
 
 /// The transactions touching one point key, split by what the mode lattice
 /// does with them.
@@ -402,10 +545,11 @@ impl PointClasses {
 ///
 /// Effects bucket by the key space they can alias — point keys by the key
 /// itself, collection targets by `(owner, collection)` — so transactions
-/// that could not possibly conflict are never compared. Point buckets then
-/// resolve in one pass over the mode lattice. Interval targets stay
-/// pairwise inside their own collection, where overlap is arithmetic and
-/// the population is whoever declared that collection.
+/// that could not possibly conflict are never compared. A point bucket
+/// resolves in one pass over the mode lattice, every claim in it naming the
+/// same key. A collection bucket resolves in one ordered sweep, where
+/// sorting by interval start makes overlap a property of the sweep point
+/// and leaves only the lattice to decide.
 fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
     let mut component: Vec<usize> = (0..batch.len()).collect();
     let mut points: BTreeMap<SubstateKey, PointClasses> = BTreeMap::new();
@@ -421,11 +565,24 @@ fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
                 }
                 | EffectTarget::Range {
                     owner, collection, ..
-                } => collections.entry((owner, collection)).or_default().push((
-                    index,
-                    effect.target,
-                    kind,
-                )),
+                } => {
+                    // A claim conflicting with nothing, or naming an empty
+                    // interval, joins no group and never enters the sweep.
+                    let (Some(class), Some((lo, hi))) =
+                        (ClaimClass::of(kind), claim_interval(&effect.target))
+                    else {
+                        continue;
+                    };
+                    collections
+                        .entry((owner, collection))
+                        .or_default()
+                        .push(CollectionClaim {
+                            tx: index,
+                            lo,
+                            hi,
+                            class,
+                        });
+                }
             }
         }
     }
@@ -433,17 +590,8 @@ fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
     for classes in points.values() {
         classes.merge_into(&mut component);
     }
-    for touching in collections.values() {
-        for (position, (left, left_target, left_kind)) in touching.iter().enumerate() {
-            for (right, right_target, right_kind) in &touching[position + 1..] {
-                if left != right
-                    && !compatible(*left_kind, *right_kind)
-                    && targets_overlap(left_target, right_target)
-                {
-                    merge(&mut component, *left, *right);
-                }
-            }
-        }
+    for claims in collections.values_mut() {
+        sweep_collection(claims, &mut component);
     }
 
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
@@ -951,15 +1099,19 @@ mod tests {
                 )),
                 mode: nth_mode(mode),
             }),
-            (0u128..6, 0u8..2).prop_map(|(order, write)| Effect {
+            // Every mode on a collection target, not just read and write:
+            // the commutative modes are what make a read conflict with
+            // something a read does not, and the sweep collapses reads
+            // precisely when one arrives.
+            (0u128..6, 0u8..5).prop_map(|(order, mode)| Effect {
                 target: EffectTarget::Entry {
                     owner: BOOK,
                     collection: ASKS,
                     order,
                 },
-                mode: if write == 0 { Mode::Read } else { Mode::Write },
+                mode: nth_mode(mode),
             }),
-            (0u128..6, 0u128..6, 0u8..2).prop_map(|(a, b, write)| Effect {
+            (0u128..6, 0u128..6, 0u8..5).prop_map(|(a, b, mode)| Effect {
                 target: EffectTarget::Range {
                     owner: BOOK,
                     collection: ASKS,
@@ -967,7 +1119,18 @@ mod tests {
                     hi: a.max(b),
                     cap: 4,
                 },
-                mode: if write == 0 { Mode::Read } else { Mode::Write },
+                mode: nth_mode(mode),
+            }),
+            // Inverted intervals name nothing and must group nothing.
+            (0u128..6, 0u128..6, 0u8..5).prop_map(|(a, b, mode)| Effect {
+                target: EffectTarget::Range {
+                    owner: BOOK,
+                    collection: ASKS,
+                    lo: a.max(b).saturating_add(1),
+                    hi: a.min(b),
+                    cap: 4,
+                },
+                mode: nth_mode(mode),
             }),
         ]
     }
@@ -1005,9 +1168,16 @@ mod tests {
         /// Those facts live in the lattice, where the optimisation cannot
         /// see them — so rather than argue the two agree, they are run
         /// against each other.
+        ///
+        /// The collection sweep rests on more than the lattice: that
+        /// sorting by interval start makes every active claim overlap what
+        /// arrives, and that collapsing a class after it is absorbed loses
+        /// no edge. Neither is visible to the pairwise relation, which
+        /// compares every pair and tests every interval, so it is the
+        /// oracle for both.
         #[test]
         fn bucketed_grouping_agrees_with_the_pairwise_relation(
-            declarations in prop_vec(prop_vec(arb_effect(), 0..4), 1..6),
+            declarations in prop_vec(prop_vec(arb_effect(), 0..7), 1..9),
         ) {
             let batch: Vec<BatchTx> = declarations
                 .iter()
