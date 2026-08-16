@@ -19,6 +19,42 @@ use crate::executor::{BatchTx, GuestRunner, RunResult};
 use crate::modes::decode_amount;
 use crate::session::{Capability, KernelSession, Outcome, SessionTrap};
 
+/// One value edge in flight between the node that produced it and the
+/// node that consumes it.
+///
+/// A fungible edge is the kernel's own bucket from the moment it is
+/// produced: the rep names value the kernel holds, and what the consumer
+/// receives is that same bucket rather than a number re-read from bytes.
+/// A cell is what an edge crosses on where its guest has not been ported —
+/// every non-fungible one, and every fungible one whose package still
+/// returns the byte convention.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Edge {
+    /// A bucket the kernel holds on the producing node's behalf.
+    Bucket(u32),
+    /// The cell an edge crosses on under the byte convention.
+    Cell(Vec<u8>),
+}
+
+impl Edge {
+    /// The quantity a signed bound is judged over: a fungible edge's
+    /// amount, a non-fungible edge's id count.
+    ///
+    /// A bucket answers for itself; a cell is read as the kind its
+    /// producer declared, never sniffed from the bytes.
+    fn quantity(&self, kind: EdgeKind, session: &KernelSession) -> Option<u128> {
+        match self {
+            Self::Bucket(rep) => session.bucket(*rep).ok(),
+            Self::Cell(cell) => match kind {
+                EdgeKind::Fungible => decode_amount(cell).ok(),
+                EdgeKind::NonFungible => {
+                    cell_ids(cell).and_then(|ids| u128::try_from(ids.len()).ok())
+                }
+            },
+        }
+    }
+}
+
 /// Which handle type a rep names — the kernel's mode lattice as the
 /// runtimes' resource types.
 ///
@@ -76,6 +112,12 @@ pub enum GuestArg<'a> {
     Address(Address),
     /// A `list<u8>` argument.
     Bytes(&'a [u8]),
+    /// A value edge, transferred to the guest as the bucket the kernel
+    /// holds for it.
+    Bucket(u32),
+    /// This invocation's authority to issue, granted from the method's
+    /// own declared outputs.
+    Issuer,
 }
 
 /// One export invocation, fully assembled.
@@ -103,6 +145,9 @@ pub struct GuestCall<'a> {
 /// That distinction is what separates a declared refusal from a defect
 /// everywhere downstream — the outcome it records, and the fee it pays.
 pub enum Invoked {
+    /// The export returned the value edges it produced, as the buckets
+    /// the kernel holds again.
+    Produced(Vec<u32>),
     /// The export returned; its output bytes when its signature produces
     /// any.
     Returned(Option<Vec<u8>>),
@@ -169,9 +214,9 @@ const fn trapped(exhausted: bool, reason: AbortReason, budget: u64, spent: u64) 
 /// is cold.
 type NodeFailure = Box<(KernelSession, Outcome, u64)>;
 
-/// A node's invocation succeeded: the session, the cells it produced, and
+/// A node's invocation succeeded: the session, the edges it produced, and
 /// the fuel it consumed.
-type NodeSuccess = (KernelSession, Vec<Vec<u8>>, u64);
+type NodeSuccess = (KernelSession, Vec<Edge>, u64);
 
 fn fail(session: KernelSession, outcome: Outcome, fuel: u64) -> NodeFailure {
     Box::new((session, outcome, fuel))
@@ -189,7 +234,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
         &self,
         node: u32,
         call: &NodeCall,
-        outputs: &[Vec<Vec<u8>>],
+        outputs: &[Vec<Edge>],
         fuel_budget: u64,
         mut session: KernelSession,
     ) -> Result<NodeSuccess, NodeFailure> {
@@ -199,7 +244,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
         session.enter_invocation(call.target);
 
         let session = gated(call, node, session)?;
-        let session = edge_bounds_hold(call, node, outputs, session)?;
+        let mut session = edge_bounds_hold(call, node, outputs, session)?;
 
         let mut args = Vec::with_capacity(call.args.len());
         for arg in &call.args {
@@ -220,18 +265,29 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                     });
                 }
                 CallArg::Bucket { source, output } => {
-                    let Some(produced) = edge_cell(outputs, *source, *output) else {
+                    let Some(produced) = edge_at(outputs, *source, *output) else {
                         return Err(composition_defect(
                             session,
                             AbortReason::MissingProducerEdge,
                         ));
                     };
-                    args.push(GuestArg::Bytes(produced));
+                    args.push(match produced {
+                        Edge::Bucket(rep) => GuestArg::Bucket(*rep),
+                        Edge::Cell(bytes) => GuestArg::Bytes(bytes),
+                    });
                 }
+                CallArg::Issuer => args.push(GuestArg::Issuer),
                 CallArg::U64(scalar) => args.push(GuestArg::U64(*scalar)),
                 CallArg::Address(address) => args.push(GuestArg::Address(*address)),
                 CallArg::Bytes(bytes) => args.push(GuestArg::Bytes(bytes)),
             }
+        }
+
+        // Issuance is one node's, read off the outputs it declared: a
+        // method producing a resource derived from its own address is a
+        // method saying it issues one.
+        if call.issues {
+            session.grant_issuance();
         }
 
         let invoked = self.backend.invoke(
@@ -244,47 +300,89 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                 fuel_budget,
             },
         );
-        let returned = match invoked.result {
-            Invoked::Returned(returned) => returned,
-            // A decline is charged its own fuel, not the ceiling: the
-            // export returned, so the figure is an ordinary
-            // completed-invocation one and both engines reach it by
-            // construction. A code no package could have declared is a
-            // defect in the guest rather than a refusal, bounded here
-            // without the table the kernel does not hold.
-            Invoked::Declined(code) if code < MAX_ERROR_CODES => {
-                return Err(fail(
-                    invoked.session,
-                    Outcome::Declined { node, code },
+        settled(node, call, invoked, fuel_budget)
+    }
+}
+
+/// What one invocation left behind: the edges it produced, or the
+/// outcome it failed with.
+///
+/// Separate from assembling the call because the two read different
+/// halves of the node — what goes in comes from the declaration, and
+/// what comes back is the artifact's own answer.
+fn settled(
+    node: u32,
+    call: &NodeCall,
+    invoked: InvokeResult,
+    fuel_budget: u64,
+) -> Result<NodeSuccess, NodeFailure> {
+    let session = invoked.session;
+    let returned = match invoked.result {
+        // Edges come back as the buckets the kernel holds again, one per
+        // declared output. A count that disagrees with the declaration is
+        // the same shape refusal a byte blob that did not split used to
+        // be.
+        Invoked::Produced(reps) => {
+            return if reps.len() == call.outputs.len() {
+                Ok((
+                    session,
+                    reps.into_iter().map(Edge::Bucket).collect(),
                     invoked.fuel,
-                ));
-            }
-            Invoked::Declined(_) => {
-                return Err(fail(
-                    invoked.session,
+                ))
+            } else {
+                Err(fail(
+                    session,
                     Outcome::UserError {
-                        reason: AbortReason::ErrorCodeOutOfRange,
+                        reason: AbortReason::BadReturnShape,
                     },
                     invoked.fuel,
-                ));
-            }
-            Invoked::Aborted(reason) => {
-                let (outcome, spent) =
-                    trapped(invoked.exhausted, reason, fuel_budget, invoked.fuel);
-                return Err(fail(invoked.session, outcome, spent));
-            }
-        };
-        match split_outputs(returned.as_deref(), &call.outputs) {
-            Some(cells) => Ok((invoked.session, cells, invoked.fuel)),
-            None => Err(fail(
-                invoked.session,
+                ))
+            };
+        }
+        Invoked::Returned(returned) => returned,
+        // A decline is charged its own fuel, not the ceiling: the export
+        // returned, so the figure is an ordinary completed-invocation one
+        // and both engines reach it by construction. A code no package
+        // could have declared is a defect in the guest rather than a
+        // refusal, bounded here without the table the kernel does not
+        // hold.
+        Invoked::Declined(code) if code < MAX_ERROR_CODES => {
+            return Err(fail(
+                session,
+                Outcome::Declined { node, code },
+                invoked.fuel,
+            ));
+        }
+        Invoked::Declined(_) => {
+            return Err(fail(
+                session,
                 Outcome::UserError {
-                    reason: AbortReason::BadReturnShape,
+                    reason: AbortReason::ErrorCodeOutOfRange,
                 },
                 invoked.fuel,
-            )),
+            ));
         }
-    }
+        Invoked::Aborted(reason) => {
+            let (outcome, spent) = trapped(invoked.exhausted, reason, fuel_budget, invoked.fuel);
+            return Err(fail(session, outcome, spent));
+        }
+    };
+    // A byte blob is what an edge crosses on where its guest has not been
+    // ported, so what it splits into is cells rather than buckets.
+    let Some(cells) = split_outputs(returned.as_deref(), &call.outputs) else {
+        return Err(fail(
+            session,
+            Outcome::UserError {
+                reason: AbortReason::BadReturnShape,
+            },
+            invoked.fuel,
+        ));
+    };
+    Ok((
+        session,
+        cells.into_iter().map(Edge::Cell).collect(),
+        invoked.fuel,
+    ))
 }
 
 /// Check every signed edge bound a node consumes, before anything runs.
@@ -298,23 +396,17 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
 fn edge_bounds_hold(
     call: &NodeCall,
     node: u32,
-    outputs: &[Vec<Vec<u8>>],
+    outputs: &[Vec<Edge>],
     session: KernelSession,
 ) -> Result<KernelSession, NodeFailure> {
     for edge in &call.edges {
-        let Some(carried) = edge_cell(outputs, edge.source, edge.output) else {
+        let Some(carried) = edge_at(outputs, edge.source, edge.output) else {
             return Err(composition_defect(
                 session,
                 AbortReason::MissingProducerEdge,
             ));
         };
-        let amount = match edge.kind {
-            EdgeKind::Fungible => decode_amount(carried).ok(),
-            EdgeKind::NonFungible => {
-                cell_ids(carried).and_then(|ids| u128::try_from(ids.len()).ok())
-            }
-        };
-        let Some(amount) = amount else {
+        let Some(amount) = carried.quantity(edge.kind, &session) else {
             return Err(composition_defect(session, AbortReason::MalformedEdgeCell));
         };
         if !edge.bounds.admits(amount) {
@@ -332,13 +424,12 @@ fn edge_bounds_hold(
     Ok(session)
 }
 
-/// The cell a producer left on one of its output edges.
-fn edge_cell(outputs: &[Vec<Vec<u8>>], source: u32, output: u32) -> Option<&[u8]> {
+/// The edge a producer left on one of its outputs.
+fn edge_at(outputs: &[Vec<Edge>], source: u32, output: u32) -> Option<&Edge> {
     let produced = usize::try_from(source).ok().and_then(|i| outputs.get(i))?;
     usize::try_from(output)
         .ok()
         .and_then(|slot| produced.get(slot))
-        .map(Vec::as_slice)
 }
 
 /// Judge a call's gate, returning the session to whichever path owns it
@@ -415,10 +506,10 @@ fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, Sess
 /// Split an export's returned blob into one cell per output edge, each
 /// framed by its declared kind.
 ///
-/// A method producing edges returns exactly their cells concatenated —
-/// a fungible cell is exactly [`EDGE_CELL_BYTES`], a non-fungible cell
-/// the framed shape [`cell_ids`] admits, its ids distinct — and one
-/// producing none returns nothing at all. A blob of any other shape is a
+/// The byte convention, which a non-fungible edge still crosses on and a
+/// fungible one crosses on until its guest is ported: a fungible cell is
+/// exactly [`EDGE_CELL_BYTES`], a non-fungible cell the framed shape
+/// [`cell_ids`] admits, its ids distinct. A blob of any other shape is a
 /// package whose code and signature disagree, which is its author's
 /// defect and its caller's trap.
 fn split_outputs(returned: Option<&[u8]>, outputs: &[EdgeKind]) -> Option<Vec<Vec<u8>>> {
@@ -449,7 +540,7 @@ fn split_outputs(returned: Option<&[u8]>, outputs: &[EdgeKind]) -> Option<Vec<Ve
 
 impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
     fn run(&self, entry: &BatchTx, mut session: KernelSession) -> RunResult {
-        let mut outputs: Vec<Vec<Vec<u8>>> = Vec::with_capacity(entry.calls.len());
+        let mut outputs: Vec<Vec<Edge>> = Vec::with_capacity(entry.calls.len());
         let mut fuel = 0u64;
         for (index, call) in entry.calls.iter().enumerate() {
             let node = u32::try_from(index).unwrap_or(u32::MAX);

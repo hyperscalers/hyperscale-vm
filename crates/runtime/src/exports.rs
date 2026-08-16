@@ -27,6 +27,8 @@ pub enum ExportParam {
     /// `hyperscale:kernel/state` interface exports it — `"read-cell"`,
     /// `"write-cell"`, and so on.
     Handle(String),
+    /// `own<bucket>`: a value edge the call transfers into the guest.
+    Bucket,
     /// `list<u8>`: keys, opaque values, and every other byte-shaped one.
     Bytes,
     /// A scalar `u64`.
@@ -42,6 +44,13 @@ pub enum ExportParam {
 pub struct ExportShape {
     /// The parameter shapes, in the export's own order.
     pub params: Vec<ExportParam>,
+    /// How many value edges the result carries: one own, the elements of
+    /// a tuple of owns, or none.
+    ///
+    /// Judged against what the signature declares it produces, so a
+    /// package cannot describe itself as yielding edges its code does not
+    /// hand back.
+    pub edges: usize,
     /// Whether the result carries an error arm — the method can decline
     /// on its own terms rather than only by trapping.
     ///
@@ -82,7 +91,15 @@ pub fn component_exports(bytes: &[u8]) -> Result<BTreeMap<String, ExportShape>, 
             .map(|(_, param)| param_shape(types, &resources, param))
             .collect();
         let declines = ty.result.is_some_and(|result| declinable(types, &result));
-        out.insert(name, ExportShape { params, declines });
+        let edges = ty.result.map_or(0, |result| edge_count(types, &result));
+        out.insert(
+            name,
+            ExportShape {
+                params,
+                edges,
+                declines,
+            },
+        );
     }
     Ok(out)
 }
@@ -146,6 +163,27 @@ fn declinable(types: TypesRef<'_>, result: &ComponentValType) -> bool {
     matches!(types.get(*id), Some(ComponentDefinedType::Result { .. }))
 }
 
+/// How many owned edges a result carries, looking through the refusal
+/// channel: an error arm says how a method ends, not what it produces.
+fn edge_count(types: TypesRef<'_>, result: &ComponentValType) -> usize {
+    let ComponentValType::Type(id) = result else {
+        return 0;
+    };
+    match types.get(*id) {
+        Some(ComponentDefinedType::Own(_)) => 1,
+        Some(ComponentDefinedType::Tuple(elements)) => elements
+            .types
+            .iter()
+            .filter(|ty| {
+                matches!(ty, ComponentValType::Type(id)
+                    if matches!(types.get(*id), Some(ComponentDefinedType::Own(_))))
+            })
+            .count(),
+        Some(ComponentDefinedType::Result { ok: Some(ok), .. }) => edge_count(types, ok),
+        _ => 0,
+    }
+}
+
 /// The shape of one parameter.
 fn param_shape(
     types: TypesRef<'_>,
@@ -162,6 +200,9 @@ fn param_shape(
             Some(ComponentDefinedType::Borrow(resource)) => resources
                 .get(&resource.resource())
                 .map_or(ExportParam::Other, |name| ExportParam::Handle(name.clone())),
+            // An owned handle is a value edge: the world owns one such
+            // resource, and a body that holds one holds value.
+            Some(ComponentDefinedType::Own(_)) => ExportParam::Bucket,
             // The world's value records are told apart by their field
             // widths, which is what the profile admits them by: a record
             // of scalars, judged by shape rather than by the name an

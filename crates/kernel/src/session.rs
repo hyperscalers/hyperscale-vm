@@ -17,8 +17,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    AbortReason, Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Mode, ModeKind,
-    SubstateKey,
+    AbortReason, Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, ISSUER_REP,
+    Mode, ModeKind, SubstateKey,
 };
 
 use crate::locality::Locality;
@@ -78,12 +78,6 @@ pub enum Capability {
         cap: u32,
     },
 }
-
-/// The rep an issuance grant is handed out under.
-///
-/// An invocation is granted issuance or it is not, so there is one, and
-/// the constant is what says the number carries no information.
-pub const ISSUER_REP: u32 = 0;
 
 /// Why materialization refused a declared effect set — each an abort
 /// before any guest execution.

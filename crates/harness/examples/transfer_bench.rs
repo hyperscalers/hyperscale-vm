@@ -180,11 +180,14 @@ impl GuestBackend for Bench {
                 GuestArg::U64(scalar) => HostArg::U64(*scalar),
                 GuestArg::Address(address) => HostArg::Address(*address),
                 GuestArg::Bytes(bytes) => HostArg::Bytes(bytes),
+                GuestArg::Bucket(rep) => HostArg::Bucket(*rep),
+                GuestArg::Issuer => HostArg::Issuer,
             })
             .collect();
         let outcome = call_export(&mut store, &instance, call.export, &args);
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);
         let result = match outcome {
+            Ok(Returned::Edges(reps)) => Invoked::Produced(reps),
             Ok(Returned::Values(bytes)) => Invoked::Returned(bytes),
             Ok(Returned::Declined(code)) => Invoked::Declined(code),
             Err(error) => Invoked::Aborted(classify(&error)),

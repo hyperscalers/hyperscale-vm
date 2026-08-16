@@ -134,6 +134,12 @@ pub enum CallArg {
     Address(Address),
     /// A byte string the signature derived from the node's inputs.
     Bytes(Vec<u8>),
+    /// This invocation's authority to issue.
+    ///
+    /// Carries nothing: the grant is that it exists, and which resource
+    /// the value it creates is denominated in is what [`NodeCall::outputs`]
+    /// already says.
+    Issuer,
 }
 
 /// One edge a node consumes, with the bound its consumer signed.
@@ -187,10 +193,18 @@ pub struct NodeCall {
     /// the invocation.
     pub edges: Vec<EdgeBound>,
     /// The declared cell shape of each value edge the node produces, in
-    /// output order. An export returns bytes exactly when this is
-    /// non-empty, and then exactly one cell per entry, each framed by its
-    /// kind.
+    /// output order. An export produces exactly one edge per entry: a
+    /// fungible one as a bucket the kernel takes back, a non-fungible one
+    /// as the cell its ids frame.
     pub outputs: Vec<EdgeKind>,
+    /// Whether this node's method declares an output the invoked instance
+    /// issues itself.
+    ///
+    /// Evaluated at routing from the same output projections that fixed
+    /// the edge kinds: a resource derived from the target's own address
+    /// is a method saying it produces what it issues, which is the whole
+    /// of what grants the authority.
+    pub issues: bool,
     /// The identities this call presents, resolved from the signed
     /// evidence the manifest node names.
     pub evidence: Vec<Address>,

@@ -37,7 +37,7 @@ pub use envelope::{
     TransactionEnvelope, TxHash,
 };
 pub use execution::{
-    AbortReason, Event, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
+    AbortReason, Event, ISSUER_REP, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
     MAX_EVENTS_PER_TX, Outcome,
 };
 pub use mode::{Mode, ModeKind, compatible};

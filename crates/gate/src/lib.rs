@@ -20,7 +20,7 @@
 pub use hyperscale_vm_effects::METADATA_SECTION;
 use hyperscale_vm_effects::{
     AbiParam, Clause, MethodSignature, ModeExpr, PackageMetadata, TargetExpr, Totality,
-    attach_metadata as attach_canonical, check_abi, check_declarations, metadata_section,
+    attach_metadata as attach_canonical, check_abi, check_declarations, fungible, metadata_section,
 };
 use hyperscale_vm_runtime::{
     ExportParam, ExportShape, check_method, component_exports, validate_component,
@@ -157,9 +157,37 @@ fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, Gat
         check_declarations(signature)
             .map_err(|error| GateError(format!("method {method:?}: {error}")))?;
         check_abi_against_export(method, signature, &export.params)?;
+        check_outputs_against_export(method, signature, export)?;
         judge_totality(artifact, method, signature, export, provenance)?;
     }
     Ok(metadata)
+}
+
+/// Judge a method's declared outputs against what its export hands back.
+///
+/// A fungible edge crosses as a bucket the kernel takes ownership of, so
+/// the export's result carries one own per such output. A non-fungible
+/// one still crosses as the cell its ids frame, on the byte convention,
+/// so it carries none — until ids ride the handle too, this is the one
+/// place the two conventions are told apart, and the declaration is what
+/// tells them.
+fn check_outputs_against_export(
+    method: &str,
+    signature: &MethodSignature,
+    export: &ExportShape,
+) -> Result<(), GateError> {
+    // Both conventions are admitted while the corpus crosses over: a
+    // ported export hands back one own per fungible output, and one that
+    // has not been ported hands back none and returns the cells.
+    let declared = signature.outputs.iter().filter(|o| fungible(o)).count();
+    if declared == export.edges || export.edges == 0 {
+        return Ok(());
+    }
+    Err(GateError(format!(
+        "method {method:?}: the signature produces {declared} value edges, the export \
+         hands back {}",
+        export.edges
+    )))
 }
 
 /// Judge a claim to totality: refused outright from a publisher, and read
@@ -267,15 +295,26 @@ fn check_abi_against_export(
                 }
             }
             AbiParam::Bucket(_) => {
-                if *param != ExportParam::Bytes {
+                // Both conventions while the corpus crosses over: a
+                // ported export takes the edge as the bucket it is, and
+                // one still on the byte convention takes its amount.
+                if !matches!(param, ExportParam::Bucket | ExportParam::Bytes) {
                     return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} is a bucket \
-                         amount, but the export takes {param:?}"
+                        "method {method:?}: ABI parameter {position} is a value \
+                         edge, but the export takes {param:?}"
+                    )));
+                }
+            }
+            AbiParam::Issuer => {
+                if *param != ExportParam::Handle("issuer".to_owned()) {
+                    return Err(GateError(format!(
+                        "method {method:?}: ABI parameter {position} is an issuance \
+                         grant, but the export takes {param:?}"
                     )));
                 }
             }
             AbiParam::Derived(_) => {
-                if matches!(param, ExportParam::Handle(_)) {
+                if matches!(param, ExportParam::Handle(_) | ExportParam::Bucket) {
                     return Err(GateError(format!(
                         "method {method:?}: ABI parameter {position} is a derived \
                          value, but the export takes a resource borrow"

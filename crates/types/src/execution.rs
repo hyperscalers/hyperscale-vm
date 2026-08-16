@@ -6,6 +6,13 @@
 //! kernel's emission and the wire's decode with the same constants, so the
 //! two cannot drift.
 
+/// The rep an issuance grant is handed out under.
+///
+/// An invocation is granted issuance or it is not, so there is one, and
+/// the constant is what says the number carries no information. Shared
+/// because the kernel hands the grant out and the embedding lowers it.
+pub const ISSUER_REP: u32 = 0;
+
 use hyperscale_hbor::Hbor;
 
 use crate::address::{Address, SubstateKey};

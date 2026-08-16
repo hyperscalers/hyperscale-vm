@@ -29,7 +29,7 @@ pub use conflict::{conflicts, targets_overlap};
 pub use executor::{
     BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, execute_batch,
 };
-pub use hyperscale_vm_effects::{AbortReason, StateWrites};
+pub use hyperscale_vm_effects::{AbortReason, ISSUER_REP, StateWrites};
 pub use locality::{Locality, OwnedDelta};
 pub use modes::{
     AMOUNT_CELL_BYTES, DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount,
@@ -39,9 +39,9 @@ pub use oracle::{covered, multiply_held_ids, permits, target_covers, undeclared_
 pub use overlay::OverlayStore;
 pub use ownership::{CreationContext, MoveError, move_object};
 pub use session::{
-    Capability, DeltaMap, EnvInputs, Event, FinishError, ISSUER_REP, KernelSession,
-    MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, Movement,
-    Outcome, Receipt, SessionTrap, StateDelta,
+    Capability, DeltaMap, EnvInputs, Event, FinishError, KernelSession, MAX_EVENT_PAYLOAD_BYTES,
+    MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, Movement, Outcome, Receipt, SessionTrap,
+    StateDelta,
 };
 pub use store::{Access, AppliedDelta, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
 pub use supply::SupplyLedger;

@@ -171,6 +171,24 @@ impl ParamType {
     }
 }
 
+/// Whether an output projection names a resource the instance issues
+/// itself: the `SelfResource` derivation, at the resource position.
+#[must_use]
+pub fn issued(output: &Expr) -> bool {
+    match output {
+        Expr::SelfResource { .. } => true,
+        Expr::NfBucket { resource, .. } => matches!(**resource, Expr::SelfResource { .. }),
+        _ => false,
+    }
+}
+
+/// Whether an output crosses as a bucket rather than as the cell its ids
+/// frame.
+#[must_use]
+pub const fn fungible(output: &Expr) -> bool {
+    !matches!(output, Expr::NfBucket { .. })
+}
+
 /// How one guest ABI parameter is built at invocation.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum AbiParam {
@@ -183,20 +201,26 @@ pub enum AbiParam {
     /// target cannot be a handle parameter, and naming one is a
     /// deterministic refusal at materialization.
     Handle(u32),
-    /// The runtime amount of this declared [`ParamType::Bucket`]
-    /// parameter.
+    /// The value edge this declared [`ParamType::Bucket`] parameter is
+    /// bound to.
     ///
-    /// The one value a signature cannot derive: a bucket's resource type
-    /// is static but its amount is whatever the producing node actually
-    /// returned, which does not exist until that node runs.
+    /// The one argument a signature cannot derive: which bucket it is
+    /// depends on what the producing node handed back, which does not
+    /// exist until that node runs.
     Bucket(u32),
+    /// This invocation's authority to issue.
+    ///
+    /// Granted by the walk from the method's own declared outputs, so a
+    /// binding naming one where the signature issues nothing is a
+    /// package asking for a handle nothing would hand it.
+    Issuer,
     /// A value evaluated over the method's bound inputs.
     ///
     /// The same evaluation the effect clauses run, against the same
     /// inputs — arguments, instance configuration, and the identity,
     /// node and frame a fresh id derives from — so an argument the guest
     /// reads is bounded and deterministic on exactly the terms a declared
-    /// target already is. Everything but a bucket's amount lands here.
+    /// target already is. Everything but a value edge lands here.
     Derived(Expr),
 }
 
@@ -454,6 +478,14 @@ pub enum AbiError {
     /// against concurrent sign-ins.
     #[error("a role-gated method declares exactly one point write: its rule cell")]
     RoleGatedShape,
+    /// An issuance grant bound by a method that declares no output of a
+    /// resource it issues. The walk grants one from the declaration, so
+    /// there would be nothing to hand over.
+    #[error("ABI parameter {position} takes an issuance grant, but no output is issued")]
+    IssuerWithoutIssuedOutput {
+        /// The ABI parameter position.
+        position: u32,
+    },
     /// A handle binding naming an effect clause the signature does not
     /// declare.
     #[error("ABI parameter {position} names effect clause {clause}, past the {declared} declared")]
@@ -579,6 +611,14 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
                         clause: *clause,
                         declared: bound(signature.effects.len()),
                     });
+                }
+            }
+            // The grant is the method's own declaration, so a binding
+            // that names one where nothing is issued asks for a handle
+            // the walk would not hand over.
+            AbiParam::Issuer => {
+                if !signature.outputs.iter().any(issued) {
+                    return Err(AbiError::IssuerWithoutIssuedOutput { position });
                 }
             }
             AbiParam::Bucket(param) => {

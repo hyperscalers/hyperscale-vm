@@ -26,8 +26,9 @@ use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     AbortReason, BatchTx, CellKind, EnvInputs, Event, GuestArg, GuestBackend, GuestCall,
-    GuestRunner, InvokeResult, Invoked, KernelSession, ManifestWalk, MemoryStore, Outcome,
-    OverlayStore, Receipt, TxHash, WorkingStore, decode_amount, encode_amount, multiply_held_ids,
+    GuestRunner, ISSUER_REP, InvokeResult, Invoked, KernelSession, ManifestWalk, MemoryStore,
+    Outcome, OverlayStore, Receipt, TxHash, WorkingStore, decode_amount, encode_amount,
+    multiply_held_ids,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{
@@ -367,6 +368,7 @@ impl GuestBackend for ReferenceBackend<'_> {
 /// The blessed engine's verdict as the kernel's.
 fn invoked(outcome: Result<Returned>) -> Invoked {
     match outcome {
+        Ok(Returned::Edges(reps)) => Invoked::Produced(reps),
         Ok(Returned::Values(bytes)) => Invoked::Returned(bytes),
         Ok(Returned::Declined(code)) => Invoked::Declined(code),
         Err(error) => Invoked::Aborted(classify(&error)),
@@ -416,6 +418,8 @@ const fn host_arg<'a>(arg: &GuestArg<'a>) -> HostArg<'a> {
         GuestArg::U64(scalar) => HostArg::U64(*scalar),
         GuestArg::Address(address) => HostArg::Address(*address),
         GuestArg::Bytes(bytes) => HostArg::Bytes(bytes),
+        GuestArg::Bucket(rep) => HostArg::Bucket(*rep),
+        GuestArg::Issuer => HostArg::Issuer,
     }
 }
 
@@ -425,6 +429,8 @@ fn ref_arg(arg: &GuestArg<'_>) -> CVal {
         GuestArg::U64(scalar) => CVal::U64(*scalar),
         GuestArg::Address(address) => CVal::Address(address.to_bytes()),
         GuestArg::Bytes(bytes) => CVal::Bytes(bytes.to_vec()),
+        GuestArg::Bucket(rep) => CVal::Own(*rep),
+        GuestArg::Issuer => CVal::Borrow(ISSUER_REP, ResourceKind::Issuer),
     }
 }
 

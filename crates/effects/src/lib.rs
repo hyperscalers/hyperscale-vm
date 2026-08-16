@@ -64,7 +64,7 @@ pub use graph::{
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
     AUTH_BYTE_WEIGHT, AbortReason, EntryKey, EntryLeaf, Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT,
-    MAX_CELL_VALUE_LEN, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
+    ISSUER_REP, MAX_CELL_VALUE_LEN, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
     MAX_EVENTS_PER_TX, Outcome, SettledWrites, StateWrites, TX_UNITS, TxHash, VERIFY_WEIGHT,
     declared_work, entry_leaf_key, signature_work, work_units,
 };
@@ -75,8 +75,8 @@ pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInpu
 pub use metadata::{
     AbiError, AbiParam, Accessibility, CallSite, DeclarationError, InstanceMeta, InstanceRegistry,
     MetadataBoundsError, MetadataCache, MethodSignature, PACKAGE_ROLE, PackageHash,
-    PackageMetadata, ParamType, Totality, check_abi, check_declarations, check_metadata,
-    package_hash, package_key,
+    PackageMetadata, ParamType, Totality, check_abi, check_declarations, check_metadata, fungible,
+    issued, package_hash, package_key,
 };
 pub use resource::{
     Fungibility, ResourceRecord, holdings_collection, holdings_range, instance_data_key,
