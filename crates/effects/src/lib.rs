@@ -83,8 +83,9 @@ pub use resource::{
     resource_record_key,
 };
 pub use route::{
-    CallEdge, CallGraph, FrameDeclaration, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES, MethodRef,
-    PrefixShardResolver, RouteError, Routing, ShardResolver, route,
+    CallEdge, CallGraph, FrameDeclaration, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES,
+    MAX_STAGED_DEPTH, MethodRef, PrefixShardResolver, Role, RouteError, Routing, ShardResolver,
+    Strategy, route,
 };
 pub use rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule};
 pub use types::{

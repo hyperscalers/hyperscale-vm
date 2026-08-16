@@ -135,7 +135,19 @@ fn funds_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "deposit".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            // What the composite below earns: a deposit that cannot reach
+            // the vault lands in the claims cell instead, so the two
+            // refusals it would otherwise carry — no such target, a rule
+            // that declines — become a different destination rather than
+            // an error. Both effects are commutative, nothing gates the
+            // call, and no call leaves the body, so there is neither
+            // anything to refuse nor a callee's totality to fold in.
+            //
+            // Claimed here rather than checked: the publish-time checker
+            // that grants this does not exist yet, and when it does the
+            // stdlib's own marks are things it validates, not things it
+            // takes on trust.
+            totality: Totality::Total,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::Bucket],

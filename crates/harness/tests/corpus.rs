@@ -18,11 +18,11 @@ use hyperscale_vm_effects::stdlib::{
 use hyperscale_vm_effects::{
     AbiParam, Address, AuthBase, AuthCell, Clause, CollectionId, ComponentAddr, Constraint, Effect,
     EffectSet, EffectTarget, EntryKey, EvidenceRef, Expr, Hash32, Hasher, InstanceMeta,
-    InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash,
-    PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, Proposal, ResourceAddr, RoleId,
-    RoleSet, Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Totality,
-    Value, admit, child_key, collection_id, fresh_id, holdings_collection, instance_data_key,
-    order_key, resource_address, route,
+    InstanceRegistry, MAX_STAGED_DEPTH, ManifestGraph, MetadataCache, MethodSignature, Mode,
+    ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr,
+    Proposal, ResourceAddr, Role, RoleId, RoleSet, Routing, Rule, ShardId, ShardResolver, Strategy,
+    SubstateKey, TargetExpr, TestHasher, Totality, Value, admit, child_key, collection_id,
+    fresh_id, holdings_collection, instance_data_key, order_key, resource_address, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -855,6 +855,18 @@ fn transfer_profile_and_provision_shape_are_exact() {
             .provision_targets()
             .is_empty()
     );
+
+    // The star the same transfer takes, whole: the sign-in is core, the
+    // sender's reservation is the inbound leg, and the recipient's
+    // deposit is the outbound one — total by its claims composite, so
+    // nothing waits on it. A transfer is the degenerate star, a core
+    // with a leg on either side and no venue between them.
+    assert_eq!(routing.alternation_depth, 1);
+    assert_eq!(
+        routing.roles,
+        vec![Role::Core, Role::Inbound, Role::Outbound]
+    );
+    assert_eq!(routing.strategy, Strategy::LegLocal);
 }
 
 #[test]
@@ -1647,6 +1659,27 @@ fn swap_profile_and_provision_shape_are_exact() {
         routing.per_shard[&shard_of(ALICE)].provision_targets(),
         std::iter::once(EffectTarget::Point(auth(ALICE))).collect()
     );
+
+    // The fan-in shape this whole line of work is for, and it is the
+    // star exactly: the user's withdrawal inbound, the pool a
+    // single-shard core, the delivery outbound. The pool's cells are
+    // held for one execution rather than for a settlement round, which
+    // is the throughput the venue gains.
+    assert_eq!(
+        routing.roles,
+        vec![Role::Core, Role::Inbound, Role::Core, Role::Outbound]
+    );
+    assert_eq!(routing.strategy, Strategy::LegLocal);
+
+    // The depth counts crossings, and the chain crosses back to deliver.
+    // That return costs no stage — an outbound leg is one nothing waits
+    // on — so this is the raw structural count rather than the latency
+    // the budget prices, and the two differ by exactly the outbound
+    // crossing. It reads at the budget's own value while the shape it
+    // describes is one stage deep.
+    assert_eq!(routing.alternation_depth, 2);
+    assert_eq!(routing.alternation_depth, MAX_STAGED_DEPTH);
+    assert_eq!(routing.roles[3], Role::Outbound);
 }
 
 #[test]
