@@ -81,6 +81,12 @@ impl RefKernelHost for NoHost {
     fn delta_sub(&mut self, _rep: u32, _amount: u128) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
+    fn delta_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+    fn write_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
     fn issuer_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }

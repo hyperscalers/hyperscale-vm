@@ -48,6 +48,8 @@ pub trait RefKernelHost {
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
     fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
     fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
+    fn delta_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
+    fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
     fn issuer_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
@@ -148,10 +150,12 @@ enum HostFn {
     WriteCellGet,
     WriteCellSet,
     WriteTake,
+    WritePut,
     IssuerTake,
     DeltaAdd,
     DeltaSub,
     DeltaTake,
+    DeltaPut,
     ReserveAmount,
     ReserveTake,
     RangeReadCount,
@@ -548,10 +552,12 @@ impl RefComponent {
             ("state", "write-cell-get") => Ok(HostFn::WriteCellGet),
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
             ("state", "write-cell-take") => Ok(HostFn::WriteTake),
+            ("state", "write-cell-put") => Ok(HostFn::WritePut),
             ("state", "issuer-take") => Ok(HostFn::IssuerTake),
             ("state", "delta-cell-add") => Ok(HostFn::DeltaAdd),
             ("state", "delta-cell-sub") => Ok(HostFn::DeltaSub),
             ("state", "delta-cell-take") => Ok(HostFn::DeltaTake),
+            ("state", "delta-cell-put") => Ok(HostFn::DeltaPut),
             ("state", "reserve-cell-amount") => Ok(HostFn::ReserveAmount),
             ("state", "reserve-cell-take") => Ok(HostFn::ReserveTake),
             ("state", "range-read-count") => Ok(HostFn::RangeReadCount),
@@ -1312,6 +1318,24 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
         })
     }
 
+    /// Lifts an owned handle passed as an import argument: the guest
+    /// gives up the slot and the host has the rep.
+    ///
+    /// The mirror of seating one, and the reason a put cannot be undone
+    /// by a body — what it hands over stops being nameable.
+    fn consume_bucket(&mut self, index: Value) -> Result<u32, ExecError> {
+        let idx = index.as_i32().cast_unsigned() as usize;
+        match self.handles.get(idx) {
+            Some(Some(h)) if h.live && h.own => {
+                let rep = h.rep;
+                self.free_slot(idx);
+                Ok(rep)
+            }
+            Some(Some(h)) if h.live => Err(ExecError::Canon(CanonError::WrongHandleType)),
+            _ => Err(ExecError::Canon(CanonError::UnknownHandle)),
+        }
+    }
+
     /// Empties the slot at `idx`, returning it for reuse.
     ///
     /// # Panics
@@ -1435,7 +1459,9 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::LockedCellGet
                     | HostFn::WriteCellGet
                     | HostFn::ReserveAmount
-                    | HostFn::RangeWriteRemove,
+                    | HostFn::RangeWriteRemove
+                    | HostFn::WritePut
+                    | HostFn::DeltaPut,
                 ) => 2,
                 CompFunc::Host(
                     HostFn::WriteCellSet
@@ -1566,6 +1592,22 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let bucket = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
+                    }
+                    HostFn::WritePut | HostFn::DeltaPut => {
+                        let expected = if host_fn == HostFn::WritePut {
+                            ResourceKind::WriteCell
+                        } else {
+                            ResourceKind::DeltaCell
+                        };
+                        let rep = self.resolve_handle(args[0], expected)?;
+                        let funds = self.consume_bucket(args[1])?;
+                        let result = if host_fn == HostFn::WritePut {
+                            self.host.write_put(rep, funds)
+                        } else {
+                            self.host.delta_put(rep, funds)
+                        };
+                        result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(Vec::new())
                     }
                     HostFn::IssuerTake => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;

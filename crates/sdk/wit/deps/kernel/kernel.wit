@@ -33,8 +33,9 @@ interface state {
 
     /// Value in the kernel's own keeping.
     ///
-    /// A guest holds the handle; the resource and the amount are the
-    /// kernel's. There is no constructor here, so the only ways to hold
+    /// A guest holds the handle and the kernel holds the amount; which
+    /// resource that amount is denominated in is what a method's declared
+    /// outputs say. There is no constructor here, so the only ways to hold
     /// one are to be handed one and to take one from a cell the method
     /// declared — a quantity of value is not something a body can name
     /// into existence. It is owned rather than borrowed because the
@@ -87,11 +88,24 @@ interface state {
     /// on a debit past what it holds.
     write-cell-take: func(c: borrow<write-cell>, amount: amount) -> own<bucket>;
 
+    /// Credit the amount cell with what the bucket carries.
+    ///
+    /// The bucket is consumed, so what lands in the cell is exactly what
+    /// crossed and the body names no number. Traps on a stored cell that
+    /// is not an amount and on a total past the cell's width.
+    write-cell-put: func(c: borrow<write-cell>, funds: own<bucket>);
+
     /// Credit the amount cell.
     delta-cell-add: func(c: borrow<delta-cell>, value: amount);
 
     /// Debit the amount cell unconditionally.
     delta-cell-sub: func(c: borrow<delta-cell>, value: amount);
+
+    /// Credit the amount cell with what the bucket carries.
+    ///
+    /// The bucket is consumed, so the credit and the value that crossed
+    /// are one number the body never got to write twice.
+    delta-cell-put: func(c: borrow<delta-cell>, funds: own<bucket>);
 
     /// Debit the amount cell and hand the value out.
     ///

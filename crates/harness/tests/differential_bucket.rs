@@ -541,6 +541,174 @@ fn a_stored_cell_that_is_not_an_amount_is_the_states_defect() -> Result<()> {
     Ok(())
 }
 
+/// A credit driven on both engines, with the bucket the lane opened for
+/// it: what the cell holds afterwards, and whether the handle survived.
+#[derive(Debug, PartialEq, Eq)]
+struct Credited {
+    /// What the credited cell reads as once the receipt settles.
+    cell: Option<Vec<u8>>,
+    /// The movement the receipt carries, where the mode has one.
+    credit: Option<u128>,
+    /// Whether the consumed bucket's rep still names anything.
+    funds_survive: bool,
+    /// The class the host assigned, where the credit was refused.
+    refusal: Option<AbortReason>,
+}
+
+/// One credit under one engine, both driven from the same closure over
+/// the two runtimes' call shapes.
+fn put_blessed(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(Credited, u64)> {
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    validate_component(&bytes)?;
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<SessionHost>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let mut host = SessionHost(materialize(fx));
+    let funds = host.0.open_bucket(held);
+    let (key, mode) = if delta {
+        (fx.ledger, Mode::Delta)
+    } else {
+        (fx.vault, Mode::Write)
+    };
+    let rep = rep_of(&host, key, mode);
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+
+    let called = if delta {
+        instance
+            .get_typed_func::<(Resource<DeltaCell>, Resource<Bucket>), (u64,)>(&mut store, export)?
+            .call(
+                &mut store,
+                (Resource::new_borrow(rep), Resource::new_own(funds)),
+            )
+    } else {
+        instance
+            .get_typed_func::<(Resource<WriteCell>, Resource<Bucket>), (u64,)>(&mut store, export)?
+            .call(
+                &mut store,
+                (Resource::new_borrow(rep), Resource::new_own(funds)),
+            )
+    };
+    let fuel = FUEL - store.get_fuel()?;
+    let host = store.into_data();
+    let refusal = match called {
+        Ok(_) => None,
+        Err(error) => match error.downcast_ref::<HostRefusal>() {
+            Some(refusal) => Some(refusal.0),
+            None => return Err(error),
+        },
+    };
+    Ok((settled(host, key, funds, refusal), fuel))
+}
+
+/// The same credit under the reference interpreter.
+fn put_ref(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(Credited, u64)> {
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    let comp = RefComponent::decode(&bytes)?;
+    let mut host = SessionHost(materialize(fx));
+    let funds = host.0.open_bucket(held);
+    let (key, mode, kind) = if delta {
+        (fx.ledger, Mode::Delta, ResourceKind::DeltaCell)
+    } else {
+        (fx.vault, Mode::Write, ResourceKind::WriteCell)
+    };
+    let args = vec![
+        CVal::Borrow(rep_of(&host, key, mode), kind),
+        CVal::Own(funds),
+    ];
+    let mut instance =
+        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+    let called = instance.invoke(export, &args)?;
+    let fuel = instance.fuel_consumed();
+    let host = instance.into_host();
+    let refusal = match called {
+        Ok(_) => None,
+        Err(ExecError::Canon(CanonError::Host(reason))) => Some(reason),
+        Err(other) => return Err(format_err!("ref {export} failed: {other:?}")),
+    };
+    Ok((settled(host, key, funds, refusal), fuel))
+}
+
+/// What the session says about a credit once it settles.
+fn settled(
+    host: SessionHost,
+    key: SubstateKey,
+    funds: u32,
+    refusal: Option<AbortReason>,
+) -> Credited {
+    let funds_survive = host.0.bucket(funds).is_ok();
+    let (receipt, _) = host
+        .0
+        .finish(Outcome::Completed { value: None }, 0)
+        .expect("the oracle is clean");
+    Credited {
+        cell: receipt.delta.cells.get(&key).cloned().flatten(),
+        credit: receipt.delta.movements.get(&key).map(|m| m.credit),
+        funds_survive,
+        refusal,
+    }
+}
+
+/// One credit on both engines, comparing what settled and what it cost.
+fn credited(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<Credited> {
+    let (blessed, blessed_fuel) = put_blessed(fx, export, held, delta)?;
+    let (reference, ref_fuel) = put_ref(fx, export, held, delta)?;
+    assert_eq!(blessed, reference, "{export} diverged");
+    assert_eq!(blessed_fuel, ref_fuel, "{export} fuel diverged");
+    Ok(blessed)
+}
+
+#[test]
+fn a_credit_is_what_the_bucket_carried() -> Result<()> {
+    let fx = fixture();
+
+    let absolute = credited(&fx, "put-write", 30, false)?;
+    assert_eq!(
+        absolute.cell,
+        Some(encode_amount(BALANCE + 30).to_vec()),
+        "the kernel added what crossed to what the cell held"
+    );
+
+    let commutative = credited(&fx, "put-delta", 30, true)?;
+    assert_eq!(commutative.credit, Some(30));
+    Ok(())
+}
+
+#[test]
+fn a_put_consumes_the_handle_it_was_given() -> Result<()> {
+    let fx = fixture();
+    // The canonical ABI lifts an owned argument out of the guest's table,
+    // so the value is the kernel's again and the rep names nothing.
+    let credited = credited(&fx, "put-write", 30, false)?;
+    assert!(!credited.funds_survive);
+
+    // And the handle is gone on the guest's side too: dropping it after
+    // the put reaches for a slot the table no longer holds, which both
+    // engines refuse. The class is the canonical ABI's own and reaches no
+    // receipt, so the lane reads each engine's own wording for it.
+    let blessed = put_blessed(&fx, "put-write-then-drop", 30, false)
+        .expect_err("the blessed engine refuses a consumed handle");
+    assert!(format!("{blessed:#}").contains("unknown handle"));
+    let reference = put_ref(&fx, "put-write-then-drop", 30, false)
+        .expect_err("the interpreter refuses a consumed handle");
+    assert!(format!("{reference:#}").contains("UnknownHandle"));
+    Ok(())
+}
+
+#[test]
+fn a_credit_past_the_cells_width_refuses_at_the_call() -> Result<()> {
+    let fx = fixture();
+    let overflowed = credited(&fx, "put-write", u128::MAX, false)?;
+    assert_eq!(overflowed.refusal, Some(AbortReason::CellOverflow));
+    // Refused, so nothing moved and the value is still the kernel's to
+    // account for.
+    assert_eq!(overflowed.cell, None);
+    assert!(overflowed.funds_survive);
+    Ok(())
+}
+
 #[test]
 fn issuance_is_the_one_bucket_with_no_cell_behind_it() -> Result<()> {
     let fx = fixture();

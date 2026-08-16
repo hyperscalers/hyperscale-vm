@@ -176,6 +176,9 @@ pub enum SessionTrap {
     /// because an absolute resolves there.
     #[error("debit exceeds the cell's balance")]
     CellUnderflow,
+    /// A credit past the cell's own width, on the same terms.
+    #[error("credit exceeds the cell's width")]
+    CellOverflow,
     /// An emission outside any invocation, so the kernel has no address to
     /// stamp — unreachable through a runner that enters every node.
     #[error("emission outside an invocation")]
@@ -207,6 +210,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::IssuanceUngranted => Self::IssuanceUngranted,
             SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
             SessionTrap::CellUnderflow => Self::CellUnderflow,
+            SessionTrap::CellOverflow => Self::CellOverflow,
             SessionTrap::NoInvocation => Self::EmissionOutsideInvocation,
             SessionTrap::EventTypeOutOfRange(_) => Self::EventTypeOutOfRange,
             SessionTrap::TooManyEvents => Self::EventCountExceeded,
@@ -781,6 +785,54 @@ impl KernelSession {
         Ok(self.open_bucket(amount))
     }
 
+    /// Credit a delta capability with what the bucket at `funds` carries.
+    ///
+    /// The bucket is consumed, so the credit and the value that crossed
+    /// are one number and there is no second one to disagree with.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn delta_put(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
+        // Nothing is consumed until everything is judged. A refusal
+        // aborts the whole transaction, so no state would escape either
+        // way; what the ordering keeps true is that the kernel is never
+        // holding a credit it did not make, which is the property the
+        // bucket table exists to state.
+        let Capability::Delta(_) = self.capability(rep)? else {
+            return Err(SessionTrap::WrongMode(rep));
+        };
+        let amount = self.bucket(funds)?;
+        self.delta(rep, amount, DeltaOp::Add)?;
+        self.take_bucket(funds).map(|_| ())
+    }
+
+    /// Credit a write capability's amount cell with what the bucket at
+    /// `funds` carries.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
+        let Capability::Write(key) = self.capability(rep)? else {
+            return Err(SessionTrap::WrongMode(rep));
+        };
+        let held = self.amount_cell(key)?;
+        let amount = self.bucket(funds)?;
+        let total = held.checked_add(amount).ok_or(SessionTrap::CellOverflow)?;
+        self.store.write(key, encode_amount(total).to_vec())?;
+        self.take_bucket(funds).map(|_| ())
+    }
+
+    /// A declared cell's contents as an amount; an absent cell is zero.
+    fn amount_cell(&mut self, key: SubstateKey) -> Result<u128, SessionTrap> {
+        let cell = self.store.read(key)?.unwrap_or_default();
+        if cell.is_empty() {
+            return Ok(0);
+        }
+        decode_amount(&cell).map_err(|_| SessionTrap::BadAmountCell(key))
+    }
+
     /// Debit `amount` through a write capability and hand the value out
     /// as a bucket.
     ///
@@ -798,12 +850,7 @@ impl KernelSession {
         let Capability::Write(key) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
-        let cell = self.store.read(key)?.unwrap_or_default();
-        let held = if cell.is_empty() {
-            0
-        } else {
-            decode_amount(&cell).map_err(|_| SessionTrap::BadAmountCell(key))?
-        };
+        let held = self.amount_cell(key)?;
         let left = held.checked_sub(amount).ok_or(SessionTrap::CellUnderflow)?;
         self.store.write(key, encode_amount(left).to_vec())?;
         Ok(self.open_bucket(amount))

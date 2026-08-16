@@ -153,6 +153,22 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
 
+    /// Credit the amount cell with what the bucket at `funds` carries,
+    /// consuming it.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn delta_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
+
+    /// Credit the absolute amount cell with what the bucket at `funds`
+    /// carries, consuming it.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
+
     /// Debit the absolute amount cell and hand the value out as a
     /// bucket, whose rep this returns.
     ///
@@ -384,6 +400,27 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
                 .write_take(r.rep(), amount.into())
                 .map_err(host_trap)?;
             Ok((Resource::<Bucket>::new_own(rep),))
+        },
+    )?;
+    // A put consumes the handle the guest passed: the canonical ABI
+    // lifts an owned argument out of the caller's table, so the rep
+    // arrives here and the guest no longer has it.
+    state.func_wrap(
+        "write-cell-put",
+        |mut store: StoreContextMut<'_, T>, (r, funds): (Resource<WriteCell>, Resource<Bucket>)| {
+            store
+                .data_mut()
+                .write_put(r.rep(), funds.rep())
+                .map_err(host_trap)
+        },
+    )?;
+    state.func_wrap(
+        "delta-cell-put",
+        |mut store: StoreContextMut<'_, T>, (r, funds): (Resource<DeltaCell>, Resource<Bucket>)| {
+            store
+                .data_mut()
+                .delta_put(r.rep(), funds.rep())
+                .map_err(host_trap)
         },
     )?;
     state.func_wrap(
