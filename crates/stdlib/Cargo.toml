@@ -8,5 +8,8 @@ description = "Prebuilt genesis stdlib artifacts and their effect metadata"
 [dependencies]
 hyperscale-vm-effects.workspace = true
 
+[dev-dependencies]
+hyperscale-vm-runtime.workspace = true
+
 [lints]
 workspace = true

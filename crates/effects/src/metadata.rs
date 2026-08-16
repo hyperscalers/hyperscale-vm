@@ -256,6 +256,14 @@ pub enum Totality {
     Total,
 }
 
+impl Totality {
+    /// Whether a caller may commit without waiting to hear back.
+    #[must_use]
+    pub const fn is_total(self) -> bool {
+        matches!(self, Self::Total)
+    }
+}
+
 /// A method's declared access. Its transitive effect set is the fold of its
 /// callees' signatures over the static call graph, which is acyclic — a DAG
 /// fold, never a fixpoint.
@@ -588,6 +596,9 @@ pub enum DeclarationError {
         /// effects, `for-each` bodies counted in place.
         clause: u32,
     },
+    /// A method claiming totality behind a gate that can turn it away.
+    #[error("a total method admits every caller, and this one is gated")]
+    GatedTotality,
 }
 
 /// Whether a target names the declaring instance's own prefix.
@@ -640,6 +651,14 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
             }
         }
         Ok(())
+    }
+    // A gate is an error arm the vocabulary can see. Trap freedom is what
+    // the artifact scan establishes, and it says nothing about whether the
+    // call is admitted at all — a guarded method turns callers away for
+    // reasons the body never runs to discover, which is exactly the
+    // refusal a total leg promises cannot happen.
+    if signature.totality.is_total() && signature.accessibility != Accessibility::Public {
+        return Err(DeclarationError::GatedTotality);
     }
     walk(&signature.effects, &mut 0)
 }

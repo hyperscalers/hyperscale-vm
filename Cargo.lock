@@ -731,6 +731,7 @@ name = "hyperscale-vm-stdlib"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-effects",
+ "hyperscale-vm-runtime",
 ]
 
 [[package]]
