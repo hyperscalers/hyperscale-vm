@@ -1,12 +1,19 @@
 //! Deploy-time totality checking.
 //!
 //! A method marked total promises its callers that it cannot come back
-//! with a refusal or a fault. The type system carries half of that — an
-//! error arm is visible in the signature — and nothing carries the other
-//! half, because a trap leaves the type system entirely. This module is
-//! the other half: a scan of a function body for the operators that can
-//! trap, so the mark is granted against the code rather than taken from
-//! the package that would benefit from claiming it.
+//! with a refusal or a fault. Two things could break that promise here
+//! and the vocabulary sees only one of them: a gate turns callers away
+//! before the body runs, which a signature's accessibility states, and a
+//! trap leaves the type system entirely and states nothing anywhere.
+//! This module answers the second — a scan of a function body for the
+//! operators that can fault, so the verdict is read off the code rather
+//! than taken from the package that would benefit from it.
+//!
+//! There is no third. WIT has `result<t, e>`, and no world in this
+//! protocol uses it: every export returns a value or nothing, and a
+//! method declines by trapping. So the error arm a signature could carry
+//! is not a signal that distinguishes anything here, and the scan is not
+//! half the answer but nearly all of it.
 //!
 //! The scan is a membership test, not an analysis. Proving an arbitrary
 //! body cannot fault is undecidable, and approximating it well is a
@@ -49,20 +56,33 @@
 //! would deny the mark to every method in the language, forever, for a
 //! reason no author can act on.
 //!
-//! So the closure of the canonical ABI's own exports — the `cabi_` names
-//! the toolchain generates — is excluded from the walk, on the same
-//! footing as the imports: allocation failure is a resource bound the
-//! boundary discharges, exactly as fuel exhaustion is, and a leg whose
-//! memory is pre-sized cannot reach it. What that costs is real. A body
-//! that panics *through* the glue is no longer caught, and a helper the
-//! allocator and an authored method both call is excluded on the
-//! allocator's account. The exclusion is an over-approximation in the
-//! unsound direction, and closing it means a panic-free allocator rather
-//! than a cleverer scan.
+//! So the closure of the ABI's support functions is excluded from the
+//! walk, on the same footing as the imports: allocation failure is a
+//! resource bound the boundary discharges, exactly as fuel exhaustion is,
+//! and a leg whose memory is pre-sized cannot reach it.
+//!
+//! **Which functions those are is read from the component's own wiring,
+//! never from their names.** A `cabi_` prefix is something an author
+//! chooses, so excluding by prefix would let a package export its
+//! panicking helper under that name and have the scan look away — a hole
+//! anyone reading this file could walk through. What a `canon lift`
+//! designates is a role rather than a name: the runtime calls that
+//! function to allocate for every value crossing the boundary. A package
+//! can still point the role at a body of its own, and then that body has
+//! to serve as the allocator, which leaves it holding the gap the honest
+//! allocator already has instead of opening a new one.
+//!
+//! What the exclusion costs is still real: a body that panics *through*
+//! the glue is not caught, and a helper the allocator and an authored
+//! method both call is set aside on the allocator's account. Closing that
+//! means a panic-free allocator rather than a cleverer scan.
 
 use std::collections::BTreeSet;
 
-use wasmparser::{ExternalKind, FunctionBody, Operator, Parser, Payload, TypeRef};
+use wasmparser::{
+    CanonicalFunction, CanonicalOption, ComponentAlias, ExternalKind, FunctionBody, Operator,
+    Parser, Payload, TypeRef,
+};
 
 /// Why a body cannot carry the total mark.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -167,8 +187,9 @@ pub fn check_body(body: &FunctionBody<'_>) -> Result<(), TotalityError> {
 /// The first [`TotalityError`] any reachable body yields, or
 /// [`TotalityError::Undecodable`] if the module does not parse.
 pub fn check_reachable(module: &[u8], entry: u32) -> Result<(), TotalityError> {
+    let designated = abi_support_exports(module)?;
     let parsed = Module::parse(module)?;
-    let shim = parsed.shim_closure()?;
+    let shim = parsed.shim_closure(&designated)?;
     parsed.walk(entry, &shim)
 }
 
@@ -185,12 +206,13 @@ pub fn check_reachable(module: &[u8], entry: u32) -> Result<(), TotalityError> {
 /// [`TotalityError::NoSuchExport`] if no core module exports `method`,
 /// or whatever the walk from it yields.
 pub fn check_method(artifact: &[u8], method: &str) -> Result<(), TotalityError> {
+    let designated = abi_support_exports(artifact)?;
     for module in core_modules(artifact)? {
         let parsed = Module::parse(module)?;
         let Some(entry) = parsed.export_named(method) else {
             continue;
         };
-        let shim = parsed.shim_closure()?;
+        let shim = parsed.shim_closure(&designated)?;
         return parsed.walk(entry, &shim);
     }
     Err(TotalityError::NoSuchExport(method.to_string()))
@@ -217,9 +239,71 @@ fn core_modules(artifact: &[u8]) -> Result<Vec<&[u8]>, TotalityError> {
     Ok(nested)
 }
 
-/// The prefix the canonical ABI gives its own exports. Everything the
-/// closure of these reaches is toolchain glue rather than authored code.
-const SHIM_EXPORT_PREFIX: &str = "cabi_";
+/// The core exports the component itself designates as canonical-ABI
+/// support: whatever its `canon lift`s name as their realloc and their
+/// post-return.
+///
+/// Read from the component's own wiring rather than from a naming
+/// convention, and that is the whole point. A prefix is something an
+/// author picks, so excluding everything called `cabi_*` lets a package
+/// export its panicking helper under that name and have the scan look
+/// away. What a lift designates is not a name but a role: the runtime
+/// calls this function to allocate, on every value that crosses the
+/// boundary. A package can still point that role at a body of its own —
+/// but then that body must actually serve as the allocator, which leaves
+/// it with the same gap the honest allocator already has rather than a
+/// new one.
+///
+/// Empty for a bare core module, which has no canonical section and
+/// therefore no glue to set aside.
+fn abi_support_exports(artifact: &[u8]) -> Result<BTreeSet<String>, TotalityError> {
+    // The component's core function index space, in payload order: an
+    // alias of a core export contributes its name, and every canonical
+    // function except a lift contributes an entry that is not an alias.
+    // A lift produces a component function and so contributes nothing.
+    let mut core_functions: Vec<Option<String>> = Vec::new();
+    let mut designated: BTreeSet<u32> = BTreeSet::new();
+
+    for payload in Parser::new(0).parse_all(artifact) {
+        match payload.map_err(|e| TotalityError::Undecodable(e.to_string()))? {
+            Payload::ComponentAliasSection(reader) => {
+                for alias in reader {
+                    let alias = alias.map_err(|e| TotalityError::Undecodable(e.to_string()))?;
+                    if let ComponentAlias::CoreInstanceExport { kind, name, .. } = alias
+                        && kind == ExternalKind::Func
+                    {
+                        core_functions.push(Some(name.to_owned()));
+                    }
+                }
+            }
+            Payload::ComponentCanonicalSection(reader) => {
+                for function in reader {
+                    let function =
+                        function.map_err(|e| TotalityError::Undecodable(e.to_string()))?;
+                    let CanonicalFunction::Lift { options, .. } = function else {
+                        core_functions.push(None);
+                        continue;
+                    };
+                    for option in &options {
+                        match option {
+                            CanonicalOption::Realloc(index)
+                            | CanonicalOption::PostReturn(index) => {
+                                designated.insert(*index);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(designated
+        .into_iter()
+        .filter_map(|index| core_functions.get(index as usize).cloned().flatten())
+        .collect())
+}
 
 /// A core module's function space, indexed the way calls index it.
 struct Module<'a> {
@@ -299,12 +383,12 @@ impl<'a> Module<'a> {
             .map(|(_, index)| *index)
     }
 
-    /// Everything the canonical ABI's own exports reach.
-    fn shim_closure(&self) -> Result<BTreeSet<u32>, TotalityError> {
+    /// Everything the designated ABI support reaches.
+    fn shim_closure(&self, designated: &BTreeSet<String>) -> Result<BTreeSet<u32>, TotalityError> {
         let frontier: Vec<u32> = self
             .exports
             .iter()
-            .filter(|(name, _)| name.starts_with(SHIM_EXPORT_PREFIX))
+            .filter(|(name, _)| designated.contains(*name))
             .map(|(_, index)| *index)
             .collect();
         self.reachable(frontier, &BTreeSet::new())
@@ -448,34 +532,27 @@ mod tests {
         assert_eq!(check_reachable(&module, 0), Ok(()));
     }
 
-    /// The glue exclusion, on a module shaped like the real one: an
-    /// entry whose own body is clean, reaching a faulting function only
-    /// through something the ABI's own export also reaches.
+    /// A bare core module designates nothing, so nothing is set aside:
+    /// with no component around it there is no `canon lift` to name a
+    /// realloc, and a faulting callee is the entry's problem however it
+    /// is named.
     #[test]
-    fn the_canonical_abi_glue_is_not_the_entrys_problem() {
-        let module = parse_str(
-            r#"(module
-                 (func $entry call $glue)
-                 (func $glue unreachable)
-                 (export "deposit" (func $entry))
-                 (export "cabi_realloc" (func $glue)))"#,
-        )
-        .expect("valid wat");
-        assert_eq!(check_reachable(&module, 0), Ok(()));
-
-        // The same faulting body, no longer the ABI's: without the
-        // `cabi_` export naming it, nothing excludes it.
-        let authored = parse_str(
-            r#"(module
-                 (func $entry call $helper)
-                 (func $helper unreachable)
-                 (export "deposit" (func $entry)))"#,
-        )
-        .expect("valid wat");
-        assert_eq!(
-            check_reachable(&authored, 0),
-            Err(TotalityError::Unreachable),
-        );
+    fn a_name_alone_sets_nothing_aside() {
+        for export in ["helper", "cabi_realloc"] {
+            let module = parse_str(format!(
+                r#"(module
+                     (func $entry call $helper)
+                     (func $helper unreachable)
+                     (export "deposit" (func $entry))
+                     (export "{export}" (func $helper)))"#
+            ))
+            .expect("valid wat");
+            assert_eq!(
+                check_reachable(&module, 0),
+                Err(TotalityError::Unreachable),
+                "exporting the faulting body as {export:?} must not excuse it",
+            );
+        }
     }
 
     /// An imported function has no body to walk into, and a call to one
