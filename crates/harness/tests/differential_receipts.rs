@@ -81,6 +81,9 @@ impl RefKernelHost for NoHost {
     fn delta_sub(&mut self, _rep: u32, _amount: u128) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
+    fn bucket_amount(&mut self, _rep: u32) -> Result<u128, AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
     fn delta_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }

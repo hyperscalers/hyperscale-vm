@@ -481,6 +481,8 @@ pub mod fixtures {
     /// for the handle afterwards, which is the one thing a put makes
     /// impossible. `take-two` debits two cells and hands both back at
     /// once, which is what a method with more than one edge does.
+    /// `weigh` reads what a bucket carries and hands it back, which is
+    /// the one question about value that moves none.
     ///
     /// The three handle-returning exports return the handle index they
     /// were given, because that index is a core `i32` a body can read and
@@ -500,6 +502,7 @@ pub mod fixtures {
     (export "issuer-take" (func (param "i" (borrow $is)) (param "amount" $amt) (result (own $bk))))
     (export "write-cell-take" (func (param "c" (borrow $wc)) (param "amount" $amt) (result (own $bk))))
     (export "write-cell-put" (func (param "c" (borrow $wc)) (param "funds" (own $bk))))
+    (export "bucket-amount" (func (param "b" (borrow $bk)) (result $amt)))
     (export "delta-cell-put" (func (param "c" (borrow $dc)) (param "funds" (own $bk))))
     (export "delta-cell-take" (func (param "c" (borrow $dc)) (param "amount" $amt) (result (own $bk))))
     (export "reserve-cell-take" (func (param "c" (borrow $vc)) (result (own $bk))))))
@@ -514,6 +517,7 @@ pub mod fixtures {
   (alias export $state "issuer-take" (func $issue))
   (alias export $state "write-cell-take" (func $write_take))
   (alias export $state "write-cell-put" (func $write_put))
+  (alias export $state "bucket-amount" (func $bucket_amount))
   (alias export $state "delta-cell-put" (func $delta_put))
   (alias export $state "delta-cell-take" (func $delta_take))
   (alias export $state "reserve-cell-take" (func $reserve_take))
@@ -537,6 +541,8 @@ pub mod fixtures {
   (core func $issue_l (canon lower (func $issue)))
   (core func $write_take_l (canon lower (func $write_take)))
   (core func $write_put_l (canon lower (func $write_put)))
+  (core func $bucket_amount_l (canon lower (func $bucket_amount)
+    (memory $a "mem")))
   (core func $delta_put_l (canon lower (func $delta_put)))
   (core func $delta_take_l (canon lower (func $delta_take)))
   (core func $reserve_take_l (canon lower (func $reserve_take)))
@@ -553,6 +559,7 @@ pub mod fixtures {
     (import "k" "issue" (func $issue (param i32 i64 i64) (result i32)))
     (import "k" "write-take" (func $write_take (param i32 i64 i64) (result i32)))
     (import "k" "write-put" (func $write_put (param i32 i32)))
+    (import "k" "bucket-amount" (func $bucket_amount (param i32 i32)))
     (import "k" "delta-put" (func $delta_put (param i32 i32)))
     (import "k" "delta-take" (func $delta_take (param i32 i64 i64) (result i32)))
     (import "k" "reserve-take" (func $reserve_take (param i32) (result i32)))
@@ -595,6 +602,17 @@ pub mod fixtures {
       call $issue
       local.get 0
       call $drop_issuer)
+
+    ;; Read what the bucket carries without moving it, then hand it back:
+    ;; a borrow costs the body nothing and leaves the value where it was.
+    (func (export "weigh") (param i32) (result i64)
+      local.get 0
+      i32.const 32
+      call $bucket_amount
+      i32.const 32
+      i64.load
+      local.get 0
+      call $drop_bucket)
 
     ;; Credit the cell with the bucket, then say whether the handle it
     ;; consumed still names anything: a live one would answer, and a
@@ -691,6 +709,7 @@ pub mod fixtures {
       (export "issue" (func $issue_l))
       (export "write-take" (func $write_take_l))
       (export "write-put" (func $write_put_l))
+      (export "bucket-amount" (func $bucket_amount_l))
       (export "delta-put" (func $delta_put_l))
       (export "delta-take" (func $delta_take_l))
       (export "reserve-take" (func $reserve_take_l))
@@ -720,6 +739,9 @@ pub mod fixtures {
     (param "a" u64) (param "b" u64)
     (result (tuple (own $bucket) (own $bucket)))
     (canon lift (core func $i "take-two") (memory $a "mem")))
+  (func (export "weigh")
+    (param "b" (own $bucket)) (result u64)
+    (canon lift (core func $i "weigh")))
   (func (export "put-write")
     (param "c" (borrow $wcell)) (param "funds" (own $bucket)) (result u64)
     (canon lift (core func $i "put-write")))
@@ -906,6 +928,9 @@ pub mod session_host {
                 }
                 fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason> {
                     self.0.delta_sub(rep, amount).map_err(AbortReason::from)
+                }
+                fn bucket_amount(&mut self, rep: u32) -> Result<u128, AbortReason> {
+                    self.0.bucket(rep).map_err(AbortReason::from)
                 }
                 fn delta_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
                     self.0.delta_put(rep, funds).map_err(AbortReason::from)

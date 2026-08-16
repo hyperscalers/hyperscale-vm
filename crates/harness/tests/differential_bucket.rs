@@ -790,6 +790,44 @@ fn pair_ref(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
     Ok((pair, fuel))
 }
 
+/// What a bucket weighs, read through a borrow on each engine.
+fn weighed(fx: &Fixture, held: u128) -> Result<(u64, u64)> {
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    validate_component(&bytes)?;
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<SessionHost>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let mut host = SessionHost(materialize(fx));
+    let funds = host.0.open_bucket(held);
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+    let (blessed,) = instance
+        .get_typed_func::<(Resource<Bucket>,), (u64,)>(&mut store, "weigh")?
+        .call(&mut store, (Resource::new_own(funds),))?;
+
+    let comp = RefComponent::decode(&bytes)?;
+    let mut host = SessionHost(materialize(fx));
+    let funds = host.0.open_bucket(held);
+    let mut instance =
+        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+    let reference = match invoke(&mut instance, "weigh", &[CVal::Own(funds)])?.as_slice() {
+        [CVal::U64(v)] => *v,
+        other => return Err(format_err!("weigh returned {other:?}")),
+    };
+    Ok((blessed, reference))
+}
+
+#[test]
+fn a_body_can_read_what_it_was_paid_without_moving_it() -> Result<()> {
+    let fx = fixture();
+    let (blessed, reference) = weighed(&fx, 4242)?;
+    assert_eq!(blessed, reference, "the weighed amount diverged");
+    assert_eq!(blessed, 4242);
+    Ok(())
+}
+
 #[test]
 fn a_method_with_two_edges_hands_back_two_buckets() -> Result<()> {
     let fx = fixture();

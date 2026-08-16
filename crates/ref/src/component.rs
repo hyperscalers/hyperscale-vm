@@ -48,6 +48,7 @@ pub trait RefKernelHost {
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
     fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
     fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
+    fn bucket_amount(&mut self, rep: u32) -> Result<u128, AbortReason>;
     fn delta_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
     fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
     fn issuer_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
@@ -151,6 +152,7 @@ enum HostFn {
     WriteCellSet,
     WriteTake,
     WritePut,
+    BucketAmount,
     IssuerTake,
     DeltaAdd,
     DeltaSub,
@@ -570,6 +572,7 @@ impl RefComponent {
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
             ("state", "write-cell-take") => Ok(HostFn::WriteTake),
             ("state", "write-cell-put") => Ok(HostFn::WritePut),
+            ("state", "bucket-amount") => Ok(HostFn::BucketAmount),
             ("state", "issuer-take") => Ok(HostFn::IssuerTake),
             ("state", "delta-cell-add") => Ok(HostFn::DeltaAdd),
             ("state", "delta-cell-sub") => Ok(HostFn::DeltaSub),
@@ -1497,7 +1500,8 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::ReserveAmount
                     | HostFn::RangeWriteRemove
                     | HostFn::WritePut
-                    | HostFn::DeltaPut,
+                    | HostFn::DeltaPut
+                    | HostFn::BucketAmount,
                 ) => 2,
                 CompFunc::Host(
                     HostFn::WriteCellSet
@@ -1628,6 +1632,17 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let bucket = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
+                    }
+                    HostFn::BucketAmount => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
+                        let amount = self
+                            .host
+                            .bucket_amount(rep)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        let mem = self.mem_opt(id)?;
+                        Self::write_amount(store, mem, args[1], amount)?;
+                        Ok(Vec::new())
                     }
                     HostFn::WritePut | HostFn::DeltaPut => {
                         let expected = if host_fn == HostFn::WritePut {

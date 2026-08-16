@@ -95,6 +95,14 @@ interface state {
     /// is not an amount and on a total past the cell's width.
     write-cell-put: func(c: borrow<write-cell>, funds: own<bucket>);
 
+    /// What a bucket carries.
+    ///
+    /// A borrow, so asking costs the body nothing: reading how much is in
+    /// hand is not moving it. A body needs this wherever its own
+    /// arithmetic turns on the value it was paid — a curve, a budget, a
+    /// receipt — and reading it is the one thing that cannot create any.
+    bucket-amount: func(b: borrow<bucket>) -> amount;
+
     /// Credit the amount cell.
     delta-cell-add: func(c: borrow<delta-cell>, value: amount);
 
