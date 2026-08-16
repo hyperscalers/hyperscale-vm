@@ -709,6 +709,103 @@ fn a_credit_past_the_cells_width_refuses_at_the_call() -> Result<()> {
     Ok(())
 }
 
+/// Two debits handed back together: the reps, in the slots they landed
+/// in, and what each carried.
+#[derive(Debug, PartialEq, Eq)]
+struct Pair {
+    reps: (u32, u32),
+    values: (u128, u128),
+}
+
+/// What both edges came to, blessed side.
+fn pair_blessed(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    validate_component(&bytes)?;
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<SessionHost>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let host = SessionHost(materialize(fx));
+    let ledger = rep_of(&host, fx.ledger, Mode::Delta);
+    let vault = rep_of(&host, fx.vault, Mode::Write);
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+
+    let ((one, two),) = instance
+        .get_typed_func::<
+            (Resource<DeltaCell>, Resource<WriteCell>, u64, u64),
+            ((Resource<Bucket>, Resource<Bucket>),),
+        >(&mut store, "take-two")?
+        .call(
+            &mut store,
+            (
+                Resource::new_borrow(ledger),
+                Resource::new_borrow(vault),
+                a,
+                b,
+            ),
+        )?;
+    let fuel = FUEL - store.get_fuel()?;
+    let mut host = store.into_data();
+    let pair = Pair {
+        reps: (one.rep(), two.rep()),
+        values: (
+            host.0.take_bucket(one.rep())?,
+            host.0.take_bucket(two.rep())?,
+        ),
+    };
+    Ok((pair, fuel))
+}
+
+/// The same, under the reference interpreter.
+fn pair_ref(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    let comp = RefComponent::decode(&bytes)?;
+    let host = SessionHost(materialize(fx));
+    let args = vec![
+        CVal::Borrow(
+            rep_of(&host, fx.ledger, Mode::Delta),
+            ResourceKind::DeltaCell,
+        ),
+        CVal::Borrow(
+            rep_of(&host, fx.vault, Mode::Write),
+            ResourceKind::WriteCell,
+        ),
+        CVal::U64(a),
+        CVal::U64(b),
+    ];
+    let mut instance =
+        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+    let produced = invoke(&mut instance, "take-two", &args)?;
+    let fuel = instance.fuel_consumed();
+    let mut host = instance.into_host();
+    let pair = match produced.as_slice() {
+        [CVal::Own(one), CVal::Own(two)] => Pair {
+            reps: (*one, *two),
+            values: (host.0.take_bucket(*one)?, host.0.take_bucket(*two)?),
+        },
+        other => return Err(format_err!("take-two returned {other:?}")),
+    };
+    Ok((pair, fuel))
+}
+
+#[test]
+fn a_method_with_two_edges_hands_back_two_buckets() -> Result<()> {
+    let fx = fixture();
+    let (blessed, blessed_fuel) = pair_blessed(&fx, 30, 40)?;
+    let (reference, ref_fuel) = pair_ref(&fx, 30, 40)?;
+    assert_eq!(blessed, reference, "the paired edges diverged");
+    assert_eq!(blessed_fuel, ref_fuel, "take-two fuel diverged");
+
+    // Distinct buckets, in the order the body took them: which slot an
+    // edge lands in is what a consumer routes on, so the two engines
+    // agreeing on it is the whole of what the tuple has to promise.
+    assert_eq!(blessed.values, (30, 40));
+    assert_ne!(blessed.reps.0, blessed.reps.1);
+    Ok(())
+}
+
 #[test]
 fn issuance_is_the_one_bucket_with_no_cell_behind_it() -> Result<()> {
     let fx = fixture();

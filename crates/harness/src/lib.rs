@@ -479,7 +479,8 @@ pub mod fixtures {
     /// target. `put-write` and `put-delta` are the credits, each
     /// consuming the bucket it was handed; `put-write-then-drop` reaches
     /// for the handle afterwards, which is the one thing a put makes
-    /// impossible.
+    /// impossible. `take-two` debits two cells and hands both back at
+    /// once, which is what a method with more than one edge does.
     ///
     /// The three handle-returning exports return the handle index they
     /// were given, because that index is a core `i32` a body can read and
@@ -625,6 +626,33 @@ pub mod fixtures {
       call $drop_write
       i64.const 0)
 
+    ;; Two debits, from two cells, handed back together: the handles go
+    ;; into the return area in declared order and the area's pointer is
+    ;; what a spilled result returns.
+    (func (export "take-two") (param i32 i32 i64 i64) (result i32)
+      (local $one i32) (local $two i32)
+      local.get 0
+      local.get 2
+      i64.const 0
+      call $delta_take
+      local.set $one
+      local.get 1
+      local.get 3
+      i64.const 0
+      call $write_take
+      local.set $two
+      i32.const 64
+      local.get $one
+      i32.store
+      i32.const 68
+      local.get $two
+      i32.store
+      local.get 0
+      call $drop_delta
+      local.get 1
+      call $drop_write
+      i32.const 64)
+
     (func (export "take-write") (param i32 i64) (result i32)
       local.get 0
       local.get 1
@@ -687,6 +715,11 @@ pub mod fixtures {
   (func (export "issue")
     (param "i" (borrow $issuer)) (param "amount" u64) (result (own $bucket))
     (canon lift (core func $i "issue")))
+  (func (export "take-two")
+    (param "d" (borrow $dcell)) (param "w" (borrow $wcell))
+    (param "a" u64) (param "b" u64)
+    (result (tuple (own $bucket) (own $bucket)))
+    (canon lift (core func $i "take-two") (memory $a "mem")))
   (func (export "put-write")
     (param "c" (borrow $wcell)) (param "funds" (own $bucket)) (result u64)
     (canon lift (core func $i "put-write")))

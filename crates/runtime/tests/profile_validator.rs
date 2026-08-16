@@ -193,6 +193,27 @@ fn rejects_excessive_blocks() {
 }
 
 #[test]
+fn rejects_a_tuple_that_is_not_a_run_of_edges() {
+    // A tuple is admitted for one reason — it is how a method with more
+    // than one edge returns them — so a tuple of anything else is a shape
+    // with no meaning in the world rather than a value type to model.
+    let bytes = parse_str(
+        r#"
+(component
+  (core module $m
+    (memory (export "mem") 1 1)
+    (func (export "f") (result i32) (i32.const 0)))
+  (core instance $i (instantiate $m))
+  (type $pair (tuple u64 u64))
+  (func (export "f") (result $pair)
+    (canon lift (core func $i "f") (memory $i "mem"))))
+"#,
+    )
+    .expect("fixture must parse");
+    assert_rejected(&bytes, "tuple of owned handles");
+}
+
+#[test]
 fn rejects_oversized_artifacts() {
     let bytes = vec![0u8; MAX_COMPONENT_BYTES + 1];
     assert!(matches!(

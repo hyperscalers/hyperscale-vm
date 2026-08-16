@@ -235,6 +235,9 @@ const RESULT_PAYLOAD: usize = 4;
 /// area. The blessed engine charges the same figure.
 const AMOUNT_BOUNDARY_BYTES: usize = 16;
 
+/// A handle's width in a spilled result: the core `i32` it is.
+const HANDLE_BYTES: usize = 4;
+
 /// The amount a flattened `record { low: u64, high: u64 }` carries.
 fn flat_amount(low: Value, high: Value) -> u128 {
     u128::from(low.as_i64().cast_unsigned()) | (u128::from(high.as_i64().cast_unsigned()) << 64)
@@ -256,6 +259,9 @@ enum CTy {
     Borrow,
     /// `own<R>`: a handle the call transfers rather than lends.
     Own,
+    /// `tuple<own<R>, …>`: how a method with more than one edge returns
+    /// them, carrying the arity because that is what the lift walks.
+    OwnTuple(u32),
     /// `result<list<u8>, u32>`: the refusal channel over a method that
     /// produces bytes.
     DeclinableList8,
@@ -444,6 +450,17 @@ impl RefComponent {
                 }
                 ComponentDefinedType::Borrow(_) => CTypeEntry::Defined(CTy::Borrow),
                 ComponentDefinedType::Own(_) => CTypeEntry::Defined(CTy::Own),
+                ComponentDefinedType::Tuple(elements) => {
+                    for element in &**elements {
+                        if self.value_type(*element)? != CTy::Own {
+                            return Err(DecodeError::Unsupported("tuple element".to_string()));
+                        }
+                    }
+                    CTypeEntry::Defined(CTy::OwnTuple(
+                        u32::try_from(elements.len())
+                            .map_err(|_| DecodeError::Unsupported("tuple arity".to_string()))?,
+                    ))
+                }
                 // The profile pins the refusal channel to two shapes; a
                 // component carrying anything else never reaches here,
                 // and one that did would be a type this engine cannot
@@ -1128,6 +1145,25 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
         match ctype.results.as_slice() {
             [] => Ok(Vec::new()),
             [CTy::Own] => Ok(vec![CVal::Own(self.lift_own(area())?)]),
+            // One own per element, flattened into the result list: a
+            // tuple of handles is what a method's edges are, and nothing
+            // downstream wants them re-wrapped. One element fits the flat
+            // limit and arrives as the handle itself; anything wider
+            // spills, and the elements sit at their own alignment in the
+            // area the single returned pointer names.
+            [CTy::OwnTuple(arity)] => {
+                let mut owned = Vec::with_capacity(*arity as usize);
+                if *arity == 1 {
+                    owned.push(CVal::Own(self.lift_own(area())?));
+                } else {
+                    for index in 0..*arity {
+                        let at = area() + (index as usize) * HANDLE_BYTES;
+                        let handle = self.lift_u32(mem_idx, at)? as usize;
+                        owned.push(CVal::Own(self.lift_own(handle)?));
+                    }
+                }
+                Ok(owned)
+            }
             [CTy::U32] => Ok(vec![CVal::U32(
                 values.first().map_or(0, |v| v.as_i32().cast_unsigned()),
             )]),

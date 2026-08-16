@@ -129,6 +129,14 @@ enum ValueSlot {
     /// `own<R>` of a state resource: a handle the guest holds rather than
     /// one lent to it for a call, so one it can keep, return, or discard.
     Owned,
+    /// A tuple whose every element is an owned handle.
+    ///
+    /// A method's edges are its results, and a signature carries one
+    /// result — so a method producing more than one edge produces them
+    /// together. Admitted on the same property the flat records are: a
+    /// tuple of handles is a run of `i32`s, so it costs the return area
+    /// its own width and reaches linear memory for nothing else.
+    OwnedTuple,
     /// `result<list<u8>, u32>` or `result<_, u32>`: the declared refusal
     /// channel.
     Declinable,
@@ -169,7 +177,8 @@ fn admits_param_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> boo
 }
 
 /// Whether a value type may occupy an export's result position:
-/// everything a parameter admits, plus the refusal channel.
+/// everything a parameter admits, plus the refusal channel and the tuple
+/// a multi-edge method returns.
 fn admits_result_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> bool {
     resolve(defined, vt).is_some()
 }
@@ -222,6 +231,18 @@ fn record_component_type(
         }
         ComponentType::Defined(ComponentDefinedType::Borrow(_)) => Some(ValueSlot::Handle),
         ComponentType::Defined(ComponentDefinedType::Own(_)) => Some(ValueSlot::Owned),
+        ComponentType::Defined(ComponentDefinedType::Tuple(elements)) => {
+            for element in &**elements {
+                if !matches!(resolve(defined, *element), Some(ValueSlot::Owned)) {
+                    return Err(ProfileError::Structural(
+                        "only a tuple of owned handles is within the profile: it is how a \
+                         method with more than one edge returns them"
+                            .to_string(),
+                    ));
+                }
+            }
+            Some(ValueSlot::OwnedTuple)
+        }
         // The refusal channel, pinned to one shape. A code rather than a
         // payload, and the same code width whatever the method returns,
         // so what a receipt records is an index into the package's error
