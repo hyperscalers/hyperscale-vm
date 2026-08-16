@@ -1,9 +1,9 @@
 [package]
-name = "hyperscale-vm-stdlib"
+name = "hyperscale-vm-fixtures"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Prebuilt genesis stdlib artifacts and their effect metadata"
+description = "Prebuilt test packages: guests a network seeds outside production"
 
 [dependencies]
 hyperscale-vm-effects.workspace = true

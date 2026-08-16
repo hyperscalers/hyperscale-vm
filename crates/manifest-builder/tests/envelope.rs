@@ -11,10 +11,10 @@ use hyperscale_vm_effects::{
     Constraint, EnvelopeTree, Hasher, InstanceRegistry, IntentDecl, MetadataCache, PackageHash,
     PrincipalAddr, ResourceAddr, TestHasher, admit_tree,
 };
-use hyperscale_vm_manifest_builder::native::account;
 use hyperscale_vm_manifest_builder::{
     EnvelopeBuilder, EnvelopeError, IntentBuilder, Param, YieldSink,
 };
+use hyperscale_vm_stdlib::calls::account;
 use proptest::prelude::{prop, proptest};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);

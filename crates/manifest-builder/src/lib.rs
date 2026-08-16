@@ -35,7 +35,6 @@
 pub mod args;
 pub mod builder;
 pub mod envelope;
-pub mod native;
 pub mod preflight;
 pub mod render;
 pub mod signing;

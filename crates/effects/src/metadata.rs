@@ -1347,8 +1347,8 @@ mod tests {
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::hash::Hash32;
     use crate::stdlib::{
-        OWNER_BADGE, account_metadata, amm_metadata, book_metadata, splitter_metadata,
-        staking_metadata,
+        OWNER_BADGE, account_metadata, amm_metadata, book_metadata, lottery_metadata,
+        splitter_metadata, staking_metadata,
     };
     use crate::types::AddressClass;
 
@@ -1358,6 +1358,7 @@ mod tests {
             ("account", account_metadata()),
             ("amm", amm_metadata()),
             ("book", book_metadata()),
+            ("lottery", lottery_metadata()),
             ("splitter", splitter_metadata()),
             ("staking", staking_metadata()),
         ]
@@ -1730,7 +1731,7 @@ mod tests {
         // Exhaustive on purpose. `Public` is the default, so a method
         // added without a thought about its callers gets the permissive
         // value silently — and the shape that is easiest to miss moves no
-        // funds at all: `stamp-entropy` writes a leaf under its target's
+        // funds at all: `securify` writes a leaf under its target's
         // prefix and consumes nothing, which is the same class as any
         // later per-account module. Adding a method breaks this list,
         // which is the point.
@@ -1761,11 +1762,6 @@ mod tests {
             ),
             (
                 "account",
-                "stamp-entropy",
-                Accessibility::Guarded(Expr::SelfAddr),
-            ),
-            (
-                "account",
                 "withdraw",
                 Accessibility::Guarded(Expr::SelfAddr),
             ),
@@ -1777,6 +1773,8 @@ mod tests {
             ("amm", "swap", Accessibility::Public),
             ("book", "fill-asks", Accessibility::Public),
             ("book", "place-ask", Accessibility::Public),
+            ("lottery", "draw", Accessibility::Public),
+            ("lottery", "enter", Accessibility::Public),
             ("splitter", "take", Accessibility::Public),
             (
                 "staking",

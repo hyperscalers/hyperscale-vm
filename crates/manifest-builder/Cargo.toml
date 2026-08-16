@@ -12,6 +12,10 @@ hyperscale-vm-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# A dev-only cycle: the wrappers moved to the crates that own the
+# packages, and the builder's own tests still compose graphs out of them.
+hyperscale-vm-fixtures.workspace = true
+hyperscale-vm-stdlib.workspace = true
 proptest.workspace = true
 trybuild.workspace = true
 

@@ -1,5 +1,5 @@
-//! The minimal stdlib account: reservation-backed withdrawal, delta
-//! deposit, and the entropy stamp. Feasibility is judged before
+//! The minimal stdlib account: reservation-backed withdrawal and delta
+//! deposit. Feasibility is judged before
 //! execution, so `withdraw` only checks that the granted reservation is
 //! the amount the manifest asked for.
 //!
@@ -17,7 +17,7 @@ wit_bindgen::generate!({
     generate_all,
 });
 
-use hyperscale::kernel::env::{clock, randomness};
+use hyperscale::kernel::env::clock;
 use hyperscale::kernel::events::emit;
 use hyperscale::kernel::state::{
     delta_cell_add, range_write_count, range_write_insert, range_write_order, range_write_remove,
@@ -104,10 +104,6 @@ impl Guest for Account {
     fn deposit(vault: &DeltaCell, amount: Vec<u8>) {
         delta_cell_add(vault, &amount);
         emit(DEPOSITED, &amount);
-    }
-
-    fn stamp_entropy(leaf: &WriteCell) {
-        write_cell_set(leaf, &randomness());
     }
 
     fn authorize() {

@@ -14,16 +14,17 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::stdlib::{
-    account_metadata, amm_metadata, book_metadata, nf_metadata, registry_metadata,
-    splitter_metadata, staking_metadata,
+    account_metadata, amm_metadata, book_metadata, lottery_metadata, nf_metadata,
+    registry_metadata, splitter_metadata, staking_metadata,
 };
 use hyperscale_vm_effects::{
     ComponentAddr, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
     MetadataCache, PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr, RoleSet, Rule,
     TestHasher, Value, admit, resource_address,
 };
-use hyperscale_vm_manifest_builder::native::{account, amm, book, nf, registry, splitter, staking};
+use hyperscale_vm_fixtures::calls::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
+use hyperscale_vm_stdlib::calls::{account, staking};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -78,6 +79,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
         ("nf", vec![Value::Address(BASE.address())]),
         ("registry", vec![]),
         ("splitter", vec![]),
+        ("lottery", vec![]),
     ] {
         instances.create(&TestHasher, instance(name, config));
     }
@@ -90,6 +92,7 @@ fn stdlib() -> Vec<(&'static str, PackageMetadata)> {
         ("account", account_metadata()),
         ("amm", amm_metadata()),
         ("book", book_metadata()),
+        ("lottery", lottery_metadata()),
         ("nf", nf_metadata()),
         ("registry", registry_metadata()),
         ("splitter", splitter_metadata()),
@@ -114,7 +117,6 @@ fn the_account_wrappers_match_their_signatures() {
         let alice = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice, BASE, 100)?;
         account::deposit(b, BOB, funds)?;
-        account::stamp_entropy(b, alice)?;
         account::securify_uniform(b, alice, Rule::Require(BOB.address()), 86_400_000)?;
         account::propose(
             b,
@@ -125,7 +127,7 @@ fn the_account_wrappers_match_their_signatures() {
         account::cancel(b, ALICE)?;
         account::confirm(b, ALICE)
     });
-    assert_eq!(graph.nodes.len(), 8);
+    assert_eq!(graph.nodes.len(), 7);
 }
 
 /// A rule literal is judged by decoding it as the vocabulary — the same
@@ -265,6 +267,19 @@ fn the_registry_wrappers_match_their_signatures() {
 }
 
 #[test]
+fn the_lottery_wrappers_match_their_signatures() {
+    let lottery_addr = address("lottery", vec![]);
+    admits(|b| {
+        let alice_proof = account::authorize(b, ALICE)?;
+        let stake = account::withdraw(b, alice_proof, BASE, 100)?;
+        // Alice pays and Bob is entered: the entrant is named by the
+        // composer, not by whoever the funds came from.
+        lottery::enter(b, lottery_addr, BOB, stake)?;
+        lottery::draw(b, lottery_addr)
+    });
+}
+
+#[test]
 fn the_splitter_wrapper_matches_its_signature() {
     let splitter = address("splitter", vec![]);
     admits(|b| {
@@ -320,13 +335,13 @@ fn every_stdlib_method_has_a_wrapper() {
                 "present-badge",
                 "propose",
                 "securify",
-                "stamp-entropy",
                 "withdraw",
                 "withdraw-nf",
             ],
         ),
         ("amm", &["swap"]),
         ("book", &["fill-asks", "place-ask"]),
+        ("lottery", &["draw", "enter"]),
         ("nf", &["burn", "deposit", "mint", "operate", "withdraw"]),
         ("registry", &["bind", "check", "drain"]),
         ("splitter", &["take"]),
@@ -343,6 +358,10 @@ fn every_stdlib_method_has_a_wrapper() {
             ],
         ),
     ];
+    // Zipping would truncate silently, so the lists are held to one
+    // length first: a package appended to one and not the other is the
+    // same drift as a method, and would otherwise go unchecked.
+    assert_eq!(stdlib().len(), wrapped.len());
     for ((package, metadata), (named, methods)) in stdlib().into_iter().zip(wrapped) {
         assert_eq!(package, named);
         let declared: BTreeSet<&str> = metadata.methods.keys().map(String::as_str).collect();

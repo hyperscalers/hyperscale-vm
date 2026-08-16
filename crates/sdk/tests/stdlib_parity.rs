@@ -1,7 +1,7 @@
 //! The spike's headline claim: an author writing ordinary Rust reaches the
 //! authored signature form exactly.
 //!
-//! `vm-effects::stdlib` carries the four packages the corpus guests execute
+//! `vm-effects::stdlib` carries the packages the corpus guests execute
 //! under, hand-written as [`MethodSignature`] literals — and says of itself
 //! that they are "authored, not compiler-inferred — the inference backend
 //! is a later phase". This file is that phase's evidence. Each package is
@@ -16,11 +16,11 @@
 //! those tests without restating them.
 
 use hyperscale_vm_effects::stdlib::{
-    ASKS, AUTH, CLAIMS, CONFIG, ENTROPY, FILL_CAP, VAULT, account_metadata, amm_metadata,
-    book_metadata, splitter_metadata,
+    ASKS, AUTH, CLAIMS, CONFIG, DRAW, FILL_CAP, ROUND_CAP, TICKETS, VAULT, account_metadata,
+    amm_metadata, book_metadata, lottery_metadata, splitter_metadata,
 };
 use hyperscale_vm_effects::{PackageMetadata, ParamType, RoleId};
-use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Num, Sym, lit_u64, pack};
+use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Num, Opaque, Sym, lit_u64, lit_u128, pack};
 use hyperscale_vm_sdk::{Blueprint, Trace};
 
 /// The fungible account.
@@ -50,11 +50,6 @@ fn account() -> Blueprint {
             let claims = holder.child(CLAIMS, &[resource.cast()]);
             t.point(&vault).delta();
             t.point(&claims).delta();
-        })
-        .method("stamp-entropy", &[], |t: &mut Trace| {
-            let holder = t.self_addr();
-            let leaf = holder.child(ENTROPY, &[]);
-            t.point(&leaf).write();
         })
         // The sign-in's whole body is its gate's read: the cell the
         // account's stored rule lives in.
@@ -171,6 +166,46 @@ fn book() -> Blueprint {
         .build()
 }
 
+/// The lottery: an entry at the entrant's hashed order beside the pot,
+/// and a draw over the whole entrants interval.
+fn lottery() -> Blueprint {
+    Blueprint::builder()
+        .method(
+            "enter",
+            &[ParamType::Address, ParamType::Bucket],
+            |t: &mut Trace| {
+                let who: Sym<Addr> = t.arg(0);
+                let stake: Sym<Bucket> = t.arg(1);
+                let venue = t.self_addr();
+
+                // The ticket is the unordered-collection shape: one entry
+                // at the hash of the entrant, so entering twice lands on
+                // the same ticket.
+                let key: Sym<Opaque> = who.cast();
+                t.keyed_entry(&venue, TICKETS, &key).write();
+
+                let pot = venue.child(VAULT, &[stake.resource().cast()]);
+                t.point(&pot).delta();
+            },
+        )
+        .method("draw", &[], |t: &mut Trace| {
+            let venue = t.self_addr();
+            let outcome = venue.child(DRAW, &[]);
+            t.point(&outcome).write();
+            // The whole order space: a round is every entrant in it, and
+            // no argument narrows what a draw may select from.
+            t.range(
+                &venue,
+                TICKETS,
+                &lit_u128(0),
+                &lit_u128(u128::MAX),
+                ROUND_CAP,
+            )
+            .read();
+        })
+        .build()
+}
+
 /// The bucket splitter: two output edges, no effects at all.
 fn splitter() -> Blueprint {
     Blueprint::builder()
@@ -240,6 +275,11 @@ fn the_book_traces_to_its_authored_signature() {
 }
 
 #[test]
+fn the_lottery_traces_to_its_authored_signature() {
+    assert_parity(&lottery(), &lottery_metadata(), "lottery");
+}
+
+#[test]
 fn the_splitter_traces_to_its_authored_signature() {
     assert_parity(&splitter(), &splitter_metadata(), "splitter");
 }
@@ -249,10 +289,10 @@ fn every_authored_role_is_reachable_from_the_sdk() {
     // A guard on the fixtures rather than on the SDK: if a role is added to
     // the stdlib and no traced declaration names it, the parity tests above
     // are silently covering less than they read as covering.
-    let named = [VAULT, CLAIMS, CONFIG, ASKS, ENTROPY];
+    let named = [VAULT, CLAIMS, CONFIG, ASKS, TICKETS, DRAW];
     assert_eq!(
         named.len(),
-        5,
+        6,
         "a role was added to the stdlib without a traced declaration to match"
     );
     assert!(named.iter().all(|r| *r != RoleId(0)));

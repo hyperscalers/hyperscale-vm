@@ -20,7 +20,6 @@ use hyperscale_vm_kernel::{
     WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
-use hyperscale_vm_manifest_builder::native::account;
 use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
 };
@@ -28,6 +27,7 @@ use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
     validate_component,
 };
+use hyperscale_vm_stdlib::calls::account;
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};

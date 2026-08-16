@@ -40,8 +40,6 @@ mod account {
         vaults: Keyed<Amount>,
         #[role(2)]
         claims: Keyed<Amount>,
-        #[role(5)]
-        entropy: Cell<u64>,
         #[role(9)]
         auth: Cell<u64>,
     }
@@ -56,12 +54,6 @@ mod account {
         pub fn deposit(&mut self, funds: Bucket) {
             self.vaults.at(funds.resource()).add(funds.amount());
             self.claims.at(funds.resource()).add(0);
-        }
-
-        /// Stamp the transaction's randomness draw into the entropy leaf.
-        #[name("stamp-entropy")]
-        pub fn stamp_entropy(&mut self) {
-            self.entropy.set(0);
         }
 
         /// The sign-in's whole body is its gate's read: the cell the

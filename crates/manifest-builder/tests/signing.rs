@@ -19,8 +19,8 @@ use hyperscale_vm_effects::{
     ResourceAddr, TestHasher,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
-use hyperscale_vm_manifest_builder::native::account;
 use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap};
+use hyperscale_vm_stdlib::calls::account;
 use hyperscale_vm_types::{
     AccountSigner, NetworkId, SchemeId, SchemeVerifier, TransactionEnvelope,
 };

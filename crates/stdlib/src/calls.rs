@@ -1,31 +1,26 @@
-//! The stdlib's methods as functions.
+//! The account and stake pool methods as functions.
 //!
-//! A typed call still spells its method as a string and its arguments as a
-//! tuple, so the two things left for an author to get wrong are the name
-//! and the order. These wrappers spend the last of it: one function per
-//! stdlib method, named parameters in the declared order, narrow address
+//! A typed call still spells its method as a string and its arguments as
+//! a tuple, so the two things left for an author to get wrong are the
+//! name and the order. These wrappers spend the last of it: one function
+//! per method, named parameters in the declared order, narrow address
 //! classes where a position admits one, and a return type that *is* the
-//! method's output arity — `Bucket`, `(Bucket, Bucket)`, or nothing.
+//! method's output arity.
 //!
 //! They are hand-written rather than generated, because the parts worth
 //! having are the parts metadata does not carry. A signature declares
-//! kinds and counts; it does not name a parameter `amount`, and nothing in
-//! it says an account method is addressed to a principal. Generating from
-//! `stdlib.rs` would reproduce exactly the positional surface these exist
-//! to replace.
+//! kinds and counts; it does not name a parameter `amount`, and nothing
+//! in it says an account method is addressed to a principal. Generating
+//! from the signatures would reproduce exactly the positional surface
+//! these exist to replace.
 //!
 //! What that costs is a wrapper that can drift from the signature it
 //! mirrors — the error class the builder exists to remove, reintroduced
 //! one level up. So every wrapper is exercised against the authored
-//! metadata, and every method the stdlib declares is checked to have one.
-//! Arity, kinds and output count are pinned by the typed layer refusing
-//! the call; a method added without a wrapper is pinned by the count.
+//! metadata, and every method a package declares is checked to have one.
 
 use hyperscale_vm_effects::{ComponentAddr, PrincipalAddr, ResourceRef, RoleSet, Rule};
-
-use crate::args::BucketArg;
-use crate::builder::Bucket;
-use crate::typed::{Proof, TypedBuilder, TypedError};
+use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
 
 /// The fungible account: every principal answers these.
 pub mod account {
@@ -65,18 +60,6 @@ pub mod account {
         funds: impl BucketArg,
     ) -> Result<(), TypedError> {
         builder.call(who, "deposit", (funds,))?.none()
-    }
-
-    /// Write the transaction's randomness draw into the proof holder's
-    /// entropy leaf.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `stamp-entropy`.
-    pub fn stamp_entropy(builder: &mut TypedBuilder<'_>, proof: Proof) -> Result<(), TypedError> {
-        builder
-            .call_as(proof, proof.target(), "stamp-entropy", ())?
-            .none()
     }
 
     /// Sign in as `who`: mint the account's identity as a proof later
@@ -363,215 +346,5 @@ pub mod staking {
         builder
             .call_as(operator, pool, "clear-param-vote", ())?
             .none()
-    }
-}
-
-/// The constant-product pool.
-pub mod amm {
-    use super::{Bucket, BucketArg, ComponentAddr, TypedBuilder, TypedError};
-
-    /// Trade `input` through `pool`, refusing to settle for less than
-    /// `min_out`. The proceeds are typed by the pool's configured output
-    /// resource.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `swap`.
-    pub fn swap(
-        builder: &mut TypedBuilder<'_>,
-        pool: ComponentAddr,
-        input: impl BucketArg,
-        min_out: u128,
-    ) -> Result<Bucket, TypedError> {
-        builder.call(pool, "swap", (input, min_out))?.one()
-    }
-}
-
-/// The order book.
-pub mod book {
-    use super::{Bucket, BucketArg, ComponentAddr, TypedBuilder, TypedError};
-
-    /// Offer `funds` on `book` at `price`, escrowed until filled.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `place-ask`.
-    pub fn place_ask(
-        builder: &mut TypedBuilder<'_>,
-        book: ComponentAddr,
-        price: u64,
-        funds: impl BucketArg,
-    ) -> Result<(), TypedError> {
-        builder.call(book, "place-ask", (price, funds))?.none()
-    }
-
-    /// Spend `payment` against `book`'s asks priced within `from..=to`,
-    /// answering what was bought and then what of the payment was not
-    /// spent, in that order.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `fill-asks`.
-    pub fn fill_asks(
-        builder: &mut TypedBuilder<'_>,
-        book: ComponentAddr,
-        from: u64,
-        to: u64,
-        payment: impl BucketArg,
-    ) -> Result<[Bucket; 2], TypedError> {
-        builder
-            .call(book, "fill-asks", (from, to, payment))?
-            .into_array()
-    }
-}
-
-/// The name registry.
-pub mod registry {
-    use super::{ComponentAddr, TypedBuilder, TypedError};
-
-    /// Bind `name` to `value` on `registry`, overwriting any prior
-    /// binding.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `bind`.
-    pub fn bind(
-        builder: &mut TypedBuilder<'_>,
-        registry: ComponentAddr,
-        name: u64,
-        value: u128,
-    ) -> Result<(), TypedError> {
-        builder.call(registry, "bind", (name, value))?.none()
-    }
-
-    /// Read the binding for `name`; execution traps unless it holds
-    /// exactly `expected`.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `check`.
-    pub fn check(
-        builder: &mut TypedBuilder<'_>,
-        registry: ComponentAddr,
-        name: u64,
-        expected: u128,
-    ) -> Result<(), TypedError> {
-        builder.call(registry, "check", (name, expected))?.none()
-    }
-
-    /// Remove one crank's worth of bindings from `cursor` up the hash
-    /// order; resume from the last removed order plus one.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `drain`.
-    pub fn drain(
-        builder: &mut TypedBuilder<'_>,
-        registry: ComponentAddr,
-        cursor: u128,
-    ) -> Result<(), TypedError> {
-        builder.call(registry, "drain", (cursor,))?.none()
-    }
-}
-
-/// The non-fungible fixture: an issuer that mints and burns, holders
-/// whose instances are holdings entries.
-pub mod nf {
-    use hyperscale_vm_effects::Value;
-
-    use super::{Bucket, BucketArg, ComponentAddr, ResourceRef, TypedBuilder, TypedError};
-
-    /// Mint one fresh instance of `issuer`'s resource, producing its
-    /// one-id edge.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `mint`.
-    pub fn mint(
-        builder: &mut TypedBuilder<'_>,
-        issuer: ComponentAddr,
-    ) -> Result<Bucket, TypedError> {
-        builder.call(issuer, "mint", ())?.one()
-    }
-
-    /// File `funds`' instances as entries of `holder`'s holdings.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `deposit`.
-    pub fn deposit(
-        builder: &mut TypedBuilder<'_>,
-        holder: ComponentAddr,
-        funds: impl BucketArg,
-    ) -> Result<(), TypedError> {
-        builder.call(holder, "deposit", (funds,))?.none()
-    }
-
-    /// Remove the named `ids` of `resource` from `holder`'s holdings,
-    /// producing their edge; an id not held traps at execution.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `withdraw`.
-    pub fn withdraw(
-        builder: &mut TypedBuilder<'_>,
-        holder: ComponentAddr,
-        resource: impl Into<ResourceRef>,
-        ids: &[u64],
-    ) -> Result<Bucket, TypedError> {
-        let ids = Value::List(ids.iter().copied().map(Value::U64).collect());
-        builder
-            .call(holder, "withdraw", (resource.into(), ids))?
-            .one()
-    }
-
-    /// Consume `funds` outright: its instances stop being held anywhere.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `burn`.
-    pub fn burn(
-        builder: &mut TypedBuilder<'_>,
-        issuer: ComponentAddr,
-        funds: impl BucketArg,
-    ) -> Result<(), TypedError> {
-        builder.call(issuer, "burn", (funds,))?.none()
-    }
-
-    /// Act on the badge-gated instance, presenting the badge identity a
-    /// custody gate minted.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `operate`.
-    pub fn operate(
-        builder: &mut TypedBuilder<'_>,
-        gated: ComponentAddr,
-        proof: super::Proof,
-    ) -> Result<(), TypedError> {
-        builder.call_as(proof, gated, "operate", ())?.none()
-    }
-}
-
-/// The bucket splitter.
-pub mod splitter {
-    use super::{Bucket, BucketArg, ComponentAddr, TypedBuilder, TypedError};
-
-    /// Split `amount` off `funds`, answering the part taken and then the
-    /// rest — both typed by what went in, and both of which linearity
-    /// forces the graph to route.
-    ///
-    /// # Errors
-    ///
-    /// Any [`TypedError`] the call does not type against `take`.
-    pub fn take(
-        builder: &mut TypedBuilder<'_>,
-        splitter: ComponentAddr,
-        funds: impl BucketArg,
-        amount: u128,
-    ) -> Result<[Bucket; 2], TypedError> {
-        builder
-            .call(splitter, "take", (funds, amount))?
-            .into_array()
     }
 }

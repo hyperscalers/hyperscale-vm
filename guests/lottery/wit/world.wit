@@ -1,0 +1,36 @@
+package test:guest;
+
+/// The lottery: a pot anyone may enter, and a winner nobody chooses.
+///
+/// The draw is the transaction's randomness — a value fixed by the block
+/// that committed the transaction and available to no signer beforehand.
+/// That is the whole point of the package: every other way of picking a
+/// winner is something a participant could have influenced.
+world lottery {
+    import hyperscale:kernel/state;
+    import hyperscale:kernel/env;
+    import hyperscale:kernel/events;
+
+    use hyperscale:kernel/state.{delta-cell, write-cell, range-read, range-write};
+
+    /// Enter `who` in the round, staking `amount` into the pot.
+    ///
+    /// One ticket per entrant: the order arrives derived, hashed from the
+    /// entrant by admission, so a second entry from the same address lands
+    /// on the same ticket rather than beside it.
+    export enter: func(
+        tickets: borrow<range-write>,
+        pot: borrow<delta-cell>,
+        order: list<u8>,
+        who: list<u8>,
+        amount: list<u8>,
+    );
+
+    /// Settle the round on the transaction's draw, recording the draw
+    /// itself beside the entrant it selects.
+    ///
+    /// The draw is recorded because a lottery that publishes only its
+    /// winner asks to be trusted; one that publishes the draw can be
+    /// checked against the block that fixed it.
+    export draw: func(outcome: borrow<write-cell>, tickets: borrow<range-read>);
+}

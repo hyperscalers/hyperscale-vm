@@ -1,6 +1,6 @@
-//! The minimal stdlib's authored effect signatures: the fungible account,
-//! the constant-product pool, the order book, the bucket splitter, and the
-//! stake pool.
+//! The authored effect signatures: the fungible account and the stake
+//! pool the protocol ships, and the fixtures the corpus executes beside
+//! them.
 //!
 //! These are the signatures the corpus guests execute under. They are
 //! authored, not compiler-inferred — the inference backend is a later
@@ -19,6 +19,15 @@ pub const XRD: NativeRole = NativeRole(1);
 /// The publisher the protocol's own packages sit under.
 pub const GENESIS_PUBLISHER: NativeRole = NativeRole(2);
 
+// A role is hashed with its owner, and an owner belongs to one package,
+// so two packages naming one number never collide. What a package's own
+// roles must avoid is the vocabulary the protocol derives keys for
+// without consulting metadata — `VAULT`, `CLAIMS`, `CONFIG`, `AUTH`,
+// `RESOURCE`, `NF_VAULT`, `INSTANCE` — because a package's instances
+// hold those cells under the same address as their own. Everything else
+// below is one package's private storage layout, distinct here only
+// because the table is shared.
+
 /// A fungible balance cell under its holder.
 pub const VAULT: RoleId = RoleId(1);
 /// The guaranteed-delivery fallback cell beside a vault.
@@ -27,8 +36,6 @@ pub const CLAIMS: RoleId = RoleId(2);
 pub const CONFIG: RoleId = RoleId(3);
 /// The order book's ask-side ordered collection.
 pub const ASKS: RoleId = RoleId(4);
-/// An account's entropy leaf: the transaction draw a stamp records.
-pub const ENTROPY: RoleId = RoleId(5);
 /// A stake pool's total awaiting release to the delegators who returned
 /// their units.
 pub const UNBONDING: RoleId = RoleId(6);
@@ -52,6 +59,11 @@ pub const NF_VAULT: RoleId = RoleId(12);
 /// A non-fungible instance's data cell under its issuer, keyed by the
 /// resource and the instance's id: written at mint, immutable after.
 pub const INSTANCE: RoleId = RoleId(13);
+/// A lottery's entrants: one entry per entrant, at the entrant's hashed
+/// order, so a second entry from one address lands on its own ticket.
+pub const TICKETS: RoleId = RoleId(14);
+/// A lottery's settled round: the draw, and the entrant it selected.
+pub const DRAW: RoleId = RoleId(15);
 
 /// The entry cap the book's fill range declares.
 pub const FILL_CAP: u32 = 64;
@@ -63,6 +75,9 @@ pub const DRAIN_CAP: u32 = 8;
 /// edge can carry, since [`MAX_IDS_PER_EDGE`](crate::types::MAX_IDS_PER_EDGE)
 /// fits it.
 pub const NF_MOVE_CAP: u32 = 64;
+
+/// The entrant cap a draw declares: the round a single draw settles.
+pub const ROUND_CAP: u32 = 64;
 
 fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
     Expr::ChildKey {
@@ -77,11 +92,10 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 /// `withdraw(resource, amount)`: reserve `amount` on the caller's vault
 /// for `resource`. `deposit(bucket)`: delta on the recipient's vault plus
 /// the claims-area fallback cell, both keyed by the bucket's resource.
-/// `stamp-entropy()`: an exclusive write of the transaction's randomness
-/// draw into the account's entropy leaf. `authorize()`: nothing but its
-/// own gate — naming it mints the account's identity as evidence for
-/// later nodes of the intent, which is how an account acts through calls
-/// its own signature proof would not open. `securify(roles, delay)`:
+/// `authorize()`: nothing but its own gate — naming it mints the
+/// account's identity as evidence for later nodes of the intent, which
+/// is how an account acts through calls its own signature proof would
+/// not open. `securify(roles, delay)`:
 /// create the stored-authority cell `authorize` reads, refusing one that
 /// already exists — the transition off the address-derived rule,
 /// one-way. `propose(roles, delay)`, `cancel()`, `confirm()`: the timed
@@ -94,9 +108,8 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 /// does not. Anyone may credit you, and a transfer therefore still
 /// composes under the sender's single signature — the recipient is not
 /// asked for one, because nothing about a deposit is theirs to refuse.
-/// The stamp is gated for the same reason the withdrawal is, though it
-/// moves nothing: it writes a leaf under the target's prefix, and every
-/// later method that does the same belongs on this side of the split.
+/// A method writing a leaf under the target's prefix is gated for the
+/// same reason a withdrawal is, though it moves nothing.
 ///
 /// No method reads another account's balance. A precondition on mutable
 /// state is a fresh [`ModeExpr::Read`], which makes the read's owner a
@@ -113,8 +126,8 @@ pub fn account_metadata() -> PackageMetadata {
     methods
 }
 
-/// `withdraw`, `deposit`, and the entropy stamp: the account moving and
-/// recording things, gated by the identity its sign-in mints.
+/// `withdraw` and `deposit`: the account moving funds, the spending side
+/// gated by the identity its sign-in mints.
 fn funds_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "withdraw".into(),
@@ -169,22 +182,6 @@ fn funds_methods(methods: &mut PackageMetadata) {
                     mode: ModeExpr::Delta,
                 },
             ],
-            calls: vec![],
-        },
-    );
-    methods.methods.insert(
-        "stamp-entropy".into(),
-        MethodSignature {
-            totality: Totality::Fallible,
-            accessibility: Accessibility::Guarded(Expr::SelfAddr),
-            mints: None,
-            params: vec![],
-            abi: vec![AbiParam::Handle(0)],
-            outputs: vec![],
-            effects: vec![Clause::Effect {
-                target: TargetExpr::Point(self_child(ENTROPY, vec![])),
-                mode: ModeExpr::Write,
-            }],
             calls: vec![],
         },
     );
@@ -957,5 +954,107 @@ pub fn nf_metadata() -> PackageMetadata {
             ..MethodSignature::default()
         },
     );
+    methods
+}
+
+/// The lottery: a pot anyone may enter, and a winner nobody chooses.
+///
+/// `enter(who, funds)`: one ticket at the entrant's hashed order and the
+/// stake into the pot, both commutative with every other entry — two
+/// people entering at once write two entries and one delta, and neither
+/// waits on the other. It is public, and the authority behind an entry is
+/// the funds it carries, gated upstream at the withdrawal that produced
+/// them. Whoever pays may name whoever they like as the entrant, which is
+/// buying somebody a ticket.
+///
+/// `draw()`: a fresh read of the whole entrants interval and an exclusive
+/// write of the result. Public for a reason that is not laziness — the
+/// draw is the transaction's randomness, and no signer chooses it, so
+/// there is nothing an operator would be trusted with. What the result
+/// cell records is the draw beside the entrant it selected, which is what
+/// lets a reader check the winner against the block that fixed the draw
+/// rather than take the package's word for it.
+///
+/// Paying the pot out to the winner is a later leg this package does not
+/// have: what it settles is who won, which is the part randomness decides.
+#[must_use]
+pub fn lottery_metadata() -> PackageMetadata {
+    let ticket_order = || Expr::OrderKey {
+        owner: Box::new(Expr::SelfAddr),
+        role: TICKETS,
+        material: vec![Expr::Arg(0)],
+    };
+    let mut methods = PackageMetadata::default();
+    methods.methods.insert(
+        "enter".into(),
+        MethodSignature {
+            totality: Totality::Fallible,
+            accessibility: Accessibility::Public,
+            mints: None,
+            params: vec![ParamType::Address, ParamType::Bucket],
+            abi: vec![
+                AbiParam::Handle(0),
+                AbiParam::Handle(1),
+                // The order is derived rather than the guest's to compute,
+                // for the reason the registry's is: a hash over the
+                // collection's own keying is admission's to take.
+                AbiParam::Derived(ticket_order()),
+                AbiParam::Derived(Expr::Arg(0)),
+                AbiParam::Bucket(1),
+            ],
+            outputs: vec![],
+            effects: vec![
+                Clause::Effect {
+                    target: TargetExpr::Entry {
+                        owner: Expr::SelfAddr,
+                        collection: TICKETS,
+                        material: vec![],
+                        order: ticket_order(),
+                    },
+                    mode: ModeExpr::Write,
+                },
+                Clause::Effect {
+                    target: TargetExpr::Point(self_child(
+                        VAULT,
+                        vec![Expr::ResourceOf(Box::new(Expr::Arg(1)))],
+                    )),
+                    mode: ModeExpr::Delta,
+                },
+            ],
+            calls: vec![],
+        },
+    );
+    methods.methods.insert(
+        "draw".into(),
+        MethodSignature {
+            totality: Totality::Fallible,
+            accessibility: Accessibility::Public,
+            mints: None,
+            params: vec![],
+            abi: vec![AbiParam::Handle(0), AbiParam::Handle(1)],
+            outputs: vec![],
+            effects: vec![
+                Clause::Effect {
+                    target: TargetExpr::Point(self_child(DRAW, vec![])),
+                    mode: ModeExpr::Write,
+                },
+                Clause::Effect {
+                    target: TargetExpr::Range {
+                        owner: Expr::SelfAddr,
+                        collection: TICKETS,
+                        material: vec![],
+                        lo: Expr::Literal(Value::U128(0)),
+                        hi: Expr::Literal(Value::U128(u128::MAX)),
+                        cap: ROUND_CAP,
+                    },
+                    mode: ModeExpr::Read,
+                },
+            ],
+            calls: vec![],
+        },
+    );
+    // Index order is the contract: the guest emits 0 and 1, and these are
+    // what those indexes mean.
+    methods.events = vec!["entered".into(), "drawn".into()];
     methods
 }

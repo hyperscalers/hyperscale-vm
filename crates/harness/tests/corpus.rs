@@ -12,8 +12,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use hyperscale_vm_effects::stdlib::{
-    ASKS, AUTH, CLAIMS, CONFIG, DRAIN_CAP, FILL_CAP, NAMES, VAULT, account_metadata, amm_metadata,
-    book_metadata, nf_metadata, registry_metadata,
+    ASKS, AUTH, CLAIMS, CONFIG, DRAIN_CAP, DRAW, FILL_CAP, NAMES, ROUND_CAP, TICKETS, VAULT,
+    account_metadata, amm_metadata, book_metadata, lottery_metadata, nf_metadata,
+    registry_metadata,
 };
 use hyperscale_vm_effects::{
     AbiParam, Address, AuthBase, AuthCell, Clause, CollectionId, ComponentAddr, Constraint, Effect,
@@ -24,6 +25,7 @@ use hyperscale_vm_effects::{
     SubstateKey, TargetExpr, TestHasher, Totality, Value, admit, child_key, collection_id,
     fresh_id, holdings_collection, instance_data_key, order_key, resource_address, route,
 };
+use hyperscale_vm_fixtures::calls::{amm, book, lottery, nf, registry};
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -31,7 +33,6 @@ use hyperscale_vm_kernel::{
     InvokeResult, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt, TxHash,
     WorkingStore, decode_amount, encode_amount, multiply_held_ids,
 };
-use hyperscale_vm_manifest_builder::native::{account, amm, book, nf, registry};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
@@ -40,6 +41,7 @@ use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
     check_method, validate_component,
 };
+use hyperscale_vm_stdlib::calls::account;
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
@@ -117,6 +119,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     cache.publish(pkg("book"), book_metadata());
     cache.publish(pkg("registry"), registry_metadata());
     cache.publish(pkg("nf"), nf_metadata());
+    cache.publish(pkg("lottery"), lottery_metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, pool_meta());
@@ -127,6 +130,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     instances.create(&TestHasher, nf_holder_meta(8));
     instances.create(&TestHasher, gated_meta(nf_resource().address(), 9));
     instances.create(&TestHasher, gated_meta(RES_X.address(), 10));
+    instances.create(&TestHasher, lottery_meta());
     (cache, instances)
 }
 
@@ -221,6 +225,19 @@ fn gated_by(badge: Address, salt: u8) -> ComponentAddr {
     gated_meta(badge, salt).address(&TestHasher)
 }
 
+fn lottery_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("lottery"),
+        config: vec![],
+        salt: Hash32([11; 32]),
+    }
+}
+
+/// The lottery instance.
+fn lottery_addr() -> ComponentAddr {
+    lottery_meta().address(&TestHasher)
+}
+
 fn mirror_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("mirror"),
@@ -240,6 +257,7 @@ const PACKAGES: &[(&str, &str)] = &[
     ("book", "book"),
     ("registry", "registry"),
     ("nf", "nf"),
+    ("lottery", "lottery"),
     ("mirror", "account"),
 ];
 
@@ -258,7 +276,7 @@ impl Engines {
         let engine = blessed_engine()?;
         let mut blessed = BTreeMap::new();
         let mut reference = BTreeMap::new();
-        for name in ["account", "amm", "book", "registry", "nf"] {
+        for name in ["account", "amm", "book", "registry", "nf", "lottery"] {
             let bytes = build_guest(name)?;
             validate_component(&bytes).with_context(|| format!("profile validation of {name}"))?;
             blessed.insert(name, Component::new(&engine, &bytes)?);
@@ -2258,6 +2276,128 @@ fn non_fungibles_mint_transfer_and_burn_end_to_end() -> Result<()> {
     assert!(
         store.cells().any(|(key, _)| key == burned),
         "instance data is written at mint and immutable after"
+    );
+    Ok(())
+}
+
+/// The lottery's entrants collection, as its declarations derive it.
+fn tickets() -> CollectionId {
+    collection_id(&TestHasher, lottery_addr(), TICKETS, &[])
+}
+
+/// Where an entrant's ticket sits in the collection's order space.
+fn ticket_order(who: PrincipalAddr) -> u128 {
+    order_key(
+        &TestHasher,
+        lottery_addr(),
+        TICKETS,
+        &[Value::Address(who.address()).canonical_bytes()],
+    )
+}
+
+/// The lottery's settled-round cell.
+fn draw_cell(store: &mut MemoryStore) -> Option<Vec<u8>> {
+    store
+        .read(child_key(&TestHasher, lottery_addr(), DRAW, &[]))
+        .unwrap()
+}
+
+/// Randomness reaching a guest, on both runtimes: two entries and a
+/// draw that settles on one of them.
+///
+/// What the result cell holds is the draw itself beside the winner, and
+/// the draw is asserted to be the environment's — the whole property the
+/// package exists to witness, since a winner is only as unchosen as the
+/// value that picked it.
+///
+/// The winning index is re-derived here from the entrants' hash order
+/// rather than read back from the guest, so the assertion is an
+/// independent computation of who should have won and not a restatement
+/// of what did.
+#[test]
+fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    store
+        .write(vault(BOB, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    store.clear_log();
+
+    let enter = |who: PrincipalAddr, stake: u128| {
+        graph(move |b| {
+            let proof = account::authorize(b, who)?;
+            let funds = account::withdraw(b, proof, RES_X, stake)?;
+            lottery::enter(b, lottery_addr(), who, funds)
+        })
+    };
+    let draw = graph(|b| lottery::draw(b, lottery_addr()));
+
+    // The empty round first: nobody has entered, and the draw still
+    // settles — recording what it drew and naming no winner.
+    let (results, store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[(&draw, TxHash(Hash32([0x60; 32])))],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    let mut empty_store = store.clone();
+    assert_eq!(
+        draw_cell(&mut empty_store),
+        Some(env().randomness.to_vec()),
+        "an unentered round records its draw and no winner"
+    );
+
+    let (results, mut store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[
+            (&enter(ALICE, 100), TxHash(Hash32([0x61; 32]))),
+            (&enter(BOB, 40), TxHash(Hash32([0x62; 32]))),
+            (&draw, TxHash(Hash32([0x63; 32]))),
+        ],
+    );
+    assert!(results.iter().all(|r| matches!(r, TxResult::Completed(_))));
+
+    // One ticket per entrant, each holding the entrant it was bought
+    // for, and the stakes pooled into the lottery's own vault.
+    let entries: BTreeMap<u128, Vec<u8>> = store
+        .collection_entries()
+        .filter(|(key, _)| (key.owner, key.collection) == (lottery_addr().into(), tickets()))
+        .map(|(key, value)| (key.order, value.to_vec()))
+        .collect();
+    assert_eq!(entries.len(), 2);
+    for who in [ALICE, BOB] {
+        assert_eq!(
+            entries[&ticket_order(who)],
+            who.address().to_bytes().to_vec(),
+            "a ticket holds its entrant"
+        );
+    }
+    assert!(u32::try_from(entries.len()).unwrap() <= ROUND_CAP);
+    assert_eq!(amount_of(&mut store, vault(lottery_addr(), RES_X)), 140);
+
+    // Ascending order is the index space the draw reduces into, so who
+    // sits at which index is the hash order and nothing else.
+    let ascending: Vec<PrincipalAddr> = {
+        let mut both = [ALICE, BOB];
+        both.sort_by_key(|who| ticket_order(*who));
+        both.to_vec()
+    };
+    let seed = u128::from_le_bytes(env().randomness[..16].try_into().unwrap());
+    let expected = ascending[(seed % 2) as usize];
+
+    let mut settled = env().randomness.to_vec();
+    settled.extend_from_slice(&expected.address().to_bytes());
+    assert_eq!(
+        draw_cell(&mut store),
+        Some(settled),
+        "the round settles on the draw and the entrant it selects"
     );
     Ok(())
 }

@@ -1,7 +1,6 @@
 package test:guest;
 
-/// The minimal account: reservation-backed withdrawal, delta deposit, and
-/// an entropy stamp.
+/// The minimal account: reservation-backed withdrawal and delta deposit.
 world account {
     import hyperscale:kernel/state;
     import hyperscale:kernel/env;
@@ -15,11 +14,6 @@ world account {
 
     /// Credit a bucket's amount into the vault.
     export deposit: func(vault: borrow<delta-cell>, amount: list<u8>);
-
-    /// Record the transaction's randomness draw in the account's entropy
-    /// leaf — a value no signer chose, fixed by the block that committed
-    /// the transaction.
-    export stamp-entropy: func(leaf: borrow<write-cell>);
 
     /// Nothing but its own gate: naming this method mints the account's
     /// identity as evidence for later nodes of the same intent. The gate

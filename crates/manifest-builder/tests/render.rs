@@ -9,8 +9,9 @@ use hyperscale_vm_effects::{
     ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
     PrincipalAddr, ResourceAddr, TestHasher, TextError, Value,
 };
-use hyperscale_vm_manifest_builder::native::{account, amm, splitter};
+use hyperscale_vm_fixtures::calls::{amm, splitter};
 use hyperscale_vm_manifest_builder::{GraphBuilder, Names, Param, TypedBuilder, render};
+use hyperscale_vm_stdlib::calls::account;
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);

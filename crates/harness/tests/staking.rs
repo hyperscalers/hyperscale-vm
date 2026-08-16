@@ -33,7 +33,6 @@ use hyperscale_vm_kernel::{
     InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, Receipt, TxHash,
     WorkingStore, decode_amount, encode_amount, execute_batch,
 };
-use hyperscale_vm_manifest_builder::native::{account, staking};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
@@ -42,6 +41,7 @@ use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
     validate_component,
 };
+use hyperscale_vm_stdlib::calls::{account, staking};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};

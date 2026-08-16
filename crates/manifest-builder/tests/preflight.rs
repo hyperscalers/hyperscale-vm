@@ -12,10 +12,10 @@ use hyperscale_vm_effects::{
     TestHasher, TextError, Value, admit, declared_work, footprint, resource_address, route,
     signature_work,
 };
-use hyperscale_vm_manifest_builder::native::{account, staking};
 use hyperscale_vm_manifest_builder::{
     Authority, EnvelopeBuilder, PreflightError, TypedBuilder, preflight, preflight_tree,
 };
+use hyperscale_vm_stdlib::calls::{account, staking};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);

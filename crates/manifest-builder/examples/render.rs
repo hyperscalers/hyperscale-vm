@@ -13,10 +13,11 @@ use hyperscale_vm_effects::{
     PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId, TestHasher, Value,
     resource_address,
 };
-use hyperscale_vm_manifest_builder::native::{account, amm, splitter, staking};
+use hyperscale_vm_fixtures::calls::{amm, splitter};
 use hyperscale_vm_manifest_builder::{
     Authority, Names, TypedBuilder, TypedError, preflight, render,
 };
+use hyperscale_vm_stdlib::calls::{account, staking};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
