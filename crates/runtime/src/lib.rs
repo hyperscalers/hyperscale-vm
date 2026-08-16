@@ -27,7 +27,7 @@ pub mod gas;
 pub mod world;
 
 pub use exports::{ExportParam, component_export_params};
-pub use totality::{TotalityError, check_body};
+pub use totality::{TotalityError, check_body, check_method, check_reachable};
 pub use validator::{ProfileError, validate_component, validate_core_module};
 #[cfg(feature = "engine")]
 pub use {

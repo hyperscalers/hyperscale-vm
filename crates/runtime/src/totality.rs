@@ -90,6 +90,9 @@ pub enum TotalityError {
     /// fuel the transaction pre-charged, which needs a static ceiling.
     #[error("a loop, whose fuel cost has no static bound")]
     UnboundedLoop,
+    /// No core module in the artifact exports the named method.
+    #[error("no core module exports {0:?}")]
+    NoSuchExport(String),
     /// The body could not be decoded.
     #[error("undecodable body: {0}")]
     Undecodable(String),
@@ -169,6 +172,51 @@ pub fn check_reachable(module: &[u8], entry: u32) -> Result<(), TotalityError> {
     parsed.walk(entry, &shim)
 }
 
+/// Whether the method a package exports as `method` can carry the mark.
+///
+/// Takes the artifact as deployed. A component under this profile wraps
+/// exactly one core module, and wit-bindgen names that module's exports
+/// after the WIT functions they implement, so the method's name is the
+/// core export's name and no canonical-ABI indirection has to be
+/// unwound to find it.
+///
+/// # Errors
+///
+/// [`TotalityError::NoSuchExport`] if no core module exports `method`,
+/// or whatever the walk from it yields.
+pub fn check_method(artifact: &[u8], method: &str) -> Result<(), TotalityError> {
+    for module in core_modules(artifact)? {
+        let parsed = Module::parse(module)?;
+        let Some(entry) = parsed.export_named(method) else {
+            continue;
+        };
+        let shim = parsed.shim_closure()?;
+        return parsed.walk(entry, &shim);
+    }
+    Err(TotalityError::NoSuchExport(method.to_string()))
+}
+
+/// The core modules an artifact carries: the ones nested inside a
+/// component, or the artifact itself when it is already a core module.
+fn core_modules(artifact: &[u8]) -> Result<Vec<&[u8]>, TotalityError> {
+    let mut nested = Vec::new();
+    for payload in Parser::new(0).parse_all(artifact) {
+        if let Payload::ModuleSection {
+            unchecked_range, ..
+        } = payload.map_err(|e| TotalityError::Undecodable(e.to_string()))?
+        {
+            let bytes = artifact
+                .get(unchecked_range)
+                .ok_or_else(|| TotalityError::Undecodable("module range out of bounds".into()))?;
+            nested.push(bytes);
+        }
+    }
+    if nested.is_empty() {
+        nested.push(artifact);
+    }
+    Ok(nested)
+}
+
 /// The prefix the canonical ABI gives its own exports. Everything the
 /// closure of these reaches is toolchain glue rather than authored code.
 const SHIM_EXPORT_PREFIX: &str = "cabi_";
@@ -242,6 +290,13 @@ impl<'a> Module<'a> {
             }
         }
         Ok(out)
+    }
+
+    fn export_named(&self, name: &str) -> Option<u32> {
+        self.exports
+            .iter()
+            .find(|(export, _)| *export == name)
+            .map(|(_, index)| *index)
     }
 
     /// Everything the canonical ABI's own exports reach.

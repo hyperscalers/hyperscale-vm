@@ -38,7 +38,7 @@ use hyperscale_vm_ref::{
 };
 use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
-    validate_component,
+    check_method, validate_component,
 };
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
@@ -1905,6 +1905,45 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
             ..placed_ask
         }),
         Some(&encode_amount(10).to_vec())
+    );
+    Ok(())
+}
+
+/// The stdlib's own total mark, checked against the code that carries it.
+///
+/// `account_metadata` declares `deposit` total, and a claim a package
+/// makes about itself is worth nothing unless something reads the
+/// artifact back. This is that reading: the guest as it deploys, the
+/// method as routing names it, and the same walk a publish-time check
+/// would run.
+///
+/// `withdraw` rides along as the contrast. It declares a reserve, so it
+/// is fallible by its own signature and the metadata never claims
+/// otherwise — but it is also the proof that the check is answering per
+/// method rather than per package, since the two live in one module and
+/// only one of them passes.
+#[test]
+fn the_stdlib_deposit_earns_the_mark_it_claims() -> Result<()> {
+    let artifact = build_guest("account")?;
+
+    assert_eq!(
+        account_metadata().methods["deposit"].totality,
+        Totality::Total,
+        "the fixture under test is the claim itself",
+    );
+    assert_eq!(
+        check_method(&artifact, "deposit"),
+        Ok(()),
+        "the claim has to survive the artifact, or it is not a claim",
+    );
+
+    assert_eq!(
+        account_metadata().methods["withdraw"].totality,
+        Totality::Fallible,
+    );
+    assert!(
+        check_method(&artifact, "withdraw").is_err(),
+        "one module, two verdicts — the check is per method",
     );
     Ok(())
 }
