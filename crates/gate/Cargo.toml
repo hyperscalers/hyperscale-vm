@@ -1,0 +1,23 @@
+[package]
+name = "hyperscale-vm-gate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The publish gate: what an artifact must satisfy to enter the chain as a package"
+
+[dependencies]
+hyperscale-vm-effects.workspace = true
+hyperscale-vm-types.workspace = true
+# The profile validator, without the blessed engine: a publish verdict is
+# the same verdict wherever it is reached.
+hyperscale-vm-runtime.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+hyperscale-hbor.workspace = true
+hyperscale-vm-fixtures.workspace = true
+hyperscale-vm-stdlib.workspace = true
+wat.workspace = true
+
+[lints]
+workspace = true

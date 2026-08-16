@@ -5,6 +5,7 @@ members = [
     "crates/hbor-macros",
     "crates/effects",
     "crates/fixtures",
+    "crates/gate",
     "crates/types",
     "crates/harness",
     "crates/kernel",
@@ -26,6 +27,7 @@ hyperscale-hbor = { path = "crates/hbor" }
 hyperscale-hbor-macros = { path = "crates/hbor-macros" }
 hyperscale-vm-effects = { path = "crates/effects" }
 hyperscale-vm-fixtures = { path = "crates/fixtures" }
+hyperscale-vm-gate = { path = "crates/gate" }
 hyperscale-vm-types = { path = "crates/types" }
 hyperscale-vm-kernel = { path = "crates/kernel" }
 hyperscale-vm-manifest-builder = { path = "crates/manifest-builder" }
