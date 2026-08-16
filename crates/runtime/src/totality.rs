@@ -39,7 +39,9 @@
 //! the stdlib, which is the code the mark is granted to today, and it
 //! wants revisiting before an untrusted package can earn one.
 
-use wasmparser::{FunctionBody, Operator};
+use std::collections::BTreeSet;
+
+use wasmparser::{FunctionBody, Operator, Parser, Payload, TypeRef};
 
 /// Why a body cannot carry the total mark.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -116,6 +118,82 @@ pub fn check_body(body: &FunctionBody<'_>) -> Result<(), TotalityError> {
     Ok(())
 }
 
+/// Whether every function reachable from `entry` stays inside the
+/// vocabulary, walking the module's own call graph.
+///
+/// The mark speaks for a transitive body, not for one function: a method
+/// whose own operators are harmless but which calls something that panics
+/// can still panic. So the check follows every direct call from the entry
+/// and refuses if any body it reaches does.
+///
+/// **A call to an import is admitted, and that is the kernel's promise
+/// rather than the scan's finding.** Host calls are how a body reaches
+/// the kernel at all, and they can refuse — but a total leg runs with
+/// every handle already materialized from its declared effect set, so the
+/// gate that would refuse has been discharged before the body starts.
+/// The scan cannot see that and does not try to; it records here that the
+/// guarantee comes from the boundary, so a change to how handles are
+/// materialized is a change to what this check means.
+///
+/// `entry` indexes the module's whole function space — imports first,
+/// then defined functions — the same space [`Operator::Call`] uses.
+///
+/// # Errors
+///
+/// The first [`TotalityError`] any reachable body yields, or
+/// [`TotalityError::Undecodable`] if the module does not parse.
+pub fn check_reachable(module: &[u8], entry: u32) -> Result<(), TotalityError> {
+    let mut imported_functions = 0u32;
+    let mut bodies: Vec<FunctionBody<'_>> = Vec::new();
+    for payload in Parser::new(0).parse_all(module) {
+        match payload.map_err(|e| TotalityError::Undecodable(e.to_string()))? {
+            Payload::ImportSection(reader) => {
+                // Grouped in the compact encoding, so flatten before
+                // counting: what shifts the defined functions' indices is
+                // the number of imports, not the number of groups.
+                for import in reader.into_imports() {
+                    let import = import.map_err(|e| TotalityError::Undecodable(e.to_string()))?;
+                    if matches!(import.ty, TypeRef::Func(_)) {
+                        imported_functions += 1;
+                    }
+                }
+            }
+            Payload::CodeSectionEntry(body) => bodies.push(body),
+            _ => {}
+        }
+    }
+
+    // Defined function `i` sits at `imported_functions + i`; anything
+    // below that is an import and has no body here to walk into.
+    let body_of = |index: u32| -> Option<&FunctionBody<'_>> {
+        index
+            .checked_sub(imported_functions)
+            .and_then(|defined| bodies.get(defined as usize))
+    };
+
+    let mut seen: BTreeSet<u32> = BTreeSet::new();
+    let mut frontier = vec![entry];
+    while let Some(index) = frontier.pop() {
+        if !seen.insert(index) {
+            continue;
+        }
+        let Some(body) = body_of(index) else {
+            continue;
+        };
+        check_body(body)?;
+        let reader = body
+            .get_operators_reader()
+            .map_err(|e| TotalityError::Undecodable(e.to_string()))?;
+        for op in reader {
+            let op = op.map_err(|e| TotalityError::Undecodable(e.to_string()))?;
+            if let Operator::Call { function_index } = op {
+                frontier.push(function_index);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Whether the operator that pushed the divisor proves it non-zero.
 const fn divisor_is_non_zero(previous: Option<&Operator<'_>>) -> bool {
     match previous {
@@ -127,7 +205,6 @@ const fn divisor_is_non_zero(previous: Option<&Operator<'_>>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use wasmparser::{Parser, Payload};
     use wat::parse_str;
 
     use super::*;
@@ -182,5 +259,61 @@ mod tests {
     fn forward_branching_is_admitted() {
         assert_eq!(check("block br 0 end"), Ok(()));
         assert_eq!(check("i32.const 1 if else end"), Ok(()));
+    }
+
+    /// Two functions, the second reached from the first by a direct call.
+    fn caller_and_callee(callee_body: &str) -> Vec<u8> {
+        parse_str(format!(
+            "(module (func $entry call $callee) (func $callee {callee_body}))"
+        ))
+        .expect("valid wat")
+    }
+
+    /// The mark speaks for the transitive body: a caller whose own
+    /// operators are harmless still cannot be total when what it calls
+    /// can panic.
+    #[test]
+    fn a_callee_that_can_fault_denies_its_caller() {
+        assert_eq!(check_reachable(&caller_and_callee("nop"), 0), Ok(()));
+        assert_eq!(
+            check_reachable(&caller_and_callee("unreachable"), 0),
+            Err(TotalityError::Unreachable),
+        );
+    }
+
+    /// Reachability is the whole of it: a faulting function nobody calls
+    /// says nothing about the entry, which is what lets one package hold
+    /// both a total method and a fallible one.
+    #[test]
+    fn an_unreached_faulting_function_is_not_the_entrys_problem() {
+        let module =
+            parse_str("(module (func $entry nop) (func $orphan unreachable))").expect("valid wat");
+        assert_eq!(check_reachable(&module, 0), Ok(()));
+        assert_eq!(
+            check_reachable(&module, 1),
+            Err(TotalityError::Unreachable),
+            "the orphan is refused on its own account, just not the entry's",
+        );
+    }
+
+    /// Recursion terminates the walk rather than hanging it. The cycle is
+    /// refused for its loop-free-but-unbounded fuel elsewhere; what this
+    /// pins is that the visit set closes.
+    #[test]
+    fn a_call_cycle_terminates_the_walk() {
+        let module = parse_str("(module (func $a call 1) (func $b call 0))").expect("valid wat");
+        assert_eq!(check_reachable(&module, 0), Ok(()));
+    }
+
+    /// An imported function has no body to walk into, and a call to one
+    /// is admitted on the kernel's precondition discharge rather than on
+    /// anything the scan established.
+    #[test]
+    fn a_call_into_an_import_is_admitted() {
+        let module = parse_str(r#"(module (import "k" "f" (func)) (func $entry call 0))"#)
+            .expect("valid wat");
+        // The import occupies index 0, so the defined entry is index 1 —
+        // the shift the walk has to get right to find any body at all.
+        assert_eq!(check_reachable(&module, 1), Ok(()));
     }
 }
