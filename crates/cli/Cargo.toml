@@ -1,0 +1,25 @@
+[package]
+name = "hyperscale-vm-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "cargo hyperscale: build a package crate into an artifact the chain admits"
+
+[[bin]]
+name = "cargo-hyperscale"
+path = "src/bin/cargo-hyperscale.rs"
+
+[dependencies]
+hyperscale-vm-effects.workspace = true
+# The publish gate, run locally against exactly the bytes a publish would
+# carry: a package that builds here has passed the call admission runs.
+hyperscale-vm-gate.workspace = true
+hyperscale-vm-runtime.workspace = true
+thiserror.workspace = true
+wit-component.workspace = true
+
+[dev-dependencies]
+hyperscale-vm-gate.workspace = true
+
+[lints]
+workspace = true

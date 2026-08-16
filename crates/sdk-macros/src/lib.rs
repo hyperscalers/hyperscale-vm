@@ -759,11 +759,14 @@ fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
     };
 
     strip_macro_attrs(items, &state_name);
-    // On a guest build the authoring half is held back, so the state
-    // struct, the configuration record and the vocabulary they are
-    // written against are all read by nothing there.
+    // Nothing in a package constructs its own state: the struct names
+    // the roles the kernel materializes storage under, and the
+    // configuration record is an instance's, not the code's. On a guest
+    // build the authoring half is held back too, so the vocabulary those
+    // are written against is read by nothing there either.
+    module.attrs.push(syn::parse_quote!(#[allow(dead_code)]));
     module.attrs.push(syn::parse_quote!(
-        #[cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+        #[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
     ));
     items.extend(event_emitters(&events));
     items.push(syn::parse_quote!(

@@ -1,7 +1,8 @@
 //! Rebuild the committed guest blobs from the guest sources.
 //!
-//! Builds each guest with the repository toolchain, componentizes and
-//! profile-validates it, and overwrites the artifact its crate embeds:
+//! Builds each guest through `cargo hyperscale`'s own compile step —
+//! which componentizes and profile-validates — and overwrites the
+//! artifact its crate embeds:
 //! the protocol's own packages into `hyperscale-vm-stdlib`, the test
 //! packages into `hyperscale-vm-fixtures`. Both are built on identical
 //! terms — what separates them is who seeds them at genesis, not how
@@ -17,7 +18,6 @@
 use std::path::Path;
 
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
-use hyperscale_vm_runtime::validate_component;
 use wasmtime::Result;
 use wasmtime::error::Context;
 
@@ -31,8 +31,6 @@ const BLOBS: &[(&str, &str)] = &[
 fn main() -> Result<()> {
     for (guest, blobs) in BLOBS {
         let artifact = build_guest(guest)?;
-        validate_component(&artifact)
-            .with_context(|| format!("{guest} component failed profile validation"))?;
         let path = repo_root()
             .join(Path::new(blobs))
             .join(format!("{guest}.component.wasm"));

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/hbor",
     "crates/hbor-macros",
+    "crates/cli",
     "crates/effects",
     "crates/fixtures",
     "crates/gate",
@@ -25,6 +26,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 hyperscale-hbor = { path = "crates/hbor" }
 hyperscale-hbor-macros = { path = "crates/hbor-macros" }
+hyperscale-vm-cli = { path = "crates/cli" }
 hyperscale-vm-effects = { path = "crates/effects" }
 hyperscale-vm-fixtures = { path = "crates/fixtures" }
 hyperscale-vm-gate = { path = "crates/gate" }

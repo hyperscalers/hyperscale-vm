@@ -34,11 +34,10 @@ pub fn on_deep_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'stati
 /// Shared guest fixtures for the differential lanes.
 pub mod fixtures {
     use std::path::PathBuf;
-    use std::process::Command;
 
+    use hyperscale_vm_cli::compile;
     use wasmtime::Result;
-    use wasmtime::error::{Context, ensure, format_err};
-    use wit_component::ComponentEncoder;
+    use wasmtime::error::format_err;
 
     /// The repository root, derived from this crate's manifest directory.
     ///
@@ -54,47 +53,20 @@ pub mod fixtures {
             .to_path_buf()
     }
 
-    /// Builds a `guests/<name>` crate with the pinned toolchain and
-    /// returns the componentized artifact.
+    /// Builds a `guests/<name>` crate and returns the componentized
+    /// artifact.
     ///
-    /// The environment is scrubbed of the caller's toolchain selection:
-    /// a `cargo` spawned from inside a cargo run inherits
-    /// `RUSTUP_TOOLCHAIN`, which overrides `guests/rust-toolchain.toml`
-    /// and would build a consensus artifact with whatever the host
-    /// happens to have. The pin is only a pin if it wins.
+    /// One implementation of the guest build, and it is the command's:
+    /// what a test compiles and what `cargo hyperscale` compiles are the
+    /// same bytes because they are the same call.
     ///
     /// # Errors
     ///
-    /// Fails if the guest build or componentization fails.
+    /// Fails if the guest build, the componentization, or the
+    /// deterministic profile refuses.
     pub fn build_guest(name: &str) -> Result<Vec<u8>> {
-        let guest_dir = repo_root().join("guests").join(name);
-        let status = Command::new("cargo")
-            .args(["build", "--release", "--target", "wasm32-unknown-unknown"])
-            .current_dir(&guest_dir)
-            .env_remove("RUSTUP_TOOLCHAIN")
-            .env_remove("CARGO")
-            .env_remove("CARGO_HOME")
-            .env_remove("RUSTC")
-            .env_remove("RUSTUP_HOME")
-            .status()
-            .context("spawn cargo for the guest build")?;
-        ensure!(status.success(), "guest build failed");
-
-        let core = std::fs::read(
-            guest_dir
-                .join("target/wasm32-unknown-unknown/release")
-                .join(format!("{}_guest.wasm", name.replace('-', "_"))),
-        )
-        .context("read guest core module")?;
-        // wit-component's API errors with `anyhow::Error`, which has no
-        // `StdError` impl to convert through; flatten its chain instead.
-        let component = ComponentEncoder::default()
-            .validate(true)
-            .module(&core)
-            .map_err(|e| format_err!("encode component: {e:#}"))?
-            .encode()
-            .map_err(|e| format_err!("componentize: {e:#}"))?;
-        Ok(component)
+        compile(&repo_root().join("guests").join(name))
+            .map_err(|error| format_err!("{name}: {error}"))
     }
 
     /// The transfer fixture's artifact.
