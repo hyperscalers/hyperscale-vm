@@ -569,7 +569,7 @@ fn type_args(
         let method = || method.to_owned();
         inputs.push(match arg {
             GraphArg::Literal(value) => {
-                if *param == ParamType::Bucket {
+                if param.is_edge() {
                     return Err(TypedError::LiteralForBucketParam {
                         method: method(),
                         param: index,
@@ -586,7 +586,7 @@ fn type_args(
                 Some(value.clone())
             }
             GraphArg::Edge { constraints, .. } => {
-                if *param != ParamType::Bucket {
+                if !param.is_edge() {
                     return Err(TypedError::EdgeForValueParam {
                         method: method(),
                         param: index,
@@ -594,11 +594,20 @@ fn type_args(
                 }
                 edge_resource(constraints).map(|resource| Value::Bucket {
                     resource: resource.address(),
-                    content: EdgeContent::Fungible,
+                    // The builder types what it can see: an edge's own
+                    // ids are the producing node's, which this pass does
+                    // not resolve. What it does know is which kind the
+                    // callee declared, and that is what admission judges
+                    // the routed edge against.
+                    content: if *param == ParamType::NfBucket {
+                        EdgeContent::NonFungible { ids: Vec::new() }
+                    } else {
+                        EdgeContent::Fungible
+                    },
                 })
             }
             GraphArg::Param(_) => {
-                if *param != ParamType::Bucket {
+                if !param.is_edge() {
                     return Err(TypedError::ParamForValueParam {
                         method: method(),
                         param: index,

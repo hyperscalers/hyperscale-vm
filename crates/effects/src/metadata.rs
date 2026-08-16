@@ -13,6 +13,7 @@ use crate::dsl::{
     Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, ModeExpr, TargetExpr,
 };
 use crate::hash::{Hash32, Hasher};
+use crate::invoke::EdgeKind;
 use crate::resource::holdings_range;
 use crate::rule::Rule;
 use crate::types::{
@@ -84,7 +85,14 @@ pub enum ParamType {
     Bytes,
     /// A global object's address.
     Address,
-    /// A value edge; its resource type is static, its amount dynamic.
+    /// A fungible value edge; its resource type is static, its amount
+    /// dynamic.
+    ///
+    /// Which of the two edge kinds a method consumes is part of its
+    /// signature rather than a fact about whichever edge is routed in:
+    /// the two cross the boundary as different cells, so a callee that
+    /// did not say would be one whose guest had to sniff what it was
+    /// handed.
     Bucket,
     /// An authority rule, carried as its canonical bytes and decoded as
     /// the vocabulary at admission — so a rule past a cap, or with a
@@ -98,9 +106,32 @@ pub enum ParamType {
     /// names the ids it moves; nothing about an instance is resolved at
     /// execution.
     Ids,
+    /// A non-fungible value edge, carrying the instances it moves rather
+    /// than an amount.
+    NfBucket,
 }
 
 impl ParamType {
+    /// Whether this kind is a value edge, of either edge kind.
+    ///
+    /// What the two share is how they are supplied — an edge, never a
+    /// literal — and how they are bound, through [`AbiParam::Bucket`].
+    /// What separates them is the cell they cross as.
+    #[must_use]
+    pub const fn is_edge(self) -> bool {
+        matches!(self, Self::Bucket | Self::NfBucket)
+    }
+
+    /// The edge kind this parameter accepts, if it is an edge at all.
+    #[must_use]
+    pub const fn edge_kind(self) -> Option<EdgeKind> {
+        match self {
+            Self::Bucket => Some(EdgeKind::Fungible),
+            Self::NfBucket => Some(EdgeKind::NonFungible),
+            _ => None,
+        }
+    }
+
     /// The kind name, for diagnostics.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -110,6 +141,7 @@ impl ParamType {
             Self::Bytes => "bytes",
             Self::Address => "address",
             Self::Bucket => "bucket",
+            Self::NfBucket => "nf-bucket",
             Self::Rule => "rule",
             Self::RoleSet => "role-set",
             Self::Ids => "ids",
@@ -556,7 +588,7 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
                     declared: bound(signature.params.len()),
                 })?;
                 match signature.params.get(slot) {
-                    Some(ParamType::Bucket) => carried[slot] += 1,
+                    Some(kind) if kind.is_edge() => carried[slot] += 1,
                     Some(other) => {
                         return Err(AbiError::NotABucket {
                             position,

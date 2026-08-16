@@ -122,7 +122,7 @@ fn holdings_methods(methods: &mut PackageMetadata) {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
-            params: vec![ParamType::Bucket],
+            params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             outputs: vec![],
             effects: vec![Clause::Effect {

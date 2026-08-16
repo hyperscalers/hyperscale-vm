@@ -62,7 +62,7 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
-            params: vec![ParamType::Bucket],
+            params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             effects: vec![Clause::Effect {
                 target: holdings_range(Expr::ResourceOf(Box::new(Expr::Arg(0))), NF_MOVE_CAP),
@@ -96,7 +96,7 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
-            params: vec![ParamType::Bucket],
+            params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Bucket(0)],
             ..MethodSignature::default()
         },

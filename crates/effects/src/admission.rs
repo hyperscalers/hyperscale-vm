@@ -18,6 +18,7 @@ use crate::dsl::{EvalError, EvalInputs, evaluate_expr};
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
 use crate::hash::Hasher;
+use crate::invoke::EdgeKind;
 use crate::manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{
     Accessibility, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash, ParamType,
@@ -254,6 +255,20 @@ pub enum AdmissionError {
         node: u32,
         /// The parameter position.
         param: u32,
+    },
+    /// An edge carrying one kind bound to a parameter declaring the
+    /// other. The producer's projection says what crosses; the callee's
+    /// signature says what it takes.
+    #[error("node {node} argument {param}: a {expected} parameter cannot take a {found:?} edge")]
+    EdgeKindMismatch {
+        /// The offending node.
+        node: u32,
+        /// The parameter position.
+        param: u32,
+        /// The kind the parameter declares.
+        expected: &'static str,
+        /// The kind the producing edge carries.
+        found: EdgeKind,
     },
     /// An edge whose producer is not an earlier node — the shape a cycle
     /// would need, rejected structurally.
@@ -684,7 +699,7 @@ pub(crate) fn admit_intents(
             let param_index = u32::try_from(position).map_err(|_| AdmissionError::TooManyNodes)?;
             match arg {
                 GraphArg::Literal(value) => {
-                    if *param == ParamType::Bucket {
+                    if param.is_edge() {
                         return Err(AdmissionError::LiteralForBucketParam {
                             node: node_index,
                             param: param_index,
@@ -702,7 +717,7 @@ pub(crate) fn admit_intents(
                     inputs.push(NodeInput::Literal(value.clone()));
                 }
                 GraphArg::Edge { edge, constraints } => {
-                    if *param != ParamType::Bucket {
+                    if !param.is_edge() {
                         return Err(AdmissionError::EdgeForValueParam {
                             node: node_index,
                             param: param_index,
@@ -733,6 +748,21 @@ pub(crate) fn admit_intents(
                         return Err(AdmissionError::DoubleConsumption {
                             producer: source,
                             output: edge.output,
+                        });
+                    }
+                    // The producer's projection fixes what the edge
+                    // carries and the callee's signature fixes what it
+                    // takes; a fungible cell and an id cell are different
+                    // shapes, so a mismatch is a graph nothing should
+                    // sign rather than something a guest decodes its way
+                    // out of.
+                    let carried = EdgeKind::of(&content);
+                    if param.edge_kind() != Some(carried) {
+                        return Err(AdmissionError::EdgeKindMismatch {
+                            node: node_index,
+                            param: param_index,
+                            expected: param.name(),
+                            found: carried,
                         });
                     }
                     let bounds = check_constraints(constraints, resource, node_index, param_index)?;

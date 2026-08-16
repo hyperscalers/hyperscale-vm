@@ -11,8 +11,8 @@ use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world}
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     Accessibility, Address, AddressClass, AdmissionError, AuthRole, AuthorityGate, Clause,
-    ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget, EvidenceRef, Expr, GraphArg,
-    GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph,
+    ComponentAddr, Constraint, EdgeKind, EdgeRef, Effect, EffectTarget, EvidenceRef, Expr,
+    GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph,
     MetadataCache, MethodSignature, Mode, ModeExpr, PackageMetadata, TargetExpr, TestHasher,
     Totality, Value, admit, child_key, fresh_id, holdings_collection, holdings_range, route,
 };
@@ -587,6 +587,22 @@ fn every_malformed_mutation_rejects() {
     assert_eq!(
         admit_it(&edge_value),
         Err(AdmissionError::EdgeForValueParam { node: 2, param: 1 })
+    );
+    // An edge of one kind into a parameter declaring the other. The
+    // producer's projection says what crosses and the callee's signature
+    // says what it takes, so a disagreement is a graph nothing should
+    // sign rather than a cell whose framing a guest decodes its way out
+    // of.
+    let mut wrong_edge_kind = valid_graph();
+    wrong_edge_kind.nodes[3].method = "deposit-nf".into();
+    assert_eq!(
+        admit_it(&wrong_edge_kind),
+        Err(AdmissionError::EdgeKindMismatch {
+            node: 3,
+            param: 0,
+            expected: "nf-bucket",
+            found: EdgeKind::Fungible,
+        })
     );
     let mut phantom = valid_graph();
     phantom.nodes[3].args[0] = GraphArg::Edge {
