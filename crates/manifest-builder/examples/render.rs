@@ -5,19 +5,16 @@
 //! client-side reads of one signed form. Run it with
 //! `cargo run -p hyperscale-vm-manifest-builder --example render`.
 
-use hyperscale_vm_effects::stdlib::{
-    account_metadata, amm_metadata, splitter_metadata, staking_metadata,
-};
 use hyperscale_vm_effects::{
     ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
     PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId, TestHasher, Value,
     resource_address,
 };
-use hyperscale_vm_fixtures::calls::{amm, splitter};
+use hyperscale_vm_fixtures::{amm, splitter};
 use hyperscale_vm_manifest_builder::{
     Authority, Names, TypedBuilder, TypedError, preflight, render,
 };
-use hyperscale_vm_stdlib::calls::{account, staking};
+use hyperscale_vm_stdlib::{account, staking};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -75,10 +72,10 @@ fn units() -> ResourceAddr {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account_metadata());
-    cache.publish(pkg("amm"), amm_metadata());
-    cache.publish(pkg("splitter"), splitter_metadata());
-    cache.publish(pkg("staking"), staking_metadata());
+    cache.publish(pkg("account"), account::metadata());
+    cache.publish(pkg("amm"), amm::metadata());
+    cache.publish(pkg("splitter"), splitter::metadata());
+    cache.publish(pkg("staking"), staking::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, instance("amm", pair()));

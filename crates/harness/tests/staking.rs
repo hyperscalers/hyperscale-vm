@@ -18,9 +18,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use hyperscale_vm_effects::stdlib::{
-    OWNER_BADGE, UNBONDING, VALIDATORS, VAULT, VOTE, account_metadata, staking_metadata,
-};
+use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     Address, ComponentAddr, EnvelopeTree, Fungibility, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
@@ -41,8 +39,7 @@ use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
     validate_component,
 };
-use hyperscale_vm_stdlib::calls::{account, staking};
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
+use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, staking};
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
@@ -62,7 +59,7 @@ fn badge() -> ResourceAddr {
     resource_address(
         &TestHasher,
         pool(),
-        &[Value::Bytes(OWNER_BADGE.to_vec()).canonical_bytes()],
+        &[Value::Bytes(staking::OWNER_BADGE.to_vec()).canonical_bytes()],
     )
 }
 /// The badge instance the operator holds in these tests.
@@ -120,8 +117,8 @@ fn staking_pkg() -> PackageHash {
 /// that.
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(account_pkg(), account_metadata());
-    cache.publish(staking_pkg(), staking_metadata());
+    cache.publish(account_pkg(), account::metadata());
+    cache.publish(staking_pkg(), staking::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(account_pkg());
     instances.create(&TestHasher, pool_meta());
@@ -157,7 +154,7 @@ fn unbonding(pool: impl Into<Address>, resource: impl Into<Address>) -> Substate
     child_key(
         &TestHasher,
         pool,
-        UNBONDING,
+        staking::UNBONDING,
         &[Value::Address(resource.into()).canonical_bytes()],
     )
 }
@@ -199,7 +196,7 @@ fn validator_leaf(pool: impl Into<Address>, validator: u64) -> SubstateKey {
     child_key(
         &TestHasher,
         pool,
-        VALIDATORS,
+        staking::VALIDATORS,
         &[Value::U64(validator).canonical_bytes()],
     )
 }
@@ -735,7 +732,7 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
 /// The pool's vote leaf: one per pool, holding whatever it currently
 /// backs.
 fn vote_leaf(pool: impl Into<Address>) -> SubstateKey {
-    child_key(&TestHasher, pool, VOTE, &[])
+    child_key(&TestHasher, pool, staking::VOTE, &[])
 }
 
 /// The parameters a cast carries, in the order the guest lays them out.

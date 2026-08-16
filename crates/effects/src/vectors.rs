@@ -11,11 +11,11 @@ use std::fmt::Write as _;
 
 use crate::hash::{Hash32, Hasher};
 use crate::metadata::PackageHash;
-use crate::stdlib::XRD;
 use crate::types::{
     Address, AddressClass, SchemeId, component_address, config_hash, native_address,
     package_address, principal_address, resource_address,
 };
+use crate::vocabulary::XRD;
 
 /// The configuration leaf bytes the component vector commits to.
 pub const CONFIG_LEAF: &[u8] = b"hyperscale-vm/vectors/config-leaf";

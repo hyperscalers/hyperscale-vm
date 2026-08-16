@@ -32,9 +32,9 @@ pub mod metadata;
 pub mod resource;
 pub mod route;
 pub mod rule;
-pub mod stdlib;
 pub mod types;
 pub mod vectors;
+pub mod vocabulary;
 
 pub use admission::{AdmissionError, Admitted, MAX_YIELD_PARAMS, admit};
 pub use artifact::{
@@ -47,7 +47,7 @@ pub use auth::{
 pub use dsl::{
     Clause, Declaration, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, evaluate_declaration,
-    evaluate_effects, evaluate_expr, fresh_id, fresh_local,
+    evaluate_effects, evaluate_expr, fresh_id, fresh_local, self_child,
 };
 pub use envelope::{
     AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_ROLE, Subintent,

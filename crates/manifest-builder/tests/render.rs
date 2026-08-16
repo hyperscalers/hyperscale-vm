@@ -4,14 +4,13 @@
 //! rather than regenerated: a diff here is a change to what a wallet shows
 //! somebody before they sign.
 
-use hyperscale_vm_effects::stdlib::{account_metadata, amm_metadata, splitter_metadata};
 use hyperscale_vm_effects::{
     ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
     PrincipalAddr, ResourceAddr, TestHasher, TextError, Value,
 };
-use hyperscale_vm_fixtures::calls::{amm, splitter};
+use hyperscale_vm_fixtures::{amm, splitter};
 use hyperscale_vm_manifest_builder::{GraphBuilder, Names, Param, TypedBuilder, render};
-use hyperscale_vm_stdlib::calls::account;
+use hyperscale_vm_stdlib::account;
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -48,9 +47,9 @@ fn splitter() -> ComponentAddr {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account_metadata());
-    cache.publish(pkg("amm"), amm_metadata());
-    cache.publish(pkg("splitter"), splitter_metadata());
+    cache.publish(pkg("account"), account::metadata());
+    cache.publish(pkg("amm"), amm::metadata());
+    cache.publish(pkg("splitter"), splitter::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, instance("amm", pair()));

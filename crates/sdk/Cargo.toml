@@ -17,6 +17,8 @@ hyperscale-vm-effects.workspace = true
 hyperscale-vm-sdk-macros = { workspace = true, optional = true }
 
 [dev-dependencies]
+hyperscale-vm-fixtures.workspace = true
+hyperscale-vm-stdlib.workspace = true
 trybuild.workspace = true
 
 [lints]

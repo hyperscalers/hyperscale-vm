@@ -1,28 +1,28 @@
-//! The genesis stdlib: prebuilt guest components and their effect metadata.
+//! The protocol's own packages: the account every principal answers and
+//! the stake pool the beacon folds facts for.
 //!
-//! Ships each guest as a committed, componentized artifact so a consumer
-//! seeds genesis state and warms its engine caches from pinned blobs, with
-//! no wasm toolchain in its build. The blobs are regenerated from `guests/`
+//! One module per package, each holding the whole of it — the roles it
+//! stores under, the signatures its guest executes, and the wrappers a
+//! client calls it through — beside the committed blob its content
+//! address covers. A consumer seeds genesis state and warms its engine
+//! caches from pinned bytes, with no wasm toolchain in its build. The blobs are regenerated from `guests/`
 //! by the vm-harness `regenerate_stdlib` example; the committed bytes — not
 //! a rebuild — are the protocol artifact, and the harness's blob
 //! conformance lane runs them under both runtimes.
 
-pub mod calls;
+pub mod account;
+pub mod staking;
 
 use std::sync::LazyLock;
 
-use hyperscale_vm_effects::stdlib::GENESIS_PUBLISHER as GENESIS_PUBLISHER_ROLE;
-pub use hyperscale_vm_effects::stdlib::{
-    ASKS, CLAIMS, CONFIG, FILL_CAP, UNBONDING, VAULT, account_metadata, amm_metadata,
-    book_metadata, splitter_metadata, staking_metadata,
-};
+use hyperscale_vm_effects::vocabulary::GENESIS_PUBLISHER as GENESIS_PUBLISHER_ROLE;
 use hyperscale_vm_effects::{
     Hasher, NativeAddr, PackageHash, StateWrites, attach_metadata, native_address, package_hash,
     package_key,
 };
 
-/// The componentized account guest: reservation-backed `withdraw`, delta
-/// and delta `deposit`.
+/// The componentized account guest: reservation-backed `withdraw` and
+/// delta `deposit`.
 pub const ACCOUNT_COMPONENT: &[u8] = include_bytes!("../blobs/account.component.wasm");
 
 /// The account package's content address under `hasher` — the key its
@@ -63,14 +63,14 @@ pub fn genesis_publisher(hasher: &dyn Hasher) -> NativeAddr {
 /// signature set, one frozen encoding — so every consumer holds the same
 /// bytes and therefore the same content address.
 static ACCOUNT_ARTIFACT: LazyLock<Vec<u8>> = LazyLock::new(|| {
-    attach_metadata(ACCOUNT_COMPONENT, &account_metadata())
+    attach_metadata(ACCOUNT_COMPONENT, &account::metadata())
         .expect("the stdlib account metadata attaches to its committed blob")
 });
 
 /// The stdlib stake pool package as a publishable artifact, assembled the
 /// same way and for the same reason as the account's.
 static STAKING_ARTIFACT: LazyLock<Vec<u8>> = LazyLock::new(|| {
-    attach_metadata(STAKING_COMPONENT, &staking_metadata())
+    attach_metadata(STAKING_COMPONENT, &staking::metadata())
         .expect("the stdlib stake pool metadata attaches to its committed blob")
 });
 
@@ -128,8 +128,8 @@ mod tests {
         let writes = package_writes(&TestHasher, &protocol_artifacts());
         assert_eq!(writes.cells.len(), 2);
         for (artifact, metadata) in [
-            (account_artifact(), account_metadata()),
-            (staking_artifact(), staking_metadata()),
+            (account_artifact(), account::metadata()),
+            (staking_artifact(), staking::metadata()),
         ] {
             let cell = package_key(
                 &TestHasher,

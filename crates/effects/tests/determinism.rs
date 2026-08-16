@@ -6,7 +6,7 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{ALICE, account_metadata, pkg, resolver, shard_of, vault};
+use common::{ALICE, account, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
     Address, AddressClass, CallSite, ComponentAddr, EdgeContent, EdgeRef, Effect, EffectTarget,
     EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
@@ -136,7 +136,7 @@ proptest! {
     ) {
         let resource = Address::new([resource_byte; 31], AddressClass::Component);
         let mut cache = MetadataCache::new();
-        cache.publish(pkg("account"), account_metadata());
+        cache.publish(pkg("account"), account::metadata());
         let mut instances = InstanceRegistry::new();
         let sender = instance(&mut instances, "account", 0, sender_byte);
         let recipient = instance(&mut instances, "account", 1, recipient_byte);
@@ -192,7 +192,7 @@ proptest! {
     ) {
         let resource = Address::new([resource_byte; 31], AddressClass::Component);
         let mut cache = MetadataCache::new();
-        cache.publish(pkg("account"), account_metadata());
+        cache.publish(pkg("account"), account::metadata());
         let mut forward = PackageMetadata::default();
         forward.methods.insert(
             "forward".into(),

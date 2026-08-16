@@ -24,10 +24,10 @@ use crate::metadata::{
 };
 use crate::resource::holdings_collection;
 use crate::route::MAX_MANIFEST_NODES;
-use crate::stdlib::VAULT;
 use crate::types::{
     Address, AddressClass, EdgeContent, MAX_VALUE_DEPTH, PrincipalAddr, Value, child_key,
 };
+use crate::vocabulary::VAULT;
 
 /// The bound on yield parameters one intent may declare.
 ///

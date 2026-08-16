@@ -11,6 +11,10 @@ hyperscale-vm-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# A dev-only cycle: a package ships with the crate that holds its blob,
+# and the sweeps over every package have to see them all.
+hyperscale-vm-fixtures.workspace = true
+hyperscale-vm-stdlib.workspace = true
 proptest.workspace = true
 
 [lints]

@@ -41,6 +41,19 @@ pub const MAX_CLAUSE_DEPTH: usize = 4;
 /// of empty loops unbounded.
 pub const MAX_EFFECTS_PER_SIGNATURE: usize = 4096;
 
+/// A child key under the instance the method is running on.
+///
+/// The shape every package's own storage takes: a package declares
+/// against itself, so `self` is the owner of everything it can reach.
+#[must_use]
+pub fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
+    Expr::ChildKey {
+        owner: Box::new(Expr::SelfAddr),
+        role,
+        material,
+    }
+}
+
 /// An expression over a method's inputs.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum Expr {

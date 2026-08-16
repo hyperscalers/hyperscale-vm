@@ -5,14 +5,13 @@
 //! nobody claimed. A builder with no policy still refuses, because routing
 //! value somewhere the author never named is worse than making them say.
 
-use hyperscale_vm_effects::stdlib::{account_metadata, splitter_metadata};
 use hyperscale_vm_effects::{
     CallTarget, ComponentAddr, Constraint, GraphArg, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, MetadataCache, PackageHash, PrincipalAddr, ResourceAddr, TestHasher, admit,
 };
-use hyperscale_vm_fixtures::calls::splitter;
+use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{BuildError, GraphBuilder, TypedBuilder, TypedError};
-use hyperscale_vm_stdlib::calls::account;
+use hyperscale_vm_stdlib::account;
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -36,8 +35,8 @@ fn splitter() -> ComponentAddr {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account_metadata());
-    cache.publish(pkg("splitter"), splitter_metadata());
+    cache.publish(pkg("account"), account::metadata());
+    cache.publish(pkg("splitter"), splitter::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, splitter_meta());

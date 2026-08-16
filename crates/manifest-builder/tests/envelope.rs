@@ -6,7 +6,6 @@
 //! composition needs: a yield edge is an edge, and what makes it a
 //! composition is which graph it crosses.
 
-use hyperscale_vm_effects::stdlib::account_metadata;
 use hyperscale_vm_effects::{
     Constraint, EnvelopeTree, Hasher, InstanceRegistry, IntentDecl, MetadataCache, PackageHash,
     PrincipalAddr, ResourceAddr, TestHasher, admit_tree,
@@ -14,7 +13,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_manifest_builder::{
     EnvelopeBuilder, EnvelopeError, IntentBuilder, Param, YieldSink,
 };
-use hyperscale_vm_stdlib::calls::account;
+use hyperscale_vm_stdlib::account;
 use proptest::prelude::{prop, proptest};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -28,7 +27,7 @@ fn pkg() -> PackageHash {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg(), account_metadata());
+    cache.publish(pkg(), account::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg());
     (cache, instances)

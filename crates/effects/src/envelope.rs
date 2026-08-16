@@ -24,6 +24,7 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 
+use crate::PACKAGE_ROLE_BASE;
 use crate::admission::{
     AdmissionError, Admitted, IntentView, MAX_YIELD_PARAMS, admit_intents, check_instance_values,
     check_value_depth,
@@ -38,9 +39,16 @@ use crate::types::{
 };
 
 /// The kernel-reserved role of subintent nullifier substates under a
-/// signer's prefix. Stdlib roles count up from one; the top of the role
-/// space is the kernel's.
+/// signer's prefix.
+///
+/// The top of the role space is the kernel's, as the bottom is the
+/// protocol vocabulary's and the middle is where packages number from.
 pub const NULLIFIER_ROLE: RoleId = RoleId(0xFFFF);
+
+// Held at compile time rather than by a test: both sides are constants,
+// so a nullifier colliding with a package's own cell is a thing the
+// build can refuse outright.
+const _: () = assert!(NULLIFIER_ROLE.0 > PACKAGE_ROLE_BASE);
 
 /// A typed inbound yield edge an intent declares: the composition must
 /// bind an edge carrying exactly this resource, under the declaring

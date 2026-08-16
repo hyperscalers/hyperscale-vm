@@ -13,14 +13,13 @@
 //! questions can sign an envelope, and a verifier that agrees with it can
 //! accept the result.
 
-use hyperscale_vm_effects::stdlib::account_metadata;
 use hyperscale_vm_effects::{
     EnvelopeTree, Hasher, InstanceRegistry, IntentDecl, MetadataCache, PackageHash, PrincipalAddr,
     ResourceAddr, TestHasher,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap};
-use hyperscale_vm_stdlib::calls::account;
+use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     AccountSigner, NetworkId, SchemeId, SchemeVerifier, TransactionEnvelope,
 };
@@ -86,7 +85,7 @@ fn expected_signature(key: &[u8], digest: &[u8; 32]) -> Vec<u8> {
 fn world() -> (MetadataCache, InstanceRegistry) {
     let package = PackageHash(TestHasher.hash(b"package", &[b"account"]));
     let mut cache = MetadataCache::new();
-    cache.publish(package, account_metadata());
+    cache.publish(package, account::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(package);
     (cache, instances)

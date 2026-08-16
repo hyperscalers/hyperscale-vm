@@ -7,6 +7,7 @@ use hyperscale_hbor::{EncodeError, Hbor, to_vec};
 use hyperscale_vm_types::MAX_EVENT_TYPES;
 use thiserror::Error;
 
+use crate::PACKAGE_ROLE_BASE;
 use crate::auth::{AuthRole, RoleSet};
 use crate::dsl::{
     Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, ModeExpr, TargetExpr,
@@ -14,11 +15,11 @@ use crate::dsl::{
 use crate::hash::{Hash32, Hasher};
 use crate::resource::holdings_range;
 use crate::rule::Rule;
-use crate::stdlib::VAULT;
 use crate::types::{
     Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, RoleId, SubstateKey,
     Value, child_key, component_address, config_hash,
 };
+use crate::vocabulary::VAULT;
 
 /// A published package's identity: the hash of its artifact, which covers
 /// the metadata section, so metadata is immutable with the package.
@@ -37,10 +38,12 @@ pub fn package_hash(hasher: &dyn Hasher, artifact: &[u8]) -> PackageHash {
 
 /// The reserved role a publisher's package cells key under.
 ///
-/// Outside the blueprint-reachable role space — blueprint signatures name
-/// vault, claims, config and entropy — so the cell is reachable by the
-/// publish path and by nothing else.
+/// In the kernel's own band at the top of the role space, above anything
+/// the protocol vocabulary or a package numbers into, so the cell is
+/// reachable by the publish path and by nothing else.
 pub const PACKAGE_ROLE: RoleId = RoleId(0xFFFE);
+
+const _: () = assert!(PACKAGE_ROLE.0 > PACKAGE_ROLE_BASE);
 
 /// Where `publisher`'s copy of the package addressed by `package` lives.
 ///
@@ -1346,23 +1349,7 @@ mod tests {
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::hash::Hash32;
-    use crate::stdlib::{
-        OWNER_BADGE, account_metadata, amm_metadata, book_metadata, lottery_metadata,
-        splitter_metadata, staking_metadata,
-    };
     use crate::types::AddressClass;
-
-    /// Every stdlib package, in the order the exhaustive tests read them.
-    fn stdlib() -> Vec<(&'static str, PackageMetadata)> {
-        vec![
-            ("account", account_metadata()),
-            ("amm", amm_metadata()),
-            ("book", book_metadata()),
-            ("lottery", lottery_metadata()),
-            ("splitter", splitter_metadata()),
-            ("staking", staking_metadata()),
-        ]
-    }
 
     fn clause() -> Clause {
         Clause::Effect {
@@ -1631,17 +1618,6 @@ mod tests {
         );
     }
 
-    /// Exhaustive over the stdlib: whatever a package may declare, an
-    /// authored one declares only its own.
-    #[test]
-    fn every_authored_signature_declares_its_own_prefix() {
-        for (package, metadata) in stdlib() {
-            for (name, signature) in &metadata.methods {
-                assert_eq!(check_declarations(signature), Ok(()), "{package}::{name}");
-            }
-        }
-    }
-
     /// Every way a signature can write somebody else's prefix, refused
     /// where its author can see it.
     #[test]
@@ -1713,116 +1689,5 @@ mod tests {
             check_declarations(&looped),
             Err(DeclarationError::ForeignPrefix { clause: 1 })
         );
-    }
-
-    #[test]
-    fn every_authored_signature_is_well_formed() {
-        // The stdlib is the corpus's whole surface, so a rule it breaks
-        // is a rule nothing else could be held to.
-        for (package, metadata) in stdlib() {
-            for (name, signature) in &metadata.methods {
-                assert_eq!(check_abi(signature), Ok(()), "{package}::{name}");
-            }
-        }
-    }
-
-    #[test]
-    fn every_stdlib_method_declares_who_may_call_it() {
-        // Exhaustive on purpose. `Public` is the default, so a method
-        // added without a thought about its callers gets the permissive
-        // value silently — and the shape that is easiest to miss moves no
-        // funds at all: `securify` writes a leaf under its target's
-        // prefix and consumes nothing, which is the same class as any
-        // later per-account module. Adding a method breaks this list,
-        // which is the point.
-        let expected = [
-            ("account", "authorize", Accessibility::Authorizing),
-            (
-                "account",
-                "cancel",
-                Accessibility::RoleGated(AuthRole::Primary),
-            ),
-            (
-                "account",
-                "confirm",
-                Accessibility::RoleGated(AuthRole::Confirmation),
-            ),
-            ("account", "deposit", Accessibility::Public),
-            ("account", "deposit-nf", Accessibility::Public),
-            ("account", "present-badge", Accessibility::Custodial),
-            (
-                "account",
-                "propose",
-                Accessibility::RoleGated(AuthRole::Recovery),
-            ),
-            (
-                "account",
-                "securify",
-                Accessibility::Guarded(Expr::SelfAddr),
-            ),
-            (
-                "account",
-                "withdraw",
-                Accessibility::Guarded(Expr::SelfAddr),
-            ),
-            (
-                "account",
-                "withdraw-nf",
-                Accessibility::Guarded(Expr::SelfAddr),
-            ),
-            ("amm", "swap", Accessibility::Public),
-            ("book", "fill-asks", Accessibility::Public),
-            ("book", "place-ask", Accessibility::Public),
-            ("lottery", "draw", Accessibility::Public),
-            ("lottery", "enter", Accessibility::Public),
-            ("splitter", "take", Accessibility::Public),
-            (
-                "staking",
-                "cast-param-vote",
-                Accessibility::Guarded(Expr::SelfResource {
-                    material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-                }),
-            ),
-            (
-                "staking",
-                "clear-param-vote",
-                Accessibility::Guarded(Expr::SelfResource {
-                    material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-                }),
-            ),
-            (
-                "staking",
-                "deactivate-validator",
-                Accessibility::Guarded(Expr::SelfResource {
-                    material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-                }),
-            ),
-            (
-                "staking",
-                "register-validator",
-                Accessibility::Guarded(Expr::SelfResource {
-                    material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-                }),
-            ),
-            ("staking", "stake", Accessibility::Public),
-            (
-                "staking",
-                "unjail",
-                Accessibility::Guarded(Expr::SelfResource {
-                    material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-                }),
-            ),
-            ("staking", "unstake", Accessibility::Public),
-        ];
-        let packages = stdlib();
-        let declared: Vec<_> = packages
-            .iter()
-            .flat_map(|(package, metadata)| {
-                metadata.methods.iter().map(move |(name, signature)| {
-                    (*package, name.as_str(), signature.accessibility.clone())
-                })
-            })
-            .collect();
-        assert_eq!(declared, expected);
     }
 }

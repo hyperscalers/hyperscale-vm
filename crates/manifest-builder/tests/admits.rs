@@ -13,12 +13,13 @@
 //! long enough that index bookkeeping would be the error-prone part by
 //! hand.
 
-use hyperscale_vm_effects::stdlib::{account_metadata, splitter_metadata};
 use hyperscale_vm_effects::{
     ComponentAddr, Constraint, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry,
     MetadataCache, PackageHash, PrincipalAddr, ResourceAddr, TestHasher, admit,
 };
+use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{GraphBuilder, TypedBuilder};
+use hyperscale_vm_stdlib::account;
 use proptest::prelude::{Strategy, prop, prop_assert, proptest};
 
 const ACCOUNTS: [PrincipalAddr; 4] = [
@@ -48,8 +49,8 @@ fn pkg(name: &str) -> PackageHash {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account_metadata());
-    cache.publish(pkg("splitter"), splitter_metadata());
+    cache.publish(pkg("account"), account::metadata());
+    cache.publish(pkg("splitter"), splitter::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, splitter_meta());

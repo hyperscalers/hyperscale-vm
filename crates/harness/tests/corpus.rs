@@ -11,11 +11,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use hyperscale_vm_effects::stdlib::{
-    ASKS, AUTH, CLAIMS, CONFIG, DRAIN_CAP, DRAW, FILL_CAP, NAMES, ROUND_CAP, TICKETS, VAULT,
-    account_metadata, amm_metadata, book_metadata, lottery_metadata, nf_metadata,
-    registry_metadata,
-};
+use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, Address, AuthBase, AuthCell, Clause, CollectionId, ComponentAddr, Constraint, Effect,
     EffectSet, EffectTarget, EntryKey, EvidenceRef, Expr, Hash32, Hasher, InstanceMeta,
@@ -25,7 +21,7 @@ use hyperscale_vm_effects::{
     SubstateKey, TargetExpr, TestHasher, Totality, Value, admit, child_key, collection_id,
     fresh_id, holdings_collection, instance_data_key, order_key, resource_address, route,
 };
-use hyperscale_vm_fixtures::calls::{amm, book, lottery, nf, registry};
+use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry};
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
@@ -41,7 +37,7 @@ use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
     check_method, validate_component,
 };
-use hyperscale_vm_stdlib::calls::account;
+use hyperscale_vm_stdlib::account;
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
@@ -96,7 +92,7 @@ fn config_leaf(owner: impl Into<Address>) -> SubstateKey {
 
 /// The book's asks collection, as the stdlib's declarations derive it.
 fn asks() -> CollectionId {
-    collection_id(&TestHasher, book(), ASKS, &[])
+    collection_id(&TestHasher, book(), book::ASKS, &[])
 }
 
 /// An account's stored-authority cell — what its sign-in reads.
@@ -114,12 +110,12 @@ fn uniform_base(identity: Address) -> AuthBase {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account_metadata());
-    cache.publish(pkg("amm"), amm_metadata());
-    cache.publish(pkg("book"), book_metadata());
-    cache.publish(pkg("registry"), registry_metadata());
-    cache.publish(pkg("nf"), nf_metadata());
-    cache.publish(pkg("lottery"), lottery_metadata());
+    cache.publish(pkg("account"), account::metadata());
+    cache.publish(pkg("amm"), amm::metadata());
+    cache.publish(pkg("book"), book::metadata());
+    cache.publish(pkg("registry"), registry::metadata());
+    cache.publish(pkg("nf"), nf::metadata());
+    cache.publish(pkg("lottery"), lottery::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, pool_meta());
@@ -945,7 +941,7 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
     // Nothing on the execution path resolves an index, so the guest's
     // constants and the package's table are two halves of one contract
     // that only a test holds together.
-    let table = account_metadata().events;
+    let table = account::metadata().events;
     assert_eq!(table, vec!["withdrawn", "deposited"]);
     for event in &receipt.events {
         assert!(
@@ -1811,7 +1807,7 @@ fn fill_provisions_only_the_interval() {
             collection: asks(),
             lo: 3u128 << 64,
             hi: (5u128 << 64) | u128::from(u64::MAX),
-            cap: FILL_CAP,
+            cap: book::FILL_CAP,
         })
         .collect()
     );
@@ -1945,7 +1941,7 @@ fn the_stdlib_deposit_earns_the_mark_it_claims() -> Result<()> {
     let artifact = build_guest("account")?;
 
     assert_eq!(
-        account_metadata().methods["deposit"].totality,
+        account::metadata().methods["deposit"].totality,
         Totality::Total,
         "the fixture under test is the claim itself",
     );
@@ -1956,7 +1952,7 @@ fn the_stdlib_deposit_earns_the_mark_it_claims() -> Result<()> {
     );
 
     assert_eq!(
-        account_metadata().methods["withdraw"].totality,
+        account::metadata().methods["withdraw"].totality,
         Totality::Fallible,
     );
     assert!(
@@ -2016,12 +2012,12 @@ fn the_registry_binds_checks_and_drains_hashed_entries() -> Result<()> {
 
     // Exactly two bindings, each at the order its name hashes to, holding
     // the last value bound — the rebind overwrote in place.
-    let names = collection_id(&TestHasher, registry_addr(), NAMES, &[]);
+    let names = collection_id(&TestHasher, registry_addr(), registry::NAMES, &[]);
     let order_of = |name: u64| {
         order_key(
             &TestHasher,
             registry_addr(),
-            NAMES,
+            registry::NAMES,
             &[Value::U64(name).canonical_bytes()],
         )
     };
@@ -2036,7 +2032,7 @@ fn the_registry_binds_checks_and_drains_hashed_entries() -> Result<()> {
 
     // One crank from the bottom of the hash order clears everything —
     // two entries against a cap of eight.
-    assert!(u32::try_from(entries.len()).unwrap() <= DRAIN_CAP);
+    assert!(u32::try_from(entries.len()).unwrap() <= registry::DRAIN_CAP);
     let drain = graph(|b| registry::drain(b, registry_addr(), 0));
     let (results, store) = run_both(
         &engines,
@@ -2282,7 +2278,7 @@ fn non_fungibles_mint_transfer_and_burn_end_to_end() -> Result<()> {
 
 /// The lottery's entrants collection, as its declarations derive it.
 fn tickets() -> CollectionId {
-    collection_id(&TestHasher, lottery_addr(), TICKETS, &[])
+    collection_id(&TestHasher, lottery_addr(), lottery::TICKETS, &[])
 }
 
 /// Where an entrant's ticket sits in the collection's order space.
@@ -2290,7 +2286,7 @@ fn ticket_order(who: PrincipalAddr) -> u128 {
     order_key(
         &TestHasher,
         lottery_addr(),
-        TICKETS,
+        lottery::TICKETS,
         &[Value::Address(who.address()).canonical_bytes()],
     )
 }
@@ -2298,7 +2294,7 @@ fn ticket_order(who: PrincipalAddr) -> u128 {
 /// The lottery's settled-round cell.
 fn draw_cell(store: &mut MemoryStore) -> Option<Vec<u8>> {
     store
-        .read(child_key(&TestHasher, lottery_addr(), DRAW, &[]))
+        .read(child_key(&TestHasher, lottery_addr(), lottery::DRAW, &[]))
         .unwrap()
 }
 
@@ -2379,7 +2375,7 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
             "a ticket holds its entrant"
         );
     }
-    assert!(u32::try_from(entries.len()).unwrap() <= ROUND_CAP);
+    assert!(u32::try_from(entries.len()).unwrap() <= lottery::ROUND_CAP);
     assert_eq!(amount_of(&mut store, vault(lottery_addr(), RES_X)), 140);
 
     // Ascending order is the index space the draw reduces into, so who

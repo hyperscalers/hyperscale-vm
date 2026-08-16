@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use hyperscale_vm_effects::stdlib::{VAULT, account_metadata};
+use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     Address, AdmittedTree, Constraint, EnvelopeTree, Hasher, InstanceRegistry, MetadataCache,
     PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SubstateKey, TestHasher, Value,
@@ -27,7 +27,7 @@ use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
     validate_component,
 };
-use hyperscale_vm_stdlib::calls::account;
+use hyperscale_vm_stdlib::account;
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
@@ -57,7 +57,7 @@ fn pkg() -> PackageHash {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg(), account_metadata());
+    cache.publish(pkg(), account::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg());
     (cache, instances)

@@ -10,9 +10,7 @@
 
 use hyperscale_vm_effects::Accessibility;
 use hyperscale_vm_runtime::check_method;
-use hyperscale_vm_stdlib::{
-    ACCOUNT_COMPONENT, STAKING_COMPONENT, account_metadata, staking_metadata,
-};
+use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, staking};
 
 /// One method, as the two conditions below see it.
 struct Method {
@@ -34,8 +32,8 @@ struct Package {
 
 fn packages() -> Vec<Package> {
     [
-        ("account", ACCOUNT_COMPONENT, account_metadata()),
-        ("staking", STAKING_COMPONENT, staking_metadata()),
+        ("account", ACCOUNT_COMPONENT, account::metadata()),
+        ("staking", STAKING_COMPONENT, staking::metadata()),
     ]
     .into_iter()
     .map(|(name, artifact, metadata)| Package {

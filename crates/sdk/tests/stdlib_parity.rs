@@ -15,13 +15,15 @@
 //! elsewhere in the workspace means the SDK's output inherits every one of
 //! those tests without restating them.
 
-use hyperscale_vm_effects::stdlib::{
-    ASKS, AUTH, CLAIMS, CONFIG, DRAW, FILL_CAP, ROUND_CAP, TICKETS, VAULT, account_metadata,
-    amm_metadata, book_metadata, lottery_metadata, splitter_metadata,
-};
+use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
 use hyperscale_vm_effects::{PackageMetadata, ParamType, RoleId};
+use hyperscale_vm_fixtures::{
+    amm as amm_package, book as book_package, lottery as lottery_package,
+    splitter as splitter_package,
+};
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Num, Opaque, Sym, lit_u64, lit_u128, pack};
 use hyperscale_vm_sdk::{Blueprint, Trace};
+use hyperscale_vm_stdlib::account as account_package;
 
 /// The fungible account.
 fn account() -> Blueprint {
@@ -132,7 +134,7 @@ fn book() -> Blueprint {
                 // the order key unique without reading the book.
                 let seq = t.fresh_id();
                 let order = pack(&price, &seq);
-                t.entry(&venue, ASKS, &order).write();
+                t.entry(&venue, book_package::ASKS, &order).write();
 
                 let escrow = venue.child(VAULT, &[funds.resource().cast()]);
                 t.point(&escrow).delta();
@@ -152,7 +154,8 @@ fn book() -> Blueprint {
                 // covers every sequence at the boundary prices.
                 let lo = pack(&from, &lit_u64(0));
                 let hi = pack(&to, &lit_u64(u64::MAX));
-                t.range(&venue, ASKS, &lo, &hi, FILL_CAP).write();
+                t.range(&venue, book_package::ASKS, &lo, &hi, book_package::FILL_CAP)
+                    .write();
 
                 let quote = payment.resource();
                 t.point(&venue.child(VAULT, &[base.clone().cast()])).delta();
@@ -182,7 +185,8 @@ fn lottery() -> Blueprint {
                 // at the hash of the entrant, so entering twice lands on
                 // the same ticket.
                 let key: Sym<Opaque> = who.cast();
-                t.keyed_entry(&venue, TICKETS, &key).write();
+                t.keyed_entry(&venue, lottery_package::TICKETS, &key)
+                    .write();
 
                 let pot = venue.child(VAULT, &[stake.resource().cast()]);
                 t.point(&pot).delta();
@@ -190,16 +194,16 @@ fn lottery() -> Blueprint {
         )
         .method("draw", &[], |t: &mut Trace| {
             let venue = t.self_addr();
-            let outcome = venue.child(DRAW, &[]);
+            let outcome = venue.child(lottery_package::DRAW, &[]);
             t.point(&outcome).write();
             // The whole order space: a round is every entrant in it, and
             // no argument narrows what a draw may select from.
             t.range(
                 &venue,
-                TICKETS,
+                lottery_package::TICKETS,
                 &lit_u128(0),
                 &lit_u128(u128::MAX),
-                ROUND_CAP,
+                lottery_package::ROUND_CAP,
             )
             .read();
         })
@@ -226,7 +230,7 @@ fn splitter() -> Blueprint {
 /// material-keyed range, no id-set output, and no gate-owned read — the
 /// inference backend is a later phase, and these are its first customers.
 fn fungible_account() -> PackageMetadata {
-    let mut authored = account_metadata();
+    let mut authored = account_package::metadata();
     for gap in ["deposit-nf", "withdraw-nf", "present-badge"] {
         authored.methods.remove(gap);
     }
@@ -266,22 +270,22 @@ fn the_account_traces_to_its_authored_signature() {
 
 #[test]
 fn the_pool_traces_to_its_authored_signature() {
-    assert_parity(&amm(), &amm_metadata(), "amm");
+    assert_parity(&amm(), &amm_package::metadata(), "amm");
 }
 
 #[test]
 fn the_book_traces_to_its_authored_signature() {
-    assert_parity(&book(), &book_metadata(), "book");
+    assert_parity(&book(), &book_package::metadata(), "book");
 }
 
 #[test]
 fn the_lottery_traces_to_its_authored_signature() {
-    assert_parity(&lottery(), &lottery_metadata(), "lottery");
+    assert_parity(&lottery(), &lottery_package::metadata(), "lottery");
 }
 
 #[test]
 fn the_splitter_traces_to_its_authored_signature() {
-    assert_parity(&splitter(), &splitter_metadata(), "splitter");
+    assert_parity(&splitter(), &splitter_package::metadata(), "splitter");
 }
 
 #[test]
@@ -289,7 +293,14 @@ fn every_authored_role_is_reachable_from_the_sdk() {
     // A guard on the fixtures rather than on the SDK: if a role is added to
     // the stdlib and no traced declaration names it, the parity tests above
     // are silently covering less than they read as covering.
-    let named = [VAULT, CLAIMS, CONFIG, ASKS, TICKETS, DRAW];
+    let named = [
+        VAULT,
+        CLAIMS,
+        CONFIG,
+        book_package::ASKS,
+        lottery_package::TICKETS,
+        lottery_package::DRAW,
+    ];
     assert_eq!(
         named.len(),
         6,

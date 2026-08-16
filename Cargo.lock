@@ -646,6 +646,8 @@ name = "hyperscale-vm-effects"
 version = "0.1.0"
 dependencies = [
  "hyperscale-hbor",
+ "hyperscale-vm-fixtures",
+ "hyperscale-vm-stdlib",
  "hyperscale-vm-types",
  "proptest",
  "thiserror 2.0.19",
@@ -725,7 +727,9 @@ name = "hyperscale-vm-sdk"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-effects",
+ "hyperscale-vm-fixtures",
  "hyperscale-vm-sdk-macros",
+ "hyperscale-vm-stdlib",
  "trybuild",
 ]
 

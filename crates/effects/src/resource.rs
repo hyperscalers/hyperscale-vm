@@ -10,8 +10,8 @@ use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_
 
 use crate::dsl::{Expr, TargetExpr};
 use crate::hash::Hasher;
-pub use crate::stdlib::{INSTANCE, NF_VAULT, RESOURCE};
 use crate::types::{Address, CollectionId, SubstateKey, Value, child_key, collection_id};
+pub use crate::vocabulary::{INSTANCE, NF_VAULT, RESOURCE};
 
 /// The decoder cap for a record cell: a flat two-field struct, one level
 /// of body over the frame.
@@ -159,8 +159,8 @@ mod tests {
         Fungibility, ResourceRecord, holdings_collection, instance_data_key, resource_record_key,
     };
     use crate::hash::TestHasher;
-    use crate::stdlib::{GENESIS_PUBLISHER, XRD};
     use crate::types::{Address, AddressClass, native_address};
+    use crate::vocabulary::{GENESIS_PUBLISHER, XRD};
 
     #[test]
     fn records_round_trip_canonically() {

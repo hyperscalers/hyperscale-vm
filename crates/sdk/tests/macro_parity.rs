@@ -26,8 +26,9 @@
 #![allow(clippy::needless_pass_by_ref_mut)]
 
 use hyperscale_vm_effects::PackageMetadata;
-use hyperscale_vm_effects::stdlib::{account_metadata, amm_metadata, book_metadata};
+use hyperscale_vm_fixtures::{amm as amm_package, book as book_package};
 use hyperscale_vm_sdk::blueprint;
+use hyperscale_vm_stdlib::account as account_package;
 
 #[blueprint]
 mod account {
@@ -221,7 +222,7 @@ fn the_account_body_derives_its_authored_signature() {
     // material-keyed range, no id-set output, and no gate-owned read —
     // the inference backend is a later phase, and these are its first
     // customers.
-    let mut authored = account_metadata();
+    let mut authored = account_package::metadata();
     for gap in ["deposit-nf", "withdraw-nf", "present-badge"] {
         authored.methods.remove(gap);
     }
@@ -230,12 +231,20 @@ fn the_account_body_derives_its_authored_signature() {
 
 #[test]
 fn the_pool_body_derives_its_authored_signature() {
-    assert_derived(&amm::blueprint().metadata(), &amm_metadata(), "amm");
+    assert_derived(
+        &amm::blueprint().metadata(),
+        &amm_package::metadata(),
+        "amm",
+    );
 }
 
 #[test]
 fn the_book_body_derives_its_authored_signature() {
-    assert_derived(&book::blueprint().metadata(), &book_metadata(), "book");
+    assert_derived(
+        &book::blueprint().metadata(),
+        &book_package::metadata(),
+        "book",
+    );
 }
 
 /// Control-flow spellings of one access set, each beside its straight-line

@@ -1,12 +1,8 @@
-//! Shared fixtures: authored effect signatures for the account, AMM pool,
-//! and order-book packages, and the instance world the shape tests route
-//! against.
+//! Shared fixtures: the packages the shape tests route against, and the
+//! instance world they resolve in.
 #![allow(dead_code, unused_imports)] // shared between test binaries; each uses a subset
 
-pub use hyperscale_vm_effects::stdlib::{
-    ASKS, AUTH, CLAIMS, CONFIG, FILL_CAP, VAULT, account_metadata, amm_metadata, book_metadata,
-    splitter_metadata,
-};
+pub use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Address, CallSite, Clause, ComponentAddr, Effect, EffectSet, Expr, Hash32, Hasher,
     InstanceMeta, InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr,
@@ -14,6 +10,9 @@ use hyperscale_vm_effects::{
     RoleId, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Totality, Value,
     child_key,
 };
+pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
+pub use hyperscale_vm_fixtures::{amm, book, splitter};
+pub use hyperscale_vm_stdlib::account;
 
 /// Accounts are principals: their class is what resolves them to the
 /// protocol's account blueprint, so a fixture names one without anything
@@ -49,9 +48,9 @@ pub const fn identity() -> ManifestHash {
 #[must_use]
 pub fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account_metadata());
-    cache.publish(pkg("amm"), amm_metadata());
-    cache.publish(pkg("book"), book_metadata());
+    cache.publish(pkg("account"), account::metadata());
+    cache.publish(pkg("amm"), amm::metadata());
+    cache.publish(pkg("book"), book::metadata());
 
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
@@ -157,7 +156,7 @@ pub fn effect_set(effects: &[Effect]) -> EffectSet {
 /// the exact withdraw effect plus a superset the method never touches.
 #[must_use]
 pub fn wide_account_metadata() -> PackageMetadata {
-    let mut methods = account_metadata();
+    let mut methods = account::metadata();
     let mut effects = methods.methods["withdraw"].effects.clone();
     effects.push(Clause::Effect {
         target: TargetExpr::Point(self_child(RoleId(99), vec![])),

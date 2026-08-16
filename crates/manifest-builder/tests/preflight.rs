@@ -5,7 +5,6 @@
 //! matters is that composing them changed nothing: every quantity here is
 //! checked against the same call made directly.
 
-use hyperscale_vm_effects::stdlib::{OWNER_BADGE, account_metadata, staking_metadata};
 use hyperscale_vm_effects::{
     AuthRole, ComponentAddr, Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry,
     MetadataCache, PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId,
@@ -15,7 +14,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_manifest_builder::{
     Authority, EnvelopeBuilder, PreflightError, TypedBuilder, preflight, preflight_tree,
 };
-use hyperscale_vm_stdlib::calls::{account, staking};
+use hyperscale_vm_stdlib::{account, staking};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -45,14 +44,14 @@ fn badge() -> ResourceAddr {
     resource_address(
         &TestHasher,
         pool(),
-        &[Value::Bytes(OWNER_BADGE.to_vec()).canonical_bytes()],
+        &[Value::Bytes(staking::OWNER_BADGE.to_vec()).canonical_bytes()],
     )
 }
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account_metadata());
-    cache.publish(pkg("staking"), staking_metadata());
+    cache.publish(pkg("account"), account::metadata());
+    cache.publish(pkg("staking"), staking::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, pool_meta());

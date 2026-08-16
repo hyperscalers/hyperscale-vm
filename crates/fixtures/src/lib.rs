@@ -3,7 +3,8 @@
 //!
 //! These are packages in every sense the protocol cares about — a
 //! componentized guest, authored effect metadata, one content address —
-//! and in no sense the protocol depends on. Nothing here is a protocol
+//! and in no sense the protocol depends on. One module per package, on
+//! the same terms as the protocol's own. Nothing here is a protocol
 //! artifact; what separates them from [`hyperscale_vm_stdlib`]'s account
 //! and stake pool is not their shape but who seeds them, which is a
 //! decision the embedder makes per network.
@@ -20,11 +21,15 @@
 //!
 //! [`hyperscale_vm_stdlib`]: https://docs.rs/hyperscale-vm-stdlib
 
-pub mod calls;
+pub mod amm;
+pub mod book;
+pub mod lottery;
+pub mod nf;
+pub mod registry;
+pub mod splitter;
 
 use std::sync::LazyLock;
 
-pub use hyperscale_vm_effects::stdlib::{DRAW, ROUND_CAP, TICKETS, lottery_metadata};
 use hyperscale_vm_effects::{Hasher, PackageHash, attach_metadata, package_hash};
 
 /// The componentized lottery guest: `enter` buys a ticket into the pot,
@@ -42,7 +47,7 @@ pub fn lottery_package_hash(hasher: &dyn Hasher) -> PackageHash {
 /// blob with its effect metadata attached in the section a published
 /// package carries it in.
 static LOTTERY_ARTIFACT: LazyLock<Vec<u8>> = LazyLock::new(|| {
-    attach_metadata(LOTTERY_COMPONENT, &lottery_metadata())
+    attach_metadata(LOTTERY_COMPONENT, &lottery::metadata())
         .expect("the lottery metadata attaches to its committed blob")
 });
 
@@ -71,7 +76,7 @@ mod tests {
         let artifact = lottery_artifact();
         assert_eq!(
             extract_metadata(artifact).unwrap(),
-            Some(lottery_metadata())
+            Some(lottery::metadata())
         );
         // The attached section is what the address covers, so the bare
         // component addresses differently from the package.

@@ -13,12 +13,12 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::stdlib::{DRAW, ROUND_CAP, TICKETS, VAULT};
+use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
     RoleId, SubstateKey, TestHasher, Value, child_key, collection_id, order_key,
 };
-use hyperscale_vm_fixtures::LOTTERY_COMPONENT;
+use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
 #[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -350,18 +350,18 @@ const ENTRANT: Address = Address::new([5; 31], AddressClass::Component);
 
 /// The lottery's settled-round cell and its entrants collection.
 fn draw_key() -> SubstateKey {
-    child_key(&TestHasher, LOTTERY, DRAW, &[])
+    child_key(&TestHasher, LOTTERY, lottery::DRAW, &[])
 }
 
 fn ticket_collection() -> CollectionId {
-    collection_id(&TestHasher, LOTTERY, TICKETS, &[])
+    collection_id(&TestHasher, LOTTERY, lottery::TICKETS, &[])
 }
 
 fn ticket_order() -> u128 {
     order_key(
         &TestHasher,
         LOTTERY,
-        TICKETS,
+        lottery::TICKETS,
         &[Value::Address(ENTRANT).canonical_bytes()],
     )
 }
@@ -393,7 +393,7 @@ fn lottery_session() -> KernelSession {
                 collection: ticket_collection(),
                 lo: 0,
                 hi: u128::MAX,
-                cap: ROUND_CAP,
+                cap: lottery::ROUND_CAP,
             },
             mode: Mode::Read,
         },
@@ -474,7 +474,7 @@ fn blessed_round() -> Result<(Receipt, u64)> {
             collection: ticket_collection(),
             lo: 0,
             hi: u128::MAX,
-            cap: ROUND_CAP,
+            cap: lottery::ROUND_CAP,
         },
     );
     let mut store = Store::new(&engine, host);
@@ -535,7 +535,7 @@ fn reference_round() -> Result<(Receipt, u64)> {
             collection: ticket_collection(),
             lo: 0,
             hi: u128::MAX,
-            cap: ROUND_CAP,
+            cap: lottery::ROUND_CAP,
         },
     );
     let mut instance =

@@ -7,8 +7,8 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter_metadata, vault, world};
-use hyperscale_vm_effects::stdlib::{AUTH, VAULT};
+use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world};
+use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     Accessibility, Address, AddressClass, AdmissionError, AuthRole, AuthorityGate, Clause,
     ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget, EvidenceRef, Expr, GraphArg,
@@ -34,7 +34,7 @@ fn splitter() -> ComponentAddr {
 
 fn setup() -> (MetadataCache, InstanceRegistry) {
     let (mut cache, mut instances) = world();
-    cache.publish(pkg("splitter"), splitter_metadata());
+    cache.publish(pkg("splitter"), splitter::metadata());
     instances.create(&TestHasher, splitter_meta());
     (cache, instances)
 }

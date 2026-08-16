@@ -2,15 +2,15 @@
 //! along their yield edges, the nullifier vocabulary derives canonical
 //! addresses, and every malformed composition rejects exactly.
 
-use hyperscale_vm_effects::stdlib::account_metadata;
 use hyperscale_vm_effects::{
     Address, AdmissionError, AdmittedTree, Bounds, CallTarget, Constraint, EdgeContent, EdgeRef,
     Effect, EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, IntentDecl, MAX_SUBINTENTS, MAX_VALUE_DEPTH, MAX_YIELD_PARAMS, ManifestGraph,
     ManifestHash, MetadataCache, Mode, NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver,
-    PrincipalAddr, ResourceAddr, RoleId, ShardResolver, Subintent, TestHasher, Value, YieldBinding,
+    PrincipalAddr, ResourceAddr, ShardResolver, Subintent, TestHasher, Value, YieldBinding,
     YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
+use hyperscale_vm_stdlib::account;
 use proptest::prelude::{any, proptest};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -24,7 +24,7 @@ fn pkg() -> PackageHash {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg(), account_metadata());
+    cache.publish(pkg(), account::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg());
     (cache, instances)
@@ -419,11 +419,6 @@ fn fresh_keys_root_at_the_envelope_identity() {
         admitted[0].admitted.identity(),
         admitted[1].admitted.identity()
     );
-}
-
-#[test]
-fn the_nullifier_role_stays_off_stdlib_roles() {
-    assert!(NULLIFIER_ROLE > RoleId(0x00FF), "reserved role space");
 }
 
 #[test]

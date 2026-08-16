@@ -13,18 +13,14 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_vm_effects::stdlib::{
-    account_metadata, amm_metadata, book_metadata, lottery_metadata, nf_metadata,
-    registry_metadata, splitter_metadata, staking_metadata,
-};
 use hyperscale_vm_effects::{
     ComponentAddr, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
     MetadataCache, PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr, RoleSet, Rule,
     TestHasher, Value, admit, resource_address,
 };
-use hyperscale_vm_fixtures::calls::{amm, book, lottery, nf, registry, splitter};
+use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
-use hyperscale_vm_stdlib::calls::{account, staking};
+use hyperscale_vm_stdlib::{account, staking};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -89,14 +85,14 @@ fn world() -> (MetadataCache, InstanceRegistry) {
 /// Every authored package, by the name its hash derives from.
 fn stdlib() -> Vec<(&'static str, PackageMetadata)> {
     vec![
-        ("account", account_metadata()),
-        ("amm", amm_metadata()),
-        ("book", book_metadata()),
-        ("lottery", lottery_metadata()),
-        ("nf", nf_metadata()),
-        ("registry", registry_metadata()),
-        ("splitter", splitter_metadata()),
-        ("staking", staking_metadata()),
+        ("account", account::metadata()),
+        ("amm", amm::metadata()),
+        ("book", book::metadata()),
+        ("lottery", lottery::metadata()),
+        ("nf", nf::metadata()),
+        ("registry", registry::metadata()),
+        ("splitter", splitter::metadata()),
+        ("staking", staking::metadata()),
     ]
 }
 

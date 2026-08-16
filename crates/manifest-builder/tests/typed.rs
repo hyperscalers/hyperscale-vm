@@ -2,13 +2,14 @@
 //! call site, and the edge types it derives so the author does not assert
 //! them.
 
-use hyperscale_vm_effects::stdlib::{account_metadata, splitter_metadata, staking_metadata};
 use hyperscale_vm_effects::{
     ComponentAddr, Constraint, EdgeRef, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry,
     ManifestGraph, MetadataCache, PackageHash, PrincipalAddr, ResourceAddr, ResourceRef,
     TestHasher, Value, admit, resource_address,
 };
+use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
+use hyperscale_vm_stdlib::{account, staking};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -54,9 +55,9 @@ fn unit() -> ResourceAddr {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account_metadata());
-    cache.publish(pkg("splitter"), splitter_metadata());
-    cache.publish(pkg("staking"), staking_metadata());
+    cache.publish(pkg("account"), account::metadata());
+    cache.publish(pkg("splitter"), splitter::metadata());
+    cache.publish(pkg("staking"), staking::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, splitter_meta());
