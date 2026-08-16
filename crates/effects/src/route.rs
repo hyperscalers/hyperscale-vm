@@ -114,10 +114,15 @@ pub struct Routing {
     pub kernel_effects: Vec<Effect>,
     /// The static call graph.
     pub call_graph: CallGraph,
-    /// How many times the longest dependency chain changes shard — the
-    /// stage boundaries a staged execution would pay for, and zero for a
-    /// transaction whose whole dependency structure sits on one shard.
+    /// How many times the longest dependency chain changes shard. Zero
+    /// exactly when the whole structure sits on one shard, which is what
+    /// says there is nothing to decompose.
     pub alternation_depth: u32,
+    /// How many of those crossings something waits on — the settlement
+    /// latency staging would add, and what [`MAX_STAGED_DEPTH`] budgets.
+    /// Lower than [`Self::alternation_depth`] by the crossings into
+    /// outbound legs, which the core commits without hearing back from.
+    pub staged_depth: u32,
     /// Where each manifest node sits in the star, in node order.
     pub roles: Vec<Role>,
     /// How this transaction's participants divide its execution.
@@ -435,10 +440,9 @@ pub fn route(
         roots,
         edges: fold.edges,
     };
-    let alternation_depth = alternation_depth(manifest, &call_graph, shards);
-
     let roles = classify_roles(manifest, cache, instances);
-    let strategy = classify_strategy(manifest, &roles, alternation_depth);
+    let (alternation_depth, staged_depth) = chain_depths(manifest, &call_graph, shards, &roles);
+    let strategy = classify_strategy(manifest, &roles, alternation_depth, staged_depth);
 
     Ok(Routing {
         per_shard: fold.per_shard,
@@ -447,6 +451,7 @@ pub fn route(
         kernel_effects: Vec::new(),
         call_graph,
         alternation_depth,
+        staged_depth,
         roles,
         strategy,
     })
@@ -601,8 +606,13 @@ fn is_reservation_shaped(signature: &MethodSignature) -> bool {
 ///   that knows about ids. The test is over legs alone: a core's
 ///   participants reach agreement by unanimity rather than by attested
 ///   value, so nothing inside one is exposed to it.
-fn classify_strategy(manifest: &Manifest, roles: &[Role], alternation_depth: u32) -> Strategy {
-    if alternation_depth == 0 || alternation_depth > MAX_STAGED_DEPTH {
+fn classify_strategy(
+    manifest: &Manifest,
+    roles: &[Role],
+    alternation_depth: u32,
+    staged_depth: u32,
+) -> Strategy {
+    if alternation_depth == 0 || staged_depth > MAX_STAGED_DEPTH {
         return Strategy::Replicated;
     }
     let is_leg = |index: usize| matches!(roles.get(index), Some(Role::Inbound | Role::Outbound));
@@ -624,7 +634,7 @@ fn classify_strategy(manifest: &Manifest, roles: &[Role], alternation_depth: u32
     Strategy::LegLocal
 }
 
-/// One vertex of the dependency graph [`alternation_depth`] walks.
+/// One vertex of the dependency graph [`chain_depths`] walks.
 ///
 /// Manifest nodes stay distinct from the methods they invoke because two
 /// nodes can name the same instance and method — a vault withdrawn from
@@ -638,28 +648,37 @@ enum Vertex<'a> {
     Call(&'a MethodRef),
 }
 
-/// How many times the longest dependency chain changes shard.
+/// How far the longest dependency chain reaches, counted two ways.
 ///
-/// This is the count of stage boundaries a staged execution would pay
-/// for: a chain crosses shards exactly where a downstream unit of work
-/// needs an upstream one's *output*, which no committed state root holds
-/// when it is wanted. A replicating participant pays none of them — it
-/// fetches every counterpart's committed reads in one round whatever the
-/// shape — so the depth is what the two strategies are compared on rather
-/// than a cost either of them simply has.
+/// Returns `(crossings, stages)`. Both walk the same graph and differ
+/// only in what a step costs, because the two questions they answer are
+/// different: whether a transaction reaches beyond one shard at all, and
+/// how much settlement latency staging it would add.
+///
+/// **Crossings** counts every shard change along the chain. It is the
+/// structural fact — a chain returning to a shard it already visited has
+/// crossed twice — and what says whether there is anything to decompose.
+///
+/// **Stages** counts only the crossings something waits on. A crossing
+/// into an outbound leg costs nothing: the leg cannot refuse, so the core
+/// commits without hearing back and no latency accrues on the far side of
+/// it. This is the quantity [`MAX_STAGED_DEPTH`] budgets, and the two
+/// diverge by exactly the outbound crossings — a single-venue swap
+/// crosses twice to reach the venue and return, and stages once.
 ///
 /// Two kinds of dependency contribute, and both are structural. A value
 /// edge binds one manifest node's output to a later node's input. A call
 /// edge runs a callee inside its caller, which crosses a boundary exactly
 /// when the two sit on different shards. The union is acyclic — value
 /// edges run from lower node indices to higher, and the call graph is a
-/// DAG by construction — so the longest path is a fold over one
-/// topological pass rather than a search.
-fn alternation_depth(
+/// DAG by construction — so the longest path settles rather than
+/// searches.
+fn chain_depths(
     manifest: &Manifest,
     call_graph: &CallGraph,
     shards: &dyn ShardResolver,
-) -> u32 {
+    roles: &[Role],
+) -> (u32, u32) {
     let shard_of = |vertex: &Vertex<'_>| -> ShardId {
         match vertex {
             Vertex::Node(index) => shards.shard_of(manifest.nodes[*index as usize].target),
@@ -699,40 +718,67 @@ fn alternation_depth(
             .insert(Vertex::Call(&edge.callee));
     }
 
-    // Longest path by shard changes. Every vertex starts a chain, so each
-    // is seeded at zero and relaxed by whatever reaches it; the manifest's
-    // producer-before-consumer rule and the call graph's acyclicity make
-    // one pass in vertex order sufficient for the node spine, and the
-    // repeat below settles call chains reached from several nodes.
-    let mut best: BTreeMap<Vertex<'_>, u32> = BTreeMap::new();
-    for vertex in successors.keys() {
-        best.insert(vertex.clone(), 0);
-    }
-    for successor_set in successors.values() {
-        for vertex in successor_set {
-            best.entry(vertex.clone()).or_insert(0);
+    // A crossing whose destination is an outbound leg costs no stage:
+    // the leg cannot refuse, so nothing on the far side of it is waited
+    // on and the chain ends there as far as latency is concerned. Every
+    // other crossing is a stage, including one into a call the roles do
+    // not describe, which is the conservative reading.
+    let waited_on = |vertex: &Vertex<'_>| -> bool {
+        match vertex {
+            Vertex::Node(index) => !matches!(roles.get(*index as usize), Some(Role::Outbound)),
+            Vertex::Call(_) => true,
         }
+    };
+
+    // Longest path, relaxed until it settles. Every vertex starts a chain
+    // so each is seeded at zero; the manifest's producer-before-consumer
+    // rule and the call graph's acyclicity bound the settling at one
+    // round per vertex.
+    let mut crossings: BTreeMap<Vertex<'_>, u32> = BTreeMap::new();
+    let mut stages: BTreeMap<Vertex<'_>, u32> = BTreeMap::new();
+    for vertex in successors
+        .keys()
+        .cloned()
+        .chain(successors.values().flatten().cloned())
+    {
+        crossings.entry(vertex.clone()).or_insert(0);
+        stages.entry(vertex).or_insert(0);
     }
     let mut settled = false;
     let mut rounds = 0;
-    while !settled && rounds <= best.len() {
+    while !settled && rounds <= crossings.len() {
         settled = true;
         rounds += 1;
         for (vertex, successor_set) in &successors {
-            let here = best.get(vertex).copied().unwrap_or(0);
+            let (crossed_here, staged_here) = (
+                crossings.get(vertex).copied().unwrap_or(0),
+                stages.get(vertex).copied().unwrap_or(0),
+            );
             let from = shard_of(vertex);
             for successor in successor_set {
-                let step = u32::from(shard_of(successor) != from);
-                let candidate = here.saturating_add(step);
-                let slot = best.entry(successor.clone()).or_insert(0);
-                if candidate > *slot {
-                    *slot = candidate;
-                    settled = false;
+                let crossed = shard_of(successor) != from;
+                for (map, here, step) in [
+                    (&mut crossings, crossed_here, u32::from(crossed)),
+                    (
+                        &mut stages,
+                        staged_here,
+                        u32::from(crossed && waited_on(successor)),
+                    ),
+                ] {
+                    let candidate = here.saturating_add(step);
+                    let slot = map.entry(successor.clone()).or_insert(0);
+                    if candidate > *slot {
+                        *slot = candidate;
+                        settled = false;
+                    }
                 }
             }
         }
     }
-    best.values().copied().max().unwrap_or(0)
+    (
+        crossings.values().copied().max().unwrap_or(0),
+        stages.values().copied().max().unwrap_or(0),
+    )
 }
 
 /// Lower one node's ABI binding against the inputs bound to it.
@@ -1765,14 +1811,22 @@ mod tests {
     /// the deeper route runs replicated however well shaped it is.
     #[test]
     fn a_route_past_the_budget_replicates() {
+        let empty = Manifest { nodes: vec![] };
         assert_eq!(
-            classify_strategy(&Manifest { nodes: vec![] }, &[], MAX_STAGED_DEPTH + 1),
+            classify_strategy(&empty, &[], MAX_STAGED_DEPTH + 1, MAX_STAGED_DEPTH + 1),
             Strategy::Replicated,
         );
         assert_eq!(
-            classify_strategy(&Manifest { nodes: vec![] }, &[], MAX_STAGED_DEPTH),
+            classify_strategy(&empty, &[], MAX_STAGED_DEPTH, MAX_STAGED_DEPTH),
             Strategy::LegLocal,
             "the budget's own depth is admitted, not refused",
+        );
+        // The budget reads stages, not crossings: a chain that crosses
+        // past the budget but only stages within it still decomposes,
+        // which is exactly the single-venue swap's shape.
+        assert_eq!(
+            classify_strategy(&empty, &[], MAX_STAGED_DEPTH + 4, MAX_STAGED_DEPTH),
+            Strategy::LegLocal,
         );
     }
 

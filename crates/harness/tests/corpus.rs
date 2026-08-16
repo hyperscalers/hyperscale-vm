@@ -861,12 +861,17 @@ fn transfer_profile_and_provision_shape_are_exact() {
     // deposit is the outbound one — total by its claims composite, so
     // nothing waits on it. A transfer is the degenerate star, a core
     // with a leg on either side and no venue between them.
-    assert_eq!(routing.alternation_depth, 1);
     assert_eq!(
         routing.roles,
         vec![Role::Core, Role::Inbound, Role::Outbound]
     );
     assert_eq!(routing.strategy, Strategy::LegLocal);
+
+    // It crosses once and stages not at all: the only crossing is into
+    // the recipient's deposit, which cannot refuse, so the sender's side
+    // commits without waiting to hear anything back.
+    assert_eq!(routing.alternation_depth, 1);
+    assert_eq!(routing.staged_depth, 0);
 }
 
 #[test]
@@ -1671,15 +1676,14 @@ fn swap_profile_and_provision_shape_are_exact() {
     );
     assert_eq!(routing.strategy, Strategy::LegLocal);
 
-    // The depth counts crossings, and the chain crosses back to deliver.
-    // That return costs no stage — an outbound leg is one nothing waits
-    // on — so this is the raw structural count rather than the latency
-    // the budget prices, and the two differ by exactly the outbound
-    // crossing. It reads at the budget's own value while the shape it
-    // describes is one stage deep.
+    // Two crossings, one stage. The chain reaches the venue and returns
+    // to deliver, but the return is into an outbound leg the core does
+    // not hear back from, so it costs latency nothing. The gap between
+    // the two numbers is exactly that crossing, and it is why the
+    // canonical swap sits at a third of the budget rather than all of it.
     assert_eq!(routing.alternation_depth, 2);
-    assert_eq!(routing.alternation_depth, MAX_STAGED_DEPTH);
-    assert_eq!(routing.roles[3], Role::Outbound);
+    assert_eq!(routing.staged_depth, 1);
+    assert!(routing.staged_depth < MAX_STAGED_DEPTH);
 }
 
 #[test]
