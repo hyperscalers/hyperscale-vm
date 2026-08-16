@@ -19,7 +19,9 @@ use crate::metadata::{
     AbiError, AbiParam, Accessibility, CallSite, InstanceMeta, InstanceRegistry, MetadataCache,
     MethodSignature, PackageHash, Totality, check_abi,
 };
-use crate::types::{Address, CallTarget, Effect, EffectSet, MAX_IDS_PER_EDGE, ShardId, Value};
+use crate::types::{
+    Address, CallTarget, EdgeContent, Effect, EffectSet, MAX_IDS_PER_EDGE, ShardId, Value,
+};
 
 /// Resolves an owner prefix to the shard holding it.
 pub trait ShardResolver {
@@ -118,6 +120,8 @@ pub struct Routing {
     pub alternation_depth: u32,
     /// Where each manifest node sits in the star, in node order.
     pub roles: Vec<Role>,
+    /// How this transaction's participants divide its execution.
+    pub strategy: Strategy,
 }
 
 /// One frame's contribution to the transaction's declaration.
@@ -433,6 +437,9 @@ pub fn route(
     };
     let alternation_depth = alternation_depth(manifest, &call_graph, shards);
 
+    let roles = classify_roles(manifest, cache, instances);
+    let strategy = classify_strategy(manifest, &roles, alternation_depth);
+
     Ok(Routing {
         per_shard: fold.per_shard,
         frames: fold.frames_log,
@@ -440,8 +447,39 @@ pub fn route(
         kernel_effects: Vec::new(),
         call_graph,
         alternation_depth,
-        roles: classify_roles(manifest, cache, instances),
+        roles,
+        strategy,
     })
+}
+
+/// The deepest route staging is admissible for.
+///
+/// A budget rather than a capability. Staging never wins on latency —
+/// every stage past the first adds an inclusion-to-certification gap and
+/// a composition wait, where replication fetches every counterpart's
+/// committed reads in one round whatever the shape — so what it buys is
+/// the deleted replicated executions and the hot shard's decongestion,
+/// and what it costs is settlement latency. Measured against a gap of one
+/// block, a staged route runs about 1.6 times the replicated equivalent's
+/// settlement at depth two and about 2.1 at depth three; the budget is
+/// twice, so two is admitted and three is refused.
+pub const MAX_STAGED_DEPTH: u32 = 2;
+
+/// How a transaction's participants divide its execution.
+///
+/// Both are always correct and the choice is a cost decision, which is
+/// why it can be derived rather than declared: replication is never
+/// unavailable, and it is the fallback for every shape where staging
+/// costs more than it saves.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Strategy {
+    /// Every participant executes the whole manifest and computes the
+    /// same result from the same committed inputs.
+    #[default]
+    Replicated,
+    /// Each participant executes only the legs whose cells it owns and
+    /// takes every other leg's result as an attested value.
+    LegLocal,
 }
 
 /// Where a manifest node sits in the star a decomposable transaction
@@ -544,6 +582,46 @@ fn is_reservation_shaped(signature: &MethodSignature) -> bool {
         })
     }
     signature.outputs.len() == 1 && declares_reserve(&signature.effects)
+}
+
+/// Decide how this transaction's participants divide its execution.
+///
+/// Three things refuse staging, and each for its own reason:
+///
+/// - **Nothing crosses.** A transaction whose dependency structure sits
+///   on one shard has one participant, so the two strategies name the
+///   same execution and the honest verdict is the one that claims less.
+/// - **It crosses too often.** Past [`MAX_STAGED_DEPTH`] the settlement
+///   latency staging adds outruns the replicated work it deletes.
+/// - **A leg moves a named instance.** The supply-delta attestation an
+///   escrow certificate carries is linear over amounts and blind to
+///   identity, so a fabricated non-fungible credit would arrive with a
+///   delta its producer's history supports. Fungible legs are bounded by
+///   that attestation; non-fungible ones are not, so they wait for one
+///   that knows about ids. The test is over legs alone: a core's
+///   participants reach agreement by unanimity rather than by attested
+///   value, so nothing inside one is exposed to it.
+fn classify_strategy(manifest: &Manifest, roles: &[Role], alternation_depth: u32) -> Strategy {
+    if alternation_depth == 0 || alternation_depth > MAX_STAGED_DEPTH {
+        return Strategy::Replicated;
+    }
+    let is_leg = |index: usize| matches!(roles.get(index), Some(Role::Inbound | Role::Outbound));
+    for (index, node) in manifest.nodes.iter().enumerate() {
+        for input in &node.inputs {
+            let NodeInput::Edge {
+                source, content, ..
+            } = input
+            else {
+                continue;
+            };
+            if matches!(content, EdgeContent::NonFungible { .. })
+                && (is_leg(index) || is_leg(*source as usize))
+            {
+                return Strategy::Replicated;
+            }
+        }
+    }
+    Strategy::LegLocal
 }
 
 /// One vertex of the dependency graph [`alternation_depth`] walks.
@@ -1148,7 +1226,8 @@ mod tests {
 
     use super::{
         AbiParam, Accessibility, Admitted, CallArg, CallEdge, EdgeBound, EdgeKind, MAX_CALL_DEPTH,
-        MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver, Role, RouteError, ShardResolver, route,
+        MAX_MANIFEST_NODES, MAX_STAGED_DEPTH, MethodRef, PrefixShardResolver, Role, RouteError,
+        ShardResolver, Strategy, classify_strategy, route,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, fresh_id};
     use crate::hash::{Hash32, Hasher, TestHasher};
@@ -1625,6 +1704,113 @@ mod tests {
             Role::Core,
             "a reserve fed by an edge is not core-independent",
         );
+    }
+
+    /// Nothing crossing means one participant, so the two strategies name
+    /// the same execution and the verdict is the one claiming less.
+    #[test]
+    fn a_single_shard_transaction_does_not_decompose() {
+        let mut cache = MetadataCache::new();
+        let mut solo = PackageMetadata::default();
+        solo.methods.insert(
+            "act".into(),
+            method(vec![self_point(RoleId(1), ModeExpr::Delta)], vec![]),
+        );
+        cache.publish(pkg("solo"), solo);
+        let mut instances = InstanceRegistry::new();
+        instances.create(&TestHasher, meta_of("solo"));
+        let manifest = Manifest {
+            nodes: vec![Node {
+                target: instance_of("solo").into(),
+                method: "act".into(),
+                inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
+            }],
+        };
+
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
+        assert_eq!(routing.alternation_depth, 0);
+        assert_eq!(routing.strategy, Strategy::Replicated);
+    }
+
+    /// A crossing inside the budget stages. The fixture's own depth is
+    /// asserted beside the verdict, so a placement change that moved it
+    /// past the budget would show up as the depth changing rather than as
+    /// a verdict quietly meaning something else.
+    #[test]
+    fn a_crossing_within_the_budget_decomposes() {
+        let (cache, instances, manifest) = payer_payee_world();
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
+        assert!(routing.alternation_depth <= MAX_STAGED_DEPTH);
+        assert_eq!(routing.strategy, Strategy::LegLocal);
+    }
+
+    /// The budget is a refusal, not a preference: past it the settlement
+    /// latency staging adds outruns the replicated work it deletes, so
+    /// the deeper route runs replicated however well shaped it is.
+    #[test]
+    fn a_route_past_the_budget_replicates() {
+        assert_eq!(
+            classify_strategy(&Manifest { nodes: vec![] }, &[], MAX_STAGED_DEPTH + 1),
+            Strategy::Replicated,
+        );
+        assert_eq!(
+            classify_strategy(&Manifest { nodes: vec![] }, &[], MAX_STAGED_DEPTH),
+            Strategy::LegLocal,
+            "the budget's own depth is admitted, not refused",
+        );
+    }
+
+    /// A leg carrying named instances replicates: the supply delta an
+    /// escrow certificate attests counts amounts and cannot see which id
+    /// moved, so nothing bounds a fabricated one.
+    #[test]
+    fn a_leg_moving_named_instances_replicates() {
+        let (cache, instances, manifest) = star_world(Totality::Total);
+        let fungible = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
+        assert_eq!(fungible.roles[0], Role::Inbound);
+        assert_eq!(fungible.strategy, Strategy::LegLocal);
+
+        // The identical shape, with the inbound leg's value now named.
+        let mut named = manifest;
+        named.nodes[1].inputs = vec![NodeInput::Edge {
+            source: 0,
+            output: 0,
+            resource: instance_of("vault").into(),
+            content: EdgeContent::NonFungible { ids: vec![7] },
+            bounds: Bounds::default(),
+        }];
+        let routing = route(
+            &admitted(&named),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
+        assert_eq!(routing.strategy, Strategy::Replicated);
     }
 
     #[test]
