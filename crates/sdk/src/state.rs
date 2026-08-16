@@ -28,6 +28,15 @@
 //! resolves a collection to one of those parameters is the lowering —
 //! which is why [`Keyed`], [`Ordered`] and [`Unordered`] have no guest
 //! body: a call to `at` is rewritten to the handle it named, never made.
+//!
+//! # The deterministic environment
+//!
+//! [`clock_ms`], [`randomness`] and [`hash`] are here for the same reason
+//! the accessors are: a body is read on one target and run on another, so
+//! everything it can name has to exist on both. They declare nothing —
+//! each is identical on every replica by construction rather than by
+//! exclusion — which is what separates them from a state read and why no
+//! clause follows from calling one.
 
 use hyperscale_vm_effects::Address;
 
@@ -111,6 +120,7 @@ pub use crate::guest::Handle;
 /// Only the resource is ever declared. The amount is dynamic and never
 /// reaches the DSL, which is what lets one declaration cover every size of
 /// transfer.
+///
 /// An edge's resource is static and its amount is dynamic, so the two
 /// are known in different places: the amount crosses the boundary, and
 /// the resource is the declaration's — which is why the field is carried
@@ -529,6 +539,43 @@ pub const fn pack(hi: u64, lo: u64) -> Amount {
 /// A deterministic fresh id, unique within this call.
 #[must_use]
 pub fn fresh_id() -> u64 {
+    unimplemented!("{OFF_HOST}")
+}
+
+/// The transaction clock, in milliseconds.
+///
+/// The canonical weighted-time anchor of the block that committed this
+/// transaction — identical on every replica by construction, which is
+/// what separates it from a wall clock a body must never read.
+#[must_use]
+pub fn clock_ms() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    return crate::guest::clock_ms();
+    #[cfg(not(target_arch = "wasm32"))]
+    unimplemented!("{OFF_HOST}")
+}
+
+/// The transaction's randomness draw: 32 bytes, domain-separated per
+/// transaction.
+#[must_use]
+pub fn randomness() -> Vec<u8> {
+    #[cfg(target_arch = "wasm32")]
+    return crate::guest::randomness();
+    #[cfg(not(target_arch = "wasm32"))]
+    unimplemented!("{OFF_HOST}")
+}
+
+/// The protocol hash function: a 32-byte digest.
+///
+/// The host's, never a guest's own — a package carrying its own
+/// implementation would be a second answer to a question the protocol
+/// has already fixed.
+#[must_use]
+pub fn hash(data: &[u8]) -> Vec<u8> {
+    let _ = data;
+    #[cfg(target_arch = "wasm32")]
+    return crate::guest::hash(data);
+    #[cfg(not(target_arch = "wasm32"))]
     unimplemented!("{OFF_HOST}")
 }
 

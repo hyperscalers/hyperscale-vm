@@ -280,3 +280,52 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
         }],
     );
 }
+
+/// The deterministic environment, which a body may read and a declaration
+/// says nothing about.
+///
+/// Identical on every replica by construction rather than by exclusion:
+/// the clock is the committing block's own weighted-time anchor, the
+/// draw is domain-separated per transaction, and the hash is the
+/// protocol's. So a method reading all three declares exactly what a
+/// method reading none of them does.
+#[blueprint]
+mod environment {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Amount, Cell, Keyed, clock_ms, hash, randomness};
+
+    #[state]
+    struct Environment {
+        #[role(1)]
+        vaults: Keyed<Amount>,
+        #[role(2)]
+        seen: Cell<u64>,
+    }
+
+    impl Environment {
+        pub fn stamp(&mut self, holder: Address) {
+            let digest = hash(&randomness());
+            let drawn = u128::from(digest[0]);
+            self.vaults.at(holder).add(drawn);
+            self.seen.set(clock_ms());
+        }
+
+        pub fn plain(&mut self, holder: Address) {
+            self.vaults.at(holder).add(0);
+            self.seen.set(0);
+        }
+    }
+}
+
+#[test]
+fn reading_the_environment_declares_nothing() {
+    let metadata = environment::blueprint().metadata();
+    let effects = |name: &str| &metadata.methods[name].effects;
+    assert_eq!(effects("stamp"), effects("plain"), "environment reads");
+    // And nothing of it reaches the guest through the ABI: the kernel
+    // answers each call where it is made, so none is a bound value.
+    assert_eq!(
+        metadata.methods["stamp"].abi, metadata.methods["plain"].abi,
+        "environment bindings"
+    );
+}
