@@ -62,9 +62,12 @@ fn value_shape(
     match need {
         // A bucket crosses as its amount alone, at the kernel's cell
         // width.
-        Need::Amount(_) => Shape::Cell(Box::new(syn::parse_quote!(
-            ::hyperscale_vm_sdk::state::Amount
-        ))),
+        // Both cross at the kernel's own 128-bit cell width: an edge's
+        // amount because that is what an amount is, an order key whatever
+        // the logical key it was derived from.
+        Need::Amount(_) | Need::Derived(Term::OrderKey { .. }) => Shape::Cell(Box::new(
+            syn::parse_quote!(::hyperscale_vm_sdk::state::Amount),
+        )),
         Need::Derived(Term::Arg(index)) => {
             params
                 .get(*index as usize)

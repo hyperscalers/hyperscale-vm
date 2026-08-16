@@ -1,4 +1,4 @@
-//! The lottery guest: entries into a pot, and a winner chosen by the
+//! The lottery: entries into a pot, and a winner chosen by the
 //! transaction's randomness draw.
 //!
 //! The draw is the only thing here that could not be written some other
@@ -19,56 +19,71 @@
 //! for the same reason.
 //!
 //! Paying the pot out to the winner is a later leg this package does not
-//! have. What it settles is who won, which is the part randomness
-//! decides.
+//! have. What it settles is who won, which is the part randomness decides.
 
-wit_bindgen::generate!({
-    path: ["../../crates/sdk/wit/deps/kernel", "wit"],
-    world: "test:guest/lottery",
-    generate_all,
-});
+use hyperscale_vm_sdk::blueprint;
 
-use hyperscale::kernel::env::randomness;
-use hyperscale::kernel::events::emit;
-use hyperscale::kernel::state::{
-    delta_cell_add, range_read_count, range_read_entry, range_write_insert, write_cell_set,
-};
+#[blueprint]
+pub mod lottery {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed, Unordered, randomness};
 
-/// The lottery's event table: the indexes a consumer resolves against
-/// this package's metadata.
-const ENTERED: u32 = 0;
-const DRAWN: u32 = 1;
+    /// Somebody took a ticket.
+    #[event]
+    struct Entered;
 
-struct Lottery;
+    /// The round settled on a draw.
+    #[event]
+    struct Drawn;
 
-impl Guest for Lottery {
-    fn enter(tickets: &RangeWrite, pot: &DeltaCell, order: Vec<u8>, who: Vec<u8>, amount: Vec<u8>) {
-        // The ticket holds the entrant, because the order key is a hash
-        // and a hash names no winner: the draw has to be able to say who
-        // it picked, not merely which slot.
-        range_write_insert(tickets, &order, &who);
-        delta_cell_add(pot, &amount);
-        emit(ENTERED, &who);
+    #[state]
+    struct Lottery {
+        /// One entry per entrant, at the entrant's hashed order, so a
+        /// second entry from one address lands on its own ticket. The
+        /// role is the package band's first, which is what
+        /// `package_role(0)` names.
+        #[role(16)]
+        tickets: Unordered<Vec<u8>>,
+        /// The settled round: the draw, and the entrant it selected.
+        #[role(17)]
+        outcome: Cell<Vec<u8>>,
+        #[role(1)]
+        vaults: Keyed<Amount>,
     }
 
-    fn draw(outcome: &WriteCell, tickets: &RangeRead) {
-        let draw = randomness();
-        let mut settled = draw.clone();
-        let entrants = range_read_count(tickets);
-        if entrants > 0 {
-            // The draw is 32 bytes and an index needs far fewer; the
-            // modulo's bias is over the top 128 bits of a space the
-            // entrant count never approaches.
-            let seed = u128::from_le_bytes(draw[..16].try_into().unwrap());
-            let winner = (seed % u128::from(entrants)) as u32;
-            settled.extend_from_slice(&range_read_entry(tickets, winner));
+    impl Lottery {
+        /// Take a ticket for `who`, staking `funds` into the pot.
+        pub fn enter(&mut self, who: Address, funds: Bucket) {
+            // The ticket holds the entrant, because the order key is a
+            // hash and a hash names no winner: the draw has to be able to
+            // say who it picked, not merely which slot.
+            self.tickets.at(who).set(who.to_bytes().to_vec());
+            self.vaults.at(funds.resource()).add(funds.amount());
+            Entered::emit(&who.to_bytes());
         }
-        // A round nobody entered still drew: the draw is recorded, no
-        // winner follows it, and the pot stands for the next round.
-        // Refusing here would let an empty round wedge the lottery.
-        write_cell_set(outcome, &settled);
-        emit(DRAWN, &settled);
+
+        /// Settle the round on the transaction's own randomness.
+        pub fn draw(&mut self) {
+            let draw = randomness();
+            let mut settled = draw.clone();
+            let tickets = self.tickets.sweep(0, 64);
+            let entrants = tickets.count();
+            if entrants > 0 {
+                // The draw is 32 bytes and an index needs far fewer; the
+                // modulo's bias is over the top 128 bits of a space the
+                // entrant count never approaches.
+                let seed = u128::from_le_bytes(draw[..16].try_into().unwrap());
+                // The remainder is below the entrant count, which is a
+                // `u32` to begin with.
+                #[allow(clippy::cast_possible_truncation)]
+                let winner = (seed % u128::from(entrants)) as u32;
+                settled.extend_from_slice(&tickets.entry(winner));
+            }
+            // A round nobody entered still drew: the draw is recorded, no
+            // winner follows it, and the pot stands for the next round.
+            // Refusing here would let an empty round wedge the lottery.
+            self.outcome.set(settled.clone());
+            Drawn::emit(&settled);
+        }
     }
 }
-
-export!(Lottery);

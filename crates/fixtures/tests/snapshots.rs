@@ -16,7 +16,7 @@
 use std::path::PathBuf;
 
 use hyperscale_vm_effects::PackageMetadata;
-use hyperscale_vm_fixtures::{amm, book};
+use hyperscale_vm_fixtures::{amm, book, lottery};
 
 fn snapshot(name: &str, metadata: &PackageMetadata) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -53,4 +53,9 @@ fn the_pool_declares_what_its_snapshot_records() {
 #[test]
 fn the_book_declares_what_its_snapshot_records() {
     snapshot("book", &book::metadata());
+}
+
+#[test]
+fn the_lottery_declares_what_its_snapshot_records() {
+    snapshot("lottery", &lottery::metadata());
 }

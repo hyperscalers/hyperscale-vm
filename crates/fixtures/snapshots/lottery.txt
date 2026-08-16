@@ -1,0 +1,141 @@
+PackageMetadata {
+    methods: {
+        "draw": MethodSignature {
+            accessibility: Public,
+            totality: Infallible,
+            mints: None,
+            params: [],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Range {
+                        owner: SelfAddr,
+                        collection: RoleId(
+                            16,
+                        ),
+                        material: [],
+                        lo: Literal(
+                            U64(
+                                0,
+                            ),
+                        ),
+                        hi: Literal(
+                            U128(
+                                340282366920938463463374607431768211455,
+                            ),
+                        ),
+                        cap: 64,
+                    },
+                    mode: Read,
+                },
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                17,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Handle(
+                    1,
+                ),
+            ],
+            calls: [],
+        },
+        "enter": MethodSignature {
+            accessibility: Public,
+            totality: Infallible,
+            mints: None,
+            params: [
+                Address,
+                Bucket,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Entry {
+                        owner: SelfAddr,
+                        collection: RoleId(
+                            16,
+                        ),
+                        material: [],
+                        order: OrderKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                16,
+                            ),
+                            material: [
+                                Arg(
+                                    0,
+                                ),
+                            ],
+                        },
+                    },
+                    mode: Write,
+                },
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                1,
+                            ),
+                            material: [
+                                ResourceOf(
+                                    Arg(
+                                        1,
+                                    ),
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Delta,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Handle(
+                    1,
+                ),
+                Derived(
+                    OrderKey {
+                        owner: SelfAddr,
+                        role: RoleId(
+                            16,
+                        ),
+                        material: [
+                            Arg(
+                                0,
+                            ),
+                        ],
+                    },
+                ),
+                Derived(
+                    Arg(
+                        0,
+                    ),
+                ),
+                Bucket(
+                    1,
+                ),
+            ],
+            calls: [],
+        },
+    },
+    events: [
+        "entered",
+        "drawn",
+    ],
+    errors: [],
+}

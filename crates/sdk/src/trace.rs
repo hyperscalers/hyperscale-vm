@@ -227,6 +227,21 @@ impl Trace {
         }
     }
 
+    /// The order an unordered collection places `key` at: the hash of
+    /// the key salted by the collection's owner and role.
+    ///
+    /// The derivation is the kernel's, so a guest that has to name the
+    /// entry is handed the answer rather than asked to rebuild it — which
+    /// is what lets an unordered collection have an executing body at all.
+    #[must_use]
+    pub fn order_key<K: Kind>(&self, collection: RoleId, key: &Sym<K>) -> Sym<Amount> {
+        Sym::new(Expr::OrderKey {
+            owner: Box::new(Expr::SelfAddr),
+            role: collection,
+            material: vec![self.lower(key.expr().clone())],
+        })
+    }
+
     /// Declare accesses to one unordered-collection entry: the entry at
     /// the hash of `key`, salted by the collection's owner and role.
     #[must_use]

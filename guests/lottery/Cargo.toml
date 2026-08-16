@@ -5,10 +5,13 @@ edition = "2024"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 wit-bindgen = "=0.60.0"
+# The contract SDK. `#[blueprint]` is what authors this package: the
+# declaration on a host build, the component on a guest one.
+hyperscale-vm-sdk = { path = "../../crates/sdk" }
 
 [profile.release]
 opt-level = "s"

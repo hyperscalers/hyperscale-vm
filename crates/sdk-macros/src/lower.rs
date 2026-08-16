@@ -617,9 +617,11 @@ impl<'a> Lowerer<'a> {
             // of those, evaluated from the declaration rather than taken
             // from the guest, so a body that reads one cannot disagree
             // with what its signature says the edge carries.
-            Term::Arg(_) | Term::Config(_) | Term::FreshId(_) | Term::ResourceOf(_) => {
-                self.need(&Need::Derived(term.clone()))
-            }
+            Term::Arg(_)
+            | Term::Config(_)
+            | Term::FreshId(_)
+            | Term::ResourceOf(_)
+            | Term::OrderKey { .. } => self.need(&Need::Derived(term.clone())),
             Term::Lookup { .. } | Term::Field(..) | Term::Binding(_) => {
                 self.refuse(
                     "this term is evaluated where the declaration is, and the guest \
@@ -1584,14 +1586,14 @@ impl<'a> Lowerer<'a> {
                         },
                         field.element.clone(),
                     );
-                    // The order is the hash of the key salted by owner and
-                    // role, which is the kernel's derivation and not one a
-                    // guest can rebuild from what it is handed.
-                    self.refuse(
-                        "an unordered collection's entry sits at a hash the kernel \
-                         derives, so a guest cannot name it",
-                    );
-                    self.slot(site, call.span())
+                    // The order is the kernel's hash over owner, role and
+                    // key. A guest cannot rebuild it, so it is handed one:
+                    // the same evaluation admission runs, bound as a value.
+                    let order = Term::OrderKey {
+                        role,
+                        key: Box::new(key.clone()),
+                    };
+                    self.entry(site, &order, call.span())
                 } else {
                     self.error(
                         call.args.span(),

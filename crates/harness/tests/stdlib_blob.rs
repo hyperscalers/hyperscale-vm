@@ -481,12 +481,12 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &compiled)?;
     let draw = instance
-        .get_typed_func::<(Resource<WriteCell>, Resource<RangeRead>), ()>(&mut store, "draw")?;
+        .get_typed_func::<(Resource<RangeRead>, Resource<WriteCell>), ()>(&mut store, "draw")?;
     draw.call(
         &mut store,
         (
-            Resource::new_borrow(outcome_rep),
             Resource::new_borrow(round_rep),
+            Resource::new_borrow(outcome_rep),
         ),
     )?;
     let fuel = enter_fuel + (FUEL - store.get_fuel()?);
@@ -543,8 +543,8 @@ fn reference_round() -> Result<(Receipt, u64)> {
     let outcome = instance.invoke(
         "draw",
         &[
-            CVal::Borrow(outcome_rep, ResourceKind::WriteCell),
             CVal::Borrow(round_rep, ResourceKind::RangeRead),
+            CVal::Borrow(outcome_rep, ResourceKind::WriteCell),
         ],
     )?;
     outcome.map_err(|trap| wasmtime::error::format_err!("draw trapped: {trap:?}"))?;

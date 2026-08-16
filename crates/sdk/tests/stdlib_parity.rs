@@ -18,10 +18,9 @@
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
 use hyperscale_vm_effects::{PackageMetadata, ParamType, RoleId};
 use hyperscale_vm_fixtures::{
-    amm as amm_package, book as book_package, lottery as lottery_package,
-    splitter as splitter_package,
+    amm as amm_package, book as book_package, splitter as splitter_package,
 };
-use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Num, Opaque, Sym, lit_u64, lit_u128, pack};
+use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Num, Sym, lit_u64, pack};
 use hyperscale_vm_sdk::{Blueprint, Trace};
 use hyperscale_vm_stdlib::account as account_package;
 
@@ -169,47 +168,6 @@ fn book() -> Blueprint {
         .build()
 }
 
-/// The lottery: an entry at the entrant's hashed order beside the pot,
-/// and a draw over the whole entrants interval.
-fn lottery() -> Blueprint {
-    Blueprint::builder()
-        .method(
-            "enter",
-            &[ParamType::Address, ParamType::Bucket],
-            |t: &mut Trace| {
-                let who: Sym<Addr> = t.arg(0);
-                let stake: Sym<Bucket> = t.arg(1);
-                let venue = t.self_addr();
-
-                // The ticket is the unordered-collection shape: one entry
-                // at the hash of the entrant, so entering twice lands on
-                // the same ticket.
-                let key: Sym<Opaque> = who.cast();
-                t.keyed_entry(&venue, lottery_package::TICKETS, &key)
-                    .write();
-
-                let pot = venue.child(VAULT, &[stake.resource().cast()]);
-                t.point(&pot).delta();
-            },
-        )
-        .method("draw", &[], |t: &mut Trace| {
-            let venue = t.self_addr();
-            let outcome = venue.child(lottery_package::DRAW, &[]);
-            t.point(&outcome).write();
-            // The whole order space: a round is every entrant in it, and
-            // no argument narrows what a draw may select from.
-            t.range(
-                &venue,
-                lottery_package::TICKETS,
-                &lit_u128(0),
-                &lit_u128(u128::MAX),
-                lottery_package::ROUND_CAP,
-            )
-            .read();
-        })
-        .build()
-}
-
 /// The bucket splitter: two output edges, no effects at all.
 fn splitter() -> Blueprint {
     Blueprint::builder()
@@ -279,11 +237,6 @@ fn the_book_traces_to_its_authored_signature() {
 }
 
 #[test]
-fn the_lottery_traces_to_its_authored_signature() {
-    assert_parity(&lottery(), &lottery_package::metadata(), "lottery");
-}
-
-#[test]
 fn the_splitter_traces_to_its_authored_signature() {
     assert_parity(&splitter(), &splitter_package::metadata(), "splitter");
 }
@@ -292,18 +245,13 @@ fn the_splitter_traces_to_its_authored_signature() {
 fn every_authored_role_is_reachable_from_the_sdk() {
     // A guard on the fixtures rather than on the SDK: if a role is added to
     // the stdlib and no traced declaration names it, the parity tests above
-    // are silently covering less than they read as covering.
-    let named = [
-        VAULT,
-        CLAIMS,
-        CONFIG,
-        book_package::ASKS,
-        lottery_package::TICKETS,
-        lottery_package::DRAW,
-    ];
+    // are silently covering less than they read as covering. A package
+    // traced from its own module needs no entry — there is no second
+    // declaration left to cover.
+    let named = [VAULT, CLAIMS, CONFIG, book_package::ASKS];
     assert_eq!(
         named.len(),
-        6,
+        4,
         "a role was added to the stdlib without a traced declaration to match"
     );
     assert!(named.iter().all(|r| *r != RoleId(0)));

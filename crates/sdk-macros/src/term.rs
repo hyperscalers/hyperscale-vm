@@ -53,6 +53,14 @@ pub enum Term {
     /// parameter carrying that id have to be the same draw, so the term
     /// names the site rather than re-drawing at every use.
     FreshId(usize),
+    /// The order an unordered collection places a key at: the kernel's
+    /// hash over the collection's owner, role and the key.
+    OrderKey {
+        /// The collection's role.
+        role: u16,
+        /// The logical key.
+        key: Box<Self>,
+    },
     /// A `u64` literal.
     LitU64(u64),
     /// The element of an enclosing `for`, by absolute nesting depth.
@@ -102,6 +110,13 @@ impl Term {
             Self::FreshId(site) => {
                 let ident = fresh_ident(*site);
                 quote!(#ident.clone().cast::<::hyperscale_vm_sdk::Opaque>())
+            }
+            Self::OrderKey { role, key } => {
+                let key = key.emit();
+                quote!(
+                    __t.order_key(::hyperscale_vm_sdk::RoleId(#role), &#key)
+                        .cast::<::hyperscale_vm_sdk::Opaque>()
+                )
             }
             Self::LitU64(value) => quote!(
                 ::hyperscale_vm_sdk::sym::lit_u64(#value)
