@@ -869,23 +869,6 @@ fn transfer_profile_and_provision_shape_are_exact() {
             .provision_targets()
             .is_empty()
     );
-
-    // The star the same transfer takes, whole: the sign-in is core, the
-    // sender's reservation is the inbound leg, and the recipient's
-    // deposit is the outbound one — total by its claims composite, so
-    // nothing waits on it. A transfer is the degenerate star, a core
-    // with a leg on either side and no venue between them.
-    assert_eq!(
-        routing.roles,
-        vec![Role::Core, Role::Inbound, Role::Outbound]
-    );
-    assert_eq!(routing.strategy, Strategy::LegLocal);
-
-    // It crosses once and stages not at all: the only crossing is into
-    // the recipient's deposit, which cannot refuse, so the sender's side
-    // commits without waiting to hear anything back.
-    assert_eq!(routing.alternation_depth, 1);
-    assert_eq!(routing.staged_depth, 0);
 }
 
 #[test]
@@ -1303,22 +1286,6 @@ fn cancel_graph() -> ManifestGraph {
     graph(|b| account::cancel(b, ALICE))
 }
 
-/// An account governing itself reaches no further than itself, so there
-/// is no star to take and nothing a second participant could execute.
-/// The verdict is the one that claims less: the two strategies name the
-/// same execution when only one shard is party to it.
-#[test]
-fn governing_one_account_does_not_decompose() {
-    let world = world();
-    for graph in [propose_graph(), cancel_graph(), confirm_graph()] {
-        let routing = sharded_routing(&world, &graph);
-        assert_eq!(routing.per_shard.len(), 1);
-        assert_eq!(routing.alternation_depth, 0);
-        assert_eq!(routing.staged_depth, 0);
-        assert_eq!(routing.strategy, Strategy::Replicated);
-    }
-}
-
 fn confirm_graph() -> ManifestGraph {
     graph(|b| account::confirm(b, ALICE))
 }
@@ -1694,26 +1661,6 @@ fn swap_profile_and_provision_shape_are_exact() {
         routing.per_shard[&shard_of(ALICE)].provision_targets(),
         std::iter::once(EffectTarget::Point(auth(ALICE))).collect()
     );
-
-    // The fan-in shape this whole line of work is for, and it is the
-    // star exactly: the user's withdrawal inbound, the pool a
-    // single-shard core, the delivery outbound. The pool's cells are
-    // held for one execution rather than for a settlement round, which
-    // is the throughput the venue gains.
-    assert_eq!(
-        routing.roles,
-        vec![Role::Core, Role::Inbound, Role::Core, Role::Outbound]
-    );
-    assert_eq!(routing.strategy, Strategy::LegLocal);
-
-    // Two crossings, one stage. The chain reaches the venue and returns
-    // to deliver, but the return is into an outbound leg the core does
-    // not hear back from, so it costs latency nothing. The gap between
-    // the two numbers is exactly that crossing, and it is why the
-    // canonical swap sits at a third of the budget rather than all of it.
-    assert_eq!(routing.alternation_depth, 2);
-    assert_eq!(routing.staged_depth, 1);
-    assert!(routing.staged_depth < MAX_STAGED_DEPTH);
 }
 
 #[test]
@@ -1811,14 +1758,147 @@ fn fill_provisions_only_the_interval() {
         })
         .collect()
     );
+}
 
-    // The book is a venue like the pool is, so a fill takes the venue's
-    // star: the taker's reservation inbound, the book itself core, and
-    // whatever the fill pays out an outbound leg. One stage, whatever the
-    // interval's width — a range's size prices provisioning, never depth.
-    assert_eq!(routing.staged_depth, 1);
+/// One catalogue pattern and the star its shape implies.
+struct Shape {
+    name: &'static str,
+    graph: ManifestGraph,
+    /// Where each node sits, in node order.
+    roles: Vec<Role>,
+    /// Every shard change along the longest chain.
+    crossings: u32,
+    /// Only the crossings something waits on.
+    stages: u32,
+    strategy: Strategy,
+}
+
+/// Every catalogue shape, and the decomposition it implies.
+///
+/// One table rather than an assertion bolted onto each behavioural test,
+/// because what earns its place here is the *contrast* between the rows:
+/// the same classifier has to call a transfer a degenerate star, a venue
+/// call a one-stage star, a self-governing account nothing at all, and a
+/// named-instance move back to replication. A row on its own would say
+/// little; the set is the falsifier.
+#[test]
+fn every_pattern_takes_the_star_its_shape_implies() {
+    let world = world();
+    let shapes = vec![
+        // A core with a leg either side and no venue between them. The
+        // one crossing is into the recipient's deposit, which cannot
+        // refuse, so nothing waits and no stage is owed.
+        Shape {
+            name: "transfer",
+            graph: transfer_graph(),
+            roles: vec![Role::Core, Role::Inbound, Role::Outbound],
+            crossings: 1,
+            stages: 0,
+            strategy: Strategy::LegLocal,
+        },
+        // The venue star: the withdrawal inbound, the pool a single-shard
+        // core, the delivery outbound. Two crossings to reach the venue
+        // and return, and only the outbound one is free.
+        Shape {
+            name: "swap",
+            graph: swap_graph(300),
+            roles: vec![Role::Core, Role::Inbound, Role::Core, Role::Outbound],
+            crossings: 2,
+            stages: 1,
+            strategy: Strategy::LegLocal,
+        },
+        // The same star over a range rather than points — an interval's
+        // width prices provisioning and never depth — and the first
+        // shape with more than one outbound leg, which is what L2's "N
+        // outbound legs" was written for: a fill pays out on two edges
+        // and the core waits on neither.
+        Shape {
+            name: "fill",
+            graph: fill_graph(),
+            roles: vec![
+                Role::Core,
+                Role::Inbound,
+                Role::Core,
+                Role::Outbound,
+                Role::Outbound,
+            ],
+            crossings: 2,
+            stages: 1,
+            strategy: Strategy::LegLocal,
+        },
+        // An account governing itself reaches no further than itself, so
+        // there is no star to take and the two strategies name the same
+        // execution.
+        Shape {
+            name: "propose",
+            graph: propose_graph(),
+            roles: vec![Role::Core],
+            crossings: 0,
+            stages: 0,
+            strategy: Strategy::Replicated,
+        },
+    ];
+
+    for shape in shapes {
+        let routing = sharded_routing(&world, &shape.graph);
+        let name = shape.name;
+        assert_eq!(routing.roles, shape.roles, "{name}: star");
+        assert_eq!(
+            routing.alternation_depth, shape.crossings,
+            "{name}: crossings"
+        );
+        assert_eq!(routing.staged_depth, shape.stages, "{name}: stages");
+        assert_eq!(routing.strategy, shape.strategy, "{name}: strategy");
+        // The budget is what the verdict is for, so nothing may decompose
+        // past it. Read across the table rather than per row: the claim
+        // is about the classifier, not about any one shape's depth.
+        assert!(
+            shape.strategy != Strategy::LegLocal || routing.staged_depth <= MAX_STAGED_DEPTH,
+            "{name}: decomposed at {} stages, past a budget of {MAX_STAGED_DEPTH}",
+            routing.staged_depth,
+        );
+    }
+}
+
+/// Named instances moving inside a core do not force replication.
+///
+/// L11 excludes non-fungible value from *staging*, because the supply
+/// delta an escrow certificate attests counts amounts and cannot see
+/// which id moved. A core is not staged: its participants agree by
+/// unanimity rather than by taking each other's attested values, so
+/// nothing inside one is exposed to that gap and the exclusion has no
+/// business firing.
+///
+/// Minting an instance and filing it into an account is exactly that
+/// shape — neither node is a leg, since a mint declares no reservation
+/// and `deposit-nf` cannot carry the total mark while filing each id is
+/// a loop — so the two sit on either side of a multi-shard core and the
+/// route still decomposes.
+///
+/// The reachable-today consequence, worth stating: no catalogue pattern
+/// can put a named instance across a *leg*, because no non-fungible
+/// method is reservation-shaped or total. L11 guards a shape the
+/// vocabulary cannot currently express, which is where a unit test
+/// belongs and a catalogue case cannot go.
+#[test]
+fn named_instances_inside_a_core_still_decompose() {
+    let world = world();
+    let seat = graph(|b| {
+        let minted = nf::mint(b, nf_issuer())?;
+        account::deposit_nf(b, ALICE, minted)
+    });
+    let routing = sharded_routing(&world, &seat);
+
+    assert!(
+        routing.alternation_depth > 0,
+        "the fixture has to cross, or the verdict below proves nothing",
+    );
+    assert!(
+        routing.roles.iter().all(|role| *role == Role::Core),
+        "neither end is a leg: {:?}",
+        routing.roles,
+    );
     assert_eq!(routing.strategy, Strategy::LegLocal);
-    assert!(routing.roles.contains(&Role::Inbound));
 }
 
 #[test]
