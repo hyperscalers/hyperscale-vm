@@ -13,16 +13,26 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, TypedBuilder, TypedError};
 
+/// The code `swap` declines with when the output misses its floor.
+pub const SLIPPAGE_EXCEEDED: u32 = 0;
+
 /// `swap(input, min_out)`: a locked read of the pool's
 /// configuration and exclusive writes on its two reserve leaves, named by
 /// the creation-fixed resource pair.
+///
+/// The only fallible method in the corpus, and deliberately: the floor
+/// its signature declares is the one failure a pool can meet without
+/// anyone having done anything wrong.
 #[must_use]
 pub fn metadata() -> PackageMetadata {
-    let mut methods = PackageMetadata::default();
+    let mut methods = PackageMetadata {
+        errors: vec!["slippage-exceeded".into()],
+        ..PackageMetadata::default()
+    };
     methods.methods.insert(
         "swap".into(),
         MethodSignature {
-            totality: Totality::Infallible,
+            totality: Totality::Fallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::Bucket, ParamType::U128],

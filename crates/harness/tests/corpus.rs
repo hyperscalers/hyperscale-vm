@@ -430,6 +430,10 @@ enum TxResult {
     /// Compared whole: the vocabulary is closed, so the two lanes
     /// disagreeing here is a divergence rather than a wording difference.
     Trapped(AbortReason),
+    /// The package declined on its own terms, with an index into its
+    /// error table. Not a defect and not the kernel's refusal: the guest
+    /// ran to completion and said no.
+    Declined(u32),
     /// The kernel refused, before or around the call.
     Refused(Outcome),
 }
@@ -541,6 +545,7 @@ fn execute_manifest(
             Ok((TxResult::Completed(receipt), threaded.collapse_onto(before)))
         }
         Outcome::UserError { reason } => Ok((TxResult::Trapped(reason), before)),
+        Outcome::Declined { code, .. } => Ok((TxResult::Declined(code), before)),
         refused => Ok((TxResult::Refused(refused), before)),
     }
 }
@@ -1718,12 +1723,19 @@ fn swap_executes_with_real_pool_math_on_both_runtimes() -> Result<()> {
     Ok(())
 }
 
+/// The floor is declined, not trapped, and the two lanes reach the same
+/// code.
+///
+/// The distinction is the whole of A1: 332 out cannot cover a 400 floor,
+/// which is a race the sender lost between signing and execution rather
+/// than a defect it committed. The abort is still whole-transaction —
+/// nothing moves, and the manifest does not branch on the arm — but the
+/// receipt records what happened instead of a wasm backtrace, and the
+/// fee schedule prices it as the lost race.
 #[test]
-fn a_violated_output_floor_traps_identically() -> Result<()> {
+fn a_violated_output_floor_declines_identically() -> Result<()> {
     let world = world();
     let engines = Engines::build()?;
-    // 332 out cannot cover a 400 floor: the guest's assert is a
-    // deterministic user-error trap on both runtimes, and no state moves.
     let graph = swap_graph(400);
     let (results, mut final_store) = run_both(
         &engines,
@@ -1731,7 +1743,12 @@ fn a_violated_output_floor_traps_identically() -> Result<()> {
         &swap_store(),
         &[(&graph, TxHash(Hash32([0x03; 32])))],
     );
-    assert_eq!(results[0], TxResult::Trapped(AbortReason::Unreachable));
+    assert_eq!(results[0], TxResult::Declined(amm::SLIPPAGE_EXCEEDED));
+    assert_eq!(
+        amm::metadata().errors[amm::SLIPPAGE_EXCEEDED as usize],
+        "slippage-exceeded",
+        "the code is an index into the table the package published",
+    );
     assert_eq!(amount_of(&mut final_store, vault(pool(), RES_X)), 1_000);
     assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 600);
     Ok(())

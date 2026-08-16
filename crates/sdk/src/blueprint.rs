@@ -169,7 +169,11 @@ impl Blueprint {
                 .iter()
                 .map(|(name, m)| (name.clone(), m.signature.clone()))
                 .collect(),
+            // Neither name table is something a trace can see: both are
+            // authored beside the WIT, like the totality mark whose arm
+            // the error table indexes.
             events: Vec::new(),
+            errors: Vec::new(),
         }
     }
 }

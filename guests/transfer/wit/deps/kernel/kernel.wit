@@ -3,6 +3,16 @@
 /// handles the kernel materializes per transaction, and each mode of the
 /// effect lattice is its own resource type, so an undeclared mode is as
 /// inexpressible as an undeclared key: there is no handle type to receive.
+///
+/// What a contract *exports* is not declared here — each package owns its
+/// own world — but the shapes admitted there are fixed and worth naming
+/// beside the imports. A method takes handles, `list<u8>` values and
+/// `u64` scalars, and returns `list<u8>`, nothing, or one of those
+/// wrapped in `result<_, u32>`. The error arm is the declared refusal
+/// channel: the `u32` indexes the package's own error table, and
+/// returning on it aborts the transaction as a declared refusal rather
+/// than as a defect. A method with no arm cannot decline, and the publish
+/// gate holds each signature's totality mark to whichever its export is.
 package hyperscale:kernel;
 
 /// Declared-state access, one resource per mode. Amounts and order keys

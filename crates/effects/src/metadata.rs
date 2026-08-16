@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use hyperscale_hbor::{EncodeError, Hbor, to_vec};
-use hyperscale_vm_types::MAX_EVENT_TYPES;
+use hyperscale_vm_types::{MAX_ERROR_CODES, MAX_EVENT_TYPES};
 use thiserror::Error;
 
 use crate::PACKAGE_ROLE_BASE;
@@ -692,6 +692,12 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
             metadata.events.len()
         )));
     }
+    if metadata.errors.len() > MAX_ERROR_CODES as usize {
+        return Err(MetadataBoundsError(format!(
+            "error table names {} codes, past the {MAX_ERROR_CODES} a declined code can reach",
+            metadata.errors.len()
+        )));
+    }
     for (name, signature) in &metadata.methods {
         check_signature_bounds(signature)
             .map_err(|error| MetadataBoundsError(format!("method {name:?}: {}", error.0)))?;
@@ -874,6 +880,15 @@ pub struct PackageMetadata {
     /// what lets a consumer name what it read, and it can only mean one
     /// thing because a package is content-addressed and immutable.
     pub events: Vec<String>,
+    /// The package's error names, in the index order a declined
+    /// invocation's code refers to.
+    ///
+    /// The same shape as [`events`](Self::events) and for the same
+    /// reasons: the kernel bounds a returned code without resolving it,
+    /// the table is what turns that code into something a wallet can
+    /// render, and immutability is what stops an index coming to mean
+    /// something else. Empty for a package whose methods cannot decline.
+    pub errors: Vec<String>,
 }
 
 /// The content-addressed metadata cache. An entry never invalidates —
@@ -1225,15 +1240,28 @@ mod tests {
         );
     }
 
+    /// Both name tables are bounded by the index that reaches them: the
+    /// kernel checks an emitted event type and a returned error code
+    /// without holding the metadata, so a table longer than the ceiling
+    /// would name entries nothing could ever refer to.
     #[test]
-    fn an_event_table_past_the_index_the_kernel_accepts_is_refused() {
-        let table = |len: usize| PackageMetadata {
-            methods: BTreeMap::new(),
+    fn a_name_table_past_the_index_the_kernel_accepts_is_refused() {
+        let events = |len: usize| PackageMetadata {
             events: vec![String::new(); len],
+            ..PackageMetadata::default()
         };
         assert_bounded(
-            &table(MAX_EVENT_TYPES as usize),
-            &table(MAX_EVENT_TYPES as usize + 1),
+            &events(MAX_EVENT_TYPES as usize),
+            &events(MAX_EVENT_TYPES as usize + 1),
+        );
+
+        let errors = |len: usize| PackageMetadata {
+            errors: vec![String::new(); len],
+            ..PackageMetadata::default()
+        };
+        assert_bounded(
+            &errors(MAX_ERROR_CODES as usize),
+            &errors(MAX_ERROR_CODES as usize + 1),
         );
     }
 

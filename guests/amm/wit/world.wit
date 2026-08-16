@@ -7,13 +7,18 @@ world amm {
 
     use hyperscale:kernel/state.{locked-cell, write-cell};
 
-    /// Swap `input` against the pool; aborts unless the output covers
-    /// `min-out`. Returns the output amount.
+    /// Swap `input` against the pool. Returns the output amount, or
+    /// declines with an index into the package's error table when the
+    /// output does not cover `min-out`.
+    ///
+    /// The floor is a race the sender loses rather than a defect it
+    /// committed, so it is declared rather than trapped: a decline is
+    /// priced as the lost race, a trap as the sender's own fault.
     export swap: func(
         config: borrow<locked-cell>,
         reserve-in: borrow<write-cell>,
         reserve-out: borrow<write-cell>,
         input: list<u8>,
         min-out: list<u8>,
-    ) -> list<u8>;
+    ) -> result<list<u8>, u32>;
 }

@@ -1,6 +1,10 @@
 //! The constant-product pool guest: real read-modify-write over the two
 //! reserve cells, fee from the locked configuration, checked
 //! arithmetic throughout — any overflow is a deterministic trap.
+//!
+//! The output floor is the one failure it declares rather than traps.
+//! Missing it is a race the sender lost between signing and execution,
+//! not a defect, and the two are priced apart.
 
 wit_bindgen::generate!({
     path: "wit",
@@ -14,6 +18,9 @@ fn amount(bytes: &[u8]) -> u128 {
     bytes.try_into().map_or(0, u128::from_le_bytes)
 }
 
+/// The package's only error code: index 0 of its error table.
+const SLIPPAGE_EXCEEDED: u32 = 0;
+
 struct Amm;
 
 impl Guest for Amm {
@@ -23,7 +30,7 @@ impl Guest for Amm {
         reserve_out: &WriteCell,
         input: Vec<u8>,
         min_out: Vec<u8>,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, u32> {
         let raw = locked_cell_get(config);
         let fee_bps = u64::from(u16::from_le_bytes(raw[..2].try_into().unwrap()));
         let x = amount(&write_cell_get(reserve_in));
@@ -38,11 +45,13 @@ impl Guest for Amm {
             .checked_mul(dx_effective)
             .unwrap()
             / x.checked_add(dx_effective).unwrap();
-        assert!(out >= amount(&min_out), "output below the declared floor");
+        if out < amount(&min_out) {
+            return Err(SLIPPAGE_EXCEEDED);
+        }
 
         write_cell_set(reserve_in, &(x + dx).to_le_bytes());
         write_cell_set(reserve_out, &(y - out).to_le_bytes());
-        out.to_le_bytes().to_vec()
+        Ok(out.to_le_bytes().to_vec())
     }
 }
 
