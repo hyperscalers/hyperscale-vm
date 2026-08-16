@@ -14,9 +14,10 @@ use std::path::PathBuf;
 use hyperscale_vm_cli::{artifact, declaration};
 use hyperscale_vm_gate::extract_metadata;
 
-/// The packages authored as one module apiece: three that mirror the
-/// corpus, and one whose whole content is the shapes the grammar admits.
-const PACKAGES: &[&str] = &["derived-account", "derived-amm", "derived-book", "grammar"];
+/// The packages authored as one module apiece: the corpus's own, the
+/// account's derived twin while its own guest is still hand-written, and
+/// one whose whole content is the shapes the grammar admits.
+const PACKAGES: &[&str] = &["amm", "book", "derived-account", "grammar"];
 
 fn guests() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

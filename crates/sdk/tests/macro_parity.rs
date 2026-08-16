@@ -4,14 +4,15 @@
 //!
 //! Same bar as `stdlib_parity`, one level higher up. There the declarations
 //! were written against the builder API and compared to the authored
-//! fixtures. Here nobody writes a declaration at all — the contracts below
-//! are contracts, and `#[blueprint]` derives the metadata from their
-//! bodies. The comparison is still whole-structure equality against
-//! `vm-effects::stdlib`.
+//! fixtures. Here nobody writes a declaration at all — the contract below
+//! is a contract, and `#[blueprint]` derives the metadata from its body.
+//! The comparison is still whole-structure equality against the authored
+//! form.
 //!
-//! Everything that survives is therefore true of the derived form too: the
-//! fixtures are routed under test elsewhere in the workspace, and these
-//! packages are byte-identical to them.
+//! Only the account is left to compare. amm and book are traced by their
+//! own fixtures now, so a comparison against them would be a thing
+//! compared to itself; what guards those is a committed snapshot of what
+//! the derivation produces, in `crates/fixtures`.
 
 // The contracts below are read by `#[blueprint]`, never called: what these
 // tests exercise is the metadata derived from the bodies, and the derivation
@@ -19,30 +20,19 @@
 // its methods are the package's exported surface, so nothing is dead there —
 // the appearance is an artifact of a contract living inside a test binary.
 #![allow(dead_code)]
-// `&mut self` is the contract's own statement that a method mutates
-// component state. That the host-side stub handles in `sdk::state` happen to
-// take `&self` is an artifact of their being unimplemented off-guest, not a
-// reason to narrow a contract's signature.
-#![allow(clippy::needless_pass_by_ref_mut)]
 
 use hyperscale_vm_effects::{PackageMetadata, Totality};
-use hyperscale_vm_fixtures::{amm as amm_package, book as book_package};
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_stdlib::account as account_package;
 
-// The three packages are contract crates, built to real components by
-// `crates/harness`. Read here rather than copied, so what this compares
-// is the artifact's own module and not a second one that resembles it.
+// The account is the one package still authored twice: its own guest is
+// hand-written, so a derived module beside it is what says the two agree.
+// Read rather than copied, so what this compares is the artifact's own
+// module and not a second one that resembles it.
 #[path = "../../../guests/derived-account/src/lib.rs"]
 mod derived_account;
-#[path = "../../../guests/derived-amm/src/lib.rs"]
-mod derived_amm;
-#[path = "../../../guests/derived-book/src/lib.rs"]
-mod derived_book;
 
 use derived_account::account;
-use derived_amm::amm;
-use derived_book::book;
 
 /// Compare everything a body determines — the ABI binding included.
 ///
@@ -116,26 +106,6 @@ fn the_account_body_derives_its_authored_signature() {
         &authored,
         "account",
         &["deposit"],
-    );
-}
-
-#[test]
-fn the_pool_body_derives_its_authored_signature() {
-    assert_derived(
-        &amm::blueprint().metadata(),
-        &amm_package::metadata(),
-        "amm",
-        &[],
-    );
-}
-
-#[test]
-fn the_book_body_derives_its_authored_signature() {
-    assert_derived(
-        &book::blueprint().metadata(),
-        &book_package::metadata(),
-        "book",
-        &[],
     );
 }
 

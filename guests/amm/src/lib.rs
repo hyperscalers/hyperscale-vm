@@ -1,56 +1,69 @@
-//! The constant-product pool guest: real read-modify-write over the two
-//! reserve cells, fee from the evaluated configuration slot, checked
-//! arithmetic throughout — any overflow is a deterministic trap.
+//! The constant-product pool, as one module.
 //!
-//! The output floor is the one failure it declares rather than traps.
-//! Missing it is a race the sender lost between signing and execution,
-//! not a defect, and the two are priced apart.
+//! Nothing here is written twice: the declaration routing reads, the WIT
+//! world, the ABI binding and the executing component all come out of the
+//! bodies below.
+//!
+//! Checked arithmetic throughout — an overflow is a deterministic trap
+//! rather than a wrap, which release-mode arithmetic would otherwise give
+//! it.
 
-wit_bindgen::generate!({
-    path: ["../../crates/sdk/wit/deps/kernel", "wit"],
-    world: "test:guest/amm",
-    generate_all,
-});
+use hyperscale_vm_sdk::blueprint;
 
-use hyperscale::kernel::state::{write_cell_get, write_cell_set};
+#[blueprint]
+pub mod amm {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Amount, Bucket, Keyed, Locked};
 
-fn amount(bytes: &[u8]) -> u128 {
-    bytes.try_into().map_or(0, u128::from_le_bytes)
-}
-
-/// The package's only error code: index 0 of its error table.
-const SLIPPAGE_EXCEEDED: u32 = 0;
-
-struct Amm;
-
-impl Guest for Amm {
-    fn swap(
-        reserve_in: &WriteCell,
-        reserve_out: &WriteCell,
-        input: Vec<u8>,
+    /// The pool's creation-fixed configuration: the pair it trades and
+    /// the fee it takes.
+    struct Settings {
+        x: Address,
+        y: Address,
         fee_bps: u64,
-        min_out: Vec<u8>,
-    ) -> Result<Vec<u8>, u32> {
-        let x = amount(&write_cell_get(reserve_in));
-        let y = amount(&write_cell_get(reserve_out));
-        let dx = amount(&input);
+    }
 
-        let dx_effective = dx
-            .checked_mul(u128::from(10_000 - fee_bps))
-            .unwrap()
-            / 10_000;
-        let out = y
-            .checked_mul(dx_effective)
-            .unwrap()
-            / x.checked_add(dx_effective).unwrap();
-        if out < amount(&min_out) {
-            return Err(SLIPPAGE_EXCEEDED);
+    /// What a swap declines with when the output misses its floor.
+    ///
+    /// A race the sender lost between signing and execution rather than
+    /// a defect it committed, so it is declared rather than trapped.
+    #[error]
+    enum Error {
+        SlippageExceeded,
+    }
+
+    #[state]
+    struct Amm {
+        #[role(3)]
+        config: Locked<Settings>,
+        #[role(1)]
+        vaults: Keyed<Amount>,
+    }
+
+    impl Amm {
+        /// Swap `input` against the pool, returning the bought side.
+        pub fn swap(&mut self, input: Bucket, min_out: u128) -> Result<Bucket, Error> {
+            // Pins the whole configuration record: the fee is read from it,
+            // so the swap wants it stable, not merely consulted.
+            let settings = self.config.locked();
+            let mut sold = self.vaults.at(settings.x);
+            let mut bought = self.vaults.at(settings.y);
+
+            let x = sold.get();
+            let y = bought.get();
+            let dx = input
+                .amount()
+                .checked_mul(u128::from(10_000 - settings.fee_bps))
+                .unwrap()
+                / 10_000;
+            let out = y.checked_mul(dx).unwrap() / x.checked_add(dx).unwrap();
+            if out < min_out {
+                return Err(Error::SlippageExceeded);
+            }
+
+            sold.set(x.checked_add(input.amount()).unwrap());
+            bought.set(y - out);
+            Ok(Bucket::of(settings.y, out))
         }
-
-        write_cell_set(reserve_in, &(x + dx).to_le_bytes());
-        write_cell_set(reserve_out, &(y - out).to_le_bytes());
-        Ok(out.to_le_bytes().to_vec())
     }
 }
-
-export!(Amm);

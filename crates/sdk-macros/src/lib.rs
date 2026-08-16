@@ -772,6 +772,14 @@ fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
     // build the authoring half is held back too, so the vocabulary those
     // are written against is read by nothing there either.
     module.attrs.push(syn::parse_quote!(#[allow(dead_code)]));
+    // `&mut self` is a contract's own statement that a method mutates
+    // component state, which is what the declaration is read from. That
+    // the host-side stubs it calls happen to take `&self` is an artifact
+    // of their being unimplemented off-guest, not a reason to narrow a
+    // signature the derivation depends on.
+    module
+        .attrs
+        .push(syn::parse_quote!(#[allow(clippy::needless_pass_by_ref_mut)]));
     module.attrs.push(syn::parse_quote!(
         #[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
     ));

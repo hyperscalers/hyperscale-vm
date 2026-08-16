@@ -1,0 +1,90 @@
+PackageMetadata {
+    methods: {
+        "swap": MethodSignature {
+            accessibility: Public,
+            totality: Fallible,
+            mints: None,
+            params: [
+                Bucket,
+                U128,
+            ],
+            outputs: [
+                Config(
+                    1,
+                ),
+            ],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                3,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Locked,
+                },
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                1,
+                            ),
+                            material: [
+                                Config(
+                                    0,
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Write,
+                },
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                1,
+                            ),
+                            material: [
+                                Config(
+                                    1,
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    1,
+                ),
+                Handle(
+                    2,
+                ),
+                Bucket(
+                    0,
+                ),
+                Derived(
+                    Config(
+                        2,
+                    ),
+                ),
+                Derived(
+                    Arg(
+                        1,
+                    ),
+                ),
+            ],
+            calls: [],
+        },
+    },
+    events: [],
+    errors: [
+        "slippage-exceeded",
+    ],
+}

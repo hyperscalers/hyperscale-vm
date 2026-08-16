@@ -6,6 +6,7 @@ version = 4
 name = "amm-guest"
 version = "0.0.0"
 dependencies = [
+ "hyperscale-vm-sdk",
  "wit-bindgen",
 ]
 
@@ -47,6 +48,58 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hyperscale-hbor"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-hbor-macros",
+ "thiserror",
+]
+
+[[package]]
+name = "hyperscale-hbor-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
+name = "hyperscale-vm-effects"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-hbor",
+ "hyperscale-vm-types",
+ "thiserror",
+]
+
+[[package]]
+name = "hyperscale-vm-sdk"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-vm-effects",
+ "hyperscale-vm-sdk-macros",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "hyperscale-vm-sdk-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
+name = "hyperscale-vm-types"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-hbor",
+ "thiserror",
+]
 
 [[package]]
 name = "id-arena"
@@ -197,6 +250,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
+dependencies = [
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]

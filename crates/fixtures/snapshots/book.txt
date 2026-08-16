@@ -1,0 +1,178 @@
+PackageMetadata {
+    methods: {
+        "fill-asks": MethodSignature {
+            accessibility: Public,
+            totality: Infallible,
+            mints: None,
+            params: [
+                U64,
+                U64,
+                Bucket,
+            ],
+            outputs: [
+                Config(
+                    0,
+                ),
+                ResourceOf(
+                    Arg(
+                        2,
+                    ),
+                ),
+            ],
+            effects: [
+                Effect {
+                    target: Range {
+                        owner: SelfAddr,
+                        collection: RoleId(
+                            16,
+                        ),
+                        material: [],
+                        lo: Pack {
+                            hi: Arg(
+                                0,
+                            ),
+                            lo: Literal(
+                                U64(
+                                    0,
+                                ),
+                            ),
+                        },
+                        hi: Pack {
+                            hi: Arg(
+                                1,
+                            ),
+                            lo: Literal(
+                                U64(
+                                    18446744073709551615,
+                                ),
+                            ),
+                        },
+                        cap: 64,
+                    },
+                    mode: Write,
+                },
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                1,
+                            ),
+                            material: [
+                                Config(
+                                    0,
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Delta,
+                },
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                1,
+                            ),
+                            material: [
+                                ResourceOf(
+                                    Arg(
+                                        2,
+                                    ),
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Delta,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Handle(
+                    1,
+                ),
+                Handle(
+                    2,
+                ),
+                Bucket(
+                    2,
+                ),
+            ],
+            calls: [],
+        },
+        "place-ask": MethodSignature {
+            accessibility: Public,
+            totality: Infallible,
+            mints: None,
+            params: [
+                U64,
+                Bucket,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Entry {
+                        owner: SelfAddr,
+                        collection: RoleId(
+                            16,
+                        ),
+                        material: [],
+                        order: Pack {
+                            hi: Arg(
+                                0,
+                            ),
+                            lo: FreshId {
+                                slot: 0,
+                            },
+                        },
+                    },
+                    mode: Write,
+                },
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                1,
+                            ),
+                            material: [
+                                ResourceOf(
+                                    Arg(
+                                        1,
+                                    ),
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Delta,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Handle(
+                    1,
+                ),
+                Derived(
+                    Arg(
+                        0,
+                    ),
+                ),
+                Derived(
+                    FreshId {
+                        slot: 0,
+                    },
+                ),
+                Bucket(
+                    1,
+                ),
+            ],
+            calls: [],
+        },
+    },
+    events: [],
+    errors: [],
+}

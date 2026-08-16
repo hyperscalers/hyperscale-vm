@@ -1,74 +1,27 @@
 //! The constant-product pool.
 //!
-//! The package in one place: the effect signatures its guest executes,
-//! the roles it stores under where it has any of its own, and the
-//! wrappers a client calls it through. A signature and the wrapper
-//! mirroring it drift the moment they live apart.
+//! The declaration is the package's own: `metadata()` traces the module
+//! the component is built from, so the signatures a caller routes on and
+//! the code that executes them are read off one text. What stays here is
+//! the wrappers, which a signature cannot supply — nothing in one says
+//! which address class a method is addressed to.
 
-use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
-use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
-use hyperscale_vm_effects::{
-    AbiParam, Accessibility, ComponentAddr, Expr, MethodSignature, PackageMetadata, ParamType,
-    Totality, self_child,
-};
+use hyperscale_vm_effects::{ComponentAddr, PackageMetadata};
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, TypedBuilder, TypedError};
+
+// The package, read from the crate the artifact is built from rather
+// than copied into this one: a second copy is the drift the derivation
+// exists to remove.
+#[path = "../../../guests/amm/src/lib.rs"]
+mod package;
 
 /// The code `swap` declines with when the output misses its floor.
 pub const SLIPPAGE_EXCEEDED: u32 = 0;
 
-/// The constant-product pool's declaration.
-///
-/// `swap(input, min_out)`: a locked read of the pool's configuration and
-/// exclusive writes on its two reserve leaves, named by the creation-fixed
-/// resource pair. Configuration is three slots: the pair, then the fee in
-/// basis points.
-///
-/// The only fallible method in the corpus, and deliberately: the floor
-/// its signature declares is the one failure a pool can meet without
-/// anyone having done anything wrong.
+/// The package's declaration, traced from its own module.
 #[must_use]
 pub fn metadata() -> PackageMetadata {
-    let mut methods = PackageMetadata {
-        errors: vec!["slippage-exceeded".into()],
-        ..PackageMetadata::default()
-    };
-    methods.methods.insert(
-        "swap".into(),
-        MethodSignature {
-            totality: Totality::Fallible,
-            accessibility: Accessibility::Public,
-            mints: None,
-            params: vec![ParamType::Bucket, ParamType::U128],
-            // No handle for the locked clause: the pin is what makes the
-            // record stable, and the fee the body reads reaches it as an
-            // evaluated configuration slot — the same way the declaration
-            // reads one — rather than as a decode of the leaf.
-            abi: vec![
-                AbiParam::Handle(1),
-                AbiParam::Handle(2),
-                AbiParam::Bucket(0),
-                AbiParam::Derived(Expr::Config(2)),
-                AbiParam::Derived(Expr::Arg(1)),
-            ],
-            outputs: vec![Expr::Config(1)],
-            effects: vec![
-                Clause::Effect {
-                    target: TargetExpr::Point(self_child(CONFIG, vec![])),
-                    mode: ModeExpr::Locked,
-                },
-                Clause::Effect {
-                    target: TargetExpr::Point(self_child(VAULT, vec![Expr::Config(0)])),
-                    mode: ModeExpr::Write,
-                },
-                Clause::Effect {
-                    target: TargetExpr::Point(self_child(VAULT, vec![Expr::Config(1)])),
-                    mode: ModeExpr::Write,
-                },
-            ],
-            calls: vec![],
-        },
-    );
-    methods
+    package::amm::blueprint().metadata()
 }
 
 // ─── calls ─────────────────────────────────────────────────────────────

@@ -1,69 +1,85 @@
-//! The order-book guest: placement inserts at `price | seq` inside the
-//! declared interval; filling walks the interval's best price first,
-//! consuming and partially rewriting entries, and settles both escrow
-//! vaults by delta. Checked arithmetic throughout — overflow is a
-//! deterministic trap.
+//! The order book, as one module: makers place asks into a declared
+//! interval, takers fill by price-time priority within it.
+//!
+//! Checked arithmetic throughout — an overflow is a deterministic trap
+//! rather than a wrap, which release-mode arithmetic would otherwise give
+//! it.
 
-wit_bindgen::generate!({
-    path: ["../../crates/sdk/wit/deps/kernel", "wit"],
-    world: "test:guest/book",
-    generate_all,
-});
+use hyperscale_vm_sdk::blueprint;
 
-use hyperscale::kernel::state::{
-    delta_cell_add, delta_cell_sub, range_write_count, range_write_entry, range_write_insert,
-    range_write_order, range_write_remove, range_write_set,
-};
+#[blueprint]
+pub mod book {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Amount, Bucket, Keyed, Locked, Ordered, fresh_id, pack};
 
-fn amount(bytes: &[u8]) -> u128 {
-    bytes.try_into().map_or(0, u128::from_le_bytes)
-}
-
-struct Book;
-
-impl Guest for Book {
-    fn place_ask(asks: &RangeWrite, escrow: &DeltaCell, price: u64, seq: u64, amount_cell: Vec<u8>) {
-        let order = (u128::from(price) << 64) | u128::from(seq);
-        range_write_insert(asks, &order.to_le_bytes(), &amount_cell);
-        delta_cell_add(escrow, &amount_cell);
+    /// The book's creation-fixed pair.
+    struct Pair {
+        base: Address,
+        quote: Address,
     }
 
-    fn fill_asks(
-        asks: &RangeWrite,
-        base_escrow: &DeltaCell,
-        quote_escrow: &DeltaCell,
-        budget_cell: Vec<u8>,
-    ) -> Vec<u8> {
-        let opening = amount(&budget_cell);
-        let mut budget = opening;
-        let mut bought: u128 = 0;
-        while range_write_count(asks) > 0 {
-            let order = amount(&range_write_order(asks, 0));
-            let price = order >> 64;
-            assert!(price > 0, "zero-priced ask");
-            let available = amount(&range_write_entry(asks, 0));
-            let affordable = budget / price;
-            let take = available.min(affordable);
-            if take == 0 {
-                break;
-            }
-            let cost = take.checked_mul(price).unwrap();
-            budget -= cost;
-            bought = bought.checked_add(take).unwrap();
-            if take == available {
-                range_write_remove(asks, 0);
-            } else {
-                range_write_set(asks, 0, &(available - take).to_le_bytes());
-            }
+    #[state]
+    struct Book {
+        #[role(16)]
+        asks: Ordered<u128>,
+        #[role(1)]
+        vaults: Keyed<Amount>,
+        #[role(3)]
+        config: Locked<Pair>,
+    }
+
+    impl Book {
+        /// Insert an ask at `price`, escrowing the maker's funds.
+        #[name("place-ask")]
+        pub fn place_ask(&mut self, price: u64, funds: Bucket) {
+            // Price over a fresh sequence id: unique without reading the
+            // book, which is what lets the entry key be declared.
+            self.asks.at(pack(price, fresh_id())).set(funds.amount());
+            self.vaults.at(funds.resource()).add(funds.amount());
         }
-        let spent = opening - budget;
-        delta_cell_sub(base_escrow, &bought.to_le_bytes());
-        delta_cell_add(quote_escrow, &spent.to_le_bytes());
 
-        let mut result = bought.to_le_bytes().to_vec();
-        result.extend(budget.to_le_bytes());
-        result
+        /// Buy base within the declared price interval, best price first.
+        ///
+        /// The interval is ordered by price over sequence id, so entry
+        /// zero is always the best ask still standing — which is what
+        /// makes price-time priority a walk from the front rather than a
+        /// search.
+        #[name("fill-asks")]
+        pub fn fill_asks(&mut self, from: u64, to: u64, payment: Bucket) -> (Bucket, Bucket) {
+            // The whole tiebreaker span at each end, so the interval covers
+            // every sequence at the boundary prices.
+            let mut asks = self.asks.range(pack(from, 0), pack(to, u64::MAX), 64);
+            let opening = payment.amount();
+            let mut budget = opening;
+            let mut bought: Amount = 0;
+
+            while asks.count() > 0 {
+                let price = asks.order(0) >> 64;
+                assert!(price > 0, "zero-priced ask");
+                let available = asks.entry(0);
+                let take = available.min(budget / price);
+                if take == 0 {
+                    break;
+                }
+                budget -= take.checked_mul(price).unwrap();
+                bought = bought.checked_add(take).unwrap();
+                if take == available {
+                    asks.remove(0);
+                } else {
+                    asks.set(0, available - take);
+                }
+            }
+
+            // Note the config fields are read without pinning the leaf:
+            // configuration is locked state, consultable without a claim.
+            let spent = opening - budget;
+            self.vaults.at(self.config.base).sub(bought);
+            self.vaults.at(payment.resource()).add(spent);
+
+            (
+                Bucket::of(self.config.base, bought),
+                Bucket::of(payment.resource(), budget),
+            )
+        }
     }
 }
-
-export!(Book);

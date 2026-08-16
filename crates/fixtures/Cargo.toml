@@ -8,6 +8,9 @@ description = "Prebuilt test packages: guests a network seeds outside production
 [dependencies]
 hyperscale-vm-effects.workspace = true
 hyperscale-vm-manifest-builder.workspace = true
+# The packages themselves: a fixture's declaration is traced from the
+# module its component is built from, never restated beside it.
+hyperscale-vm-sdk.workspace = true
 
 [dev-dependencies]
 hyperscale-vm-runtime.workspace = true

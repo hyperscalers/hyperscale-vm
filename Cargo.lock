@@ -671,6 +671,7 @@ dependencies = [
  "hyperscale-vm-effects",
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-runtime",
+ "hyperscale-vm-sdk",
 ]
 
 [[package]]

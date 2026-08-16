@@ -5,7 +5,7 @@
 use std::io::Write as _;
 
 fn main() {
-    let metadata = derived_book::book::blueprint().metadata();
+    let metadata = book_guest::book::blueprint().metadata();
     let bytes = hyperscale_vm_sdk::encode_metadata(&metadata).expect("a traced declaration encodes");
     std::io::stdout()
         .write_all(&bytes)
