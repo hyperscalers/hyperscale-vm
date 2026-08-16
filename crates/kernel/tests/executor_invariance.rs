@@ -93,9 +93,9 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
 
     let outcome = if let (Some(reserve), Some(delta)) = (reserve, delta) {
         let amount = session.reserve_amount(reserve).unwrap();
-        session.delta_add(delta, &amount).unwrap();
+        session.delta_add(delta, amount).unwrap();
         Outcome::Completed {
-            value: Some(u64::try_from(decode_amount(&amount).unwrap()).unwrap()),
+            value: Some(u64::try_from(amount).unwrap()),
         }
     } else if let Some(write) = write {
         let mut value = session.write_cell_get(write).unwrap();

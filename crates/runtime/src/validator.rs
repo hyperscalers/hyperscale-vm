@@ -114,6 +114,14 @@ pub fn validate_component(bytes: &[u8]) -> Result<(), ProfileError> {
 enum ValueSlot {
     /// `u8`, `u32` or `u64`.
     Scalar,
+    /// A record whose every field is a scalar.
+    ///
+    /// Admitted as a class rather than by naming the kernel's own types,
+    /// because what the profile is judging is the property: such a record
+    /// flattens to its fields, so it crosses in registers and reaches no
+    /// linear memory. A record with a field the profile does not model is
+    /// refused by the same walk that models the field.
+    Flat,
     /// `list<u8>`.
     Bytes,
     /// `borrow<R>` of a state resource.
@@ -147,7 +155,7 @@ fn resolve(defined: &[Option<ValueSlot>], vt: ComponentValType) -> Option<ValueS
 fn admits_param_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> bool {
     matches!(
         resolve(defined, vt),
-        Some(ValueSlot::Scalar | ValueSlot::Bytes | ValueSlot::Handle)
+        Some(ValueSlot::Scalar | ValueSlot::Flat | ValueSlot::Bytes | ValueSlot::Handle)
     )
 }
 
@@ -190,6 +198,18 @@ fn record_component_type(
                 ));
             }
             Some(ValueSlot::Bytes)
+        }
+        ComponentType::Defined(ComponentDefinedType::Record(fields)) => {
+            for (_, vt) in &**fields {
+                if !matches!(resolve(defined, *vt), Some(ValueSlot::Scalar)) {
+                    return Err(ProfileError::Structural(
+                        "a record's fields must be scalars: what admits one is that it \
+                         flattens rather than crossing through memory"
+                            .to_string(),
+                    ));
+                }
+            }
+            Some(ValueSlot::Flat)
         }
         ComponentType::Defined(ComponentDefinedType::Borrow(_)) => Some(ValueSlot::Handle),
         // The refusal channel, pinned to one shape. A code rather than a

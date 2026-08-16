@@ -75,19 +75,19 @@ impl RefKernelHost for NoHost {
     fn write_cell_set(&mut self, _rep: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
-    fn delta_add(&mut self, _rep: u32, _amount: &[u8]) -> Result<(), AbortReason> {
+    fn delta_add(&mut self, _rep: u32, _amount: u128) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
-    fn delta_sub(&mut self, _rep: u32, _amount: &[u8]) -> Result<(), AbortReason> {
+    fn delta_sub(&mut self, _rep: u32, _amount: u128) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
-    fn reserve_amount(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
+    fn reserve_amount(&mut self, _rep: u32) -> Result<u128, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
     fn range_count(&mut self, _rep: u32) -> Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
-    fn range_order(&mut self, _rep: u32, _index: u32) -> Result<Vec<u8>, AbortReason> {
+    fn range_order(&mut self, _rep: u32, _index: u32) -> Result<u128, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
     fn range_entry(&mut self, _rep: u32, _index: u32) -> Result<Vec<u8>, AbortReason> {
@@ -96,7 +96,7 @@ impl RefKernelHost for NoHost {
     fn range_set(&mut self, _rep: u32, _index: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
-    fn range_insert(&mut self, _rep: u32, _order: &[u8], _v: Vec<u8>) -> Result<(), AbortReason> {
+    fn range_insert(&mut self, _rep: u32, _order: u128, _v: Vec<u8>) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
     fn range_remove(&mut self, _rep: u32, _index: u32) -> Result<(), AbortReason> {

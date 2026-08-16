@@ -166,23 +166,23 @@ impl KernelHost for TestHost {
         Ok(())
     }
 
-    fn delta_add(&mut self, _rep: u32, _amount: &[u8]) -> std::result::Result<(), AbortReason> {
+    fn delta_add(&mut self, _rep: u32, _amount: u128) -> std::result::Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn delta_sub(&mut self, _rep: u32, _amount: &[u8]) -> std::result::Result<(), AbortReason> {
+    fn delta_sub(&mut self, _rep: u32, _amount: u128) -> std::result::Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn reserve_amount(&mut self, _rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
-        Ok(vec![0; 16])
+    fn reserve_amount(&mut self, _rep: u32) -> std::result::Result<u128, AbortReason> {
+        Ok(0)
     }
 
     fn range_count(&mut self, _rep: u32) -> std::result::Result<u32, AbortReason> {
         Ok(0)
     }
 
-    fn range_order(&mut self, _rep: u32, _index: u32) -> std::result::Result<Vec<u8>, AbortReason> {
+    fn range_order(&mut self, _rep: u32, _index: u32) -> std::result::Result<u128, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
@@ -202,7 +202,7 @@ impl KernelHost for TestHost {
     fn range_insert(
         &mut self,
         _rep: u32,
-        _order: &[u8],
+        _order: u128,
         _value: Vec<u8>,
     ) -> std::result::Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)

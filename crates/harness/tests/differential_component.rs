@@ -207,8 +207,8 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Resour
         "peek" => vec![point(fx.config, ResourceKind::LockedCell)],
         "rmw" => vec![point(fx.rmw, ResourceKind::WriteCell)],
         "scan-sum" => vec![range(ResourceKind::RangeRead)],
-        "fill" | "place" => vec![range(ResourceKind::RangeWrite)],
-        "escape" | "bad-amount" => vec![point(fx.recipient, ResourceKind::DeltaCell)],
+        "fill" | "place" | "no-such-entry" => vec![range(ResourceKind::RangeWrite)],
+        "escape" => vec![point(fx.recipient, ResourceKind::DeltaCell)],
         "leak" | "handle-value" => vec![point(fx.readable, ResourceKind::ReadCell)],
         "forge" | "forge-zero" => vec![],
         other => unreachable!("unknown export {other}"),
@@ -536,10 +536,10 @@ fn freed_handle_slots_reuse_most_recent_first_across_invokes() -> Result<()> {
 #[test]
 fn kernel_refusals_carry_identical_classes() -> Result<()> {
     let fx = fixture();
-    let (outcome, ..) = both(&fx, "bad-amount")?;
+    let (outcome, ..) = both(&fx, "no-such-entry")?;
     assert_eq!(
         outcome,
-        LaneOutcome::Refusal(AbortReason::MalformedAmountCell)
+        LaneOutcome::Refusal(AbortReason::EntryIndexOutOfBounds)
     );
     Ok(())
 }

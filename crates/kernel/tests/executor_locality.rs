@@ -69,7 +69,7 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
     });
     if let (Some(reserve), Some(delta)) = (reserve, delta) {
         let amount = session.reserve_amount(reserve).unwrap();
-        session.delta_add(delta, &amount).unwrap();
+        session.delta_add(delta, amount).unwrap();
     }
     RunResult {
         session,
@@ -321,8 +321,8 @@ fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -
             let rep = u32::try_from(rep).unwrap();
             match capability {
                 Capability::Delta(_) => {
-                    session.delta_add(rep, &encode_amount(credit)).unwrap();
-                    session.delta_sub(rep, &encode_amount(debit)).unwrap();
+                    session.delta_add(rep, credit).unwrap();
+                    session.delta_sub(rep, debit).unwrap();
                 }
                 Capability::Read(_) => {
                     let cell = session.read_cell(rep).unwrap();

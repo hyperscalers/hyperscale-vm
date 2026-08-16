@@ -45,14 +45,14 @@ pub trait RefKernelHost {
     fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
     fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
-    fn delta_add(&mut self, rep: u32, amount: &[u8]) -> Result<(), AbortReason>;
-    fn delta_sub(&mut self, rep: u32, amount: &[u8]) -> Result<(), AbortReason>;
-    fn reserve_amount(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
+    fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
+    fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
+    fn reserve_amount(&mut self, rep: u32) -> Result<u128, AbortReason>;
     fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason>;
-    fn range_order(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
+    fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, AbortReason>;
     fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
     fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), AbortReason>;
-    fn range_insert(&mut self, rep: u32, order: &[u8], value: Vec<u8>) -> Result<(), AbortReason>;
+    fn range_insert(&mut self, rep: u32, order: u128, value: Vec<u8>) -> Result<(), AbortReason>;
     fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), AbortReason>;
     /// The transaction clock in milliseconds.
     fn clock_ms(&self) -> u64;
@@ -200,12 +200,25 @@ pub(crate) struct CType {
 /// discriminant byte, padded to the four-byte alignment both arms carry.
 const RESULT_PAYLOAD: usize = 4;
 
+/// What an amount costs at the boundary, and how wide it is in the return
+/// area. The blessed engine charges the same figure.
+const AMOUNT_BOUNDARY_BYTES: usize = 16;
+
+/// The amount a flattened `record { low: u64, high: u64 }` carries.
+fn flat_amount(low: Value, high: Value) -> u128 {
+    u128::from(low.as_i64().cast_unsigned()) | (u128::from(high.as_i64().cast_unsigned()) << 64)
+}
+
 /// A component value type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CTy {
     U32,
     U64,
     List8,
+    /// `record { u64, u64 }`: the kernel's own amount, flattened to its
+    /// two halves as a parameter and written whole to the return area as
+    /// a result.
+    Amount,
     Borrow,
     /// `result<list<u8>, u32>`: the refusal channel over a method that
     /// produces bytes.
@@ -363,6 +376,22 @@ impl RefComponent {
                 }
                 ComponentDefinedType::List(_) => {
                     return Err(DecodeError::Unsupported("non-u8 list".to_string()));
+                }
+                // The profile admits a record whose fields are scalars,
+                // and the kernel declares exactly one: two `u64` halves
+                // of an amount. A record of any other shape is a type
+                // this engine does not model rather than one it guesses
+                // at.
+                ComponentDefinedType::Record(fields) => {
+                    let halves: Vec<CTy> = fields
+                        .iter()
+                        .map(|(_, vt)| self.value_type(*vt))
+                        .collect::<Result<_, _>>()?;
+                    if halves == [CTy::U64, CTy::U64] {
+                        CTypeEntry::Defined(CTy::Amount)
+                    } else {
+                        return Err(DecodeError::Unsupported("record shape".to_string()));
+                    }
                 }
                 ComponentDefinedType::Borrow(_) => CTypeEntry::Defined(CTy::Borrow),
                 // The profile pins the refusal channel to two shapes; a
@@ -1212,6 +1241,29 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
         Ok(())
     }
 
+    /// Writes an amount whole into the guest's return area.
+    ///
+    /// Two `u64`s wide, and no realloc: a flat record's result travels in
+    /// the area the caller already reserved, where a list travels in a
+    /// buffer the guest has to be asked to allocate.
+    fn write_amount(
+        store: &mut Store,
+        mem_idx: u32,
+        retptr: Value,
+        amount: u128,
+    ) -> Result<(), ExecError> {
+        let mem = &mut store.memories[mem_idx as usize];
+        let at = usize::try_from(retptr.as_i32().cast_unsigned()).expect("32-bit");
+        let end = at
+            .checked_add(AMOUNT_BOUNDARY_BYTES)
+            .ok_or(ExecError::Trap(Trap::MemoryOutOfBounds))?;
+        if end > mem.data.len() {
+            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+        }
+        mem.data[at..end].copy_from_slice(&amount.to_le_bytes());
+        Ok(())
+    }
+
     fn read_guest_bytes(
         store: &Store,
         mem_idx: u32,
@@ -1301,27 +1353,33 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                 };
                 match host_fn {
                     HostFn::Clock => Ok(vec![Value::I64(self.host.clock_ms().cast_signed())]),
-                    HostFn::ReadCellGet
-                    | HostFn::LockedCellGet
-                    | HostFn::WriteCellGet
-                    | HostFn::ReserveAmount => {
+                    HostFn::ReadCellGet | HostFn::LockedCellGet | HostFn::WriteCellGet => {
                         let expected = match host_fn {
                             HostFn::ReadCellGet => ResourceKind::ReadCell,
                             HostFn::LockedCellGet => ResourceKind::LockedCell,
-                            HostFn::WriteCellGet => ResourceKind::WriteCell,
-                            _ => ResourceKind::ReserveCell,
+                            _ => ResourceKind::WriteCell,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let result = match host_fn {
                             HostFn::ReadCellGet => self.host.read_cell(rep),
                             HostFn::LockedCellGet => self.host.locked_cell(rep),
-                            HostFn::WriteCellGet => self.host.write_cell_get(rep),
-                            _ => self.host.reserve_amount(rep),
+                            _ => self.host.write_cell_get(rep),
                         };
                         let bytes = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         self.charge_boundary(store, bytes.len())?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[1])?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::ReserveAmount => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::ReserveCell)?;
+                        let amount = self
+                            .host
+                            .reserve_amount(rep)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        let mem = self.mem_opt(id)?;
+                        Self::write_amount(store, mem, args[1], amount)?;
                         Ok(Vec::new())
                     }
                     HostFn::WriteCellSet => {
@@ -1336,13 +1394,12 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::DeltaAdd | HostFn::DeltaSub => {
                         let rep = self.resolve_handle(args[0], ResourceKind::DeltaCell)?;
-                        let mem = self.mem_opt(id)?;
-                        let amount = Self::read_guest_bytes(store, mem, args[1], args[2])?;
-                        self.charge_boundary(store, amount.len())?;
+                        let amount = flat_amount(args[1], args[2]);
+                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
                         let result = if host_fn == HostFn::DeltaAdd {
-                            self.host.delta_add(rep, &amount)
+                            self.host.delta_add(rep, amount)
                         } else {
-                            self.host.delta_sub(rep, &amount)
+                            self.host.delta_sub(rep, amount)
                         };
                         result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(Vec::new())
@@ -1360,25 +1417,35 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(count.cast_signed())])
                     }
-                    HostFn::RangeReadOrder
-                    | HostFn::RangeReadEntry
-                    | HostFn::RangeWriteOrder
-                    | HostFn::RangeWriteEntry => {
-                        let expected = match host_fn {
-                            HostFn::RangeReadOrder | HostFn::RangeReadEntry => {
-                                ResourceKind::RangeRead
-                            }
-                            _ => ResourceKind::RangeWrite,
+                    HostFn::RangeReadOrder | HostFn::RangeWriteOrder => {
+                        let expected = if host_fn == HostFn::RangeReadOrder {
+                            ResourceKind::RangeRead
+                        } else {
+                            ResourceKind::RangeWrite
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let index = args[1].as_i32().cast_unsigned();
-                        let result = match host_fn {
-                            HostFn::RangeReadOrder | HostFn::RangeWriteOrder => {
-                                self.host.range_order(rep, index)
-                            }
-                            _ => self.host.range_entry(rep, index),
+                        let order = self
+                            .host
+                            .range_order(rep, index)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        let mem = self.mem_opt(id)?;
+                        Self::write_amount(store, mem, args[2], order)?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::RangeReadEntry | HostFn::RangeWriteEntry => {
+                        let expected = if host_fn == HostFn::RangeReadEntry {
+                            ResourceKind::RangeRead
+                        } else {
+                            ResourceKind::RangeWrite
                         };
-                        let bytes = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let rep = self.resolve_handle(args[0], expected)?;
+                        let index = args[1].as_i32().cast_unsigned();
+                        let bytes = self
+                            .host
+                            .range_entry(rep, index)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         self.charge_boundary(store, bytes.len())?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[2])?;
@@ -1398,11 +1465,11 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::RangeWriteInsert => {
                         let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
                         let mem = self.mem_opt(id)?;
-                        let order = Self::read_guest_bytes(store, mem, args[1], args[2])?;
+                        let order = flat_amount(args[1], args[2]);
                         let value = Self::read_guest_bytes(store, mem, args[3], args[4])?;
-                        self.charge_boundary(store, order.len() + value.len())?;
+                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES + value.len())?;
                         self.host
-                            .range_insert(rep, &order, value)
+                            .range_insert(rep, order, value)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(Vec::new())
                     }

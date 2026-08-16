@@ -85,8 +85,8 @@ pub mod fixtures {
     /// zero and removes the last entry of a write interval; `place` inserts
     /// order 42; `escape` passes a delta handle to a read-cell function
     /// (the mode-escape trap); `forge` passes a handle index the host never
-    /// lowered; `leak` never drops its borrow; `bad-amount` sends a 3-byte
-    /// amount cell (a deterministic kernel refusal).
+    /// lowered; `leak` never drops its borrow; `no-such-entry` removes past
+    /// the interval's last entry (a deterministic kernel refusal).
     pub const KERNEL_GUEST_WAT: &str = r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
@@ -97,18 +97,20 @@ pub mod fixtures {
     (export "reserve-cell" (type $vc (sub resource)))
     (export "range-read" (type $rr (sub resource)))
     (export "range-write" (type $rw (sub resource)))
+    (type $amt_decl (record (field "low" u64) (field "high" u64)))
+    (export "amount" (type $amt (eq $amt_decl)))
     (export "read-cell-get" (func (param "c" (borrow $rc)) (result (list u8))))
     (export "locked-cell-get" (func (param "c" (borrow $sc)) (result (list u8))))
     (export "write-cell-get" (func (param "c" (borrow $wc)) (result (list u8))))
     (export "write-cell-set" (func (param "c" (borrow $wc)) (param "value" (list u8))))
-    (export "delta-cell-add" (func (param "c" (borrow $dc)) (param "amount" (list u8))))
-    (export "reserve-cell-amount" (func (param "c" (borrow $vc)) (result (list u8))))
+    (export "delta-cell-add" (func (param "c" (borrow $dc)) (param "value" $amt)))
+    (export "reserve-cell-amount" (func (param "c" (borrow $vc)) (result $amt)))
     (export "range-read-count" (func (param "r" (borrow $rr)) (result u32)))
-    (export "range-read-order" (func (param "r" (borrow $rr)) (param "index" u32) (result (list u8))))
+    (export "range-read-order" (func (param "r" (borrow $rr)) (param "index" u32) (result $amt)))
     (export "range-read-entry" (func (param "r" (borrow $rr)) (param "index" u32) (result (list u8))))
     (export "range-write-count" (func (param "r" (borrow $rw)) (result u32)))
     (export "range-write-set" (func (param "r" (borrow $rw)) (param "index" u32) (param "value" (list u8))))
-    (export "range-write-insert" (func (param "r" (borrow $rw)) (param "order" (list u8)) (param "value" (list u8))))
+    (export "range-write-insert" (func (param "r" (borrow $rw)) (param "order" $amt) (param "value" (list u8))))
     (export "range-write-remove" (func (param "r" (borrow $rw)) (param "index" u32)))))
   (import "hyperscale:kernel/env" (instance $env
     (export "clock" (func (result u64)))))
@@ -187,14 +189,14 @@ pub mod fixtures {
     (import "k" "locked-get" (func $locked_get (param i32 i32)))
     (import "k" "write-get" (func $write_get (param i32 i32)))
     (import "k" "write-set" (func $write_set (param i32 i32 i32)))
-    (import "k" "delta-add" (func $delta_add (param i32 i32 i32)))
+    (import "k" "delta-add" (func $delta_add (param i32 i64 i64)))
     (import "k" "reserve-amount" (func $reserve_amount (param i32 i32)))
     (import "k" "rr-count" (func $rr_count (param i32) (result i32)))
     (import "k" "rr-order" (func $rr_order (param i32 i32 i32)))
     (import "k" "rr-entry" (func $rr_entry (param i32 i32 i32)))
     (import "k" "rw-count" (func $rw_count (param i32) (result i32)))
     (import "k" "rw-set" (func $rw_set (param i32 i32 i32 i32)))
-    (import "k" "rw-insert" (func $rw_insert (param i32 i32 i32 i32 i32)))
+    (import "k" "rw-insert" (func $rw_insert (param i32 i64 i64 i32 i32)))
     (import "k" "rw-remove" (func $rw_remove (param i32 i32)))
     (import "k" "clock" (func $clock (result i64)))
     (import "k" "drop-r" (func $drop_r (param i32)))
@@ -211,12 +213,11 @@ pub mod fixtures {
       call $reserve_amount
       local.get 1
       i32.const 8
-      i32.load
-      i32.const 12
-      i32.load
+      i64.load
+      i32.const 16
+      i64.load
       call $delta_add
       i32.const 8
-      i32.load
       i64.load
       local.get 0
       call $drop_v
@@ -292,7 +293,6 @@ pub mod fixtures {
           call $rr_order
           local.get $sum
           i32.const 16
-          i32.load
           i32.load8_u
           i64.extend_i32_u
           i64.add
@@ -338,15 +338,12 @@ pub mod fixtures {
       call $drop_rw)
 
     (func (export "place") (param i32) (result i64)
-      i32.const 640
-      i32.const 42
-      i32.store8
       i32.const 660
       i32.const 7
       i32.store8
       local.get 0
-      i32.const 640
-      i32.const 16
+      i64.const 42
+      i64.const 0
       i32.const 660
       i32.const 1
       call $rw_insert
@@ -394,11 +391,10 @@ pub mod fixtures {
       i32.load
       i64.extend_i32_u)
 
-    (func (export "bad-amount") (param i32) (result i64)
+    (func (export "no-such-entry") (param i32) (result i64)
       local.get 0
-      i32.const 0
-      i32.const 3
-      call $delta_add
+      i32.const 99
+      call $rw_remove
       i64.const 0))
 
   (core instance $i (instantiate $m
@@ -457,9 +453,9 @@ pub mod fixtures {
   (func (export "leak")
     (param "c" (borrow $rcell)) (result u64)
     (canon lift (core func $i "leak")))
-  (func (export "bad-amount")
-    (param "c" (borrow $dcell)) (result u64)
-    (canon lift (core func $i "bad-amount"))))
+  (func (export "no-such-entry")
+    (param "r" (borrow $wrange)) (result u64)
+    (canon lift (core func $i "no-such-entry"))))
 "#;
 
     /// A component whose `realloc` calls a lowered import, closing a call
@@ -620,19 +616,19 @@ pub mod session_host {
                 fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason> {
                     self.0.write_cell_set(rep, value).map_err(AbortReason::from)
                 }
-                fn delta_add(&mut self, rep: u32, amount: &[u8]) -> Result<(), AbortReason> {
+                fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason> {
                     self.0.delta_add(rep, amount).map_err(AbortReason::from)
                 }
-                fn delta_sub(&mut self, rep: u32, amount: &[u8]) -> Result<(), AbortReason> {
+                fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason> {
                     self.0.delta_sub(rep, amount).map_err(AbortReason::from)
                 }
-                fn reserve_amount(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason> {
+                fn reserve_amount(&mut self, rep: u32) -> Result<u128, AbortReason> {
                     self.0.reserve_amount(rep).map_err(AbortReason::from)
                 }
                 fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason> {
                     self.0.range_count(rep).map_err(AbortReason::from)
                 }
-                fn range_order(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason> {
+                fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, AbortReason> {
                     self.0.range_order(rep, index).map_err(AbortReason::from)
                 }
                 fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason> {
@@ -651,7 +647,7 @@ pub mod session_host {
                 fn range_insert(
                     &mut self,
                     rep: u32,
-                    order: &[u8],
+                    order: u128,
                     value: Vec<u8>,
                 ) -> Result<(), AbortReason> {
                     self.0

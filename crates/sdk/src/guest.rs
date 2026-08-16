@@ -53,7 +53,25 @@ use kernel::state::{
 };
 
 /// The kernel's amount-cell width: a little-endian `u128`.
+///
+/// A stored amount is still bytes — a cell holds bytes — but one crossing
+/// the boundary is an `amount`, so this width is the substate's rather
+/// than the world's.
 pub const AMOUNT_CELL_BYTES: usize = 16;
+
+/// A `u128` as the kernel's world names it.
+#[allow(clippy::cast_possible_truncation)] // taking a half is the truncation
+fn amount(value: u128) -> kernel::state::Amount {
+    kernel::state::Amount {
+        low: value as u64,
+        high: (value >> 64) as u64,
+    }
+}
+
+/// The `u128` an `amount` carries.
+const fn whole(value: kernel::state::Amount) -> u128 {
+    (value.low as u128) | ((value.high as u128) << 64)
+}
 
 /// The amount a value edge carries, as it arrives at an export.
 ///
@@ -85,10 +103,6 @@ pub fn amount_of(cell: &[u8]) -> u128 {
 }
 
 /// Encode an amount into the kernel's cell representation.
-///
-/// An array rather than a `Vec`: every caller hands it straight to an
-/// import as a slice, so a heap buffer would be an allocation the path
-/// never needed and a fault the totality scan would be right to see.
 #[must_use]
 pub const fn amount_cell(amount: u128) -> [u8; AMOUNT_CELL_BYTES] {
     amount.to_le_bytes()
@@ -194,10 +208,10 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
 ///
 /// On any mode but [`Handle::Delta`].
 #[inline(always)]
-pub fn delta_add(handle: Handle, amount: u128) {
+pub fn delta_add(handle: Handle, value: u128) {
     match handle {
         Handle::Delta(rep) => {
-            kernel::state::delta_cell_add(&delta_cell(rep), &amount_cell(amount));
+            kernel::state::delta_cell_add(&delta_cell(rep), amount(value));
         }
         other => unreachable!("{other:?} carries no movement"),
     }
@@ -209,10 +223,10 @@ pub fn delta_add(handle: Handle, amount: u128) {
 ///
 /// On any mode but [`Handle::Delta`].
 #[inline(always)]
-pub fn delta_sub(handle: Handle, amount: u128) {
+pub fn delta_sub(handle: Handle, value: u128) {
     match handle {
         Handle::Delta(rep) => {
-            kernel::state::delta_cell_sub(&delta_cell(rep), &amount_cell(amount));
+            kernel::state::delta_cell_sub(&delta_cell(rep), amount(value));
         }
         other => unreachable!("{other:?} carries no movement"),
     }
@@ -227,7 +241,7 @@ pub fn delta_sub(handle: Handle, amount: u128) {
 #[inline(always)]
 pub fn reserved(handle: Handle) -> u128 {
     match handle {
-        Handle::Reserve(rep) => amount_of(&kernel::state::reserve_cell_amount(&reserve_cell(rep))),
+        Handle::Reserve(rep) => whole(kernel::state::reserve_cell_amount(&reserve_cell(rep))),
         other => unreachable!("{other:?} holds no reservation"),
     }
 }
@@ -281,11 +295,9 @@ pub fn entry_count(handle: Handle) -> u32 {
 #[inline(always)]
 pub fn entry_order(handle: Handle, index: u32) -> u128 {
     match handle {
-        Handle::RangeRead(rep) => {
-            amount_of(&kernel::state::range_read_order(&range_read(rep), index))
-        }
+        Handle::RangeRead(rep) => whole(kernel::state::range_read_order(&range_read(rep), index)),
         Handle::RangeWrite(rep) => {
-            amount_of(&kernel::state::range_write_order(&range_write(rep), index))
+            whole(kernel::state::range_write_order(&range_write(rep), index))
         }
         other => unreachable!("{other:?} yields no order keys"),
     }
@@ -344,7 +356,7 @@ pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
 pub fn entry_insert(handle: Handle, order: u128, value: &[u8]) {
     match handle {
         Handle::RangeWrite(rep) => {
-            kernel::state::range_write_insert(&range_write(rep), &amount_cell(order), value);
+            kernel::state::range_write_insert(&range_write(rep), amount(order), value);
         }
         other => unreachable!("{other:?} does not write entries"),
     }

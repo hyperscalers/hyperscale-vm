@@ -109,10 +109,12 @@ pub enum AbortReason {
     HandleUnknown,
     /// A handle whose capability does not grant the operation.
     HandleWrongMode,
-    /// A value that is not a well-formed amount cell.
+    /// A stored cell that is not a well-formed amount.
+    ///
+    /// A defect in state rather than in a call: amounts reach the kernel
+    /// from a guest as a typed value, so the only way to meet one that is
+    /// not an amount is to read a cell that was never written as one.
     MalformedAmountCell,
-    /// A value that is not a well-formed order key.
-    MalformedOrderCell,
     /// An entry index past the interval's current entries.
     EntryIndexOutOfBounds,
     /// An insert whose order key falls outside the declared interval.

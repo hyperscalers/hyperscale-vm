@@ -20,9 +20,30 @@ wit_bindgen::generate!({
 use hyperscale::kernel::env::clock;
 use hyperscale::kernel::events::emit;
 use hyperscale::kernel::state::{
-    delta_cell_add, range_write_count, range_write_insert, range_write_order, range_write_remove,
-    reserve_cell_amount, write_cell_get, write_cell_set,
+    Amount, delta_cell_add, range_write_count, range_write_insert, range_write_order,
+    range_write_remove, reserve_cell_amount, write_cell_get, write_cell_set,
 };
+
+/// A `u128` as the kernel's world names it.
+#[allow(clippy::cast_possible_truncation)] // taking a half is the truncation
+const fn amount(value: u128) -> Amount {
+    Amount {
+        low: value as u64,
+        high: (value >> 64) as u64,
+    }
+}
+
+/// The `u128` an `amount` carries.
+const fn whole(value: Amount) -> u128 {
+    (value.low as u128) | ((value.high as u128) << 64)
+}
+
+/// An amount cell's value; an off-width cell reads as zero, on the same
+/// terms an absent substate does. The ABI binding hands this method the
+/// kernel's own cell, so no other width arrives.
+fn cell_amount(cell: &[u8]) -> Amount {
+    amount(cell.try_into().map_or(0, u128::from_le_bytes))
+}
 
 /// The ids a count-prefixed edge cell carries; traps on any other shape.
 fn cell_ids(cell: &[u8]) -> Vec<u64> {
@@ -34,8 +55,8 @@ fn cell_ids(cell: &[u8]) -> Vec<u64> {
 }
 
 /// An id's position in the holdings interval's order-key space.
-fn order_cell(id: u64) -> [u8; 16] {
-    u128::from(id).to_le_bytes()
+const fn order_of(id: u64) -> Amount {
+    amount(id as u128)
 }
 
 struct Account;
@@ -94,15 +115,18 @@ fn governing(cell: &[u8]) -> &[u8] {
 }
 
 impl Guest for Account {
-    fn withdraw(vault: &ReserveCell, amount: Vec<u8>) -> Vec<u8> {
-        let reserved = reserve_cell_amount(vault);
-        assert!(reserved == amount, "reservation does not match the request");
-        emit(WITHDRAWN, &reserved);
-        reserved
+    fn withdraw(vault: &ReserveCell, requested: Vec<u8>) -> Vec<u8> {
+        let reserved = whole(reserve_cell_amount(vault));
+        assert!(
+            requested == reserved.to_le_bytes(),
+            "reservation does not match the request"
+        );
+        emit(WITHDRAWN, &requested);
+        requested
     }
 
     fn deposit(vault: &DeltaCell, amount: Vec<u8>) {
-        delta_cell_add(vault, &amount);
+        delta_cell_add(vault, cell_amount(&amount));
         emit(DEPOSITED, &amount);
     }
 
@@ -112,15 +136,15 @@ impl Guest for Account {
 
     fn deposit_nf(holdings: &RangeWrite, funds: Vec<u8>) {
         for id in cell_ids(&funds) {
-            range_write_insert(holdings, &order_cell(id), &[1]);
+            range_write_insert(holdings, order_of(id), &[1]);
         }
     }
 
     fn withdraw_nf(holdings: &RangeWrite, ids: Vec<u8>) -> Vec<u8> {
         for id in cell_ids(&ids) {
-            let order = order_cell(id);
+            let order = u128::from(id);
             let held = (0..range_write_count(holdings))
-                .find(|&index| range_write_order(holdings, index) == order)
+                .find(|&index| whole(range_write_order(holdings, index)) == order)
                 .expect("id not held");
             range_write_remove(holdings, held);
         }

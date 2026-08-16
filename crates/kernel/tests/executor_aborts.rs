@@ -77,10 +77,10 @@ fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
         match (reserve, delta) {
             (Some(reserve), Some(delta)) => {
                 let amount = session.reserve_amount(reserve).unwrap();
-                session.delta_add(delta, &amount).unwrap();
+                session.delta_add(delta, amount).unwrap();
             }
             (None, Some(delta)) => {
-                session.delta_sub(delta, &encode_amount(sub)).unwrap();
+                session.delta_sub(delta, sub).unwrap();
             }
             _ => {}
         }
@@ -581,7 +581,7 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
             .position(|c| matches!(c, Capability::Delta(_)))
             .map(|rep| u32::try_from(rep).unwrap());
         if let Some(rep) = delta {
-            session.delta_add(rep, &encode_amount(1)).unwrap();
+            session.delta_add(rep, 1).unwrap();
         }
         RunResult {
             session,
@@ -713,8 +713,8 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
                 .position(|c| matches!(c, Capability::Delta(_)))
                 .map(|rep| u32::try_from(rep).unwrap())
                 .expect("a delta capability");
-            session.delta_add(rep, &encode_amount(u128::MAX)).unwrap();
-            session.delta_add(rep, &encode_amount(u128::MAX)).unwrap();
+            session.delta_add(rep, u128::MAX).unwrap();
+            session.delta_add(rep, u128::MAX).unwrap();
         }
         RunResult {
             session,

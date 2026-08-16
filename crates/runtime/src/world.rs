@@ -16,10 +16,51 @@
 //! trap carrying the host's own abort class.
 
 use hyperscale_vm_types::AbortReason;
-use wasmtime::component::{Linker, Resource, ResourceType};
+use wasmtime::component::{ComponentType, Lift, Linker, Lower, Resource, ResourceType};
 use wasmtime::{Error, Result, StoreContextMut};
 
 use crate::gas::charge_boundary_bytes;
+
+/// What an amount costs at the boundary.
+///
+/// The width it has, not the width it travels in: a flat record copies
+/// nothing through linear memory, and pricing it at zero would make a
+/// movement's fee turn on the encoding rather than on the value crossing.
+/// Both engines charge this, which is what keeps the figure agreed.
+const AMOUNT_BOUNDARY_BYTES: usize = 16;
+
+/// The world's `amount`: a `u128` as the two halves the component model
+/// can name.
+///
+/// A record rather than a byte list, so it flattens across the boundary
+/// instead of travelling through linear memory — which is what leaves a
+/// guest that moves an amount with no allocation to make, and what makes
+/// a malformed amount inexpressible from a guest rather than refused by
+/// the kernel.
+#[derive(Clone, Copy, ComponentType, Lift, Lower)]
+#[component(record)]
+pub struct Amount {
+    /// The low 64 bits.
+    pub low: u64,
+    /// The high 64 bits.
+    pub high: u64,
+}
+
+impl From<u128> for Amount {
+    #[allow(clippy::cast_possible_truncation)] // taking a half is the truncation
+    fn from(value: u128) -> Self {
+        Self {
+            low: value as u64,
+            high: (value >> 64) as u64,
+        }
+    }
+}
+
+impl From<Amount> for u128 {
+    fn from(value: Amount) -> Self {
+        Self::from(value.low) | (Self::from(value.high) << 64)
+    }
+}
 
 /// Host-side marker for the `read-cell` resource.
 pub struct ReadCell;
@@ -78,22 +119,22 @@ pub trait KernelHost: Send {
     ///
     /// # Errors
     ///
-    /// A deterministic refusal (bad amount cell).
-    fn delta_add(&mut self, rep: u32, amount: &[u8]) -> Result<(), AbortReason>;
+    /// A deterministic refusal.
+    fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
 
     /// Debit the amount cell unconditionally.
     ///
     /// # Errors
     ///
-    /// A deterministic refusal (bad amount cell).
-    fn delta_sub(&mut self, rep: u32, amount: &[u8]) -> Result<(), AbortReason>;
+    /// A deterministic refusal.
+    fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
 
-    /// The reserved amount this transaction holds, as a 16-byte cell.
+    /// The reserved amount this transaction holds.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn reserve_amount(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
+    fn reserve_amount(&mut self, rep: u32) -> Result<u128, AbortReason>;
 
     /// Entries currently in the interval, bounded by the declared cap.
     ///
@@ -102,12 +143,12 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason>;
 
-    /// The order key of the entry at `index`, as a 16-byte cell.
+    /// The order key of the entry at `index`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_order(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
+    fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, AbortReason>;
 
     /// The value of the entry at `index`.
     ///
@@ -127,9 +168,8 @@ pub trait KernelHost: Send {
     ///
     /// # Errors
     ///
-    /// A deterministic refusal (bad order cell, order outside the
-    /// interval).
-    fn range_insert(&mut self, rep: u32, order: &[u8], value: Vec<u8>) -> Result<(), AbortReason>;
+    /// A deterministic refusal (an order outside the interval).
+    fn range_insert(&mut self, rep: u32, order: u128, value: Vec<u8>) -> Result<(), AbortReason>;
 
     /// Remove the entry at `index`.
     ///
@@ -240,21 +280,21 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     )?;
     state.func_wrap(
         "delta-cell-add",
-        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<DeltaCell>, Vec<u8>)| {
-            charge_boundary_bytes(&mut store, amount.len())?;
+        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<DeltaCell>, Amount)| {
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
             store
                 .data_mut()
-                .delta_add(r.rep(), &amount)
+                .delta_add(r.rep(), amount.into())
                 .map_err(host_trap)
         },
     )?;
     state.func_wrap(
         "delta-cell-sub",
-        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<DeltaCell>, Vec<u8>)| {
-            charge_boundary_bytes(&mut store, amount.len())?;
+        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<DeltaCell>, Amount)| {
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
             store
                 .data_mut()
-                .delta_sub(r.rep(), &amount)
+                .delta_sub(r.rep(), amount.into())
                 .map_err(host_trap)
         },
     )?;
@@ -265,8 +305,8 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
                 .data_mut()
                 .reserve_amount(r.rep())
                 .map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, amount.len())?;
-            Ok((amount,))
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            Ok((Amount::from(amount),))
         },
     )?;
 
@@ -283,8 +323,8 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
                 .data_mut()
                 .range_order(r.rep(), index)
                 .map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, order.len())?;
-            Ok((order,))
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            Ok((Amount::from(order),))
         },
     )?;
     state.func_wrap(
@@ -311,8 +351,8 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
                 .data_mut()
                 .range_order(r.rep(), index)
                 .map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, order.len())?;
-            Ok((order,))
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            Ok((Amount::from(order),))
         },
     )?;
     state.func_wrap(
@@ -340,11 +380,11 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "range-write-insert",
         |mut store: StoreContextMut<'_, T>,
-         (r, order, value): (Resource<RangeWrite>, Vec<u8>, Vec<u8>)| {
-            charge_boundary_bytes(&mut store, order.len() + value.len())?;
+         (r, order, value): (Resource<RangeWrite>, Amount, Vec<u8>)| {
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES + value.len())?;
             store
                 .data_mut()
-                .range_insert(r.rep(), &order, value)
+                .range_insert(r.rep(), order.into(), value)
                 .map_err(host_trap)
         },
     )?;

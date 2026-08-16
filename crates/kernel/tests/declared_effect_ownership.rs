@@ -214,7 +214,7 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
     };
     let rep = u32::try_from(rep).expect("one clause");
 
-    let spent = session.delta_sub(rep, &encode_amount(5_000));
+    let spent = session.delta_sub(rep, 5_000);
     assert!(
         spent.is_err(),
         "a stranger's vault was debited through a declared delta"

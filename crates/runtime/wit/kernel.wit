@@ -15,10 +15,22 @@
 /// gate holds each signature's totality mark to whichever its export is.
 package hyperscale:kernel;
 
-/// Declared-state access, one resource per mode. Amounts and order keys
-/// cross the boundary in the kernel's cell representation: exactly 16
-/// bytes, little-endian u128.
+/// Declared-state access, one resource per mode.
 interface state {
+    /// A quantity at the kernel's own cell width, as its two halves.
+    ///
+    /// A type rather than the sixteen bytes it is stored as: the width is
+    /// the protocol's, so a boundary that carried it as a byte list would
+    /// be asking each side to agree by convention on something the type
+    /// can simply say. Amounts and order keys are both this — an order
+    /// key is a `u128` for the same reason a balance is.
+    record amount {
+        /// The low 64 bits.
+        low: u64,
+        /// The high 64 bits.
+        high: u64,
+    }
+
     /// A declared fresh read of one substate.
     resource read-cell;
     /// A read of one permanently locked substate.
@@ -47,19 +59,19 @@ interface state {
     write-cell-set: func(c: borrow<write-cell>, value: list<u8>);
 
     /// Credit the amount cell.
-    delta-cell-add: func(c: borrow<delta-cell>, amount: list<u8>);
+    delta-cell-add: func(c: borrow<delta-cell>, value: amount);
 
     /// Debit the amount cell unconditionally.
-    delta-cell-sub: func(c: borrow<delta-cell>, amount: list<u8>);
+    delta-cell-sub: func(c: borrow<delta-cell>, value: amount);
 
     /// The reserved amount this transaction holds.
-    reserve-cell-amount: func(c: borrow<reserve-cell>) -> list<u8>;
+    reserve-cell-amount: func(c: borrow<reserve-cell>) -> amount;
 
     /// Entries currently in the interval, bounded by the declared cap.
     range-read-count: func(r: borrow<range-read>) -> u32;
 
     /// The order key of the entry at `index`, ascending.
-    range-read-order: func(r: borrow<range-read>, index: u32) -> list<u8>;
+    range-read-order: func(r: borrow<range-read>, index: u32) -> amount;
 
     /// The value of the entry at `index`, ascending.
     range-read-entry: func(r: borrow<range-read>, index: u32) -> list<u8>;
@@ -68,7 +80,7 @@ interface state {
     range-write-count: func(r: borrow<range-write>) -> u32;
 
     /// The order key of the entry at `index`, ascending.
-    range-write-order: func(r: borrow<range-write>, index: u32) -> list<u8>;
+    range-write-order: func(r: borrow<range-write>, index: u32) -> amount;
 
     /// The value of the entry at `index`, ascending.
     range-write-entry: func(r: borrow<range-write>, index: u32) -> list<u8>;
@@ -78,7 +90,7 @@ interface state {
 
     /// Insert (or replace) the entry at `order`, which must lie inside the
     /// declared interval.
-    range-write-insert: func(r: borrow<range-write>, order: list<u8>, value: list<u8>);
+    range-write-insert: func(r: borrow<range-write>, order: amount, value: list<u8>);
 
     /// Remove the entry at `index`.
     range-write-remove: func(r: borrow<range-write>, index: u32);

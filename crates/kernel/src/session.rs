@@ -22,7 +22,7 @@ use hyperscale_vm_effects::{
 };
 
 use crate::locality::Locality;
-use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
+use crate::modes::{DeltaOp, ModeError, TxHash};
 use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
 use crate::store::{Access, StoreError, WorkingStore};
@@ -128,12 +128,6 @@ pub enum SessionTrap {
     /// through the typed world surface, kept as an honest error.
     #[error("handle {0} does not grant this operation")]
     WrongMode(u32),
-    /// An amount that is not a 16-byte cell.
-    #[error("amount cell must be 16 bytes, found {0}")]
-    BadAmountCell(usize),
-    /// An order key that is not a 16-byte cell.
-    #[error("order cell must be 16 bytes, found {0}")]
-    BadOrderCell(usize),
     /// An entry index past the interval's current entries.
     #[error("entry index {index} out of bounds ({count} entries)")]
     IndexOutOfBounds {
@@ -183,8 +177,6 @@ impl From<SessionTrap> for AbortReason {
         match trap {
             SessionTrap::UnknownHandle(_) => Self::HandleUnknown,
             SessionTrap::WrongMode(_) => Self::HandleWrongMode,
-            SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
-            SessionTrap::BadOrderCell(_) => Self::MalformedOrderCell,
             SessionTrap::IndexOutOfBounds { .. } => Self::EntryIndexOutOfBounds,
             SessionTrap::OrderOutsideInterval => Self::OrderOutsideInterval,
             SessionTrap::WriteCapExceeded { .. } => Self::IntervalWriteCapExceeded,
@@ -605,7 +597,7 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn delta_add(&mut self, rep: u32, amount: &[u8]) -> Result<(), SessionTrap> {
+    pub fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), SessionTrap> {
         self.delta(rep, amount, DeltaOp::Add)
     }
 
@@ -614,32 +606,28 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn delta_sub(&mut self, rep: u32, amount: &[u8]) -> Result<(), SessionTrap> {
+    pub fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), SessionTrap> {
         self.delta(rep, amount, DeltaOp::Sub)
     }
 
     fn delta(
         &mut self,
         rep: u32,
-        amount: &[u8],
+        amount: u128,
         op: fn(u128) -> DeltaOp,
     ) -> Result<(), SessionTrap> {
         match self.capability(rep)? {
-            Capability::Delta(key) => {
-                let amount =
-                    decode_amount(amount).map_err(|_| SessionTrap::BadAmountCell(amount.len()))?;
-                Ok(self.store.queue_delta(key, op(amount))?)
-            }
+            Capability::Delta(key) => Ok(self.store.queue_delta(key, op(amount))?),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
     }
 
-    /// The reserved amount behind a reserve capability, as a 16-byte cell.
+    /// The reserved amount behind a reserve capability.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn reserve_amount(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
+    pub fn reserve_amount(&mut self, rep: u32) -> Result<u128, SessionTrap> {
         match self.capability(rep)? {
             // The clause's own declared amount, not the folded hold: two
             // reservations on one cell share a single held total, and a
@@ -649,7 +637,7 @@ impl KernelSession {
             Capability::Reserve { key, amount } => self
                 .store
                 .held_reservation(key, self.tx)
-                .map(|_| encode_amount(amount).to_vec())
+                .map(|_| amount)
                 .ok_or(SessionTrap::ReservationMissing),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
@@ -738,14 +726,14 @@ impl KernelSession {
         Ok(u32::try_from(self.scans[&rep].len()).unwrap_or(u32::MAX))
     }
 
-    /// The order key at `index`, ascending, as a 16-byte cell.
+    /// The order key at `index`, ascending.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn range_order(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, SessionTrap> {
+    pub fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, SessionTrap> {
         self.scan(rep)?;
-        indexed(&self.scans[&rep], index).map(|(order, _)| encode_amount(*order).to_vec())
+        indexed(&self.scans[&rep], index).map(|(order, _)| *order)
     }
 
     /// The entry value at `index`, ascending.
@@ -785,14 +773,13 @@ impl KernelSession {
     pub fn range_insert(
         &mut self,
         rep: u32,
-        order: &[u8],
+        order: u128,
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
         let (owner, collection, lo, hi, cap, writable) = self.range_of(rep)?;
         if !writable {
             return Err(SessionTrap::WrongMode(rep));
         }
-        let order = decode_amount(order).map_err(|_| SessionTrap::BadOrderCell(order.len()))?;
         if !(lo..=hi).contains(&order) {
             return Err(SessionTrap::OrderOutsideInterval);
         }
@@ -1468,8 +1455,8 @@ mod tests {
         )
         .expect("11 reserved against 100 is feasible");
 
-        assert_eq!(session.reserve_amount(0), Ok(encode_amount(5).to_vec()));
-        assert_eq!(session.reserve_amount(1), Ok(encode_amount(6).to_vec()));
+        assert_eq!(session.reserve_amount(0), Ok(5));
+        assert_eq!(session.reserve_amount(1), Ok(6));
     }
 
     fn session_over(store: MemoryStore, set: &EffectSet) -> KernelSession {
@@ -1510,30 +1497,9 @@ mod tests {
             session.write_cell_set(0, vec![1]),
             Err(SessionTrap::WrongMode(0))
         );
-        assert_eq!(
-            session.delta_add(0, &encode_amount(1)),
-            Err(SessionTrap::WrongMode(0))
-        );
+        assert_eq!(session.delta_add(0, 1), Err(SessionTrap::WrongMode(0)));
         assert_eq!(session.reserve_amount(0), Err(SessionTrap::WrongMode(0)));
         assert_eq!(session.range_count(0), Err(SessionTrap::WrongMode(0)));
-    }
-
-    #[test]
-    fn malformed_amount_and_order_cells_are_named_refusals() {
-        let vault = key(2);
-        let set = declared(&[Effect {
-            target: EffectTarget::Point(vault),
-            mode: Mode::Delta,
-        }]);
-        let mut session = session_over(MemoryStore::new(), &set);
-        assert_eq!(
-            session.delta_add(0, &[1, 2, 3]),
-            Err(SessionTrap::BadAmountCell(3))
-        );
-        assert_eq!(
-            session.delta_sub(0, &[]),
-            Err(SessionTrap::BadAmountCell(0))
-        );
     }
 
     #[test]
@@ -1568,14 +1534,10 @@ mod tests {
         // An insert must land inside the declared interval, and its order
         // key is an amount cell like any other.
         assert_eq!(
-            session.range_insert(0, &encode_amount(99), vec![2]),
+            session.range_insert(0, 99, vec![2]),
             Err(SessionTrap::OrderOutsideInterval)
         );
-        assert_eq!(
-            session.range_insert(0, &[0, 1], vec![2]),
-            Err(SessionTrap::BadOrderCell(2))
-        );
-        assert_eq!(session.range_insert(0, &encode_amount(12), vec![2]), Ok(()));
+        assert_eq!(session.range_insert(0, 12, vec![2]), Ok(()));
         assert_eq!(session.range_count(0), Ok(2));
     }
 
@@ -1598,17 +1560,17 @@ mod tests {
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
-        assert_eq!(session.range_insert(0, &encode_amount(10), vec![1]), Ok(()));
-        assert_eq!(session.range_insert(0, &encode_amount(20), vec![2]), Ok(()));
+        assert_eq!(session.range_insert(0, 10, vec![1]), Ok(()));
+        assert_eq!(session.range_insert(0, 20, vec![2]), Ok(()));
         assert_eq!(
-            session.range_insert(0, &encode_amount(30), vec![3]),
+            session.range_insert(0, 30, vec![3]),
             Err(SessionTrap::WriteCapExceeded { cap: 2, order: 30 }),
             "a third distinct entry is past the declared cap"
         );
 
         // Rewriting an entry the interval already changed is the same
         // entry touched again, not a new one.
-        assert_eq!(session.range_insert(0, &encode_amount(10), vec![9]), Ok(()));
+        assert_eq!(session.range_insert(0, 10, vec![9]), Ok(()));
     }
 
     #[test]
@@ -1630,14 +1592,14 @@ mod tests {
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
-        assert_eq!(session.range_insert(0, &encode_amount(10), vec![1]), Ok(()));
+        assert_eq!(session.range_insert(0, 10, vec![1]), Ok(()));
         assert_eq!(
             session.range_count(0),
             Ok(1),
             "re-materializes the interval"
         );
         assert_eq!(
-            session.range_insert(0, &encode_amount(20), vec![2]),
+            session.range_insert(0, 20, vec![2]),
             Err(SessionTrap::WriteCapExceeded { cap: 1, order: 20 }),
         );
     }
@@ -1696,7 +1658,7 @@ mod tests {
             Err(SessionTrap::WrongMode(0))
         );
         assert_eq!(
-            session.range_insert(0, &encode_amount(1), vec![1]),
+            session.range_insert(0, 1, vec![1]),
             Err(SessionTrap::WrongMode(0))
         );
         assert_eq!(session.range_remove(0, 0), Err(SessionTrap::WrongMode(0)));
@@ -1868,7 +1830,7 @@ mod tests {
 
         session.enter_invocation(Address::new([9; 31], AddressClass::Component));
         session.emit(1, b"paid".to_vec()).unwrap();
-        session.delta_sub(0, &encode_amount(1)).unwrap();
+        session.delta_sub(0, 1).unwrap();
 
         let (receipt, _) = session
             .finish(Outcome::Completed { value: None }, 7)
