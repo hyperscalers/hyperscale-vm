@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 use hyperscale_vm_effects::{
     Clause, Effect, EffectTarget, Expr, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
     ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
-    PrefixShardResolver, PrincipalAddr, RoleId, ShardResolver, TargetExpr, TestHasher, Value,
-    admit, collection_id, fresh_id, route,
+    PrefixShardResolver, PrincipalAddr, RoleId, ShardResolver, TargetExpr, TestHasher, Totality,
+    Value, admit, collection_id, fresh_id, route,
 };
 use hyperscale_vm_kernel::{CreationContext, MemoryStore, WorkingStore};
 
@@ -23,6 +23,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     package.methods.insert(
         "spawn".into(),
         MethodSignature {
+            totality: Totality::Fallible,
             effects: vec![
                 Clause::Effect {
                     target: TargetExpr::Point(Expr::FreshKey { slot: 0 }),

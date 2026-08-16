@@ -11,7 +11,7 @@ use hyperscale_vm_effects::{
     Address, AddressClass, CallSite, ComponentAddr, EdgeContent, EdgeRef, Effect, EffectTarget,
     EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
     ManifestGraph, ManifestHash, MetadataCache, MethodSignature, Mode, PackageMetadata, ParamType,
-    RoleId, TestHasher, Value, admit, evaluate_expr, route,
+    RoleId, TestHasher, Totality, Value, admit, evaluate_expr, route,
 };
 use proptest::collection::vec;
 use proptest::option;
@@ -197,6 +197,7 @@ proptest! {
         forward.methods.insert(
             "forward".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 params: vec![ParamType::Address, ParamType::Bucket],
                 calls: vec![CallSite {
                     target: Expr::Arg(0),

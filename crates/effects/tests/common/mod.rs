@@ -11,7 +11,8 @@ use hyperscale_vm_effects::{
     Address, CallSite, Clause, ComponentAddr, Effect, EffectSet, Expr, Hash32, Hasher,
     InstanceMeta, InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr,
     PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, ResourceAddr,
-    RoleId, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value, child_key,
+    RoleId, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Totality, Value,
+    child_key,
 };
 
 /// Accounts are principals: their class is what resolves them to the
@@ -165,6 +166,7 @@ pub fn wide_account_metadata() -> PackageMetadata {
     methods.methods.insert(
         "withdraw_wide".into(),
         MethodSignature {
+            totality: Totality::Fallible,
             params: vec![ParamType::Address, ParamType::U128],
             abi: Vec::new(),
             outputs: vec![Expr::Arg(0)],
@@ -183,6 +185,7 @@ pub fn router_metadata() -> PackageMetadata {
     methods.methods.insert(
         "forward".into(),
         MethodSignature {
+            totality: Totality::Fallible,
             calls: vec![CallSite {
                 target: Expr::Arg(0),
                 method: "deposit".into(),

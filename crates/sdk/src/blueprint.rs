@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{
     Accessibility, Clause, MAX_EFFECTS_PER_SIGNATURE, MethodSignature, ModeExpr, ModeKind,
-    PackageMetadata, ParamType, TargetExpr,
+    PackageMetadata, ParamType, TargetExpr, Totality,
 };
 
 use crate::trace::Trace;
@@ -207,6 +207,7 @@ impl Builder {
         };
         let method = Method {
             signature: MethodSignature {
+                totality: Totality::Fallible,
                 // Neither the accessibility nor the ABI binding is
                 // something a trace can see: one is a claim about who may
                 // call the method, the other about the export's parameter

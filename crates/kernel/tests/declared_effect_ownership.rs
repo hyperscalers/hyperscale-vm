@@ -22,7 +22,7 @@ use hyperscale_vm_effects::{
     Address, AddressClass, Clause, ComponentAddr, Expr, GraphArg, GraphNode, Hash32, Hasher,
     InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, ModeExpr,
     PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, RoleId,
-    SubstateKey, TargetExpr, TestHasher, Value, admit, child_key, route,
+    SubstateKey, TargetExpr, TestHasher, Totality, Value, admit, child_key, route,
 };
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, WorkingStore,
@@ -64,6 +64,7 @@ fn predator() -> PackageMetadata {
     methods.methods.insert(
         "drain".into(),
         MethodSignature {
+            totality: Totality::Fallible,
             params: vec![ParamType::Address],
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(Expr::ChildKey {

@@ -13,8 +13,8 @@ use hyperscale_vm_effects::{
     Accessibility, Address, AddressClass, AdmissionError, AuthRole, AuthorityGate, Clause,
     ComponentAddr, Constraint, EdgeRef, Effect, EffectTarget, EvidenceRef, Expr, GraphArg,
     GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph,
-    MetadataCache, MethodSignature, Mode, ModeExpr, PackageMetadata, TargetExpr, TestHasher, Value,
-    admit, child_key, fresh_id, holdings_collection, holdings_range, route,
+    MetadataCache, MethodSignature, Mode, ModeExpr, PackageMetadata, TargetExpr, TestHasher,
+    Totality, Value, admit, child_key, fresh_id, holdings_collection, holdings_range, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -284,6 +284,7 @@ fn custodian_world(
     package.methods.insert(
         "present".into(),
         MethodSignature {
+            totality: Totality::Fallible,
             accessibility,
             mints,
             effects,
@@ -293,6 +294,7 @@ fn custodian_world(
     package.methods.insert(
         "operate".into(),
         MethodSignature {
+            totality: Totality::Fallible,
             accessibility: Accessibility::Guarded(Expr::Config(0)),
             ..MethodSignature::default()
         },

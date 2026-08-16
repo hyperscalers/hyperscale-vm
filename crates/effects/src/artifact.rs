@@ -233,7 +233,7 @@ mod tests {
         extract_metadata, write_uleb128,
     };
     use crate::dsl::{Clause, Expr, MAX_EXPR_DEPTH, ModeExpr, TargetExpr};
-    use crate::metadata::{MethodSignature, PackageMetadata};
+    use crate::metadata::{MethodSignature, PackageMetadata, Totality};
 
     fn empty_component() -> Vec<u8> {
         let mut artifact = b"\0asm".to_vec();
@@ -291,6 +291,7 @@ mod tests {
         metadata.methods.insert(
             "m".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 effects: vec![Clause::Effect {
                     target: TargetExpr::Point(expr),
                     mode: ModeExpr::Write,

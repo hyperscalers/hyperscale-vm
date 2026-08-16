@@ -20,9 +20,9 @@ use hyperscale_vm_effects::{
     EffectSet, EffectTarget, EntryKey, EvidenceRef, Expr, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash,
     PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, Proposal, ResourceAddr, RoleId,
-    RoleSet, Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Value,
-    admit, child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
-    resource_address, route,
+    RoleSet, Routing, Rule, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Totality,
+    Value, admit, child_key, collection_id, fresh_id, holdings_collection, instance_data_key,
+    order_key, resource_address, route,
 };
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -675,6 +675,7 @@ fn mirror_metadata() -> PackageMetadata {
     metadata.methods.insert(
         "deposit".into(),
         MethodSignature {
+            totality: Totality::Fallible,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(1), AbiParam::Bucket(0)],
             effects: vec![

@@ -75,8 +75,8 @@ pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInpu
 pub use metadata::{
     AbiError, AbiParam, Accessibility, CallSite, DeclarationError, InstanceMeta, InstanceRegistry,
     MetadataBoundsError, MetadataCache, MethodSignature, PACKAGE_ROLE, PackageHash,
-    PackageMetadata, ParamType, check_abi, check_declarations, check_metadata, package_hash,
-    package_key,
+    PackageMetadata, ParamType, Totality, check_abi, check_declarations, check_metadata,
+    package_hash, package_key,
 };
 pub use resource::{
     Fungibility, ResourceRecord, holdings_collection, holdings_range, instance_data_key,

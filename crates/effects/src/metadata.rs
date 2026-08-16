@@ -226,6 +226,36 @@ pub enum Accessibility {
     Custodial,
 }
 
+/// How completely a method can be relied on to return.
+///
+/// Three states rather than a flag, because the two facts behind them are
+/// not the same fact and one does not imply the other. An error arm is
+/// visible in the signature and says the method can fail on its own terms.
+/// Trap freedom is not visible anywhere — a trap leaves the type system
+/// entirely — so ruling it out takes analysis of the body rather than a
+/// reading of its declaration.
+///
+/// The ordering is what a caller may assume, weakest first, and the
+/// default is the weakest: a signature that says nothing claims nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+pub enum Totality {
+    /// The signature carries an error arm, so the method fails on its own
+    /// terms and every caller has a failure to handle.
+    #[default]
+    Fallible,
+    /// No error arm, and nothing established about traps. Necessary for
+    /// [`Total`](Self::Total) and not sufficient for it: fuel exhaustion
+    /// and a panicking body are both still reachable from here.
+    Infallible,
+    /// No error arm, and the publish-time checker established the rest:
+    /// no partial operation anywhere in the transitive body, and a static
+    /// fuel bound the transaction pre-charges so exhaustion cannot occur
+    /// at execution. Never authored — a package claims it and the check
+    /// grants it, because a claim a package could simply assert about
+    /// itself would carry no weight for the shards that rely on it.
+    Total,
+}
+
 /// A method's declared access. Its transitive effect set is the fold of its
 /// callees' signatures over the static call graph, which is acyclic — a DAG
 /// fold, never a fixpoint.
@@ -233,6 +263,13 @@ pub enum Accessibility {
 pub struct MethodSignature {
     /// Whose authority naming this method on this target requires.
     pub accessibility: Accessibility,
+    /// How completely the method returns: whether a caller has a failure
+    /// to handle, and whether anything rules out a trap.
+    ///
+    /// What a leg's decomposition turns on — an outbound leg commits
+    /// locally and offers no veto, so it must be one that cannot come
+    /// back with a refusal or a trap for the core to have to answer.
+    pub totality: Totality,
     /// The badge a custodial method's gate reads and its mint names, over
     /// the target's own inputs.
     ///
@@ -1043,6 +1080,7 @@ mod tests {
     /// A signature whose only effect points at `expr`.
     fn signature_over(expr: Expr) -> MethodSignature {
         MethodSignature {
+            totality: Totality::Fallible,
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(expr),
                 mode: ModeExpr::Write,
@@ -1102,6 +1140,7 @@ mod tests {
     #[test]
     fn abi_expressions_are_bounded_like_every_other_walk() {
         let derived = |depth: usize| MethodSignature {
+            totality: Totality::Fallible,
             abi: vec![AbiParam::Derived(nested_projection(depth))],
             ..MethodSignature::default()
         };
@@ -1115,10 +1154,12 @@ mod tests {
     fn clause_nesting_is_bounded_where_the_evaluator_bounds_it() {
         assert_bounded(
             &one_method(MethodSignature {
+                totality: Totality::Fallible,
                 effects: vec![nested_foreach(MAX_CLAUSE_DEPTH)],
                 ..MethodSignature::default()
             }),
             &one_method(MethodSignature {
+                totality: Totality::Fallible,
                 effects: vec![nested_foreach(MAX_CLAUSE_DEPTH + 1)],
                 ..MethodSignature::default()
             }),
@@ -1133,6 +1174,7 @@ mod tests {
         };
         let with = |count: usize| {
             one_method(MethodSignature {
+                totality: Totality::Fallible,
                 effects: vec![effect.clone(); count],
                 ..MethodSignature::default()
             })
@@ -1311,6 +1353,7 @@ mod tests {
 
     fn signature(params: Vec<ParamType>, abi: Vec<AbiParam>) -> MethodSignature {
         MethodSignature {
+            totality: Totality::Fallible,
             params,
             abi,
             effects: vec![clause()],
@@ -1359,6 +1402,7 @@ mod tests {
     #[test]
     fn a_rule_reading_method_declares_exactly_its_cell() {
         let shaped = |accessibility, mode| MethodSignature {
+            totality: Totality::Fallible,
             accessibility,
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(Expr::SelfAddr),
@@ -1392,6 +1436,7 @@ mod tests {
         );
         assert_eq!(
             check_abi(&MethodSignature {
+                totality: Totality::Fallible,
                 accessibility: Accessibility::Authorizing,
                 ..MethodSignature::default()
             }),
@@ -1418,6 +1463,7 @@ mod tests {
     #[test]
     fn an_authority_the_caller_names_is_refused() {
         let guarded = |identity: Expr| MethodSignature {
+            totality: Totality::Fallible,
             accessibility: Accessibility::Guarded(identity),
             ..MethodSignature::default()
         };
@@ -1443,6 +1489,7 @@ mod tests {
     #[test]
     fn a_minted_identity_belongs_to_the_custody_shape_alone() {
         let shaped = |mints: Option<Expr>, effects| MethodSignature {
+            totality: Totality::Fallible,
             accessibility: Accessibility::Custodial,
             mints,
             effects,
@@ -1516,6 +1563,7 @@ mod tests {
         ] {
             assert_eq!(
                 check_abi(&MethodSignature {
+                    totality: Totality::Fallible,
                     accessibility,
                     mints: Some(Expr::Config(0)),
                     effects: vec![Clause::Effect {
@@ -1579,6 +1627,7 @@ mod tests {
     #[test]
     fn a_signature_reaching_another_prefix_is_refused() {
         let declaring = |target: TargetExpr| MethodSignature {
+            totality: Totality::Fallible,
             effects: vec![Clause::Effect {
                 target,
                 mode: ModeExpr::Delta,
@@ -1630,6 +1679,7 @@ mod tests {
 
         // And inside a `for-each` body, where the element is the owner.
         let looped = MethodSignature {
+            totality: Totality::Fallible,
             effects: vec![Clause::ForEach {
                 list: Expr::Arg(0),
                 body: vec![Clause::Effect {

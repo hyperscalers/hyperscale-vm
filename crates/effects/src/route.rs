@@ -929,7 +929,7 @@ mod tests {
     use crate::manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
     use crate::metadata::{
         CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
-        PackageMetadata, ParamType,
+        PackageMetadata, ParamType, Totality,
     };
     use crate::types::{
         Address, AddressClass, ComponentAddr, EdgeContent, Effect, EffectSet, EffectTarget,
@@ -987,6 +987,7 @@ mod tests {
 
     fn method(effects: Vec<Clause>, calls: Vec<CallSite>) -> MethodSignature {
         MethodSignature {
+            totality: Totality::Fallible,
             effects,
             calls,
             ..MethodSignature::default()
@@ -1784,6 +1785,7 @@ mod tests {
         package.methods.insert(
             "m".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 abi,
                 effects: vec![
                     Clause::ForEach {
@@ -1913,6 +1915,7 @@ mod tests {
         package.methods.insert(
             "take".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(0)],
                 effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
@@ -1922,6 +1925,7 @@ mod tests {
         package.methods.insert(
             "make".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 outputs: vec![Expr::Literal(Value::Bucket {
                     resource: addr(0xE1),
                     content: EdgeContent::NonFungible { ids: ids.clone() },
@@ -1975,6 +1979,7 @@ mod tests {
         package.methods.insert(
             "take".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(0)],
                 effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
@@ -1984,6 +1989,7 @@ mod tests {
         package.methods.insert(
             "make".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 outputs: vec![Expr::Literal(Value::Address(addr(0xE1)))],
                 ..MethodSignature::default()
             },
@@ -2057,6 +2063,7 @@ mod tests {
         router.methods.insert(
             "forward".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 // Nothing carries the bucket: the callee reads it.
                 abi: vec![AbiParam::Handle(0)],
@@ -2072,6 +2079,7 @@ mod tests {
         router.methods.insert(
             "make".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 outputs: vec![Expr::Literal(Value::Address(addr(0xE1)))],
                 ..MethodSignature::default()
             },
@@ -2080,6 +2088,7 @@ mod tests {
         callee.methods.insert(
             "take".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(0)],
                 effects: vec![self_point(RoleId(2), ModeExpr::Delta)],
@@ -2171,6 +2180,7 @@ mod tests {
             package.methods.insert(
                 "reach".into(),
                 MethodSignature {
+                    totality: Totality::Fallible,
                     params: vec![ParamType::Address],
                     effects: vec![Clause::Effect {
                         target: TargetExpr::Point(Expr::ChildKey {
@@ -2232,6 +2242,7 @@ mod tests {
         package.methods.insert(
             "reach".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 calls: vec![CallSite {
                     target: Expr::SelfAddr,
                     method: "guarded".into(),
@@ -2243,6 +2254,7 @@ mod tests {
         package.methods.insert(
             "guarded".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 accessibility: Accessibility::Guarded(Expr::SelfAddr),
                 ..MethodSignature::default()
             },
@@ -2284,6 +2296,7 @@ mod tests {
         package.methods.insert(
             "m".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(0), AbiParam::Bucket(0)],
                 effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
@@ -2293,6 +2306,7 @@ mod tests {
         package.methods.insert(
             "make".into(),
             MethodSignature {
+                totality: Totality::Fallible,
                 outputs: vec![Expr::Literal(Value::Address(addr(0xE1)))],
                 ..MethodSignature::default()
             },
