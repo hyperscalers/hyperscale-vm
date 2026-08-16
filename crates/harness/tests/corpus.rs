@@ -1289,6 +1289,22 @@ fn cancel_graph() -> ManifestGraph {
     graph(|b| account::cancel(b, ALICE))
 }
 
+/// An account governing itself reaches no further than itself, so there
+/// is no star to take and nothing a second participant could execute.
+/// The verdict is the one that claims less: the two strategies name the
+/// same execution when only one shard is party to it.
+#[test]
+fn governing_one_account_does_not_decompose() {
+    let world = world();
+    for graph in [propose_graph(), cancel_graph(), confirm_graph()] {
+        let routing = sharded_routing(&world, &graph);
+        assert_eq!(routing.per_shard.len(), 1);
+        assert_eq!(routing.alternation_depth, 0);
+        assert_eq!(routing.staged_depth, 0);
+        assert_eq!(routing.strategy, Strategy::Replicated);
+    }
+}
+
 fn confirm_graph() -> ManifestGraph {
     graph(|b| account::confirm(b, ALICE))
 }
@@ -1781,6 +1797,14 @@ fn fill_provisions_only_the_interval() {
         })
         .collect()
     );
+
+    // The book is a venue like the pool is, so a fill takes the venue's
+    // star: the taker's reservation inbound, the book itself core, and
+    // whatever the fill pays out an outbound leg. One stage, whatever the
+    // interval's width — a range's size prices provisioning, never depth.
+    assert_eq!(routing.staged_depth, 1);
+    assert_eq!(routing.strategy, Strategy::LegLocal);
+    assert!(routing.roles.contains(&Role::Inbound));
 }
 
 #[test]
