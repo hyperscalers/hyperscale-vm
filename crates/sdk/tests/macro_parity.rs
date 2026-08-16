@@ -325,3 +325,56 @@ fn reading_the_environment_declares_nothing() {
         "environment bindings"
     );
 }
+
+/// A resource an instance issues: the stake unit a pool hands back, and
+/// the badge that operates it.
+///
+/// Both derive from the instance's own address rather than from its
+/// configuration, and they have to — an address commits the
+/// configuration, so a configured field naming a value derived from that
+/// address would not be expressible. The mark is what separates one from
+/// the other.
+#[blueprint]
+mod issuer {
+    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, issued};
+
+    #[state]
+    struct Issuer {
+        #[role(1)]
+        staked: Cell<Amount>,
+    }
+
+    impl Issuer {
+        /// Take a delegation and hand back units at par.
+        pub fn stake(&mut self, funds: Bucket) -> Bucket {
+            self.staked.set(funds.amount());
+            Bucket::of(issued(b""), funds.amount())
+        }
+
+        /// The operator surface, gated on the badge the pool issues.
+        #[guarded(issued(b"owner-badge"))]
+        pub fn retire(&mut self) {
+            self.staked.set(0);
+        }
+    }
+}
+
+#[test]
+fn an_instance_issues_resources_its_own_address_derives() {
+    use hyperscale_vm_effects::{Accessibility, Expr, Value};
+
+    let metadata = issuer::blueprint().metadata();
+    // The unit is the instance's primary issue: no material at all,
+    // which is a different resource from any marked one.
+    assert_eq!(
+        metadata.methods["stake"].outputs,
+        vec![Expr::SelfResource { material: vec![] }],
+    );
+    // The badge is the same derivation over the mark that separates it.
+    assert_eq!(
+        metadata.methods["retire"].accessibility,
+        Accessibility::Guarded(Expr::SelfResource {
+            material: vec![Expr::Literal(Value::Bytes(b"owner-badge".to_vec()))],
+        }),
+    );
+}

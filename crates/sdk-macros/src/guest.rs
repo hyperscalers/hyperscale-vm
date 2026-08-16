@@ -68,6 +68,10 @@ fn value_shape(
         Need::Amount(_) | Need::Derived(Term::OrderKey { .. }) => Shape::Cell(Box::new(
             syn::parse_quote!(::hyperscale_vm_sdk::state::Amount),
         )),
+        // A resource is an address however it was derived.
+        Need::Derived(Term::SelfResource(_) | Term::ResourceOf(_)) => {
+            Shape::Cell(Box::new(syn::parse_quote!(::hyperscale_vm_sdk::Address)))
+        }
         Need::Derived(Term::Arg(index)) => {
             params
                 .get(*index as usize)

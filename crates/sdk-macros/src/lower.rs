@@ -621,7 +621,8 @@ impl<'a> Lowerer<'a> {
             | Term::Config(_)
             | Term::FreshId(_)
             | Term::ResourceOf(_)
-            | Term::OrderKey { .. } => self.need(&Need::Derived(term.clone())),
+            | Term::OrderKey { .. }
+            | Term::SelfResource(_) => self.need(&Need::Derived(term.clone())),
             Term::Lookup { .. } | Term::Field(..) | Term::Binding(_) => {
                 self.refuse(
                     "this term is evaluated where the declaration is, and the guest \
@@ -1300,6 +1301,22 @@ impl<'a> Lowerer<'a> {
                 code: Code::Term(term),
             };
         }
+        if name == "issued" {
+            let mark = call.args.first().and_then(byte_literal);
+            let Some(mark) = mark else {
+                self.error(
+                    call.args.span(),
+                    "the mark separating an instance's resources is part of every key \
+                     derived from one, so it must be a byte-string literal",
+                );
+                return Eval::absent("a computed resource mark");
+            };
+            let term = Term::SelfResource(mark);
+            return Eval {
+                val: Val::Term(term.clone()),
+                code: Code::Term(term),
+            };
+        }
         let evals: Vec<Eval> = call.args.iter().map(|a| self.expr(a)).collect();
         let vals: Vec<Val> = evals.iter().map(|e| e.val.clone()).collect();
         match (name.as_str(), vals.as_slice()) {
@@ -1800,6 +1817,18 @@ impl<'a> Lowerer<'a> {
             body,
         });
         quote!(for #pat in #list { #(#statements)* })
+    }
+}
+
+/// The bytes of a byte-string literal, when an expression is one.
+fn byte_literal(expr: &syn::Expr) -> Option<Vec<u8>> {
+    match expr {
+        syn::Expr::Lit(lit) => match &lit.lit {
+            syn::Lit::ByteStr(bytes) => Some(bytes.value()),
+            _ => None,
+        },
+        syn::Expr::Reference(reference) => byte_literal(&reference.expr),
+        _ => None,
     }
 }
 

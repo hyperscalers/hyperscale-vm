@@ -177,6 +177,25 @@ impl Trace {
         Sym::new(Expr::SelfAddr)
     }
 
+    /// A resource this instance issues, separated from its others by
+    /// `mark`.
+    ///
+    /// Derived from the instance rather than configured, and it has to
+    /// be: an instance's address commits its configuration, so a
+    /// configured field naming a value derived from that address would
+    /// not be expressible. The mark is what lets one instance issue more
+    /// than one — a stake unit and the badge that operates the pool are
+    /// the same derivation over different material.
+    #[must_use]
+    pub fn self_resource(&self, mark: &[u8]) -> Sym<Addr> {
+        let material = if mark.is_empty() {
+            Vec::new()
+        } else {
+            vec![Expr::Literal(Value::Bytes(mark.to_vec()))]
+        };
+        Sym::new(Expr::SelfResource { material })
+    }
+
     /// A deterministic fresh 64-bit id, in the next unused slot.
     #[must_use]
     pub const fn fresh_id(&mut self) -> Sym<Num> {

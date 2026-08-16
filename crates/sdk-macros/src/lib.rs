@@ -294,6 +294,75 @@ enum Gate {
     Custodial(u32),
 }
 
+/// The identity a `#[guarded]` method requires, as a tracer call.
+///
+/// Every identity a method can require is one the target itself names.
+/// A caller who names the identity they must present can always present
+/// it, so a gate over an argument reads as guarded and admits everyone —
+/// which is the refusal `check_abi` makes at publish, made here on the
+/// line that wrote it.
+fn guarded_identity(
+    identity: &syn::Expr,
+    params: &[(String, syn::Type)],
+) -> syn::Result<TokenStream2> {
+    let refuse = || {
+        syn::Error::new(
+            identity.span(),
+            "a guarded method names `self`, a badge it issues, or one of the \
+             component's configuration fields",
+        )
+    };
+    match identity {
+        syn::Expr::Path(path) if path.path.is_ident("self") => Ok(quote!(__t.self_addr())),
+        syn::Expr::Path(path) if path.path.get_ident().is_some() => {
+            let name = path.path.get_ident().expect("checked").to_string();
+            if params.iter().any(|(p, _)| *p == name) {
+                return Err(syn::Error::new(
+                    identity.span(),
+                    "the authority this method requires is one its caller names, so \
+                     the gate would admit everyone — name `self`, a badge it issues, \
+                     or a configuration field instead",
+                ));
+            }
+            Err(refuse())
+        }
+        // A badge the instance issues: holding it is operating the
+        // instance, and it derives from the address rather than from
+        // anything a caller supplies.
+        syn::Expr::Call(call) => {
+            let named = match &*call.func {
+                syn::Expr::Path(path) => path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|s| s.ident == "issued"),
+                _ => false,
+            };
+            let mark = call.args.first().and_then(byte_literal);
+            match (named, mark) {
+                (true, Some(mark)) => {
+                    let mark = syn::LitByteStr::new(&mark, identity.span());
+                    Ok(quote!(__t.self_resource(#mark)))
+                }
+                _ => Err(refuse()),
+            }
+        }
+        _ => Err(refuse()),
+    }
+}
+
+/// The bytes of a byte-string literal, when an expression is one.
+fn byte_literal(expr: &syn::Expr) -> Option<Vec<u8>> {
+    match expr {
+        syn::Expr::Lit(lit) => match &lit.lit {
+            syn::Lit::ByteStr(bytes) => Some(bytes.value()),
+            _ => None,
+        },
+        syn::Expr::Reference(reference) => byte_literal(&reference.expr),
+        _ => None,
+    }
+}
+
 /// Read a method's gate off its attributes.
 fn parse_gate(
     method: &syn::ImplItemFn,
@@ -303,38 +372,7 @@ fn parse_gate(
     for attr in &method.attrs {
         if attr.path().is_ident("guarded") {
             let identity: syn::Expr = attr.parse_args()?;
-            // Every identity a method can require is one the target itself
-            // names; a caller who names the identity they must present can
-            // always present it, so the gate would admit everyone.
-            let tokens = match &identity {
-                syn::Expr::Path(path) if path.path.is_ident("self") => {
-                    quote!(__t.self_addr())
-                }
-                syn::Expr::Path(path) if path.path.get_ident().is_some() => {
-                    let name = path.path.get_ident().expect("checked").to_string();
-                    if params.iter().any(|(p, _)| *p == name) {
-                        return Err(syn::Error::new(
-                            identity.span(),
-                            "the authority this method requires is one its caller names, \
-                             so the gate would admit everyone — name `self` or a \
-                             configuration field instead",
-                        ));
-                    }
-                    return Err(syn::Error::new(
-                        identity.span(),
-                        "a guarded method names `self` or one of the component's \
-                         configuration fields",
-                    ));
-                }
-                _ => {
-                    return Err(syn::Error::new(
-                        identity.span(),
-                        "a guarded method names `self` or one of the component's \
-                         configuration fields",
-                    ));
-                }
-            };
-            return Ok(Gate::Guarded(tokens));
+            return Ok(Gate::Guarded(guarded_identity(&identity, params)?));
         }
         if attr.path().is_ident("authorizing") {
             let field: syn::Ident = attr.parse_args()?;

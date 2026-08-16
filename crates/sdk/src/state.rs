@@ -536,6 +536,20 @@ pub const fn pack(hi: u64, lo: u64) -> Amount {
     ((hi as Amount) << 64) | (lo as Amount)
 }
 
+/// A resource this instance issues, separated from its others by `mark`.
+///
+/// Derived from the instance rather than configured: an instance's
+/// address commits its configuration, so a configured field naming a
+/// value derived from that address would not be expressible. Pass an
+/// empty mark for the instance's primary issue, and a distinguishing one
+/// for anything beside it — a badge that operates the instance is the
+/// same derivation over different material.
+#[must_use]
+pub fn issued(mark: &[u8]) -> Address {
+    let _ = mark;
+    unimplemented!("{OFF_HOST}")
+}
+
 /// A deterministic fresh id, unique within this call.
 #[must_use]
 pub fn fresh_id() -> u64 {

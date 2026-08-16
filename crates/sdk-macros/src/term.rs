@@ -61,6 +61,8 @@ pub enum Term {
         /// The logical key.
         key: Box<Self>,
     },
+    /// A resource the instance issues, marked apart from its others.
+    SelfResource(Vec<u8>),
     /// A `u64` literal.
     LitU64(u64),
     /// The element of an enclosing `for`, by absolute nesting depth.
@@ -117,6 +119,10 @@ impl Term {
                     __t.order_key(::hyperscale_vm_sdk::RoleId(#role), &#key)
                         .cast::<::hyperscale_vm_sdk::Opaque>()
                 )
+            }
+            Self::SelfResource(mark) => {
+                let mark = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
+                quote!(__t.self_resource(#mark).cast::<::hyperscale_vm_sdk::Opaque>())
             }
             Self::LitU64(value) => quote!(
                 ::hyperscale_vm_sdk::sym::lit_u64(#value)
