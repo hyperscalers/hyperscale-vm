@@ -13,8 +13,9 @@
 //! supplement against the store's fuel: argument bytes before the host
 //! operation, result bytes after it succeeds. A host operation's refusal
 //! (a bad amount cell, an out-of-bounds entry index) is a deterministic
-//! trap carrying the host's message.
+//! trap carrying the host's own abort class.
 
+use hyperscale_vm_types::AbortReason;
 use wasmtime::component::{Linker, Resource, ResourceType};
 use wasmtime::{Error, Result, StoreContextMut};
 
@@ -42,84 +43,85 @@ pub struct RangeWrite;
 /// buffer a completed outcome turns into receipt events. Reps are indexes
 /// the host itself assigned when materializing handles, so lookups are
 /// infallible by construction; fallible operations return a deterministic
-/// refusal message that becomes the trap text on every replica.
+/// [`AbortReason`] that becomes the receipt's abort class on every
+/// replica. The host classifies; the boundary transports.
 pub trait KernelHost: Send {
     /// The cell's current bytes; empty if absent.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, String>;
+    fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
 
     /// The cell's pinned bytes; empty if absent.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, String>;
+    fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
 
     /// The cell's current bytes under a write capability; empty if absent.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, String>;
+    fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
 
     /// Replace the cell's bytes.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), String>;
+    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
 
     /// Credit the amount cell.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (bad amount cell).
-    fn delta_add(&mut self, rep: u32, amount: &[u8]) -> Result<(), String>;
+    fn delta_add(&mut self, rep: u32, amount: &[u8]) -> Result<(), AbortReason>;
 
     /// Debit the amount cell unconditionally.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (bad amount cell).
-    fn delta_sub(&mut self, rep: u32, amount: &[u8]) -> Result<(), String>;
+    fn delta_sub(&mut self, rep: u32, amount: &[u8]) -> Result<(), AbortReason>;
 
     /// The reserved amount this transaction holds, as a 16-byte cell.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn reserve_amount(&mut self, rep: u32) -> Result<Vec<u8>, String>;
+    fn reserve_amount(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
 
     /// Entries currently in the interval, bounded by the declared cap.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn range_count(&mut self, rep: u32) -> Result<u32, String>;
+    fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason>;
 
     /// The order key of the entry at `index`, as a 16-byte cell.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_order(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, String>;
+    fn range_order(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
 
     /// The value of the entry at `index`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, String>;
+    fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
 
     /// Replace the value of the entry at `index`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), String>;
+    fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), AbortReason>;
 
     /// Insert or replace the entry at `order` within the declared interval.
     ///
@@ -127,14 +129,14 @@ pub trait KernelHost: Send {
     ///
     /// A deterministic refusal (bad order cell, order outside the
     /// interval).
-    fn range_insert(&mut self, rep: u32, order: &[u8], value: Vec<u8>) -> Result<(), String>;
+    fn range_insert(&mut self, rep: u32, order: &[u8], value: Vec<u8>) -> Result<(), AbortReason>;
 
     /// Remove the entry at `index`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), String>;
+    fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), AbortReason>;
 
     /// The transaction clock in milliseconds.
     fn clock_ms(&self) -> u64;
@@ -151,12 +153,22 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal (a cap or the event-type ceiling).
-    fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), String>;
+    fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), AbortReason>;
 }
 
-fn host_trap(message: &str) -> Error {
-    Error::msg(format!("kernel refusal: {message}"))
+/// A host refusal as an engine trap, with its class recoverable.
+///
+/// The class rides the error rather than its text: the backend downcasts
+/// it back out, so nothing on the path from the kernel's verdict to the
+/// receipt's abort record passes through prose.
+fn host_trap(reason: AbortReason) -> Error {
+    Error::new(HostRefusal(reason))
 }
+
+/// A kernel refusal in flight through the engine.
+#[derive(Debug, thiserror::Error)]
+#[error("kernel refusal: {0:?}")]
+pub struct HostRefusal(pub AbortReason);
 
 /// Adds the `hyperscale:kernel` interfaces to a component linker.
 ///
@@ -192,10 +204,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "read-cell-get",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<ReadCell>,)| {
-            let value = store
-                .data_mut()
-                .read_cell(r.rep())
-                .map_err(|m| host_trap(&m))?;
+            let value = store.data_mut().read_cell(r.rep()).map_err(host_trap)?;
             charge_boundary_bytes(&mut store, value.len())?;
             Ok((value,))
         },
@@ -203,10 +212,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "locked-cell-get",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<LockedCell>,)| {
-            let value = store
-                .data_mut()
-                .locked_cell(r.rep())
-                .map_err(|m| host_trap(&m))?;
+            let value = store.data_mut().locked_cell(r.rep()).map_err(host_trap)?;
             charge_boundary_bytes(&mut store, value.len())?;
             Ok((value,))
         },
@@ -217,7 +223,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             let value = store
                 .data_mut()
                 .write_cell_get(r.rep())
-                .map_err(|m| host_trap(&m))?;
+                .map_err(host_trap)?;
             charge_boundary_bytes(&mut store, value.len())?;
             Ok((value,))
         },
@@ -229,7 +235,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             store
                 .data_mut()
                 .write_cell_set(r.rep(), value)
-                .map_err(|m| host_trap(&m))
+                .map_err(host_trap)
         },
     )?;
     state.func_wrap(
@@ -239,7 +245,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             store
                 .data_mut()
                 .delta_add(r.rep(), &amount)
-                .map_err(|m| host_trap(&m))
+                .map_err(host_trap)
         },
     )?;
     state.func_wrap(
@@ -249,7 +255,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             store
                 .data_mut()
                 .delta_sub(r.rep(), &amount)
-                .map_err(|m| host_trap(&m))
+                .map_err(host_trap)
         },
     )?;
     state.func_wrap(
@@ -258,7 +264,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             let amount = store
                 .data_mut()
                 .reserve_amount(r.rep())
-                .map_err(|m| host_trap(&m))?;
+                .map_err(host_trap)?;
             charge_boundary_bytes(&mut store, amount.len())?;
             Ok((amount,))
         },
@@ -267,10 +273,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "range-read-count",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeRead>,)| {
-            Ok((store
-                .data_mut()
-                .range_count(r.rep())
-                .map_err(|m| host_trap(&m))?,))
+            Ok((store.data_mut().range_count(r.rep()).map_err(host_trap)?,))
         },
     )?;
     state.func_wrap(
@@ -279,7 +282,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             let order = store
                 .data_mut()
                 .range_order(r.rep(), index)
-                .map_err(|m| host_trap(&m))?;
+                .map_err(host_trap)?;
             charge_boundary_bytes(&mut store, order.len())?;
             Ok((order,))
         },
@@ -290,7 +293,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             let value = store
                 .data_mut()
                 .range_entry(r.rep(), index)
-                .map_err(|m| host_trap(&m))?;
+                .map_err(host_trap)?;
             charge_boundary_bytes(&mut store, value.len())?;
             Ok((value,))
         },
@@ -298,10 +301,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "range-write-count",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeWrite>,)| {
-            Ok((store
-                .data_mut()
-                .range_count(r.rep())
-                .map_err(|m| host_trap(&m))?,))
+            Ok((store.data_mut().range_count(r.rep()).map_err(host_trap)?,))
         },
     )?;
     state.func_wrap(
@@ -310,7 +310,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             let order = store
                 .data_mut()
                 .range_order(r.rep(), index)
-                .map_err(|m| host_trap(&m))?;
+                .map_err(host_trap)?;
             charge_boundary_bytes(&mut store, order.len())?;
             Ok((order,))
         },
@@ -321,7 +321,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             let value = store
                 .data_mut()
                 .range_entry(r.rep(), index)
-                .map_err(|m| host_trap(&m))?;
+                .map_err(host_trap)?;
             charge_boundary_bytes(&mut store, value.len())?;
             Ok((value,))
         },
@@ -334,7 +334,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             store
                 .data_mut()
                 .range_set(r.rep(), index, value)
-                .map_err(|m| host_trap(&m))
+                .map_err(host_trap)
         },
     )?;
     state.func_wrap(
@@ -345,7 +345,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             store
                 .data_mut()
                 .range_insert(r.rep(), &order, value)
-                .map_err(|m| host_trap(&m))
+                .map_err(host_trap)
         },
     )?;
     state.func_wrap(
@@ -354,7 +354,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             store
                 .data_mut()
                 .range_remove(r.rep(), index)
-                .map_err(|m| host_trap(&m))
+                .map_err(host_trap)
         },
     )?;
 
@@ -386,7 +386,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             store
                 .data_mut()
                 .emit(event_type, payload)
-                .map_err(|m| host_trap(&m))
+                .map_err(host_trap)
         },
     )?;
 

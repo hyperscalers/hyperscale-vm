@@ -27,8 +27,8 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
-    InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, Receipt, TxHash,
+    AbortReason, BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend,
+    GuestCall, InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, TxHash,
     WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -36,8 +36,8 @@ use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
 };
 use hyperscale_vm_runtime::{
-    CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
-    validate_component,
+    CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export, classify,
+    exhausted, validate_component,
 };
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, staking};
 use wasmtime::component::{Component, Linker};
@@ -290,10 +290,10 @@ impl GuestBackend for BlessedPackages {
             .instantiate(&mut store, component)
             .expect("instantiate");
         let args: Vec<HostArg<'_>> = call.args.iter().map(host_arg).collect();
-        let result = call_export(&mut store, &instance, call.export, &args, call.returns)
-            .map_err(|trap| format!("{trap:#}"));
+        let outcome = call_export(&mut store, &instance, call.export, &args, call.returns);
+        let exhausted = outcome.as_ref().err().is_some_and(exhausted);
+        let result = outcome.map_err(|error| classify(&error));
         let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
-        let exhausted = store.get_fuel().expect("fuel") == 0 && result.is_err();
         InvokeResult {
             session: store.into_data().0,
             fuel,
@@ -326,9 +326,9 @@ impl GuestBackend for RefPackages {
             Ok(values) => match (call.returns, values.as_slice()) {
                 (false, []) => Ok(None),
                 (true, [CVal::Bytes(bytes)]) => Ok(Some(bytes.clone())),
-                other => Err(format!("unexpected result shape {other:?}")),
+                _ => Err(AbortReason::BadReturnShape),
             },
-            Err(trap) => Err(format!("{trap:?}")),
+            Err(error) => Err(error.abort_reason()),
         };
         InvokeResult {
             session: instance.into_host().0,
@@ -419,30 +419,6 @@ fn amount_of(end: &MemoryStore, key: SubstateKey) -> u128 {
         .map_or(0, |cell| decode_amount(cell).unwrap())
 }
 
-/// One outcome's receipts with each guest defect reduced to the bare fact
-/// that one happened.
-///
-/// Everything else compares whole. A [`Outcome::UserError`] reason is the
-/// engine's own text and the two runtimes word theirs differently — the
-/// blessed engine names the export and the trapping instruction, the
-/// reference interpreter names the trap — so the reason is the one field
-/// they are not expected to agree on. It reaches no consensus artifact:
-/// a failed transaction commits `ConsensusReceipt::Failed`, which carries
-/// no reason at all.
-fn comparable(outcome: &BatchOutcome) -> BTreeMap<TxHash, Receipt> {
-    outcome
-        .receipts
-        .iter()
-        .map(|(tx, receipt)| {
-            let mut receipt = receipt.clone();
-            if let Outcome::UserError { reason } = &mut receipt.outcome {
-                reason.clear();
-            }
-            (*tx, receipt)
-        })
-        .collect()
-}
-
 /// Execute on both runtimes over both packages and assert identical
 /// receipts and end state; returns the blessed outcome.
 /// Execute the batch on both runtimes and assert byte-identical receipts
@@ -489,9 +465,11 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<(BatchOutcome, Mem
         &Locality::All,
     )
     .unwrap();
+    // Whole receipts, abort classes included: the vocabulary is closed,
+    // so a failure path the two runtimes classify differently is a
+    // divergence rather than a wording difference to look past.
     assert_eq!(
-        comparable(&blessed_outcome),
-        comparable(&ref_outcome),
+        blessed_outcome.receipts, ref_outcome.receipts,
         "lanes diverged"
     );
     let end = blessed_outcome.store.collapse_onto(store.clone());

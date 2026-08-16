@@ -7,6 +7,8 @@
 //! [`CanonDispatch`] trait, whose implementor may recursively call back in
 //! (guest realloc during lowering).
 
+use hyperscale_vm_types::AbortReason;
+
 use crate::error::{DecodeError, Trap};
 use crate::module::{RefModule, Ty};
 use crate::ops::{LoadKind, Op, StoreKind, Value, eval_binary, eval_unary, fuel_cost};
@@ -52,8 +54,8 @@ pub enum CanonError {
     /// the ABI runs while it is mid-lowering, where the component instance
     /// is not free to be left.
     CannotLeave,
-    /// A deterministic kernel refusal, carrying the host's message.
-    Host(String),
+    /// A deterministic kernel refusal, carrying the host's own class.
+    Host(AbortReason),
     /// An unresolved canon definition — a decoder or instantiation defect,
     /// never guest-reachable.
     Internal(&'static str),
@@ -62,6 +64,28 @@ pub enum CanonError {
 impl From<Trap> for ExecError {
     fn from(t: Trap) -> Self {
         Self::Trap(t)
+    }
+}
+
+impl ExecError {
+    /// This failure as the protocol's abort class.
+    ///
+    /// # Panics
+    ///
+    /// Through [`Trap::abort_reason`], on the harness step budget.
+    #[must_use]
+    pub const fn abort_reason(&self) -> AbortReason {
+        match self {
+            Self::Trap(trap) => trap.abort_reason(),
+            // A kernel refusal already carries its own class; the host
+            // classified it and the boundary only transports it.
+            Self::Canon(CanonError::Host(reason)) => *reason,
+            // Everything else collapses. The blessed engine surfaces most
+            // canonical-ABI violations as an error that resolves to no
+            // trap kind, so subdividing here would build a distinction the
+            // two runtimes could not make identically.
+            Self::Canon(_) => AbortReason::AbiViolation,
+        }
     }
 }
 

@@ -17,7 +17,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{Address, CollectionId, EffectTarget, EntryKey, ModeKind, SubstateKey};
+use hyperscale_vm_effects::{
+    AbortReason, Address, CollectionId, EffectTarget, EntryKey, ModeKind, SubstateKey,
+};
 
 use crate::modes::{
     DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount, fold_deltas, judge,
@@ -56,6 +58,18 @@ pub enum StoreError {
     /// An amount-cell or fold failure.
     #[error(transparent)]
     Mode(#[from] ModeError),
+}
+
+impl From<StoreError> for AbortReason {
+    fn from(error: StoreError) -> Self {
+        match error {
+            StoreError::Locked(_) => Self::SubstateLocked,
+            StoreError::MissingReservation { .. } => Self::ReservationMissing,
+            StoreError::HeldExceedsCommitted(_) => Self::LedgerInvariant,
+            StoreError::DuplicateRequest { .. } => Self::DuplicateReservationRequest,
+            StoreError::Mode(mode) => mode.into(),
+        }
+    }
 }
 
 /// One recorded access: what was touched and in which mode. The trace the

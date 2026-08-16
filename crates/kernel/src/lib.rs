@@ -29,7 +29,7 @@ pub use conflict::{conflicts, targets_overlap};
 pub use executor::{
     BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, execute_batch,
 };
-pub use hyperscale_vm_effects::StateWrites;
+pub use hyperscale_vm_effects::{AbortReason, StateWrites};
 pub use locality::{Locality, OwnedDelta};
 pub use modes::{
     AMOUNT_CELL_BYTES, DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount,
@@ -45,7 +45,5 @@ pub use session::{
 };
 pub use store::{Access, AppliedDelta, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
 pub use supply::SupplyLedger;
-pub use walk::{
-    CellKind, GuestArg, GuestBackend, GuestCall, InvokeResult, ManifestWalk, OUT_OF_GAS,
-};
+pub use walk::{CellKind, GuestArg, GuestBackend, GuestCall, InvokeResult, ManifestWalk};
 pub use work::Work;

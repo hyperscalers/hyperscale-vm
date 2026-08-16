@@ -12,9 +12,9 @@ use hyperscale_vm_effects::{
     SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
-    MemoryStore, Movement, Outcome, RunResult, TxHash, WorkingStore, decode_amount, encode_amount,
-    execute_batch,
+    AbortReason, BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession,
+    Locality, MemoryStore, Movement, Outcome, RunResult, TxHash, WorkingStore, decode_amount,
+    encode_amount, execute_batch,
 };
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
@@ -104,7 +104,7 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
         if tx_id == tx(0x66) {
             // The doomed writer: state must not survive its failure.
             Outcome::UserError {
-                reason: "scripted defect".into(),
+                reason: AbortReason::Unreachable,
             }
         } else {
             Outcome::Completed {

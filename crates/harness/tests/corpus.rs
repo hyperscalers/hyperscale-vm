@@ -25,9 +25,9 @@ use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry};
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    BatchTx, CellKind, EnvInputs, Event, GuestArg, GuestBackend, GuestCall, GuestRunner,
-    InvokeResult, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt, TxHash,
-    WorkingStore, decode_amount, encode_amount, multiply_held_ids,
+    AbortReason, BatchTx, CellKind, EnvInputs, Event, GuestArg, GuestBackend, GuestCall,
+    GuestRunner, InvokeResult, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore,
+    Receipt, TxHash, WorkingStore, decode_amount, encode_amount, multiply_held_ids,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{
@@ -35,7 +35,7 @@ use hyperscale_vm_ref::{
 };
 use hyperscale_vm_runtime::{
     CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
-    check_method, validate_component,
+    check_method, classify, exhausted, validate_component,
 };
 use hyperscale_vm_stdlib::account;
 use wasmtime::component::{Component, Linker};
@@ -318,10 +318,10 @@ impl GuestBackend for BlessedBackend<'_> {
             .instantiate(&mut store, component)
             .expect("instantiate");
         let args: Vec<HostArg<'_>> = call.args.iter().map(host_arg).collect();
-        let result = call_export(&mut store, &instance, call.export, &args, call.returns)
-            .map_err(|trap| format!("{trap:#}"));
+        let outcome = call_export(&mut store, &instance, call.export, &args, call.returns);
+        let exhausted = outcome.as_ref().err().is_some_and(exhausted);
+        let result = outcome.map_err(|error| classify(&error));
         let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
-        let exhausted = store.get_fuel().expect("fuel") == 0 && result.is_err();
         InvokeResult {
             session: store.into_data().0,
             fuel,
@@ -351,9 +351,9 @@ impl GuestBackend for ReferenceBackend<'_> {
             Ok(values) => match (call.returns, values.as_slice()) {
                 (false, []) => Ok(None),
                 (true, [CVal::Bytes(bytes)]) => Ok(Some(bytes.clone())),
-                other => Err(format!("unexpected result shape {other:?}")),
+                _ => Err(AbortReason::BadReturnShape),
             },
-            Err(trap) => Err(format!("{trap:?}")),
+            Err(error) => Err(error.abort_reason()),
         };
         InvokeResult {
             session: instance.into_host().0,
@@ -411,11 +411,11 @@ fn ref_arg(arg: &GuestArg<'_>) -> CVal {
 #[derive(Debug, PartialEq, Eq)]
 enum TxResult {
     Completed(Receipt),
-    /// The guest trapped. Compared as the bare fact: the reason is the
-    /// engine's own text, and the two runtimes word theirs differently.
-    Trapped,
-    /// The kernel refused, before or around the call. Its verdicts carry
-    /// no engine text, so the lanes are compared whole.
+    /// The guest trapped, with the class both runtimes classified it as.
+    /// Compared whole: the vocabulary is closed, so the two lanes
+    /// disagreeing here is a divergence rather than a wording difference.
+    Trapped(AbortReason),
+    /// The kernel refused, before or around the call.
     Refused(Outcome),
 }
 
@@ -525,7 +525,7 @@ fn execute_manifest(
                 .expect("the oracle stands on every corpus receipt");
             Ok((TxResult::Completed(receipt), threaded.collapse_onto(before)))
         }
-        Outcome::UserError { .. } => Ok((TxResult::Trapped, before)),
+        Outcome::UserError { reason } => Ok((TxResult::Trapped(reason), before)),
         refused => Ok((TxResult::Refused(refused), before)),
     }
 }
@@ -1113,7 +1113,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
     );
     assert_eq!(
         results,
-        vec![TxResult::Trapped],
+        vec![TxResult::Trapped(AbortReason::Unreachable)],
         "securifying a securified account is the guest's own refusal"
     );
     Ok(())
@@ -1460,7 +1460,7 @@ fn primary_cancels_an_unmatured_proposal() -> Result<()> {
         &[(&confirm_graph(), TxHash(Hash32([0x6C; 32])))],
         Some(MAKER),
     );
-    assert_eq!(results, vec![TxResult::Trapped]);
+    assert_eq!(results, vec![TxResult::Trapped(AbortReason::Unreachable)]);
     Ok(())
 }
 
@@ -1597,7 +1597,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() -> Result<()> {
         &[(&own_propose, TxHash(Hash32([0x74; 32])))],
         Some(ALICE),
     );
-    assert_eq!(results, vec![TxResult::Trapped]);
+    assert_eq!(results, vec![TxResult::Trapped(AbortReason::Unreachable)]);
     Ok(())
 }
 
@@ -1716,7 +1716,7 @@ fn a_violated_output_floor_traps_identically() -> Result<()> {
         &swap_store(),
         &[(&graph, TxHash(Hash32([0x03; 32])))],
     );
-    assert_eq!(results[0], TxResult::Trapped);
+    assert_eq!(results[0], TxResult::Trapped(AbortReason::Unreachable));
     assert_eq!(amount_of(&mut final_store, vault(pool(), RES_X)), 1_000);
     assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 600);
     Ok(())
@@ -2088,7 +2088,11 @@ fn the_registry_binds_checks_and_drains_hashed_entries() -> Result<()> {
         matches!(results[3], TxResult::Completed(_)),
         "a true check passes"
     );
-    assert_eq!(results[4], TxResult::Trapped, "a false check traps");
+    assert_eq!(
+        results[4],
+        TxResult::Trapped(AbortReason::Unreachable),
+        "a false check traps"
+    );
 
     // Exactly two bindings, each at the order its name hashes to, holding
     // the last value bound — the rebind overwrote in place.
@@ -2338,7 +2342,7 @@ fn non_fungibles_mint_transfer_and_burn_end_to_end() -> Result<()> {
     assert!(matches!(results[0], TxResult::Completed(_)));
     assert_eq!(
         results[1],
-        TxResult::Trapped,
+        TxResult::Trapped(AbortReason::Unreachable),
         "moving an id you do not hold aborts"
     );
     assert!(matches!(results[2], TxResult::Completed(_)));

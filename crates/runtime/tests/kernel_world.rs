@@ -6,6 +6,7 @@ use hyperscale_vm_runtime::gas::FUEL_PER_BOUNDARY_BYTE;
 use hyperscale_vm_runtime::{
     KernelHost, ReadCell, WriteCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
+use hyperscale_vm_types::AbortReason;
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Engine, Result, Store, Trap};
 use wat::parse_str;
@@ -148,45 +149,45 @@ struct TestHost {
 }
 
 impl KernelHost for TestHost {
-    fn read_cell(&mut self, rep: u32) -> std::result::Result<Vec<u8>, String> {
+    fn read_cell(&mut self, rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
         Ok(self.values[rep as usize].clone())
     }
 
-    fn locked_cell(&mut self, rep: u32) -> std::result::Result<Vec<u8>, String> {
+    fn locked_cell(&mut self, rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
         Ok(self.values[rep as usize].clone())
     }
 
-    fn write_cell_get(&mut self, rep: u32) -> std::result::Result<Vec<u8>, String> {
+    fn write_cell_get(&mut self, rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
         Ok(self.values[rep as usize].clone())
     }
 
-    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> std::result::Result<(), String> {
+    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> std::result::Result<(), AbortReason> {
         self.values[rep as usize] = value;
         Ok(())
     }
 
-    fn delta_add(&mut self, _rep: u32, _amount: &[u8]) -> std::result::Result<(), String> {
-        Err("unused in this fixture".into())
+    fn delta_add(&mut self, _rep: u32, _amount: &[u8]) -> std::result::Result<(), AbortReason> {
+        Err(AbortReason::HandleUnknown)
     }
 
-    fn delta_sub(&mut self, _rep: u32, _amount: &[u8]) -> std::result::Result<(), String> {
-        Err("unused in this fixture".into())
+    fn delta_sub(&mut self, _rep: u32, _amount: &[u8]) -> std::result::Result<(), AbortReason> {
+        Err(AbortReason::HandleUnknown)
     }
 
-    fn reserve_amount(&mut self, _rep: u32) -> std::result::Result<Vec<u8>, String> {
+    fn reserve_amount(&mut self, _rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
         Ok(vec![0; 16])
     }
 
-    fn range_count(&mut self, _rep: u32) -> std::result::Result<u32, String> {
+    fn range_count(&mut self, _rep: u32) -> std::result::Result<u32, AbortReason> {
         Ok(0)
     }
 
-    fn range_order(&mut self, _rep: u32, _index: u32) -> std::result::Result<Vec<u8>, String> {
-        Err("unused in this fixture".into())
+    fn range_order(&mut self, _rep: u32, _index: u32) -> std::result::Result<Vec<u8>, AbortReason> {
+        Err(AbortReason::HandleUnknown)
     }
 
-    fn range_entry(&mut self, _rep: u32, _index: u32) -> std::result::Result<Vec<u8>, String> {
-        Err("unused in this fixture".into())
+    fn range_entry(&mut self, _rep: u32, _index: u32) -> std::result::Result<Vec<u8>, AbortReason> {
+        Err(AbortReason::HandleUnknown)
     }
 
     fn range_set(
@@ -194,8 +195,8 @@ impl KernelHost for TestHost {
         _rep: u32,
         _index: u32,
         _value: Vec<u8>,
-    ) -> std::result::Result<(), String> {
-        Err("unused in this fixture".into())
+    ) -> std::result::Result<(), AbortReason> {
+        Err(AbortReason::HandleUnknown)
     }
 
     fn range_insert(
@@ -203,12 +204,12 @@ impl KernelHost for TestHost {
         _rep: u32,
         _order: &[u8],
         _value: Vec<u8>,
-    ) -> std::result::Result<(), String> {
-        Err("unused in this fixture".into())
+    ) -> std::result::Result<(), AbortReason> {
+        Err(AbortReason::HandleUnknown)
     }
 
-    fn range_remove(&mut self, _rep: u32, _index: u32) -> std::result::Result<(), String> {
-        Err("unused in this fixture".into())
+    fn range_remove(&mut self, _rep: u32, _index: u32) -> std::result::Result<(), AbortReason> {
+        Err(AbortReason::HandleUnknown)
     }
 
     fn clock_ms(&self) -> u64 {
@@ -224,7 +225,7 @@ impl KernelHost for TestHost {
         [sum; 32]
     }
 
-    fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), String> {
+    fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), AbortReason> {
         self.emitted.push((event_type, payload));
         Ok(())
     }

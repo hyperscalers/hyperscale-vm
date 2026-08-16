@@ -24,8 +24,8 @@ use hyperscale_vm_effects::{
     Mode, RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore,
-    Movement, Outcome, RunResult, TxHash, WorkingStore, decode_amount, encode_amount,
+    AbortReason, BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality,
+    MemoryStore, Movement, Outcome, RunResult, TxHash, WorkingStore, decode_amount, encode_amount,
     execute_batch,
 };
 use proptest::collection::vec as prop_vec;
@@ -257,7 +257,7 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
         }
         let outcome = if aborting.contains(&id) {
             Outcome::UserError {
-                reason: "scripted abort".into(),
+                reason: AbortReason::Unreachable,
             }
         } else {
             Outcome::Completed { value: None }

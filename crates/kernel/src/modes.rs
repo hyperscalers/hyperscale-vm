@@ -11,8 +11,8 @@
 //! counting in-flight deltas.
 
 pub use hyperscale_vm_effects::TxHash;
-use hyperscale_vm_types::read_amount;
 pub use hyperscale_vm_types::{AMOUNT_CELL_BYTES, amount_cell, encode_amount};
+use hyperscale_vm_types::{AbortReason, read_amount};
 
 /// Why a mode-semantics computation rejected its inputs. Deterministic:
 /// the same inputs fail identically on every replica.
@@ -33,6 +33,18 @@ pub enum ModeError {
     /// A supply accumulator update past its bounds.
     #[error("supply accumulator out of bounds")]
     SupplyOutOfBounds,
+}
+
+impl From<ModeError> for AbortReason {
+    fn from(error: ModeError) -> Self {
+        match error {
+            ModeError::BadAmountCell(_) => Self::MalformedAmountCell,
+            ModeError::DeltaOverflow => Self::DeltaTotalOverflow,
+            ModeError::CellOverflow => Self::CellOverflow,
+            ModeError::CellUnderflow => Self::CellUnderflow,
+            ModeError::SupplyOutOfBounds => Self::SupplyOutOfBounds,
+        }
+    }
 }
 
 /// Decode an amount cell.

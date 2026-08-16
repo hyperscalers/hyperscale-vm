@@ -36,7 +36,9 @@ pub use envelope::{
     MAX_MESSAGE_LEN, MAX_SUBINTENTS, MAX_TX_BYTES_LEN, NetworkId, SubintentSig, TransactionBody,
     TransactionEnvelope, TxHash,
 };
-pub use execution::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome};
+pub use execution::{
+    AbortReason, Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome,
+};
 pub use mode::{Mode, ModeKind, compatible};
 pub use scheme::{
     AccountSigner, MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId, SchemeSpec, SchemeVerifier,

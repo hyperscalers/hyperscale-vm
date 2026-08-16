@@ -13,14 +13,14 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome, OverlayStore, Receipt,
-    TxHash, WorkingStore, encode_amount,
+    AbortReason, Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome,
+    OverlayStore, Receipt, TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
 };
 use hyperscale_vm_runtime::{
-    DeltaCell, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
+    DeltaCell, HostRefusal, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
     add_kernel_to_linker, blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
@@ -222,21 +222,30 @@ enum LaneOutcome {
     UnknownHandle,
     WrongHandleType,
     BorrowsRemain,
-    Refusal(String),
+    Refusal(AbortReason),
     Other(String),
 }
 
-fn classify_blessed(msg: &str) -> LaneOutcome {
+/// The blessed engine's failure as a lane outcome.
+///
+/// A kernel refusal comes back as the class the host assigned it —
+/// downcast, not parsed — which is the one comparison here that has to be
+/// exact. The canonical-ABI classes below still read from the engine's
+/// prose, because wasmtime words them and resolves them to no trap kind;
+/// they are lane bookkeeping and reach no receipt.
+fn classify_blessed(error: &Error) -> LaneOutcome {
+    if let Some(refusal) = error.downcast_ref::<HostRefusal>() {
+        return LaneOutcome::Refusal(refusal.0);
+    }
+    let msg = format!("{error:#}");
     if msg.contains("unknown handle index") {
         LaneOutcome::UnknownHandle
     } else if msg.contains("borrow handles") {
         LaneOutcome::BorrowsRemain
-    } else if let Some(tail) = msg.split("kernel refusal: ").nth(1) {
-        LaneOutcome::Refusal(tail.lines().next().unwrap_or(tail).to_string())
     } else if msg.contains("resource") && msg.contains("type") {
         LaneOutcome::WrongHandleType
     } else {
-        LaneOutcome::Other(msg.to_string())
+        LaneOutcome::Other(msg)
     }
 }
 
@@ -294,7 +303,7 @@ fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, 
 
     let outcome = match result {
         Ok(v) => LaneOutcome::Value(v),
-        Err(e) => classify_blessed(&format!("{e:#}")),
+        Err(e) => classify_blessed(&e),
     };
     let fuel = FUEL - store.get_fuel()?;
     Ok((outcome, store.into_data(), fuel))
@@ -318,7 +327,7 @@ fn run_ref(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, u64)
         Err(ExecError::Canon(CanonError::UnknownHandle)) => LaneOutcome::UnknownHandle,
         Err(ExecError::Canon(CanonError::WrongHandleType)) => LaneOutcome::WrongHandleType,
         Err(ExecError::Canon(CanonError::BorrowsRemain)) => LaneOutcome::BorrowsRemain,
-        Err(ExecError::Canon(CanonError::Host(m))) => LaneOutcome::Refusal(m),
+        Err(ExecError::Canon(CanonError::Host(reason))) => LaneOutcome::Refusal(reason),
         Err(e) => LaneOutcome::Other(format!("{e:?}")),
     };
     let fuel = instance.fuel_consumed();
@@ -525,12 +534,12 @@ fn freed_handle_slots_reuse_most_recent_first_across_invokes() -> Result<()> {
 }
 
 #[test]
-fn kernel_refusals_carry_identical_messages() -> Result<()> {
+fn kernel_refusals_carry_identical_classes() -> Result<()> {
     let fx = fixture();
     let (outcome, ..) = both(&fx, "bad-amount")?;
     assert_eq!(
         outcome,
-        LaneOutcome::Refusal("amount cell must be 16 bytes, found 3".to_string())
+        LaneOutcome::Refusal(AbortReason::MalformedAmountCell)
     );
     Ok(())
 }

@@ -1,5 +1,6 @@
 //! Decode errors and execution traps.
 
+use hyperscale_vm_types::AbortReason;
 use thiserror::Error;
 
 /// A module the interpreter cannot decode. The profile validator admits a
@@ -78,4 +79,34 @@ pub enum Trap {
     /// generated corpora, never a consensus verdict.
     #[error("step budget exhausted")]
     StepBudgetExhausted,
+}
+
+impl Trap {
+    /// This trap as the protocol's abort class.
+    ///
+    /// The blessed engine's own mapping must agree arm for arm; the
+    /// differential lanes compare the resulting outcomes rather than the
+    /// trap kinds, which is what checks that it does.
+    ///
+    /// # Panics
+    ///
+    /// On [`Trap::StepBudgetExhausted`], which is a harness valve rather
+    /// than an execution verdict and reaches no receipt.
+    #[must_use]
+    pub const fn abort_reason(self) -> AbortReason {
+        match self {
+            Self::Unreachable => AbortReason::Unreachable,
+            Self::IntegerDivisionByZero => AbortReason::IntegerDivideByZero,
+            Self::IntegerOverflow => AbortReason::IntegerOverflow,
+            Self::MemoryOutOfBounds => AbortReason::MemoryOutOfBounds,
+            Self::TableOutOfBounds => AbortReason::TableOutOfBounds,
+            Self::IndirectCallToNull => AbortReason::IndirectCallToNull,
+            Self::BadSignature => AbortReason::IndirectCallSignature,
+            Self::CallDepthExhausted => AbortReason::StackExhausted,
+            Self::OutOfFuel => AbortReason::OutOfGas,
+            Self::StepBudgetExhausted => {
+                panic!("the step budget is a harness valve, never an execution verdict")
+            }
+        }
+    }
 }

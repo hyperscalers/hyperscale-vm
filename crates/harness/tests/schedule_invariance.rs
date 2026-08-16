@@ -15,9 +15,9 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
-    Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, WorkingStore, decode_amount,
-    encode_amount, execute_batch,
+    AbortReason, BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner,
+    KernelSession, Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, WorkingStore,
+    decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
@@ -219,7 +219,7 @@ impl GuestRunner for BlessedRunner {
         };
         let outcome = result.map_or_else(
             |_| Outcome::UserError {
-                reason: "guest trap".into(),
+                reason: AbortReason::Unreachable,
             },
             |value| Outcome::Completed { value: Some(value) },
         );
@@ -292,12 +292,12 @@ impl GuestRunner for RefRunner {
             .expect("decode");
         let outcome = instance.invoke(export, &args).expect("invoke").map_or_else(
             |_| Outcome::UserError {
-                reason: "guest trap".into(),
+                reason: AbortReason::Unreachable,
             },
             |values| match values.as_slice() {
                 [CVal::U64(v)] => Outcome::Completed { value: Some(*v) },
-                other => Outcome::UserError {
-                    reason: format!("unexpected values {other:?}"),
+                _ => Outcome::UserError {
+                    reason: AbortReason::BadReturnShape,
                 },
             },
         );

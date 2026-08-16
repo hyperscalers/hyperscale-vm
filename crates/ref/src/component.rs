@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 
+use hyperscale_vm_types::AbortReason;
 use wasmparser::{
     CanonicalFunction, CanonicalOption, ComponentAlias, ComponentDefinedType,
     ComponentExternalKind, ComponentType, ComponentTypeRef, ComponentValType, ExternalKind,
@@ -34,31 +35,32 @@ use crate::ops::Value;
 /// The host surface behind the kernel world.
 ///
 /// Mirrors the runtime's trait — same operations, same deterministic
-/// refusal messages — so one host drives both implementations. Every
-/// `Err` is a kernel refusal that traps with its message.
+/// refusals — so one host drives both implementations. Every `Err` is a
+/// kernel refusal that traps with the class the host assigned it; the
+/// boundary transports that class and never words one of its own.
 #[allow(missing_docs)] // mirrors the documented runtime trait method for method
 #[allow(clippy::missing_errors_doc)] // every Err is a deterministic kernel refusal
 pub trait RefKernelHost {
-    fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, String>;
-    fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, String>;
-    fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, String>;
-    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), String>;
-    fn delta_add(&mut self, rep: u32, amount: &[u8]) -> Result<(), String>;
-    fn delta_sub(&mut self, rep: u32, amount: &[u8]) -> Result<(), String>;
-    fn reserve_amount(&mut self, rep: u32) -> Result<Vec<u8>, String>;
-    fn range_count(&mut self, rep: u32) -> Result<u32, String>;
-    fn range_order(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, String>;
-    fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, String>;
-    fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), String>;
-    fn range_insert(&mut self, rep: u32, order: &[u8], value: Vec<u8>) -> Result<(), String>;
-    fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), String>;
+    fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
+    fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
+    fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
+    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
+    fn delta_add(&mut self, rep: u32, amount: &[u8]) -> Result<(), AbortReason>;
+    fn delta_sub(&mut self, rep: u32, amount: &[u8]) -> Result<(), AbortReason>;
+    fn reserve_amount(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
+    fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason>;
+    fn range_order(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
+    fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
+    fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), AbortReason>;
+    fn range_insert(&mut self, rep: u32, order: &[u8], value: Vec<u8>) -> Result<(), AbortReason>;
+    fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), AbortReason>;
     /// The transaction clock in milliseconds.
     fn clock_ms(&self) -> u64;
     /// The transaction's randomness draw.
     fn randomness(&self) -> [u8; 32];
     /// The protocol hash function.
     fn hash(&self, data: &[u8]) -> [u8; 32];
-    fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), String>;
+    fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), AbortReason>;
 }
 
 /// The state interface's resource types: one per access mode.

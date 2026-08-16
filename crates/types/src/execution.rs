@@ -39,6 +39,139 @@ pub struct Event {
     pub payload: Vec<u8>,
 }
 
+/// Why a transaction aborted, as a class rather than as prose.
+///
+/// Closed and flat. Both runtimes classify their own refusals into it and
+/// neither formats one, so the outcome a receipt records is the same
+/// value on every replica and a differential lane can compare receipts
+/// whole instead of erasing the reason first. The fee an abort carries is
+/// a function of the [`Outcome`] variant, which makes the classification
+/// consensus content and this the vocabulary that keeps it checkable.
+///
+/// Payload-free by construction: every abort with structure worth
+/// carrying already has its own `Outcome` variant carrying it. What is
+/// left here is a class, so nothing engine-derived can ride in. Which
+/// handle, which index, which key is a diagnostic and goes to `tracing`.
+///
+/// The vocabulary is fixed by the protocol version and grows only by
+/// upgrade.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub enum AbortReason {
+    /// `unreachable` executed — what an `assert!` or a `panic!` becomes.
+    Unreachable,
+    /// Integer division or remainder by zero.
+    IntegerDivideByZero,
+    /// `INT_MIN / -1` style overflow.
+    IntegerOverflow,
+    /// Out-of-bounds linear memory access.
+    MemoryOutOfBounds,
+    /// Out-of-bounds table access.
+    TableOutOfBounds,
+    /// `call_indirect` through a null table entry.
+    IndirectCallToNull,
+    /// `call_indirect` signature mismatch.
+    IndirectCallSignature,
+    /// The call-depth bound: the blessed engine's stack limit, the
+    /// interpreter's frame counter. Unreachable for an artifact the
+    /// deploy-time frame bound admits.
+    StackExhausted,
+    /// The transaction spent its signed ceiling.
+    ///
+    /// Charged as the declared limit rather than as the counter standing
+    /// at the trap — that figure is engine-defined and no consensus
+    /// reader may see it.
+    OutOfGas,
+    /// A trap the profile does not model.
+    ///
+    /// The blessed engine's trap enum is open upstream and the profile
+    /// validator admits a subset in which the rest cannot occur, so an
+    /// occurrence is a defect in the profile rather than a guest's. The
+    /// arm exists to keep the classification total without reopening a
+    /// free-form one.
+    TrapOutsideProfile,
+    /// A canonical-ABI violation: an unknown or wrongly typed handle,
+    /// borrows still live at return, a call that would re-enter.
+    ///
+    /// One variant rather than four because the blessed engine surfaces
+    /// most of these as an error that does not resolve to a trap kind. A
+    /// finer vocabulary would be one the two runtimes could not populate
+    /// identically, which is the divergence this type exists to exclude.
+    AbiViolation,
+    /// A handle rep with no entry in the capability table.
+    HandleUnknown,
+    /// A handle whose capability does not grant the operation.
+    HandleWrongMode,
+    /// A value that is not a well-formed amount cell.
+    MalformedAmountCell,
+    /// A value that is not a well-formed order key.
+    MalformedOrderCell,
+    /// An entry index past the interval's current entries.
+    EntryIndexOutOfBounds,
+    /// An insert whose order key falls outside the declared interval.
+    OrderOutsideInterval,
+    /// More distinct entries written through one interval than the cap it
+    /// declared.
+    IntervalWriteCapExceeded,
+    /// A reservation the capability table promises but the store does not
+    /// hold.
+    ReservationMissing,
+    /// An emission outside any invocation, so the kernel has no address
+    /// to stamp.
+    EmissionOutsideInvocation,
+    /// An event type past the per-package ceiling.
+    EventTypeOutOfRange,
+    /// More events than one transaction may emit.
+    EventCountExceeded,
+    /// An event payload past the per-event byte cap.
+    EventPayloadTooLarge,
+    /// A mutation of a permanently locked substate.
+    SubstateLocked,
+    /// One judging batch carrying the same transaction and cell twice.
+    DuplicateReservationRequest,
+    /// Held reservations exceeding the committed cell.
+    LedgerInvariant,
+    /// Summing a fold's increments or decrements overflowed.
+    DeltaTotalOverflow,
+    /// A fold that would push a cell above its maximum.
+    CellOverflow,
+    /// A fold whose decrements exceed the cell's credited total.
+    CellUnderflow,
+    /// A supply accumulator update past its bounds.
+    SupplyOutOfBounds,
+    /// A declared mode and target combination the world cannot hand out.
+    EffectUnsupported,
+    /// A mutation declared on a permanently locked substate.
+    MutationOfLocked,
+    /// A locked read declared on a substate that is not locked.
+    LockedReadOfUnlocked,
+    /// One transaction declaring an exclusive and a commutative mode on
+    /// the same cell.
+    SelfConflictingModes,
+    /// An already-held reservation whose amount differs from the declared
+    /// one.
+    ReservationMismatch,
+    /// A lowered call naming a capability past the materialized table.
+    CapabilityOutOfRange,
+    /// A lowered call consuming an output edge no producer left.
+    MissingProducerEdge,
+    /// A cell on a bounded edge that does not decode.
+    MalformedEdgeCell,
+    /// An authority gate whose declared cell could not be read.
+    AuthorityCellUnreadable,
+    /// An export whose returned blob does not split into the edges its
+    /// signature declared.
+    BadReturnShape,
+    /// A component that exports no function of the invoked name.
+    ExportMissing,
+    /// The component would not instantiate.
+    InstantiationFailed,
+    /// No compiled code for the called package.
+    ///
+    /// An embedder failing to resolve a package admission already
+    /// accepted, so never the sender's defect and priced to nobody.
+    CodeUnavailable,
+}
+
 /// How execution ended: the abort taxonomy as the receipt records it.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum Outcome {
@@ -52,7 +185,7 @@ pub enum Outcome {
     /// sender.
     UserError {
         /// The deterministic reason class.
-        reason: String,
+        reason: AbortReason,
     },
     /// A lost deterministic race: a declared reservation the committed
     /// balance could not cover — aborted before any execution — or an
@@ -111,7 +244,7 @@ pub enum Outcome {
     /// never expected to occur.
     ProtocolError {
         /// The deterministic reason class.
-        reason: String,
+        reason: AbortReason,
     },
 }
 
@@ -119,7 +252,7 @@ pub enum Outcome {
 mod tests {
     use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
 
-    use super::{Address, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome, SubstateKey};
+    use super::{AbortReason, Address, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome, SubstateKey};
     use crate::address::{AddressClass, LocalKey};
 
     #[test]
@@ -138,7 +271,7 @@ mod tests {
             amount: 100,
         });
         assert_canonical(&Outcome::UserError {
-            reason: "trap".to_owned(),
+            reason: AbortReason::Unreachable,
         });
     }
 

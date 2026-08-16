@@ -15,8 +15,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
-    InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, OUT_OF_GAS, Outcome, TxHash,
+    AbortReason, BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend,
+    GuestCall, InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, TxHash,
     WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
@@ -24,8 +24,8 @@ use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
 };
 use hyperscale_vm_runtime::{
-    CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
-    validate_component,
+    CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export, classify,
+    exhausted, validate_component,
 };
 use hyperscale_vm_stdlib::account;
 use wasmtime::component::{Component, Linker};
@@ -172,10 +172,10 @@ impl GuestBackend for BlessedComposed {
             .instantiate(&mut store, &self.component)
             .expect("instantiate");
         let args: Vec<HostArg<'_>> = call.args.iter().map(host_arg).collect();
-        let result = call_export(&mut store, &instance, call.export, &args, call.returns)
-            .map_err(|trap| format!("{trap:#}"));
+        let outcome = call_export(&mut store, &instance, call.export, &args, call.returns);
+        let exhausted = outcome.as_ref().err().is_some_and(exhausted);
+        let result = outcome.map_err(|error| classify(&error));
         let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
-        let exhausted = store.get_fuel().expect("fuel") == 0 && result.is_err();
         InvokeResult {
             session: store.into_data().0,
             fuel,
@@ -204,9 +204,9 @@ impl GuestBackend for RefComposed {
             Ok(values) => match (call.returns, values.as_slice()) {
                 (false, []) => Ok(None),
                 (true, [CVal::Bytes(bytes)]) => Ok(Some(bytes.clone())),
-                other => Err(format!("unexpected result shape {other:?}")),
+                _ => Err(AbortReason::BadReturnShape),
             },
-            Err(trap) => Err(format!("{trap:?}")),
+            Err(error) => Err(error.abort_reason()),
         };
         InvokeResult {
             session: instance.into_host().0,
@@ -449,7 +449,7 @@ fn a_transaction_that_spends_its_gas_limit_aborts_on_both_runtimes() -> Result<(
     let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&starved))?;
 
     match &outcome.receipts[&starved.tx].outcome {
-        Outcome::UserError { reason } => assert_eq!(reason, OUT_OF_GAS),
+        Outcome::UserError { reason } => assert_eq!(*reason, AbortReason::OutOfGas),
         other => panic!("expected the gas ceiling to abort it, got {other:?}"),
     }
     // Nothing moved: the seeded balances stand.

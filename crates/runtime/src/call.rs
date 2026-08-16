@@ -12,8 +12,9 @@
 //! its handle type is the same one the linker registers.
 
 use wasmtime::component::{Instance, Resource, ResourceAny, Val};
-use wasmtime::{AsContextMut, Result, bail};
+use wasmtime::{AsContextMut, Error, Result};
 
+use crate::abort::CallError;
 use crate::world::{
     DeltaCell, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
 };
@@ -102,7 +103,7 @@ pub fn call_export<T: 'static>(
     returns: bool,
 ) -> Result<Option<Vec<u8>>> {
     let Some(func) = instance.get_func(store.as_context_mut(), export) else {
-        bail!("component exports no function `{export}`");
+        return Err(CallError::ExportMissing(export.to_owned()).into());
     };
     let mut lowered = Vec::with_capacity(args.len());
     for arg in args {
@@ -123,11 +124,19 @@ pub fn call_export<T: 'static>(
             for value in values {
                 match value {
                     Val::U8(byte) => bytes.push(*byte),
-                    other => bail!("`{export}` returned a list of {other:?}, not of bytes"),
+                    other => return Err(shape(export, &format!("a list of {other:?}"))),
                 }
             }
             Ok(Some(bytes))
         }
-        Some(other) => bail!("`{export}` returned {other:?}, not a byte list"),
+        Some(other) => Err(shape(export, &format!("{other:?}"))),
     }
+}
+
+fn shape(export: &str, found: &str) -> Error {
+    CallError::BadReturnShape {
+        export: export.to_owned(),
+        found: found.to_owned(),
+    }
+    .into()
 }

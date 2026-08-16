@@ -10,8 +10,8 @@ use hyperscale_vm_effects::{
     SubintentHash, SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
-    MemoryStore, Outcome, OverlayStore, RunResult, TxHash, WorkingStore, decode_amount,
+    AbortReason, BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession,
+    Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, WorkingStore, decode_amount,
     encode_amount, execute_batch,
 };
 
@@ -288,11 +288,11 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
     )
     .unwrap();
     let reason = |id: u8| match &outcome.receipts[&tx(id)].outcome {
-        Outcome::UserError { reason } => reason.clone(),
+        Outcome::UserError { reason } => *reason,
         other => panic!("expected a user error, found {other:?}"),
     };
-    assert!(reason(0x01).contains("locked"));
-    assert!(reason(0x02).contains("amount cell"));
+    assert_eq!(reason(0x01), AbortReason::SubstateLocked);
+    assert_eq!(reason(0x02), AbortReason::MalformedAmountCell);
     assert!(matches!(
         outcome.receipts[&tx(0x03)].outcome,
         Outcome::Completed { .. }
@@ -525,7 +525,7 @@ fn an_aborted_transaction_spends_no_nullifier() {
         session,
         outcome: if entry.tx == tx(0x01) {
             Outcome::UserError {
-                reason: "guest trap".into(),
+                reason: AbortReason::Unreachable,
             }
         } else {
             Outcome::Completed { value: None }
@@ -619,7 +619,7 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
         Outcome::Completed { .. }
     ));
     match &outcome.receipts[&tx(0x02)].outcome {
-        Outcome::UserError { reason } => assert!(reason.contains("amount cell"), "{reason}"),
+        Outcome::UserError { reason } => assert_eq!(*reason, AbortReason::MalformedAmountCell),
         other => panic!("expected a user error, found {other:?}"),
     }
 }
@@ -747,7 +747,7 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
     .expect("one guest's arithmetic must not fail the batch");
 
     match &outcome.receipts[&tx(0x01)].outcome {
-        Outcome::UserError { reason } => assert!(reason.contains("overflow"), "{reason}"),
+        Outcome::UserError { reason } => assert_eq!(*reason, AbortReason::DeltaTotalOverflow),
         other => panic!("expected a user error, found {other:?}"),
     }
     assert!(matches!(

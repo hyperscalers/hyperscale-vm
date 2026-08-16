@@ -18,6 +18,8 @@ pub mod totality;
 pub mod validator;
 
 #[cfg(feature = "engine")]
+pub mod abort;
+#[cfg(feature = "engine")]
 pub mod call;
 #[cfg(feature = "engine")]
 pub mod engine;
@@ -31,10 +33,11 @@ pub use totality::{TotalityError, check_body, check_method, check_reachable};
 pub use validator::{ProfileError, validate_component, validate_core_module};
 #[cfg(feature = "engine")]
 pub use {
+    abort::{CallError, classify, exhausted, trap_reason},
     call::{CellKind, HostArg, call_export},
     engine::{blessed_config, blessed_engine},
     world::{
-        DeltaCell, KernelHost, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
-        add_kernel_to_linker,
+        DeltaCell, HostRefusal, KernelHost, LockedCell, RangeRead, RangeWrite, ReadCell,
+        ReserveCell, WriteCell, add_kernel_to_linker,
     },
 };

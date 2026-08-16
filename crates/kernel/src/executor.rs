@@ -30,8 +30,8 @@ use std::sync::Arc;
 use std::thread;
 
 use hyperscale_vm_effects::{
-    Address, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Mode, ModeKind, NodeCall,
-    SubstateKey, compatible,
+    AbortReason, Address, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Mode,
+    ModeKind, NodeCall, SubstateKey, compatible,
 };
 
 use crate::locality::Locality;
@@ -610,13 +610,29 @@ fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
 /// mode on a target that cannot carry it. A held reservation that does not
 /// match, or a store refusal, is the crate's own bookkeeping by its own
 /// taxonomy — charging the sender for it would price our defect to them.
-fn materialize_abort(defect: &MaterializeError) -> Outcome {
+/// A reservation the committed balance cannot cover is neither: it is the
+/// lost race the taxonomy names, and it carries the cell and the amount
+/// rather than a class.
+fn materialize_abort(defect: MaterializeError) -> Outcome {
     match defect {
-        MaterializeError::HeldMismatch(_) | MaterializeError::Store(_) => Outcome::ProtocolError {
-            reason: defect.to_string(),
+        MaterializeError::Infeasible { key, amount } => Outcome::Infeasible { key, amount },
+        MaterializeError::HeldMismatch(_) => Outcome::ProtocolError {
+            reason: AbortReason::ReservationMismatch,
         },
-        _ => Outcome::UserError {
-            reason: defect.to_string(),
+        MaterializeError::Store(store) => Outcome::ProtocolError {
+            reason: store.into(),
+        },
+        MaterializeError::Unsupported(_) => Outcome::UserError {
+            reason: AbortReason::EffectUnsupported,
+        },
+        MaterializeError::MutationOfLocked(_) => Outcome::UserError {
+            reason: AbortReason::MutationOfLocked,
+        },
+        MaterializeError::UnlockedTarget(_) => Outcome::UserError {
+            reason: AbortReason::LockedReadOfUnlocked,
+        },
+        MaterializeError::SelfConflicting(_) => Outcome::UserError {
+            reason: AbortReason::SelfConflictingModes,
         },
     }
 }
@@ -681,18 +697,8 @@ fn run_group<R: GuestRunner>(
                 drop(before);
                 session.with_locality(locality.clone())
             }
-            Err(MaterializeError::Infeasible { key, amount }) => {
-                // Adoption makes this unreachable for batch-judged
-                // reservations; kept as an honest per-transaction abort.
-                receipts.push((
-                    entry.tx,
-                    abort_receipt(Outcome::Infeasible { key, amount }, 0),
-                ));
-                store = before;
-                continue;
-            }
             Err(defect) => {
-                receipts.push((entry.tx, abort_receipt(materialize_abort(&defect), 0)));
+                receipts.push((entry.tx, abort_receipt(materialize_abort(defect), 0)));
                 store = before;
                 continue;
             }
@@ -756,7 +762,7 @@ fn screen_reserve_targets<'batch>(
                 entry.tx,
                 abort_receipt(
                     Outcome::UserError {
-                        reason: error.to_string(),
+                        reason: error.into(),
                     },
                     0,
                 ),
@@ -1225,7 +1231,10 @@ mod tests {
             })),
         ] {
             assert!(
-                matches!(materialize_abort(&sender_fault), Outcome::UserError { .. }),
+                matches!(
+                    materialize_abort(sender_fault.clone()),
+                    Outcome::UserError { .. }
+                ),
                 "{sender_fault:?} is the sender's declaration defect"
             );
         }
@@ -1237,7 +1246,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    materialize_abort(&kernel_defect),
+                    materialize_abort(kernel_defect.clone()),
                     Outcome::ProtocolError { .. }
                 ),
                 "{kernel_defect:?} is our own bookkeeping"

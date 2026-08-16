@@ -11,8 +11,8 @@
 //! embedding wrong; it cannot get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
-    Address, AuthCell, AuthRole, AuthorityGate, CallArg, EDGE_CELL_BYTES, EdgeKind, NodeCall,
-    PackageHash, cell_ids, nf_cell_len,
+    AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, EDGE_CELL_BYTES, EdgeKind,
+    NodeCall, PackageHash, cell_ids, nf_cell_len,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult};
@@ -104,8 +104,12 @@ pub struct InvokeResult {
     pub session: KernelSession,
     /// Fuel consumed by this invocation.
     pub fuel: u64,
-    /// The export's returned bytes, or a deterministic trap reason.
-    pub result: Result<Option<Vec<u8>>, String>,
+    /// The export's returned bytes, or the abort class the backend
+    /// classified its failure as.
+    ///
+    /// A class rather than a message, so a backend has no formatting
+    /// decision to make and two backends cannot word one failure two ways.
+    pub result: Result<Option<Vec<u8>>, AbortReason>,
     /// Whether the invocation ended by exhausting its fuel budget.
     ///
     /// Reported as a flag rather than read out of the reason text: each
@@ -129,32 +133,21 @@ pub struct ManifestWalk<'a, B> {
     pub backend: &'a B,
 }
 
-/// The reason a transaction that spent its signed ceiling reports.
-///
-/// Consensus content: both engines classify exhaustion as this, and the
-/// charge is the declared limit rather than the fuel standing at the trap
-/// — that number is engine-defined and no consensus reader may see it.
-pub const OUT_OF_GAS: &str = "out of gas";
-
 /// How a trapped invocation reads: its outcome and what it spent.
 ///
-/// One reason and one figure for exhaustion, whichever engine reported
-/// it. The trap text is engine-defined and so is the counter standing at
-/// a trap — one flushes an in-register total, the other charges every
-/// operator — so a node that spent its allowance reports the allowance.
-/// It could not have consumed more, and both engines agree on that by
-/// construction rather than by happening to count the same.
-fn trapped(exhausted: bool, reason: String, budget: u64, spent: u64) -> (Outcome, u64) {
-    if exhausted {
-        (
-            Outcome::UserError {
-                reason: OUT_OF_GAS.to_string(),
-            },
-            budget,
-        )
-    } else {
-        (Outcome::UserError { reason }, spent)
-    }
+/// One figure for exhaustion, whichever engine reported it. The counter
+/// standing at a trap is engine-defined — one flushes an in-register
+/// total, the other charges every operator — so a node that spent its
+/// allowance reports the allowance. It could not have consumed more, and
+/// both engines agree on that by construction rather than by happening to
+/// count the same.
+///
+/// The class comes from the backend, which already classified the failure
+/// against its own engine; the exhaustion flag decides only what is
+/// charged.
+const fn trapped(exhausted: bool, reason: AbortReason, budget: u64, spent: u64) -> (Outcome, u64) {
+    let charged = if exhausted { budget } else { spent };
+    (Outcome::UserError { reason }, charged)
 }
 
 /// A node's invocation failed, deterministically. The session comes back
@@ -173,7 +166,7 @@ fn fail(session: KernelSession, outcome: Outcome, fuel: u64) -> NodeFailure {
 /// A defect in whoever composed the batch: a lowered call that does not
 /// fit the declaration materialized beside it. Priced to nobody — the
 /// sender did not cause it.
-fn composition_defect(session: KernelSession, reason: String) -> NodeFailure {
+fn composition_defect(session: KernelSession, reason: AbortReason) -> NodeFailure {
     fail(session, Outcome::ProtocolError { reason }, 0)
 }
 
@@ -195,7 +188,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
         let session = edge_bounds_hold(call, node, outputs, session)?;
 
         let mut args = Vec::with_capacity(call.args.len());
-        for (position, arg) in call.args.iter().enumerate() {
+        for arg in &call.args {
             match arg {
                 CallArg::Handle(rep) => {
                     let Some(capability) = usize::try_from(*rep)
@@ -204,7 +197,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                     else {
                         return Err(composition_defect(
                             session,
-                            format!("argument {position} names capability {rep}, past the table"),
+                            AbortReason::CapabilityOutOfRange,
                         ));
                     };
                     args.push(GuestArg::Handle {
@@ -216,10 +209,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                     let Some(produced) = edge_cell(outputs, *source, *output) else {
                         return Err(composition_defect(
                             session,
-                            format!(
-                                "argument {position} consumes output {output} of node {source}, \
-                                 which produced no such edge"
-                            ),
+                            AbortReason::MissingProducerEdge,
                         ));
                     };
                     args.push(GuestArg::Bytes(produced));
@@ -253,12 +243,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
             None => Err(fail(
                 invoked.session,
                 Outcome::UserError {
-                    reason: format!(
-                        "`{}` returned {} bytes for {} output edges",
-                        call.export,
-                        returned.map_or(0, |bytes| bytes.len()),
-                        call.outputs.len()
-                    ),
+                    reason: AbortReason::BadReturnShape,
                 },
                 invoked.fuel,
             )),
@@ -284,10 +269,7 @@ fn edge_bounds_hold(
         let Some(carried) = edge_cell(outputs, edge.source, edge.output) else {
             return Err(composition_defect(
                 session,
-                format!(
-                    "parameter {} consumes output {} of node {}, which produced no such edge",
-                    edge.param, edge.output, edge.source
-                ),
+                AbortReason::MissingProducerEdge,
             ));
         };
         let amount = match edge.kind {
@@ -297,10 +279,7 @@ fn edge_bounds_hold(
             }
         };
         let Some(amount) = amount else {
-            return Err(composition_defect(
-                session,
-                format!("parameter {} carries a malformed cell", edge.param),
-            ));
+            return Err(composition_defect(session, AbortReason::MalformedEdgeCell));
         };
         if !edge.bounds.admits(amount) {
             return Err(fail(
@@ -336,9 +315,9 @@ fn gated(
     match authorized(call, &mut session) {
         Ok(true) => Ok(session),
         Ok(false) => Err(fail(session, Outcome::Unauthorized { node }, 0)),
-        Err(trap) => Err(composition_defect(
+        Err(_) => Err(composition_defect(
             session,
-            format!("the authority gate's cell read failed: {trap}"),
+            AbortReason::AuthorityCellUnreadable,
         )),
     }
 }

@@ -17,7 +17,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Mode, ModeKind, SubstateKey,
+    AbortReason, Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Mode, ModeKind,
+    SubstateKey,
 };
 
 use crate::locality::Locality;
@@ -115,8 +116,8 @@ pub enum MaterializeError {
     Store(#[from] StoreError),
 }
 
-/// A deterministic host refusal during execution: the trap text on every
-/// replica.
+/// A deterministic host refusal during execution: the same abort class on
+/// every replica.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SessionTrap {
     /// A rep with no table entry — unreachable through either runtime's
@@ -175,6 +176,26 @@ pub enum SessionTrap {
     /// A store refusal.
     #[error(transparent)]
     Store(#[from] StoreError),
+}
+
+impl From<SessionTrap> for AbortReason {
+    fn from(trap: SessionTrap) -> Self {
+        match trap {
+            SessionTrap::UnknownHandle(_) => Self::HandleUnknown,
+            SessionTrap::WrongMode(_) => Self::HandleWrongMode,
+            SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
+            SessionTrap::BadOrderCell(_) => Self::MalformedOrderCell,
+            SessionTrap::IndexOutOfBounds { .. } => Self::EntryIndexOutOfBounds,
+            SessionTrap::OrderOutsideInterval => Self::OrderOutsideInterval,
+            SessionTrap::WriteCapExceeded { .. } => Self::IntervalWriteCapExceeded,
+            SessionTrap::ReservationMissing => Self::ReservationMissing,
+            SessionTrap::NoInvocation => Self::EmissionOutsideInvocation,
+            SessionTrap::EventTypeOutOfRange(_) => Self::EventTypeOutOfRange,
+            SessionTrap::TooManyEvents => Self::EventCountExceeded,
+            SessionTrap::EventPayloadTooLarge(_) => Self::EventPayloadTooLarge,
+            SessionTrap::Store(store) => store.into(),
+        }
+    }
 }
 
 // The emission caps and the event record are the shared vocabulary: the
@@ -950,7 +971,7 @@ impl KernelSession {
                     return Ok(abort_with(
                         self.store,
                         Outcome::UserError {
-                            reason: error.to_string(),
+                            reason: error.into(),
                         },
                         fuel,
                     ));
@@ -1100,7 +1121,7 @@ fn abort_with(mut store: OverlayStore, outcome: Outcome, fuel: u64) -> (Receipt,
 fn declaration_defect(defect: &StoreError) -> Option<Outcome> {
     match defect {
         StoreError::Mode(error @ ModeError::BadAmountCell(_)) => Some(Outcome::UserError {
-            reason: error.to_string(),
+            reason: (*error).into(),
         }),
         _ => None,
     }

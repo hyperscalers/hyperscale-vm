@@ -18,8 +18,8 @@ use hyperscale_vm_effects::{
     SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore, Outcome, RunResult,
-    TxHash, WorkingStore, decode_amount, encode_amount, execute_batch,
+    AbortReason, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore, Outcome,
+    RunResult, TxHash, WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 
 const CONFIG: u128 = 7;
@@ -151,12 +151,14 @@ fn a_locked_read_of_an_unlocked_cell_refuses() {
         (cell(MUTABLE), Mode::Locked),
         (cell(LEDGER), Mode::Write),
     ]));
-    let Outcome::UserError { reason } = &outcome else {
-        panic!("an unlocked snapshot must refuse: {outcome:?}");
-    };
     assert!(
-        reason.contains("unlocked"),
-        "the refusal must name the reason: {reason}"
+        matches!(
+            outcome,
+            Outcome::UserError {
+                reason: AbortReason::LockedReadOfUnlocked
+            }
+        ),
+        "an unlocked snapshot must refuse as such: {outcome:?}"
     );
 }
 

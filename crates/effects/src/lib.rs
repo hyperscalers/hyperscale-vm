@@ -63,7 +63,7 @@ pub use graph::{
 };
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
-    AUTH_BYTE_WEIGHT, EntryKey, EntryLeaf, Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT,
+    AUTH_BYTE_WEIGHT, AbortReason, EntryKey, EntryLeaf, Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT,
     MAX_CELL_VALUE_LEN, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome,
     SettledWrites, StateWrites, TX_UNITS, TxHash, VERIFY_WEIGHT, declared_work, entry_leaf_key,
     signature_work, work_units,

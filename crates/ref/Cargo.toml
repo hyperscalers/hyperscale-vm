@@ -6,6 +6,7 @@ license.workspace = true
 description = "Reference interpreter of the deterministic profile: the executable spec"
 
 [dependencies]
+hyperscale-vm-types.workspace = true
 thiserror.workspace = true
 wasmparser.workspace = true
 

@@ -26,8 +26,8 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_runtime::{
-    CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export,
-    validate_component,
+    CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export, classify,
+    exhausted, validate_component,
 };
 use hyperscale_vm_stdlib::account;
 use wasmtime::component::{Component, InstancePre, Linker};
@@ -181,10 +181,10 @@ impl GuestBackend for Bench {
                 GuestArg::Bytes(bytes) => HostArg::Bytes(bytes),
             })
             .collect();
-        let result = call_export(&mut store, &instance, call.export, &args, call.returns)
-            .map_err(|trap| format!("{trap:#}"));
+        let outcome = call_export(&mut store, &instance, call.export, &args, call.returns);
+        let exhausted = outcome.as_ref().err().is_some_and(exhausted);
+        let result = outcome.map_err(|error| classify(&error));
         let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
-        let exhausted = store.get_fuel().expect("fuel") == 0 && result.is_err();
         InvokeResult {
             session: store.into_data().0,
             fuel,

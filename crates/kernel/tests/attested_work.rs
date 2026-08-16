@@ -29,8 +29,9 @@ use hyperscale_vm_effects::{
     footprint, nullifier_key, work_units,
 };
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore,
-    Outcome, Receipt, RunResult, TxHash, Work, WorkingStore, encode_amount, execute_batch,
+    AbortReason, BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality,
+    MemoryStore, Outcome, Receipt, RunResult, TxHash, Work, WorkingStore, encode_amount,
+    execute_batch,
 };
 
 const PAYER_BYTE: u8 = 0xA1;
@@ -101,7 +102,7 @@ fn trapping_guest(fuel: u64) -> impl Fn(&BatchTx, KernelSession) -> RunResult + 
     move |_entry: &BatchTx, session| RunResult {
         session,
         outcome: Outcome::UserError {
-            reason: "integer divide by zero".into(),
+            reason: AbortReason::IntegerDivideByZero,
         },
         fuel,
     }
