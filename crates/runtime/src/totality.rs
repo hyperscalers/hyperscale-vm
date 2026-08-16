@@ -38,10 +38,31 @@
 //! This is the check's weakest link and it is deliberate. It is sound for
 //! the stdlib, which is the code the mark is granted to today, and it
 //! wants revisiting before an untrusted package can earn one.
+//!
+//! ## The canonical ABI's glue is excluded, and that is the second
+//!
+//! Measured against the account guest, every export but the two that read
+//! and return nothing fails on `unreachable` — and the failure is never in
+//! the authored body. It is in the allocator the ABI calls to move a
+//! `list<u8>` across the boundary, which panics on allocation failure, and
+//! which every export that carries a value therefore reaches. Checking it
+//! would deny the mark to every method in the language, forever, for a
+//! reason no author can act on.
+//!
+//! So the closure of the canonical ABI's own exports — the `cabi_` names
+//! the toolchain generates — is excluded from the walk, on the same
+//! footing as the imports: allocation failure is a resource bound the
+//! boundary discharges, exactly as fuel exhaustion is, and a leg whose
+//! memory is pre-sized cannot reach it. What that costs is real. A body
+//! that panics *through* the glue is no longer caught, and a helper the
+//! allocator and an authored method both call is excluded on the
+//! allocator's account. The exclusion is an over-approximation in the
+//! unsound direction, and closing it means a panic-free allocator rather
+//! than a cleverer scan.
 
 use std::collections::BTreeSet;
 
-use wasmparser::{FunctionBody, Operator, Parser, Payload, TypeRef};
+use wasmparser::{ExternalKind, FunctionBody, Operator, Parser, Payload, TypeRef};
 
 /// Why a body cannot carry the total mark.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -143,55 +164,122 @@ pub fn check_body(body: &FunctionBody<'_>) -> Result<(), TotalityError> {
 /// The first [`TotalityError`] any reachable body yields, or
 /// [`TotalityError::Undecodable`] if the module does not parse.
 pub fn check_reachable(module: &[u8], entry: u32) -> Result<(), TotalityError> {
-    let mut imported_functions = 0u32;
-    let mut bodies: Vec<FunctionBody<'_>> = Vec::new();
-    for payload in Parser::new(0).parse_all(module) {
-        match payload.map_err(|e| TotalityError::Undecodable(e.to_string()))? {
-            Payload::ImportSection(reader) => {
-                // Grouped in the compact encoding, so flatten before
-                // counting: what shifts the defined functions' indices is
-                // the number of imports, not the number of groups.
-                for import in reader.into_imports() {
-                    let import = import.map_err(|e| TotalityError::Undecodable(e.to_string()))?;
-                    if matches!(import.ty, TypeRef::Func(_)) {
-                        imported_functions += 1;
+    let parsed = Module::parse(module)?;
+    let shim = parsed.shim_closure()?;
+    parsed.walk(entry, &shim)
+}
+
+/// The prefix the canonical ABI gives its own exports. Everything the
+/// closure of these reaches is toolchain glue rather than authored code.
+const SHIM_EXPORT_PREFIX: &str = "cabi_";
+
+/// A core module's function space, indexed the way calls index it.
+struct Module<'a> {
+    /// Imports occupy the low indices and have no body here.
+    imported_functions: u32,
+    bodies: Vec<FunctionBody<'a>>,
+    /// Exported function indices by name, for finding the shim's roots.
+    exports: Vec<(&'a str, u32)>,
+}
+
+impl<'a> Module<'a> {
+    fn parse(module: &'a [u8]) -> Result<Self, TotalityError> {
+        let mut parsed = Self {
+            imported_functions: 0,
+            bodies: Vec::new(),
+            exports: Vec::new(),
+        };
+        for payload in Parser::new(0).parse_all(module) {
+            match payload.map_err(|e| TotalityError::Undecodable(e.to_string()))? {
+                Payload::ImportSection(reader) => {
+                    // Grouped in the compact encoding, so flatten before
+                    // counting: what shifts the defined functions' indices
+                    // is the number of imports, not of groups.
+                    for import in reader.into_imports() {
+                        let import =
+                            import.map_err(|e| TotalityError::Undecodable(e.to_string()))?;
+                        if matches!(import.ty, TypeRef::Func(_)) {
+                            parsed.imported_functions += 1;
+                        }
                     }
                 }
+                Payload::ExportSection(reader) => {
+                    for export in reader {
+                        let export =
+                            export.map_err(|e| TotalityError::Undecodable(e.to_string()))?;
+                        if matches!(export.kind, ExternalKind::Func) {
+                            parsed.exports.push((export.name, export.index));
+                        }
+                    }
+                }
+                Payload::CodeSectionEntry(body) => parsed.bodies.push(body),
+                _ => {}
             }
-            Payload::CodeSectionEntry(body) => bodies.push(body),
-            _ => {}
         }
+        Ok(parsed)
     }
 
-    // Defined function `i` sits at `imported_functions + i`; anything
-    // below that is an import and has no body here to walk into.
-    let body_of = |index: u32| -> Option<&FunctionBody<'_>> {
+    /// Defined function `i` sits at `imports + i`; anything below that is
+    /// an import, which has no body here to walk into.
+    fn body_of(&self, index: u32) -> Option<&FunctionBody<'a>> {
         index
-            .checked_sub(imported_functions)
-            .and_then(|defined| bodies.get(defined as usize))
-    };
+            .checked_sub(self.imported_functions)
+            .and_then(|defined| self.bodies.get(defined as usize))
+    }
 
-    let mut seen: BTreeSet<u32> = BTreeSet::new();
-    let mut frontier = vec![entry];
-    while let Some(index) = frontier.pop() {
-        if !seen.insert(index) {
-            continue;
-        }
-        let Some(body) = body_of(index) else {
-            continue;
+    fn callees(&self, index: u32) -> Result<Vec<u32>, TotalityError> {
+        let Some(body) = self.body_of(index) else {
+            return Ok(Vec::new());
         };
-        check_body(body)?;
         let reader = body
             .get_operators_reader()
             .map_err(|e| TotalityError::Undecodable(e.to_string()))?;
+        let mut out = Vec::new();
         for op in reader {
             let op = op.map_err(|e| TotalityError::Undecodable(e.to_string()))?;
             if let Operator::Call { function_index } = op {
-                frontier.push(function_index);
+                out.push(function_index);
             }
         }
+        Ok(out)
     }
-    Ok(())
+
+    /// Everything the canonical ABI's own exports reach.
+    fn shim_closure(&self) -> Result<BTreeSet<u32>, TotalityError> {
+        let frontier: Vec<u32> = self
+            .exports
+            .iter()
+            .filter(|(name, _)| name.starts_with(SHIM_EXPORT_PREFIX))
+            .map(|(_, index)| *index)
+            .collect();
+        self.reachable(frontier, &BTreeSet::new())
+    }
+
+    /// Indices reachable from `frontier`, not descending into `excluded`.
+    fn reachable(
+        &self,
+        mut frontier: Vec<u32>,
+        excluded: &BTreeSet<u32>,
+    ) -> Result<BTreeSet<u32>, TotalityError> {
+        let mut seen = BTreeSet::new();
+        while let Some(index) = frontier.pop() {
+            if excluded.contains(&index) || !seen.insert(index) {
+                continue;
+            }
+            frontier.extend(self.callees(index)?);
+        }
+        Ok(seen)
+    }
+
+    /// Check every body reachable from `entry` that is not shim.
+    fn walk(&self, entry: u32, shim: &BTreeSet<u32>) -> Result<(), TotalityError> {
+        for index in self.reachable(vec![entry], shim)? {
+            if let Some(body) = self.body_of(index) {
+                check_body(body)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Whether the operator that pushed the divisor proves it non-zero.
@@ -303,6 +391,36 @@ mod tests {
     fn a_call_cycle_terminates_the_walk() {
         let module = parse_str("(module (func $a call 1) (func $b call 0))").expect("valid wat");
         assert_eq!(check_reachable(&module, 0), Ok(()));
+    }
+
+    /// The glue exclusion, on a module shaped like the real one: an
+    /// entry whose own body is clean, reaching a faulting function only
+    /// through something the ABI's own export also reaches.
+    #[test]
+    fn the_canonical_abi_glue_is_not_the_entrys_problem() {
+        let module = parse_str(
+            r#"(module
+                 (func $entry call $glue)
+                 (func $glue unreachable)
+                 (export "deposit" (func $entry))
+                 (export "cabi_realloc" (func $glue)))"#,
+        )
+        .expect("valid wat");
+        assert_eq!(check_reachable(&module, 0), Ok(()));
+
+        // The same faulting body, no longer the ABI's: without the
+        // `cabi_` export naming it, nothing excludes it.
+        let authored = parse_str(
+            r#"(module
+                 (func $entry call $helper)
+                 (func $helper unreachable)
+                 (export "deposit" (func $entry)))"#,
+        )
+        .expect("valid wat");
+        assert_eq!(
+            check_reachable(&authored, 0),
+            Err(TotalityError::Unreachable),
+        );
     }
 
     /// An imported function has no body to walk into, and a call to one
