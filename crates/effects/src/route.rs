@@ -9,13 +9,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::admission::Admitted;
-use crate::dsl::{Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr};
+use crate::dsl::{
+    Clause, Declaration, EvalError, EvalInputs, ModeExpr, evaluate_declaration, evaluate_expr,
+};
 use crate::hash::Hasher;
 use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, ids_cell};
 use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{
     AbiError, AbiParam, Accessibility, CallSite, InstanceMeta, InstanceRegistry, MetadataCache,
-    MethodSignature, PackageHash, check_abi,
+    MethodSignature, PackageHash, Totality, check_abi,
 };
 use crate::types::{Address, CallTarget, Effect, EffectSet, MAX_IDS_PER_EDGE, ShardId, Value};
 
@@ -114,6 +116,8 @@ pub struct Routing {
     /// stage boundaries a staged execution would pay for, and zero for a
     /// transaction whose whole dependency structure sits on one shard.
     pub alternation_depth: u32,
+    /// Where each manifest node sits in the star, in node order.
+    pub roles: Vec<Role>,
 }
 
 /// One frame's contribution to the transaction's declaration.
@@ -436,7 +440,110 @@ pub fn route(
         kernel_effects: Vec::new(),
         call_graph,
         alternation_depth,
+        roles: classify_roles(manifest, cache, instances),
     })
+}
+
+/// Where a manifest node sits in the star a decomposable transaction
+/// takes the shape of.
+///
+/// The topology is one core with legs on either side of it, and the two
+/// leg kinds differ by which side: an inbound leg runs before the core and
+/// hands it attested value, an outbound leg runs after and cannot refuse
+/// what it is handed. Everything else is core, which is what the
+/// transaction's atomicity has to cover.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Role {
+    /// Runs before the core, on arguments the core did not produce, and
+    /// commits locally: its refusal is the escrow release path rather
+    /// than the core's problem.
+    Inbound,
+    /// Neither leg. The default in both senses — what a node is when
+    /// nothing lets it decompose, and what the star is organised around.
+    #[default]
+    Core,
+    /// Runs after the core and offers it no veto: nothing it does can
+    /// come back as a refusal the core would have to answer.
+    Outbound,
+}
+
+/// Classify every manifest node into the star.
+///
+/// The two leg tests are structural, and both are read off the manifest's
+/// own edges rather than off what a method is named:
+///
+/// - An **inbound** leg takes no value edge, so nothing the core produces
+///   can be among its arguments — L3's core-independence, falling out of
+///   the shape instead of needing its own analysis — and it is
+///   reservation-shaped: one reserve declared, one value out.
+/// - An **outbound** leg's output feeds nothing, and its method carries
+///   the verified [`Totality::Total`] mark, so the core cannot be made to
+///   wait on a verdict it might refuse.
+///
+/// Every other node is core, and so is every node either test is unsure
+/// about. That direction is the safe one: a node wrongly called core
+/// costs the transaction a decomposition it could have had, while a leg
+/// wrongly peeled off the core costs the atomicity the core exists for.
+fn classify_roles(
+    manifest: &Manifest,
+    cache: &MetadataCache,
+    instances: &InstanceRegistry,
+) -> Vec<Role> {
+    let consumed: BTreeSet<u32> = manifest
+        .nodes
+        .iter()
+        .flat_map(|node| &node.inputs)
+        .filter_map(|input| match input {
+            NodeInput::Edge { source, .. } => Some(*source),
+            NodeInput::Literal(_) => None,
+        })
+        .collect();
+
+    manifest
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| {
+            let signature = CallTarget::try_from(node.target)
+                .ok()
+                .and_then(|target| instances.get(target))
+                .and_then(|meta| cache.get(meta.package))
+                .and_then(|pkg| pkg.methods.get(&node.method));
+            let Some(signature) = signature else {
+                return Role::Core;
+            };
+            let takes_no_edge = node
+                .inputs
+                .iter()
+                .all(|input| matches!(input, NodeInput::Literal(_)));
+            let index = u32::try_from(index).unwrap_or(u32::MAX);
+
+            if takes_no_edge && is_reservation_shaped(signature) {
+                Role::Inbound
+            } else if !consumed.contains(&index) && signature.totality == Totality::Total {
+                Role::Outbound
+            } else {
+                Role::Core
+            }
+        })
+        .collect()
+}
+
+/// Whether a signature is the shape an inbound leg has to be: it declares
+/// a conditional decrement, and it yields exactly one value out.
+///
+/// The reserve is what makes the leg's refusal local — the amount is
+/// judged where the funds live, and a refusal there releases rather than
+/// aborting the core — and the single output is what makes the value it
+/// yields nameable as one escrow certificate.
+fn is_reservation_shaped(signature: &MethodSignature) -> bool {
+    fn declares_reserve(clauses: &[Clause]) -> bool {
+        clauses.iter().any(|clause| match clause {
+            Clause::Effect { mode, .. } => matches!(mode, ModeExpr::Reserve(_)),
+            Clause::ForEach { body, .. } => declares_reserve(body),
+        })
+    }
+    signature.outputs.len() == 1 && declares_reserve(&signature.effects)
 }
 
 /// One vertex of the dependency graph [`alternation_depth`] walks.
@@ -1041,7 +1148,7 @@ mod tests {
 
     use super::{
         AbiParam, Accessibility, Admitted, CallArg, CallEdge, EdgeBound, EdgeKind, MAX_CALL_DEPTH,
-        MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver, RouteError, ShardResolver, route,
+        MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver, Role, RouteError, ShardResolver, route,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, fresh_id};
     use crate::hash::{Hash32, Hasher, TestHasher};
@@ -1115,6 +1222,84 @@ mod tests {
 
     fn resolver() -> PrefixShardResolver {
         PrefixShardResolver { bits: 8 }
+    }
+
+    /// The star in its canonical shape: a reservation-shaped source, a
+    /// venue in the middle whose output the source's value feeds, and a
+    /// sink whose totality the caller chooses.
+    ///
+    /// Three nodes rather than two because the sink has to be a node the
+    /// core does not consume from, which is exactly what makes it a leg.
+    fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest) {
+        let mut cache = MetadataCache::new();
+        let mut vault_pkg = PackageMetadata::default();
+        vault_pkg.methods.insert(
+            "withdraw".into(),
+            MethodSignature {
+                outputs: vec![Expr::SelfAddr],
+                effects: vec![self_point(RoleId(1), ModeExpr::Reserve(Expr::Arg(0)))],
+                ..MethodSignature::default()
+            },
+        );
+        let mut venue_pkg = PackageMetadata::default();
+        venue_pkg.methods.insert(
+            "swap".into(),
+            MethodSignature {
+                outputs: vec![Expr::SelfAddr],
+                effects: vec![self_point(RoleId(2), ModeExpr::Write)],
+                ..MethodSignature::default()
+            },
+        );
+        let mut sink_pkg = PackageMetadata::default();
+        sink_pkg.methods.insert(
+            "deposit".into(),
+            MethodSignature {
+                totality: sink,
+                effects: vec![self_point(RoleId(3), ModeExpr::Delta)],
+                ..MethodSignature::default()
+            },
+        );
+        cache.publish(pkg("vault"), vault_pkg);
+        cache.publish(pkg("venue"), venue_pkg);
+        cache.publish(pkg("sink"), sink_pkg);
+        let mut instances = InstanceRegistry::new();
+        for name in ["vault", "venue", "sink"] {
+            instances.create(&TestHasher, meta_of(name));
+        }
+
+        let edge = |source: u32, resource: ComponentAddr| NodeInput::Edge {
+            source,
+            output: 0,
+            resource: resource.into(),
+            content: EdgeContent::Fungible,
+            bounds: Bounds::default(),
+        };
+        let manifest = Manifest {
+            nodes: vec![
+                Node {
+                    target: instance_of("vault").into(),
+                    method: "withdraw".into(),
+                    inputs: vec![NodeInput::Literal(Value::U128(5))],
+                    evidence: Vec::new(),
+                    authority: None,
+                },
+                Node {
+                    target: instance_of("venue").into(),
+                    method: "swap".into(),
+                    inputs: vec![edge(0, instance_of("vault"))],
+                    evidence: Vec::new(),
+                    authority: None,
+                },
+                Node {
+                    target: instance_of("sink").into(),
+                    method: "deposit".into(),
+                    inputs: vec![edge(1, instance_of("venue"))],
+                    evidence: Vec::new(),
+                    authority: None,
+                },
+            ],
+        };
+        (cache, instances, manifest)
     }
 
     /// A payer calling a payee: one manifest node, one transitive callee,
@@ -1341,6 +1526,105 @@ mod tests {
         )
         .unwrap();
         assert_eq!(routing.alternation_depth, 1);
+    }
+
+    /// The reservation-shaped source is the inbound leg: nothing the core
+    /// produces reaches its arguments, so it can run first, and the
+    /// reserve is what lets its refusal release rather than abort.
+    #[test]
+    fn a_reservation_shaped_source_is_an_inbound_leg() {
+        let (cache, instances, manifest) = star_world(Totality::Fallible);
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
+        assert_eq!(routing.roles[0], Role::Inbound);
+        assert_eq!(routing.roles[1], Role::Core, "the venue is the core");
+    }
+
+    /// A sink whose method carries the verified mark is the outbound leg.
+    /// Without the mark the same node is core — the shape alone never
+    /// earns it, because what the core needs is the guarantee that
+    /// nothing comes back, and only the checker can give that.
+    #[test]
+    fn only_a_marked_sink_is_an_outbound_leg() {
+        for (totality, expected) in [
+            (Totality::Fallible, Role::Core),
+            (Totality::Infallible, Role::Core),
+            (Totality::Total, Role::Outbound),
+        ] {
+            let (cache, instances, manifest) = star_world(totality);
+            let routing = route(
+                &admitted(&manifest),
+                &cache,
+                &instances,
+                &TestHasher,
+                &resolver(),
+            )
+            .unwrap();
+            assert_eq!(
+                routing.roles[2], expected,
+                "a {totality:?} sink should be {expected:?}",
+            );
+        }
+    }
+
+    /// Taking a value edge is what disqualifies an inbound leg, whatever
+    /// its shape: an argument the core produced cannot be available
+    /// before the core runs, which is the whole of L3's test.
+    #[test]
+    fn a_reservation_fed_by_the_core_joins_it() {
+        let (cache, instances, _) = star_world(Totality::Fallible);
+        // The venue first, and the same reservation-shaped method after
+        // it — its amount now the venue's output rather than a literal.
+        let manifest = Manifest {
+            nodes: vec![
+                Node {
+                    target: instance_of("venue").into(),
+                    method: "swap".into(),
+                    inputs: vec![],
+                    evidence: Vec::new(),
+                    authority: None,
+                },
+                Node {
+                    target: instance_of("vault").into(),
+                    method: "withdraw".into(),
+                    // The amount stays a literal so the reserve still
+                    // evaluates — what disqualifies the leg is the edge
+                    // beside it, not what the reserve reads.
+                    inputs: vec![
+                        NodeInput::Literal(Value::U128(5)),
+                        NodeInput::Edge {
+                            source: 0,
+                            output: 0,
+                            resource: instance_of("venue").into(),
+                            content: EdgeContent::Fungible,
+                            bounds: Bounds::default(),
+                        },
+                    ],
+                    evidence: Vec::new(),
+                    authority: None,
+                },
+            ],
+        };
+
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
+        assert_eq!(
+            routing.roles[1],
+            Role::Core,
+            "a reserve fed by an edge is not core-independent",
+        );
     }
 
     #[test]
