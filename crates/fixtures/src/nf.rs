@@ -36,7 +36,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "mint".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![],
@@ -59,7 +59,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "deposit".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::Bucket],
@@ -74,7 +74,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "withdraw".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::Address, ParamType::Ids],
@@ -93,7 +93,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "burn".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::Bucket],
@@ -107,7 +107,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "operate".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Guarded(Expr::Config(0)),
             mints: None,
             ..MethodSignature::default()

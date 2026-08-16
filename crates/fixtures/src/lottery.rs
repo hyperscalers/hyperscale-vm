@@ -53,7 +53,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "enter".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::Address, ParamType::Bucket],
@@ -92,7 +92,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "draw".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![],

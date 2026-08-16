@@ -132,7 +132,7 @@ fn delegation_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "stake".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::Bucket],
@@ -148,7 +148,7 @@ fn delegation_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "unstake".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::Bucket],
@@ -180,7 +180,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "register-validator".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Guarded(owner_badge()),
             mints: None,
             params: vec![ParamType::U64, ParamType::Bytes, ParamType::Bytes],
@@ -198,7 +198,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "deactivate-validator".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Guarded(owner_badge()),
             mints: None,
             params: vec![ParamType::U64],
@@ -211,7 +211,7 @@ fn validator_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "unjail".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Guarded(owner_badge()),
             mints: None,
             params: vec![ParamType::U64],
@@ -236,7 +236,7 @@ fn governance_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "cast-param-vote".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Guarded(owner_badge()),
             mints: None,
             params: vec![ParamType::U64, ParamType::U64, ParamType::U64],
@@ -254,7 +254,7 @@ fn governance_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "clear-param-vote".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Guarded(owner_badge()),
             mints: None,
             params: vec![],

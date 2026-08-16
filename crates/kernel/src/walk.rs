@@ -12,7 +12,7 @@
 
 use hyperscale_vm_effects::{
     AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, EDGE_CELL_BYTES, EdgeKind,
-    NodeCall, PackageHash, cell_ids, nf_cell_len,
+    MAX_ERROR_CODES, NodeCall, PackageHash, cell_ids, nf_cell_len,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult};
@@ -88,28 +88,40 @@ pub struct GuestCall<'a> {
     pub export: &'a str,
     /// The arguments, in the export's own order.
     pub args: &'a [GuestArg<'a>],
-    /// Whether the export returns bytes. True exactly when the node
-    /// produces value edges.
-    pub returns: bool,
     /// What is left of the transaction's signed ceiling. The backend
     /// meters this invocation against it, so a manifest's nodes share one
     /// budget rather than each getting the whole of it.
     pub fuel_budget: u64,
 }
 
+/// How one invocation ended.
+///
+/// Three ways rather than two, because returning on an error arm is
+/// neither of the other two: the guest ran to completion and said no.
+/// That distinction is what separates a declared refusal from a defect
+/// everywhere downstream — the outcome it records, and the fee it pays.
+pub enum Invoked {
+    /// The export returned; its output bytes when its signature produces
+    /// any.
+    Returned(Option<Vec<u8>>),
+    /// The export declined, with an index into its package's error table.
+    Declined(u32),
+    /// The invocation failed, in the class the backend classified it as.
+    ///
+    /// A class rather than a message, so a backend has no formatting
+    /// decision to make and two backends cannot word one failure two ways.
+    Aborted(AbortReason),
+}
+
 /// What one invocation produced: the session back from the engine, the
-/// fuel consumed, and either the export's output bytes or a trap reason.
+/// fuel consumed, and how it ended.
 pub struct InvokeResult {
     /// The session, which always survives for the kernel's rollback.
     pub session: KernelSession,
     /// Fuel consumed by this invocation.
     pub fuel: u64,
-    /// The export's returned bytes, or the abort class the backend
-    /// classified its failure as.
-    ///
-    /// A class rather than a message, so a backend has no formatting
-    /// decision to make and two backends cannot word one failure two ways.
-    pub result: Result<Option<Vec<u8>>, AbortReason>,
+    /// How the invocation ended.
+    pub result: Invoked,
     /// Whether the invocation ended by exhausting its fuel budget.
     ///
     /// Reported as a flag rather than read out of the reason text: each
@@ -226,13 +238,34 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                 target: call.target,
                 export: &call.export,
                 args: &args,
-                returns: !call.outputs.is_empty(),
                 fuel_budget,
             },
         );
         let returned = match invoked.result {
-            Ok(returned) => returned,
-            Err(reason) => {
+            Invoked::Returned(returned) => returned,
+            // A decline is charged its own fuel, not the ceiling: the
+            // export returned, so the figure is an ordinary
+            // completed-invocation one and both engines reach it by
+            // construction. A code no package could have declared is a
+            // defect in the guest rather than a refusal, bounded here
+            // without the table the kernel does not hold.
+            Invoked::Declined(code) if code < MAX_ERROR_CODES => {
+                return Err(fail(
+                    invoked.session,
+                    Outcome::Declined { node, code },
+                    invoked.fuel,
+                ));
+            }
+            Invoked::Declined(_) => {
+                return Err(fail(
+                    invoked.session,
+                    Outcome::UserError {
+                        reason: AbortReason::ErrorCodeOutOfRange,
+                    },
+                    invoked.fuel,
+                ));
+            }
+            Invoked::Aborted(reason) => {
                 let (outcome, spent) =
                     trapped(invoked.exhausted, reason, fuel_budget, invoked.fuel);
                 return Err(fail(invoked.session, outcome, spent));

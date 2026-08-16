@@ -88,20 +88,36 @@ fn handle(kind: CellKind, rep: u32, store: impl AsContextMut) -> Result<Resource
     }
 }
 
-/// Invoke `export` on `instance` with `args`, expecting one `list<u8>`
-/// result when `returns` is set and none otherwise.
+/// How an invocation ended, as the artifact's own result type says it can.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Returned {
+    /// The export returned: its byte payload, when its signature has one.
+    Values(Option<Vec<u8>>),
+    /// The export declined, with an index into its package's error table.
+    ///
+    /// Not a failure of the call — the guest ran to completion and said
+    /// no on its own terms, which is what makes its fuel an ordinary
+    /// completed figure rather than an engine-defined one.
+    Declined(u32),
+}
+
+/// Invoke `export` on `instance` with `args`.
+///
+/// The result arity comes from the export's own type rather than from
+/// the manifest node driving it: how a method ends is a fact about the
+/// artifact, and a caller that supplied its own count could disagree
+/// with the code.
 ///
 /// # Errors
 ///
 /// A missing export, an argument the canonical ABI refuses, a guest trap,
-/// or a result that is not the single byte list the convention fixes.
+/// or a result outside the shapes the convention fixes.
 pub fn call_export<T: 'static>(
     mut store: impl AsContextMut<Data = T>,
     instance: &Instance,
     export: &str,
     args: &[HostArg<'_>],
-    returns: bool,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<Returned> {
     let Some(func) = instance.get_func(store.as_context_mut(), export) else {
         return Err(CallError::ExportMissing(export.to_owned()).into());
     };
@@ -115,22 +131,38 @@ pub fn call_export<T: 'static>(
             HostArg::Bytes(bytes) => Val::List(bytes.iter().copied().map(Val::U8).collect()),
         });
     }
-    let mut results = vec![Val::Bool(false); usize::from(returns)];
+    let arity = func.ty(store.as_context()).results().len();
+    let mut results = vec![Val::Bool(false); arity];
     func.call(store.as_context_mut(), &lowered, &mut results)?;
     match results.first() {
-        None => Ok(None),
-        Some(Val::List(values)) => {
-            let mut bytes = Vec::with_capacity(values.len());
-            for value in values {
-                match value {
-                    Val::U8(byte) => bytes.push(*byte),
-                    other => return Err(shape(export, &format!("a list of {other:?}"))),
-                }
-            }
-            Ok(Some(bytes))
+        // No result at all, or an ok arm with no payload: a method that
+        // produces nothing, whether or not it can decline.
+        None | Some(Val::Result(Ok(None))) => Ok(Returned::Values(None)),
+        Some(Val::Result(Ok(Some(value)))) => {
+            byte_list(export, value).map(|bytes| Returned::Values(Some(bytes)))
         }
-        Some(other) => Err(shape(export, &format!("{other:?}"))),
+        Some(Val::Result(Err(Some(code)))) => match **code {
+            Val::U32(code) => Ok(Returned::Declined(code)),
+            ref other => Err(shape(export, &format!("declined with {other:?}"))),
+        },
+        Some(value) => byte_list(export, value).map(|bytes| Returned::Values(Some(bytes))),
     }
+}
+
+/// The bytes of a `list<u8>` value, or a shape refusal naming what came
+/// back instead.
+fn byte_list(export: &str, value: &Val) -> Result<Vec<u8>> {
+    let Val::List(values) = value else {
+        return Err(shape(export, &format!("{value:?}")));
+    };
+    let mut bytes = Vec::with_capacity(values.len());
+    for value in values {
+        match value {
+            Val::U8(byte) => bytes.push(*byte),
+            other => return Err(shape(export, &format!("a list of {other:?}"))),
+        }
+    }
+    Ok(bytes)
 }
 
 fn shape(export: &str, found: &str) -> Error {

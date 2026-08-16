@@ -27,7 +27,7 @@ use wasmparser::{
 
 use crate::error::{DecodeError, Trap};
 use crate::interp::{
-    CanonDispatch, CanonError, ExecError, FuncAddr, Store, call, instantiate_module,
+    CanonDispatch, CanonError, ExecError, FuncAddr, Memory, Store, call, instantiate_module,
 };
 use crate::module::{CoreImportKind, RefModule};
 use crate::ops::Value;
@@ -112,6 +112,9 @@ pub enum CVal {
     Borrow(u32, ResourceKind),
     /// A `list<u8>` value at the export boundary.
     Bytes(Vec<u8>),
+    /// A declined result: the code the guest returned on the error arm,
+    /// an index into its package's error table.
+    Declined(u32),
 }
 
 /// A kernel-world import.
@@ -193,6 +196,10 @@ pub(crate) struct CType {
     results: Vec<CTy>,
 }
 
+/// Where a `result`'s payload sits in its memory representation: one
+/// discriminant byte, padded to the four-byte alignment both arms carry.
+const RESULT_PAYLOAD: usize = 4;
+
 /// A component value type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CTy {
@@ -200,6 +207,12 @@ enum CTy {
     U64,
     List8,
     Borrow,
+    /// `result<list<u8>, u32>`: the refusal channel over a method that
+    /// produces bytes.
+    DeclinableList8,
+    /// `result<_, u32>`: the refusal channel over a method that produces
+    /// nothing.
+    DeclinableUnit,
 }
 
 /// A decoded component.
@@ -352,6 +365,25 @@ impl RefComponent {
                     return Err(DecodeError::Unsupported("non-u8 list".to_string()));
                 }
                 ComponentDefinedType::Borrow(_) => CTypeEntry::Defined(CTy::Borrow),
+                // The profile pins the refusal channel to two shapes; a
+                // component carrying anything else never reaches here,
+                // and one that did would be a type this engine cannot
+                // model rather than a decline it misreads.
+                ComponentDefinedType::Result { ok, err } => {
+                    if !matches!(
+                        err,
+                        Some(ComponentValType::Primitive(PrimitiveValType::U32))
+                    ) {
+                        return Err(DecodeError::Unsupported("result error arm".to_string()));
+                    }
+                    match ok.map(|vt| self.value_type(vt)).transpose()? {
+                        None => CTypeEntry::Defined(CTy::DeclinableUnit),
+                        Some(CTy::List8) => CTypeEntry::Defined(CTy::DeclinableList8),
+                        Some(_) => {
+                            return Err(DecodeError::Unsupported("result ok arm".to_string()));
+                        }
+                    }
+                }
                 _ => CTypeEntry::Other,
             },
             _ => CTypeEntry::Other,
@@ -974,7 +1006,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
     }
 
     /// Lift the core return values per the export's declared results:
-    /// scalars come back flat; a list result spills to a return area the
+    /// scalars come back flat; anything wider spills to a return area the
     /// single returned pointer names.
     fn lift_results(
         &self,
@@ -982,6 +1014,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
         values: &[Value],
         mem_idx: Option<u32>,
     ) -> Result<Vec<CVal>, ExecError> {
+        let area = || values.first().map_or(0, |v| v.as_i32().cast_unsigned()) as usize;
         match ctype.results.as_slice() {
             [] => Ok(Vec::new()),
             [CTy::U32] => Ok(vec![CVal::U32(
@@ -990,33 +1023,84 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
             [CTy::U64] => Ok(vec![CVal::U64(
                 values.first().map_or(0, |v| v.as_i64().cast_unsigned()),
             )]),
-            [CTy::List8] => {
-                let area = values.first().map_or(0, |v| v.as_i32().cast_unsigned()) as usize;
-                let Some(mem) = mem_idx else {
-                    return Err(ExecError::Canon(CanonError::Internal(
-                        "list result without a memory option",
-                    )));
-                };
-                let memory = &self.store.memories[mem as usize];
-                if area + 8 > memory.data.len() {
-                    return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+            [CTy::List8] => Ok(vec![CVal::Bytes(self.lift_list(mem_idx, area())?)]),
+            // The refusal channel spills like any result the canonical
+            // ABI cannot flatten: a one-byte discriminant, then the
+            // arm's payload at the offset the wider arm's alignment
+            // fixes. Both shapes share that layout and differ only in
+            // what the ok arm carries.
+            [CTy::DeclinableList8] => {
+                if self.discriminant(mem_idx, area())? == 0 {
+                    Ok(vec![CVal::Bytes(
+                        self.lift_list(mem_idx, area() + RESULT_PAYLOAD)?,
+                    )])
+                } else {
+                    Ok(vec![CVal::Declined(
+                        self.lift_u32(mem_idx, area() + RESULT_PAYLOAD)?,
+                    )])
                 }
-                let ptr =
-                    u32::from_le_bytes(memory.data[area..area + 4].try_into().expect("4 bytes"))
-                        as usize;
-                let len = u32::from_le_bytes(
-                    memory.data[area + 4..area + 8].try_into().expect("4 bytes"),
-                ) as usize;
-                let Some(end) = ptr.checked_add(len) else {
-                    return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
-                };
-                if end > memory.data.len() {
-                    return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+            }
+            [CTy::DeclinableUnit] => {
+                if self.discriminant(mem_idx, area())? == 0 {
+                    Ok(Vec::new())
+                } else {
+                    Ok(vec![CVal::Declined(
+                        self.lift_u32(mem_idx, area() + RESULT_PAYLOAD)?,
+                    )])
                 }
-                Ok(vec![CVal::Bytes(memory.data[ptr..end].to_vec())])
             }
             _ => Err(ExecError::Canon(CanonError::Internal("result shape"))),
         }
+    }
+
+    /// The bytes of a `list<u8>` whose `(ptr, len)` pair sits at `at`.
+    fn lift_list(&self, mem_idx: Option<u32>, at: usize) -> Result<Vec<u8>, ExecError> {
+        let memory = self.lifting_memory(mem_idx)?;
+        let ptr = self.lift_u32(mem_idx, at)? as usize;
+        let len = self.lift_u32(mem_idx, at + 4)? as usize;
+        let Some(end) = ptr.checked_add(len) else {
+            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+        };
+        if end > memory.data.len() {
+            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+        }
+        Ok(memory.data[ptr..end].to_vec())
+    }
+
+    /// The `u32` at `at`.
+    fn lift_u32(&self, mem_idx: Option<u32>, at: usize) -> Result<u32, ExecError> {
+        let memory = self.lifting_memory(mem_idx)?;
+        let Some(end) = at.checked_add(4) else {
+            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+        };
+        if end > memory.data.len() {
+            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+        }
+        Ok(u32::from_le_bytes(
+            memory.data[at..end].try_into().expect("4 bytes"),
+        ))
+    }
+
+    /// The one-byte variant discriminant at `at`.
+    fn discriminant(&self, mem_idx: Option<u32>, at: usize) -> Result<u8, ExecError> {
+        let memory = self.lifting_memory(mem_idx)?;
+        memory
+            .data
+            .get(at)
+            .copied()
+            .ok_or(ExecError::Trap(Trap::MemoryOutOfBounds))
+    }
+
+    /// The memory the lift options name, or the defect of naming none
+    /// while returning something that needs one.
+    fn lifting_memory(&self, mem_idx: Option<u32>) -> Result<&Memory, ExecError> {
+        let index = mem_idx.ok_or(ExecError::Canon(CanonError::Internal(
+            "spilled result without a memory option",
+        )))? as usize;
+        self.store
+            .memories
+            .get(index)
+            .ok_or(ExecError::Canon(CanonError::Internal("memory option")))
     }
 
     /// Bounds execution to `limit` fuel: the instruction schedule plus the

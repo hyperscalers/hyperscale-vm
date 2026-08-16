@@ -33,7 +33,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "place-ask".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::U64, ParamType::Bucket],
@@ -72,7 +72,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "fill-asks".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::U64, ParamType::U64, ParamType::Bucket],

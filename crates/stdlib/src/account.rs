@@ -57,7 +57,7 @@ fn funds_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "withdraw".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Guarded(Expr::SelfAddr),
             mints: None,
             params: vec![ParamType::Address, ParamType::U128],
@@ -119,7 +119,7 @@ fn holdings_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "deposit-nf".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::Bucket],
@@ -135,7 +135,7 @@ fn holdings_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "withdraw-nf".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Guarded(Expr::SelfAddr),
             mints: None,
             params: vec![ParamType::Address, ParamType::Ids],
@@ -157,7 +157,7 @@ fn holdings_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "present-badge".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Custodial,
             mints: Some(Expr::Arg(0)),
             params: vec![ParamType::Address],
@@ -188,7 +188,7 @@ fn authority_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "authorize".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Authorizing,
             mints: None,
             params: vec![],
@@ -208,7 +208,7 @@ fn authority_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "securify".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Guarded(Expr::SelfAddr),
             mints: None,
             params: vec![ParamType::RoleSet, ParamType::U64],
@@ -236,7 +236,7 @@ fn authority_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "propose".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::RoleGated(AuthRole::Recovery),
             mints: None,
             params: vec![ParamType::RoleSet, ParamType::U64],
@@ -256,7 +256,7 @@ fn authority_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "cancel".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::RoleGated(AuthRole::Primary),
             mints: None,
             params: vec![],
@@ -272,7 +272,7 @@ fn authority_methods(methods: &mut PackageMetadata) {
     methods.methods.insert(
         "confirm".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::RoleGated(AuthRole::Confirmation),
             mints: None,
             params: vec![],

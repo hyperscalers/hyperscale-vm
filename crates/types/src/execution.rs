@@ -20,6 +20,14 @@ pub const MAX_EVENT_PAYLOAD_BYTES: usize = 4096;
 /// index, checked without resolving it.
 pub const MAX_EVENT_TYPES: u32 = 1024;
 
+/// The error codes one package may declare.
+///
+/// The bound on a returned code, checked the same way an event index is
+/// and for the same reason: the kernel is not holding the package's
+/// metadata when the guest hands one back, so what it can enforce is the
+/// ceiling rather than the table.
+pub const MAX_ERROR_CODES: u32 = 1024;
+
 /// One event a transaction emitted.
 ///
 /// The kernel stamps the emitter from the invocation rather than taking it
@@ -120,6 +128,8 @@ pub enum AbortReason {
     EmissionOutsideInvocation,
     /// An event type past the per-package ceiling.
     EventTypeOutOfRange,
+    /// A declined code past the per-package ceiling.
+    ErrorCodeOutOfRange,
     /// More events than one transaction may emit.
     EventCountExceeded,
     /// An event payload past the per-event byte cap.
@@ -212,6 +222,22 @@ pub enum Outcome {
         param: u32,
         /// What the edge actually carried.
         amount: u128,
+    },
+    /// A method declined on its own terms: it returned on its error arm
+    /// rather than trapping.
+    ///
+    /// A declared refusal rather than a defect, and priced as one. The
+    /// export *returned*, so its fuel is an ordinary completed-invocation
+    /// figure — agreed between the runtimes by construction, unlike the
+    /// counter standing at a trap — which is what makes this the abort
+    /// class a refundable execution charge can settle against once
+    /// host-side fee settlement lands. Until then it pays the floor, the
+    /// same class a lost race pays.
+    Declined {
+        /// The declining node.
+        node: u32,
+        /// The index into the declining package's error table.
+        code: u32,
     },
     /// A guarded call whose presented evidence does not satisfy its
     /// target's gate.

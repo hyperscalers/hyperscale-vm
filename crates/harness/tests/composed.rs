@@ -16,16 +16,16 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend,
-    GuestCall, InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, TxHash,
-    WorkingStore, decode_amount, encode_amount, execute_batch,
+    GuestCall, InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome,
+    TxHash, WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
 use hyperscale_vm_ref::{
     CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
 };
 use hyperscale_vm_runtime::{
-    CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export, classify,
-    exhausted, validate_component,
+    CellKind as HostCellKind, HostArg, Returned, add_kernel_to_linker, blessed_engine, call_export,
+    classify, exhausted, validate_component,
 };
 use hyperscale_vm_stdlib::account;
 use wasmtime::component::{Component, Linker};
@@ -172,9 +172,9 @@ impl GuestBackend for BlessedComposed {
             .instantiate(&mut store, &self.component)
             .expect("instantiate");
         let args: Vec<HostArg<'_>> = call.args.iter().map(host_arg).collect();
-        let outcome = call_export(&mut store, &instance, call.export, &args, call.returns);
+        let outcome = call_export(&mut store, &instance, call.export, &args);
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);
-        let result = outcome.map_err(|error| classify(&error));
+        let result = invoked(outcome);
         let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
         InvokeResult {
             session: store.into_data().0,
@@ -201,12 +201,8 @@ impl GuestBackend for RefComposed {
         let fuel = instance.fuel_consumed();
         let exhausted = matches!(outcome, Err(ExecError::Trap(RefTrap::OutOfFuel)));
         let result = match outcome {
-            Ok(values) => match (call.returns, values.as_slice()) {
-                (false, []) => Ok(None),
-                (true, [CVal::Bytes(bytes)]) => Ok(Some(bytes.clone())),
-                _ => Err(AbortReason::BadReturnShape),
-            },
-            Err(error) => Err(error.abort_reason()),
+            Ok(values) => lifted(&values),
+            Err(error) => Invoked::Aborted(error.abort_reason()),
         };
         InvokeResult {
             session: instance.into_host().0,
@@ -214,6 +210,25 @@ impl GuestBackend for RefComposed {
             result,
             exhausted,
         }
+    }
+}
+
+/// The blessed engine's verdict as the kernel's.
+fn invoked(outcome: Result<Returned>) -> Invoked {
+    match outcome {
+        Ok(Returned::Values(bytes)) => Invoked::Returned(bytes),
+        Ok(Returned::Declined(code)) => Invoked::Declined(code),
+        Err(error) => Invoked::Aborted(classify(&error)),
+    }
+}
+
+/// The reference interpreter's lifted results as the kernel's verdict.
+fn lifted(values: &[CVal]) -> Invoked {
+    match values {
+        [] => Invoked::Returned(None),
+        [CVal::Bytes(bytes)] => Invoked::Returned(Some(bytes.clone())),
+        [CVal::Declined(code)] => Invoked::Declined(*code),
+        _ => Invoked::Aborted(AbortReason::BadReturnShape),
     }
 }
 

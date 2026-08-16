@@ -104,45 +104,84 @@ pub fn validate_component(bytes: &[u8]) -> Result<(), ProfileError> {
     check_component_stack_bounds(bytes)
 }
 
-/// Whether a component value type is one the executable spec models:
-/// `u8`/`u32`, `u64`, or a reference to a defined `list<u8>` or borrow.
-fn admits_value_type(defined: &[bool], vt: ComponentValType) -> bool {
+/// A value type the profile models, as a type-index slot records it.
+///
+/// Recorded per slot rather than as a flag because the vocabulary is no
+/// longer uniform: a `result` arm is admissible where a value is
+/// returned and nowhere else, so knowing that a slot holds *a* value type
+/// stopped being enough to judge the position it appears in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ValueSlot {
+    /// `u8`, `u32` or `u64`.
+    Scalar,
+    /// `list<u8>`.
+    Bytes,
+    /// `borrow<R>` of a state resource.
+    Handle,
+    /// `result<list<u8>, u32>` or `result<_, u32>`: the declared refusal
+    /// channel.
+    Declinable,
+}
+
+/// What a value type resolves to, or `None` where the profile models
+/// nothing of the kind.
+fn resolve(defined: &[Option<ValueSlot>], vt: ComponentValType) -> Option<ValueSlot> {
     match vt {
         ComponentValType::Primitive(
             PrimitiveValType::U8 | PrimitiveValType::U32 | PrimitiveValType::U64,
-        ) => true,
-        ComponentValType::Type(index) => {
-            usize::try_from(index).is_ok_and(|index| defined.get(index).copied().unwrap_or(false))
-        }
-        ComponentValType::Primitive(_) => false,
+        ) => Some(ValueSlot::Scalar),
+        ComponentValType::Type(index) => usize::try_from(index)
+            .ok()
+            .and_then(|index| defined.get(index).copied())
+            .flatten(),
+        ComponentValType::Primitive(_) => None,
     }
 }
 
-/// Records one component type entry, returning whether it names a defined
-/// value type. The walk mirrors the executable spec's type index space —
+/// Whether a value type may occupy a parameter position.
+///
+/// The refusal channel is deliberately absent. It says how a method
+/// *ends*, and a method that took one would be a caller handling a
+/// callee's refusal — the shape A1 refuses at the manifest layer, which
+/// the call boundary should not quietly reopen.
+fn admits_param_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> bool {
+    matches!(
+        resolve(defined, vt),
+        Some(ValueSlot::Scalar | ValueSlot::Bytes | ValueSlot::Handle)
+    )
+}
+
+/// Whether a value type may occupy an export's result position:
+/// everything a parameter admits, plus the refusal channel.
+fn admits_result_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> bool {
+    resolve(defined, vt).is_some()
+}
+
+/// Records one component type entry, resolving what its type-index slot
+/// holds. The walk mirrors the executable spec's type index space —
 /// declared types, then world-level `use` imports, aliases, and re-exports
 /// — because a function type resolves its parameters through it.
 fn record_component_type(
-    defined: &mut Vec<bool>,
+    defined: &mut Vec<Option<ValueSlot>>,
     entry: &ComponentType<'_>,
 ) -> Result<(), ProfileError> {
-    let is_value = match entry {
+    let slot = match entry {
         ComponentType::Func(f) => {
             for (_, vt) in &*f.params {
-                if !admits_value_type(defined, *vt) {
+                if !admits_param_type(defined, *vt) {
                     return Err(ProfileError::Structural(
                         "component parameter type is outside the profile vocabulary".to_string(),
                     ));
                 }
             }
             if let Some(vt) = f.result
-                && !admits_value_type(defined, vt)
+                && !admits_result_type(defined, vt)
             {
                 return Err(ProfileError::Structural(
                     "component result type is outside the profile vocabulary".to_string(),
                 ));
             }
-            false
+            None
         }
         ComponentType::Defined(ComponentDefinedType::List(element)) => {
             if !matches!(element, ComponentValType::Primitive(PrimitiveValType::U8)) {
@@ -150,12 +189,34 @@ fn record_component_type(
                     "only list<u8> is within the profile".to_string(),
                 ));
             }
-            true
+            Some(ValueSlot::Bytes)
         }
-        ComponentType::Defined(ComponentDefinedType::Borrow(_)) => true,
-        _ => false,
+        ComponentType::Defined(ComponentDefinedType::Borrow(_)) => Some(ValueSlot::Handle),
+        // The refusal channel, pinned to one shape. A code rather than a
+        // payload, and the same code width whatever the method returns,
+        // so what a receipt records is an index into the package's error
+        // table and never author-chosen bytes.
+        ComponentType::Defined(ComponentDefinedType::Result { ok, err }) => {
+            if !matches!(
+                err,
+                Some(ComponentValType::Primitive(PrimitiveValType::U32))
+            ) {
+                return Err(ProfileError::Structural(
+                    "a result's error arm must be u32, the package's error-table index".to_string(),
+                ));
+            }
+            match ok.map(|vt| resolve(defined, vt)) {
+                None | Some(Some(ValueSlot::Bytes)) => Some(ValueSlot::Declinable),
+                _ => {
+                    return Err(ProfileError::Structural(
+                        "a result's ok arm must be list<u8> or absent".to_string(),
+                    ));
+                }
+            }
+        }
+        _ => None,
     };
-    defined.push(is_value);
+    defined.push(slot);
     Ok(())
 }
 
@@ -182,7 +243,7 @@ pub fn validate_core_module(bytes: &[u8]) -> Result<(), ProfileError> {
 /// slot a world-level `use` takes.
 fn check_component_imports(
     reader: ComponentImportSectionReader<'_>,
-    defined: &mut Vec<bool>,
+    defined: &mut Vec<Option<ValueSlot>>,
 ) -> Result<(), ProfileError> {
     for import in reader {
         let import = import.map_err(|e| ProfileError::Feature(e.to_string()))?;
@@ -191,7 +252,7 @@ fn check_component_imports(
         // `use` of a kernel resource type encodes — so only value-carrying
         // imports are gated. They do take a type-index slot.
         if matches!(import.ty, ComponentTypeRef::Type(_)) {
-            defined.push(false);
+            defined.push(None);
             continue;
         }
         if !name.starts_with(profile::KERNEL_IMPORT_PREFIX) {
@@ -203,8 +264,8 @@ fn check_component_imports(
 
 fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
     let mut core_modules = 0usize;
-    // Type-index slots, flagged by whether they name a defined value type.
-    let mut defined: Vec<bool> = Vec::new();
+    // Type-index slots, by what each one holds.
+    let mut defined: Vec<Option<ValueSlot>> = Vec::new();
     for payload in Parser::new(0).parse_all(bytes) {
         let payload = payload.map_err(|e| ProfileError::Feature(e.to_string()))?;
         match payload {
@@ -240,7 +301,7 @@ fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
                             ..
                         }
                     ) {
-                        defined.push(false);
+                        defined.push(None);
                     }
                 }
             }
@@ -251,7 +312,7 @@ fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
                         let aliased = usize::try_from(export.index)
                             .ok()
                             .and_then(|index| defined.get(index).copied())
-                            .unwrap_or(false);
+                            .flatten();
                         defined.push(aliased);
                     }
                 }

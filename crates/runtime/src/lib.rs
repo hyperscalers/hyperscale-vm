@@ -28,13 +28,13 @@ pub mod gas;
 #[cfg(feature = "engine")]
 pub mod world;
 
-pub use exports::{ExportParam, component_export_params};
+pub use exports::{ExportParam, ExportShape, component_exports};
 pub use totality::{TotalityError, check_body, check_method, check_reachable};
 pub use validator::{ProfileError, validate_component, validate_core_module};
 #[cfg(feature = "engine")]
 pub use {
     abort::{CallError, classify, exhausted, trap_reason},
-    call::{CellKind, HostArg, call_export},
+    call::{CellKind, HostArg, Returned, call_export},
     engine::{blessed_config, blessed_engine},
     world::{
         DeltaCell, HostRefusal, KernelHost, LockedCell, RangeRead, RangeWrite, ReadCell,

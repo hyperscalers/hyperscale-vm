@@ -21,13 +21,13 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
-    GuestRunner, InvokeResult, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome,
-    OverlayStore, TxHash, WorkingStore, encode_amount, execute_batch,
+    GuestRunner, InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore,
+    Outcome, OverlayStore, TxHash, WorkingStore, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_runtime::{
-    CellKind as HostCellKind, HostArg, add_kernel_to_linker, blessed_engine, call_export, classify,
-    exhausted, validate_component,
+    CellKind as HostCellKind, HostArg, Returned, add_kernel_to_linker, blessed_engine, call_export,
+    classify, exhausted, validate_component,
 };
 use hyperscale_vm_stdlib::account;
 use wasmtime::component::{Component, InstancePre, Linker};
@@ -181,9 +181,13 @@ impl GuestBackend for Bench {
                 GuestArg::Bytes(bytes) => HostArg::Bytes(bytes),
             })
             .collect();
-        let outcome = call_export(&mut store, &instance, call.export, &args, call.returns);
+        let outcome = call_export(&mut store, &instance, call.export, &args);
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);
-        let result = outcome.map_err(|error| classify(&error));
+        let result = match outcome {
+            Ok(Returned::Values(bytes)) => Invoked::Returned(bytes),
+            Ok(Returned::Declined(code)) => Invoked::Declined(code),
+            Err(error) => Invoked::Aborted(classify(&error)),
+        };
         let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
         InvokeResult {
             session: store.into_data().0,

@@ -207,12 +207,13 @@ impl Builder {
         };
         let method = Method {
             signature: MethodSignature {
-                totality: Totality::Fallible,
-                // Neither the accessibility nor the ABI binding is
-                // something a trace can see: one is a claim about who may
-                // call the method, the other about the export's parameter
-                // list, and a body determines neither. Both are authored
-                // beside the WIT and land on the signature there.
+                // Three things a trace cannot see: whether the method
+                // can decline is its export's result type, who may call
+                // it is a claim, and how its arguments are built is the
+                // export's parameter list. A body determines none of
+                // them, and all three are authored beside the WIT and
+                // land on the signature there.
+                totality: Totality::Infallible,
                 accessibility: Accessibility::default(),
                 mints: None,
                 params: params.to_vec(),

@@ -22,7 +22,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "swap".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::Bucket, ParamType::U128],

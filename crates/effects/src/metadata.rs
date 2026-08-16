@@ -238,17 +238,20 @@ pub enum Accessibility {
 /// entirely — so ruling it out takes analysis of the body rather than a
 /// reading of its declaration.
 ///
-/// The ordering is what a caller may assume, weakest first, and the
-/// default is the weakest: a signature that says nothing claims nothing.
+/// The ordering is what a caller may assume, weakest first. The default
+/// is not the weakest but the commonest: the mark is a function of the
+/// component type rather than a claim an author may under-shoot, and a
+/// method with no error arm is the shape most methods have.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum Totality {
     /// The signature carries an error arm, so the method fails on its own
-    /// terms and every caller has a failure to handle.
-    #[default]
+    /// terms and every caller has a failure to handle. The publish gate
+    /// admits this mark exactly over an export that carries one.
     Fallible,
     /// No error arm, and nothing established about traps. Necessary for
     /// [`Total`](Self::Total) and not sufficient for it: fuel exhaustion
     /// and a panicking body are both still reachable from here.
+    #[default]
     Infallible,
     /// No error arm, and the publish-time checker established the rest:
     /// no partial operation anywhere in the transitive body, and a static

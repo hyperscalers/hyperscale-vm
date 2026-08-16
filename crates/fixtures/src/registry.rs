@@ -48,7 +48,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "bind".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::U64, ParamType::U128],
@@ -68,7 +68,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "check".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::U64, ParamType::U128],
@@ -83,7 +83,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "drain".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::U128],

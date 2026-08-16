@@ -19,7 +19,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         "take".into(),
         MethodSignature {
-            totality: Totality::Fallible,
+            totality: Totality::Infallible,
             params: vec![ParamType::Bucket, ParamType::U128],
             abi: vec![AbiParam::Bucket(0), AbiParam::Derived(Expr::Arg(1))],
             outputs: vec![

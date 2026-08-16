@@ -1,4 +1,4 @@
-//! Component export parameter shapes.
+//! Component export shapes.
 //!
 //! A method's ABI binding says how each of the guest's arguments is
 //! built; the artifact's export type says how many arguments there are
@@ -7,7 +7,7 @@
 //! admits a package judges one against the other, and this module is the
 //! artifact half of that judgement: the parameter shapes of every
 //! function the component exports, with handle parameters resolved to
-//! the state resource they borrow.
+//! the state resource they borrow, and whether the export can decline.
 
 use std::collections::BTreeMap;
 
@@ -35,17 +35,28 @@ pub enum ExportParam {
     Other,
 }
 
-/// The parameter shapes of every function the component exports, by
-/// export name.
+/// One export as the gate reads it: what it takes, and how it ends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExportShape {
+    /// The parameter shapes, in the export's own order.
+    pub params: Vec<ExportParam>,
+    /// Whether the result carries an error arm — the method can decline
+    /// on its own terms rather than only by trapping.
+    ///
+    /// The mark a signature declares is judged against this, so a
+    /// package cannot describe itself as declining when its code has no
+    /// way to, or as total when it has.
+    pub declines: bool,
+}
+
+/// The shape of every function the component exports, by export name.
 ///
 /// # Errors
 ///
 /// [`ProfileError::Feature`] if the artifact does not validate under the
 /// profile's feature set — callers run the full profile validator first,
 /// so an error here means the artifact was never admitted at all.
-pub fn component_export_params(
-    bytes: &[u8],
-) -> Result<BTreeMap<String, Vec<ExportParam>>, ProfileError> {
+pub fn component_exports(bytes: &[u8]) -> Result<BTreeMap<String, ExportShape>, ProfileError> {
     let types = Validator::new_with_features(profile_features())
         .validate_all(bytes)
         .map_err(|error| ProfileError::Feature(error.to_string()))?;
@@ -68,7 +79,8 @@ pub fn component_export_params(
             .iter()
             .map(|(_, param)| param_shape(types, &resources, param))
             .collect();
-        out.insert(name, params);
+        let declines = ty.result.is_some_and(|result| declinable(types, &result));
+        out.insert(name, ExportShape { params, declines });
     }
     Ok(out)
 }
@@ -120,6 +132,16 @@ fn export_names(bytes: &[u8]) -> Result<Vec<String>, ProfileError> {
         }
     }
     Ok(names)
+}
+
+/// Whether a result type carries an error arm. The profile pins the
+/// shape to `result<list<u8>, u32>` or `result<_, u32>`, so its presence
+/// is the whole of what a reader needs.
+fn declinable(types: TypesRef<'_>, result: &ComponentValType) -> bool {
+    let ComponentValType::Type(id) = result else {
+        return false;
+    };
+    matches!(types.get(*id), Some(ComponentDefinedType::Result { .. }))
 }
 
 /// The shape of one parameter.

@@ -11,7 +11,7 @@
 
 use hyperscale_vm_kernel::AbortReason;
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, RefKernelHost};
-use hyperscale_vm_runtime::{blessed_engine, classify};
+use hyperscale_vm_runtime::{Returned, blessed_engine, call_export, classify, validate_component};
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::Context;
 use wasmtime::{Error, Result, Store};
@@ -213,4 +213,95 @@ fn both_engines_classify_exhaustion_as_exhaustion() -> Result<()> {
     assert_eq!(blessed, AbortReason::OutOfGas);
     assert_eq!(reference, AbortReason::OutOfGas);
     Ok(())
+}
+
+/// A guest that declines: the refusal channel's two shapes, each
+/// answering both ways.
+///
+/// Hand-written rather than compiled so the memory representation is
+/// visible — a one-byte discriminant, the payload at the alignment the
+/// wider arm fixes — which is exactly what the reference interpreter
+/// reads and what nothing but this comparison holds it to.
+const DECLINING_GUEST: &str = r#"
+(component
+  (core module $m
+    (memory (export "mem") 1 1)
+    (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 512)
+    (func (export "yes") (result i32)
+      (i32.store8 (i32.const 0) (i32.const 0))
+      (i32.store (i32.const 4) (i32.const 64))
+      (i32.store (i32.const 8) (i32.const 3))
+      (i32.store8 (i32.const 64) (i32.const 7))
+      (i32.store8 (i32.const 65) (i32.const 8))
+      (i32.store8 (i32.const 66) (i32.const 9))
+      i32.const 0)
+    (func (export "no") (result i32)
+      (i32.store8 (i32.const 0) (i32.const 1))
+      (i32.store (i32.const 4) (i32.const 5))
+      i32.const 0)
+    (func (export "unit-yes") (result i32)
+      (i32.store8 (i32.const 128) (i32.const 0))
+      i32.const 128)
+    (func (export "unit-no") (result i32)
+      (i32.store8 (i32.const 128) (i32.const 1))
+      (i32.store (i32.const 132) (i32.const 9))
+      i32.const 128))
+  (core instance $i (instantiate $m))
+  (func (export "yes") (result (result (list u8) (error u32)))
+    (canon lift (core func $i "yes") (memory $i "mem") (realloc (func $i "realloc"))))
+  (func (export "no") (result (result (list u8) (error u32)))
+    (canon lift (core func $i "no") (memory $i "mem") (realloc (func $i "realloc"))))
+  (func (export "unit-yes") (result (result (error u32)))
+    (canon lift (core func $i "unit-yes") (memory $i "mem") (realloc (func $i "realloc"))))
+  (func (export "unit-no") (result (result (error u32)))
+    (canon lift (core func $i "unit-no") (memory $i "mem") (realloc (func $i "realloc")))))
+"#;
+
+#[test]
+fn both_engines_read_the_refusal_channel_the_same_way() -> Result<()> {
+    let bytes = parse_str(DECLINING_GUEST)?;
+    validate_component(&bytes).expect("the refusal channel is inside the profile");
+
+    for (export, expected) in [
+        ("yes", Returned::Values(Some(vec![7, 8, 9]))),
+        ("no", Returned::Declined(5)),
+        ("unit-yes", Returned::Values(None)),
+        ("unit-no", Returned::Declined(9)),
+    ] {
+        let engine = blessed_engine()?;
+        let component = Component::new(&engine, &bytes)?;
+        let linker = Linker::<NoHost>::new(&engine);
+        let mut store = Store::new(&engine, NoHost);
+        store.set_fuel(1_000_000).context("fuel")?;
+        let instance = linker.instantiate(&mut store, &component)?;
+        let blessed = call_export(&mut store, &instance, export, &[])?;
+
+        let decoded = RefComponent::decode(&bytes).map_err(|e| engine_error(&e))?;
+        let mut interpreted = RefComponentInstance::instantiate(&decoded, NoHost)
+            .map_err(|(_, e)| engine_error(&e))?;
+        interpreted.set_fuel_limit(1_000_000);
+        let reference = interpreted
+            .invoke(export, &[])
+            .map_err(|e| engine_error(&e))?
+            .expect("the guest returns");
+
+        assert_eq!(blessed, expected, "`{export}` on the blessed engine");
+        assert_eq!(
+            lifted(&reference),
+            expected,
+            "`{export}` on the reference interpreter"
+        );
+    }
+    Ok(())
+}
+
+/// The interpreter's lifted values as the blessed engine's verdict, so
+/// the two lanes compare in one vocabulary.
+fn lifted(values: &[CVal]) -> Returned {
+    match values {
+        [] => Returned::Values(None),
+        [CVal::Bytes(bytes)] => Returned::Values(Some(bytes.clone())),
+        [CVal::Declined(code)] => Returned::Declined(*code),
+        other => panic!("off-convention result {other:?}"),
+    }
 }
