@@ -18,11 +18,15 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, WorkingStore,
+    AbortReason, Capability, EnvInputs, KernelSession, MemoryStore, Outcome, OverlayStore, TxHash,
+    WorkingStore, encode_amount,
 };
-use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
+use hyperscale_vm_ref::{
+    CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
+};
 use hyperscale_vm_runtime::{
-    Bucket, ReadCell, add_kernel_to_linker, blessed_engine, validate_component,
+    Bucket, DeltaCell, HostRefusal, ReadCell, ReserveCell, WriteCell, add_kernel_to_linker,
+    blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::error::format_err;
@@ -51,45 +55,85 @@ const fn env() -> EnvInputs {
     }
 }
 
+/// What a reserve clause grants, and what the vault behind it holds.
+const RESERVED: u128 = 75;
+/// What the absolute vault holds before a take.
+const BALANCE: u128 = 100;
+
 struct Fixture {
     declared: EffectSet,
     store: MemoryStore,
-    resource: Address,
+    readable: SubstateKey,
+    vault: SubstateKey,
+    ledger: SubstateKey,
+    opaque: SubstateKey,
+    reserved: SubstateKey,
 }
 
 fn fixture() -> Fixture {
-    let readable: SubstateKey = child_key(
-        &TestHasher,
-        Address::new([0x60; 31], AddressClass::Component),
-        RoleId(1),
-        &[],
-    );
+    let key = |role: u16| {
+        child_key(
+            &TestHasher,
+            Address::new([0x60; 31], AddressClass::Component),
+            RoleId(role),
+            &[],
+        )
+    };
+    let (readable, vault, ledger, opaque, reserved) = (key(1), key(2), key(3), key(4), key(5));
+
     let mut store = MemoryStore::new();
     store.write(readable, vec![5]).unwrap();
+    store.write(vault, encode_amount(BALANCE).to_vec()).unwrap();
+    store
+        .write(ledger, encode_amount(BALANCE).to_vec())
+        .unwrap();
+    store
+        .write(reserved, encode_amount(BALANCE).to_vec())
+        .unwrap();
+    // A write cell holding something that is not an amount: state a
+    // movement can only refuse, which is the narrow reading the class has.
+    store.write(opaque, vec![1, 2, 3]).unwrap();
     store.clear_log();
 
     let mut declared = EffectSet::new();
-    declared
-        .insert(Effect {
+    for effect in [
+        Effect {
             target: EffectTarget::Point(readable),
             mode: Mode::Read,
-        })
-        .unwrap();
+        },
+        Effect {
+            target: EffectTarget::Point(vault),
+            mode: Mode::Write,
+        },
+        Effect {
+            target: EffectTarget::Point(opaque),
+            mode: Mode::Write,
+        },
+        Effect {
+            target: EffectTarget::Point(ledger),
+            mode: Mode::Delta,
+        },
+        Effect {
+            target: EffectTarget::Point(reserved),
+            mode: Mode::Reserve { amount: RESERVED },
+        },
+    ] {
+        declared.insert(effect).unwrap();
+    }
 
     Fixture {
         declared,
         store,
-        resource: Address::new([0x70; 31], AddressClass::Resource),
+        readable,
+        vault,
+        ledger,
+        opaque,
+        reserved,
     }
 }
 
-/// A session with the read capability materialized and two buckets in the
-/// kernel's keeping.
-///
-/// The reps are the table's own order, so both runtimes are handed the
-/// same two.
-fn session(fx: &Fixture) -> (SessionHost, u32, u32) {
-    let mut session = KernelSession::materialize(
+fn materialize(fx: &Fixture) -> KernelSession {
+    KernelSession::materialize(
         OverlayStore::new(Arc::new(fx.store.clone())),
         &fx.declared,
         &fx.declared.iter().collect::<Vec<_>>(),
@@ -97,9 +141,35 @@ fn session(fx: &Fixture) -> (SessionHost, u32, u32) {
         env(),
         test_hash,
     )
-    .expect("fixture materializes");
-    let held = session.open_bucket(fx.resource, HELD);
-    let spent = session.open_bucket(fx.resource, SPENT);
+    .expect("fixture materializes")
+}
+
+/// The capability rep for one declared point, by the mode it carries.
+fn rep_of(host: &SessionHost, wanted: SubstateKey, mode: Mode) -> u32 {
+    let position = host
+        .0
+        .capabilities()
+        .iter()
+        .position(|c| match (mode, c) {
+            (Mode::Read, Capability::Read(key))
+            | (Mode::Write, Capability::Write(key))
+            | (Mode::Delta, Capability::Delta(key))
+            | (Mode::Reserve { .. }, Capability::Reserve { key, .. }) => *key == wanted,
+            _ => false,
+        })
+        .expect("capability present");
+    u32::try_from(position).expect("bounded")
+}
+
+/// A session with the fixture's capabilities and two buckets in the
+/// kernel's keeping.
+///
+/// The reps are the table's own order, so both runtimes are handed the
+/// same two.
+fn session(fx: &Fixture) -> (SessionHost, u32, u32) {
+    let mut session = materialize(fx);
+    let held = session.open_bucket(HELD);
+    let spent = session.open_bucket(SPENT);
     (SessionHost(session), held, spent)
 }
 
@@ -129,6 +199,7 @@ fn run_blessed(fx: &Fixture) -> Result<(Trace, u64)> {
     let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let (host, held, spent) = session(fx);
+    let readable = rep_of(&host, fx.readable, Mode::Read);
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
@@ -138,7 +209,7 @@ fn run_blessed(fx: &Fixture) -> Result<(Trace, u64)> {
         .call(&mut store, (Resource::new_own(held),))?;
     let (borrow_handle,) = instance
         .get_typed_func::<(Resource<ReadCell>,), (u64,)>(&mut store, "peek")?
-        .call(&mut store, (Resource::new_borrow(0),))?;
+        .call(&mut store, (Resource::new_borrow(readable),))?;
     let (released,) = instance
         .get_typed_func::<(), (Resource<Bucket>,)>(&mut store, "release")?
         .call(&mut store, ())?;
@@ -154,7 +225,7 @@ fn run_blessed(fx: &Fixture) -> Result<(Trace, u64)> {
         borrow_handle,
         released_rep,
         discard_handle,
-        released_amount: host.0.take_bucket(released_rep)?.amount,
+        released_amount: host.0.take_bucket(released_rep)?,
         discarded_survives: host.0.bucket(spent).is_ok(),
     };
     Ok((trace, fuel))
@@ -165,6 +236,7 @@ fn run_ref(fx: &Fixture) -> Result<(Trace, u64)> {
     let bytes = parse_str(BUCKET_GUEST_WAT)?;
     let comp = RefComponent::decode(&bytes)?;
     let (host, held, spent) = session(fx);
+    let readable = rep_of(&host, fx.readable, Mode::Read);
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
 
@@ -178,7 +250,7 @@ fn run_ref(fx: &Fixture) -> Result<(Trace, u64)> {
         invoke(
             &mut instance,
             "peek",
-            &[CVal::Borrow(0, ResourceKind::ReadCell)],
+            &[CVal::Borrow(readable, ResourceKind::ReadCell)],
         )?,
     )?;
     let released_rep = match invoke(&mut instance, "release", &[])?.as_slice() {
@@ -197,7 +269,7 @@ fn run_ref(fx: &Fixture) -> Result<(Trace, u64)> {
         borrow_handle,
         released_rep,
         discard_handle,
-        released_amount: host.0.take_bucket(released_rep)?.amount,
+        released_amount: host.0.take_bucket(released_rep)?,
         discarded_survives: host.0.bucket(spent).is_ok(),
     };
     Ok((trace, fuel))
@@ -213,6 +285,227 @@ fn invoke(
     instance
         .invoke(export, args)?
         .map_err(|e| format_err!("ref {export} failed: {e:?}"))
+}
+
+/// Which debit to drive, against which of the fixture's cells.
+#[derive(Clone, Copy)]
+enum Take {
+    /// A queued debit of `n` against the delta ledger.
+    Delta(u64),
+    /// An absolute debit of `n` against the amount vault.
+    Vault(u64),
+    /// An absolute debit against a cell holding no amount.
+    Opaque(u64),
+    /// The whole grant.
+    Reserve,
+    /// The same grant, asked twice.
+    ReserveTwice,
+}
+
+impl Take {
+    const fn export(self) -> &'static str {
+        match self {
+            Self::Delta(_) => "take-delta",
+            Self::Vault(_) | Self::Opaque(_) => "take-write",
+            Self::Reserve => "take-reserve",
+            Self::ReserveTwice => "take-reserve-twice",
+        }
+    }
+
+    /// The cell the take is aimed at and the mode it reaches it through.
+    const fn cell(self, fx: &Fixture) -> (SubstateKey, Mode) {
+        match self {
+            Self::Delta(_) => (fx.ledger, Mode::Delta),
+            Self::Vault(_) => (fx.vault, Mode::Write),
+            Self::Opaque(_) => (fx.opaque, Mode::Write),
+            Self::Reserve | Self::ReserveTwice => (fx.reserved, Mode::Reserve { amount: RESERVED }),
+        }
+    }
+
+    /// The amount the export takes, where the mode has the body name one.
+    const fn amount(self) -> Option<u64> {
+        match self {
+            Self::Delta(n) | Self::Vault(n) | Self::Opaque(n) => Some(n),
+            Self::Reserve | Self::ReserveTwice => None,
+        }
+    }
+}
+
+/// What a take produced.
+#[derive(Debug, PartialEq, Eq)]
+enum Took {
+    /// The value the bucket carried, once the lane took it back out of
+    /// the kernel.
+    Value(u128),
+    /// The host refused, in the class it assigned.
+    Refusal(AbortReason),
+}
+
+/// One take under the blessed engine.
+fn take_blessed(fx: &Fixture, take: Take) -> Result<(Took, SessionHost, u64)> {
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    validate_component(&bytes)?;
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<SessionHost>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let host = SessionHost(materialize(fx));
+    let (key, mode) = take.cell(fx);
+    let rep = rep_of(&host, key, mode);
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+
+    let export = take.export();
+    let produced = match (mode, take.amount()) {
+        (Mode::Delta, Some(n)) => instance
+            .get_typed_func::<(Resource<DeltaCell>, u64), (Resource<Bucket>,)>(&mut store, export)?
+            .call(&mut store, (Resource::new_borrow(rep), n)),
+        (Mode::Write, Some(n)) => instance
+            .get_typed_func::<(Resource<WriteCell>, u64), (Resource<Bucket>,)>(&mut store, export)?
+            .call(&mut store, (Resource::new_borrow(rep), n)),
+        _ => instance
+            .get_typed_func::<(Resource<ReserveCell>,), (Resource<Bucket>,)>(&mut store, export)?
+            .call(&mut store, (Resource::new_borrow(rep),)),
+    };
+
+    let fuel = FUEL - store.get_fuel()?;
+    let mut host = store.into_data();
+    let took = match produced {
+        Ok((bucket,)) => Took::Value(host.0.take_bucket(bucket.rep())?),
+        Err(error) => match error.downcast_ref::<HostRefusal>() {
+            Some(refusal) => Took::Refusal(refusal.0),
+            None => return Err(error),
+        },
+    };
+    Ok((took, host, fuel))
+}
+
+/// The same take under the reference interpreter.
+fn take_ref(fx: &Fixture, take: Take) -> Result<(Took, SessionHost, u64)> {
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    let comp = RefComponent::decode(&bytes)?;
+    let host = SessionHost(materialize(fx));
+    let (key, mode) = take.cell(fx);
+    let kind = match mode {
+        Mode::Delta => ResourceKind::DeltaCell,
+        Mode::Write => ResourceKind::WriteCell,
+        _ => ResourceKind::ReserveCell,
+    };
+    let mut args = vec![CVal::Borrow(rep_of(&host, key, mode), kind)];
+    args.extend(take.amount().map(CVal::U64));
+    let mut instance =
+        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+
+    let produced = instance.invoke(take.export(), &args)?;
+    let fuel = instance.fuel_consumed();
+    let mut host = instance.into_host();
+    let took = match produced {
+        Ok(values) => match values.as_slice() {
+            [CVal::Own(rep)] => Took::Value(host.0.take_bucket(*rep)?),
+            other => return Err(format_err!("{} returned {other:?}", take.export())),
+        },
+        Err(ExecError::Canon(CanonError::Host(reason))) => Took::Refusal(reason),
+        Err(other) => return Err(format_err!("ref {} failed: {other:?}", take.export())),
+    };
+    Ok((took, host, fuel))
+}
+
+/// One take on both engines, comparing what it produced, what it touched
+/// and what it cost; returns the blessed side for further assertions.
+fn both(fx: &Fixture, take: Take) -> Result<(Took, SessionHost)> {
+    let (blessed, blessed_host, blessed_fuel) = take_blessed(fx, take)?;
+    let (reference, ref_host, ref_fuel) = take_ref(fx, take)?;
+    let export = take.export();
+    assert_eq!(blessed, reference, "{export} diverged");
+    assert_eq!(
+        blessed_host.0.store().access_log(),
+        ref_host.0.store().access_log(),
+        "{export} access log diverged"
+    );
+    assert_eq!(blessed_fuel, ref_fuel, "{export} fuel diverged");
+    Ok((blessed, blessed_host))
+}
+
+#[test]
+fn each_take_yields_the_value_it_debits() -> Result<()> {
+    let fx = fixture();
+
+    let (delta, host) = both(&fx, Take::Delta(30))?;
+    assert_eq!(delta, Took::Value(30));
+    let (receipt, _) = host
+        .0
+        .finish(Outcome::Completed { value: None }, 0)
+        .expect("the oracle is clean");
+    assert_eq!(
+        receipt.delta.movements.get(&fx.ledger).map(|m| m.debit),
+        Some(30),
+        "the debit the take performed is the movement the receipt carries"
+    );
+
+    // An absolute cell resolves at the call, so the balance is already
+    // down by what the body is holding.
+    let (vault, host) = both(&fx, Take::Vault(30))?;
+    assert_eq!(vault, Took::Value(30));
+    let (receipt, _) = host
+        .0
+        .finish(Outcome::Completed { value: None }, 0)
+        .expect("the oracle is clean");
+    assert_eq!(
+        receipt.delta.cells.get(&fx.vault),
+        Some(&Some(encode_amount(BALANCE - 30).to_vec()))
+    );
+
+    // The grant is the bucket: no amount is named and none can be missed.
+    let (reserve, _) = both(&fx, Take::Reserve)?;
+    assert_eq!(reserve, Took::Value(RESERVED));
+    Ok(())
+}
+
+#[test]
+fn an_over_take_refuses_in_each_modes_own_terms() -> Result<()> {
+    let fx = fixture();
+
+    // Absolute: the read-modify-write resolves at the call, so the
+    // refusal is the call's.
+    let (vault, _) = both(&fx, Take::Vault(500))?;
+    assert_eq!(vault, Took::Refusal(AbortReason::CellUnderflow));
+
+    // Commutative: the debit is queued, so the take succeeds and the
+    // movement fold is what refuses — the transaction aborts and no value
+    // leaves.
+    let (delta, host) = both(&fx, Take::Delta(500))?;
+    assert_eq!(delta, Took::Value(500));
+    let (receipt, _) = host
+        .0
+        .finish(Outcome::Completed { value: None }, 0)
+        .expect("the oracle is clean");
+    assert_eq!(
+        receipt.outcome,
+        Outcome::Infeasible {
+            key: fx.ledger,
+            amount: 500,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn a_stored_cell_that_is_not_an_amount_is_the_states_defect() -> Result<()> {
+    let fx = fixture();
+    let (opaque, _) = both(&fx, Take::Opaque(1))?;
+    assert_eq!(opaque, Took::Refusal(AbortReason::MalformedAmountCell));
+    Ok(())
+}
+
+#[test]
+fn a_reservation_answers_once() -> Result<()> {
+    let fx = fixture();
+    let (twice, _) = both(&fx, Take::ReserveTwice)?;
+    // The read this replaces answered every time it was asked, so a body
+    // asking twice held two edges against one hold.
+    assert_eq!(twice, Took::Refusal(AbortReason::ReservationAlreadyTaken));
+    Ok(())
 }
 
 #[test]

@@ -174,8 +174,20 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
+    fn delta_take(&mut self, _rep: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+
+    fn write_take(&mut self, _rep: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+
     fn reserve_amount(&mut self, _rep: u32) -> std::result::Result<u128, AbortReason> {
         Ok(0)
+    }
+
+    fn reserve_take(&mut self, _rep: u32) -> std::result::Result<u32, AbortReason> {
+        Err(AbortReason::HandleUnknown)
     }
 
     fn range_count(&mut self, _rep: u32) -> std::result::Result<u32, AbortReason> {

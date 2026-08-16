@@ -135,12 +135,35 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
 
+    /// Debit the amount cell and hand the value out as a bucket, whose
+    /// rep this returns.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
+
+    /// Debit the absolute amount cell and hand the value out as a
+    /// bucket, whose rep this returns.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
+
     /// The reserved amount this transaction holds.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
     fn reserve_amount(&mut self, rep: u32) -> Result<u128, AbortReason>;
+
+    /// Take the reservation as a bucket, whose rep this returns.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal, including a second take of one grant.
+    fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason>;
 
     /// Entries currently in the interval, bounded by the declared cap.
     ///
@@ -325,6 +348,38 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
                 .data_mut()
                 .delta_sub(r.rep(), amount.into())
                 .map_err(host_trap)
+        },
+    )?;
+    // A take charges its amount argument and nothing for the handle it
+    // yields: a bucket crosses as a table index, where the amount it
+    // carries never crosses at all.
+    state.func_wrap(
+        "write-cell-take",
+        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<WriteCell>, Amount)| {
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            let rep = store
+                .data_mut()
+                .write_take(r.rep(), amount.into())
+                .map_err(host_trap)?;
+            Ok((Resource::<Bucket>::new_own(rep),))
+        },
+    )?;
+    state.func_wrap(
+        "delta-cell-take",
+        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<DeltaCell>, Amount)| {
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            let rep = store
+                .data_mut()
+                .delta_take(r.rep(), amount.into())
+                .map_err(host_trap)?;
+            Ok((Resource::<Bucket>::new_own(rep),))
+        },
+    )?;
+    state.func_wrap(
+        "reserve-cell-take",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<ReserveCell>,)| {
+            let rep = store.data_mut().reserve_take(r.rep()).map_err(host_trap)?;
+            Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
     state.func_wrap(

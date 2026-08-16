@@ -125,6 +125,9 @@ pub enum AbortReason {
     /// A reservation the capability table promises but the store does not
     /// hold.
     ReservationMissing,
+    /// A second take of one reservation: the grant leaves the kernel
+    /// once, so asking again is asking for value no hold covers.
+    ReservationAlreadyTaken,
     /// An emission outside any invocation, so the kernel has no address
     /// to stamp.
     EmissionOutsideInvocation,

@@ -48,7 +48,10 @@ pub trait RefKernelHost {
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
     fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
     fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
+    fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
+    fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn reserve_amount(&mut self, rep: u32) -> Result<u128, AbortReason>;
+    fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason>;
     fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason>;
     fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, AbortReason>;
     fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
@@ -140,9 +143,12 @@ enum HostFn {
     LockedCellGet,
     WriteCellGet,
     WriteCellSet,
+    WriteTake,
     DeltaAdd,
     DeltaSub,
+    DeltaTake,
     ReserveAmount,
+    ReserveTake,
     RangeReadCount,
     RangeReadOrder,
     RangeReadEntry,
@@ -536,9 +542,12 @@ impl RefComponent {
             ("state", "locked-cell-get") => Ok(HostFn::LockedCellGet),
             ("state", "write-cell-get") => Ok(HostFn::WriteCellGet),
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
+            ("state", "write-cell-take") => Ok(HostFn::WriteTake),
             ("state", "delta-cell-add") => Ok(HostFn::DeltaAdd),
             ("state", "delta-cell-sub") => Ok(HostFn::DeltaSub),
+            ("state", "delta-cell-take") => Ok(HostFn::DeltaTake),
             ("state", "reserve-cell-amount") => Ok(HostFn::ReserveAmount),
+            ("state", "reserve-cell-take") => Ok(HostFn::ReserveTake),
             ("state", "range-read-count") => Ok(HostFn::RangeReadCount),
             ("state", "range-read-order") => Ok(HostFn::RangeReadOrder),
             ("state", "range-read-entry") => Ok(HostFn::RangeReadEntry),
@@ -1287,6 +1296,16 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
         }
     }
 
+    /// Seats a bucket the host just opened as an owned handle.
+    fn seat_bucket(&mut self, rep: u32) -> u32 {
+        self.insert(Handle {
+            rep,
+            kind: ResourceKind::Bucket,
+            live: true,
+            own: true,
+        })
+    }
+
     /// Empties the slot at `idx`, returning it for reuse.
     ///
     /// # Panics
@@ -1395,8 +1414,15 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
         match &self.comp.core_funcs[id as usize] {
             CoreFuncDef::ResourceDrop { .. } => 1,
             CoreFuncDef::Lower { func, .. } => match self.comp.comp_funcs[*func as usize] {
+                // A take's bucket comes back as a flat handle, so it
+                // costs no return-area pointer where the read beside it
+                // needs one for the amount — which is why each take
+                // counts one lower than the read it stands next to.
                 CompFunc::Host(
-                    HostFn::RangeReadCount | HostFn::RangeWriteCount | HostFn::Randomness,
+                    HostFn::RangeReadCount
+                    | HostFn::RangeWriteCount
+                    | HostFn::Randomness
+                    | HostFn::ReserveTake,
                 ) => 1,
                 CompFunc::Host(
                     HostFn::ReadCellGet
@@ -1407,8 +1433,10 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                 ) => 2,
                 CompFunc::Host(
                     HostFn::WriteCellSet
+                    | HostFn::WriteTake
                     | HostFn::DeltaAdd
                     | HostFn::DeltaSub
+                    | HostFn::DeltaTake
                     | HostFn::RangeReadOrder
                     | HostFn::RangeReadEntry
                     | HostFn::RangeWriteOrder
@@ -1509,6 +1537,36 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                             .write_cell_set(rep, bytes)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(Vec::new())
+                    }
+                    // A take seats the bucket the host opened as an owned
+                    // handle, which is the guest's to keep, hand back, or
+                    // drop — the same seating a lowered argument gets, so
+                    // the numbering is one table's whatever opened the
+                    // slot.
+                    HostFn::WriteTake | HostFn::DeltaTake => {
+                        let expected = if host_fn == HostFn::WriteTake {
+                            ResourceKind::WriteCell
+                        } else {
+                            ResourceKind::DeltaCell
+                        };
+                        let rep = self.resolve_handle(args[0], expected)?;
+                        let amount = flat_amount(args[1], args[2]);
+                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        let result = if host_fn == HostFn::WriteTake {
+                            self.host.write_take(rep, amount)
+                        } else {
+                            self.host.delta_take(rep, amount)
+                        };
+                        let bucket = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
+                    }
+                    HostFn::ReserveTake => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::ReserveCell)?;
+                        let bucket = self
+                            .host
+                            .reserve_take(rep)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
                     HostFn::DeltaAdd | HostFn::DeltaSub => {
                         let rep = self.resolve_handle(args[0], ResourceKind::DeltaCell)?;

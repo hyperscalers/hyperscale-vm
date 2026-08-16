@@ -69,14 +69,39 @@ interface state {
     /// Replace the substate's bytes.
     write-cell-set: func(c: borrow<write-cell>, value: list<u8>);
 
+    /// Debit the amount cell and hand the value out.
+    ///
+    /// The kernel reads, subtracts and writes back, which is what makes
+    /// an absolute cell's value linear: a body that has to read a balance
+    /// writes no absolute of its own, so nothing it computes can disagree
+    /// with what left. Traps on a stored cell that is not an amount and
+    /// on a debit past what it holds.
+    write-cell-take: func(c: borrow<write-cell>, amount: amount) -> own<bucket>;
+
     /// Credit the amount cell.
     delta-cell-add: func(c: borrow<delta-cell>, value: amount);
 
     /// Debit the amount cell unconditionally.
     delta-cell-sub: func(c: borrow<delta-cell>, value: amount);
 
+    /// Debit the amount cell and hand the value out.
+    ///
+    /// The debit is queued like any other, so whether the cell covered it
+    /// is the movement fold's question and an over-take aborts at settle
+    /// rather than here. What the pairing fixes is that the amount
+    /// debited and the amount now in flight are one number.
+    delta-cell-take: func(c: borrow<delta-cell>, amount: amount) -> own<bucket>;
+
     /// The reserved amount this transaction holds.
     reserve-cell-amount: func(c: borrow<reserve-cell>) -> amount;
+
+    /// Take the reservation, as the value it grants.
+    ///
+    /// No declared amount: the kernel judged and held the reservation
+    /// before this body ran, and the grant is the bucket. Once per
+    /// reservation — taking is a question with one answer, where the read
+    /// beside it answers every time it is asked.
+    reserve-cell-take: func(c: borrow<reserve-cell>) -> own<bucket>;
 
     /// Entries currently in the interval, bounded by the declared cap.
     range-read-count: func(r: borrow<range-read>) -> u32;

@@ -458,8 +458,8 @@ pub mod fixtures {
     (canon lift (core func $i "no-such-entry"))))
 "#;
 
-    /// The bucket guest: a component that takes value, keeps it, gives it
-    /// back, and throws some away.
+    /// The bucket guest: a component that takes value out of the cells it
+    /// was lent, keeps it, gives it back, and throws some away.
     ///
     /// `hold` takes an `own<bucket>` and stashes the handle in a global,
     /// so the handle outlives the call that delivered it; `release`
@@ -470,19 +470,39 @@ pub mod fixtures {
     /// table, so what a borrow is numbered depends on what an own is
     /// still holding.
     ///
-    /// Every export returns the handle index it was given, because that
-    /// index is a core `i32` a body can read and therefore something the
-    /// two engines must agree on to the number.
+    /// `take-delta`, `take-write` and `take-reserve` are the debits, each
+    /// handing back the bucket it produced rather than a number; and
+    /// `take-reserve-twice` asks one grant the same question twice, which
+    /// is the one thing a take can refuse that the read beside it could
+    /// not.
+    ///
+    /// The three handle-returning exports return the handle index they
+    /// were given, because that index is a core `i32` a body can read and
+    /// therefore something the two engines must agree on to the number.
     pub const BUCKET_GUEST_WAT: &str = r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
     (export "bucket" (type $bk (sub resource)))
     (export "read-cell" (type $rc (sub resource)))
-    (export "read-cell-get" (func (param "c" (borrow $rc)) (result (list u8))))))
+    (export "write-cell" (type $wc (sub resource)))
+    (export "delta-cell" (type $dc (sub resource)))
+    (export "reserve-cell" (type $vc (sub resource)))
+    (type $amt_decl (record (field "low" u64) (field "high" u64)))
+    (export "amount" (type $amt (eq $amt_decl)))
+    (export "read-cell-get" (func (param "c" (borrow $rc)) (result (list u8))))
+    (export "write-cell-take" (func (param "c" (borrow $wc)) (param "amount" $amt) (result (own $bk))))
+    (export "delta-cell-take" (func (param "c" (borrow $dc)) (param "amount" $amt) (result (own $bk))))
+    (export "reserve-cell-take" (func (param "c" (borrow $vc)) (result (own $bk))))))
 
   (alias export $state "bucket" (type $bucket))
   (alias export $state "read-cell" (type $rcell))
+  (alias export $state "write-cell" (type $wcell))
+  (alias export $state "delta-cell" (type $dcell))
+  (alias export $state "reserve-cell" (type $vcell))
   (alias export $state "read-cell-get" (func $read_get))
+  (alias export $state "write-cell-take" (func $write_take))
+  (alias export $state "delta-cell-take" (func $delta_take))
+  (alias export $state "reserve-cell-take" (func $reserve_take))
 
   (core module $alloc
     (memory (export "mem") 1 1)
@@ -500,14 +520,26 @@ pub mod fixtures {
 
   (core func $read_get_l (canon lower (func $read_get)
     (memory $a "mem") (realloc (func $a "realloc"))))
+  (core func $write_take_l (canon lower (func $write_take)))
+  (core func $delta_take_l (canon lower (func $delta_take)))
+  (core func $reserve_take_l (canon lower (func $reserve_take)))
   (core func $drop_bucket (canon resource.drop $bucket))
   (core func $drop_read (canon resource.drop $rcell))
+  (core func $drop_write (canon resource.drop $wcell))
+  (core func $drop_delta (canon resource.drop $dcell))
+  (core func $drop_reserve (canon resource.drop $vcell))
 
   (core module $m
     (import "env" "mem" (memory 1 1))
     (import "k" "read-get" (func $read_get (param i32 i32)))
+    (import "k" "write-take" (func $write_take (param i32 i64 i64) (result i32)))
+    (import "k" "delta-take" (func $delta_take (param i32 i64 i64) (result i32)))
+    (import "k" "reserve-take" (func $reserve_take (param i32) (result i32)))
     (import "k" "drop-bucket" (func $drop_bucket (param i32)))
     (import "k" "drop-read" (func $drop_read (param i32)))
+    (import "k" "drop-write" (func $drop_write (param i32)))
+    (import "k" "drop-delta" (func $drop_delta (param i32)))
+    (import "k" "drop-reserve" (func $drop_reserve (param i32)))
     (global $held (mut i32) (i32.const 0))
 
     (func (export "hold") (param i32) (result i64)
@@ -532,14 +564,51 @@ pub mod fixtures {
       local.get 0
       i64.extend_i32_u
       local.get 0
-      call $drop_bucket))
+      call $drop_bucket)
+
+    (func (export "take-write") (param i32 i64) (result i32)
+      local.get 0
+      local.get 1
+      i64.const 0
+      call $write_take
+      local.get 0
+      call $drop_write)
+
+    (func (export "take-delta") (param i32 i64) (result i32)
+      local.get 0
+      local.get 1
+      i64.const 0
+      call $delta_take
+      local.get 0
+      call $drop_delta)
+
+    (func (export "take-reserve") (param i32) (result i32)
+      local.get 0
+      call $reserve_take
+      local.get 0
+      call $drop_reserve)
+
+    (func (export "take-reserve-twice") (param i32) (result i32)
+      local.get 0
+      call $reserve_take
+      call $drop_bucket
+      local.get 0
+      call $reserve_take
+      local.get 0
+      call $drop_reserve))
 
   (core instance $i (instantiate $m
     (with "env" (instance (export "mem" (memory $a "mem"))))
     (with "k" (instance
       (export "read-get" (func $read_get_l))
+      (export "write-take" (func $write_take_l))
+      (export "delta-take" (func $delta_take_l))
+      (export "reserve-take" (func $reserve_take_l))
       (export "drop-bucket" (func $drop_bucket))
-      (export "drop-read" (func $drop_read))))))
+      (export "drop-read" (func $drop_read))
+      (export "drop-write" (func $drop_write))
+      (export "drop-delta" (func $drop_delta))
+      (export "drop-reserve" (func $drop_reserve))))))
 
   (func (export "hold")
     (param "b" (own $bucket)) (result u64)
@@ -551,7 +620,19 @@ pub mod fixtures {
     (canon lift (core func $i "peek")))
   (func (export "discard")
     (param "b" (own $bucket)) (result u64)
-    (canon lift (core func $i "discard"))))
+    (canon lift (core func $i "discard")))
+  (func (export "take-write")
+    (param "c" (borrow $wcell)) (param "amount" u64) (result (own $bucket))
+    (canon lift (core func $i "take-write")))
+  (func (export "take-delta")
+    (param "c" (borrow $dcell)) (param "amount" u64) (result (own $bucket))
+    (canon lift (core func $i "take-delta")))
+  (func (export "take-reserve")
+    (param "v" (borrow $vcell)) (result (own $bucket))
+    (canon lift (core func $i "take-reserve")))
+  (func (export "take-reserve-twice")
+    (param "v" (borrow $vcell)) (result (own $bucket))
+    (canon lift (core func $i "take-reserve-twice"))))
 "#;
 
     /// A component whose `realloc` calls a lowered import, closing a call
@@ -718,8 +799,17 @@ pub mod session_host {
                 fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason> {
                     self.0.delta_sub(rep, amount).map_err(AbortReason::from)
                 }
+                fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
+                    self.0.delta_take(rep, amount).map_err(AbortReason::from)
+                }
+                fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
+                    self.0.write_take(rep, amount).map_err(AbortReason::from)
+                }
                 fn reserve_amount(&mut self, rep: u32) -> Result<u128, AbortReason> {
                     self.0.reserve_amount(rep).map_err(AbortReason::from)
+                }
+                fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason> {
+                    self.0.reserve_take(rep).map_err(AbortReason::from)
                 }
                 fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason> {
                     self.0.range_count(rep).map_err(AbortReason::from)

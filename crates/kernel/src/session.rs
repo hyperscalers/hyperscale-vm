@@ -22,7 +22,7 @@ use hyperscale_vm_effects::{
 };
 
 use crate::locality::Locality;
-use crate::modes::{DeltaOp, ModeError, TxHash};
+use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
 use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
 use crate::store::{Access, StoreError, WorkingStore};
@@ -77,20 +77,6 @@ pub enum Capability {
         /// adds entries no scan returned.
         cap: u32,
     },
-}
-
-/// Value in the kernel's own keeping: what one `own<bucket>` handle names.
-///
-/// The guest holds an index into the session's bucket table and the
-/// kernel holds this, which is what makes fabricating value inexpressible
-/// rather than detectable — a body has no way to say how much a bucket
-/// carries, only which one it means.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Bucket {
-    /// The resource the value is denominated in.
-    pub resource: Address,
-    /// How much of it.
-    pub amount: u128,
 }
 
 /// Why materialization refused a declared effect set — each an abort
@@ -168,6 +154,18 @@ pub enum SessionTrap {
     /// unreachable, kept honest.
     #[error("no reservation held")]
     ReservationMissing,
+    /// A second take of one reservation. The grant is a quantity, and it
+    /// leaves the kernel once.
+    #[error("reservation already taken")]
+    ReservationTaken,
+    /// A stored cell a movement reads as an amount and cannot: a defect
+    /// in state rather than in the call that found it.
+    #[error("substate {0:?} is not an amount cell")]
+    BadAmountCell(SubstateKey),
+    /// A debit past what an absolute cell holds, judged at the call
+    /// because an absolute resolves there.
+    #[error("debit exceeds the cell's balance")]
+    CellUnderflow,
     /// An emission outside any invocation, so the kernel has no address to
     /// stamp — unreachable through a runner that enters every node.
     #[error("emission outside an invocation")]
@@ -195,6 +193,9 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::OrderOutsideInterval => Self::OrderOutsideInterval,
             SessionTrap::WriteCapExceeded { .. } => Self::IntervalWriteCapExceeded,
             SessionTrap::ReservationMissing => Self::ReservationMissing,
+            SessionTrap::ReservationTaken => Self::ReservationAlreadyTaken,
+            SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
+            SessionTrap::CellUnderflow => Self::CellUnderflow,
             SessionTrap::NoInvocation => Self::EmissionOutsideInvocation,
             SessionTrap::EventTypeOutOfRange(_) => Self::EventTypeOutOfRange,
             SessionTrap::TooManyEvents => Self::EventCountExceeded,
@@ -422,7 +423,20 @@ pub struct KernelSession {
     /// the bucket leaves — dropped by the guest or taken back by the
     /// kernel — and is never reused, so one rep names one bucket for the
     /// transaction's life.
-    buckets: Vec<Option<Bucket>>,
+    ///
+    /// A bucket is an amount and nothing else. Which resource it is
+    /// denominated in is the declaration's answer wherever it is asked —
+    /// `outputs` for a produced edge, the cell's own key for a movement —
+    /// and the kernel cannot invert a cell key to recover one, so a field
+    /// for it would be right in one case and a guess in the rest.
+    buckets: Vec<Option<u128>>,
+    /// Reservations already taken, by capability rep.
+    ///
+    /// A grant answers once. The read this replaces answered every time
+    /// it was asked, so a body asking twice held two edges against one
+    /// hold; taking is a question with one answer and this is what makes
+    /// it so.
+    taken: BTreeSet<u32>,
 }
 
 impl KernelSession {
@@ -512,6 +526,7 @@ impl KernelSession {
             invocation: None,
             events: Vec::new(),
             buckets: Vec::new(),
+            taken: BTreeSet::new(),
         })
     }
 
@@ -539,9 +554,9 @@ impl KernelSession {
     ///
     /// Only past `u32` buckets in one transaction, which the declared
     /// edge and clause counts exclude.
-    pub fn open_bucket(&mut self, resource: Address, amount: u128) -> u32 {
+    pub fn open_bucket(&mut self, amount: u128) -> u32 {
         let rep = u32::try_from(self.buckets.len()).expect("bounded");
-        self.buckets.push(Some(Bucket { resource, amount }));
+        self.buckets.push(Some(amount));
         rep
     }
 
@@ -550,7 +565,7 @@ impl KernelSession {
     /// # Errors
     ///
     /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
-    pub fn bucket(&self, rep: u32) -> Result<Bucket, SessionTrap> {
+    pub fn bucket(&self, rep: u32) -> Result<u128, SessionTrap> {
         usize::try_from(rep)
             .ok()
             .and_then(|index| self.buckets.get(index))
@@ -565,7 +580,7 @@ impl KernelSession {
     /// # Errors
     ///
     /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
-    pub fn take_bucket(&mut self, rep: u32) -> Result<Bucket, SessionTrap> {
+    pub fn take_bucket(&mut self, rep: u32) -> Result<u128, SessionTrap> {
         usize::try_from(rep)
             .ok()
             .and_then(|index| self.buckets.get_mut(index))
@@ -725,6 +740,68 @@ impl KernelSession {
                 .ok_or(SessionTrap::ReservationMissing),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
+    }
+
+    /// Debit `amount` through a delta capability and hand the value out
+    /// as a bucket.
+    ///
+    /// The debit is queued like any other, so whether the cell covered it
+    /// is the movement fold's question and an over-take is
+    /// `Outcome::Infeasible` at settle rather than a refusal here. What
+    /// the pairing buys is that the amount debited and the amount now in
+    /// flight are one number the body never got to write twice.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
+        self.delta(rep, amount, DeltaOp::Sub)?;
+        Ok(self.open_bucket(amount))
+    }
+
+    /// Debit `amount` through a write capability and hand the value out
+    /// as a bucket.
+    ///
+    /// The kernel performs the read-modify-write, which is what makes an
+    /// absolute cell's value linear too: a body that needs to read a
+    /// balance — a curve needs both sides — writes no absolute back, so
+    /// there is no number of its own for the edge to disagree with.
+    /// Resolved at the call, so the refusals are immediate: a stored cell
+    /// that is not an amount, and a debit past what it holds.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
+        let Capability::Write(key) = self.capability(rep)? else {
+            return Err(SessionTrap::WrongMode(rep));
+        };
+        let cell = self.store.read(key)?.unwrap_or_default();
+        let held = if cell.is_empty() {
+            0
+        } else {
+            decode_amount(&cell).map_err(|_| SessionTrap::BadAmountCell(key))?
+        };
+        let left = held.checked_sub(amount).ok_or(SessionTrap::CellUnderflow)?;
+        self.store.write(key, encode_amount(left).to_vec())?;
+        Ok(self.open_bucket(amount))
+    }
+
+    /// Take the reservation this capability holds, as a bucket.
+    ///
+    /// Once per capability: the grant is a quantity the kernel judged and
+    /// held before the body ran, and a second answer to the same question
+    /// would be a second edge against one hold.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn reserve_take(&mut self, rep: u32) -> Result<u32, SessionTrap> {
+        let amount = self.reserve_amount(rep)?;
+        if !self.taken.insert(rep) {
+            return Err(SessionTrap::ReservationTaken);
+        }
+        Ok(self.open_bucket(amount))
     }
 
     fn range_of(
