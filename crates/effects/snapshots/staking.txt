@@ -1,0 +1,399 @@
+PackageMetadata {
+    methods: {
+        "cast-param-vote": MethodSignature {
+            accessibility: Guarded(
+                SelfResource {
+                    material: [
+                        Literal(
+                            Bytes(
+                                [
+                                    111,
+                                    119,
+                                    110,
+                                    101,
+                                    114,
+                                    45,
+                                    98,
+                                    97,
+                                    100,
+                                    103,
+                                    101,
+                                ],
+                            ),
+                        ),
+                    ],
+                },
+            ),
+            totality: Infallible,
+            mints: None,
+            params: [
+                U64,
+                U64,
+                U64,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                18,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Derived(
+                    Arg(
+                        0,
+                    ),
+                ),
+                Derived(
+                    Arg(
+                        1,
+                    ),
+                ),
+                Derived(
+                    Arg(
+                        2,
+                    ),
+                ),
+            ],
+            calls: [],
+        },
+        "clear-param-vote": MethodSignature {
+            accessibility: Guarded(
+                SelfResource {
+                    material: [
+                        Literal(
+                            Bytes(
+                                [
+                                    111,
+                                    119,
+                                    110,
+                                    101,
+                                    114,
+                                    45,
+                                    98,
+                                    97,
+                                    100,
+                                    103,
+                                    101,
+                                ],
+                            ),
+                        ),
+                    ],
+                },
+            ),
+            totality: Infallible,
+            mints: None,
+            params: [],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                18,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+            ],
+            calls: [],
+        },
+        "deactivate-validator": MethodSignature {
+            accessibility: Guarded(
+                SelfResource {
+                    material: [
+                        Literal(
+                            Bytes(
+                                [
+                                    111,
+                                    119,
+                                    110,
+                                    101,
+                                    114,
+                                    45,
+                                    98,
+                                    97,
+                                    100,
+                                    103,
+                                    101,
+                                ],
+                            ),
+                        ),
+                    ],
+                },
+            ),
+            totality: Infallible,
+            mints: None,
+            params: [
+                U64,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                17,
+                            ),
+                            material: [
+                                Arg(
+                                    0,
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Derived(
+                    Arg(
+                        0,
+                    ),
+                ),
+            ],
+            calls: [],
+        },
+        "register-validator": MethodSignature {
+            accessibility: Guarded(
+                SelfResource {
+                    material: [
+                        Literal(
+                            Bytes(
+                                [
+                                    111,
+                                    119,
+                                    110,
+                                    101,
+                                    114,
+                                    45,
+                                    98,
+                                    97,
+                                    100,
+                                    103,
+                                    101,
+                                ],
+                            ),
+                        ),
+                    ],
+                },
+            ),
+            totality: Infallible,
+            mints: None,
+            params: [
+                U64,
+                Bytes,
+                Bytes,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                17,
+                            ),
+                            material: [
+                                Arg(
+                                    0,
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Derived(
+                    Arg(
+                        0,
+                    ),
+                ),
+                Derived(
+                    Arg(
+                        1,
+                    ),
+                ),
+                Derived(
+                    Arg(
+                        2,
+                    ),
+                ),
+            ],
+            calls: [],
+        },
+        "stake": MethodSignature {
+            accessibility: Public,
+            totality: Infallible,
+            mints: None,
+            params: [
+                Bucket,
+            ],
+            outputs: [
+                SelfResource {
+                    material: [],
+                },
+            ],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                1,
+                            ),
+                            material: [
+                                Config(
+                                    0,
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Delta,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Bucket(
+                    0,
+                ),
+            ],
+            calls: [],
+        },
+        "unjail": MethodSignature {
+            accessibility: Guarded(
+                SelfResource {
+                    material: [
+                        Literal(
+                            Bytes(
+                                [
+                                    111,
+                                    119,
+                                    110,
+                                    101,
+                                    114,
+                                    45,
+                                    98,
+                                    97,
+                                    100,
+                                    103,
+                                    101,
+                                ],
+                            ),
+                        ),
+                    ],
+                },
+            ),
+            totality: Infallible,
+            mints: None,
+            params: [
+                U64,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                17,
+                            ),
+                            material: [
+                                Arg(
+                                    0,
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Derived(
+                    Arg(
+                        0,
+                    ),
+                ),
+            ],
+            calls: [],
+        },
+        "unstake": MethodSignature {
+            accessibility: Public,
+            totality: Infallible,
+            mints: None,
+            params: [
+                Bucket,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                16,
+                            ),
+                            material: [
+                                Config(
+                                    0,
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Delta,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Bucket(
+                    0,
+                ),
+            ],
+            calls: [],
+        },
+    },
+    events: [
+        "staked",
+        "unstaked",
+        "validator-registered",
+        "validator-deactivated",
+        "validator-unjailed",
+        "param-vote-cast",
+        "param-vote-cleared",
+    ],
+    errors: [],
+}

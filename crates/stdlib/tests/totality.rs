@@ -84,11 +84,14 @@ fn every_marked_method_survives_its_artifact() {
 /// something the artifact could answer.
 ///
 /// Pinned rather than asserted-as-marked, because what remains after both
-/// is a judgement. `stake` and `unstake` qualify and carry nothing: the
-/// mark is for a leg a core commits against without waiting, and whether
-/// staking is ever that is a question about the protocol rather than
-/// about their code. Fixing the set means a guest rebuild that changes it
+/// is a judgement. Fixing the set means a guest rebuild that changes it
 /// has to be looked at rather than absorbed.
+///
+/// `stake` sits outside it and `unstake` does not, which is the whole of
+/// what a derived body costs: an export returning a value builds its
+/// `list<u8>` on the heap, and allocation failure is a fault the scan is
+/// right to see. A method that only moves amounts reaches no allocator,
+/// so what separates the two is the result shape rather than the body.
 #[test]
 fn the_candidates_for_the_mark_are_what_they_were() {
     let mut candidates: Vec<String> = Vec::new();
@@ -107,7 +110,6 @@ fn the_candidates_for_the_mark_are_what_they_were() {
         candidates,
         vec![
             "account::deposit".to_string(),
-            "staking::stake".to_string(),
             "staking::unstake".to_string(),
         ],
         "the methods eligible for the mark moved; decide whether the marks should follow",

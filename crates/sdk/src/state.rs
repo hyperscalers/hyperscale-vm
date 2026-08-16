@@ -29,6 +29,12 @@
 //! which is why [`Keyed`], [`Ordered`] and [`Unordered`] have no guest
 //! body: a call to `at` is rewritten to the handle it named, never made.
 //!
+//! The accessors that do have a guest body are always inlined, because
+//! each is one import behind a match on a mode its call site already
+//! fixed. [`crate::guest`] states the argument; what it turns on is that
+//! an out-of-line dead arm is an `unreachable` the totality scan reads as
+//! a fault, and this vocabulary is what every derived body is written in.
+//!
 //! # The deterministic environment
 //!
 //! [`clock_ms`], [`randomness`] and [`hash`] are here for the same reason
@@ -212,15 +218,18 @@ impl<T> core::ops::Deref for Locked<T> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Cell<T>(core::marker::PhantomData<fn() -> T>);
 
+#[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
 impl<T: Cellular> Cell<T> {
     /// A fresh coherent read.
     #[must_use]
+    #[inline(always)]
     pub fn get(&self) -> T {
         unimplemented!("{OFF_HOST}")
     }
 
     /// An exclusive read-modify-write.
     #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
+    #[inline(always)]
     pub fn set(&mut self, value: T) {
         let _ = value;
         unimplemented!("{OFF_HOST}")
@@ -238,8 +247,14 @@ pub struct Keyed<T>(core::marker::PhantomData<fn() -> T>);
 
 impl<T> Keyed<T> {
     /// The leaf at `key`.
+    ///
+    /// The key is whatever material the declaration hashes under the
+    /// field's role — an address is the commonest case and not the only
+    /// one, and what makes any of them declarable is being derivable
+    /// from the call's own inputs.
     #[must_use]
-    pub fn at(&self, key: Address) -> Slot<T> {
+    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
+    pub fn at<K>(&self, key: K) -> Slot<T> {
         let _ = key;
         unimplemented!("{OFF_HOST}")
     }
@@ -275,9 +290,11 @@ impl<T> Slot<T> {
     }
 }
 
+#[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
 impl<T: Cellular> Slot<T> {
     /// A fresh coherent read.
     #[must_use]
+    #[inline(always)]
     pub fn get(&self) -> T {
         #[cfg(target_arch = "wasm32")]
         return T::from_cell(&crate::guest::cell_get(self.handle));
@@ -287,6 +304,7 @@ impl<T: Cellular> Slot<T> {
 
     /// An exclusive read-modify-write.
     #[allow(clippy::needless_pass_by_value)] // the authoring stub consumes nothing
+    #[inline(always)]
     pub fn set(&mut self, value: T) {
         let _ = &value;
         #[cfg(target_arch = "wasm32")]
@@ -296,9 +314,11 @@ impl<T: Cellular> Slot<T> {
     }
 }
 
+#[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
 impl Slot<Amount> {
     /// A commutative credit; no declared amount, so it commutes with every
     /// other movement on the same cell.
+    #[inline(always)]
     pub fn add(&mut self, amount: Amount) {
         let _ = amount;
         #[cfg(target_arch = "wasm32")]
@@ -308,6 +328,7 @@ impl Slot<Amount> {
     }
 
     /// A commutative debit.
+    #[inline(always)]
     pub fn sub(&mut self, amount: Amount) {
         let _ = amount;
         #[cfg(target_arch = "wasm32")]
@@ -427,9 +448,11 @@ impl<T> Entry<T> {
     }
 }
 
+#[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
 impl<T: Cellular> Entry<T> {
     /// A fresh coherent read.
     #[must_use]
+    #[inline(always)]
     pub fn get(&self) -> T {
         #[cfg(target_arch = "wasm32")]
         return T::from_cell(&crate::guest::entry_at(self.handle, self.order));
@@ -440,6 +463,7 @@ impl<T: Cellular> Entry<T> {
     /// An exclusive read-modify-write. Writing an entry that is not there
     /// creates it, which is what makes one accessor cover both.
     #[allow(clippy::needless_pass_by_value)] // a stored value is consumed
+    #[inline(always)]
     pub fn set(&mut self, value: T) {
         let _ = &value;
         #[cfg(target_arch = "wasm32")]
@@ -457,6 +481,7 @@ pub struct Interval<T> {
     _value: core::marker::PhantomData<fn() -> T>,
 }
 
+#[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
 impl<T> Interval<T> {
     /// The interval this materialized handle names, on the terms
     /// [`Slot::at`] describes.
@@ -471,6 +496,7 @@ impl<T> Interval<T> {
 
     /// Entries currently in the interval, bounded by the declared cap.
     #[must_use]
+    #[inline(always)]
     pub fn count(&self) -> u32 {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::entry_count(self.handle);
@@ -480,6 +506,7 @@ impl<T> Interval<T> {
 
     /// The order key of the entry at `index`, ascending.
     #[must_use]
+    #[inline(always)]
     pub fn order(&self, index: u32) -> Amount {
         let _ = index;
         #[cfg(target_arch = "wasm32")]
@@ -489,9 +516,11 @@ impl<T> Interval<T> {
     }
 }
 
+#[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
 impl<T: Cellular> Interval<T> {
     /// The value of the entry at `index`, ascending.
     #[must_use]
+    #[inline(always)]
     pub fn entry(&self, index: u32) -> T {
         let _ = index;
         #[cfg(target_arch = "wasm32")]
@@ -502,6 +531,7 @@ impl<T: Cellular> Interval<T> {
 
     /// Replace the value at `index`.
     #[allow(clippy::needless_pass_by_value)] // a stored value is consumed
+    #[inline(always)]
     pub fn set(&mut self, index: u32, value: T) {
         let _ = (index, &value);
         #[cfg(target_arch = "wasm32")]
@@ -512,6 +542,7 @@ impl<T: Cellular> Interval<T> {
 
     /// Insert at `order`, which must lie inside the declared interval.
     #[allow(clippy::needless_pass_by_value)] // a stored value is consumed
+    #[inline(always)]
     pub fn insert(&mut self, order: Amount, value: T) {
         let _ = (order, &value);
         #[cfg(target_arch = "wasm32")]
@@ -521,6 +552,7 @@ impl<T: Cellular> Interval<T> {
     }
 
     /// Remove the entry at `index`.
+    #[inline(always)]
     pub fn remove(&mut self, index: u32) {
         let _ = index;
         #[cfg(target_arch = "wasm32")]

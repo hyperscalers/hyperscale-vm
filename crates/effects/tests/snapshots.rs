@@ -11,12 +11,17 @@
 //! any particular value. A diff here is not a failure — it is the
 //! derivation changing, which is a thing to read.
 //!
-//! Regenerate with `SNAPSHOT=overwrite cargo test -p hyperscale-vm-fixtures`.
+//! It stands here, beside the other whole-corpus sweeps, because a
+//! package ships with the crate holding its blob and no one of those
+//! crates can see them all.
+//!
+//! Regenerate with `SNAPSHOT=overwrite cargo test -p hyperscale-vm-effects`.
 
 use std::path::PathBuf;
 
 use hyperscale_vm_effects::PackageMetadata;
 use hyperscale_vm_fixtures::{amm, book, lottery};
+use hyperscale_vm_stdlib::staking;
 
 fn snapshot(name: &str, metadata: &PackageMetadata) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -58,4 +63,9 @@ fn the_book_declares_what_its_snapshot_records() {
 #[test]
 fn the_lottery_declares_what_its_snapshot_records() {
     snapshot("lottery", &lottery::metadata());
+}
+
+#[test]
+fn the_stake_pool_declares_what_its_snapshot_records() {
+    snapshot("staking", &staking::metadata());
 }

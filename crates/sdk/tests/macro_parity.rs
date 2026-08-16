@@ -9,10 +9,10 @@
 //! The comparison is still whole-structure equality against the authored
 //! form.
 //!
-//! Only the account is left to compare. amm and book are traced by their
-//! own fixtures now, so a comparison against them would be a thing
+//! Only the account is left to compare. Every other package is traced by
+//! the crate that ships it, so a comparison against one would be a thing
 //! compared to itself; what guards those is a committed snapshot of what
-//! the derivation produces, in `crates/fixtures`.
+//! the derivation produces, in `crates/effects`.
 
 // The contracts below are read by `#[blueprint]`, never called: what these
 // tests exercise is the metadata derived from the bodies, and the derivation

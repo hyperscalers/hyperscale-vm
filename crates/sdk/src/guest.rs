@@ -15,6 +15,21 @@
 //! never owns and can never drop, which is what the canonical ABI's
 //! `borrow` means and what keeps `state`'s types free of the lifetime a
 //! stored borrow would put on every contract signature.
+//!
+//! # The mode is a constant, so the dispatch is not one
+//!
+//! Every accessor below matches the handle's mode and refuses the rest.
+//! At each generated call site the variant is fixed — an export's
+//! prologue builds it from the resource type the parameter arrived as —
+//! so the match has one live arm and the others are dead in every program
+//! that links this crate. `#[inline(always)]` is what turns that from a
+//! fact about the program into a fact about its code: the discriminant
+//! folds at the call site and the refusing arms compile away.
+//!
+//! That is not an optimisation. A dead arm out of line is an
+//! `unreachable` the deploy-time totality scan reads as a fault the body
+//! can take, so it would deny the total mark to every method written in
+//! this vocabulary for a branch none of them can execute.
 
 // The kernel world, generated once for every package that links this
 // crate. A guest names these types through its own world's `with`
@@ -53,9 +68,14 @@ pub fn bucket_amount(cell: &[u8]) -> u128 {
 }
 
 /// The value edge an export returns, carrying `amount`.
+///
+/// The one place the amount path reaches the allocator, and it does so
+/// because the export's own result is a `list<u8>`. So a method that
+/// returns a value carries the boundary's allocation however its body is
+/// written, and one that only moves amounts carries none.
 #[must_use]
 pub fn bucket_cell(amount: u128) -> Vec<u8> {
-    amount_cell(amount)
+    amount_cell(amount).to_vec()
 }
 
 /// Decode an amount cell. An absent cell reads as empty, which is zero.
@@ -65,9 +85,13 @@ pub fn amount_of(cell: &[u8]) -> u128 {
 }
 
 /// Encode an amount into the kernel's cell representation.
+///
+/// An array rather than a `Vec`: every caller hands it straight to an
+/// import as a slice, so a heap buffer would be an allocation the path
+/// never needed and a fault the totality scan would be right to see.
 #[must_use]
-pub fn amount_cell(amount: u128) -> Vec<u8> {
-    amount.to_le_bytes().to_vec()
+pub const fn amount_cell(amount: u128) -> [u8; AMOUNT_CELL_BYTES] {
+    amount.to_le_bytes()
 }
 
 /// Reconstruct one borrow per resource type, for the duration of a call.
@@ -140,6 +164,7 @@ pub enum Handle {
 /// reservation. Generated code never builds that call; a hand-written
 /// body that does has declared one thing and reached for another.
 #[must_use]
+#[inline(always)]
 pub fn cell_get(handle: Handle) -> Vec<u8> {
     match handle {
         Handle::Read(rep) => kernel::state::read_cell_get(&read_cell(rep)),
@@ -155,6 +180,7 @@ pub fn cell_get(handle: Handle) -> Vec<u8> {
 ///
 /// On any mode but [`Handle::Write`]: absolute outcomes are the
 /// exclusive mode's alone.
+#[inline(always)]
 pub fn cell_set(handle: Handle, value: &[u8]) {
     match handle {
         Handle::Write(rep) => kernel::state::write_cell_set(&write_cell(rep), value),
@@ -167,6 +193,7 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
 /// # Panics
 ///
 /// On any mode but [`Handle::Delta`].
+#[inline(always)]
 pub fn delta_add(handle: Handle, amount: u128) {
     match handle {
         Handle::Delta(rep) => {
@@ -181,6 +208,7 @@ pub fn delta_add(handle: Handle, amount: u128) {
 /// # Panics
 ///
 /// On any mode but [`Handle::Delta`].
+#[inline(always)]
 pub fn delta_sub(handle: Handle, amount: u128) {
     match handle {
         Handle::Delta(rep) => {
@@ -196,6 +224,7 @@ pub fn delta_sub(handle: Handle, amount: u128) {
 ///
 /// On any mode but [`Handle::Reserve`].
 #[must_use]
+#[inline(always)]
 pub fn reserved(handle: Handle) -> u128 {
     match handle {
         Handle::Reserve(rep) => amount_of(&kernel::state::reserve_cell_amount(&reserve_cell(rep))),
@@ -232,6 +261,7 @@ pub fn granted(handle: Handle, declared: u128) -> u128 {
 ///
 /// On a handle that is not an interval.
 #[must_use]
+#[inline(always)]
 pub fn entry_count(handle: Handle) -> u32 {
     match handle {
         Handle::RangeRead(rep) => kernel::state::range_read_count(&range_read(rep)),
@@ -248,6 +278,7 @@ pub fn entry_count(handle: Handle) -> u32 {
 /// own keys: the write subsumes the read, so walking one by order costs
 /// no declaration the clause did not already make.
 #[must_use]
+#[inline(always)]
 pub fn entry_order(handle: Handle, index: u32) -> u128 {
     match handle {
         Handle::RangeRead(rep) => {
@@ -266,6 +297,7 @@ pub fn entry_order(handle: Handle, index: u32) -> u128 {
 ///
 /// On a handle that is not an interval.
 #[must_use]
+#[inline(always)]
 pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
     match handle {
         Handle::RangeRead(rep) => kernel::state::range_read_entry(&range_read(rep), index),
@@ -295,6 +327,7 @@ pub fn entry_at(handle: Handle, order: u128) -> Vec<u8> {
 /// # Panics
 ///
 /// On any mode but [`Handle::RangeWrite`].
+#[inline(always)]
 pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
     match handle {
         Handle::RangeWrite(rep) => kernel::state::range_write_set(&range_write(rep), index, value),
@@ -307,6 +340,7 @@ pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
 /// # Panics
 ///
 /// On any mode but [`Handle::RangeWrite`].
+#[inline(always)]
 pub fn entry_insert(handle: Handle, order: u128, value: &[u8]) {
     match handle {
         Handle::RangeWrite(rep) => {
@@ -321,6 +355,7 @@ pub fn entry_insert(handle: Handle, order: u128, value: &[u8]) {
 /// # Panics
 ///
 /// On any mode but [`Handle::RangeWrite`].
+#[inline(always)]
 pub fn entry_remove(handle: Handle, index: u32) {
     match handle {
         Handle::RangeWrite(rep) => kernel::state::range_write_remove(&range_write(rep), index),

@@ -1,18 +1,20 @@
 //! The stake pool: delegation for stake units, the validators a
 //! pool operates, and the one governance vote it holds.
 //!
-//! The package in one place: the effect signatures its guest executes,
-//! the roles it stores under where it has any of its own, and the
-//! wrappers a client calls it through. A signature and the wrapper
-//! mirroring it drift the moment they live apart.
+//! The declaration is the package's own: `metadata()` traces the module
+//! the component is built from, so the signatures a caller routes on and
+//! the code that executes them are read off one text. What stays here is
+//! the roles a consumer keys by and the wrappers a client calls it
+//! through, neither of which a signature supplies.
 
-use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
-use hyperscale_vm_effects::vocabulary::VAULT;
-use hyperscale_vm_effects::{
-    AbiParam, Accessibility, ComponentAddr, Expr, MethodSignature, PackageMetadata, ParamType,
-    RoleId, Totality, Value, package_role, self_child,
-};
+use hyperscale_vm_effects::{ComponentAddr, PackageMetadata, RoleId, package_role};
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
+
+// The package, read from the crate the artifact is built from rather
+// than copied into this one: a second copy is the drift the derivation
+// exists to remove.
+#[path = "../../../guests/staking/src/lib.rs"]
+mod package;
 
 /// A stake pool's total awaiting release to the delegators who returned
 /// their units.
@@ -21,6 +23,9 @@ pub const UNBONDING: RoleId = package_role(0);
 pub const VALIDATORS: RoleId = package_role(1);
 /// A stake pool's one active network-parameter vote.
 pub const VOTE: RoleId = package_role(2);
+
+/// The material separating a pool's owner badge from the unit it issues.
+pub const OWNER_BADGE: &[u8] = b"owner-badge";
 
 /// The stake pool.
 ///
@@ -80,190 +85,7 @@ pub const VOTE: RoleId = package_role(2);
 /// configuration carries.
 #[must_use]
 pub fn metadata() -> PackageMetadata {
-    let mut methods = PackageMetadata::default();
-    delegation_methods(&mut methods);
-    validator_methods(&mut methods);
-    governance_methods(&mut methods);
-    // Index order is the contract: the guest emits these indexes, and the
-    // beacon's witness lift resolves them against this package's metadata.
-    methods.events = vec![
-        "staked".into(),
-        "unstaked".into(),
-        "validator-registered".into(),
-        "validator-deactivated".into(),
-        "validator-unjailed".into(),
-        "param-vote-cast".into(),
-        "param-vote-cleared".into(),
-    ];
-    methods
-}
-
-/// The staked resource — what a delegation is denominated in.
-const STAKED_RESOURCE: u32 = 0;
-
-/// The material separating a pool's owner badge from the unit it issues.
-pub const OWNER_BADGE: &[u8] = b"owner-badge";
-
-/// The resource this pool issues against delegations.
-///
-/// Derived from the pool rather than configured: the pool's address
-/// commits its configuration, so a configured field naming a value
-/// derived from that address would not be expressible.
-const fn unit_resource() -> Expr {
-    Expr::SelfResource {
-        material: Vec::new(),
-    }
-}
-
-/// The pool's owner badge — the identity its operator surface admits.
-///
-/// Derived like the unit and separated from it by material, and for the
-/// same reason it is not configured: a configured badge would cycle
-/// through the pool's own address. Holding it is operating the pool;
-/// `present-badge` is how the holder says so.
-fn owner_badge() -> Expr {
-    Expr::SelfResource {
-        material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-    }
-}
-
-/// `stake` and `unstake`: what anyone holding funds may do to a pool.
-fn delegation_methods(methods: &mut PackageMetadata) {
-    methods.methods.insert(
-        "stake".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Public,
-            mints: None,
-            params: vec![ParamType::Bucket],
-            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
-            outputs: vec![unit_resource()],
-            effects: vec![Clause::Effect {
-                target: TargetExpr::Point(self_child(VAULT, vec![Expr::Config(STAKED_RESOURCE)])),
-                mode: ModeExpr::Delta,
-            }],
-            calls: vec![],
-        },
-    );
-    methods.methods.insert(
-        "unstake".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Public,
-            mints: None,
-            params: vec![ParamType::Bucket],
-            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
-            outputs: vec![],
-            effects: vec![Clause::Effect {
-                target: TargetExpr::Point(self_child(
-                    UNBONDING,
-                    vec![Expr::Config(STAKED_RESOURCE)],
-                )),
-                mode: ModeExpr::Delta,
-            }],
-            calls: vec![],
-        },
-    );
-}
-
-/// The validator surface: each method names the validator it concerns and
-/// writes that validator's own leaf, so the pool holds a record it can
-/// read back — which is what lets a re-registration be refused here
-/// rather than only where the beacon happens to refuse it.
-fn validator_methods(methods: &mut PackageMetadata) {
-    let validator = || {
-        vec![Clause::Effect {
-            target: TargetExpr::Point(self_child(VALIDATORS, vec![Expr::Arg(0)])),
-            mode: ModeExpr::Write,
-        }]
-    };
-    methods.methods.insert(
-        "register-validator".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Guarded(owner_badge()),
-            mints: None,
-            params: vec![ParamType::U64, ParamType::Bytes, ParamType::Bytes],
-            abi: vec![
-                AbiParam::Handle(0),
-                AbiParam::Derived(Expr::Arg(0)),
-                AbiParam::Derived(Expr::Arg(1)),
-                AbiParam::Derived(Expr::Arg(2)),
-            ],
-            outputs: vec![],
-            effects: validator(),
-            calls: vec![],
-        },
-    );
-    methods.methods.insert(
-        "deactivate-validator".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Guarded(owner_badge()),
-            mints: None,
-            params: vec![ParamType::U64],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
-            outputs: vec![],
-            effects: validator(),
-            calls: vec![],
-        },
-    );
-    methods.methods.insert(
-        "unjail".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Guarded(owner_badge()),
-            mints: None,
-            params: vec![ParamType::U64],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
-            outputs: vec![],
-            effects: validator(),
-            calls: vec![],
-        },
-    );
-}
-
-/// The governance surface: the pool's one vote, on one leaf. A pool holds
-/// a single active vote and the network counts it once, so serializing a
-/// pool's own votes against each other is the shape rather than a cost.
-fn governance_methods(methods: &mut PackageMetadata) {
-    let vote = || {
-        vec![Clause::Effect {
-            target: TargetExpr::Point(self_child(VOTE, vec![])),
-            mode: ModeExpr::Write,
-        }]
-    };
-    methods.methods.insert(
-        "cast-param-vote".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Guarded(owner_badge()),
-            mints: None,
-            params: vec![ParamType::U64, ParamType::U64, ParamType::U64],
-            abi: vec![
-                AbiParam::Handle(0),
-                AbiParam::Derived(Expr::Arg(0)),
-                AbiParam::Derived(Expr::Arg(1)),
-                AbiParam::Derived(Expr::Arg(2)),
-            ],
-            outputs: vec![],
-            effects: vote(),
-            calls: vec![],
-        },
-    );
-    methods.methods.insert(
-        "clear-param-vote".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Guarded(owner_badge()),
-            mints: None,
-            params: vec![],
-            abi: vec![AbiParam::Handle(0)],
-            outputs: vec![],
-            effects: vote(),
-            calls: vec![],
-        },
-    );
+    package::staking::blueprint().metadata()
 }
 
 // ─── calls ─────────────────────────────────────────────────────────────
