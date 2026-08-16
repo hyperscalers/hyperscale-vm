@@ -1,12 +1,15 @@
 //! The contract SDK: blueprint declarations traced into package metadata.
 //!
-//! A spike, and scoped like one. It answers a single question — can a Rust
-//! author write a contract's access declaration as ordinary Rust and get
-//! back exactly the [`hyperscale_vm_effects::MethodSignature`] routing
-//! needs — and it answers it against the real evaluator rather than a
-//! model of it. The guest-side half (the WASM component, the handle
-//! bridge, the `wit-bindgen` layer) is deliberately not here; what is here
-//! is the half where the design risk was.
+//! Two halves of one vocabulary. On the host, [`state`] is read rather
+//! than run: `#[blueprint]` traces a body written in it and gets back
+//! exactly the [`hyperscale_vm_effects::MethodSignature`] routing needs,
+//! against the real evaluator rather than a model of it. On the guest the
+//! same types are the calls — [`guest`] binds `hyperscale:kernel` once,
+//! and each accessor is the import its mode names.
+//!
+//! One vocabulary rather than two is the whole of it: a body cannot reach
+//! state except through these types, so the declaration a host build
+//! derives and the calls a guest build makes are read off the same text.
 //!
 //! # The shape
 //!
@@ -140,6 +143,8 @@
 //! content-addressed package at all.
 
 pub mod blueprint;
+#[cfg(target_arch = "wasm32")]
+pub mod guest;
 pub mod state;
 pub mod sym;
 pub mod trace;

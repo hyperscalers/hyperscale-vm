@@ -1,0 +1,15 @@
+package hyperscale:sdk;
+
+/// The kernel imports alone.
+///
+/// A contract's exports live in its own world; this one exists so the
+/// bindings for what every contract *calls* are generated once, in the
+/// SDK, and reached from each package's world through a `with` mapping.
+/// Two generations of one interface would be two incompatible sets of
+/// Rust types for the same resources.
+world kernel-imports {
+    import hyperscale:kernel/state;
+    import hyperscale:kernel/env;
+    import hyperscale:kernel/crypto;
+    import hyperscale:kernel/events;
+}

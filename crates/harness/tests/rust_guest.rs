@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
     Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
     SubstateKey, TestHasher, child_key,
 };
-use hyperscale_vm_harness::fixtures::{build_transfer_component, repo_root};
+use hyperscale_vm_harness::fixtures::build_transfer_component;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, KernelSession, MaterializeError, MemoryStore, Movement, Outcome,
@@ -108,12 +108,6 @@ fn handle_reps(session: &KernelSession) -> (u32, u32) {
 
 #[test]
 fn the_wit_bindgen_guest_conforms_and_transfers() -> Result<()> {
-    // The kernel.wit copy the guest builds against must match the canonical
-    // definition in vm-runtime.
-    let canonical = std::fs::read(repo_root().join("crates/runtime/wit/kernel.wit"))?;
-    let copy = std::fs::read(repo_root().join("guests/transfer/wit/deps/kernel/kernel.wit"))?;
-    assert_eq!(canonical, copy, "guest kernel.wit drifted from canonical");
-
     let component = build_transfer_component()?;
 
     // The floats verdict: a real Rust guest built with lto + panic=abort

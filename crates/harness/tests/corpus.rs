@@ -2075,13 +2075,27 @@ fn the_stdlib_deposit_earns_the_mark_it_claims() -> Result<()> {
     Ok(())
 }
 
+/// One kernel WIT, and no package holds a copy of it.
+///
+/// Drift used to be checkable only by comparing eight copies against the
+/// canonical file; now there is nothing to compare, because a package
+/// resolves `hyperscale:kernel` out of the SDK rather than vendoring it.
+/// What is left to assert is that the vendoring did not come back — a
+/// package with its own copy would compile against a world nothing holds
+/// it to.
 #[test]
-fn every_guest_builds_against_the_canonical_world() -> Result<()> {
+fn no_guest_vendors_its_own_kernel_world() -> Result<()> {
     let canonical = std::fs::read(repo_root().join("crates/runtime/wit/kernel.wit"))?;
-    for guest in ["transfer", "account", "amm", "book"] {
-        let copy =
-            std::fs::read(repo_root().join(format!("guests/{guest}/wit/deps/kernel/kernel.wit")))?;
-        assert_eq!(canonical, copy, "{guest} kernel.wit drifted");
+    let vendored = std::fs::read(repo_root().join("crates/sdk/wit/deps/kernel/kernel.wit"))?;
+    assert_eq!(canonical, vendored, "the SDK's kernel.wit drifted");
+
+    for guest in std::fs::read_dir(repo_root().join("guests"))? {
+        let guest = guest?.path();
+        assert!(
+            !guest.join("wit/deps").exists(),
+            "{} vendors its own dependencies",
+            guest.display()
+        );
     }
     Ok(())
 }

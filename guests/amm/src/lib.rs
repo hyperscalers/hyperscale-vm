@@ -7,8 +7,8 @@
 //! not a defect, and the two are priced apart.
 
 wit_bindgen::generate!({
-    path: "wit",
-    world: "amm",
+    path: ["../../crates/sdk/wit/deps/kernel", "wit"],
+    world: "test:guest/amm",
     generate_all,
 });
 

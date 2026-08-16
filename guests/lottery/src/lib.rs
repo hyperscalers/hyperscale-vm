@@ -23,8 +23,8 @@
 //! decides.
 
 wit_bindgen::generate!({
-    path: "wit",
-    world: "lottery",
+    path: ["../../crates/sdk/wit/deps/kernel", "wit"],
+    world: "test:guest/lottery",
     generate_all,
 });
 

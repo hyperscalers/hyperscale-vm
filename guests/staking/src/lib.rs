@@ -29,8 +29,8 @@
 //! the current vote is what a pool's governance position *is*.
 
 wit_bindgen::generate!({
-    path: "wit",
-    world: "staking",
+    path: ["../../crates/sdk/wit/deps/kernel", "wit"],
+    world: "test:guest/staking",
     generate_all,
 });
 

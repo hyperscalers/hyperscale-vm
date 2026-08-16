@@ -9,6 +9,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wit-bindgen = "=0.60.0"
+# The contract SDK's guest half: the kernel bindings and the state
+# vocabulary. Default features off — `#[blueprint]` is a host-side
+# derivation and a guest build has nothing to derive.
+hyperscale-vm-sdk = { path = "../../crates/sdk", default-features = false }
 
 [profile.release]
 opt-level = "s"

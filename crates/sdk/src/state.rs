@@ -14,12 +14,20 @@
 //! are the Rust-facing shadow of that surface, which is why the vocabulary
 //! is closed rather than merely conventional.
 //!
-//! # On the host
+//! # Two builds, one vocabulary
 //!
-//! Host builds carry no kernel, so the bodies are never executed here —
-//! `#[blueprint]` reads them, it does not run them. Every accessor below
-//! panics if called outside a guest. The declaration these types exist to
-//! derive is produced without executing a single one of them.
+//! Host builds carry no kernel, so the bodies are never executed there —
+//! `#[blueprint]` reads them, it does not run them, and every accessor
+//! panics if reached. Guest builds carry the imports, and the same
+//! accessors are the calls: each handle holds the index the kernel
+//! materialized it at, and [`crate::guest`] turns that index back into a
+//! borrow for the duration of one call.
+//!
+//! The index is not something an author writes. A handle reaches a body
+//! as an export parameter, in the order the declaration fixed, and what
+//! resolves a collection to one of those parameters is the lowering —
+//! which is why [`Keyed`], [`Ordered`] and [`Unordered`] have no guest
+//! body: a call to `at` is rewritten to the handle it named, never made.
 
 use hyperscale_vm_effects::Address;
 
@@ -28,6 +36,59 @@ pub type Amount = u128;
 
 const OFF_HOST: &str = "contract bodies execute in the guest, never on the host — \
                         `#[blueprint]` reads this body, it does not run it";
+
+/// A value a declared cell or entry can hold.
+///
+/// The kernel's substates are bytes; this is the vocabulary's statement
+/// of which Rust values it will carry them as. Closed on purpose — a
+/// contract that could name any encoding would put an author's choice
+/// where a protocol representation belongs.
+pub trait Cellular: Sized {
+    /// Read the value from a substate. An absent substate reads empty,
+    /// which every implementation takes as its zero.
+    fn from_cell(cell: &[u8]) -> Self;
+
+    /// The substate representation of this value.
+    fn to_cell(&self) -> Vec<u8>;
+}
+
+impl Cellular for Amount {
+    fn from_cell(cell: &[u8]) -> Self {
+        cell.try_into().map_or(0, Self::from_le_bytes)
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.to_le_bytes().to_vec()
+    }
+}
+
+impl Cellular for u64 {
+    fn from_cell(cell: &[u8]) -> Self {
+        cell.try_into().map_or(0, Self::from_le_bytes)
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.to_le_bytes().to_vec()
+    }
+}
+
+impl Cellular for Vec<u8> {
+    fn from_cell(cell: &[u8]) -> Self {
+        cell.to_vec()
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.clone()
+    }
+}
+
+/// The materialized handle a guest-side accessor calls through.
+///
+/// Carried only where there is a kernel to call. On the host the field
+/// would name a table that does not exist, and a type that had one would
+/// invite an author to write it down.
+#[cfg(target_arch = "wasm32")]
+pub use crate::guest::Handle;
 
 /// A value edge: a resource and an amount in flight between components.
 ///
@@ -101,7 +162,7 @@ impl<T> core::ops::Deref for Locked<T> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Cell<T>(core::marker::PhantomData<fn() -> T>);
 
-impl<T> Cell<T> {
+impl<T: Cellular> Cell<T> {
     /// A fresh coherent read.
     #[must_use]
     pub fn get(&self) -> T {
@@ -135,20 +196,52 @@ impl<T> Keyed<T> {
 }
 
 /// An open handle on one leaf.
+///
+/// Which mode the handle carries is fixed by the accessor the body
+/// reaches for, not by the type: `get`/`set` is exclusive, `add`/`sub`
+/// commutative, `reserve` conditional. That is the whole reason the
+/// vocabulary is closed — the declaration is read off which of these a
+/// body calls.
 #[derive(Clone, Copy, Debug)]
-pub struct Slot<T>(core::marker::PhantomData<fn() -> T>);
+pub struct Slot<T> {
+    #[cfg(target_arch = "wasm32")]
+    handle: Handle,
+    _value: core::marker::PhantomData<fn() -> T>,
+}
 
 impl<T> Slot<T> {
+    /// The leaf this materialized handle names.
+    ///
+    /// Called by generated code, never by an author: which handle a
+    /// collection resolves to is the declaration's order, and which mode
+    /// it carries is what the body's own accessors decided.
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub const fn at(handle: Handle) -> Self {
+        Self {
+            handle,
+            _value: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: Cellular> Slot<T> {
     /// A fresh coherent read.
     #[must_use]
     pub fn get(&self) -> T {
+        #[cfg(target_arch = "wasm32")]
+        return T::from_cell(&crate::guest::cell_get(self.handle));
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 
     /// An exclusive read-modify-write.
-    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
+    #[allow(clippy::needless_pass_by_value)] // the authoring stub consumes nothing
     pub fn set(&mut self, value: T) {
-        let _ = value;
+        let _ = &value;
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::cell_set(self.handle, &value.to_cell());
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 }
@@ -158,17 +251,28 @@ impl Slot<Amount> {
     /// other movement on the same cell.
     pub fn add(&mut self, amount: Amount) {
         let _ = amount;
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::delta_add(self.handle, amount);
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 
     /// A commutative debit.
     pub fn sub(&mut self, amount: Amount) {
         let _ = amount;
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::delta_sub(self.handle, amount);
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 
     /// A conditional decrement, judged feasible against the declared
     /// amount, yielding the value edge it moved.
+    ///
+    /// The declared amount is what admission judged and the kernel
+    /// granted before this body ran, so the guest reads the reservation
+    /// rather than performing one — a reserve handle is already the
+    /// answer.
     #[must_use]
     pub fn reserve(&mut self, amount: Amount) -> Bucket {
         let _ = amount;
@@ -239,12 +343,30 @@ impl<T> Unordered<T> {
 
 /// An open handle on a declared interval.
 #[derive(Clone, Copy, Debug)]
-pub struct Interval<T>(core::marker::PhantomData<fn() -> T>);
+pub struct Interval<T> {
+    #[cfg(target_arch = "wasm32")]
+    handle: Handle,
+    _value: core::marker::PhantomData<fn() -> T>,
+}
 
 impl<T> Interval<T> {
+    /// The interval this materialized handle names, on the terms
+    /// [`Slot::at`] describes.
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub const fn at(handle: Handle) -> Self {
+        Self {
+            handle,
+            _value: core::marker::PhantomData,
+        }
+    }
+
     /// Entries currently in the interval, bounded by the declared cap.
     #[must_use]
     pub fn count(&self) -> u32 {
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::entry_count(self.handle);
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 
@@ -252,31 +374,50 @@ impl<T> Interval<T> {
     #[must_use]
     pub fn order(&self, index: u32) -> Amount {
         let _ = index;
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::entry_order(self.handle, index);
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
+}
 
+impl<T: Cellular> Interval<T> {
     /// The value of the entry at `index`, ascending.
     #[must_use]
     pub fn entry(&self, index: u32) -> T {
         let _ = index;
+        #[cfg(target_arch = "wasm32")]
+        return T::from_cell(&crate::guest::entry_get(self.handle, index));
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 
     /// Replace the value at `index`.
+    #[allow(clippy::needless_pass_by_value)] // a stored value is consumed
     pub fn set(&mut self, index: u32, value: T) {
-        let _ = (index, value);
+        let _ = (index, &value);
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::entry_set(self.handle, index, &value.to_cell());
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 
     /// Insert at `order`, which must lie inside the declared interval.
+    #[allow(clippy::needless_pass_by_value)] // a stored value is consumed
     pub fn insert(&mut self, order: Amount, value: T) {
-        let _ = (order, value);
+        let _ = (order, &value);
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::entry_insert(self.handle, order, &value.to_cell());
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 
     /// Remove the entry at `index`.
     pub fn remove(&mut self, index: u32) {
         let _ = index;
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::entry_remove(self.handle, index);
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 }

@@ -3,8 +3,8 @@
 //! mismatched binding, and `drain` removes the declared tail's entries.
 
 wit_bindgen::generate!({
-    path: "wit",
-    world: "registry",
+    path: ["../../crates/sdk/wit/deps/kernel", "wit"],
+    world: "test:guest/registry",
     generate_all,
 });
 

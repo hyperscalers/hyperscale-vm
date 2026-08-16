@@ -46,6 +46,9 @@ wasm-smith = "0.255.0"
 wasmparser = "0.255.0"
 wat = "1.255.0"
 wit-component = "0.255.0"
+# The guest bindings generator, pinned exactly like the guest toolchain and
+# for the same reason: what it emits is part of a consensus artifact.
+wit-bindgen = "=0.60.0"
 # The blessed engine, pinned exactly to the latest stable ahead of the 48 LTS
 # (expected 2026-08-20; the pin moves there when it lands). Upgrades are
 # deliberate protocol events, never dependency drift.

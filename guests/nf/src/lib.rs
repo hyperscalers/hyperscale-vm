@@ -4,8 +4,8 @@
 //! trapping on one not held — and `burn` consumes an edge outright.
 
 wit_bindgen::generate!({
-    path: "wit",
-    world: "nf",
+    path: ["../../crates/sdk/wit/deps/kernel", "wit"],
+    world: "test:guest/nf",
     generate_all,
 });
 

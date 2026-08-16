@@ -16,6 +16,12 @@ macros = ["dep:hyperscale-vm-sdk-macros"]
 hyperscale-vm-effects.workspace = true
 hyperscale-vm-sdk-macros = { workspace = true, optional = true }
 
+# The kernel bindings a contract body executes against. Guest-only: a host
+# build reads bodies rather than running them, so it needs no imports to
+# call and no `wit-bindgen` to generate them.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wit-bindgen.workspace = true
+
 [dev-dependencies]
 hyperscale-vm-fixtures.workspace = true
 hyperscale-vm-stdlib.workspace = true

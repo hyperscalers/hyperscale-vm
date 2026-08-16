@@ -5,8 +5,8 @@
 //! deterministic trap.
 
 wit_bindgen::generate!({
-    path: "wit",
-    world: "book",
+    path: ["../../crates/sdk/wit/deps/kernel", "wit"],
+    world: "test:guest/book",
     generate_all,
 });
 

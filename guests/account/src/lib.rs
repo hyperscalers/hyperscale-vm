@@ -12,8 +12,8 @@
 //! reads at fixed offsets, and one saturating add.
 
 wit_bindgen::generate!({
-    path: "wit",
-    world: "account",
+    path: ["../../crates/sdk/wit/deps/kernel", "wit"],
+    world: "test:guest/account",
     generate_all,
 });
 
