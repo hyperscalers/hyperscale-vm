@@ -12,7 +12,7 @@ use crate::admission::Admitted;
 use crate::dsl::{Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr};
 use crate::hash::Hasher;
 use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, ids_cell};
-use crate::manifest::{ManifestHash, Node, NodeInput};
+use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{
     AbiError, AbiParam, Accessibility, CallSite, InstanceMeta, InstanceRegistry, MetadataCache,
     MethodSignature, PackageHash, check_abi,
@@ -110,6 +110,10 @@ pub struct Routing {
     pub kernel_effects: Vec<Effect>,
     /// The static call graph.
     pub call_graph: CallGraph,
+    /// How many times the longest dependency chain changes shard — the
+    /// stage boundaries a staged execution would pay for, and zero for a
+    /// transaction whose whole dependency structure sits on one shard.
+    pub alternation_depth: u32,
 }
 
 /// One frame's contribution to the transaction's declaration.
@@ -419,16 +423,131 @@ pub fn route(
         )?;
     }
 
+    let call_graph = CallGraph {
+        roots,
+        edges: fold.edges,
+    };
+    let alternation_depth = alternation_depth(manifest, &call_graph, shards);
+
     Ok(Routing {
         per_shard: fold.per_shard,
         frames: fold.frames_log,
         calls: fold.calls,
         kernel_effects: Vec::new(),
-        call_graph: CallGraph {
-            roots,
-            edges: fold.edges,
-        },
+        call_graph,
+        alternation_depth,
     })
+}
+
+/// One vertex of the dependency graph [`alternation_depth`] walks.
+///
+/// Manifest nodes stay distinct from the methods they invoke because two
+/// nodes can name the same instance and method — a vault withdrawn from
+/// twice — and collapsing them onto one vertex would turn the edge between
+/// them into a self-loop.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Vertex<'a> {
+    /// A manifest node, by index.
+    Node(u32),
+    /// A method reached through the static call graph.
+    Call(&'a MethodRef),
+}
+
+/// How many times the longest dependency chain changes shard.
+///
+/// This is the count of stage boundaries a staged execution would pay
+/// for: a chain crosses shards exactly where a downstream unit of work
+/// needs an upstream one's *output*, which no committed state root holds
+/// when it is wanted. A replicating participant pays none of them — it
+/// fetches every counterpart's committed reads in one round whatever the
+/// shape — so the depth is what the two strategies are compared on rather
+/// than a cost either of them simply has.
+///
+/// Two kinds of dependency contribute, and both are structural. A value
+/// edge binds one manifest node's output to a later node's input. A call
+/// edge runs a callee inside its caller, which crosses a boundary exactly
+/// when the two sit on different shards. The union is acyclic — value
+/// edges run from lower node indices to higher, and the call graph is a
+/// DAG by construction — so the longest path is a fold over one
+/// topological pass rather than a search.
+fn alternation_depth(
+    manifest: &Manifest,
+    call_graph: &CallGraph,
+    shards: &dyn ShardResolver,
+) -> u32 {
+    let shard_of = |vertex: &Vertex<'_>| -> ShardId {
+        match vertex {
+            Vertex::Node(index) => shards.shard_of(manifest.nodes[*index as usize].target),
+            Vertex::Call(method) => shards.shard_of(method.instance),
+        }
+    };
+
+    // Successors, built once: a node's consumers, a node's callees, and a
+    // callee's own callees.
+    let mut successors: BTreeMap<Vertex<'_>, BTreeSet<Vertex<'_>>> = BTreeMap::new();
+    for (index, node) in manifest.nodes.iter().enumerate() {
+        let consumer = u32::try_from(index).unwrap_or(u32::MAX);
+        for input in &node.inputs {
+            if let NodeInput::Edge { source, .. } = *input {
+                successors
+                    .entry(Vertex::Node(source))
+                    .or_default()
+                    .insert(Vertex::Node(consumer));
+            }
+        }
+        // The node's own frame is the root of its call tree, so every edge
+        // this node's method calls hangs off the node rather than off a
+        // shared method vertex.
+        for edge in &call_graph.edges {
+            if edge.caller.instance == node.target && edge.caller.method == node.method {
+                successors
+                    .entry(Vertex::Node(consumer))
+                    .or_default()
+                    .insert(Vertex::Call(&edge.callee));
+            }
+        }
+    }
+    for edge in &call_graph.edges {
+        successors
+            .entry(Vertex::Call(&edge.caller))
+            .or_default()
+            .insert(Vertex::Call(&edge.callee));
+    }
+
+    // Longest path by shard changes. Every vertex starts a chain, so each
+    // is seeded at zero and relaxed by whatever reaches it; the manifest's
+    // producer-before-consumer rule and the call graph's acyclicity make
+    // one pass in vertex order sufficient for the node spine, and the
+    // repeat below settles call chains reached from several nodes.
+    let mut best: BTreeMap<Vertex<'_>, u32> = BTreeMap::new();
+    for vertex in successors.keys() {
+        best.insert(vertex.clone(), 0);
+    }
+    for successor_set in successors.values() {
+        for vertex in successor_set {
+            best.entry(vertex.clone()).or_insert(0);
+        }
+    }
+    let mut settled = false;
+    let mut rounds = 0;
+    while !settled && rounds <= best.len() {
+        settled = true;
+        rounds += 1;
+        for (vertex, successor_set) in &successors {
+            let here = best.get(vertex).copied().unwrap_or(0);
+            let from = shard_of(vertex);
+            for successor in successor_set {
+                let step = u32::from(shard_of(successor) != from);
+                let candidate = here.saturating_add(step);
+                let slot = best.entry(successor.clone()).or_insert(0);
+                if candidate > *slot {
+                    *slot = candidate;
+                    settled = false;
+                }
+            }
+        }
+    }
+    best.values().copied().max().unwrap_or(0)
 }
 
 /// Lower one node's ABI binding against the inputs bound to it.
@@ -1096,6 +1215,132 @@ mod tests {
                 callee: recv_ref,
             }])
         );
+    }
+
+    /// A call that stays on one shard crosses nothing, so a staged
+    /// execution of it would pay for no boundary at all.
+    #[test]
+    fn a_single_shard_transaction_alternates_zero_times() {
+        let mut cache = MetadataCache::new();
+        let mut solo = PackageMetadata::default();
+        solo.methods.insert(
+            "act".into(),
+            method(vec![self_point(RoleId(1), ModeExpr::Delta)], vec![]),
+        );
+        cache.publish(pkg("solo"), solo);
+        let mut instances = InstanceRegistry::new();
+        instances.create(&TestHasher, meta_of("solo"));
+        let manifest = Manifest {
+            nodes: vec![Node {
+                target: instance_of("solo").into(),
+                method: "act".into(),
+                inputs: vec![],
+                evidence: Vec::new(),
+                authority: None,
+            }],
+        };
+
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
+        assert_eq!(routing.alternation_depth, 0);
+    }
+
+    /// A call reaching one instance on another shard crosses once. The
+    /// depth counts the crossing rather than the shards, which is the
+    /// distinction the whole quantity turns on — a chain returning to a
+    /// shard it already visited has crossed twice, not once.
+    #[test]
+    fn a_call_to_another_shard_alternates_once() {
+        let (cache, instances, manifest) = payer_payee_world();
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
+
+        assert_ne!(
+            resolver().shard_of(instance_of("payer").into()),
+            resolver().shard_of(instance_of("payee").into()),
+            "the fixture has to straddle, or the depth below proves nothing",
+        );
+        assert_eq!(routing.alternation_depth, 1);
+    }
+
+    /// A value edge is a dependency like a call is: the consumer cannot
+    /// run until the producer's output exists, so a consumer on another
+    /// shard is a boundary even though neither node calls the other.
+    #[test]
+    fn a_value_edge_across_shards_alternates_once() {
+        let mut cache = MetadataCache::new();
+        let mut producing = PackageMetadata::default();
+        producing.methods.insert(
+            "make".into(),
+            MethodSignature {
+                totality: Totality::Fallible,
+                outputs: vec![Expr::SelfAddr],
+                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                ..MethodSignature::default()
+            },
+        );
+        let mut consuming = PackageMetadata::default();
+        consuming.methods.insert(
+            "take".into(),
+            method(vec![self_point(RoleId(2), ModeExpr::Delta)], vec![]),
+        );
+        cache.publish(pkg("producer"), producing);
+        cache.publish(pkg("consumer"), consuming);
+        let mut instances = InstanceRegistry::new();
+        instances.create(&TestHasher, meta_of("producer"));
+        instances.create(&TestHasher, meta_of("consumer"));
+        assert_ne!(
+            resolver().shard_of(instance_of("producer").into()),
+            resolver().shard_of(instance_of("consumer").into()),
+            "the fixture has to straddle, or the depth below proves nothing",
+        );
+
+        let manifest = Manifest {
+            nodes: vec![
+                Node {
+                    target: instance_of("producer").into(),
+                    method: "make".into(),
+                    inputs: vec![],
+                    evidence: Vec::new(),
+                    authority: None,
+                },
+                Node {
+                    target: instance_of("consumer").into(),
+                    method: "take".into(),
+                    inputs: vec![NodeInput::Edge {
+                        source: 0,
+                        output: 0,
+                        resource: instance_of("producer").into(),
+                        content: EdgeContent::Fungible,
+                        bounds: Bounds::default(),
+                    }],
+                    evidence: Vec::new(),
+                    authority: None,
+                },
+            ],
+        };
+
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .unwrap();
+        assert_eq!(routing.alternation_depth, 1);
     }
 
     #[test]
