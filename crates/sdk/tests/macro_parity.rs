@@ -154,6 +154,27 @@ mod shapes {
     }
 
     impl Shapes {
+        /// A loop over a *computed* list declares what one pass declares:
+        /// the entries it walks were covered before it started. Ranging
+        /// over the argument itself would be a `for-each` — one access
+        /// set per element — which is a different declaration and the
+        /// point of reading the loop off what it ranges over.
+        #[allow(clippy::needless_pass_by_value)] // a contract consumes its arguments
+        pub fn looped(&mut self, a: Address, ids: Vec<u8>) {
+            let mut vault = self.vaults.at(a);
+            // `ids` itself is a term, and ranging over it would be a
+            // `for-each`; the length is not, so this is a plain loop.
+            for id in ids.len()..1 {
+                vault.add(u128::from(id as u64));
+            }
+        }
+
+        #[allow(clippy::needless_pass_by_value)] // a contract consumes its arguments
+        pub fn once(&mut self, a: Address, _ids: Vec<u8>) {
+            let mut vault = self.vaults.at(a);
+            vault.add(0);
+        }
+
         pub fn branched(&mut self, flag: u64, a: Address, b: Address) {
             match flag {
                 0 => self.vaults.at(a).add(0),
@@ -200,6 +221,11 @@ fn every_spelling_of_a_conditional_declares_the_same_accesses() {
     assert_eq!(effects("asserted"), effects("read"), "assert argument");
     assert_eq!(effects("scrutinised"), effects("read"), "if-let scrutinee");
     assert_eq!(effects("guarded"), effects("plain"), "let-else diverge");
+    assert_eq!(
+        effects("looped"),
+        effects("once"),
+        "loop over a runtime list"
+    );
 }
 
 /// The unordered surface: point access by hashed key, capped sweeps from a

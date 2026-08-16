@@ -45,8 +45,8 @@
 //! so a key the body computes from a substate value arrives too late to
 //! route on. That is not a limitation the macro could engineer away, and
 //! the macro stops with an error on the offending line rather than
-//! guessing. The same applies to a loop whose trip count is not a
-//! configured collection, and to a range whose entry cap is not a literal.
+//! guessing. The same applies to a range whose entry cap is not a
+//! literal.
 //!
 //! The walk is exhaustive: an expression form the lowering does not model
 //! is a compile error, never a skip, because a skipped form is a
@@ -63,6 +63,12 @@
 //! Conditionals — `if` and `match` alike — are fine: every arm is
 //! declared, giving a superset of what any one execution touches. The VM
 //! prices that superset through `footprint` rather than rejecting it.
+//!
+//! Loops are fine too, and what a `for` means is read off what it ranges
+//! over: a configured collection makes it a `for-each` clause, anything
+//! else makes it a `while` that binds a name. Walking the entries of an
+//! interval the body already declared is the common case, and the range
+//! clause covered them before the loop started.
 //!
 //! A body whose *declaration* is sound but whose executing half the
 //! emission cannot write — a `for-each`, whose handle count depends on
@@ -509,7 +515,8 @@ fn lower_method(
     }
 
     let gate = parse_gate(method, fields, &params)?;
-    let lowered = Lowerer::new(fields, config_fields, &params)
+    let returns = !matches!(method.sig.output, syn::ReturnType::Default);
+    let lowered = Lowerer::new(fields, config_fields, &params, returns)
         .run(&method.block)
         .map_err(|errors| {
             errors

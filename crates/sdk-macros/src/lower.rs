@@ -370,6 +370,11 @@ pub struct Lowerer<'a> {
     fields: &'a BTreeMap<String, Field>,
     config_fields: &'a [(String, syn::Type)],
     params: &'a [(String, syn::Type)],
+    /// Whether the method yields anything at all, read off its return
+    /// type. A body ending in a loop or a conditional has a tail
+    /// expression of unit type, which is a statement rather than a value
+    /// however it is spelled.
+    returns: bool,
     locals: Vec<BTreeMap<String, Slot>>,
     out: Lowered,
     /// The clause scopes being built, innermost last.
@@ -383,11 +388,13 @@ impl<'a> Lowerer<'a> {
         fields: &'a BTreeMap<String, Field>,
         config_fields: &'a [(String, syn::Type)],
         params: &'a [(String, syn::Type)],
+        returns: bool,
     ) -> Self {
         Self {
             fields,
             config_fields,
             params,
+            returns,
             locals: vec![BTreeMap::new()],
             out: Lowered::default(),
             scopes: vec![Vec::new()],
@@ -402,7 +409,14 @@ impl<'a> Lowerer<'a> {
     /// outputs.
     pub fn run(mut self, block: &syn::Block) -> Result<Lowered, Vec<syn::Error>> {
         self.locals.push(BTreeMap::new());
-        let (body, tail) = split_tail(block);
+        // A method yielding nothing has no tail expression worth the
+        // name: whatever sits last is a statement, and reading it as a
+        // return would try to hand back the unit a loop evaluates to.
+        let (body, tail) = if self.returns {
+            split_tail(block)
+        } else {
+            (&block.stmts[..], None)
+        };
         let mut statements = Vec::new();
         for stmt in body {
             statements.push(self.stmt(stmt));
@@ -1728,24 +1742,42 @@ impl<'a> Lowerer<'a> {
             .map_or_else(|| quote!(_), |ty| quote!(#ty))
     }
 
+    /// A `for` is one of two things, and which one is read off what it
+    /// ranges over.
+    ///
+    /// Over a configured collection it is a `for-each`: one access set
+    /// per element, with a binder the clause carries. Over anything else
+    /// it is a `while` that happens to bind a name — walking the entries
+    /// of an interval the body already declared is the common case, and
+    /// the range clause covered them before the loop started. The two
+    /// differ in whether a clause is pushed, not in whether the body is
+    /// walked: an access inside still has to name a key derivable from
+    /// the arguments, and that check is what guards the declaration
+    /// either way.
     fn for_loop(&mut self, loop_: &syn::ExprForLoop) -> TokenStream {
         let list = self.expr(&loop_.expr);
+        let pat = &loop_.pat;
+
         let Val::Term(list_term) = list.val.clone() else {
-            self.error(
-                loop_.expr.span(),
-                "a `for` loop in a contract body must range over a configured collection \
-                 — that is what bounds the keys it declares. An iterator over runtime \
-                 values has no declarable key set",
-            );
-            return quote!();
+            // The element is not a value the DSL can express, so it binds
+            // opaquely and a key derived from it is refused at the line
+            // that uses it rather than at the loop.
+            let list = self.value(list.code);
+            self.locals.push(BTreeMap::new());
+            self.bind_pattern(&loop_.pat);
+            let statements: Vec<_> = loop_.body.stmts.iter().map(|s| self.stmt(s)).collect();
+            self.locals.pop();
+            return quote!(for #pat in #list { #(#statements)* });
         };
+
         // A run of handles whose length depends on configuration cannot
-        // occupy a fixed export parameter, so a body that loops declares
-        // and does not execute.
+        // occupy a fixed export parameter, so a body that declares a
+        // `for-each` declares and does not execute.
         self.refuse(
             "a `for-each` clause expands over instance configuration, so its handles \
              occupy no fixed export parameter",
         );
+        let list = self.value(list.code);
 
         let depth = self.depth();
         self.scopes.push(Vec::new());
@@ -1765,8 +1797,6 @@ impl<'a> Lowerer<'a> {
             depth,
             body,
         });
-        let pat = &loop_.pat;
-        let list = self.value(list.code);
         quote!(for #pat in #list { #(#statements)* })
     }
 }
