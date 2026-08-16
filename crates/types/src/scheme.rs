@@ -37,11 +37,19 @@ impl SchemeId {
 
     /// ECDSA over secp256k1, keys as SEC1 compressed points and
     /// signatures as compact `r || s` under a low-`s` rule.
-    ///
-    /// A third scheme arrives with its verifier and takes the next value;
-    /// nothing may claim one before then, because the address space would
-    /// be spent on something no chain could verify.
     pub const SECP256K1: Self = Self(2);
+
+    /// ML-DSA-65 over FIPS 204, keys and signatures in the standard's own
+    /// `pkEncode` and `sigEncode` forms.
+    ///
+    /// Pure ML-DSA under the empty context string, never the pre-hash
+    /// variant: the message this path presents is already a digest, and
+    /// hashing it again would put two preimages behind one signature.
+    ///
+    /// A fourth scheme arrives with its verifier and takes the next
+    /// value; nothing may claim one before then, because the address
+    /// space would be spent on something no chain could verify.
+    pub const ML_DSA_65: Self = Self(3);
 
     /// What this id is registered as, or `None` if nothing is.
     ///
@@ -78,6 +86,14 @@ const REGISTRY: &[(SchemeId, SchemeSpec)] = &[
             key_len: 33,
             sig_len: 64,
             verify_weight: 2,
+        },
+    ),
+    (
+        SchemeId::ML_DSA_65,
+        SchemeSpec {
+            key_len: 1952,
+            sig_len: 3309,
+            verify_weight: 3,
         },
     ),
 ];
@@ -213,6 +229,14 @@ mod tests {
                 verify_weight: 2,
             })
         );
+        assert_eq!(
+            SchemeId::ML_DSA_65.spec(),
+            Some(SchemeSpec {
+                key_len: 1952,
+                sig_len: 3309,
+                verify_weight: 3,
+            })
+        );
     }
 
     /// Two schemes sharing a signature width is ordinary; two sharing an
@@ -267,7 +291,7 @@ mod tests {
 
     #[test]
     fn an_unclaimed_id_has_no_entry() {
-        assert_eq!(SchemeId(3).spec(), None);
+        assert_eq!(SchemeId(4).spec(), None);
         assert_eq!(SchemeId(u16::MAX).spec(), None);
     }
 }
