@@ -79,6 +79,20 @@ pub enum Capability {
     },
 }
 
+/// Value in the kernel's own keeping: what one `own<bucket>` handle names.
+///
+/// The guest holds an index into the session's bucket table and the
+/// kernel holds this, which is what makes fabricating value inexpressible
+/// rather than detectable — a body has no way to say how much a bucket
+/// carries, only which one it means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bucket {
+    /// The resource the value is denominated in.
+    pub resource: Address,
+    /// How much of it.
+    pub amount: u128,
+}
+
 /// Why materialization refused a declared effect set — each an abort
 /// before any guest execution.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -398,6 +412,17 @@ pub struct KernelSession {
     /// Events emitted so far, kept until the outcome is known: an abort
     /// discards them, so nothing an aborted transaction said survives.
     events: Vec<Event>,
+    /// Value held on the executing body's behalf, indexed by the rep a
+    /// guest's `own<bucket>` handle names.
+    ///
+    /// Its own rep space, beside the capability table rather than inside
+    /// it: a bucket carries value and confers no state access, and a
+    /// capability is materialized once from the declaration where a
+    /// bucket appears and leaves during execution. A slot empties when
+    /// the bucket leaves — dropped by the guest or taken back by the
+    /// kernel — and is never reused, so one rep names one bucket for the
+    /// transaction's life.
+    buckets: Vec<Option<Bucket>>,
 }
 
 impl KernelSession {
@@ -486,6 +511,7 @@ impl KernelSession {
             written: BTreeMap::new(),
             invocation: None,
             events: Vec::new(),
+            buckets: Vec::new(),
         })
     }
 
@@ -500,6 +526,64 @@ impl KernelSession {
     #[must_use]
     pub fn capabilities(&self) -> &[Capability] {
         &self.table
+    }
+
+    /// Takes a quantity into the kernel's keeping, returning the rep a
+    /// guest's handle names.
+    ///
+    /// Every producer is the kernel's own — an edge routed to this
+    /// invocation, a debit against a cell the method declared — because
+    /// the world exports no constructor for one.
+    ///
+    /// # Panics
+    ///
+    /// Only past `u32` buckets in one transaction, which the declared
+    /// edge and clause counts exclude.
+    pub fn open_bucket(&mut self, resource: Address, amount: u128) -> u32 {
+        let rep = u32::try_from(self.buckets.len()).expect("bounded");
+        self.buckets.push(Some(Bucket { resource, amount }));
+        rep
+    }
+
+    /// What the bucket at `rep` carries.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
+    pub fn bucket(&self, rep: u32) -> Result<Bucket, SessionTrap> {
+        usize::try_from(rep)
+            .ok()
+            .and_then(|index| self.buckets.get(index))
+            .copied()
+            .flatten()
+            .ok_or(SessionTrap::UnknownHandle(rep))
+    }
+
+    /// Takes the bucket at `rep` back out of the table: the kernel holds
+    /// the value again and the rep names nothing afterwards.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
+    pub fn take_bucket(&mut self, rep: u32) -> Result<Bucket, SessionTrap> {
+        usize::try_from(rep)
+            .ok()
+            .and_then(|index| self.buckets.get_mut(index))
+            .and_then(Option::take)
+            .ok_or(SessionTrap::UnknownHandle(rep))
+    }
+
+    /// A bucket handle the guest let go of.
+    ///
+    /// The canonical ABI delivers the drop and the kernel decides what it
+    /// means; that delivery is the whole of what an owned handle buys
+    /// over a value a body could simply forget.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
+    pub fn drop_bucket(&mut self, rep: u32) -> Result<(), SessionTrap> {
+        self.take_bucket(rep).map(|_| ())
     }
 
     fn capability(&self, rep: u32) -> Result<Capability, SessionTrap> {

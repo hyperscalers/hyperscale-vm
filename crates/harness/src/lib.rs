@@ -458,6 +458,102 @@ pub mod fixtures {
     (canon lift (core func $i "no-such-entry"))))
 "#;
 
+    /// The bucket guest: a component that takes value, keeps it, gives it
+    /// back, and throws some away.
+    ///
+    /// `hold` takes an `own<bucket>` and stashes the handle in a global,
+    /// so the handle outlives the call that delivered it; `release`
+    /// returns the stashed handle, which is where ownership crosses back
+    /// out; `discard` takes one and drops it, which is where the host's
+    /// own destructor runs. `peek` reads a cell through a borrow and
+    /// exists to interleave the two: owned and borrowed handles share one
+    /// table, so what a borrow is numbered depends on what an own is
+    /// still holding.
+    ///
+    /// Every export returns the handle index it was given, because that
+    /// index is a core `i32` a body can read and therefore something the
+    /// two engines must agree on to the number.
+    pub const BUCKET_GUEST_WAT: &str = r#"
+(component
+  (import "hyperscale:kernel/state" (instance $state
+    (export "bucket" (type $bk (sub resource)))
+    (export "read-cell" (type $rc (sub resource)))
+    (export "read-cell-get" (func (param "c" (borrow $rc)) (result (list u8))))))
+
+  (alias export $state "bucket" (type $bucket))
+  (alias export $state "read-cell" (type $rcell))
+  (alias export $state "read-cell-get" (func $read_get))
+
+  (core module $alloc
+    (memory (export "mem") 1 1)
+    (global $next (mut i32) (i32.const 1024))
+    (func (export "realloc") (param i32 i32 i32 i32) (result i32)
+      (local $ret i32)
+      global.get $next
+      local.set $ret
+      global.get $next
+      local.get 3
+      i32.add
+      global.set $next
+      local.get $ret))
+  (core instance $a (instantiate $alloc))
+
+  (core func $read_get_l (canon lower (func $read_get)
+    (memory $a "mem") (realloc (func $a "realloc"))))
+  (core func $drop_bucket (canon resource.drop $bucket))
+  (core func $drop_read (canon resource.drop $rcell))
+
+  (core module $m
+    (import "env" "mem" (memory 1 1))
+    (import "k" "read-get" (func $read_get (param i32 i32)))
+    (import "k" "drop-bucket" (func $drop_bucket (param i32)))
+    (import "k" "drop-read" (func $drop_read (param i32)))
+    (global $held (mut i32) (i32.const 0))
+
+    (func (export "hold") (param i32) (result i64)
+      local.get 0
+      global.set $held
+      local.get 0
+      i64.extend_i32_u)
+
+    (func (export "release") (result i32)
+      global.get $held)
+
+    (func (export "peek") (param i32) (result i64)
+      local.get 0
+      i32.const 8
+      call $read_get
+      local.get 0
+      i64.extend_i32_u
+      local.get 0
+      call $drop_read)
+
+    (func (export "discard") (param i32) (result i64)
+      local.get 0
+      i64.extend_i32_u
+      local.get 0
+      call $drop_bucket))
+
+  (core instance $i (instantiate $m
+    (with "env" (instance (export "mem" (memory $a "mem"))))
+    (with "k" (instance
+      (export "read-get" (func $read_get_l))
+      (export "drop-bucket" (func $drop_bucket))
+      (export "drop-read" (func $drop_read))))))
+
+  (func (export "hold")
+    (param "b" (own $bucket)) (result u64)
+    (canon lift (core func $i "hold")))
+  (func (export "release") (result (own $bucket))
+    (canon lift (core func $i "release")))
+  (func (export "peek")
+    (param "c" (borrow $rcell)) (result u64)
+    (canon lift (core func $i "peek")))
+  (func (export "discard")
+    (param "b" (own $bucket)) (result u64)
+    (canon lift (core func $i "discard"))))
+"#;
+
     /// A component whose `realloc` calls a lowered import, closing a call
     /// cycle through the canonical-ABI boundary.
     ///
@@ -656,6 +752,9 @@ pub mod session_host {
                 }
                 fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), AbortReason> {
                     self.0.range_remove(rep, index).map_err(AbortReason::from)
+                }
+                fn bucket_drop(&mut self, rep: u32) -> Result<(), AbortReason> {
+                    self.0.drop_bucket(rep).map_err(AbortReason::from)
                 }
                 fn clock_ms(&self) -> u64 {
                     self.0.clock_ms()

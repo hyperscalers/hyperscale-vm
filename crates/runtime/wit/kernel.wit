@@ -31,6 +31,17 @@ interface state {
         high: u64,
     }
 
+    /// Value in the kernel's own keeping.
+    ///
+    /// A guest holds the handle; the resource and the amount are the
+    /// kernel's. There is no constructor here, so the only ways to hold
+    /// one are to be handed one and to take one from a cell the method
+    /// declared — a quantity of value is not something a body can name
+    /// into existence. It is owned rather than borrowed because the
+    /// canonical ABI routes a discarded owned handle to the host, and
+    /// noticing that value was dropped is what a handle buys.
+    resource bucket;
+
     /// A declared fresh read of one substate.
     resource read-cell;
     /// A read of one permanently locked substate.

@@ -212,6 +212,10 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
+    fn bucket_drop(&mut self, _rep: u32) -> std::result::Result<(), AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+
     fn clock_ms(&self) -> u64 {
         CLOCK_MS
     }

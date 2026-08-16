@@ -102,6 +102,9 @@ impl RefKernelHost for NoHost {
     fn range_remove(&mut self, _rep: u32, _index: u32) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
+    fn bucket_drop(&mut self, _rep: u32) -> Result<(), AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
     fn clock_ms(&self) -> u64 {
         0
     }

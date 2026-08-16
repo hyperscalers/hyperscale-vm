@@ -55,6 +55,7 @@ pub trait RefKernelHost {
     fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), AbortReason>;
     fn range_insert(&mut self, rep: u32, order: u128, value: Vec<u8>) -> Result<(), AbortReason>;
     fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), AbortReason>;
+    fn bucket_drop(&mut self, rep: u32) -> Result<(), AbortReason>;
     /// The transaction clock in milliseconds.
     fn clock_ms(&self) -> u64;
     /// The transaction's randomness draw.
@@ -64,13 +65,17 @@ pub trait RefKernelHost {
     fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), AbortReason>;
 }
 
-/// The state interface's resource types: one per access mode.
+/// The state interface's resource types: one per access mode, plus the
+/// one that carries value.
 ///
 /// Handles are typed with these, and lifting a borrow of the wrong type
 /// traps exactly as the blessed engine's canonical ABI does — the
 /// mode-escape trap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceKind {
+    /// `bucket`: the world's only owned resource, and so the only one a
+    /// guest can keep past a call or discard.
+    Bucket,
     /// `read-cell`.
     ReadCell,
     /// `locked-cell`.
@@ -90,6 +95,7 @@ pub enum ResourceKind {
 impl ResourceKind {
     fn from_name(name: &str) -> Option<Self> {
         match name {
+            "bucket" => Some(Self::Bucket),
             "read-cell" => Some(Self::ReadCell),
             "locked-cell" => Some(Self::LockedCell),
             "write-cell" => Some(Self::WriteCell),
@@ -111,6 +117,13 @@ pub enum CVal {
     U64(u64),
     /// A borrowed capability handle carrying its host rep and its type.
     Borrow(u32, ResourceKind),
+    /// An owned handle at its host rep.
+    ///
+    /// No type beside it, where a borrow carries one: the world owns a
+    /// single resource, so what an `own` names is never in question. What
+    /// crossing one means is ownership — the host's rep leaves its keeping
+    /// on the way in and returns to it on the way out.
+    Own(u32),
     /// An address, as the world's own four-word record.
     Address([u8; 32]),
     /// A `list<u8>` value at the export boundary.
@@ -226,6 +239,8 @@ enum CTy {
     /// words.
     Address,
     Borrow,
+    /// `own<R>`: a handle the call transfers rather than lends.
+    Own,
     /// `result<list<u8>, u32>`: the refusal channel over a method that
     /// produces bytes.
     DeclinableList8,
@@ -413,6 +428,7 @@ impl RefComponent {
                     }
                 }
                 ComponentDefinedType::Borrow(_) => CTypeEntry::Defined(CTy::Borrow),
+                ComponentDefinedType::Own(_) => CTypeEntry::Defined(CTy::Own),
                 // The profile pins the refusal channel to two shapes; a
                 // component carrying anything else never reaches here,
                 // and one that did would be a type this engine cannot
@@ -682,6 +698,13 @@ struct Handle {
     rep: u32,
     kind: ResourceKind,
     live: bool,
+    /// Whether the guest owns the handle or was lent it.
+    ///
+    /// It decides two things a borrow and an own differ on: an own
+    /// outlives the call that delivered it, so it is not what the
+    /// end-of-call borrow check looks at; and dropping one reaches the
+    /// host, where dropping a borrow only returns the lender's slot.
+    own: bool,
 }
 
 /// The handle table's reserved slot.
@@ -966,19 +989,21 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                 (CVal::U32(v), CTy::U32) => flat.push(Value::I32(v.cast_signed())),
                 (CVal::U64(v), CTy::U64) => flat.push(Value::I64(v.cast_signed())),
                 (CVal::Borrow(rep, kind), CTy::Borrow) => {
-                    let handle = Some(Handle {
+                    let idx = self.canon.insert(Handle {
                         rep: *rep,
                         kind: *kind,
                         live: true,
+                        own: false,
                     });
-                    let idx = if let Some(slot) = self.canon.free.pop() {
-                        self.canon.handles[slot as usize] = handle;
-                        slot
-                    } else {
-                        let idx = u32::try_from(self.canon.handles.len()).expect("bounded");
-                        self.canon.handles.push(handle);
-                        idx
-                    };
+                    flat.push(Value::I32(idx.cast_signed()));
+                }
+                (CVal::Own(rep), CTy::Own) => {
+                    let idx = self.canon.insert(Handle {
+                        rep: *rep,
+                        kind: ResourceKind::Bucket,
+                        live: true,
+                        own: true,
+                    });
                     flat.push(Value::I32(idx.cast_signed()));
                 }
                 (CVal::Address(bytes), CTy::Address) => {
@@ -1034,7 +1059,16 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
         let outcome = call(&modules, &mut self.canon, &mut self.store, addr, flat);
         let result = match outcome {
             Ok(values) => {
-                if self.canon.handles.iter().flatten().any(|h| h.live) {
+                // Borrows only: what a call lends it takes back at scope
+                // exit, where an owned handle is the guest's to keep for
+                // as long as the instance lives.
+                if self
+                    .canon
+                    .handles
+                    .iter()
+                    .flatten()
+                    .any(|h| h.live && !h.own)
+                {
                     Err(ExecError::Canon(CanonError::BorrowsRemain))
                 } else {
                     let lifted = self.lift_results(&ctype, &values, mem_idx);
@@ -1064,7 +1098,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
     /// scalars come back flat; anything wider spills to a return area the
     /// single returned pointer names.
     fn lift_results(
-        &self,
+        &mut self,
         ctype: &CType,
         values: &[Value],
         mem_idx: Option<u32>,
@@ -1072,6 +1106,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
         let area = || values.first().map_or(0, |v| v.as_i32().cast_unsigned()) as usize;
         match ctype.results.as_slice() {
             [] => Ok(Vec::new()),
+            [CTy::Own] => Ok(vec![CVal::Own(self.lift_own(area())?)]),
             [CTy::U32] => Ok(vec![CVal::U32(
                 values.first().map_or(0, |v| v.as_i32().cast_unsigned()),
             )]),
@@ -1105,6 +1140,21 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                 }
             }
             _ => Err(ExecError::Canon(CanonError::Internal("result shape"))),
+        }
+    }
+
+    /// Lifts an owned handle out of the table: the guest gives up the
+    /// slot, the host has the rep back, and the slot rejoins the free
+    /// list — which is why a later call can be lowered into it.
+    fn lift_own(&mut self, idx: usize) -> Result<u32, ExecError> {
+        match self.canon.handles.get(idx) {
+            Some(Some(h)) if h.live && h.own => {
+                let rep = h.rep;
+                self.canon.free_slot(idx);
+                Ok(rep)
+            }
+            Some(Some(h)) if h.live => Err(ExecError::Canon(CanonError::WrongHandleType)),
+            _ => Err(ExecError::Canon(CanonError::UnknownHandle)),
         }
     }
 
@@ -1214,6 +1264,37 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
             Some(limit) if total > limit => Err(ExecError::Trap(Trap::OutOfFuel)),
             _ => Ok(()),
         }
+    }
+
+    /// Seats a handle, reusing the most recently freed slot.
+    ///
+    /// The numbering is guest-observable — a handle value is a core `i32`
+    /// a body can return or compare — so both the reuse order and the
+    /// table's persistence across calls have to match the blessed
+    /// engine's exactly.
+    ///
+    /// # Panics
+    ///
+    /// Only on index-space overflow past `u32`.
+    fn insert(&mut self, handle: Handle) -> u32 {
+        if let Some(slot) = self.free.pop() {
+            self.handles[slot as usize] = Some(handle);
+            slot
+        } else {
+            let idx = u32::try_from(self.handles.len()).expect("bounded");
+            self.handles.push(Some(handle));
+            idx
+        }
+    }
+
+    /// Empties the slot at `idx`, returning it for reuse.
+    ///
+    /// # Panics
+    ///
+    /// Only on index-space overflow past `u32`.
+    fn free_slot(&mut self, idx: usize) {
+        self.handles[idx] = None;
+        self.free.push(u32::try_from(idx).expect("bounded"));
     }
 
     fn resolve_handle(&self, index: Value, expected: ResourceKind) -> Result<u32, ExecError> {
@@ -1363,8 +1444,19 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                 let idx = args[0].as_i32().cast_unsigned() as usize;
                 match self.handles.get(idx) {
                     Some(Some(h)) if h.live && kind.is_none_or(|k| k == h.kind) => {
-                        self.handles[idx] = None;
-                        self.free.push(u32::try_from(idx).expect("bounded"));
+                        // Dropping an owned handle destroys the resource,
+                        // so it reaches the host's own destructor; a
+                        // borrow's drop only hands the lender's slot
+                        // back. That difference is the whole of what
+                        // ownership buys, and it is the host that
+                        // decides what a discarded bucket means.
+                        let (rep, own) = (h.rep, h.own);
+                        self.free_slot(idx);
+                        if own {
+                            self.host
+                                .bucket_drop(rep)
+                                .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        }
                         Ok(Vec::new())
                     }
                     Some(Some(h)) if h.live => Err(ExecError::Canon(CanonError::WrongHandleType)),

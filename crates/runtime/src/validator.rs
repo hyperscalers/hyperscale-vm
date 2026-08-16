@@ -126,6 +126,9 @@ enum ValueSlot {
     Bytes,
     /// `borrow<R>` of a state resource.
     Handle,
+    /// `own<R>` of a state resource: a handle the guest holds rather than
+    /// one lent to it for a call, so one it can keep, return, or discard.
+    Owned,
     /// `result<list<u8>, u32>` or `result<_, u32>`: the declared refusal
     /// channel.
     Declinable,
@@ -155,7 +158,13 @@ fn resolve(defined: &[Option<ValueSlot>], vt: ComponentValType) -> Option<ValueS
 fn admits_param_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> bool {
     matches!(
         resolve(defined, vt),
-        Some(ValueSlot::Scalar | ValueSlot::Flat | ValueSlot::Bytes | ValueSlot::Handle)
+        Some(
+            ValueSlot::Scalar
+                | ValueSlot::Flat
+                | ValueSlot::Bytes
+                | ValueSlot::Handle
+                | ValueSlot::Owned
+        )
     )
 }
 
@@ -212,6 +221,7 @@ fn record_component_type(
             Some(ValueSlot::Flat)
         }
         ComponentType::Defined(ComponentDefinedType::Borrow(_)) => Some(ValueSlot::Handle),
+        ComponentType::Defined(ComponentDefinedType::Own(_)) => Some(ValueSlot::Owned),
         // The refusal channel, pinned to one shape. A code rather than a
         // payload, and the same code width whatever the method returns,
         // so what a receipt records is an index into the package's error

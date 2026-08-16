@@ -62,6 +62,12 @@ impl From<Amount> for u128 {
     }
 }
 
+/// Host-side marker for the `bucket` resource.
+///
+/// The one resource in the world a guest owns rather than borrows, so
+/// the one whose handle table entry the guest can discard — which is why
+/// it is the only one whose destructor does anything.
+pub struct Bucket;
 /// Host-side marker for the `read-cell` resource.
 pub struct ReadCell;
 /// Host-side marker for the `locked-cell` resource.
@@ -187,6 +193,18 @@ pub trait KernelHost: Send {
     /// The protocol hash function.
     fn hash(&self, data: &[u8]) -> [u8; 32];
 
+    /// A bucket handle the guest let go of.
+    ///
+    /// The canonical ABI routes a discarded owned handle here and the
+    /// host decides what it means. Delivery is the property an owned
+    /// handle has and a value type cannot be given: a record can carry an
+    /// amount, and it cannot notice being forgotten.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn bucket_drop(&mut self, rep: u32) -> Result<(), AbortReason>;
+
     /// Emit an event from the executing instance; the host stamps the
     /// emitter.
     ///
@@ -219,6 +237,17 @@ pub struct HostRefusal(pub AbortReason);
 #[allow(clippy::too_many_lines)] // one registration block per world function
 pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> Result<()> {
     let mut state = linker.instance("hyperscale:kernel/state")?;
+    // The one destructor with a body. A guest owns its buckets, so
+    // dropping one is a thing it can do and a thing the host is told
+    // about; every cell arrives as a borrow the ABI takes back at scope
+    // exit, and there is nothing for the host to decide.
+    state.resource(
+        "bucket",
+        ResourceType::host::<Bucket>(),
+        |mut store: StoreContextMut<'_, T>, rep| {
+            store.data_mut().bucket_drop(rep).map_err(host_trap)
+        },
+    )?;
     state.resource("read-cell", ResourceType::host::<ReadCell>(), |_, _| Ok(()))?;
     state.resource("locked-cell", ResourceType::host::<LockedCell>(), |_, _| {
         Ok(())
