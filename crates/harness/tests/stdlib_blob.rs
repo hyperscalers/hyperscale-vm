@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::stdlib::{DRAW, ROUND_CAP, TICKETS};
+use hyperscale_vm_effects::stdlib::{DRAW, ROUND_CAP, TICKETS, VAULT};
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
     RoleId, SubstateKey, TestHasher, Value, child_key, collection_id, order_key,
@@ -380,7 +380,7 @@ fn lottery_session() -> KernelSession {
             mode: Mode::Write,
         },
         Effect {
-            target: EffectTarget::Point(child_key(&TestHasher, LOTTERY, RoleId(1), &[])),
+            target: EffectTarget::Point(child_key(&TestHasher, LOTTERY, VAULT, &[])),
             mode: Mode::Delta,
         },
         Effect {
@@ -441,7 +441,7 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     );
     let pot_rep = rep_of(
         &host.0,
-        &Capability::Delta(child_key(&TestHasher, LOTTERY, RoleId(1), &[])),
+        &Capability::Delta(child_key(&TestHasher, LOTTERY, VAULT, &[])),
     );
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
@@ -509,7 +509,7 @@ fn reference_round() -> Result<(Receipt, u64)> {
     );
     let pot_rep = rep_of(
         &host.0,
-        &Capability::Delta(child_key(&TestHasher, LOTTERY, RoleId(1), &[])),
+        &Capability::Delta(child_key(&TestHasher, LOTTERY, VAULT, &[])),
     );
     let mut instance =
         RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;

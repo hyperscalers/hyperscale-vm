@@ -12,21 +12,20 @@ use crate::metadata::{
     AbiParam, Accessibility, MethodSignature, PackageMetadata, ParamType, Totality,
 };
 use crate::resource::holdings_range;
-use crate::types::{NativeRole, RoleId, Value};
+use crate::types::{NativeRole, RoleId, Value, package_role};
 
 /// The native fee and transfer resource.
 pub const XRD: NativeRole = NativeRole(1);
 /// The publisher the protocol's own packages sit under.
 pub const GENESIS_PUBLISHER: NativeRole = NativeRole(2);
 
-// A role is hashed with its owner, and an owner belongs to one package,
-// so two packages naming one number never collide. What a package's own
-// roles must avoid is the vocabulary the protocol derives keys for
-// without consulting metadata — `VAULT`, `CLAIMS`, `CONFIG`, `AUTH`,
-// `RESOURCE`, `NF_VAULT`, `INSTANCE` — because a package's instances
-// hold those cells under the same address as their own. Everything else
-// below is one package's private storage layout, distinct here only
-// because the table is shared.
+// The protocol vocabulary: the cells an engine derives keys for without
+// consulting any package's metadata. A fee burn finds a payer's vault,
+// an auth gate finds a stored rule, and the resource surface finds a
+// record and a holder's instances — none of them holding the metadata
+// that would say where. So these values are protocol facts, and they are
+// the band a package's own roles clear (`PACKAGE_ROLE_BASE`) rather than
+// a table every package adds to.
 
 /// A fungible balance cell under its holder.
 pub const VAULT: RoleId = RoleId(1);
@@ -34,36 +33,19 @@ pub const VAULT: RoleId = RoleId(1);
 pub const CLAIMS: RoleId = RoleId(2);
 /// A creation-fixed configuration leaf.
 pub const CONFIG: RoleId = RoleId(3);
-/// The order book's ask-side ordered collection.
-pub const ASKS: RoleId = RoleId(4);
-/// A stake pool's total awaiting release to the delegators who returned
-/// their units.
-pub const UNBONDING: RoleId = RoleId(6);
-/// A stake pool's record of one validator it operates.
-pub const VALIDATORS: RoleId = RoleId(7);
-/// A stake pool's one active network-parameter vote.
-pub const VOTE: RoleId = RoleId(8);
 /// An account's stored authority: the cell `authorize` reads and
 /// `securify` creates. Absent for a virtual account.
-pub const AUTH: RoleId = RoleId(9);
-
-/// The registry's bindings: an unordered collection keyed by hashed name.
-pub const NAMES: RoleId = RoleId(10);
+pub const AUTH: RoleId = RoleId(4);
 /// A resource's record cell under its issuer: kind and display
 /// quantization, keyed by the resource's own address.
-pub const RESOURCE: RoleId = RoleId(11);
+pub const RESOURCE: RoleId = RoleId(5);
 /// A holder's non-fungible instances: per resource, the entries of the
 /// holder's `(NF_VAULT, resource)` sub-collection at the instance's id —
 /// created at deposit, removed at withdrawal.
-pub const NF_VAULT: RoleId = RoleId(12);
+pub const NF_VAULT: RoleId = RoleId(6);
 /// A non-fungible instance's data cell under its issuer, keyed by the
 /// resource and the instance's id: written at mint, immutable after.
-pub const INSTANCE: RoleId = RoleId(13);
-/// A lottery's entrants: one entry per entrant, at the entrant's hashed
-/// order, so a second entry from one address lands on its own ticket.
-pub const TICKETS: RoleId = RoleId(14);
-/// A lottery's settled round: the draw, and the entrant it selected.
-pub const DRAW: RoleId = RoleId(15);
+pub const INSTANCE: RoleId = RoleId(7);
 
 /// The entry cap the book's fill range declares.
 pub const FILL_CAP: u32 = 64;
@@ -95,10 +77,9 @@ fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
 /// `authorize()`: nothing but its own gate — naming it mints the
 /// account's identity as evidence for later nodes of the intent, which
 /// is how an account acts through calls its own signature proof would
-/// not open. `securify(roles, delay)`:
-/// create the stored-authority cell `authorize` reads, refusing one that
-/// already exists — the transition off the address-derived rule,
-/// one-way. `propose(roles, delay)`, `cancel()`, `confirm()`: the timed
+/// not open. `securify(roles, delay)`: create the stored-authority cell
+/// `authorize` reads, refusing one that already exists — the transition
+/// off the address-derived rule, one-way. `propose(roles, delay)`, `cancel()`, `confirm()`: the timed
 /// recovery surface, each judged against the stored role its
 /// accessibility names — recovery proposes a full replacement that
 /// matures after the stored delay, primary cancels one that has not,
@@ -361,6 +342,14 @@ fn authority_methods(methods: &mut PackageMetadata) {
         },
     );
 }
+
+/// A stake pool's total awaiting release to the delegators who returned
+/// their units.
+pub const UNBONDING: RoleId = package_role(0);
+/// A stake pool's record of one validator it operates.
+pub const VALIDATORS: RoleId = package_role(1);
+/// A stake pool's one active network-parameter vote.
+pub const VOTE: RoleId = package_role(2);
 
 /// The stake pool.
 ///
@@ -647,6 +636,9 @@ pub fn amm_metadata() -> PackageMetadata {
     methods
 }
 
+/// The order book's ask-side ordered collection.
+pub const ASKS: RoleId = package_role(0);
+
 /// The order book.
 ///
 /// `place-ask(price, funds)`: insert at the computed entry key — the price
@@ -767,6 +759,9 @@ pub fn splitter_metadata() -> PackageMetadata {
     );
     methods
 }
+
+/// The registry's bindings: an unordered collection keyed by hashed name.
+pub const NAMES: RoleId = package_role(0);
 
 /// The name registry: the unordered-collection surface end to end.
 ///
@@ -957,6 +952,12 @@ pub fn nf_metadata() -> PackageMetadata {
     methods
 }
 
+/// A lottery's entrants: one entry per entrant, at the entrant's hashed
+/// order, so a second entry from one address lands on its own ticket.
+pub const TICKETS: RoleId = package_role(0);
+/// A lottery's settled round: the draw, and the entrant it selected.
+pub const DRAW: RoleId = package_role(1);
+
 /// The lottery: a pot anyone may enter, and a winner nobody chooses.
 ///
 /// `enter(who, funds)`: one ticket at the entrant's hashed order and the
@@ -1057,4 +1058,34 @@ pub fn lottery_metadata() -> PackageMetadata {
     // what those indexes mean.
     methods.events = vec!["entered".into(), "drawn".into()];
     methods
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
+    use crate::envelope::NULLIFIER_ROLE;
+    use crate::metadata::PACKAGE_ROLE;
+    use crate::types::PACKAGE_ROLE_BASE;
+
+    /// The band, held from the one side that can drift.
+    ///
+    /// A package's own roles are built by
+    /// [`package_role`](crate::types::package_role) and so cannot land
+    /// below the base by construction; the vocabulary above is written
+    /// out, and a value added to it carelessly is what would collide
+    /// with every package that ever stored anything.
+    #[test]
+    fn the_protocol_vocabulary_stays_under_the_package_band() {
+        for role in [VAULT, CLAIMS, CONFIG, AUTH, RESOURCE, NF_VAULT, INSTANCE] {
+            assert!(
+                role.0 < PACKAGE_ROLE_BASE,
+                "{role:?} reaches into the band packages number from"
+            );
+        }
+        // And the kernel's own sits above both, which is what keeps a
+        // package cell and a nullifier off every other derivation.
+        for role in [PACKAGE_ROLE, NULLIFIER_ROLE] {
+            assert!(role.0 > PACKAGE_ROLE_BASE);
+        }
+    }
 }

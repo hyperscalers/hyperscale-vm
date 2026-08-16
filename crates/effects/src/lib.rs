@@ -91,8 +91,9 @@ pub use rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule};
 pub use types::{
     Address, AddressClass, CallTarget, CollectionId, ComponentAddr, EdgeContent, Effect, EffectSet,
     EffectTarget, InvalidAddress, LocalKey, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Mode, ModeKind,
-    NativeAddr, NativeRole, NetworkWord, NotAResource, NotCallable, PackageAddr, PrincipalAddr,
-    ReserveOverflow, ResourceAddr, ResourceRef, RoleId, SchemeId, ShardId, SubstateKey, TextError,
-    Value, WrongClass, child_key, collection_id, compatible, component_address, config_hash,
-    native_address, order_key, package_address, principal_address, resource_address,
+    NativeAddr, NativeRole, NetworkWord, NotAResource, NotCallable, PACKAGE_ROLE_BASE, PackageAddr,
+    PrincipalAddr, ReserveOverflow, ResourceAddr, ResourceRef, RoleId, SchemeId, ShardId,
+    SubstateKey, TextError, Value, WrongClass, child_key, collection_id, compatible,
+    component_address, config_hash, native_address, order_key, package_address, package_role,
+    principal_address, resource_address,
 };

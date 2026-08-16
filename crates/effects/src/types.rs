@@ -32,11 +32,48 @@ pub struct ShardId(pub u64);
 /// A role tag naming a kernel-addressed slot under an owner.
 ///
 /// The role says which child — a vault, a claims cell, a field group, an
-/// ordered collection — a canonical address refers to. Role values are
-/// package conventions.
+/// ordered collection — a canonical address refers to.
+///
+/// A role is hashed with its owner, and an owner belongs to one package,
+/// so two packages naming one value never collide: a role is scoped by
+/// the address it sits under, not by this space. What the space
+/// partitions is the three populations that *do* share an owner:
+///
+/// - the kernel's own, at the top ([`NULLIFIER_ROLE`], [`PACKAGE_ROLE`]),
+///   reached by the kernel and the publish path and by nothing else;
+/// - the protocol vocabulary, counting up from one — the cells an engine
+///   derives keys for without consulting any metadata, so their values
+///   are protocol facts rather than one package's business;
+/// - a package's own, from [`PACKAGE_ROLE_BASE`] up, declared beside the
+///   package that stores them.
+///
+/// A package's instances hold protocol-vocabulary cells under the same
+/// address as their own, which is the whole reason the third band has to
+/// clear the second. It never has to clear another package's.
+///
+/// [`NULLIFIER_ROLE`]: crate::NULLIFIER_ROLE
+/// [`PACKAGE_ROLE`]: crate::PACKAGE_ROLE
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
 pub struct RoleId(pub u16);
+
+/// The first role id a package may use for a slot of its own.
+///
+/// Above the protocol vocabulary with room left over, so a role added to
+/// that vocabulary later is not a renumbering of every package that ever
+/// stored anything.
+pub const PACKAGE_ROLE_BASE: u16 = 16;
+
+/// A package's `n`th own role.
+///
+/// Packages number from zero independently — a value is scoped by the
+/// owner it is hashed with — and this is what keeps that numbering off
+/// the protocol's own band without each package restating where the band
+/// ends.
+#[must_use]
+pub const fn package_role(n: u16) -> RoleId {
+    RoleId(PACKAGE_ROLE_BASE + n)
+}
 
 /// A protocol-defined role a native address names.
 ///

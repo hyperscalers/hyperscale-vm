@@ -40,7 +40,7 @@ mod account {
         vaults: Keyed<Amount>,
         #[role(2)]
         claims: Keyed<Amount>,
-        #[role(9)]
+        #[role(4)]
         auth: Cell<u64>,
     }
 
@@ -143,7 +143,7 @@ mod book {
 
     #[state]
     struct Book {
-        #[role(4)]
+        #[role(16)]
         asks: Ordered<u128>,
         #[role(1)]
         vaults: Keyed<Amount>,
