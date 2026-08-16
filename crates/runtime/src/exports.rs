@@ -27,10 +27,12 @@ pub enum ExportParam {
     /// `hyperscale:kernel/state` interface exports it — `"read-cell"`,
     /// `"write-cell"`, and so on.
     Handle(String),
-    /// `list<u8>`: amount cells, keys, and every other byte-shaped value.
+    /// `list<u8>`: keys, opaque values, and every other byte-shaped one.
     Bytes,
     /// A scalar `u64`.
     U64,
+    /// The world's `address` record.
+    Address,
     /// Anything else the world's grammar admits but no binding names.
     Other,
 }
@@ -160,6 +162,18 @@ fn param_shape(
             Some(ComponentDefinedType::Borrow(resource)) => resources
                 .get(&resource.resource())
                 .map_or(ExportParam::Other, |name| ExportParam::Handle(name.clone())),
+            // The world's value records are told apart by their field
+            // widths, which is what the profile admits them by: a record
+            // of scalars, judged by shape rather than by the name an
+            // interface happens to export it under.
+            Some(ComponentDefinedType::Record(fields))
+                if fields.fields.len() == 4
+                    && fields.fields.iter().all(|(_, ty)| {
+                        matches!(ty, ComponentValType::Primitive(PrimitiveValType::U64))
+                    }) =>
+            {
+                ExportParam::Address
+            }
             _ => ExportParam::Other,
         },
         ComponentValType::Primitive(_) => ExportParam::Other,

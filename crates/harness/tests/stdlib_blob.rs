@@ -34,7 +34,7 @@ use hyperscale_vm_runtime::{
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
 #[cfg(target_os = "linux")]
 use hyperscale_vm_stdlib::STAKING_COMPONENT;
-use wasmtime::component::{Component, Linker, Resource};
+use wasmtime::component::{Component, ComponentType, Lift, Linker, Lower, Resource};
 use wasmtime::error::Context;
 use wasmtime::{Result, Store};
 
@@ -366,6 +366,32 @@ fn ticket_order() -> u128 {
     )
 }
 
+/// An address as the world's `address` record.
+///
+/// Spelled out here because this test drives an export directly, with no
+/// kernel between it and the component; everything else reaches the same
+/// shape through the argument path.
+#[derive(Clone, Copy, ComponentType, Lift, Lower)]
+#[component(record)]
+struct Words {
+    a: u64,
+    b: u64,
+    c: u64,
+    d: u64,
+}
+
+/// `who` as the four words its record carries.
+fn words(address: Address) -> Words {
+    let bytes = address.to_bytes();
+    let word = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().expect("eight bytes"));
+    Words {
+        a: word(0),
+        b: word(8),
+        c: word(16),
+        d: word(24),
+    }
+}
+
 /// A session over one entered round: the ticket entry, the pot, the
 /// result cell, and the interval a draw reads.
 fn lottery_session() -> KernelSession {
@@ -446,11 +472,16 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &compiled)?;
+    // The entrant crosses as the world's own address record, so a
+    // hand-written call spells its four words where it once spelled a
+    // byte list. The kernel never sees this shape — metadata and world
+    // are derived together — which is why a direct drive is the one
+    // reader that has to follow.
     let enter = instance.get_typed_func::<(
         Resource<RangeWrite>,
         Resource<DeltaCell>,
         &[u8],
-        &[u8],
+        Words,
         &[u8],
     ), ()>(&mut store, "enter")?;
     enter.call(
@@ -459,7 +490,7 @@ fn blessed_round() -> Result<(Receipt, u64)> {
             Resource::new_borrow(entry_rep),
             Resource::new_borrow(pot_rep),
             &ticket_order().to_le_bytes()[..],
-            &ENTRANT.to_bytes()[..],
+            words(ENTRANT),
             &encode_amount(AMOUNT)[..],
         ),
     )?;
@@ -519,7 +550,7 @@ fn reference_round() -> Result<(Receipt, u64)> {
             CVal::Borrow(entry_rep, ResourceKind::RangeWrite),
             CVal::Borrow(pot_rep, ResourceKind::DeltaCell),
             CVal::Bytes(ticket_order().to_le_bytes().to_vec()),
-            CVal::Bytes(ENTRANT.to_bytes().to_vec()),
+            CVal::Address(ENTRANT.to_bytes()),
             CVal::Bytes(encode_amount(AMOUNT).to_vec()),
         ],
     )?;

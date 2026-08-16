@@ -130,6 +130,8 @@ pub enum CallArg {
     },
     /// A 64-bit scalar the signature derived from the node's inputs.
     U64(u64),
+    /// An address the signature derived from the node's inputs.
+    Address(Address),
     /// A byte string the signature derived from the node's inputs.
     Bytes(Vec<u8>),
 }

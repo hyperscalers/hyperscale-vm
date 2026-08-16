@@ -178,6 +178,7 @@ impl GuestBackend for Bench {
                     kind: host_kind(*kind),
                 },
                 GuestArg::U64(scalar) => HostArg::U64(*scalar),
+                GuestArg::Address(address) => HostArg::Address(*address),
                 GuestArg::Bytes(bytes) => HostArg::Bytes(bytes),
             })
             .collect();

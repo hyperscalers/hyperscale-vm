@@ -11,6 +11,7 @@
 //! constructs are that world's, and because the mapping from a mode to
 //! its handle type is the same one the linker registers.
 
+use hyperscale_vm_types::Address;
 use wasmtime::component::{Instance, Resource, ResourceAny, Val};
 use wasmtime::{AsContextMut, Error, Result};
 
@@ -50,8 +51,30 @@ pub enum HostArg<'a> {
     },
     /// A `u64` scalar.
     U64(u64),
+    /// An address, as the world's own record.
+    Address(Address),
     /// A `list<u8>`.
     Bytes(&'a [u8]),
+}
+
+/// An address as the world's `record address`: four little-endian words.
+///
+/// The halving is the representation, not a narrowing — the component
+/// model has no 256-bit scalar, and four `u64`s flatten where a byte list
+/// would travel through memory.
+fn address_val(address: Address) -> Val {
+    let bytes = address.to_bytes();
+    let word = |at: usize| {
+        Val::U64(u64::from_le_bytes(
+            bytes[at..at + 8].try_into().expect("eight bytes"),
+        ))
+    };
+    Val::Record(vec![
+        ("a".to_owned(), word(0)),
+        ("b".to_owned(), word(8)),
+        ("c".to_owned(), word(16)),
+        ("d".to_owned(), word(24)),
+    ])
 }
 
 /// The handle for one rep, as the resource type its mode names.
@@ -128,6 +151,7 @@ pub fn call_export<T: 'static>(
                 Val::Resource(handle(*kind, *rep, store.as_context_mut())?)
             }
             HostArg::U64(scalar) => Val::U64(*scalar),
+            HostArg::Address(address) => address_val(*address),
             HostArg::Bytes(bytes) => Val::List(bytes.iter().copied().map(Val::U8).collect()),
         });
     }

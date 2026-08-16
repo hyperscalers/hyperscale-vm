@@ -72,6 +72,8 @@ pub enum GuestArg<'a> {
     },
     /// A 64-bit scalar.
     U64(u64),
+    /// An address, as the world's own record.
+    Address(Address),
     /// A `list<u8>` argument.
     Bytes(&'a [u8]),
 }
@@ -227,6 +229,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                     args.push(GuestArg::Bytes(produced));
                 }
                 CallArg::U64(scalar) => args.push(GuestArg::U64(*scalar)),
+                CallArg::Address(address) => args.push(GuestArg::Address(*address)),
                 CallArg::Bytes(bytes) => args.push(GuestArg::Bytes(bytes)),
             }
         }

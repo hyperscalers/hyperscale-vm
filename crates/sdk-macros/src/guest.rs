@@ -59,6 +59,16 @@ fn value_shape(
     config: &[(String, syn::Type)],
 ) -> Shape {
     let scalar = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.is_ident("u64"));
+    let address = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Address"));
+    let named = |ty: &syn::Type| {
+        if scalar(ty) {
+            Shape::Scalar
+        } else if address(ty) {
+            Shape::Address
+        } else {
+            Shape::Cell(Box::new(ty.clone()))
+        }
+    };
     match need {
         // A bucket crosses as its amount alone, at the kernel's cell
         // width.
@@ -69,31 +79,13 @@ fn value_shape(
             syn::parse_quote!(::hyperscale_vm_sdk::state::Amount),
         )),
         // A resource is an address however it was derived.
-        Need::Derived(Term::SelfResource(_) | Term::ResourceOf(_)) => {
-            Shape::Cell(Box::new(syn::parse_quote!(::hyperscale_vm_sdk::Address)))
-        }
-        Need::Derived(Term::Arg(index)) => {
-            params
-                .get(*index as usize)
-                .map_or(Shape::Scalar, |(_, ty)| {
-                    if scalar(ty) {
-                        Shape::Scalar
-                    } else {
-                        Shape::Cell(Box::new(ty.clone()))
-                    }
-                })
-        }
-        Need::Derived(Term::Config(index)) => {
-            config
-                .get(*index as usize)
-                .map_or(Shape::Scalar, |(_, ty)| {
-                    if scalar(ty) {
-                        Shape::Scalar
-                    } else {
-                        Shape::Cell(Box::new(ty.clone()))
-                    }
-                })
-        }
+        Need::Derived(Term::SelfResource(_) | Term::ResourceOf(_)) => Shape::Address,
+        Need::Derived(Term::Arg(index)) => params
+            .get(*index as usize)
+            .map_or(Shape::Scalar, |(_, ty)| named(ty)),
+        Need::Derived(Term::Config(index)) => config
+            .get(*index as usize)
+            .map_or(Shape::Scalar, |(_, ty)| named(ty)),
         // A fresh id is a `u64`, and so is anything else the evaluator
         // reduces to a scalar.
         Need::Derived(_) => Shape::Scalar,
@@ -175,6 +167,18 @@ pub fn method(
         }
         match shape {
             Shape::Scalar => signature.push(quote!(#ident: u64)),
+            // Named through the world's own alias, so the generated type
+            // cannot collide with the vocabulary's `Address` that the
+            // author's module already imports; the words come out at the
+            // call site, where both are in scope.
+            Shape::Address => {
+                signature.push(quote!(#ident: KernelAddress));
+                prologue.push(quote!(
+                    let #ident = ::hyperscale_vm_sdk::guest::address_of(
+                        #ident.a, #ident.b, #ident.c, #ident.d,
+                    );
+                ));
+            }
             Shape::Cell(ty) => {
                 signature.push(quote!(#ident: ::std::vec::Vec<u8>));
                 prologue.push(quote!(

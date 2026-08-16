@@ -27,6 +27,11 @@ pub enum Shape {
     Handle(&'static str),
     /// A `u64` the guest reads as it stands.
     Scalar,
+    /// The world's `address` record, rebuilt as an [`Address`] in the
+    /// export's prologue.
+    ///
+    /// [`Address`]: hyperscale_vm_sdk::Address
+    Address,
     /// A byte list the guest decodes into the named Rust type.
     Cell(Box<syn::Type>),
 }
@@ -59,13 +64,26 @@ impl Shape {
         match self {
             Self::Handle(resource) => format!("borrow<{resource}>"),
             Self::Scalar => "u64".to_owned(),
+            Self::Address => "kernel-address".to_owned(),
             Self::Cell(_) => "list<u8>".to_owned(),
         }
     }
 }
 
-/// The resources a world has to name before its exports can borrow them.
-fn borrowed(exports: &[Export]) -> Vec<&'static str> {
+/// Whether any export takes one of the world's own value records.
+fn takes_values(exports: &[Export]) -> bool {
+    exports
+        .iter()
+        .flat_map(|export| &export.params)
+        .any(|param| matches!(param.shape, Shape::Address))
+}
+
+/// The kernel types a world has to name before its exports can use them:
+/// the resources they borrow.
+///
+/// The world's own value records are not among them — they are declared
+/// here rather than imported, for the reason [`document`] gives.
+fn imported(exports: &[Export]) -> Vec<&'static str> {
     let mut named: Vec<&'static str> = Vec::new();
     for export in exports {
         for param in &export.params {
@@ -95,12 +113,29 @@ pub fn document(world: &str, exports: &[Export]) -> String {
          import hyperscale:kernel/crypto;\n    \
          import hyperscale:kernel/events;\n",
     );
-    let borrowed = borrowed(exports);
-    if !borrowed.is_empty() {
+    let imported = imported(exports);
+    if !imported.is_empty() {
         let _ = writeln!(
             out,
             "    use hyperscale:kernel/state.{{{}}};",
-            borrowed.join(", ")
+            imported.join(", ")
+        );
+    }
+    if takes_values(exports) {
+        // Declared here rather than imported from the kernel interface,
+        // and not for want of a home: `wit-bindgen` generates a type only
+        // where a signature names one, so a record no import mentions is
+        // one the SDK's bindings would not carry and a `with` mapping
+        // could not resolve. Records are structural, so this is the same
+        // type either way — and a value record is the export surface's,
+        // which is what this document is.
+        out.push_str(
+            "\n    /// A global object's address, as its four 64-bit words.\n    \
+             record kernel-address {\n        \
+             /// Bytes 0..8, little-endian.\n        a: u64,\n        \
+             /// Bytes 8..16.\n        b: u64,\n        \
+             /// Bytes 16..24.\n        c: u64,\n        \
+             /// Bytes 24..32.\n        d: u64,\n    }\n\n",
         );
     }
     for export in exports {

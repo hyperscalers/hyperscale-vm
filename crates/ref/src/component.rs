@@ -23,6 +23,7 @@ use wasmparser::{
     CanonicalFunction, CanonicalOption, ComponentAlias, ComponentDefinedType,
     ComponentExternalKind, ComponentType, ComponentTypeRef, ComponentValType, ExternalKind,
     Instance as CoreInstanceReader, InstantiationArgKind, Parser, Payload, PrimitiveValType,
+    TypeBounds,
 };
 
 use crate::error::{DecodeError, Trap};
@@ -110,6 +111,8 @@ pub enum CVal {
     U64(u64),
     /// A borrowed capability handle carrying its host rep and its type.
     Borrow(u32, ResourceKind),
+    /// An address, as the world's own four-word record.
+    Address([u8; 32]),
     /// A `list<u8>` value at the export boundary.
     Bytes(Vec<u8>),
     /// A declined result: the code the guest returned on the error arm,
@@ -219,6 +222,9 @@ enum CTy {
     /// two halves as a parameter and written whole to the return area as
     /// a result.
     Amount,
+    /// `record { u64, u64, u64, u64 }`: an address, flattened to its four
+    /// words.
+    Address,
     Borrow,
     /// `result<list<u8>, u32>`: the refusal channel over a method that
     /// produces bytes.
@@ -286,11 +292,22 @@ impl RefComponent {
                             ComponentTypeRef::Instance(_) => {
                                 comp.import_names.push(import.name.name.to_string());
                             }
-                            ComponentTypeRef::Type(_) => {
-                                comp.types.push(
-                                    ResourceKind::from_name(import.name.name)
-                                        .map_or(CTypeEntry::Other, CTypeEntry::Resource),
-                                );
+                            // A type import is either a `use` of a kernel
+                            // resource, named as the interface exports
+                            // it, or an equality import over a type the
+                            // world declared — which is how a world's own
+                            // value record reaches its exports' signatures.
+                            ComponentTypeRef::Type(bound) => {
+                                let entry = ResourceKind::from_name(import.name.name)
+                                    .map(CTypeEntry::Resource)
+                                    .or_else(|| match bound {
+                                        TypeBounds::Eq(index) => {
+                                            comp.types.get(index as usize).cloned()
+                                        }
+                                        TypeBounds::SubResource => None,
+                                    })
+                                    .unwrap_or(CTypeEntry::Other);
+                                comp.types.push(entry);
                             }
                             other => {
                                 return Err(DecodeError::Unsupported(format!(
@@ -387,10 +404,12 @@ impl RefComponent {
                         .iter()
                         .map(|(_, vt)| self.value_type(*vt))
                         .collect::<Result<_, _>>()?;
-                    if halves == [CTy::U64, CTy::U64] {
-                        CTypeEntry::Defined(CTy::Amount)
-                    } else {
-                        return Err(DecodeError::Unsupported("record shape".to_string()));
+                    match halves.as_slice() {
+                        [CTy::U64, CTy::U64] => CTypeEntry::Defined(CTy::Amount),
+                        [CTy::U64, CTy::U64, CTy::U64, CTy::U64] => {
+                            CTypeEntry::Defined(CTy::Address)
+                        }
+                        _ => return Err(DecodeError::Unsupported("record shape".to_string())),
                     }
                 }
                 ComponentDefinedType::Borrow(_) => CTypeEntry::Defined(CTy::Borrow),
@@ -961,6 +980,13 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                         idx
                     };
                     flat.push(Value::I32(idx.cast_signed()));
+                }
+                (CVal::Address(bytes), CTy::Address) => {
+                    // Four words, flattened: a record of scalars crosses
+                    // in the flat arguments and touches no memory.
+                    for word in bytes.as_chunks::<8>().0 {
+                        flat.push(Value::I64(u64::from_le_bytes(*word).cast_signed()));
+                    }
                 }
                 (CVal::Bytes(bytes), CTy::List8) => {
                     // Lower through the lift options: the guest's realloc

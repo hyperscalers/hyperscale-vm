@@ -414,6 +414,7 @@ const fn host_arg<'a>(arg: &GuestArg<'a>) -> HostArg<'a> {
             kind: host_kind(*kind),
         },
         GuestArg::U64(scalar) => HostArg::U64(*scalar),
+        GuestArg::Address(address) => HostArg::Address(*address),
         GuestArg::Bytes(bytes) => HostArg::Bytes(bytes),
     }
 }
@@ -422,6 +423,7 @@ fn ref_arg(arg: &GuestArg<'_>) -> CVal {
     match arg {
         GuestArg::Handle { rep, kind } => CVal::Borrow(*rep, ref_kind(*kind)),
         GuestArg::U64(scalar) => CVal::U64(*scalar),
+        GuestArg::Address(address) => CVal::Address(address.to_bytes()),
         GuestArg::Bytes(bytes) => CVal::Bytes(bytes.to_vec()),
     }
 }

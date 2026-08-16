@@ -52,6 +52,8 @@ use kernel::state::{
     DeltaCell, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
 };
 
+use crate::Address;
+
 /// The kernel's amount-cell width: a little-endian `u128`.
 ///
 /// A stored amount is still bytes — a cell holds bytes — but one crossing
@@ -66,6 +68,28 @@ fn amount(value: u128) -> kernel::state::Amount {
         low: value as u64,
         high: (value >> 64) as u64,
     }
+}
+
+/// The [`Address`] four world words name.
+///
+/// Called by generated code, which reads the fields at the call site: an
+/// address reaches an export as the world's own record, and taking the
+/// words rather than the record is what keeps that generated type out of
+/// the SDK's signatures — a package's bindings and the SDK's are two
+/// generations, and only one of them can own a name.
+///
+/// # Panics
+///
+/// On four words that do not name an address class. The kernel builds one
+/// by evaluating the declaration, so a malformed one is a defect and the
+/// trap is the deterministic answer to it.
+#[must_use]
+pub fn address_of(a: u64, b: u64, c: u64, d: u64) -> Address {
+    let mut bytes = [0u8; 32];
+    for (word, at) in [a, b, c, d].into_iter().zip(0..4) {
+        bytes[at * 8..at * 8 + 8].copy_from_slice(&word.to_le_bytes());
+    }
+    Address::from_bytes(bytes).expect("an address names a class")
 }
 
 /// The `u128` an `amount` carries.

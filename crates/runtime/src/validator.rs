@@ -12,8 +12,8 @@ use wasmparser::{
     ComponentAlias, ComponentDefinedType, ComponentExternalKind, ComponentImportSectionReader,
     ComponentType, ComponentTypeRef, ComponentValType, CompositeInnerType, ConstExpr, DataKind,
     DataSectionReader, ElementItems, ElementKind, ElementSectionReader, FunctionBody,
-    GlobalSectionReader, Operator, Parser, Payload, PrimitiveValType, TypeRef, TypeSectionReader,
-    ValType, Validator, WasmFeatures,
+    GlobalSectionReader, Operator, Parser, Payload, PrimitiveValType, TypeBounds, TypeRef,
+    TypeSectionReader, ValType, Validator, WasmFeatures,
 };
 
 use crate::frames::{check_component_stack_bounds, check_stack_bounds};
@@ -268,11 +268,26 @@ fn check_component_imports(
     for import in reader {
         let import = import.map_err(|e| ProfileError::Feature(e.to_string()))?;
         let name = import.name.name;
-        // Type imports confer no capability — they are how a world-level
-        // `use` of a kernel resource type encodes — so only value-carrying
-        // imports are gated. They do take a type-index slot.
-        if matches!(import.ty, ComponentTypeRef::Type(_)) {
-            defined.push(None);
+        // Type imports confer no capability — they are how a world's own
+        // types encode, whether `use`d from an interface or declared in
+        // the world itself — so only value-carrying imports are gated.
+        // They do take a type-index slot, and an equality import carries
+        // whatever the type it equals holds: a world-declared record
+        // reaches its export's signature through one of these, so
+        // dropping the slot would put every such export outside the
+        // vocabulary.
+        if let ComponentTypeRef::Type(bound) = import.ty {
+            let equals = match bound {
+                TypeBounds::Eq(index) => usize::try_from(index)
+                    .ok()
+                    .and_then(|index| defined.get(index).copied())
+                    .flatten(),
+                // A resource bound names a type with no representation of
+                // its own; what a body can do with one is fixed by the
+                // borrow types the interface exports.
+                TypeBounds::SubResource => None,
+            };
+            defined.push(equals);
             continue;
         }
         if !name.starts_with(profile::KERNEL_IMPORT_PREFIX) {
