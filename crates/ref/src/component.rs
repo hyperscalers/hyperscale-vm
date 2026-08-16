@@ -48,6 +48,7 @@ pub trait RefKernelHost {
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
     fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
     fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
+    fn issuer_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn reserve_amount(&mut self, rep: u32) -> Result<u128, AbortReason>;
@@ -79,6 +80,8 @@ pub enum ResourceKind {
     /// `bucket`: the world's only owned resource, and so the only one a
     /// guest can keep past a call or discard.
     Bucket,
+    /// `issuer`: the authority to create value, granted per invocation.
+    Issuer,
     /// `read-cell`.
     ReadCell,
     /// `locked-cell`.
@@ -99,6 +102,7 @@ impl ResourceKind {
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "bucket" => Some(Self::Bucket),
+            "issuer" => Some(Self::Issuer),
             "read-cell" => Some(Self::ReadCell),
             "locked-cell" => Some(Self::LockedCell),
             "write-cell" => Some(Self::WriteCell),
@@ -144,6 +148,7 @@ enum HostFn {
     WriteCellGet,
     WriteCellSet,
     WriteTake,
+    IssuerTake,
     DeltaAdd,
     DeltaSub,
     DeltaTake,
@@ -543,6 +548,7 @@ impl RefComponent {
             ("state", "write-cell-get") => Ok(HostFn::WriteCellGet),
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
             ("state", "write-cell-take") => Ok(HostFn::WriteTake),
+            ("state", "issuer-take") => Ok(HostFn::IssuerTake),
             ("state", "delta-cell-add") => Ok(HostFn::DeltaAdd),
             ("state", "delta-cell-sub") => Ok(HostFn::DeltaSub),
             ("state", "delta-cell-take") => Ok(HostFn::DeltaTake),
@@ -1434,6 +1440,7 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                 CompFunc::Host(
                     HostFn::WriteCellSet
                     | HostFn::WriteTake
+                    | HostFn::IssuerTake
                     | HostFn::DeltaAdd
                     | HostFn::DeltaSub
                     | HostFn::DeltaTake
@@ -1558,6 +1565,16 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                             self.host.delta_take(rep, amount)
                         };
                         let bucket = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
+                    }
+                    HostFn::IssuerTake => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
+                        let amount = flat_amount(args[1], args[2]);
+                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        let bucket = self
+                            .host
+                            .issuer_take(rep, amount)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
                     HostFn::ReserveTake => {

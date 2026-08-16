@@ -37,7 +37,7 @@ pub use {
     call::{CellKind, HostArg, Returned, call_export},
     engine::{blessed_config, blessed_engine},
     world::{
-        Bucket, DeltaCell, HostRefusal, KernelHost, LockedCell, RangeRead, RangeWrite, ReadCell,
-        ReserveCell, WriteCell, add_kernel_to_linker,
+        Bucket, DeltaCell, HostRefusal, Issuer, KernelHost, LockedCell, RangeRead, RangeWrite,
+        ReadCell, ReserveCell, WriteCell, add_kernel_to_linker,
     },
 };

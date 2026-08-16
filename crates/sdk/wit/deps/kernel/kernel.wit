@@ -42,6 +42,15 @@ interface state {
     /// noticing that value was dropped is what a handle buys.
     resource bucket;
 
+    /// The authority to create value.
+    ///
+    /// Granted to an invocation whose method declares an output the
+    /// instance issues itself, and to no other — so a body that never
+    /// said it produces what it issues has no handle to name and cannot.
+    /// The grant carries no resource: which one the value is denominated
+    /// in is what the method's declared outputs say.
+    resource issuer;
+
     /// A declared fresh read of one substate.
     resource read-cell;
     /// A read of one permanently locked substate.
@@ -94,6 +103,14 @@ interface state {
 
     /// The reserved amount this transaction holds.
     reserve-cell-amount: func(c: borrow<reserve-cell>) -> amount;
+
+    /// Create `amount` of the resource this invocation issues.
+    ///
+    /// The one place a bucket appears with no cell debited behind it, and
+    /// the reason it needs a handle rather than a function: what a body
+    /// may issue is fixed before it runs, by the declaration the grant
+    /// was read off.
+    issuer-take: func(i: borrow<issuer>, amount: amount) -> own<bucket>;
 
     /// Take the reservation, as the value it grants.
     ///

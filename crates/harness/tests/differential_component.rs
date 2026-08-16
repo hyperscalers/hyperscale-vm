@@ -297,9 +297,11 @@ fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, 
             ResourceKind::ReserveCell => call1::<ReserveCell>(&mut store, &instance, export, *rep),
             ResourceKind::RangeRead => call1::<RangeRead>(&mut store, &instance, export, *rep),
             ResourceKind::RangeWrite => call1::<RangeWrite>(&mut store, &instance, export, *rep),
-            // Nothing this fixture exports takes value; the bucket lane
-            // drives the owned handle.
-            ResourceKind::Bucket => return Err(format_err!("{export} takes no bucket")),
+            // Nothing this fixture exports takes value or issues any;
+            // the bucket lane drives both.
+            ResourceKind::Bucket | ResourceKind::Issuer => {
+                return Err(format_err!("{export} takes no value handle"));
+            }
         },
         _ => return Err(format_err!("unexpected arg shape for {export}")),
     };

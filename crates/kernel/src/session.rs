@@ -79,6 +79,12 @@ pub enum Capability {
     },
 }
 
+/// The rep an issuance grant is handed out under.
+///
+/// An invocation is granted issuance or it is not, so there is one, and
+/// the constant is what says the number carries no information.
+pub const ISSUER_REP: u32 = 0;
+
 /// Why materialization refused a declared effect set — each an abort
 /// before any guest execution.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -158,6 +164,10 @@ pub enum SessionTrap {
     /// leaves the kernel once.
     #[error("reservation already taken")]
     ReservationTaken,
+    /// An issue by an invocation that was granted none — unreachable
+    /// through a lowered handle, kept as an honest error.
+    #[error("this invocation issues nothing")]
+    IssuanceUngranted,
     /// A stored cell a movement reads as an amount and cannot: a defect
     /// in state rather than in the call that found it.
     #[error("substate {0:?} is not an amount cell")]
@@ -194,6 +204,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::WriteCapExceeded { .. } => Self::IntervalWriteCapExceeded,
             SessionTrap::ReservationMissing => Self::ReservationMissing,
             SessionTrap::ReservationTaken => Self::ReservationAlreadyTaken,
+            SessionTrap::IssuanceUngranted => Self::IssuanceUngranted,
             SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
             SessionTrap::CellUnderflow => Self::CellUnderflow,
             SessionTrap::NoInvocation => Self::EmissionOutsideInvocation,
@@ -430,6 +441,16 @@ pub struct KernelSession {
     /// and the kernel cannot invert a cell key to recover one, so a field
     /// for it would be right in one case and a guess in the rest.
     buckets: Vec<Option<u128>>,
+    /// Whether the executing invocation may create value.
+    ///
+    /// One bit rather than a table of resources. What a grant fixes is
+    /// *whether* a body may bring a bucket into existence with no cell
+    /// debited behind it; which resource that value is denominated in is
+    /// the method's declared outputs' answer, wherever the question is
+    /// asked. The bit reaches the guest as a handle all the same, so it
+    /// is visible in the export's own type and a body that was granted
+    /// nothing has nothing to name.
+    issuance: bool,
     /// Reservations already taken, by capability rep.
     ///
     /// A grant answers once. The read this replaces answered every time
@@ -526,6 +547,7 @@ impl KernelSession {
             invocation: None,
             events: Vec::new(),
             buckets: Vec::new(),
+            issuance: false,
             taken: BTreeSet::new(),
         })
     }
@@ -787,6 +809,34 @@ impl KernelSession {
         Ok(self.open_bucket(amount))
     }
 
+    /// Create `amount` of what this invocation issues, as a bucket.
+    ///
+    /// The one bucket with no cell behind it. `rep` names the grant, of
+    /// which an invocation has at most one — the handle's whole content
+    /// is that it exists.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`], including a take against a grant this
+    /// invocation was never given.
+    pub fn issuer_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
+        if rep != ISSUER_REP {
+            return Err(SessionTrap::UnknownHandle(rep));
+        }
+        if !self.issuance {
+            return Err(SessionTrap::IssuanceUngranted);
+        }
+        Ok(self.open_bucket(amount))
+    }
+
+    /// Grant the executing invocation the authority to issue.
+    ///
+    /// Read off the method's own declaration by whoever entered the node;
+    /// entering the next one takes it away again.
+    pub const fn grant_issuance(&mut self) {
+        self.issuance = true;
+    }
+
     /// Take the reservation this capability holds, as a bucket.
     ///
     /// Once per capability: the grant is a quantity the kernel judged and
@@ -993,12 +1043,16 @@ impl KernelSession {
     /// node names its target and the session does not.
     pub const fn enter_invocation(&mut self, emitter: Address) {
         self.invocation = Some(emitter);
+        // Issuance is one node's, granted from that node's own
+        // declaration, so entering the next one starts from nothing.
+        self.issuance = false;
     }
 
     /// Leave the current invocation. An emission outside one is a runner
     /// defect and traps rather than guessing an emitter.
     pub const fn leave_invocation(&mut self) {
         self.invocation = None;
+        self.issuance = false;
     }
 
     /// Emit an event from the executing instance.

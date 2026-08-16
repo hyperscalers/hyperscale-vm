@@ -68,6 +68,8 @@ impl From<Amount> for u128 {
 /// the one whose handle table entry the guest can discard — which is why
 /// it is the only one whose destructor does anything.
 pub struct Bucket;
+/// Host-side marker for the `issuer` resource.
+pub struct Issuer;
 /// Host-side marker for the `read-cell` resource.
 pub struct ReadCell;
 /// Host-side marker for the `locked-cell` resource.
@@ -134,6 +136,14 @@ pub trait KernelHost: Send {
     ///
     /// A deterministic refusal.
     fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
+
+    /// Create value under this invocation's issuance grant, returning
+    /// the bucket's rep.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal, including an invocation granted none.
+    fn issuer_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
 
     /// Debit the amount cell and hand the value out as a bucket, whose
     /// rep this returns.
@@ -271,6 +281,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             store.data_mut().bucket_drop(rep).map_err(host_trap)
         },
     )?;
+    state.resource("issuer", ResourceType::host::<Issuer>(), |_, _| Ok(()))?;
     state.resource("read-cell", ResourceType::host::<ReadCell>(), |_, _| Ok(()))?;
     state.resource("locked-cell", ResourceType::host::<LockedCell>(), |_, _| {
         Ok(())
@@ -353,6 +364,17 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     // A take charges its amount argument and nothing for the handle it
     // yields: a bucket crosses as a table index, where the amount it
     // carries never crosses at all.
+    state.func_wrap(
+        "issuer-take",
+        |mut store: StoreContextMut<'_, T>, (i, amount): (Resource<Issuer>, Amount)| {
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            let rep = store
+                .data_mut()
+                .issuer_take(i.rep(), amount.into())
+                .map_err(host_trap)?;
+            Ok((Resource::<Bucket>::new_own(rep),))
+        },
+    )?;
     state.func_wrap(
         "write-cell-take",
         |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<WriteCell>, Amount)| {

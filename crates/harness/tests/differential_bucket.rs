@@ -18,14 +18,14 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    AbortReason, Capability, EnvInputs, KernelSession, MemoryStore, Outcome, OverlayStore, TxHash,
-    WorkingStore, encode_amount,
+    AbortReason, Capability, EnvInputs, ISSUER_REP, KernelSession, MemoryStore, Outcome,
+    OverlayStore, TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
 };
 use hyperscale_vm_runtime::{
-    Bucket, DeltaCell, HostRefusal, ReadCell, ReserveCell, WriteCell, add_kernel_to_linker,
+    Bucket, DeltaCell, HostRefusal, Issuer, ReadCell, ReserveCell, WriteCell, add_kernel_to_linker,
     blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
@@ -59,6 +59,8 @@ const fn env() -> EnvInputs {
 const RESERVED: u128 = 75;
 /// What the absolute vault holds before a take.
 const BALANCE: u128 = 100;
+/// The instance whose invocation the take lane runs inside.
+const ISSUER: Address = Address::new([0x80; 31], AddressClass::Component);
 
 struct Fixture {
     declared: EffectSet,
@@ -290,6 +292,10 @@ fn invoke(
 /// Which debit to drive, against which of the fixture's cells.
 #[derive(Clone, Copy)]
 enum Take {
+    /// Value created under the invocation's issuance grant.
+    Issue(u64),
+    /// The same, by an invocation granted none.
+    IssueUngranted(u64),
     /// A queued debit of `n` against the delta ledger.
     Delta(u64),
     /// An absolute debit of `n` against the amount vault.
@@ -305,6 +311,7 @@ enum Take {
 impl Take {
     const fn export(self) -> &'static str {
         match self {
+            Self::Issue(_) | Self::IssueUngranted(_) => "issue",
             Self::Delta(_) => "take-delta",
             Self::Vault(_) | Self::Opaque(_) => "take-write",
             Self::Reserve => "take-reserve",
@@ -312,20 +319,36 @@ impl Take {
         }
     }
 
-    /// The cell the take is aimed at and the mode it reaches it through.
-    const fn cell(self, fx: &Fixture) -> (SubstateKey, Mode) {
+    /// The cell the take debits, and the mode it reaches it through.
+    ///
+    /// Issuance has none: the grant rides the invocation rather than any
+    /// state, which is what makes it the one bucket with nothing behind
+    /// it.
+    const fn cell(self, fx: &Fixture) -> Option<(SubstateKey, Mode)> {
         match self {
-            Self::Delta(_) => (fx.ledger, Mode::Delta),
-            Self::Vault(_) => (fx.vault, Mode::Write),
-            Self::Opaque(_) => (fx.opaque, Mode::Write),
-            Self::Reserve | Self::ReserveTwice => (fx.reserved, Mode::Reserve { amount: RESERVED }),
+            Self::Issue(_) | Self::IssueUngranted(_) => None,
+            Self::Delta(_) => Some((fx.ledger, Mode::Delta)),
+            Self::Vault(_) => Some((fx.vault, Mode::Write)),
+            Self::Opaque(_) => Some((fx.opaque, Mode::Write)),
+            Self::Reserve | Self::ReserveTwice => {
+                Some((fx.reserved, Mode::Reserve { amount: RESERVED }))
+            }
         }
+    }
+
+    /// Whether the invocation driving this take was granted issuance.
+    const fn granted(self) -> bool {
+        matches!(self, Self::Issue(_))
     }
 
     /// The amount the export takes, where the mode has the body name one.
     const fn amount(self) -> Option<u64> {
         match self {
-            Self::Delta(n) | Self::Vault(n) | Self::Opaque(n) => Some(n),
+            Self::Issue(n)
+            | Self::IssueUngranted(n)
+            | Self::Delta(n)
+            | Self::Vault(n)
+            | Self::Opaque(n) => Some(n),
             Self::Reserve | Self::ReserveTwice => None,
         }
     }
@@ -349,22 +372,33 @@ fn take_blessed(fx: &Fixture, take: Take) -> Result<(Took, SessionHost, u64)> {
     let component = Component::new(&engine, &bytes)?;
     let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
-    let host = SessionHost(materialize(fx));
-    let (key, mode) = take.cell(fx);
-    let rep = rep_of(&host, key, mode);
+    let mut host = SessionHost(materialize(fx));
+    host.0.enter_invocation(ISSUER);
+    if take.granted() {
+        host.0.grant_issuance();
+    }
+    let cell = take
+        .cell(fx)
+        .map(|(key, mode)| (rep_of(&host, key, mode), mode));
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
 
     let export = take.export();
-    let produced = match (mode, take.amount()) {
-        (Mode::Delta, Some(n)) => instance
+    let produced = match (cell, take.amount()) {
+        (None, amount) => instance
+            .get_typed_func::<(Resource<Issuer>, u64), (Resource<Bucket>,)>(&mut store, export)?
+            .call(
+                &mut store,
+                (Resource::new_borrow(ISSUER_REP), amount.unwrap_or(0)),
+            ),
+        (Some((rep, Mode::Delta)), Some(n)) => instance
             .get_typed_func::<(Resource<DeltaCell>, u64), (Resource<Bucket>,)>(&mut store, export)?
             .call(&mut store, (Resource::new_borrow(rep), n)),
-        (Mode::Write, Some(n)) => instance
+        (Some((rep, Mode::Write)), Some(n)) => instance
             .get_typed_func::<(Resource<WriteCell>, u64), (Resource<Bucket>,)>(&mut store, export)?
             .call(&mut store, (Resource::new_borrow(rep), n)),
-        _ => instance
+        (Some((rep, _)), _) => instance
             .get_typed_func::<(Resource<ReserveCell>,), (Resource<Bucket>,)>(&mut store, export)?
             .call(&mut store, (Resource::new_borrow(rep),)),
     };
@@ -385,14 +419,23 @@ fn take_blessed(fx: &Fixture, take: Take) -> Result<(Took, SessionHost, u64)> {
 fn take_ref(fx: &Fixture, take: Take) -> Result<(Took, SessionHost, u64)> {
     let bytes = parse_str(BUCKET_GUEST_WAT)?;
     let comp = RefComponent::decode(&bytes)?;
-    let host = SessionHost(materialize(fx));
-    let (key, mode) = take.cell(fx);
-    let kind = match mode {
-        Mode::Delta => ResourceKind::DeltaCell,
-        Mode::Write => ResourceKind::WriteCell,
-        _ => ResourceKind::ReserveCell,
+    let mut host = SessionHost(materialize(fx));
+    host.0.enter_invocation(ISSUER);
+    if take.granted() {
+        host.0.grant_issuance();
+    }
+    let (rep, kind) = match take.cell(fx) {
+        None => (ISSUER_REP, ResourceKind::Issuer),
+        Some((key, mode)) => (
+            rep_of(&host, key, mode),
+            match mode {
+                Mode::Delta => ResourceKind::DeltaCell,
+                Mode::Write => ResourceKind::WriteCell,
+                _ => ResourceKind::ReserveCell,
+            },
+        ),
     };
-    let mut args = vec![CVal::Borrow(rep_of(&host, key, mode), kind)];
+    let mut args = vec![CVal::Borrow(rep, kind)];
     args.extend(take.amount().map(CVal::U64));
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
@@ -495,6 +538,25 @@ fn a_stored_cell_that_is_not_an_amount_is_the_states_defect() -> Result<()> {
     let fx = fixture();
     let (opaque, _) = both(&fx, Take::Opaque(1))?;
     assert_eq!(opaque, Took::Refusal(AbortReason::MalformedAmountCell));
+    Ok(())
+}
+
+#[test]
+fn issuance_is_the_one_bucket_with_no_cell_behind_it() -> Result<()> {
+    let fx = fixture();
+    let (issued, _) = both(&fx, Take::Issue(9))?;
+    assert_eq!(issued, Took::Value(9));
+    Ok(())
+}
+
+#[test]
+fn an_invocation_granted_nothing_issues_nothing() -> Result<()> {
+    let fx = fixture();
+    let (refused, _) = both(&fx, Take::IssueUngranted(9))?;
+    // The handle is what a declaration grants, so a body that declared no
+    // issued output has nothing to name — and reaching for one anyway is
+    // the same refusal on both engines.
+    assert_eq!(refused, Took::Refusal(AbortReason::IssuanceUngranted));
     Ok(())
 }
 

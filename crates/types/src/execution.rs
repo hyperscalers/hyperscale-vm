@@ -128,6 +128,8 @@ pub enum AbortReason {
     /// A second take of one reservation: the grant leaves the kernel
     /// once, so asking again is asking for value no hold covers.
     ReservationAlreadyTaken,
+    /// An issue by an invocation whose declaration granted it none.
+    IssuanceUngranted,
     /// An emission outside any invocation, so the kernel has no address
     /// to stamp.
     EmissionOutsideInvocation,
