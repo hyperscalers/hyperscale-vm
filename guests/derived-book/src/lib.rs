@@ -1,0 +1,66 @@
+//! The order book, as one module: makers place asks into a declared
+//! interval, takers fill by price-time priority within it.
+
+use hyperscale_vm_sdk::blueprint;
+
+#[blueprint]
+pub mod book {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Amount, Bucket, Keyed, Locked, Ordered, fresh_id, pack};
+
+    /// The book's creation-fixed pair.
+    struct Pair {
+        base: Address,
+        quote: Address,
+    }
+
+    #[state]
+    struct Book {
+        #[role(16)]
+        asks: Ordered<u128>,
+        #[role(1)]
+        vaults: Keyed<Amount>,
+        #[role(3)]
+        config: Locked<Pair>,
+    }
+
+    impl Book {
+        /// Insert an ask at `price`, escrowing the maker's funds.
+        #[name("place-ask")]
+        pub fn place_ask(&mut self, price: u64, funds: Bucket) {
+            // Price over a fresh sequence id: unique without reading the
+            // book, which is what lets the entry key be declared.
+            self.asks.at(pack(price, fresh_id())).set(funds.amount());
+            self.vaults.at(funds.resource()).add(funds.amount());
+        }
+
+        /// Buy base within the declared price interval, best price first.
+        #[name("fill-asks")]
+        pub fn fill_asks(&mut self, from: u64, to: u64, payment: Bucket) -> (Bucket, Bucket) {
+            // The whole tiebreaker span at each end, so the interval covers
+            // every sequence at the boundary prices.
+            let mut asks = self.asks.range(pack(from, 0), pack(to, u64::MAX), 64);
+            let mut bought = 0;
+            let mut spent = 0;
+
+            let mut index = 0;
+            while index < asks.count() {
+                let size = asks.entry(index);
+                bought += size;
+                spent += size;
+                asks.remove(index);
+                index += 1;
+            }
+
+            // Note the config fields are read without pinning the leaf:
+            // configuration is locked state, consultable without a claim.
+            self.vaults.at(self.config.base).sub(bought);
+            self.vaults.at(payment.resource()).add(spent);
+
+            (
+                Bucket::of(self.config.base, bought),
+                Bucket::of(payment.resource(), payment.amount() - spent),
+            )
+        }
+    }
+}

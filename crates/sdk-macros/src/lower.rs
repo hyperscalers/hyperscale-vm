@@ -1,4 +1,4 @@
-//! Lowering a method body to its access declaration.
+//! Lowering a method body to its access declaration and its guest code.
 //!
 //! A syntactic dataflow pass, not an interpreter. It walks statements in
 //! order, tracks what each local holds as a [`Slot`], and records every
@@ -22,10 +22,26 @@
 //!   touches. The VM already supports this — it prices the superset through
 //!   `footprint` rather than rejecting it — which is what lets ordinary
 //!   control flow survive the pass.
+//!
+//! # One walk, two outputs
+//!
+//! The same walk produces the executing body. Every expression evaluates
+//! to a [`Val`] — what the declaration learns — beside a [`Code`] — what
+//! the guest runs. The two cannot be derived from one another and they
+//! cannot be walked apart: which handle `self.vaults.at(k)` resolves to is
+//! the declaration's answer, and rewriting the call to that handle is the
+//! guest's, so a second pass would be a second opinion on the same
+//! question.
+//!
+//! What the guest reaches through an export parameter rather than
+//! computes is what [`Need`] enumerates, and it is why the binding is not
+//! a function of the declaration: an argument consumed as key material
+//! never reaches the guest, and a fresh id the guest never draws does.
 
 use std::collections::BTreeMap;
 
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream};
+use quote::quote;
 use syn::spanned::Spanned;
 
 use crate::term::{Op, Slot, Term};
@@ -53,10 +69,13 @@ pub struct Field {
     pub role: u16,
     /// What shape of state it is.
     pub kind: FieldKind,
+    /// The value each leaf holds, which is what a guest accessor decodes
+    /// into.
+    pub element: Option<syn::Type>,
 }
 
 /// One target a body opened a handle on.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
     /// A single substate leaf under a role.
     Point {
@@ -108,6 +127,43 @@ pub struct Site {
     pub target: Target,
     /// The operations, in order; the mode is their fold.
     pub ops: Vec<(Op, Option<Term>)>,
+    /// The value each leaf under this handle holds.
+    pub element: Option<syn::Type>,
+}
+
+impl Site {
+    /// The kernel resource this site's handle borrows, which is its mode
+    /// and its target shape together.
+    ///
+    /// `None` for a site the body opened and never used: it declares
+    /// nothing, so there is no handle for the export to take.
+    pub fn resource(&self) -> Option<&'static str> {
+        let has = |op: Op| self.ops.iter().any(|(o, _)| *o == op);
+        let interval = matches!(
+            self.target,
+            Target::Entry { .. }
+                | Target::Range { .. }
+                | Target::KeyedEntry { .. }
+                | Target::Sweep { .. }
+        );
+        Some(match (interval, has(Op::Set), has(Op::Get)) {
+            (true, true, _) => "range-write",
+            (true, false, true) => "range-read",
+            (false, true, _) => "write-cell",
+            (false, false, true) => "read-cell",
+            (_, false, false) => {
+                if has(Op::Reserve) {
+                    "reserve-cell"
+                } else if has(Op::Delta) {
+                    "delta-cell"
+                } else if has(Op::Locked) {
+                    "locked-cell"
+                } else {
+                    return None;
+                }
+            }
+        })
+    }
 }
 
 /// The declaration's clause structure: sites in declaration order, with
@@ -127,7 +183,37 @@ pub enum Node {
     },
 }
 
-/// What one lowered method declares.
+/// A runtime value the guest reaches through an export parameter because
+/// it cannot compute it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Need {
+    /// A value the kernel evaluates over the call's bound inputs.
+    Derived(Term),
+    /// The runtime amount of a bucket parameter — the one value the
+    /// declaration cannot name.
+    Amount(u32),
+}
+
+/// What a subexpression evaluated to, on the guest's side.
+#[derive(Clone, Debug)]
+pub enum Code {
+    /// Code the guest runs as it stands.
+    Rust(TokenStream),
+    /// A declared term. The guest reaches it only through an export
+    /// parameter, so one is bound where a value is actually wanted and
+    /// nowhere else — which is what keeps key material out of the ABI.
+    Term(Term),
+    /// A bucket parameter, which the guest holds under the name the
+    /// author gave it. Deferred like a term: an edge a method only
+    /// forwards is one whose amount its own guest never reads, and
+    /// nothing in its ABI carries it.
+    Bucket(u32),
+    /// Nothing the guest can produce: a resource address, a table lookup,
+    /// a handle in value position.
+    Absent(&'static str),
+}
+
+/// What one lowered method declares, and what its guest export runs.
 #[derive(Clone, Debug, Default)]
 pub struct Lowered {
     /// Every handle site, in the order the body opened them.
@@ -136,6 +222,24 @@ pub struct Lowered {
     pub nodes: Vec<Node>,
     /// The resources of the value edges the method produces.
     pub outputs: Vec<Term>,
+    /// The sites whose handles the export takes, in binding order.
+    pub handles: Vec<usize>,
+    /// The values the export takes, in the order the body needs them.
+    pub values: Vec<Need>,
+    /// How many fresh ids the body draws.
+    pub fresh: usize,
+    /// The rewritten statements, executing against materialized handles.
+    pub body: TokenStream,
+    /// The tail that turns what the body computed into the byte list the
+    /// export convention fixes.
+    pub result: TokenStream,
+    /// Whether the method yields a value at all.
+    pub returns: bool,
+    /// Why the guest half cannot be emitted, if it cannot. The
+    /// declaration still stands: the publish gate judges artifacts, so a
+    /// package the SDK cannot execute is one whose guest is written the
+    /// long way.
+    pub refusal: Option<String>,
 }
 
 /// What a subexpression evaluated to.
@@ -168,6 +272,33 @@ impl From<Slot> for Val {
             Slot::Produced(term) => Self::Produced(term),
             Slot::Config => Self::Config,
             Slot::Opaque => Self::Opaque,
+        }
+    }
+}
+
+/// One expression's two readings: what the declaration learns, and what
+/// the guest runs.
+#[derive(Clone, Debug)]
+struct Eval {
+    val: Val,
+    code: Code,
+}
+
+impl Eval {
+    /// An expression the declaration reads nothing from, rewritten
+    /// verbatim.
+    const fn plain(code: TokenStream) -> Self {
+        Self {
+            val: Val::Opaque,
+            code: Code::Rust(code),
+        }
+    }
+
+    /// An expression neither reading names anything.
+    const fn absent(why: &'static str) -> Self {
+        Self {
+            val: Val::Opaque,
+            code: Code::Absent(why),
         }
     }
 }
@@ -211,11 +342,34 @@ fn is_self(expr: &syn::Expr) -> bool {
     matches!(expr, syn::Expr::Path(path) if path.path.is_ident("self"))
 }
 
+/// The generated name of the `index`-th bound export value.
+pub fn value_ident(index: usize) -> syn::Ident {
+    syn::Ident::new(&format!("__value_{index}"), Span::call_site())
+}
+
+/// The generated name of the `index`-th bound handle.
+pub fn handle_ident(index: usize) -> syn::Ident {
+    syn::Ident::new(&format!("__capability_{index}"), Span::call_site())
+}
+
+/// The `Handle` variant a borrowed resource arrives as.
+pub fn handle_variant(resource: &str) -> TokenStream {
+    match resource {
+        "read-cell" => quote!(Read),
+        "locked-cell" => quote!(Locked),
+        "write-cell" => quote!(Write),
+        "delta-cell" => quote!(Delta),
+        "reserve-cell" => quote!(Reserve),
+        "range-read" => quote!(RangeRead),
+        _ => quote!(RangeWrite),
+    }
+}
+
 /// The lowering pass over one method body.
 pub struct Lowerer<'a> {
     fields: &'a BTreeMap<String, Field>,
-    config_fields: &'a [String],
-    params: &'a [String],
+    config_fields: &'a [(String, syn::Type)],
+    params: &'a [(String, syn::Type)],
     locals: Vec<BTreeMap<String, Slot>>,
     out: Lowered,
     /// The clause scopes being built, innermost last.
@@ -227,8 +381,8 @@ impl<'a> Lowerer<'a> {
     /// Start a pass over a method with these positional parameters.
     pub fn new(
         fields: &'a BTreeMap<String, Field>,
-        config_fields: &'a [String],
-        params: &'a [String],
+        config_fields: &'a [(String, syn::Type)],
+        params: &'a [(String, syn::Type)],
     ) -> Self {
         Self {
             fields,
@@ -249,17 +403,24 @@ impl<'a> Lowerer<'a> {
     pub fn run(mut self, block: &syn::Block) -> Result<Lowered, Vec<syn::Error>> {
         self.locals.push(BTreeMap::new());
         let (body, tail) = split_tail(block);
+        let mut statements = Vec::new();
         for stmt in body {
-            self.stmt(stmt);
+            statements.push(self.stmt(stmt));
         }
-        if let Some(tail) = tail {
-            let value = self.returned(tail);
-            self.out.outputs = value;
-        }
+        let returned = if let Some(tail) = tail {
+            let (outputs, codes) = self.returned(tail);
+            self.out.outputs = outputs;
+            codes
+        } else {
+            Vec::new()
+        };
         self.locals.pop();
 
         if self.errors.is_empty() {
             self.out.nodes = self.scopes.pop().unwrap_or_default();
+            self.out.body = quote!(#(#statements)*);
+            self.out.returns = !returned.is_empty();
+            self.out.result = result_code(&returned);
             Ok(self.out)
         } else {
             Err(self.errors)
@@ -267,22 +428,48 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Evaluate an expression in return position, collecting the resources
-    /// of every value edge it yields.
-    fn returned(&mut self, expr: &syn::Expr) -> Vec<Term> {
+    /// of every value edge it yields beside the guest code for its amount.
+    fn returned(&mut self, expr: &syn::Expr) -> (Vec<Term>, Vec<TokenStream>) {
         match expr {
-            syn::Expr::Tuple(tuple) => tuple
-                .elems
-                .iter()
-                .filter_map(|element| match self.expr(element) {
-                    Val::Produced(term) => Some(term),
-                    _ => None,
-                })
-                .collect(),
+            syn::Expr::Tuple(tuple) => {
+                let mut outputs = Vec::new();
+                let mut codes = Vec::new();
+                for element in &tuple.elems {
+                    let eval = self.expr(element);
+                    if let Val::Produced(term) = &eval.val {
+                        outputs.push(term.clone());
+                        let code = self.value(eval.code);
+                        codes.push(quote!(#code.amount()));
+                    }
+                }
+                (outputs, codes)
+            }
             syn::Expr::Paren(paren) => self.returned(&paren.expr),
-            other => match self.expr(other) {
-                Val::Produced(term) => vec![term],
-                _ => vec![],
-            },
+            // An error arm's success side is where the edges are: the arm
+            // itself is the declared refusal, and a refusal produces
+            // nothing.
+            syn::Expr::Call(call) if free_call_name(call).as_deref() == Some("Ok") => call
+                .args
+                .first()
+                .map_or_else(|| (vec![], vec![]), |inner| self.returned(inner)),
+            other => {
+                let eval = self.expr(other);
+                #[allow(clippy::single_match_else)] // the arms are two different returns
+                match &eval.val {
+                    Val::Produced(term) => {
+                        let term = term.clone();
+                        let code = self.value(eval.code);
+                        (vec![term], vec![quote!(#code.amount())])
+                    }
+                    _ => {
+                        // A method returning something that is not an edge
+                        // still returns it: the convention is one byte
+                        // list, so the value crosses as its cell.
+                        let code = self.value(eval.code);
+                        (vec![], vec![quote!(#code)])
+                    }
+                }
+            }
         }
     }
 
@@ -292,6 +479,14 @@ impl<'a> Lowerer<'a> {
 
     fn error(&mut self, span: Span, message: &str) {
         self.errors.push(syn::Error::new(span, message));
+    }
+
+    /// Record why the guest half cannot be emitted, keeping the first
+    /// reason: the rest are usually consequences of it.
+    fn refuse(&mut self, why: &str) {
+        if self.out.refusal.is_none() {
+            self.out.refusal = Some(why.to_owned());
+        }
     }
 
     fn bind(&mut self, name: String, slot: Slot) {
@@ -313,11 +508,22 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn open(&mut self, target: Target) -> usize {
+    /// Open a handle on `target`, or answer the one already open on it.
+    ///
+    /// Two accesses to one target are one handle, because the evaluated
+    /// effect set folds them anyway and the kernel materializes one
+    /// capability per clause. Folding here is also what holds a cell a
+    /// body reads and writes to a single `Write`, rather than declaring
+    /// the leaf twice under modes that exclude each other.
+    fn open(&mut self, target: Target, element: Option<syn::Type>) -> usize {
+        if let Some(index) = self.out.sites.iter().position(|s| s.target == target) {
+            return index;
+        }
         let index = self.out.sites.len();
         self.out.sites.push(Site {
             target,
             ops: Vec::new(),
+            element,
         });
         self.push_node(Node::Site(index));
         index
@@ -343,7 +549,10 @@ impl<'a> Lowerer<'a> {
                 .ops
                 .iter()
                 .all(|(prior, _)| matches!(prior, Op::Delta)),
-            Op::Reserve | Op::Locked => entry.ops.is_empty(),
+            Op::Reserve | Op::Locked => entry
+                .ops
+                .iter()
+                .all(|(prior, _)| *prior == op && op == Op::Locked),
         };
         if compatible {
             entry.ops.push((op, param));
@@ -357,32 +566,144 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    // ---- statements -----------------------------------------------------
+    // ---- guest values ---------------------------------------------------
 
-    fn block(&mut self, block: &syn::Block) {
-        self.locals.push(BTreeMap::new());
-        for stmt in &block.stmts {
-            self.stmt(stmt);
+    /// The guest code for a value, binding an export parameter where the
+    /// guest cannot compute one.
+    fn value(&mut self, code: Code) -> TokenStream {
+        match code {
+            Code::Rust(tokens) => tokens,
+            Code::Term(term) => self.term_value(&term),
+            Code::Bucket(param) => self.need(&Need::Amount(param)),
+            Code::Absent(why) => {
+                self.refuse(&format!(
+                    "this value is not one a guest can reach: {why}. The declaration \
+                     stands; the executing body has to be written the long way"
+                ));
+                quote!(::core::unimplemented!())
+            }
         }
-        self.locals.pop();
     }
 
-    fn stmt(&mut self, stmt: &syn::Stmt) {
+    /// The guest code for a declared term.
+    fn term_value(&mut self, term: &Term) -> TokenStream {
+        match term {
+            Term::LitU64(value) => quote!(#value),
+            Term::Pack { hi, lo } => {
+                // `pack` is ordinary arithmetic, so the guest folds the
+                // two halves itself rather than taking the packed key —
+                // which is what makes a price and a sequence id two
+                // parameters instead of one opaque cell.
+                let hi = self.term_value(hi);
+                let lo = self.term_value(lo);
+                quote!(::hyperscale_vm_sdk::state::pack(#hi, #lo))
+            }
+            // Everything the evaluator can reach from the call's own
+            // inputs is a value the kernel hands over: a resource is one
+            // of those, evaluated from the declaration rather than taken
+            // from the guest, so a body that reads one cannot disagree
+            // with what its signature says the edge carries.
+            Term::Arg(_) | Term::Config(_) | Term::FreshId(_) | Term::ResourceOf(_) => {
+                self.need(&Need::Derived(term.clone()))
+            }
+            Term::Lookup { .. } | Term::Field(..) | Term::Binding(_) => {
+                self.refuse(
+                    "this term is evaluated where the declaration is, and the guest \
+                     has no way to ask for it",
+                );
+                quote!(::core::unimplemented!())
+            }
+        }
+    }
+
+    /// The export parameter carrying `need`, binding one if the body has
+    /// not needed it before.
+    fn need(&mut self, need: &Need) -> TokenStream {
+        let index = self
+            .out
+            .values
+            .iter()
+            .position(|held| held == need)
+            .unwrap_or_else(|| {
+                self.out.values.push(need.clone());
+                self.out.values.len() - 1
+            });
+        match need {
+            // A bucket parameter is bound under the author's own name, so
+            // `funds.amount()` in a body is `funds.amount()` in the
+            // guest rather than a decoded local wearing the same meaning.
+            // A value edge is `Copy`: it is a resource and an amount,
+            // and neither is owned by the body holding it.
+            Need::Amount(param) => {
+                let ident = self.param_ident(*param);
+                quote!(#ident)
+            }
+            Need::Derived(_) => {
+                let ident = value_ident(index);
+                quote!(#ident.clone())
+            }
+        }
+    }
+
+    /// The author's own name for the `index`-th declared parameter.
+    fn param_ident(&self, index: u32) -> syn::Ident {
+        self.params.get(index as usize).map_or_else(
+            || value_ident(index as usize),
+            |(name, _)| syn::Ident::new(name, Span::call_site()),
+        )
+    }
+
+    /// Bind the handle for `site` as an export parameter, and answer the
+    /// `Handle` the accessors take.
+    fn handle(&mut self, site: usize, span: Span) -> TokenStream {
+        if self.depth() != 0 {
+            self.error(
+                span,
+                "a clause under a `for-each` has a configuration-dependent handle \
+                 count, so it cannot occupy a fixed export parameter",
+            );
+        }
+        let index = self
+            .out
+            .handles
+            .iter()
+            .position(|held| *held == site)
+            .unwrap_or_else(|| {
+                self.out.handles.push(site);
+                self.out.handles.len() - 1
+            });
+        let ident = handle_ident(index);
+        quote!(#ident)
+    }
+
+    // ---- statements -----------------------------------------------------
+
+    fn block(&mut self, block: &syn::Block) -> TokenStream {
+        self.locals.push(BTreeMap::new());
+        let statements: Vec<_> = block.stmts.iter().map(|stmt| self.stmt(stmt)).collect();
+        self.locals.pop();
+        quote!({ #(#statements)* })
+    }
+
+    fn stmt(&mut self, stmt: &syn::Stmt) -> TokenStream {
         match stmt {
             syn::Stmt::Local(local) => {
-                let value = local
-                    .init
-                    .as_ref()
-                    .map_or(Val::Opaque, |init| self.expr(&init.expr));
-                if let Some(init) = &local.init
-                    && let Some((_, diverge)) = &init.diverge
+                let eval = local.init.as_ref().map_or_else(
+                    || Eval::absent("an uninitialised binding"),
+                    |init| self.expr(&init.expr),
+                );
+                let diverge = if let Some(init) = &local.init
+                    && let Some((_, branch)) = &init.diverge
                 {
-                    self.expr(diverge);
-                }
-                let slot = match value {
-                    Val::Term(term) => Slot::Value(term),
-                    Val::Handle(index) => Slot::Handle(index),
-                    Val::Produced(term) => Slot::Produced(term),
+                    let branch = self.expr(branch);
+                    Some(self.value(branch.code))
+                } else {
+                    None
+                };
+                let slot = match &eval.val {
+                    Val::Term(term) => Slot::Value(term.clone()),
+                    Val::Handle(index) => Slot::Handle(*index),
+                    Val::Produced(term) => Slot::Produced(term.clone()),
                     // A locked config read binds a name whose *fields* are
                     // config slots; the binding itself is not a value.
                     Val::Config => Slot::Config,
@@ -396,14 +717,35 @@ impl<'a> Lowerer<'a> {
                     syn::Pat::Ident(ident) => self.bind(ident.ident.to_string(), slot),
                     other => self.bind_pattern(other),
                 }
+                if matches!(eval.code, Code::Absent(_)) {
+                    // The declaration read something the guest has no
+                    // value for. Whatever the body does with the name is
+                    // either evaluated elsewhere — a configuration field
+                    // is a slot the kernel hands over — or refused at the
+                    // line that reads it.
+                    return quote!();
+                }
+                let init = self.value(eval.code);
+                let pat = &local.pat;
+                let attrs = &local.attrs;
+                diverge.map_or_else(
+                    || quote!(#(#attrs)* let #pat = #init;),
+                    |branch| quote!(#(#attrs)* let #pat = #init else #branch;),
+                )
             }
-            syn::Stmt::Expr(expr, _) => {
-                self.expr(expr);
+            syn::Stmt::Expr(expr, semi) => {
+                let eval = self.expr(expr);
+                let code = self.value(eval.code);
+                semi.map_or_else(|| quote!(#code), |_| quote!(#code;))
             }
-            syn::Stmt::Macro(mac) => self.macro_call(&mac.mac),
+            syn::Stmt::Macro(mac) => {
+                let code = self.macro_call(&mac.mac);
+                let semi = mac.semi_token.map(|_| quote!(;));
+                quote!(#code #semi)
+            }
             // A nested item cannot capture the component, so it can hold no
             // state access.
-            syn::Stmt::Item(_) => {}
+            syn::Stmt::Item(item) => quote!(#item),
         }
     }
 
@@ -413,7 +755,7 @@ impl<'a> Lowerer<'a> {
     /// inside one declares like an access outside it. Any other macro is
     /// opaque tokens — walking past it would silently drop whatever it
     /// contains, so it is refused instead.
-    fn macro_call(&mut self, mac: &syn::Macro) {
+    fn macro_call(&mut self, mac: &syn::Macro) -> TokenStream {
         let known = ["assert", "assert_eq", "assert_ne", "panic"]
             .iter()
             .any(|name| mac.path.is_ident(name));
@@ -424,20 +766,30 @@ impl<'a> Lowerer<'a> {
                  be silently dropped from the declaration — only the assert and panic \
                  family are admitted",
             );
-            return;
+            return quote!();
         }
         let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+        #[allow(clippy::single_match_else)] // two returns over one refusal
         match mac.parse_body_with(parser) {
             Ok(args) => {
-                for arg in &args {
-                    self.expr(arg);
-                }
+                let rewritten: Vec<_> = args
+                    .iter()
+                    .map(|arg| {
+                        let eval = self.expr(arg);
+                        self.value(eval.code)
+                    })
+                    .collect();
+                let path = &mac.path;
+                quote!(#path!(#(#rewritten),*))
             }
-            Err(_) => self.error(
-                mac.span(),
-                "these macro arguments do not parse as expressions, so they cannot be \
-                 checked for state accesses",
-            ),
+            Err(_) => {
+                self.error(
+                    mac.span(),
+                    "these macro arguments do not parse as expressions, so they cannot be \
+                     checked for state accesses",
+                );
+                quote!()
+            }
         }
     }
 
@@ -496,16 +848,37 @@ impl<'a> Lowerer<'a> {
 
     // ---- expressions ----------------------------------------------------
 
-    #[allow(clippy::too_many_lines)]
-    fn expr(&mut self, expr: &syn::Expr) -> Val {
+    /// Walk `expr` and take only its guest code.
+    fn code(&mut self, expr: &syn::Expr) -> TokenStream {
+        let eval = self.expr(expr);
+        self.value(eval.code)
+    }
+
+    #[allow(clippy::too_many_lines)] // one arm per expression form the walk models
+    fn expr(&mut self, expr: &syn::Expr) -> Eval {
         match expr {
             syn::Expr::Path(path) => self.path(path),
             syn::Expr::Lit(lit) => Self::literal(lit),
             syn::Expr::Field(field) => self.field(field),
             syn::Expr::MethodCall(call) => self.method_call(call),
             syn::Expr::Call(call) => self.free_call(call),
-            syn::Expr::Reference(reference) => self.expr(&reference.expr),
-            syn::Expr::Paren(paren) => self.expr(&paren.expr),
+            syn::Expr::Reference(reference) => {
+                let inner = self.expr(&reference.expr);
+                let code = self.value(inner.code);
+                let and = &reference.mutability;
+                Eval {
+                    val: inner.val,
+                    code: Code::Rust(quote!(&#and #code)),
+                }
+            }
+            syn::Expr::Paren(paren) => {
+                let inner = self.expr(&paren.expr);
+                let code = self.value(inner.code);
+                Eval {
+                    val: inner.val,
+                    code: Code::Rust(quote!((#code))),
+                }
+            }
             syn::Expr::Group(group) => self.expr(&group.expr),
 
             // Control flow: both arms are declared, so the result is a
@@ -514,35 +887,46 @@ impl<'a> Lowerer<'a> {
             // pattern's names are bound opaquely for the taken branch.
             syn::Expr::If(branch) => {
                 self.locals.push(BTreeMap::new());
-                self.condition(&branch.cond);
-                self.block(&branch.then_branch);
+                let cond = self.condition(&branch.cond);
+                let then = self.block(&branch.then_branch);
                 self.locals.pop();
-                if let Some(otherwise) = &branch.else_branch {
-                    self.expr(&otherwise.1);
-                }
-                Val::Opaque
+                let otherwise = branch
+                    .else_branch
+                    .as_ref()
+                    .map(|(_, otherwise)| self.code(otherwise))
+                    .map(|code| quote!(else #code));
+                Eval::plain(quote!(if #cond #then #otherwise))
             }
             syn::Expr::Match(match_) => {
-                self.expr(&match_.expr);
-                for arm in &match_.arms {
-                    self.locals.push(BTreeMap::new());
-                    self.bind_pattern(&arm.pat);
-                    self.expr(&arm.body);
-                    self.locals.pop();
-                }
-                Val::Opaque
+                let scrutinee = self.code(&match_.expr);
+                let arms: Vec<_> = match_
+                    .arms
+                    .iter()
+                    .map(|arm| {
+                        self.locals.push(BTreeMap::new());
+                        // A guard is part of the pattern, and `bind_pattern`
+                        // walks it there.
+                        self.bind_pattern(&arm.pat);
+                        let body = self.code(&arm.body);
+                        self.locals.pop();
+                        let pat = &arm.pat;
+                        quote!(#pat => #body,)
+                    })
+                    .collect();
+                Eval::plain(quote!(match #scrutinee { #(#arms)* }))
             }
             syn::Expr::Block(block) => {
-                self.block(&block.block);
-                Val::Opaque
+                let label = &block.label;
+                let code = self.block(&block.block);
+                Eval::plain(quote!(#label #code))
             }
             syn::Expr::ForLoop(loop_) => {
-                self.for_loop(loop_);
-                Val::Opaque
+                let code = self.for_loop(loop_);
+                Eval::plain(code)
             }
             syn::Expr::Return(ret) => {
-                if let Some(value) = &ret.expr {
-                    let produced = self.returned(value);
+                let value = ret.expr.as_ref().map(|value| {
+                    let (produced, _) = self.returned(value);
                     if !produced.is_empty() {
                         self.error(
                             ret.span(),
@@ -551,8 +935,9 @@ impl<'a> Lowerer<'a> {
                              return's edges cannot be reconciled with the tail's",
                         );
                     }
-                }
-                Val::Opaque
+                    self.code(value)
+                });
+                Eval::plain(quote!(return #value))
             }
 
             // A `while` or `loop` introduces no binder, so it declares
@@ -564,19 +949,20 @@ impl<'a> Lowerer<'a> {
             // range clause covered them before the loop started.
             syn::Expr::While(loop_) => {
                 self.locals.push(BTreeMap::new());
-                self.condition(&loop_.cond);
-                self.block(&loop_.body);
+                let cond = self.condition(&loop_.cond);
+                let body = self.block(&loop_.body);
                 self.locals.pop();
-                Val::Opaque
+                Eval::plain(quote!(while #cond #body))
             }
             syn::Expr::Loop(loop_) => {
-                self.block(&loop_.body);
-                Val::Opaque
+                let body = self.block(&loop_.body);
+                Eval::plain(quote!(loop #body))
             }
             syn::Expr::Let(let_) => {
-                self.expr(&let_.expr);
+                let value = self.code(&let_.expr);
                 self.bind_pattern(&let_.pat);
-                Val::Opaque
+                let pat = &let_.pat;
+                Eval::plain(quote!(let #pat = #value))
             }
 
             // Assignment forgets the target's slot: after a conditional
@@ -584,85 +970,89 @@ impl<'a> Lowerer<'a> {
             // use as a key must be refused where it is used rather than
             // declare the stale key.
             syn::Expr::Assign(assign) => {
-                self.expr(&assign.right);
-                self.assign_target(&assign.left);
-                Val::Opaque
+                let right = self.code(&assign.right);
+                let left = self.assign_target(&assign.left);
+                Eval::plain(quote!(#left = #right))
             }
             syn::Expr::Binary(binary) => {
-                self.expr(&binary.left);
-                self.expr(&binary.right);
+                let left = self.code(&binary.left);
+                let right = self.code(&binary.right);
+                let op = binary.op;
                 if binary_op_assigns(binary.op) {
                     self.assign_target(&binary.left);
                 }
-                Val::Opaque
+                Eval::plain(quote!(#left #op #right))
             }
 
             // Forms that carry no access semantics of their own but can
             // contain accesses: walked exhaustively, evaluated to nothing.
             syn::Expr::Unary(unary) => {
-                self.expr(&unary.expr);
-                Val::Opaque
+                let inner = self.code(&unary.expr);
+                let op = unary.op;
+                Eval::plain(quote!(#op #inner))
             }
             syn::Expr::Tuple(tuple) => {
-                for element in &tuple.elems {
-                    self.expr(element);
-                }
-                Val::Opaque
+                let elements: Vec<_> = tuple.elems.iter().map(|e| self.code(e)).collect();
+                Eval::plain(quote!((#(#elements),*)))
             }
             // A cast can truncate, so the result is not the term it was
             // cast from.
             syn::Expr::Cast(cast) => {
-                self.expr(&cast.expr);
-                Val::Opaque
+                let inner = self.code(&cast.expr);
+                let ty = &cast.ty;
+                Eval::plain(quote!(#inner as #ty))
             }
             syn::Expr::Try(try_) => {
-                self.expr(&try_.expr);
-                Val::Opaque
+                let inner = self.code(&try_.expr);
+                Eval::plain(quote!(#inner?))
             }
             syn::Expr::Index(index) => {
-                self.expr(&index.expr);
-                self.expr(&index.index);
-                Val::Opaque
+                let base = self.code(&index.expr);
+                let subscript = self.code(&index.index);
+                Eval::plain(quote!(#base[#subscript]))
             }
             syn::Expr::Array(array) => {
-                for element in &array.elems {
-                    self.expr(element);
-                }
-                Val::Opaque
+                let elements: Vec<_> = array.elems.iter().map(|e| self.code(e)).collect();
+                Eval::plain(quote!([#(#elements),*]))
             }
             syn::Expr::Repeat(repeat) => {
-                self.expr(&repeat.expr);
-                self.expr(&repeat.len);
-                Val::Opaque
+                let element = self.code(&repeat.expr);
+                let len = self.code(&repeat.len);
+                Eval::plain(quote!([#element; #len]))
             }
             syn::Expr::Struct(strct) => {
-                for field in &strct.fields {
-                    self.expr(&field.expr);
-                }
-                if let Some(rest) = &strct.rest {
-                    self.expr(rest);
-                }
-                Val::Opaque
+                let path = &strct.path;
+                let fields: Vec<_> = strct
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        let member = &field.member;
+                        let value = self.code(&field.expr);
+                        quote!(#member: #value)
+                    })
+                    .collect();
+                let rest = strct
+                    .rest
+                    .as_ref()
+                    .map(|rest| self.code(rest))
+                    .map(|rest| quote!(..#rest));
+                Eval::plain(quote!(#path { #(#fields),* #rest }))
             }
             syn::Expr::Range(range) => {
-                if let Some(start) = &range.start {
-                    self.expr(start);
-                }
-                if let Some(end) = &range.end {
-                    self.expr(end);
-                }
-                Val::Opaque
+                let start = range.start.as_ref().map(|start| self.code(start));
+                let end = range.end.as_ref().map(|end| self.code(end));
+                let limits = &range.limits;
+                Eval::plain(quote!(#start #limits #end))
             }
             syn::Expr::Break(brk) => {
-                if let Some(value) = &brk.expr {
-                    self.expr(value);
-                }
-                Val::Opaque
+                let value = brk.expr.as_ref().map(|value| self.code(value));
+                let label = &brk.label;
+                Eval::plain(quote!(break #label #value))
             }
-            syn::Expr::Continue(_) => Val::Opaque,
+            syn::Expr::Continue(cont) => Eval::plain(quote!(#cont)),
             syn::Expr::Macro(mac) => {
-                self.macro_call(&mac.mac);
-                Val::Opaque
+                let code = self.macro_call(&mac.mac);
+                Eval::plain(code)
             }
 
             // A closure could capture the component and carry accesses the
@@ -673,7 +1063,7 @@ impl<'a> Lowerer<'a> {
                     "`#[blueprint]` does not model closures — an access inside one \
                      cannot be attributed to a declaration",
                 );
-                Val::Opaque
+                Eval::absent("a closure")
             }
 
             // Anything not modelled above would be walked past silently,
@@ -687,24 +1077,26 @@ impl<'a> Lowerer<'a> {
                      the accesses inside it — rewrite the body with the forms the \
                      macro admits (see the crate docs)",
                 );
-                Val::Opaque
+                Eval::absent("an unmodelled expression")
             }
         }
     }
 
     /// Walk an `if`/`while` condition, binding an `if let` pattern's names
     /// opaquely into the scope the caller pushed.
-    fn condition(&mut self, cond: &syn::Expr) {
+    fn condition(&mut self, cond: &syn::Expr) -> TokenStream {
         if let syn::Expr::Let(let_) = cond {
-            self.expr(&let_.expr);
+            let value = self.code(&let_.expr);
             self.bind_pattern(&let_.pat);
+            let pat = &let_.pat;
+            quote!(let #pat = #value)
         } else {
-            self.expr(cond);
+            self.code(cond)
         }
     }
 
     /// Forget the slot an assignment target held, wherever it is bound.
-    fn assign_target(&mut self, left: &syn::Expr) {
+    fn assign_target(&mut self, left: &syn::Expr) -> TokenStream {
         if let syn::Expr::Path(path) = left
             && let Some(ident) = path.path.get_ident()
         {
@@ -712,15 +1104,16 @@ impl<'a> Lowerer<'a> {
             for scope in self.locals.iter_mut().rev() {
                 if let Some(slot) = scope.get_mut(&name) {
                     *slot = Slot::Opaque;
-                    return;
+                    break;
                 }
             }
+            quote!(#ident)
         } else {
-            self.expr(left);
+            self.code(left)
         }
     }
 
-    fn path(&self, path: &syn::ExprPath) -> Val {
+    fn path(&self, path: &syn::ExprPath) -> Eval {
         let Some(ident) = path.path.get_ident() else {
             // `u64::MAX` and friends are literals wearing a path. They show
             // up at range boundaries — "every sequence at this price" — so
@@ -731,7 +1124,7 @@ impl<'a> Lowerer<'a> {
                 .iter()
                 .map(|s| s.ident.to_string())
                 .collect();
-            return match segments
+            let val = match segments
                 .iter()
                 .map(String::as_str)
                 .collect::<Vec<_>>()
@@ -741,36 +1134,76 @@ impl<'a> Lowerer<'a> {
                 ["u64", "MIN"] => Val::Term(Term::LitU64(0)),
                 _ => Val::Opaque,
             };
+            return Eval {
+                val,
+                code: Code::Rust(quote!(#path)),
+            };
         };
         let name = ident.to_string();
         if let Some(slot) = self.lookup(&name) {
-            return slot.into();
+            // A local's guest code is the local: whatever the binding was
+            // rewritten to at its `let` is what the name now holds. The
+            // configuration record is the exception — it has no guest
+            // value, only fields that are slots.
+            let code = if matches!(slot, Slot::Config) {
+                Code::Absent("the pinned configuration record")
+            } else {
+                Code::Rust(quote!(#ident))
+            };
+            return Eval {
+                val: slot.into(),
+                code,
+            };
         }
-        if let Some(index) = self.params.iter().position(|p| *p == name) {
-            return Val::Term(Term::Arg(u32::try_from(index).unwrap_or(0)));
+        if let Some(index) = self.params.iter().position(|(p, _)| *p == name) {
+            let slot = u32::try_from(index).unwrap_or(0);
+            let term = Term::Arg(slot);
+            return Eval {
+                val: Val::Term(term.clone()),
+                // A parameter reaches the guest only if something actually
+                // reads it: one consumed as key material is in the
+                // declaration and nowhere else.
+                code: if is_bucket(&self.params[index].1) {
+                    Code::Bucket(slot)
+                } else {
+                    Code::Term(term)
+                },
+            };
         }
-        Val::Opaque
+        Eval {
+            val: Val::Opaque,
+            code: Code::Rust(quote!(#path)),
+        }
     }
 
-    fn literal(lit: &syn::ExprLit) -> Val {
-        if let syn::Lit::Int(int) = &lit.lit
+    fn literal(lit: &syn::ExprLit) -> Eval {
+        let val = if let syn::Lit::Int(int) = &lit.lit
             && let Ok(value) = int.base10_parse::<u64>()
         {
-            return Val::Term(Term::LitU64(value));
+            Val::Term(Term::LitU64(value))
+        } else {
+            Val::Opaque
+        };
+        Eval {
+            val,
+            code: Code::Rust(quote!(#lit)),
         }
-        Val::Opaque
     }
 
-    fn field(&mut self, field: &syn::ExprField) -> Val {
+    fn field(&mut self, field: &syn::ExprField) -> Eval {
         // `self.<name>` names a state field rather than a value.
         if let syn::Expr::Path(path) = &*field.base
             && path.path.is_ident("self")
             && let syn::Member::Named(name) = &field.member
         {
-            return Val::Field(name.to_string());
+            return Eval {
+                val: Val::Field(name.to_string()),
+                code: Code::Absent("a state field in value position"),
+            };
         }
         let base = self.expr(&field.base);
-        match (base, &field.member) {
+        let member = &field.member;
+        match (&base.val, member) {
             // `self.config.x` — a configuration field read directly.
             //
             // This declares nothing, and that is the point: configuration
@@ -782,7 +1215,7 @@ impl<'a> Lowerer<'a> {
             (Val::Field(field_name), syn::Member::Named(name))
                 if self
                     .fields
-                    .get(&field_name)
+                    .get(field_name)
                     .is_some_and(|f| f.kind == FieldKind::Locked) =>
             {
                 self.config_slot(&name.to_string(), field)
@@ -791,25 +1224,41 @@ impl<'a> Lowerer<'a> {
             // A field of a value a locked read returned.
             (Val::Config, syn::Member::Named(name)) => self.config_slot(&name.to_string(), field),
             (Val::Term(term), syn::Member::Unnamed(index)) => {
-                Val::Term(Term::Field(Box::new(term), index.index))
+                let term = Term::Field(Box::new(term.clone()), index.index);
+                Eval {
+                    val: Val::Term(term.clone()),
+                    code: Code::Term(term),
+                }
             }
-            _ => Val::Opaque,
+            _ => {
+                let code = self.value(base.code);
+                Eval::plain(quote!(#code.#member))
+            }
         }
     }
 
     /// Resolve a configuration field name to its slot index.
-    fn config_slot(&mut self, name: &str, field: &syn::ExprField) -> Val {
-        let Some(index) = self.config_fields.iter().position(|f| f == name) else {
+    ///
+    /// The guest reaches a configuration value the same way the
+    /// declaration does — the kernel evaluates the slot — rather than by
+    /// decoding the leaf, so a pinned read and a consulted one differ in
+    /// what they exclude and in nothing else.
+    fn config_slot(&mut self, name: &str, field: &syn::ExprField) -> Eval {
+        let Some(index) = self.config_fields.iter().position(|(f, _)| f == name) else {
             self.error(
                 field.span(),
                 "not a field of the component's configuration struct",
             );
-            return Val::Opaque;
+            return Eval::absent("an unknown configuration field");
         };
-        Val::Term(Term::Config(u32::try_from(index).unwrap_or(0)))
+        let term = Term::Config(u32::try_from(index).unwrap_or(0));
+        Eval {
+            val: Val::Term(term.clone()),
+            code: Code::Term(term),
+        }
     }
 
-    fn free_call(&mut self, call: &syn::ExprCall) -> Val {
+    fn free_call(&mut self, call: &syn::ExprCall) -> Eval {
         for arg in &call.args {
             if is_self(arg) {
                 self.error(
@@ -819,35 +1268,66 @@ impl<'a> Lowerer<'a> {
                 );
             }
         }
-        let syn::Expr::Path(path) = &*call.func else {
-            for arg in &call.args {
-                self.expr(arg);
-            }
-            return Val::Opaque;
+        let Some(name) = free_call_name(call) else {
+            let func = self.code(&call.func);
+            let args: Vec<_> = call.args.iter().map(|a| self.code(a)).collect();
+            return Eval::plain(quote!(#func(#(#args),*)));
         };
-        let name = path
-            .path
-            .segments
-            .last()
-            .map(|s| s.ident.to_string())
-            .unwrap_or_default();
-        let args: Vec<Val> = call.args.iter().map(|a| self.expr(a)).collect();
-        match (name.as_str(), args.as_slice()) {
-            ("pack", [Val::Term(hi), Val::Term(lo)]) => Val::Term(Term::Pack {
-                hi: Box::new(hi.clone()),
-                lo: Box::new(lo.clone()),
-            }),
+        // A fresh id is drawn once per call site: the entry key derived
+        // from it and the parameter carrying it are one draw, not two.
+        if name == "fresh_id" && call.args.is_empty() {
+            let site = self.out.fresh;
+            self.out.fresh += 1;
+            let term = Term::FreshId(site);
+            return Eval {
+                val: Val::Term(term.clone()),
+                code: Code::Term(term),
+            };
+        }
+        let evals: Vec<Eval> = call.args.iter().map(|a| self.expr(a)).collect();
+        let vals: Vec<Val> = evals.iter().map(|e| e.val.clone()).collect();
+        match (name.as_str(), vals.as_slice()) {
+            ("pack", [Val::Term(hi), Val::Term(lo)]) => {
+                let term = Term::Pack {
+                    hi: Box::new(hi.clone()),
+                    lo: Box::new(lo.clone()),
+                };
+                Eval {
+                    val: Val::Term(term.clone()),
+                    code: Code::Term(term),
+                }
+            }
             // `Bucket::of(resource, amount)` — the explicit spelling for a
             // value edge a method mints rather than moves. The resource is
-            // the declaration; the amount is dynamic and never declared.
-            ("of", [Val::Term(resource), _]) => Val::Produced(resource.clone()),
-            ("fresh_id", []) => Val::Term(Term::FreshId),
-            _ => Val::Opaque,
+            // the declaration; the amount is dynamic and never declared,
+            // so the amount is the whole of what crosses the boundary.
+            ("of", [Val::Term(resource), _]) => {
+                let resource = resource.clone();
+                let amount = evals
+                    .into_iter()
+                    .nth(1)
+                    .map_or(Code::Absent("a minted edge with no amount"), |e| e.code);
+                // Which resource the edge carries is the declaration's
+                // answer, so the guest builds one from the amount alone.
+                let amount = self.value(amount);
+                Eval {
+                    val: Val::Produced(resource),
+                    code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Bucket::carrying(#amount))),
+                }
+            }
+            _ => {
+                let func = self.code(&call.func);
+                let args: Vec<_> = evals
+                    .into_iter()
+                    .map(|eval| self.value(eval.code))
+                    .collect();
+                Eval::plain(quote!(#func(#(#args),*)))
+            }
         }
     }
 
-    #[allow(clippy::too_many_lines)]
-    fn method_call(&mut self, call: &syn::ExprMethodCall) -> Val {
+    #[allow(clippy::too_many_lines)] // one arm per receiver the vocabulary admits
+    fn method_call(&mut self, call: &syn::ExprMethodCall) -> Eval {
         // `self.other_method(…)` reaches state this body never names, so
         // its accesses cannot land in this declaration.
         if is_self(&call.receiver) {
@@ -860,7 +1340,7 @@ impl<'a> Lowerer<'a> {
             for arg in &call.args {
                 self.expr(arg);
             }
-            return Val::Opaque;
+            return Eval::absent("a call to another method of the component");
         }
         for arg in &call.args {
             if is_self(arg) {
@@ -873,9 +1353,10 @@ impl<'a> Lowerer<'a> {
         }
         let receiver = self.expr(&call.receiver);
         let method = call.method.to_string();
-        let args: Vec<Val> = call.args.iter().map(|a| self.expr(a)).collect();
+        let evals: Vec<Eval> = call.args.iter().map(|a| self.expr(a)).collect();
+        let args: Vec<Val> = evals.iter().map(|e| e.val.clone()).collect();
 
-        match receiver {
+        match receiver.val.clone() {
             // ---- opening a handle on a state field ----------------------
             Val::Field(name) => {
                 let Some(field) = self.fields.get(&name).cloned() else {
@@ -883,15 +1364,16 @@ impl<'a> Lowerer<'a> {
                         call.receiver.span(),
                         "not a declared field of the component's state struct",
                     );
-                    return Val::Opaque;
+                    return Eval::absent("an undeclared state field");
                 };
-                self.on_field(&field, &method, &args, call)
+                self.on_field(&field, &method, &evals, call)
             }
 
             // ---- operating through an open handle -----------------------
             Val::Handle(site) => {
                 let Some(op) = Op::from_method(&method) else {
-                    return Val::Opaque;
+                    let code = self.pass_through(&receiver, &method, evals, call);
+                    return Eval::plain(code);
                 };
                 let param = match args.first() {
                     Some(Val::Term(term)) => Some(term.clone()),
@@ -907,41 +1389,99 @@ impl<'a> Lowerer<'a> {
                 }
                 self.record(site, op, param, call.span());
 
+                let receiver_code = self.value(receiver.code);
+                let rewritten: Vec<_> = evals
+                    .into_iter()
+                    .map(|eval| self.value(eval.code))
+                    .collect();
+
                 // A reservation yields a value edge carrying the vault's
                 // own resource — which the site's key material already
                 // names, so the output needs no separate declaration.
+                // What the guest gets is the grant the kernel already
+                // made, checked against the amount the declaration named.
                 if op == Op::Reserve
                     && let Some(Target::Point { material, .. }) =
                         self.out.sites.get(site).map(|s| &s.target)
                     && let Some(resource) = material.first().cloned()
                 {
-                    return Val::Produced(resource);
+                    let capability = self.handle(site, call.span());
+                    let declared = rewritten.first();
+                    return Eval {
+                        val: Val::Produced(resource),
+                        code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Bucket::carrying(
+                            ::hyperscale_vm_sdk::guest::granted(#capability, #declared),
+                        ))),
+                    };
                 }
-                Val::Opaque
+                let name = &call.method;
+                Eval::plain(quote!(#receiver_code.#name(#(#rewritten),*)))
             }
 
             // ---- projections over values --------------------------------
-            Val::Produced(resource) => match method.as_str() {
-                "resource" => Val::Term(resource),
-                _ => Val::Produced(resource),
+            // A produced edge's resource is the declaration's answer, so
+            // reading one is a term the kernel evaluates rather than
+            // anything the guest already holds.
+            Val::Produced(resource) if method == "resource" => Eval {
+                val: Val::Term(resource.clone()),
+                code: Code::Term(resource),
             },
+            Val::Produced(resource) => {
+                let code = self.pass_through(&receiver, &method, evals, call);
+                Eval {
+                    val: Val::Produced(resource),
+                    code: Code::Rust(code),
+                }
+            }
 
             Val::Term(term) => match method.as_str() {
-                "resource" => Val::Term(Term::ResourceOf(Box::new(term))),
+                "resource" => Eval {
+                    val: Val::Term(Term::ResourceOf(Box::new(term.clone()))),
+                    code: Code::Term(Term::ResourceOf(Box::new(term))),
+                },
                 "lookup" | "get" if matches!(args.first(), Some(Val::Term(_))) => {
                     let Some(Val::Term(key)) = args.first() else {
-                        return Val::Opaque;
+                        return Eval::absent("a lookup with no key");
                     };
-                    Val::Term(Term::Lookup {
+                    let term = Term::Lookup {
                         map: Box::new(term),
                         key: Box::new(key.clone()),
-                    })
+                    };
+                    Eval {
+                        val: Val::Term(term.clone()),
+                        code: Code::Term(term),
+                    }
                 }
-                _ => Val::Opaque,
+                _ => {
+                    let code = self.pass_through(&receiver, &method, evals, call);
+                    Eval::plain(code)
+                }
             },
 
-            Val::Config | Val::Opaque => Val::Opaque,
+            Val::Config | Val::Opaque => {
+                let code = self.pass_through(&receiver, &method, evals, call);
+                Eval::plain(code)
+            }
         }
+    }
+
+    /// Rebuild a method call the vocabulary does not model, over its
+    /// rewritten receiver and arguments.
+    fn pass_through(
+        &mut self,
+        receiver: &Eval,
+        _method: &str,
+        evals: Vec<Eval>,
+        call: &syn::ExprMethodCall,
+    ) -> TokenStream {
+        let receiver_code = self.value(receiver.code.clone());
+        let args: Vec<_> = evals
+            .into_iter()
+            .map(|eval| self.value(eval.code))
+            .collect();
+        let name = &call.method;
+        let turbofish = &call.turbofish;
+        quote!(#receiver_code.#name #turbofish(#(#args),*))
     }
 
     #[allow(clippy::too_many_lines)] // single dispatch over (field kind, accessor) pairs
@@ -949,29 +1489,43 @@ impl<'a> Lowerer<'a> {
         &mut self,
         field: &Field,
         method: &str,
-        args: &[Val],
+        args: &[Eval],
         call: &syn::ExprMethodCall,
-    ) -> Val {
+    ) -> Eval {
         let role = field.role;
+        let vals: Vec<Val> = args.iter().map(|e| e.val.clone()).collect();
         match (field.kind, method) {
             // The locked configuration: a read that excludes nothing,
             // and the value whose fields are the config slots.
             (FieldKind::Locked, "locked") => {
-                let site = self.open(Target::Point {
-                    role,
-                    material: vec![],
-                });
+                let site = self.open(
+                    Target::Point {
+                        role,
+                        material: vec![],
+                    },
+                    field.element.clone(),
+                );
                 self.record(site, Op::Locked, None, call.span());
-                Val::Config
+                Eval {
+                    val: Val::Config,
+                    // The pin is a declaration; the values it covers reach
+                    // the guest as evaluated slots, so the record itself
+                    // is never decoded.
+                    code: Code::Absent("the pinned configuration record"),
+                }
             }
 
             // A family of leaves keyed by an address.
             (FieldKind::Keyed, "at") => {
-                if let Some(Val::Term(key)) = args.first() {
-                    Val::Handle(self.open(Target::Point {
-                        role,
-                        material: vec![key.clone()],
-                    }))
+                if let Some(Val::Term(key)) = vals.first() {
+                    let site = self.open(
+                        Target::Point {
+                            role,
+                            material: vec![key.clone()],
+                        },
+                        field.element.clone(),
+                    );
+                    self.slot(site, call.span())
                 } else {
                     self.error(
                         call.args.span(),
@@ -980,34 +1534,50 @@ impl<'a> Lowerer<'a> {
                      execution and never reads state, so a key computed from a substate \
                      value cannot be declared — pass it as a parameter instead",
                     );
-                    Val::Opaque
+                    Eval::absent("an underivable key")
                 }
             }
 
             // One entry of an ordered collection.
             (FieldKind::Ordered, "at") => {
-                if let Some(Val::Term(order)) = args.first() {
-                    Val::Handle(self.open(Target::Entry {
-                        role,
-                        order: order.clone(),
-                    }))
+                if let Some(Val::Term(order)) = vals.first() {
+                    let order = order.clone();
+                    let site = self.open(
+                        Target::Entry {
+                            role,
+                            order: order.clone(),
+                        },
+                        field.element.clone(),
+                    );
+                    self.entry(site, &order, call.span())
                 } else {
                     self.error(
                         call.args.span(),
                         "this order key is not derivable from the method's arguments or the \
                      component's configuration",
                     );
-                    Val::Opaque
+                    Eval::absent("an underivable order key")
                 }
             }
 
             // One unordered-collection entry, at the hash of its key.
             (FieldKind::Unordered, "at") => {
-                if let Some(Val::Term(key)) = args.first() {
-                    Val::Handle(self.open(Target::KeyedEntry {
-                        role,
-                        key: key.clone(),
-                    }))
+                if let Some(Val::Term(key)) = vals.first() {
+                    let site = self.open(
+                        Target::KeyedEntry {
+                            role,
+                            key: key.clone(),
+                        },
+                        field.element.clone(),
+                    );
+                    // The order is the hash of the key salted by owner and
+                    // role, which is the kernel's derivation and not one a
+                    // guest can rebuild from what it is handed.
+                    self.refuse(
+                        "an unordered collection's entry sits at a hash the kernel \
+                         derives, so a guest cannot name it",
+                    );
+                    self.slot(site, call.span())
                 } else {
                     self.error(
                         call.args.span(),
@@ -1016,20 +1586,24 @@ impl<'a> Lowerer<'a> {
                      execution and never reads state, so a key computed from a substate \
                      value cannot be declared — pass it as a parameter instead",
                     );
-                    Val::Opaque
+                    Eval::absent("an underivable key")
                 }
             }
 
             // An unordered collection's tail from a cursor.
             (FieldKind::Unordered, "sweep") => {
                 if let (Some(Val::Term(cursor)), Some(Val::Term(Term::LitU64(cap)))) =
-                    (args.first(), args.get(1))
+                    (vals.first(), vals.get(1))
                 {
-                    Val::Handle(self.open(Target::Sweep {
-                        role,
-                        cursor: cursor.clone(),
-                        cap: u32::try_from(*cap).unwrap_or(u32::MAX),
-                    }))
+                    let site = self.open(
+                        Target::Sweep {
+                            role,
+                            cursor: cursor.clone(),
+                            cap: u32::try_from(*cap).unwrap_or(u32::MAX),
+                        },
+                        field.element.clone(),
+                    );
+                    self.interval(site, call.span())
                 } else {
                     self.error(
                         call.args.span(),
@@ -1037,7 +1611,7 @@ impl<'a> Lowerer<'a> {
                      cap must be a literal — the cap bounds the work execution may do, so \
                      it is declaration, not data",
                     );
-                    Val::Opaque
+                    Eval::absent("an underivable sweep")
                 }
             }
 
@@ -1047,14 +1621,18 @@ impl<'a> Lowerer<'a> {
                     Some(Val::Term(lo)),
                     Some(Val::Term(hi)),
                     Some(Val::Term(Term::LitU64(cap))),
-                ) = (args.first(), args.get(1), args.get(2))
+                ) = (vals.first(), vals.get(1), vals.get(2))
                 {
-                    Val::Handle(self.open(Target::Range {
-                        role,
-                        lo: lo.clone(),
-                        hi: hi.clone(),
-                        cap: u32::try_from(*cap).unwrap_or(u32::MAX),
-                    }))
+                    let site = self.open(
+                        Target::Range {
+                            role,
+                            lo: lo.clone(),
+                            hi: hi.clone(),
+                            cap: u32::try_from(*cap).unwrap_or(u32::MAX),
+                        },
+                        field.element.clone(),
+                    );
+                    self.interval(site, call.span())
                 } else {
                     self.error(
                         call.args.span(),
@@ -1062,40 +1640,112 @@ impl<'a> Lowerer<'a> {
                      cap must be a literal — the cap bounds the work execution may do, so \
                      it is declaration, not data",
                     );
-                    Val::Opaque
+                    Eval::absent("an underivable range")
                 }
             }
 
             // A single leaf: the operation lands directly on it.
             (FieldKind::Cell, _) => {
                 if let Some(op) = Op::from_method(method) {
-                    let site = self.open(Target::Point {
-                        role,
-                        material: vec![],
-                    });
-                    let param = match args.first() {
+                    let site = self.open(
+                        Target::Point {
+                            role,
+                            material: vec![],
+                        },
+                        field.element.clone(),
+                    );
+                    let param = match vals.first() {
                         Some(Val::Term(term)) => Some(term.clone()),
                         _ => None,
                     };
                     self.record(site, op, param, call.span());
+                    let slot = self.slot(site, call.span());
+                    let receiver = self.value(slot.code);
+                    let rewritten: Vec<_> = args
+                        .iter()
+                        .map(|eval| self.value(eval.code.clone()))
+                        .collect();
+                    let name = &call.method;
+                    return Eval::plain(quote!(#receiver.#name(#(#rewritten),*)));
                 }
-                Val::Opaque
+                Eval::absent("an accessor the vocabulary does not name")
             }
 
-            _ => Val::Opaque,
+            _ => Eval::absent("an accessor this field shape does not have"),
         }
     }
 
-    fn for_loop(&mut self, loop_: &syn::ExprForLoop) {
-        let Val::Term(list) = self.expr(&loop_.expr) else {
+    /// The guest-side value a point handle resolves to.
+    fn slot(&mut self, site: usize, span: Span) -> Eval {
+        let handle = self.materialized(site, span);
+        let element = self.element(site);
+        Eval {
+            val: Val::Handle(site),
+            code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Slot::<#element>::at(#handle))),
+        }
+    }
+
+    /// The guest-side value one ordered-collection entry resolves to.
+    fn entry(&mut self, site: usize, order: &Term, span: Span) -> Eval {
+        let handle = self.materialized(site, span);
+        let element = self.element(site);
+        let order = self.term_value(order);
+        Eval {
+            val: Val::Handle(site),
+            code: Code::Rust(
+                quote!(::hyperscale_vm_sdk::state::Entry::<#element>::at(#handle, #order)),
+            ),
+        }
+    }
+
+    /// The guest-side value a declared interval resolves to.
+    fn interval(&mut self, site: usize, span: Span) -> Eval {
+        let handle = self.materialized(site, span);
+        let element = self.element(site);
+        Eval {
+            val: Val::Handle(site),
+            code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Interval::<#element>::at(#handle))),
+        }
+    }
+
+    /// The `Handle` a site's export parameter carries.
+    ///
+    /// Named rather than built here: which of the kernel's resource types
+    /// a handle arrives as is its mode, and the mode is not settled until
+    /// the body has finished operating through it. The prologue builds it
+    /// once the fold is known.
+    fn materialized(&mut self, site: usize, span: Span) -> TokenStream {
+        let param = self.handle(site, span);
+        quote!(#param)
+    }
+
+    /// The value the leaves under a site hold.
+    fn element(&self, site: usize) -> TokenStream {
+        self.out
+            .sites
+            .get(site)
+            .and_then(|s| s.element.as_ref())
+            .map_or_else(|| quote!(_), |ty| quote!(#ty))
+    }
+
+    fn for_loop(&mut self, loop_: &syn::ExprForLoop) -> TokenStream {
+        let list = self.expr(&loop_.expr);
+        let Val::Term(list_term) = list.val.clone() else {
             self.error(
                 loop_.expr.span(),
                 "a `for` loop in a contract body must range over a configured collection \
                  — that is what bounds the keys it declares. An iterator over runtime \
                  values has no declarable key set",
             );
-            return;
+            return quote!();
         };
+        // A run of handles whose length depends on configuration cannot
+        // occupy a fixed export parameter, so a body that loops declares
+        // and does not execute.
+        self.refuse(
+            "a `for-each` clause expands over instance configuration, so its handles \
+             occupy no fixed export parameter",
+        );
 
         let depth = self.depth();
         self.scopes.push(Vec::new());
@@ -1106,12 +1756,46 @@ impl<'a> Lowerer<'a> {
             }
             other => self.bind_pattern(other),
         }
-        for stmt in &loop_.body.stmts {
-            self.stmt(stmt);
-        }
+        let statements: Vec<_> = loop_.body.stmts.iter().map(|s| self.stmt(s)).collect();
         self.locals.pop();
         let body = self.scopes.pop().unwrap_or_default();
 
-        self.push_node(Node::ForEach { list, depth, body });
+        self.push_node(Node::ForEach {
+            list: list_term,
+            depth,
+            body,
+        });
+        let pat = &loop_.pat;
+        let list = self.value(list.code);
+        quote!(for #pat in #list { #(#statements)* })
+    }
+}
+
+/// Whether a declared parameter is a value edge, which is the one kind
+/// the guest holds as a type of its own rather than as a plain value.
+fn is_bucket(ty: &syn::Type) -> bool {
+    matches!(ty, syn::Type::Path(path)
+        if path.path.segments.last().is_some_and(|s| s.ident == "Bucket"))
+}
+
+/// The last segment of a free call's path, when it has one.
+fn free_call_name(call: &syn::ExprCall) -> Option<String> {
+    let syn::Expr::Path(path) = &*call.func else {
+        return None;
+    };
+    path.path.segments.last().map(|s| s.ident.to_string())
+}
+
+/// The tail that turns what the body computed into the byte list the
+/// export convention fixes.
+fn result_code(returned: &[TokenStream]) -> TokenStream {
+    match returned {
+        [] => quote!(),
+        [one] => quote!(::hyperscale_vm_sdk::state::Cellular::to_cell(&(#one))),
+        many => quote!({
+            let mut __out = ::std::vec::Vec::new();
+            #(__out.extend(::hyperscale_vm_sdk::state::Cellular::to_cell(&(#many)));)*
+            __out
+        }),
     }
 }

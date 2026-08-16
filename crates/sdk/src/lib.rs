@@ -152,7 +152,7 @@ pub mod trace;
 pub use blueprint::{Blueprint, Builder, HandlePlan, HandleShape, Method, TargetShape};
 // Re-exported so `#[blueprint]` output names one crate, and so a contract
 // never has to depend on `vm-effects` directly.
-pub use hyperscale_vm_effects::{Address, ParamType, RoleId};
+pub use hyperscale_vm_effects::{Address, AuthRole, ParamType, RoleId};
 #[cfg(feature = "macros")]
 pub use hyperscale_vm_sdk_macros::blueprint;
 pub use sym::{Addr, Amount, Blob, Bucket, Key, Kind, Num, Opaque, Seq, Sym};

@@ -16,9 +16,12 @@ use hyperscale_vm_manifest_builder::{Bucket, BucketArg, TypedBuilder, TypedError
 /// The code `swap` declines with when the output misses its floor.
 pub const SLIPPAGE_EXCEEDED: u32 = 0;
 
-/// `swap(input, min_out)`: a locked read of the pool's
-/// configuration and exclusive writes on its two reserve leaves, named by
-/// the creation-fixed resource pair.
+/// The constant-product pool's declaration.
+///
+/// `swap(input, min_out)`: a locked read of the pool's configuration and
+/// exclusive writes on its two reserve leaves, named by the creation-fixed
+/// resource pair. Configuration is three slots: the pair, then the fee in
+/// basis points.
 ///
 /// The only fallible method in the corpus, and deliberately: the floor
 /// its signature declares is the one failure a pool can meet without
@@ -36,11 +39,15 @@ pub fn metadata() -> PackageMetadata {
             accessibility: Accessibility::Public,
             mints: None,
             params: vec![ParamType::Bucket, ParamType::U128],
+            // No handle for the locked clause: the pin is what makes the
+            // record stable, and the fee the body reads reaches it as an
+            // evaluated configuration slot — the same way the declaration
+            // reads one — rather than as a decode of the leaf.
             abi: vec![
-                AbiParam::Handle(0),
                 AbiParam::Handle(1),
                 AbiParam::Handle(2),
                 AbiParam::Bucket(0),
+                AbiParam::Derived(Expr::Config(2)),
                 AbiParam::Derived(Expr::Arg(1)),
             ],
             outputs: vec![Expr::Config(1)],

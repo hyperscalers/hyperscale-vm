@@ -72,6 +72,22 @@ impl Cellular for u64 {
     }
 }
 
+impl Cellular for Address {
+    /// # Panics
+    ///
+    /// On a cell that is not a well-formed address. The kernel builds one
+    /// by evaluating the declaration, so a malformed one is a defect and
+    /// the trap is the deterministic answer to it.
+    fn from_cell(cell: &[u8]) -> Self {
+        let bytes: [u8; 32] = cell.try_into().expect("an address cell is 32 bytes");
+        Self::from_bytes(bytes).expect("an address cell names a class")
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+
 impl Cellular for Vec<u8> {
     fn from_cell(cell: &[u8]) -> Self {
         cell.to_vec()
@@ -95,8 +111,19 @@ pub use crate::guest::Handle;
 /// Only the resource is ever declared. The amount is dynamic and never
 /// reaches the DSL, which is what lets one declaration cover every size of
 /// transfer.
+/// An edge's resource is static and its amount is dynamic, so the two
+/// are known in different places: the amount crosses the boundary, and
+/// the resource is the declaration's — which is why the field is carried
+/// only where there is a declaration to read it from, on the same terms
+/// [`Slot`] carries a handle only where there is a kernel to call.
+///
+/// A guest that wants the resource is asking for a value the kernel
+/// evaluates, and `#[blueprint]` binds one — but only where a body
+/// genuinely reads it, so an edge that is merely moved or returned costs
+/// nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Bucket {
+    #[cfg(not(target_arch = "wasm32"))]
     resource: Address,
     amount: Amount,
 }
@@ -107,12 +134,25 @@ impl Bucket {
     /// The explicit spelling for an edge a method produces rather than
     /// moves; `#[blueprint]` reads the resource out of the first argument
     /// and records it as a declared output.
+    #[cfg(not(target_arch = "wasm32"))]
     #[must_use]
     pub const fn of(resource: Address, amount: Amount) -> Self {
         Self { resource, amount }
     }
 
+    /// The edge an export hands back, carrying `amount`.
+    ///
+    /// Called by generated code, never by an author: which resource an
+    /// edge carries is what the signature's outputs say, and the
+    /// declaration is where the author already said it.
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub const fn carrying(amount: Amount) -> Self {
+        Self { amount }
+    }
+
     /// The resource this edge carries.
+    #[cfg(not(target_arch = "wasm32"))]
     #[must_use]
     pub const fn resource(&self) -> Address {
         self.resource
@@ -273,6 +313,12 @@ impl Slot<Amount> {
     /// granted before this body ran, so the guest reads the reservation
     /// rather than performing one — a reserve handle is already the
     /// answer.
+    ///
+    /// No guest body, and not for the reason the collection accessors
+    /// have none: what this yields is a value edge, which is an
+    /// authoring type. `#[blueprint]` rewrites the call to
+    /// [`crate::guest::granted`], whose answer is the amount the edge
+    /// carries and the whole of what crosses the boundary.
     #[must_use]
     pub fn reserve(&mut self, amount: Amount) -> Bucket {
         let _ = amount;
@@ -287,7 +333,7 @@ pub struct Ordered<T>(core::marker::PhantomData<fn() -> T>);
 impl<T> Ordered<T> {
     /// The entry at one order key.
     #[must_use]
-    pub fn at(&self, order: Amount) -> Slot<T> {
+    pub fn at(&self, order: Amount) -> Entry<T> {
         let _ = order;
         unimplemented!("{OFF_HOST}")
     }
@@ -324,7 +370,7 @@ impl<T> Unordered<T> {
     /// target.
     #[must_use]
     #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
-    pub fn at<K>(&self, key: K) -> Slot<T> {
+    pub fn at<K>(&self, key: K) -> Entry<T> {
         let _ = key;
         unimplemented!("{OFF_HOST}")
     }
@@ -337,6 +383,58 @@ impl<T> Unordered<T> {
     #[must_use]
     pub fn sweep(&self, cursor: Amount, cap: u32) -> Interval<T> {
         let _ = (cursor, cap);
+        unimplemented!("{OFF_HOST}")
+    }
+}
+
+/// An open handle on one entry of a collection.
+///
+/// A collection's leaves live in an interval rather than at a key of
+/// their own, so the handle the kernel materializes covers the interval
+/// and the entry's own order is what picks it out — which is why an entry
+/// carries the order beside the handle where a [`Slot`] carries only the
+/// handle.
+#[derive(Clone, Copy, Debug)]
+pub struct Entry<T> {
+    #[cfg(target_arch = "wasm32")]
+    handle: Handle,
+    #[cfg(target_arch = "wasm32")]
+    order: Amount,
+    _value: core::marker::PhantomData<fn() -> T>,
+}
+
+impl<T> Entry<T> {
+    /// The entry at `order` of the interval this handle names, on the
+    /// terms [`Slot::at`] describes.
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub const fn at(handle: Handle, order: Amount) -> Self {
+        Self {
+            handle,
+            order,
+            _value: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: Cellular> Entry<T> {
+    /// A fresh coherent read.
+    #[must_use]
+    pub fn get(&self) -> T {
+        #[cfg(target_arch = "wasm32")]
+        return T::from_cell(&crate::guest::entry_at(self.handle, self.order));
+        #[cfg(not(target_arch = "wasm32"))]
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// An exclusive read-modify-write. Writing an entry that is not there
+    /// creates it, which is what makes one accessor cover both.
+    #[allow(clippy::needless_pass_by_value)] // a stored value is consumed
+    pub fn set(&mut self, value: T) {
+        let _ = &value;
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::entry_insert(self.handle, self.order, &value.to_cell());
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 }
@@ -434,14 +532,42 @@ pub fn fresh_id() -> u64 {
     unimplemented!("{OFF_HOST}")
 }
 
-/// An authority rule parameter, as a contract signature names it. Off
-/// guest it is a marker: the rule arrives as canonical bytes the
-/// admission gate already decoded under the vocabulary caps.
+/// An authority rule parameter, as a contract signature names it.
+///
+/// The rule arrives as canonical bytes the admission gate already decoded
+/// under the vocabulary caps, so a body carries them and judges nothing.
 #[derive(Clone, Debug, Default)]
 pub struct Rule(pub Vec<u8>);
 
 /// A role-set parameter, as a contract signature names it. The same
-/// marker shape as [`Rule`], for the three-rule form the
-/// stored-authority cell holds.
+/// shape as [`Rule`], for the three-rule form the stored-authority cell
+/// holds.
 #[derive(Clone, Debug, Default)]
 pub struct RoleSet(pub Vec<u8>);
+
+macro_rules! opaque_bytes {
+    ($($ty:ident),*) => {
+        $(
+            impl $ty {
+                /// The canonical bytes, which is all a body may do with
+                /// one: what they mean was settled at admission.
+                #[must_use]
+                pub fn bytes(&self) -> &[u8] {
+                    &self.0
+                }
+            }
+
+            impl Cellular for $ty {
+                fn from_cell(cell: &[u8]) -> Self {
+                    Self(cell.to_vec())
+                }
+
+                fn to_cell(&self) -> Vec<u8> {
+                    self.0.clone()
+                }
+            }
+        )*
+    };
+}
+
+opaque_bytes!(Rule, RoleSet);

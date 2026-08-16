@@ -1,5 +1,5 @@
 //! The constant-product pool guest: real read-modify-write over the two
-//! reserve cells, fee from the locked configuration, checked
+//! reserve cells, fee from the evaluated configuration slot, checked
 //! arithmetic throughout — any overflow is a deterministic trap.
 //!
 //! The output floor is the one failure it declares rather than traps.
@@ -12,7 +12,7 @@ wit_bindgen::generate!({
     generate_all,
 });
 
-use hyperscale::kernel::state::{locked_cell_get, write_cell_get, write_cell_set};
+use hyperscale::kernel::state::{write_cell_get, write_cell_set};
 
 fn amount(bytes: &[u8]) -> u128 {
     bytes.try_into().map_or(0, u128::from_le_bytes)
@@ -25,14 +25,12 @@ struct Amm;
 
 impl Guest for Amm {
     fn swap(
-        config: &LockedCell,
         reserve_in: &WriteCell,
         reserve_out: &WriteCell,
         input: Vec<u8>,
+        fee_bps: u64,
         min_out: Vec<u8>,
     ) -> Result<Vec<u8>, u32> {
-        let raw = locked_cell_get(config);
-        let fee_bps = u64::from(u16::from_le_bytes(raw[..2].try_into().unwrap()));
         let x = amount(&write_cell_get(reserve_in));
         let y = amount(&write_cell_get(reserve_out));
         let dx = amount(&input);

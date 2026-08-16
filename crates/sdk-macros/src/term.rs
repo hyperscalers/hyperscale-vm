@@ -45,8 +45,14 @@ pub enum Term {
         /// The tiebreaker.
         lo: Box<Self>,
     },
-    /// A deterministic fresh id.
-    FreshId,
+    /// A deterministic fresh id, by the order its call site appears in the
+    /// body.
+    ///
+    /// The slot the tracer allocates is the tracer's, but one call site is
+    /// one id: an entry key derived from a fresh id and the guest
+    /// parameter carrying that id have to be the same draw, so the term
+    /// names the site rather than re-drawing at every use.
+    FreshId(usize),
     /// A `u64` literal.
     LitU64(u64),
     /// The element of an enclosing `for`, by absolute nesting depth.
@@ -93,8 +99,9 @@ impl Term {
                     .cast::<::hyperscale_vm_sdk::Opaque>()
                 )
             }
-            Self::FreshId => {
-                quote!(__t.fresh_id().cast::<::hyperscale_vm_sdk::Opaque>())
+            Self::FreshId(site) => {
+                let ident = fresh_ident(*site);
+                quote!(#ident.clone().cast::<::hyperscale_vm_sdk::Opaque>())
             }
             Self::LitU64(value) => quote!(
                 ::hyperscale_vm_sdk::sym::lit_u64(#value)
@@ -118,6 +125,12 @@ pub fn binding_ident(depth: usize) -> syn::Ident {
         &format!("__element_{depth}"),
         proc_macro2::Span::call_site(),
     )
+}
+
+/// The generated name of the fresh id drawn at the `site`-th `fresh_id()`
+/// call in the body.
+pub fn fresh_ident(site: usize) -> syn::Ident {
+    syn::Ident::new(&format!("__fresh_{site}"), proc_macro2::Span::call_site())
 }
 
 /// What the lowering pass knows about a local binding.

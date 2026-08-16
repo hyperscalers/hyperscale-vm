@@ -25,182 +25,45 @@
 // reason to narrow a contract's signature.
 #![allow(clippy::needless_pass_by_ref_mut)]
 
-use hyperscale_vm_effects::PackageMetadata;
+use hyperscale_vm_effects::{PackageMetadata, Totality};
 use hyperscale_vm_fixtures::{amm as amm_package, book as book_package};
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_stdlib::account as account_package;
 
-#[blueprint]
-mod account {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed, RoleSet};
+// The three packages are contract crates, built to real components by
+// `crates/harness`. Read here rather than copied, so what this compares
+// is the artifact's own module and not a second one that resembles it.
+#[path = "../../../guests/derived-account/src/lib.rs"]
+mod derived_account;
+#[path = "../../../guests/derived-amm/src/lib.rs"]
+mod derived_amm;
+#[path = "../../../guests/derived-book/src/lib.rs"]
+mod derived_book;
 
-    #[state]
-    struct Account {
-        #[role(1)]
-        vaults: Keyed<Amount>,
-        #[role(2)]
-        claims: Keyed<Amount>,
-        #[role(4)]
-        auth: Cell<u64>,
-    }
+use derived_account::account;
+use derived_amm::amm;
+use derived_book::book;
 
-    impl Account {
-        /// Reserve `amount` on the caller's vault for `resource`.
-        pub fn withdraw(&mut self, resource: Address, amount: u128) -> Bucket {
-            self.vaults.at(resource).reserve(amount)
-        }
-
-        /// Credit the vault and the guaranteed-delivery cell beside it.
-        pub fn deposit(&mut self, funds: Bucket) {
-            self.vaults.at(funds.resource()).add(funds.amount());
-            self.claims.at(funds.resource()).add(0);
-        }
-
-        /// The sign-in's whole body is its gate's read: the cell the
-        /// account's stored rule lives in.
-        pub fn authorize(&mut self) {
-            let _ = self.auth.get();
-        }
-
-        /// Create the stored-authority cell; an existing one is the
-        /// body's refusal.
-        #[allow(clippy::needless_pass_by_value)] // the contract consumes the roles it stores
-        pub fn securify(&mut self, roles: RoleSet, delay_ms: u64) {
-            let _ = (roles, delay_ms);
-            self.auth.set(0);
-        }
-
-        /// Append a pending replacement, maturing after the stored
-        /// delay.
-        #[allow(clippy::needless_pass_by_value)] // the contract consumes the roles it stores
-        pub fn propose(&mut self, roles: RoleSet, delay_ms: u64) {
-            let _ = (roles, delay_ms);
-            self.auth.set(0);
-        }
-
-        /// Drop an unmatured proposal.
-        pub fn cancel(&mut self) {
-            self.auth.set(0);
-        }
-
-        /// Promote the pending proposal now.
-        pub fn confirm(&mut self) {
-            self.auth.set(0);
-        }
-    }
-}
-
-#[blueprint]
-mod amm {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Keyed, Locked};
-
-    struct Settings {
-        x: Address,
-        y: Address,
-        fee_bps: u64,
-    }
-
-    #[state]
-    struct Amm {
-        #[role(3)]
-        config: Locked<Settings>,
-        #[role(1)]
-        vaults: Keyed<Amount>,
-    }
-
-    impl Amm {
-        /// Swap `input` against the pool, returning the bought side.
-        pub fn swap(&mut self, input: Bucket, min_out: u128) -> Bucket {
-            // Pins the whole configuration record: the fee is read from it,
-            // so the swap wants it stable, not merely consulted.
-            let settings = self.config.locked();
-            let mut sold = self.vaults.at(settings.x);
-            let mut bought = self.vaults.at(settings.y);
-
-            let x = sold.get();
-            let y = bought.get();
-            let dx = input.amount() * u128::from(10_000 - settings.fee_bps) / 10_000;
-            let out = y * dx / (x + dx);
-            assert!(out >= min_out, "output below the declared floor");
-
-            sold.set(x + input.amount());
-            bought.set(y - out);
-            Bucket::of(settings.y, out)
-        }
-    }
-}
-
-#[blueprint]
-mod book {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Keyed, Locked, Ordered, fresh_id, pack};
-
-    struct Pair {
-        base: Address,
-        quote: Address,
-    }
-
-    #[state]
-    struct Book {
-        #[role(16)]
-        asks: Ordered<u128>,
-        #[role(1)]
-        vaults: Keyed<Amount>,
-        #[role(3)]
-        config: Locked<Pair>,
-    }
-
-    impl Book {
-        /// Insert an ask at `price`, escrowing the maker's funds.
-        #[name("place-ask")]
-        pub fn place_ask(&mut self, price: u64, funds: Bucket) {
-            // Price over a fresh sequence id: unique without reading the
-            // book, which is what lets the entry key be declared.
-            self.asks.at(pack(price, fresh_id())).set(funds.amount());
-            self.vaults.at(funds.resource()).add(funds.amount());
-        }
-
-        /// Buy base within the declared price interval, best price first.
-        #[name("fill-asks")]
-        pub fn fill_asks(&mut self, from: u64, to: u64, payment: Bucket) -> (Bucket, Bucket) {
-            // The whole tiebreaker span at each end, so the interval covers
-            // every sequence at the boundary prices.
-            let mut asks = self.asks.range(pack(from, 0), pack(to, u64::MAX), 64);
-            let mut bought = 0;
-            let mut spent = 0;
-
-            let mut index = 0;
-            while index < asks.count() {
-                let size = asks.entry(index);
-                bought += size;
-                spent += size;
-                asks.remove(index);
-                index += 1;
-            }
-
-            // Note the config fields are read without pinning the leaf:
-            // configuration is locked state, consultable without a claim.
-            self.vaults.at(self.config.base).sub(bought);
-            self.vaults.at(payment.resource()).add(spent);
-
-            (
-                Bucket::of(self.config.base, bought),
-                Bucket::of(payment.resource(), payment.amount() - spent),
-            )
-        }
-    }
-}
-
-/// Compare everything a body determines.
+/// Compare everything a body determines — the ABI binding included.
 ///
-/// The ABI binding is deliberately excluded: a macro sees the author's
-/// Rust method and the handles its body opens, never the component's
-/// exported parameter list, which is authored beside the WIT. What
-/// validates the binding is the publish check, against the export type in
-/// the artifact itself.
-fn assert_derived(traced: &PackageMetadata, authored: &PackageMetadata, package: &str) {
+/// The binding used to be excluded, on the ground that a macro never sees
+/// the component's exported parameter list. It sees it now: the list *is*
+/// the binding, decided by which values the emitted body could not
+/// compute, so comparing it is the strongest statement this test can make
+/// about the derivation.
+///
+/// `skip` names the methods whose authored artifact is a hand-written
+/// guest making a choice a body-derived one does not. There is exactly
+/// one: the account's `deposit` declares a claims-cell movement its own
+/// guest never performs, so its binding carries no handle for a clause a
+/// derived guest opens. The two converge where the account's artifact
+/// itself becomes derived.
+fn assert_derived(
+    traced: &PackageMetadata,
+    authored: &PackageMetadata,
+    package: &str,
+    skip: &[&str],
+) {
     assert_eq!(
         traced.methods.keys().collect::<Vec<_>>(),
         authored.methods.keys().collect::<Vec<_>>(),
@@ -212,7 +75,20 @@ fn assert_derived(traced: &PackageMetadata, authored: &PackageMetadata, package:
         assert_eq!(got.outputs, signature.outputs, "{package}::{name} outputs");
         assert_eq!(got.effects, signature.effects, "{package}::{name} effects");
         assert_eq!(got.calls, signature.calls, "{package}::{name} calls");
+        assert_eq!(
+            got.accessibility, signature.accessibility,
+            "{package}::{name} accessibility"
+        );
+        assert_eq!(got.mints, signature.mints, "{package}::{name} mints");
+        assert_eq!(
+            got.totality, signature.totality,
+            "{package}::{name} totality"
+        );
+        if !skip.contains(&name.as_str()) {
+            assert_eq!(got.abi, signature.abi, "{package}::{name} abi");
+        }
     }
+    assert_eq!(traced.errors, authored.errors, "{package}: error table");
 }
 
 #[test]
@@ -226,7 +102,21 @@ fn the_account_body_derives_its_authored_signature() {
     for gap in ["deposit-nf", "withdraw-nf", "present-badge"] {
         authored.methods.remove(gap);
     }
-    assert_derived(&account::blueprint().metadata(), &authored, "account");
+    // The account's totality marks are the artifact's, and `deposit`'s
+    // `Total` is one the publish-time checker grants rather than a body
+    // yields; the derivation claims the weakest mark the export type
+    // supports and leaves the grant where it is made.
+    authored
+        .methods
+        .get_mut("deposit")
+        .expect("declared")
+        .totality = Totality::Infallible;
+    assert_derived(
+        &account::blueprint().metadata(),
+        &authored,
+        "account",
+        &["deposit"],
+    );
 }
 
 #[test]
@@ -235,6 +125,7 @@ fn the_pool_body_derives_its_authored_signature() {
         &amm::blueprint().metadata(),
         &amm_package::metadata(),
         "amm",
+        &[],
     );
 }
 
@@ -244,6 +135,7 @@ fn the_book_body_derives_its_authored_signature() {
         &book::blueprint().metadata(),
         &book_package::metadata(),
         "book",
+        &[],
     );
 }
 

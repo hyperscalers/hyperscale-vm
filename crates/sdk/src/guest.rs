@@ -203,6 +203,29 @@ pub fn reserved(handle: Handle) -> u128 {
     }
 }
 
+/// The amount a declared reservation moved, checked against the amount
+/// the declaration named.
+///
+/// Feasibility was judged before this body ran and the grant is what the
+/// kernel already holds, so a reservation is read rather than performed.
+/// What is left to establish is that the grant is the declared amount —
+/// the one thing an executing body can still be surprised by, and a
+/// deterministic trap when it is.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::Reserve`], and on a grant that is not
+/// `declared`.
+#[must_use]
+pub fn granted(handle: Handle, declared: u128) -> u128 {
+    let held = reserved(handle);
+    assert!(
+        held == declared,
+        "the reservation is not the amount declared"
+    );
+    held
+}
+
 /// Entries currently visible in this interval, bounded by its cap.
 ///
 /// # Panics
@@ -221,13 +244,17 @@ pub fn entry_count(handle: Handle) -> u32 {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::RangeRead`]: a write interval is walked by
-/// index, and reading its keys is a read the declaration did not make.
+/// On a handle that is not an interval. An exclusive interval reads its
+/// own keys: the write subsumes the read, so walking one by order costs
+/// no declaration the clause did not already make.
 #[must_use]
 pub fn entry_order(handle: Handle, index: u32) -> u128 {
     match handle {
         Handle::RangeRead(rep) => {
             amount_of(&kernel::state::range_read_order(&range_read(rep), index))
+        }
+        Handle::RangeWrite(rep) => {
+            amount_of(&kernel::state::range_write_order(&range_write(rep), index))
         }
         other => unreachable!("{other:?} yields no order keys"),
     }
@@ -237,13 +264,30 @@ pub fn entry_order(handle: Handle, index: u32) -> u128 {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::RangeRead`].
+/// On a handle that is not an interval.
 #[must_use]
 pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
     match handle {
         Handle::RangeRead(rep) => kernel::state::range_read_entry(&range_read(rep), index),
+        Handle::RangeWrite(rep) => kernel::state::range_write_entry(&range_write(rep), index),
         other => unreachable!("{other:?} yields no entries"),
     }
+}
+
+/// The value of the entry at `order`, or empty where there is none.
+///
+/// A collection's leaf has no key of its own — the kernel materializes an
+/// interval covering it, and the order is what picks it out. Absent reads
+/// as empty, on the same terms an absent substate does.
+///
+/// # Panics
+///
+/// On a handle that is not an interval.
+#[must_use]
+pub fn entry_at(handle: Handle, order: u128) -> Vec<u8> {
+    (0..entry_count(handle))
+        .find(|&index| entry_order(handle, index) == order)
+        .map_or_else(Vec::new, |index| entry_get(handle, index))
 }
 
 /// Replace this interval's entry at `index`.

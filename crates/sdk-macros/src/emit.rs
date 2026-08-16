@@ -10,8 +10,8 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::lower::{Lowered, Node, Site, Target};
-use crate::term::{Op, Term, binding_ident};
+use crate::lower::{Lowered, Need, Node, Site, Target};
+use crate::term::{Op, Term, binding_ident, fresh_ident};
 
 /// The mode a site's operations fold to.
 ///
@@ -132,7 +132,14 @@ fn node(node: &Node, lowered: &Lowered) -> TokenStream {
                 return quote!();
             };
             let target = target(&site.target);
-            quote!({ #prelude #target __access #call; })
+            // A handle parameter names the clause just declared, so the
+            // binding rides beside the declaration rather than being
+            // recomputed from it.
+            let bind = lowered
+                .handles
+                .contains(index)
+                .then(|| quote!(__t.bind_handle();));
+            quote!({ #prelude #target __access #call; #bind })
         }
         Node::ForEach { list, depth, body } => {
             let list = list.emit();
@@ -149,16 +156,43 @@ fn node(node: &Node, lowered: &Lowered) -> TokenStream {
 }
 
 /// The declaration closure for one lowered method.
-pub fn declaration(lowered: &Lowered) -> TokenStream {
+///
+/// `gate` is the accessibility the method's own attribute names, which
+/// may declare a clause of its own: an authorizing gate's rule read
+/// happens before the export runs, so it is the gate's to declare and
+/// no handle is bound for it.
+pub fn declaration(lowered: &Lowered, gate: &TokenStream, declines: bool) -> TokenStream {
+    // One draw per call site: the entry key derived from a fresh id and
+    // the parameter carrying that id have to name the same slot.
+    let fresh = (0..lowered.fresh).map(|site| {
+        let ident = fresh_ident(site);
+        quote!(let #ident = __t.fresh_id();)
+    });
     let nodes = lowered.nodes.iter().map(|n| node(n, lowered));
     let outputs = lowered.outputs.iter().map(|term| {
         let term = term.emit();
         quote!(__t.output(&#term.cast::<::hyperscale_vm_sdk::Addr>());)
     });
+    // Values bind after the handles for a reason the export's own
+    // signature shows: a reader of the binding wants the capabilities
+    // together, not interleaved with wherever each value was first
+    // needed.
+    let values = lowered.values.iter().map(|need| match need {
+        Need::Amount(param) => quote!(__t.bind_bucket(#param);),
+        Need::Derived(term) => {
+            let term = term.emit();
+            quote!(__t.bind_derived(&#term);)
+        }
+    });
+    let fallible = declines.then(|| quote!(__t.fallible();));
     quote!(
         |__t: &mut ::hyperscale_vm_sdk::Trace| {
+            #(#fresh)*
+            #gate
+            #fallible
             #(#nodes)*
             #(#outputs)*
+            #(#values)*
         }
     )
 }

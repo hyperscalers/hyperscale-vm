@@ -30,8 +30,8 @@
 //! published contract whose method can never be called.
 
 use hyperscale_vm_effects::{
-    CallSite, Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr,
-    ParamType, RoleId, TargetExpr, Value,
+    AbiParam, Accessibility, AuthRole, CallSite, Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
+    MAX_FOREACH_ELEMENTS, ModeExpr, ParamType, RoleId, TargetExpr, Totality, Value,
 };
 
 use crate::sym::{Addr, Amount, Key, Kind, Num, Opaque, Seq, Sym, expr_depth};
@@ -55,6 +55,19 @@ pub struct Trace {
     /// The worst-case effect count, folding `for-each` width per nesting
     /// level.
     worst_case: usize,
+    /// The handle bindings, in the order the body opened them.
+    handles: Vec<AbiParam>,
+    /// The value bindings, in the order the body needs them.
+    values: Vec<AbiParam>,
+    /// The top-level clause most recently declared, which is the one
+    /// [`Trace::bind_handle`] names.
+    last_clause: Option<u32>,
+    /// Whose authority naming this method requires.
+    accessibility: Accessibility,
+    /// The badge a custodial gate reads and mints.
+    mints: Option<Expr>,
+    /// Whether the method carries an error arm.
+    totality: Totality,
 }
 
 impl Trace {
@@ -66,6 +79,12 @@ impl Trace {
             outputs: Vec::new(),
             calls: Vec::new(),
             worst_case: 0,
+            handles: Vec::new(),
+            values: Vec::new(),
+            last_clause: None,
+            accessibility: Accessibility::Public,
+            mints: None,
+            totality: Totality::Infallible,
         }
     }
 
@@ -103,11 +122,20 @@ impl Trace {
                 .unwrap_or(usize::MAX);
             self.worst_case = self.worst_case.saturating_add(width);
         }
+        let top = self.depth() == 0;
         let scope = self
             .scopes
             .last_mut()
             .expect("the method scope is never popped");
+        let index = u32::try_from(scope.len()).unwrap_or(u32::MAX);
+        let effect = matches!(clause, Clause::Effect { .. });
         scope.push(clause);
+        if top {
+            // `AbiParam::Handle` indexes the top-level clause list, so
+            // only a clause that lands there can back a handle parameter;
+            // a `for-each` clears the mark rather than shadowing it.
+            self.last_clause = effect.then_some(index);
+        }
     }
 
     /// The `index`-th manifest argument bound to this call.
@@ -317,6 +345,91 @@ impl Trace {
         });
     }
 
+    /// Bind the capability materialized for the clause just declared as
+    /// the next of the guest's handle parameters.
+    ///
+    /// Handles occupy the front of the binding, values the tail, whatever
+    /// order the body interleaved them in — which is what makes the
+    /// export's parameter list readable rather than an accident of where
+    /// each value was first needed.
+    ///
+    /// # Panics
+    ///
+    /// If no top-level effect clause has been declared, or if a
+    /// `for-each` is open: a clause under one expands over instance
+    /// configuration, so it occupies no fixed export parameter.
+    pub fn bind_handle(&mut self) {
+        assert_eq!(
+            self.depth(),
+            0,
+            "a clause under a for-each has a configuration-dependent handle count, \
+             so it cannot occupy a fixed export parameter"
+        );
+        let clause = self
+            .last_clause
+            .expect("a handle binding names the clause just declared, and none is");
+        self.handles.push(AbiParam::Handle(clause));
+    }
+
+    /// Bind the runtime amount of the `index`-th declared parameter, which
+    /// must be a bucket.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is past the declared parameters or names a kind other
+    /// than a bucket — the one value a signature cannot derive.
+    pub fn bind_bucket(&mut self, index: u32) {
+        let declared = *self
+            .params
+            .get(index as usize)
+            .unwrap_or_else(|| panic!("argument {index} is past the declared parameter list"));
+        assert!(
+            declared == ParamType::Bucket,
+            "argument {index} is declared {} and carries no runtime amount",
+            declared.name()
+        );
+        self.values.push(AbiParam::Bucket(index));
+    }
+
+    /// Bind a value evaluated over this method's bound inputs.
+    pub fn bind_derived<K: Kind>(&mut self, value: &Sym<K>) {
+        let expr = self.lower(value.expr().clone());
+        self.values.push(AbiParam::Derived(expr));
+    }
+
+    /// Record that this method carries an error arm, and may therefore
+    /// decline.
+    pub const fn fallible(&mut self) {
+        self.totality = Totality::Fallible;
+    }
+
+    /// Record that naming this method requires presenting the identity
+    /// `identity` evaluates to.
+    pub fn guarded(&mut self, identity: &Sym<Addr>) {
+        let expr = self.lower(identity.expr().clone());
+        self.accessibility = Accessibility::Guarded(expr);
+    }
+
+    /// Record that naming this method requires satisfying the target's own
+    /// rule, and mints the target's identity.
+    pub fn authorizing(&mut self) {
+        self.accessibility = Accessibility::Authorizing;
+    }
+
+    /// Record that naming this method requires satisfying `role` of the
+    /// target's stored role set.
+    pub fn role_gated(&mut self, role: AuthRole) {
+        self.accessibility = Accessibility::RoleGated(role);
+    }
+
+    /// Record that naming this method requires the target's own rule and
+    /// its possession of `badge`, and mints the badge's address.
+    pub fn custodial(&mut self, badge: &Sym<Addr>) {
+        let expr = self.lower(badge.expr().clone());
+        self.accessibility = Accessibility::Custodial;
+        self.mints = Some(expr);
+    }
+
     /// Record that this method produces a value edge carrying `resource`.
     ///
     /// Not inferable from a `-> Bucket` return type: the type says an edge
@@ -346,11 +459,17 @@ impl Trace {
             "a for-each scope outlived its closure"
         );
         let clauses = self.scopes.pop().unwrap_or_default();
+        let mut abi = self.handles;
+        abi.extend(self.values);
         Recorded {
             clauses,
             outputs: self.outputs,
             calls: self.calls,
             worst_case: self.worst_case,
+            abi,
+            accessibility: self.accessibility,
+            mints: self.mints,
+            totality: self.totality,
         }
     }
 }
@@ -415,6 +534,10 @@ pub(crate) struct Recorded {
     pub(crate) outputs: Vec<Expr>,
     pub(crate) calls: Vec<CallSite>,
     pub(crate) worst_case: usize,
+    pub(crate) abi: Vec<AbiParam>,
+    pub(crate) accessibility: Accessibility,
+    pub(crate) mints: Option<Expr>,
+    pub(crate) totality: Totality,
 }
 
 /// Binders are recorded at `u32::MAX - depth` so that a lowered index —

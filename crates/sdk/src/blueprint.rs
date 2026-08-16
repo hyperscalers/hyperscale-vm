@@ -14,8 +14,8 @@
 use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{
-    Accessibility, Clause, MAX_EFFECTS_PER_SIGNATURE, MethodSignature, ModeExpr, ModeKind,
-    PackageMetadata, ParamType, TargetExpr, Totality,
+    Clause, MAX_EFFECTS_PER_SIGNATURE, MethodSignature, ModeExpr, ModeKind, PackageMetadata,
+    ParamType, TargetExpr,
 };
 
 use crate::trace::Trace;
@@ -138,6 +138,8 @@ impl Method {
 #[derive(Clone, Debug, Default)]
 pub struct Blueprint {
     methods: BTreeMap<String, Method>,
+    events: Vec<String>,
+    errors: Vec<String>,
 }
 
 impl Blueprint {
@@ -169,11 +171,8 @@ impl Blueprint {
                 .iter()
                 .map(|(name, m)| (name.clone(), m.signature.clone()))
                 .collect(),
-            // Neither name table is something a trace can see: both are
-            // authored beside the WIT, like the totality mark whose arm
-            // the error table indexes.
-            events: Vec::new(),
-            errors: Vec::new(),
+            events: self.events.clone(),
+            errors: self.errors.clone(),
         }
     }
 }
@@ -211,17 +210,11 @@ impl Builder {
         };
         let method = Method {
             signature: MethodSignature {
-                // Three things a trace cannot see: whether the method
-                // can decline is its export's result type, who may call
-                // it is a claim, and how its arguments are built is the
-                // export's parameter list. A body determines none of
-                // them, and all three are authored beside the WIT and
-                // land on the signature there.
-                totality: Totality::Infallible,
-                accessibility: Accessibility::default(),
-                mints: None,
+                totality: recorded.totality,
+                accessibility: recorded.accessibility,
+                mints: recorded.mints,
                 params: params.to_vec(),
-                abi: Vec::new(),
+                abi: recorded.abi,
                 outputs: recorded.outputs,
                 effects: recorded.clauses,
                 calls: recorded.calls,
@@ -230,6 +223,22 @@ impl Builder {
             worst_case: recorded.worst_case,
         };
         self.blueprint.methods.insert(name.to_owned(), method);
+        self
+    }
+
+    /// Name the package's `index`-th event type, in the order a receipt
+    /// event's index refers to.
+    #[must_use]
+    pub fn event(mut self, name: &str) -> Self {
+        self.blueprint.events.push(name.to_owned());
+        self
+    }
+
+    /// Name the package's `index`-th error code, in the order a declined
+    /// invocation's code refers to.
+    #[must_use]
+    pub fn error(mut self, name: &str) -> Self {
+        self.blueprint.errors.push(name.to_owned());
         self
     }
 

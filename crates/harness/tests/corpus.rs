@@ -133,9 +133,13 @@ fn world() -> (MetadataCache, InstanceRegistry) {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("amm"),
+        // The pair, then the fee in basis points: the guest reads the fee
+        // as an evaluated slot, so it is configuration rather than a
+        // shape spliced into the locked leaf.
         config: vec![
             Value::Address(RES_X.address()),
             Value::Address(RES_Y.address()),
+            Value::U64(30),
         ],
         salt: Hash32([2; 32]),
     }
@@ -1642,7 +1646,7 @@ fn swap_store() -> MemoryStore {
         .write(vault(pool(), RES_Y), encode_amount(1_000).to_vec())
         .unwrap();
     store
-        .write(config_leaf(pool()), 30u16.to_le_bytes().to_vec())
+        .write(config_leaf(pool()), pool_meta().config_bytes().unwrap())
         .unwrap();
     store.lock(config_leaf(pool()));
     store.clear_log();

@@ -64,9 +64,12 @@ pub fn world() -> (MetadataCache, InstanceRegistry) {
 pub fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("amm"),
+        // The pair, then the fee in basis points: a swap's guest reads
+        // the fee as an evaluated slot, so it is configuration.
         config: vec![
             Value::Address(RES_X.address()),
             Value::Address(RES_Y.address()),
+            Value::U64(30),
         ],
         salt: Hash32([2; 32]),
     }
