@@ -14,6 +14,14 @@ PackageMetadata {
                     1,
                 ),
             ],
+            denominations: [
+                Some(
+                    Config(
+                        0,
+                    ),
+                ),
+                None,
+            ],
             effects: [
                 Effect {
                     target: Point(

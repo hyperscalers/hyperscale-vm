@@ -15,6 +15,7 @@ fn the_lowering_refuses_what_it_cannot_see_into() {
     refuse.compile_fail("tests/refusals/self_escape.rs");
     refuse.compile_fail("tests/refusals/closure.rs");
     refuse.compile_fail("tests/refusals/unknown_macro.rs");
+    refuse.compile_fail("tests/refusals/untyped_credit.rs");
 }
 
 #[test]
@@ -23,6 +24,7 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/mode_mix.rs");
     refuse.compile_fail("tests/refusals/reassigned_key.rs");
     refuse.compile_fail("tests/refusals/early_return_output.rs");
+    refuse.compile_fail("tests/refusals/two_denominations.rs");
 }
 
 /// A mark the macro can already tell is unsupportable, refused where the

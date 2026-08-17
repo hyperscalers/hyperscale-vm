@@ -196,6 +196,7 @@ mod tests {
                     Value::Address(Address::new([6; 31], AddressClass::Component)),
                 ])),
             ],
+            denominations: vec![None, None, None, None, Some(Expr::Config(2))],
             effects: vec![
                 Clause::Effect {
                     target: TargetExpr::Point(Expr::ChildKey {

@@ -217,6 +217,7 @@ impl Builder {
                 params: params.to_vec(),
                 abi: recorded.abi,
                 outputs: recorded.outputs,
+                denominations: recorded.denominations,
                 effects: recorded.clauses,
             },
             handles,

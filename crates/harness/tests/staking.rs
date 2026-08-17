@@ -20,10 +20,11 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    Address, ComponentAddr, EnvelopeTree, Fungibility, Hash32, Hasher, InstanceMeta,
-    InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
-    PrincipalAddr, ResourceAddr, ResourceRecord, SubstateKey, TestHasher, Value, admit_tree,
-    child_key, holdings_collection, resource_address, resource_record_key, route_tree,
+    Address, AdmissionError, ComponentAddr, EnvelopeTree, Fungibility, Hash32, Hasher,
+    InstanceMeta, InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash,
+    PrefixShardResolver, PrincipalAddr, ResourceAddr, ResourceRecord, SubstateKey, TestHasher,
+    Value, admit_tree, child_key, holdings_collection, resource_address, resource_record_key,
+    route_tree,
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall,
@@ -187,6 +188,45 @@ fn unstake_graph(amount: u128) -> ManifestGraph {
         let units = account::withdraw(b, alice, unit(), amount)?;
         staking::unstake(b, pool(), units)
     })
+}
+
+/// A delegation is denominated by the pool's configuration, so paying in
+/// anything else is refused before the transaction exists.
+///
+/// The units a pool issues are a claim on what it holds; a pool crediting
+/// its staked vault with some other resource would be issuing claims
+/// against value it never took in.
+#[test]
+fn a_delegation_in_the_wrong_resource_is_refused_at_admission() {
+    let world = world();
+    let tree = single_intent(graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, unit(), 40)?;
+        let units = staking::stake(b, pool(), funds)?;
+        account::deposit(b, ALICE, units)
+    }));
+    let identity = tree.hash(&TestHasher);
+    let refused = admit_tree(&tree, ALICE, identity, &world.0, &world.1, &TestHasher)
+        .expect_err("the pool takes its staked resource and this pays units");
+
+    assert!(
+        matches!(
+            refused,
+            AdmissionError::Denomination { param: 0, expected, .. } if expected == XRD.address()
+        ),
+        "the refusal names the staked resource: {refused:?}"
+    );
+}
+
+/// The control: the same delegation in the pool's own resource admits.
+#[test]
+fn a_delegation_in_the_pools_own_resource_admits() -> Result<()> {
+    let world = world();
+    let tree = single_intent(stake_graph(40));
+    let identity = tree.hash(&TestHasher);
+    admit_tree(&tree, ALICE, identity, &world.0, &world.1, &TestHasher)
+        .context("the pool's own resource is what it asks for")?;
+    Ok(())
 }
 
 /// The pool's own record of one validator it operates.
@@ -554,7 +594,9 @@ fn returned_units_are_consumed_and_recorded_as_unbonding() -> Result<()> {
     assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
 
     assert_eq!(amount_of(&end, vault(ALICE, unit())), 60);
-    assert_eq!(amount_of(&end, unbonding(pool(), XRD)), 40);
+    // The unbonding leaf is keyed by what lands in it, which is the units
+    // the pool issued rather than the stake they are a claim on.
+    assert_eq!(amount_of(&end, unbonding(pool(), unit())), 40);
     // Nothing came back: the release leg is a later method, so the units
     // are gone and the delegator holds no claim on the pool's vault yet.
     assert_eq!(amount_of(&end, vault(ALICE, XRD)), 0);

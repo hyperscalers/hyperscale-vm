@@ -7,6 +7,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Range {
@@ -61,6 +62,7 @@ PackageMetadata {
                 Bucket,
             ],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Entry {

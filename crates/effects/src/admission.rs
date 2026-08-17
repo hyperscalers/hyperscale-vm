@@ -320,6 +320,31 @@ pub enum AdmissionError {
         /// The parameter position.
         param: u32,
     },
+    /// A value edge carrying a resource the callee's own cells do not
+    /// hold at that position.
+    #[error(
+        "node {node} argument {param}: the method denominates this position in {expected:?}, \
+         and the edge carries {found:?}"
+    )]
+    Denomination {
+        /// The offending node.
+        node: u32,
+        /// The parameter position.
+        param: u32,
+        /// What the callee's declaration fixes the position to.
+        expected: Address,
+        /// What the routed edge actually carries.
+        found: Address,
+    },
+    /// A denomination expression that evaluated to something other than a
+    /// resource address.
+    #[error("node {node} argument {param} is denominated by an expression that is not a resource")]
+    DenominationType {
+        /// The offending node.
+        node: u32,
+        /// The parameter position.
+        param: u32,
+    },
     /// An output expression that evaluated to neither a resource address
     /// nor a bucket projection.
     #[error("node {node} output {output} is not typed by a resource or bucket")]
@@ -940,6 +965,39 @@ pub(crate) fn admit_intents(
             frame: 0,
             identity,
         };
+        // Judged here rather than inside the binding loop above, because a
+        // denomination is an expression over the *bound* arguments: one
+        // naming a later position would evaluate against a parameter that
+        // loop has not reached.
+        for (position, denomination) in signature.denominations.iter().enumerate() {
+            let Some(expr) = denomination else { continue };
+            let param = u32::try_from(position).map_err(|_| AdmissionError::TooManyNodes)?;
+            let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
+                AdmissionError::Eval {
+                    node: node_index,
+                    source,
+                }
+            })?;
+            let Value::Address(expected) = value else {
+                return Err(AdmissionError::DenominationType {
+                    node: node_index,
+                    param,
+                });
+            };
+            // A position the signature denominates and the call filled
+            // with something other than an edge is already refused by the
+            // kind check above, so what is left here is an edge.
+            if let Some(Value::Bucket { resource, .. }) = bound.get(position)
+                && *resource != expected
+            {
+                return Err(AdmissionError::Denomination {
+                    node: node_index,
+                    param,
+                    expected,
+                    found: *resource,
+                });
+            }
+        }
         // A minted identity belongs to the custody gate and nowhere else
         // — re-asked of the signature like the rule cell's shape.
         if signature.mints.is_some() && !matches!(signature.accessibility, Accessibility::Custodial)

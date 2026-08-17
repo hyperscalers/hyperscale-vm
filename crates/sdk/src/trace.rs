@@ -50,6 +50,10 @@ pub struct Trace {
     next_slot: u32,
     /// Resource expressions for the value edges this method produces.
     outputs: Vec<Expr>,
+    /// The resource each consumed edge is fixed to, by parameter; sized
+    /// to `params` and mostly empty, because most positions take whatever
+    /// the cell they land in is keyed by.
+    denominations: Vec<Option<Expr>>,
     /// The worst-case effect count, folding `for-each` width per nesting
     /// level.
     worst_case: usize,
@@ -73,6 +77,7 @@ pub struct Trace {
 impl Trace {
     pub(crate) fn new(params: Vec<ParamType>) -> Self {
         Self {
+            denominations: vec![None; params.len()],
             params,
             scopes: vec![Vec::new()],
             next_slot: 0,
@@ -516,6 +521,43 @@ impl Trace {
         self.outputs.push(expr);
     }
 
+    /// Record that the edge at `index` carries `resource`.
+    ///
+    /// Stated where the body credits a cell it keys by something other
+    /// than the arriving resource: the cell's own key is what the value
+    /// going into it has to be, and the parameter is where a caller
+    /// supplies it. A cell keyed by the bucket's own resource says
+    /// nothing and records nothing.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is past the declared parameters, names a kind that
+    /// carries no value, or already carries a different resource — a
+    /// parameter credited to two cells that cannot both be right is a
+    /// declaration with no satisfying call.
+    pub fn denomination(&mut self, index: u32, resource: &Sym<Addr>) {
+        let declared = *self
+            .params
+            .get(index as usize)
+            .unwrap_or_else(|| panic!("argument {index} is past the declared parameter list"));
+        assert!(
+            declared.is_edge(),
+            "argument {index} is declared {} and carries no value to denominate",
+            declared.name()
+        );
+        let expr = self.lower(resource.expr().clone());
+        let slot = &mut self.denominations[index as usize];
+        if let Some(held) = slot {
+            assert!(
+                *held == expr,
+                "argument {index} is credited to cells keyed by {held:?} and by {expr:?}, \
+                 and no edge carries both"
+            );
+            return;
+        }
+        *slot = Some(expr);
+    }
+
     /// Consume the trace into what it recorded.
     pub(crate) fn finish(mut self) -> Recorded {
         assert_eq!(
@@ -526,8 +568,17 @@ impl Trace {
         let clauses = self.scopes.pop().unwrap_or_default();
         let mut abi = self.handles;
         abi.extend(self.values);
+        // A method that fixes no position carries no list rather than a
+        // list of nothing: most methods are that method, and the two say
+        // the same thing everywhere the list is read.
+        let denominations = if self.denominations.iter().any(Option::is_some) {
+            self.denominations
+        } else {
+            Vec::new()
+        };
         Recorded {
             clauses,
+            denominations,
             outputs: self.outputs,
             worst_case: self.worst_case,
             abi,
@@ -597,6 +648,7 @@ impl Access<'_> {
 pub(crate) struct Recorded {
     pub(crate) clauses: Vec<Clause>,
     pub(crate) outputs: Vec<Expr>,
+    pub(crate) denominations: Vec<Option<Expr>>,
     pub(crate) worst_case: usize,
     pub(crate) abi: Vec<AbiParam>,
     pub(crate) accessibility: Accessibility,

@@ -10,11 +10,12 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world};
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
-    Accessibility, Address, AddressClass, AdmissionError, AuthRole, AuthorityGate, Clause,
-    ComponentAddr, Constraint, EdgeKind, EdgeRef, Effect, EffectTarget, EvidenceRef, Expr,
+    AbiParam, Accessibility, Address, AddressClass, AdmissionError, AuthRole, AuthorityGate,
+    Clause, ComponentAddr, Constraint, EdgeKind, EdgeRef, Effect, EffectTarget, EvidenceRef, Expr,
     GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph,
-    MetadataCache, MethodSignature, Mode, ModeExpr, PackageMetadata, TargetExpr, TestHasher,
-    Totality, Value, admit, child_key, fresh_id, holdings_collection, holdings_range, route,
+    MetadataCache, MethodSignature, Mode, ModeExpr, PackageMetadata, ParamType, ResourceAddr,
+    TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_collection,
+    holdings_range, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -30,6 +31,40 @@ fn splitter_meta() -> InstanceMeta {
 /// The splitter instance, at the address its record derives.
 fn splitter() -> ComponentAddr {
     splitter_meta().address(&TestHasher)
+}
+
+/// A package whose one method denominates its bucket by a parameter bound
+/// *after* it.
+///
+/// Authored here rather than in the fixtures, because no guest writes
+/// this: what it exists to pin is when a denomination is evaluated, and
+/// a shape the corpus happens not to contain is exactly the shape a hand
+/// written metadata section could carry.
+fn sorter_metadata() -> PackageMetadata {
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "sort".into(),
+        MethodSignature {
+            totality: Totality::Infallible,
+            params: vec![ParamType::Bucket, ParamType::Address],
+            abi: vec![AbiParam::Bucket(0), AbiParam::Derived(Expr::Arg(1))],
+            denominations: vec![Some(Expr::Arg(1)), None],
+            ..MethodSignature::default()
+        },
+    );
+    package
+}
+
+fn sorter_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("sorter"),
+        config: vec![],
+        salt: Hash32([9; 32]),
+    }
+}
+
+fn sorter() -> ComponentAddr {
+    sorter_meta().address(&TestHasher)
 }
 
 fn setup() -> (MetadataCache, InstanceRegistry) {
@@ -727,6 +762,62 @@ fn repeated_amount_bounds_fold_to_their_conjunction() {
         ],
     };
     assert!(admit_it(&satisfiable).is_ok());
+}
+
+/// A denomination is an expression over the whole bound argument list, so
+/// one naming a later parameter than the position it constrains resolves.
+///
+/// The property is about when the check runs rather than what it decides:
+/// evaluated as each argument was bound, this expression would read a
+/// position nothing had filled in yet, and the method would be
+/// unpublishable for a reason nobody wrote down.
+#[test]
+fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
+    let (mut cache, mut instances) = setup();
+    cache.publish(pkg("sorter"), sorter_metadata());
+    instances.create(&TestHasher, sorter_meta());
+    let sorted = |resource: ResourceAddr| ManifestGraph {
+        nodes: vec![
+            valid_graph().nodes[0].clone(),
+            valid_graph().nodes[1].clone(),
+            GraphNode {
+                target: sorter().into(),
+                method: "sort".into(),
+                args: vec![
+                    GraphArg::Edge {
+                        edge: EdgeRef {
+                            producer: 1,
+                            output: 0,
+                        },
+                        constraints: vec![],
+                    },
+                    GraphArg::Literal(Value::Address(resource.address())),
+                ],
+                evidence: BTreeSet::new(),
+            },
+        ],
+    };
+
+    // The edge carries what the later argument names.
+    assert_eq!(
+        admit(&sorted(RES_X), ALICE, &cache, &instances, &TestHasher).map(|_| ()),
+        Ok(())
+    );
+    // And does not.
+    assert!(matches!(
+        admit(
+            &sorted(common::RES_Y),
+            ALICE,
+            &cache,
+            &instances,
+            &TestHasher
+        ),
+        Err(AdmissionError::Denomination {
+            node: 2,
+            param: 0,
+            ..
+        })
+    ));
 }
 
 proptest! {

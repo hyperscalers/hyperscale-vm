@@ -217,6 +217,10 @@ pub fn declaration(
         let term = term.emit();
         quote!(__t.output(&#term.cast::<::hyperscale_vm_sdk::Addr>());)
     });
+    let denominations = lowered.denominations.iter().map(|(param, term)| {
+        let term = term.emit();
+        quote!(__t.denomination(#param, &#term.cast::<::hyperscale_vm_sdk::Addr>());)
+    });
     // Values bind after the handles for a reason the export's own
     // signature shows: a reader of the binding wants the capabilities
     // together, not interleaved with wherever each value was first
@@ -244,6 +248,7 @@ pub fn declaration(
             #total
             #(#nodes)*
             #(#outputs)*
+            #(#denominations)*
             #(#values)*
             #issuer
         }

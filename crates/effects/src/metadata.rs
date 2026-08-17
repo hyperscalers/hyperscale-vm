@@ -337,6 +337,20 @@ pub struct MethodSignature {
     /// The static resource type of each value edge the method produces, as
     /// an expression over the method's bound inputs.
     pub outputs: Vec<Expr>,
+    /// The resource each value edge the method *consumes* must carry, as
+    /// an expression over the method's bound inputs; `None` at a position
+    /// that takes any resource.
+    ///
+    /// The dual of `outputs`, and one entry per parameter, so a position
+    /// indexes both this and `params`. What fixes an entry is the body: a
+    /// bucket credited to a cell the method keys by something other than
+    /// that bucket's own resource is a bucket the method can only mean one
+    /// resource by. A cell keyed by the arriving resource fixes nothing,
+    /// which is what a wallet is, and leaves the position open.
+    ///
+    /// Not derivable from the effects alone: a clause names the cell and
+    /// never which parameter feeds it.
+    pub denominations: Vec<Option<Expr>>,
     /// The method's own effect clauses.
     pub effects: Vec<Clause>,
     /// How the guest's ABI parameters are built, one entry per exported
@@ -653,6 +667,23 @@ pub enum DeclarationError {
     /// A method claiming totality behind a gate that can turn it away.
     #[error("a total method admits every caller, and this one is gated")]
     GatedTotality,
+    /// A denomination list that does not line up with the parameters it
+    /// indexes.
+    #[error("{found} denominations against {expected} parameters")]
+    DenominationArity {
+        /// The declared parameter count.
+        expected: usize,
+        /// The denomination count.
+        found: usize,
+    },
+    /// A denomination at a parameter that carries no value.
+    #[error("parameter {param} is declared {kind} and carries no value to denominate")]
+    DenominationKind {
+        /// The offending position.
+        param: u32,
+        /// The kind declared there.
+        kind: &'static str,
+    },
 }
 
 /// Whether a target names the declaring instance's own prefix.
@@ -714,6 +745,32 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     if signature.totality.is_total() && signature.accessibility != Accessibility::Public {
         return Err(DeclarationError::GatedTotality);
     }
+    // A denomination is read at the position it indexes, so a list that
+    // does not cover the parameters is one whose entries name positions
+    // nobody agrees on. An empty list is the method that denominates
+    // nothing, which is most of them.
+    if !signature.denominations.is_empty()
+        && signature.denominations.len() != signature.params.len()
+    {
+        return Err(DeclarationError::DenominationArity {
+            expected: signature.params.len(),
+            found: signature.denominations.len(),
+        });
+    }
+    for (position, denomination) in signature.denominations.iter().enumerate() {
+        let param = u32::try_from(position).unwrap_or(u32::MAX);
+        if denomination.is_some()
+            && let Some(kind) = signature
+                .params
+                .get(position)
+                .filter(|kind| !kind.is_edge())
+        {
+            return Err(DeclarationError::DenominationKind {
+                param,
+                kind: kind.name(),
+            });
+        }
+    }
     walk(&signature.effects, &mut 0)
 }
 
@@ -762,6 +819,9 @@ fn check_signature_bounds(signature: &MethodSignature) -> Result<(), MetadataBou
     }
     for output in &signature.outputs {
         check_expr_bounds(output, 0)?;
+    }
+    for denomination in signature.denominations.iter().flatten() {
+        check_expr_bounds(denomination, 0)?;
     }
     for param in &signature.abi {
         if let AbiParam::Derived(expr) = param {
@@ -1759,6 +1819,66 @@ mod tests {
                 Err(DeclarationError::GatedTotality),
             );
         }
+    }
+
+    /// A denomination list is read at the positions it indexes, so the
+    /// two ways it can fail to index anything are refused at publish.
+    ///
+    /// A published package could carry a hand-written metadata section,
+    /// so neither is a fact about what the tracer emits: what admission
+    /// reads has to line up with the parameters whatever wrote it.
+    #[test]
+    fn a_denomination_names_a_parameter_that_carries_value() {
+        let denominating = |params: Vec<ParamType>, denominations: Vec<Option<Expr>>| {
+            check_declarations(&MethodSignature {
+                params,
+                denominations,
+                ..MethodSignature::default()
+            })
+        };
+
+        // No list at all is the method that fixes nothing, which is most
+        // of them.
+        assert_eq!(denominating(vec![ParamType::Bucket], vec![]), Ok(()));
+        // A list covering the parameters, fixing the one that carries
+        // value and leaving the other open.
+        assert_eq!(
+            denominating(
+                vec![ParamType::Bucket, ParamType::U128],
+                vec![Some(Expr::Config(0)), None]
+            ),
+            Ok(())
+        );
+
+        // A list that does not cover them indexes positions nobody agrees
+        // on.
+        assert_eq!(
+            denominating(
+                vec![ParamType::Bucket, ParamType::U128],
+                vec![Some(Expr::Config(0))]
+            ),
+            Err(DeclarationError::DenominationArity {
+                expected: 2,
+                found: 1
+            })
+        );
+        // A denomination on a position that carries no value denominates
+        // nothing.
+        assert_eq!(
+            denominating(
+                vec![ParamType::Bucket, ParamType::U128],
+                vec![None, Some(Expr::Config(0))]
+            ),
+            Err(DeclarationError::DenominationKind {
+                param: 1,
+                kind: "u128"
+            })
+        );
+        // Both edge kinds carry value, so both take one.
+        assert_eq!(
+            denominating(vec![ParamType::NfBucket], vec![Some(Expr::Config(0))]),
+            Ok(())
+        );
     }
 
     /// Every way a signature can write somebody else's prefix, refused

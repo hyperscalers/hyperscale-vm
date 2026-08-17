@@ -13,13 +13,14 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    AbiParam, Address, AuthBase, AuthCell, Clause, CollectionId, ComponentAddr, Constraint, Effect,
-    EffectSet, EffectTarget, EntryKey, EvidenceRef, Expr, Hash32, Hasher, InstanceMeta,
-    InstanceRegistry, MAX_STAGED_DEPTH, ManifestGraph, MetadataCache, MethodSignature, Mode,
-    ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr,
-    Proposal, ResourceAddr, Role, RoleId, RoleSet, Routing, Rule, ShardId, ShardResolver, Strategy,
-    SubstateKey, TargetExpr, TestHasher, Totality, Value, admit, child_key, collection_id,
-    fresh_id, holdings_collection, instance_data_key, order_key, resource_address, route,
+    AbiParam, Address, AdmissionError, AuthBase, AuthCell, Clause, CollectionId, ComponentAddr,
+    Constraint, Effect, EffectSet, EffectTarget, EntryKey, EvidenceRef, Expr, Hash32, Hasher,
+    InstanceMeta, InstanceRegistry, MAX_STAGED_DEPTH, ManifestGraph, MetadataCache,
+    MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
+    PrincipalAddr, Proposal, ResourceAddr, Role, RoleId, RoleSet, Routing, Rule, ShardId,
+    ShardResolver, Strategy, SubstateKey, TargetExpr, TestHasher, Totality, Value, admit,
+    child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
+    resource_address, route,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry};
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
@@ -1599,6 +1600,54 @@ fn swap_graph(min_out: u128) -> ManifestGraph {
         let out = amm::swap(b, pool(), funds, min_out)?;
         account::deposit(b, ALICE, out)
     })
+}
+
+/// The same trade, paid in the side the pool sells rather than the side
+/// it buys.
+fn wrong_side_swap_graph() -> ManifestGraph {
+    graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, RES_Y, 500)?;
+        let out = amm::swap(b, pool(), funds, 0)?;
+        account::deposit(b, ALICE, out)
+    })
+}
+
+/// The pool's sold side is its configuration's, not the caller's, and a
+/// manifest paying the wrong resource in never becomes a transaction.
+///
+/// The two vaults are separate leaves holding separate balances, so value
+/// credited to the wrong one is value the curve then prices against a
+/// number that is not a balance. Refused at admission, where the verdict
+/// is a function of signed content and costs the sender nothing.
+#[test]
+fn a_swap_paid_in_the_wrong_resource_is_refused_at_admission() {
+    let (cache, instances) = world();
+    let graph = wrong_side_swap_graph();
+    let refused = admit(&graph, ALICE, &cache, &instances, &TestHasher)
+        .expect_err("the pool buys one resource and this manifest pays another");
+
+    let AdmissionError::Denomination {
+        param,
+        expected,
+        found,
+        ..
+    } = refused
+    else {
+        panic!("the refusal names the denomination: {refused:?}");
+    };
+    assert_eq!(param, 0, "the payment is the swap's first argument");
+    assert_eq!(expected, RES_X.address());
+    assert_eq!(found, RES_Y.address());
+}
+
+/// The control: the same call, paid in the side the pool buys, admits.
+#[test]
+fn a_swap_paid_in_the_pools_own_side_admits() {
+    let (cache, instances) = world();
+    let graph = swap_graph(300);
+    admit(&graph, ALICE, &cache, &instances, &TestHasher)
+        .expect("the pool's own side is what its declaration asks for");
 }
 
 fn swap_store() -> MemoryStore {

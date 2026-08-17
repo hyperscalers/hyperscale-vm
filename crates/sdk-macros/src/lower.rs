@@ -260,6 +260,11 @@ pub struct Lowered {
     pub nodes: Vec<Node>,
     /// The resources of the value edges the method produces.
     pub outputs: Vec<Term>,
+    /// The resource each consumed edge is fixed to, by parameter.
+    ///
+    /// Sparse, because a position is fixed only where the body credits it
+    /// to a cell keyed by something other than the edge's own resource.
+    pub denominations: BTreeMap<u32, Term>,
     /// The sites whose handles the export takes.
     ///
     /// Ordered by site, which is declaration order: the ABI binding rides
@@ -317,6 +322,13 @@ enum Val {
     /// thing a return position treats specially: `outputs` records the
     /// resource, and `-> Bucket` on its own never could.
     Produced(Term),
+    /// Several value edges at once, in the order the tuple holds them.
+    ///
+    /// A division of one edge yields parts that all carry what the whole
+    /// carried, and a `let` over a tuple pattern is where they take their
+    /// names. Without this the parts bind opaquely and everything
+    /// downstream stops knowing what they hold.
+    Edges(Vec<Term>),
     /// Anything the grammar does not cover.
     Opaque,
 }
@@ -654,6 +666,43 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The resource an evaluated expression's value edge carries, where
+    /// it is one and the lowering can see what it holds.
+    ///
+    /// An edge the method was handed carries whatever the manifest routed
+    /// it as, which is that parameter's resource; one the body produced
+    /// carries the resource its producer named.
+    fn edge_resource(eval: &Eval) -> Option<Term> {
+        match &eval.val {
+            Val::Produced(term) => Some(term.clone()),
+            Val::Term(term) if matches!(eval.code, Code::Bucket(_)) => {
+                Some(Term::ResourceOf(Box::new(term.clone())))
+            }
+            _ => None,
+        }
+    }
+
+    /// Fix what the edge at `param` carries.
+    ///
+    /// One parameter credited to two cells with different keys is a
+    /// method no call satisfies — the edge would have to carry both
+    /// resources at once — so the second one is refused where the body
+    /// wrote it rather than left for a caller to discover.
+    fn denominate(&mut self, param: u32, resource: Term, span: Span) {
+        if let Some(held) = self.out.denominations.get(&param)
+            && *held != resource
+        {
+            self.error(
+                span,
+                "this edge is credited to two cells keyed by different resources, and \
+                 no edge carries both. Key one of them by the edge's own resource, or \
+                 take the second cell's value from a separate parameter",
+            );
+            return;
+        }
+        self.out.denominations.insert(param, resource);
+    }
+
     // ---- guest values ---------------------------------------------------
 
     /// The guest code for a value, binding an export parameter where the
@@ -813,13 +862,34 @@ impl<'a> Lowerer<'a> {
                     // A locked config read binds a name whose *fields* are
                     // config slots; the binding itself is not a value.
                     Val::Config => Slot::Config,
-                    Val::Field { .. } | Val::Opaque => Slot::Opaque,
+                    // Several edges are not one value, so the binding as a
+                    // whole holds nothing; the names come from the pattern
+                    // below.
+                    Val::Edges(_) | Val::Field { .. } | Val::Opaque => Slot::Opaque,
                 };
-                // A plain name takes the slot; any other pattern binds its
-                // names opaquely, so a destructured piece used as a key is
-                // refused at the use site rather than resolved to whatever
-                // an outer scope happened to call by the same name.
+                let parts = match &eval.val {
+                    Val::Edges(terms) => terms.clone(),
+                    _ => Vec::new(),
+                };
+                // A plain name takes the slot, and a tuple over edges takes
+                // one per element — a division names its parts, and each
+                // part carries what the whole did. Any other pattern binds
+                // its names opaquely, so a destructured piece used as a key
+                // is refused at the use site rather than resolved to
+                // whatever an outer scope happened to call by the same
+                // name.
                 match unwrap_pat(&local.pat) {
+                    syn::Pat::Tuple(tuple) if tuple.elems.len() == parts.len() => {
+                        let names: Vec<_> = tuple.elems.iter().cloned().collect();
+                        for (element, term) in names.into_iter().zip(parts) {
+                            match unwrap_pat(&element) {
+                                syn::Pat::Ident(ident) => {
+                                    self.bind(ident.ident.to_string(), Slot::Produced(term));
+                                }
+                                other => self.bind_pattern(other),
+                            }
+                        }
+                    }
                     syn::Pat::Ident(ident) => self.bind(ident.ident.to_string(), slot),
                     other => self.bind_pattern(other),
                 }
@@ -1492,6 +1562,21 @@ impl<'a> Lowerer<'a> {
         let evals: Vec<Eval> = call.args.iter().map(|a| self.expr(a)).collect();
         let args: Vec<Val> = evals.iter().map(|e| e.val.clone()).collect();
 
+        // A division of a value edge yields parts that each carry what the
+        // whole carried. The kernel performs the subtraction, so the parts
+        // are the whole and nothing about them is the body's to choose —
+        // which is why they stay traceable through the names a tuple
+        // pattern gives them rather than becoming opaque there.
+        if method == "split"
+            && let Some(resource) = Self::edge_resource(&receiver)
+        {
+            let code = self.pass_through(&receiver, &method, evals, call);
+            return Eval {
+                val: Val::Edges(vec![resource.clone(), resource]),
+                code: Code::Rust(code),
+            };
+        }
+
         match receiver.val.clone() {
             // ---- opening a handle on a state field ----------------------
             Val::Field { name, material } => {
@@ -1582,11 +1667,58 @@ impl<'a> Lowerer<'a> {
                         ),
                     };
                 }
+                // What the credited edge carries, read before the arguments
+                // are rewritten: a credit is where an edge meets a cell,
+                // and the cell's key is what the edge has to be.
+                let credited = evals.first().and_then(Self::edge_resource);
                 let receiver_code = self.value(receiver.code);
                 let rewritten: Vec<_> = evals
                     .into_iter()
                     .map(|eval| self.value(eval.code))
                     .collect();
+
+                // A credit fixes what the edge carries: the vault's key
+                // names one resource, and value going into it is that
+                // resource or the balance stops being one. Where the edge
+                // traces back to a parameter, that is where a caller
+                // supplies it and so where the constraint is stated; a
+                // vault keyed by the arriving edge's own resource names
+                // whatever arrives, which fixes nothing and is what a
+                // wallet is.
+                //
+                // An edge the lowering cannot see the resource of is
+                // refused rather than passed over: a signature that
+                // constrains nothing reads as a method taking any
+                // resource, so a credit nobody can type would publish as
+                // a promise the body never made.
+                if op == Op::Move
+                    && call.method == "put"
+                    && let Some(keyed) = resource.clone()
+                {
+                    match &credited {
+                        // The cell is keyed by what arrived, so it names
+                        // whatever comes and fixes nothing.
+                        Some(term) if *term == keyed => {}
+                        // An edge a caller supplies, credited to a cell
+                        // keyed by something else: that key is what the
+                        // caller has to send.
+                        Some(Term::ResourceOf(inner)) => {
+                            if let Term::Arg(param) = **inner {
+                                self.denominate(param, keyed, call.span());
+                            }
+                        }
+                        // An edge the body produced, whose resource is
+                        // whatever produced it named. No parameter carries
+                        // it, so no caller can get it wrong.
+                        Some(_) => {}
+                        None => self.error(
+                            call.args.span(),
+                            "this cell is keyed by one resource and the lowering cannot see \
+                             what is going into it. Credit an edge the method was handed, \
+                             one taken from a declared cell, or one it issued",
+                        ),
+                    }
+                }
 
                 // A debit yields the value it moved, carrying the vault's
                 // own resource — which the site's key material already
@@ -1674,7 +1806,10 @@ impl<'a> Lowerer<'a> {
                 }
             },
 
-            Val::Config | Val::Opaque => {
+            // A tuple of edges answers no method of its own: the parts are
+            // reached by the names a pattern gave them, and anything else
+            // asked of it is ordinary code.
+            Val::Config | Val::Edges(_) | Val::Opaque => {
                 let code = self.pass_through(&receiver, &method, evals, call);
                 Eval::plain(code)
             }

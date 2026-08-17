@@ -7,6 +7,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -32,6 +33,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -61,6 +63,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -90,6 +93,7 @@ PackageMetadata {
                 Bucket,
             ],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -146,6 +150,7 @@ PackageMetadata {
                 NfBucket,
             ],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Range {
@@ -197,6 +202,7 @@ PackageMetadata {
                 Address,
             ],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -266,6 +272,7 @@ PackageMetadata {
                 U64,
             ],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -308,6 +315,7 @@ PackageMetadata {
                 U64,
             ],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -354,6 +362,7 @@ PackageMetadata {
                     0,
                 ),
             ],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -403,6 +412,7 @@ PackageMetadata {
                     ),
                 },
             ],
+            denominations: [],
             effects: [
                 Effect {
                     target: Range {

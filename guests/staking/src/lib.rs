@@ -33,7 +33,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod staking {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Locked, Quantity, issue};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Locked, Quantity, issue, issued};
 
     /// The pool's creation-fixed configuration: what a delegation is
     /// denominated in.
@@ -107,7 +107,7 @@ pub mod staking {
         /// Return stake units, beginning the unbonding period.
         pub fn unstake(&mut self, units: Bucket) {
             let returned = units.quantity();
-            self.unbonding.at(self.config.staked_resource).put(units);
+            self.unbonding.at(issued(b"")).put(units);
             Unstaked::emit(&returned.subunits().to_le_bytes());
         }
 

@@ -33,6 +33,7 @@ PackageMetadata {
                 U64,
             ],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -97,6 +98,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -148,6 +150,7 @@ PackageMetadata {
                 U64,
             ],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -210,6 +213,7 @@ PackageMetadata {
                 Bytes,
             ],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -263,6 +267,13 @@ PackageMetadata {
                 SelfResource {
                     material: [],
                 },
+            ],
+            denominations: [
+                Some(
+                    Config(
+                        0,
+                    ),
+                ),
             ],
             effects: [
                 Effect {
@@ -323,6 +334,7 @@ PackageMetadata {
                 U64,
             ],
             outputs: [],
+            denominations: [],
             effects: [
                 Effect {
                     target: Point(
@@ -361,6 +373,13 @@ PackageMetadata {
                 Bucket,
             ],
             outputs: [],
+            denominations: [
+                Some(
+                    SelfResource {
+                        material: [],
+                    },
+                ),
+            ],
             effects: [
                 Effect {
                     target: Point(
@@ -370,9 +389,9 @@ PackageMetadata {
                                 16,
                             ),
                             material: [
-                                Config(
-                                    0,
-                                ),
+                                SelfResource {
+                                    material: [],
+                                },
                             ],
                         },
                     ),
