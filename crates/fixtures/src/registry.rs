@@ -51,6 +51,7 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
+            issues: None,
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![
                 AbiParam::Handle(0),
@@ -71,6 +72,7 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
+            issues: None,
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
             effects: vec![Clause::Effect {
@@ -86,6 +88,7 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
+            issues: None,
             params: vec![ParamType::U128],
             abi: vec![AbiParam::Handle(0)],
             effects: vec![Clause::Effect {

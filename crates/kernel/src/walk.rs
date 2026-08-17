@@ -11,49 +11,13 @@
 //! embedding wrong; it cannot get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
-    AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, EdgeKind, MAX_ERROR_CODES,
-    NodeCall, PackageHash, cell_ids, nf_cell_len,
+    AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, MAX_ERROR_CODES, NodeCall,
+    PackageHash,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult};
 use crate::modes::decode_amount;
 use crate::session::{Capability, KernelSession, Outcome, SessionTrap};
-
-/// One value edge in flight between the node that produced it and the
-/// node that consumes it.
-///
-/// A fungible edge is the kernel's own bucket from the moment it is
-/// produced: the rep names value the kernel holds, and what the consumer
-/// receives is that same bucket rather than a number re-read from bytes.
-/// A cell is what an edge crosses on where its guest has not been ported —
-/// every non-fungible one, and every fungible one whose package still
-/// returns the byte convention.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Edge {
-    /// A bucket the kernel holds on the producing node's behalf.
-    Bucket(u32),
-    /// The cell an edge crosses on under the byte convention.
-    Cell(Vec<u8>),
-}
-
-impl Edge {
-    /// The quantity a signed bound is judged over: a fungible edge's
-    /// amount, a non-fungible edge's id count.
-    ///
-    /// A bucket answers for itself; a cell is read as the kind its
-    /// producer declared, never sniffed from the bytes.
-    fn quantity(&self, kind: EdgeKind, session: &KernelSession) -> Option<u128> {
-        match self {
-            Self::Bucket(rep) => session.bucket(*rep).ok().map(|held| held.quantity()),
-            Self::Cell(cell) => match kind {
-                EdgeKind::Fungible => decode_amount(cell).ok(),
-                EdgeKind::NonFungible => {
-                    cell_ids(cell).and_then(|ids| u128::try_from(ids.len()).ok())
-                }
-            },
-        }
-    }
-}
 
 /// Which handle type a rep names — the kernel's mode lattice as the
 /// runtimes' resource types.
@@ -146,11 +110,8 @@ pub struct GuestCall<'a> {
 /// everywhere downstream — the outcome it records, and the fee it pays.
 pub enum Invoked {
     /// The export returned the value edges it produced, as the buckets
-    /// the kernel holds again.
+    /// the kernel holds again — none, where its signature declares none.
     Produced(Vec<u32>),
-    /// The export returned; its output bytes when its signature produces
-    /// any.
-    Returned(Option<Vec<u8>>),
     /// The export declined, with an index into its package's error table.
     Declined(u32),
     /// The invocation failed, in the class the backend classified it as.
@@ -216,7 +177,7 @@ type NodeFailure = Box<(KernelSession, Outcome, u64)>;
 
 /// A node's invocation succeeded: the session, the edges it produced, and
 /// the fuel it consumed.
-type NodeSuccess = (KernelSession, Vec<Edge>, u64);
+type NodeSuccess = (KernelSession, Vec<u32>, u64);
 
 fn fail(session: KernelSession, outcome: Outcome, fuel: u64) -> NodeFailure {
     Box::new((session, outcome, fuel))
@@ -234,7 +195,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
         &self,
         node: u32,
         call: &NodeCall,
-        outputs: &[Vec<Edge>],
+        outputs: &[Vec<u32>],
         fuel_budget: u64,
         mut session: KernelSession,
     ) -> Result<NodeSuccess, NodeFailure> {
@@ -271,10 +232,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                             AbortReason::MissingProducerEdge,
                         ));
                     };
-                    args.push(match produced {
-                        Edge::Bucket(rep) => GuestArg::Bucket(*rep),
-                        Edge::Cell(bytes) => GuestArg::Bytes(bytes),
-                    });
+                    args.push(GuestArg::Bucket(*produced));
                 }
                 CallArg::Issuer => args.push(GuestArg::Issuer),
                 CallArg::U64(scalar) => args.push(GuestArg::U64(*scalar)),
@@ -317,72 +275,43 @@ fn settled(
     fuel_budget: u64,
 ) -> Result<NodeSuccess, NodeFailure> {
     let session = invoked.session;
-    let returned = match invoked.result {
+    match invoked.result {
         // Edges come back as the buckets the kernel holds again, one per
         // declared output. A count that disagrees with the declaration is
-        // the same shape refusal a byte blob that did not split used to
-        // be.
-        Invoked::Produced(reps) => {
-            return if reps.len() == call.outputs.len() {
-                Ok((
-                    session,
-                    reps.into_iter().map(Edge::Bucket).collect(),
-                    invoked.fuel,
-                ))
-            } else {
-                Err(fail(
-                    session,
-                    Outcome::UserError {
-                        reason: AbortReason::BadReturnShape,
-                    },
-                    invoked.fuel,
-                ))
-            };
+        // a package whose code and signature part company.
+        Invoked::Produced(reps) if reps.len() == call.outputs.len() => {
+            Ok((session, reps, invoked.fuel))
         }
-        Invoked::Returned(returned) => returned,
+        Invoked::Produced(_) => Err(fail(
+            session,
+            Outcome::UserError {
+                reason: AbortReason::BadReturnShape,
+            },
+            invoked.fuel,
+        )),
         // A decline is charged its own fuel, not the ceiling: the export
         // returned, so the figure is an ordinary completed-invocation one
         // and both engines reach it by construction. A code no package
         // could have declared is a defect in the guest rather than a
         // refusal, bounded here without the table the kernel does not
         // hold.
-        Invoked::Declined(code) if code < MAX_ERROR_CODES => {
-            return Err(fail(
-                session,
-                Outcome::Declined { node, code },
-                invoked.fuel,
-            ));
-        }
-        Invoked::Declined(_) => {
-            return Err(fail(
-                session,
-                Outcome::UserError {
-                    reason: AbortReason::ErrorCodeOutOfRange,
-                },
-                invoked.fuel,
-            ));
-        }
-        Invoked::Aborted(reason) => {
-            let (outcome, spent) = trapped(invoked.exhausted, reason, fuel_budget, invoked.fuel);
-            return Err(fail(session, outcome, spent));
-        }
-    };
-    // A byte blob is what an edge crosses on where its guest has not been
-    // ported, so what it splits into is cells rather than buckets.
-    let Some(cells) = split_outputs(returned.as_deref(), &call.outputs) else {
-        return Err(fail(
+        Invoked::Declined(code) if code < MAX_ERROR_CODES => Err(fail(
+            session,
+            Outcome::Declined { node, code },
+            invoked.fuel,
+        )),
+        Invoked::Declined(_) => Err(fail(
             session,
             Outcome::UserError {
-                reason: AbortReason::BadReturnShape,
+                reason: AbortReason::ErrorCodeOutOfRange,
             },
             invoked.fuel,
-        ));
-    };
-    Ok((
-        session,
-        cells.into_iter().map(Edge::Cell).collect(),
-        invoked.fuel,
-    ))
+        )),
+        Invoked::Aborted(reason) => {
+            let (outcome, spent) = trapped(invoked.exhausted, reason, fuel_budget, invoked.fuel);
+            Err(fail(session, outcome, spent))
+        }
+    }
 }
 
 /// Check every signed edge bound a node consumes, before anything runs.
@@ -396,7 +325,7 @@ fn settled(
 fn edge_bounds_hold(
     call: &NodeCall,
     node: u32,
-    outputs: &[Vec<Edge>],
+    outputs: &[Vec<u32>],
     session: KernelSession,
 ) -> Result<KernelSession, NodeFailure> {
     for edge in &call.edges {
@@ -406,8 +335,11 @@ fn edge_bounds_hold(
                 AbortReason::MissingProducerEdge,
             ));
         };
-        let Some(amount) = carried.quantity(edge.kind, &session) else {
-            return Err(composition_defect(session, AbortReason::MalformedEdgeCell));
+        let Some(amount) = session.bucket(*carried).ok().map(|held| held.quantity()) else {
+            return Err(composition_defect(
+                session,
+                AbortReason::MissingProducerEdge,
+            ));
         };
         if !edge.bounds.admits(amount) {
             return Err(fail(
@@ -425,7 +357,7 @@ fn edge_bounds_hold(
 }
 
 /// The edge a producer left on one of its outputs.
-fn edge_at(outputs: &[Vec<Edge>], source: u32, output: u32) -> Option<&Edge> {
+fn edge_at(outputs: &[Vec<u32>], source: u32, output: u32) -> Option<&u32> {
     let produced = usize::try_from(source).ok().and_then(|i| outputs.get(i))?;
     usize::try_from(output)
         .ok()
@@ -503,47 +435,9 @@ fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, Sess
     }
 }
 
-/// Split an export's returned blob into one cell per output edge, each
-/// framed by its declared kind.
-///
-/// The byte convention, which a non-fungible edge still crosses on and a
-/// fungible one crosses on until its guest is ported: a fungible cell is
-/// exactly [`EDGE_CELL_BYTES`], a non-fungible cell the framed shape
-/// [`cell_ids`] admits, its ids distinct. A blob of any other shape is a
-/// package whose code and signature disagree, which is its author's
-/// defect and its caller's trap.
-fn split_outputs(returned: Option<&[u8]>, outputs: &[EdgeKind]) -> Option<Vec<Vec<u8>>> {
-    let bytes = match (returned, outputs.is_empty()) {
-        (None, true) => return Some(Vec::new()),
-        (None, false) | (Some(_), true) => return None,
-        (Some(bytes), false) => bytes,
-    };
-    let mut cells = Vec::with_capacity(outputs.len());
-    let mut rest = bytes;
-    for kind in outputs {
-        let width = match kind {
-            // A fungible edge has no blob to split: it is a bucket the
-            // kernel took ownership of, so a blob offered for one is a
-            // package whose code and signature disagree.
-            EdgeKind::Fungible => return None,
-            EdgeKind::NonFungible => nf_cell_len(rest)?,
-        };
-        if rest.len() < width {
-            return None;
-        }
-        let (cell, remaining) = rest.split_at(width);
-        if matches!(kind, EdgeKind::NonFungible) {
-            cell_ids(cell)?;
-        }
-        cells.push(cell.to_vec());
-        rest = remaining;
-    }
-    rest.is_empty().then_some(cells)
-}
-
 impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
     fn run(&self, entry: &BatchTx, mut session: KernelSession) -> RunResult {
-        let mut outputs: Vec<Vec<Edge>> = Vec::with_capacity(entry.calls.len());
+        let mut outputs: Vec<Vec<u32>> = Vec::with_capacity(entry.calls.len());
         let mut fuel = 0u64;
         for (index, call) in entry.calls.iter().enumerate() {
             let node = u32::try_from(index).unwrap_or(u32::MAX);
@@ -572,94 +466,5 @@ impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
             outcome: Outcome::Completed { value: None },
             fuel,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use hyperscale_vm_effects::{EdgeKind, MAX_IDS_PER_EDGE, ids_cell};
-
-    use super::split_outputs;
-
-    const FUNGIBLE: EdgeKind = EdgeKind::Fungible;
-    const NON_FUNGIBLE: EdgeKind = EdgeKind::NonFungible;
-
-    #[test]
-    fn an_export_returns_one_cell_per_output_edge() {
-        assert_eq!(split_outputs(None, &[]), Some(Vec::new()));
-        assert_eq!(
-            split_outputs(Some(&ids_cell(&[3])), &[NON_FUNGIBLE]),
-            Some(vec![ids_cell(&[3])])
-        );
-        let two: Vec<u8> = ids_cell(&[3]).into_iter().chain(ids_cell(&[9])).collect();
-        assert_eq!(
-            split_outputs(Some(&two), &[NON_FUNGIBLE, NON_FUNGIBLE]),
-            Some(vec![ids_cell(&[3]), ids_cell(&[9])])
-        );
-    }
-
-    #[test]
-    fn a_fungible_output_has_no_blob_to_split() {
-        // It is a bucket the kernel took ownership of, so a package
-        // offering bytes for one is a package whose code and signature
-        // disagree.
-        assert_eq!(split_outputs(Some(&[7; 16]), &[FUNGIBLE]), None);
-        assert_eq!(split_outputs(Some(&[9; 32]), &[FUNGIBLE, FUNGIBLE]), None);
-    }
-
-    #[test]
-    fn a_non_fungible_output_frames_as_a_counted_id_list() {
-        let cell = ids_cell(&[3, 9]);
-        assert_eq!(
-            split_outputs(Some(&cell), &[NON_FUNGIBLE]),
-            Some(vec![cell.clone()])
-        );
-
-        // Two id cells, in declared order.
-        let blob: Vec<u8> = cell.iter().copied().chain(ids_cell(&[7])).collect();
-        assert_eq!(
-            split_outputs(Some(&blob), &[NON_FUNGIBLE, NON_FUNGIBLE]),
-            Some(vec![cell, ids_cell(&[7])])
-        );
-    }
-
-    #[test]
-    fn any_other_return_shape_is_refused() {
-        // A blob for a method that declared no edges, none for a method
-        // that declared one, and a cell cut short.
-        assert_eq!(split_outputs(Some(&[0; 16]), &[]), None);
-        assert_eq!(split_outputs(None, &[NON_FUNGIBLE]), None);
-        let short = &ids_cell(&[3, 9])[..12];
-        assert_eq!(split_outputs(Some(short), &[NON_FUNGIBLE]), None);
-    }
-
-    #[test]
-    fn a_malformed_id_cell_is_refused() {
-        // An id cell whose width disagrees with its count, one cut short
-        // of its declared ids, an empty blob with no count byte, a count
-        // past the cap, and trailing bytes after the last declared cell.
-        assert_eq!(split_outputs(Some(&[2, 0, 0, 0, 0]), &[NON_FUNGIBLE]), None);
-        let short = &ids_cell(&[3, 9])[..12];
-        assert_eq!(split_outputs(Some(short), &[NON_FUNGIBLE]), None);
-        assert_eq!(split_outputs(Some(&[]), &[NON_FUNGIBLE]), None);
-
-        let over_cap = u8::try_from(MAX_IDS_PER_EDGE + 1).unwrap();
-        let mut blob = vec![over_cap];
-        blob.extend(std::iter::repeat_n(0u8, (MAX_IDS_PER_EDGE + 1) * 8));
-        assert_eq!(split_outputs(Some(&blob), &[NON_FUNGIBLE]), None);
-
-        let mut trailing = ids_cell(&[3]);
-        trailing.push(0);
-        assert_eq!(split_outputs(Some(&trailing), &[NON_FUNGIBLE]), None);
-    }
-
-    #[test]
-    fn a_produced_cell_with_a_repeated_id_is_refused() {
-        // Duplicates would count twice toward a consumer's bound: a
-        // producer returning [9, 9] must not satisfy "at least 2".
-        assert_eq!(
-            split_outputs(Some(&ids_cell(&[9, 9])), &[NON_FUNGIBLE]),
-            None
-        );
     }
 }

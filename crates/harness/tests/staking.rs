@@ -339,7 +339,6 @@ impl GuestBackend for RefPackages {
 fn invoked(outcome: Result<Returned>) -> Invoked {
     match outcome {
         Ok(Returned::Edges(reps)) => Invoked::Produced(reps),
-        Ok(Returned::Values(bytes)) => Invoked::Returned(bytes),
         Ok(Returned::Declined(code)) => Invoked::Declined(code),
         Err(error) => Invoked::Aborted(classify(&error)),
     }
@@ -348,8 +347,7 @@ fn invoked(outcome: Result<Returned>) -> Invoked {
 /// The reference interpreter's lifted results as the kernel's verdict.
 fn lifted(values: &[CVal]) -> Invoked {
     match values {
-        [] => Invoked::Returned(None),
-        [CVal::Bytes(bytes)] => Invoked::Returned(Some(bytes.clone())),
+        [] => Invoked::Produced(Vec::new()),
         // Every value is an edge, or the shape is one the convention
         // does not fix.
         edges if !edges.is_empty() && edges.iter().all(|v| matches!(v, CVal::Own(_))) => {

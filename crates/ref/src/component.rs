@@ -48,7 +48,9 @@ pub trait RefKernelHost {
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
     fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
     fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
-    fn range_take(&mut self, rep: u32, lo: u128, hi: u128) -> Result<u32, AbortReason>;
+    fn issuer_mint(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
+    fn issuer_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
+    fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
     fn range_put(&mut self, rep: u32, funds: u32, value: Vec<u8>) -> Result<(), AbortReason>;
     fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), AbortReason>;
@@ -156,6 +158,8 @@ enum HostFn {
     WriteCellSet,
     WriteTake,
     WritePut,
+    IssuerMint,
+    IssuerPut,
     RangeWriteTake,
     RangeWritePut,
     BucketTake,
@@ -272,9 +276,6 @@ enum CTy {
     /// `tuple<own<R>, …>`: how a method with more than one edge returns
     /// them, carrying the arity because that is what the lift walks.
     OwnTuple(u32),
-    /// `result<list<u8>, u32>`: the refusal channel over a method that
-    /// produces bytes.
-    DeclinableList8,
     /// `result<_, u32>`: the refusal channel over a method that produces
     /// nothing.
     DeclinableUnit,
@@ -489,7 +490,6 @@ impl RefComponent {
                     }
                     match ok.map(|vt| self.value_type(vt)).transpose()? {
                         None => CTypeEntry::Defined(CTy::DeclinableUnit),
-                        Some(CTy::List8) => CTypeEntry::Defined(CTy::DeclinableList8),
                         Some(CTy::Own) => CTypeEntry::Defined(CTy::DeclinableOwn(1)),
                         Some(CTy::OwnTuple(arity)) => {
                             CTypeEntry::Defined(CTy::DeclinableOwn(arity))
@@ -589,6 +589,8 @@ impl RefComponent {
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
             ("state", "write-cell-take") => Ok(HostFn::WriteTake),
             ("state", "write-cell-put") => Ok(HostFn::WritePut),
+            ("state", "issuer-mint") => Ok(HostFn::IssuerMint),
+            ("state", "issuer-put") => Ok(HostFn::IssuerPut),
             ("state", "range-write-take") => Ok(HostFn::RangeWriteTake),
             ("state", "range-write-put") => Ok(HostFn::RangeWritePut),
             ("state", "bucket-take") => Ok(HostFn::BucketTake),
@@ -1200,17 +1202,6 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
             // arm's payload at the offset the wider arm's alignment
             // fixes. Both shapes share that layout and differ only in
             // what the ok arm carries.
-            [CTy::DeclinableList8] => {
-                if self.discriminant(mem_idx, area())? == 0 {
-                    Ok(vec![CVal::Bytes(
-                        self.lift_list(mem_idx, area() + RESULT_PAYLOAD)?,
-                    )])
-                } else {
-                    Ok(vec![CVal::Declined(
-                        self.lift_u32(mem_idx, area() + RESULT_PAYLOAD)?,
-                    )])
-                }
-            }
             [CTy::DeclinableUnit] => {
                 if self.discriminant(mem_idx, area())? == 0 {
                     Ok(Vec::new())
@@ -1537,7 +1528,8 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::WritePut
                     | HostFn::DeltaPut
                     | HostFn::BucketAmount
-                    | HostFn::BucketPut,
+                    | HostFn::BucketPut
+                    | HostFn::IssuerPut,
                 ) => 2,
                 CompFunc::Host(
                     HostFn::WriteCellSet
@@ -1552,10 +1544,13 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::RangeWriteOrder
                     | HostFn::RangeWriteEntry
                     | HostFn::Hash
-                    | HostFn::Emit,
+                    | HostFn::Emit
+                    | HostFn::RangeWriteTake
+                    | HostFn::IssuerMint,
                 ) => 3,
                 CompFunc::Host(HostFn::RangeWritePut | HostFn::RangeWriteSet) => 4,
-                CompFunc::Host(HostFn::RangeWriteInsert | HostFn::RangeWriteTake) => 5,
+
+                CompFunc::Host(HostFn::RangeWriteInsert) => 5,
                 CompFunc::Host(HostFn::Clock) | CompFunc::Lifted { .. } => 0,
             },
             CoreFuncDef::Alias { .. } => unreachable!("aliases resolve to wasm addresses"),
@@ -1670,14 +1665,33 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let bucket = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
+                    HostFn::IssuerPut => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
+                        let funds = self.consume_bucket(args[1])?;
+                        self.host
+                            .issuer_put(rep, funds)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::IssuerMint => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
+                        let mem = self.mem_opt(id)?;
+                        let ids = Self::read_guest_bytes(store, mem, args[1], args[2])?;
+                        self.charge_boundary(store, ids.len())?;
+                        let minted = self
+                            .host
+                            .issuer_mint(rep, &ids)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(vec![Value::I32(self.seat_bucket(minted).cast_signed())])
+                    }
                     HostFn::RangeWriteTake => {
                         let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
-                        let lo = flat_amount(args[1], args[2]);
-                        let hi = flat_amount(args[3], args[4]);
-                        self.charge_boundary(store, 2 * AMOUNT_BOUNDARY_BYTES)?;
+                        let mem = self.mem_opt(id)?;
+                        let ids = Self::read_guest_bytes(store, mem, args[1], args[2])?;
+                        self.charge_boundary(store, ids.len())?;
                         let taken = self
                             .host
-                            .range_take(rep, lo, hi)
+                            .range_take(rep, &ids)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(taken).cast_signed())])
                     }

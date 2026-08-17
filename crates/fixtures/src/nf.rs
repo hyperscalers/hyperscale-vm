@@ -39,8 +39,16 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
+            // The pool's own resource, by the mark that separates it from
+            // the instance's others — which is what the grant is for and
+            // what makes another issuer's inexpressible here.
+            issues: Some(Vec::new()),
             params: vec![],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(minted_id.clone())],
+            abi: vec![
+                AbiParam::Handle(0),
+                AbiParam::Derived(minted_id.clone()),
+                AbiParam::Issuer,
+            ],
             outputs: vec![Expr::NfBucket {
                 resource: Box::new(minted_resource.clone()),
                 ids: Box::new(Expr::List(vec![minted_id.clone()])),
@@ -62,6 +70,7 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
+            issues: None,
             params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             effects: vec![Clause::Effect {
@@ -77,6 +86,7 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
+            issues: None,
             params: vec![ParamType::Address, ParamType::Ids],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
             outputs: vec![Expr::NfBucket {
@@ -96,8 +106,11 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
             mints: None,
+            // Bringing value out of existence is as declared as bringing
+            // it in, and under the same grant.
+            issues: Some(Vec::new()),
             params: vec![ParamType::NfBucket],
-            abi: vec![AbiParam::Bucket(0)],
+            abi: vec![AbiParam::Bucket(0), AbiParam::Issuer],
             ..MethodSignature::default()
         },
     );
@@ -110,6 +123,7 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             accessibility: Accessibility::Guarded(Expr::Config(0)),
             mints: None,
+            issues: None,
             ..MethodSignature::default()
         },
     );

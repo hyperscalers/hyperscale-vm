@@ -171,24 +171,6 @@ impl ParamType {
     }
 }
 
-/// Whether an output projection names a resource the instance issues
-/// itself: the `SelfResource` derivation, at the resource position.
-#[must_use]
-pub fn issued(output: &Expr) -> bool {
-    match output {
-        Expr::SelfResource { .. } => true,
-        Expr::NfBucket { resource, .. } => matches!(**resource, Expr::SelfResource { .. }),
-        _ => false,
-    }
-}
-
-/// Whether an output crosses as a bucket rather than as the cell its ids
-/// frame.
-#[must_use]
-pub const fn fungible(output: &Expr) -> bool {
-    !matches!(output, Expr::NfBucket { .. })
-}
-
 /// How one guest ABI parameter is built at invocation.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum AbiParam {
@@ -353,6 +335,15 @@ pub struct MethodSignature {
     /// keying the possession reads its gate judges. The publish check
     /// holds both sides of that.
     pub mints: Option<Expr>,
+    /// The mark of the resource this method may bring into or out of
+    /// existence, where it may.
+    ///
+    /// A mark rather than an address: it is the material separating one
+    /// of the instance's own resources from its others, so naming another
+    /// instance's is not something this field can say. The walk grants
+    /// the issuance handle against it, and the gate holds the export to
+    /// taking one exactly when it is present.
+    pub issues: Option<Vec<u8>>,
     /// The method's parameter kinds, in order; admission types every node
     /// against them.
     pub params: Vec<ParamType>,
@@ -478,10 +469,10 @@ pub enum AbiError {
     /// against concurrent sign-ins.
     #[error("a role-gated method declares exactly one point write: its rule cell")]
     RoleGatedShape,
-    /// An issuance grant bound by a method that declares no output of a
-    /// resource it issues. The walk grants one from the declaration, so
-    /// there would be nothing to hand over.
-    #[error("ABI parameter {position} takes an issuance grant, but no output is issued")]
+    /// An issuance grant bound by a method that declares no issued
+    /// resource. The walk grants one from the declaration, so there would
+    /// be nothing to hand over.
+    #[error("ABI parameter {position} takes an issuance grant, but nothing is issued")]
     IssuerWithoutIssuedOutput {
         /// The ABI parameter position.
         position: u32,
@@ -617,7 +608,7 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
             // that names one where nothing is issued asks for a handle
             // the walk would not hand over.
             AbiParam::Issuer => {
-                if !signature.outputs.iter().any(issued) {
+                if signature.issues.is_none() {
                     return Err(AbiError::IssuerWithoutIssuedOutput { position });
                 }
             }

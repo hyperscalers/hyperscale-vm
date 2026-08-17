@@ -7,22 +7,21 @@ package test:guest;
 world nf {
     import hyperscale:kernel/state;
 
-    use hyperscale:kernel/state.{write-cell, range-write};
+    use hyperscale:kernel/state.{bucket, issuer, write-cell, range-write};
 
-    /// Mint one instance: write its data cell and return the one-id cell
-    /// as the produced edge.
-    export mint: func(data: borrow<write-cell>, id: u64) -> list<u8>;
+    /// Mint one instance: write its data cell and produce the instance
+    /// under this method's own issuance grant.
+    export mint: func(data: borrow<write-cell>, id: u64, i: borrow<issuer>) -> own<bucket>;
 
-    /// Insert each id the arriving cell names into the holdings interval,
-    /// at the id as the order key.
-    export deposit: func(holdings: borrow<range-write>, funds: list<u8>);
+    /// File the arriving instances as holdings entries.
+    export deposit: func(holdings: borrow<range-write>, funds: own<bucket>);
 
-    /// Remove each named id from the holdings interval, trapping on one
-    /// not held, and return the same id cell as the produced edge.
-    export withdraw: func(holdings: borrow<range-write>, ids: list<u8>) -> list<u8>;
+    /// Take the named instances out of the holdings interval, trapping on
+    /// one not held.
+    export withdraw: func(holdings: borrow<range-write>, ids: list<u8>) -> own<bucket>;
 
-    /// Consume the edge; the instances stop being held anywhere.
-    export burn: func(funds: list<u8>);
+    /// Destroy the instances the edge carries; they stop existing.
+    export burn: func(funds: own<bucket>, i: borrow<issuer>);
 
     /// Nothing but its own gate: opens for whoever presents the identity
     /// the configured badge resource names.

@@ -508,7 +508,7 @@ pub mod fixtures {
     (export "bucket-take" (func (param "b" (borrow $bk)) (param "amount" $amt) (result (own $bk))))
     (export "range-write" (type $rw (sub resource)))
     (export "range-write-count" (func (param "r" (borrow $rw)) (result u32)))
-    (export "range-write-take" (func (param "r" (borrow $rw)) (param "lo" $amt) (param "hi" $amt) (result (own $bk))))
+    (export "range-write-take" (func (param "r" (borrow $rw)) (param "ids" (list u8)) (result (own $bk))))
     (export "range-write-put" (func (param "r" (borrow $rw)) (param "funds" (own $bk)) (param "value" (list u8))))
     (export "bucket-put" (func (param "b" (borrow $bk)) (param "other" (own $bk))))
     (export "delta-cell-put" (func (param "c" (borrow $dc)) (param "funds" (own $bk))))
@@ -559,7 +559,8 @@ pub mod fixtures {
     (memory $a "mem")))
   (core func $bucket_take_l (canon lower (func $bucket_take)))
   (core func $rw_count_l (canon lower (func $rw_count)))
-  (core func $range_take_l (canon lower (func $range_take)))
+  (core func $range_take_l (canon lower (func $range_take)
+    (memory $a "mem")))
   (core func $range_put_l (canon lower (func $range_put)
     (memory $a "mem")))
   (core func $drop_wrange (canon resource.drop $wrange))
@@ -583,7 +584,7 @@ pub mod fixtures {
     (import "k" "bucket-amount" (func $bucket_amount (param i32 i32)))
     (import "k" "bucket-take" (func $bucket_take (param i32 i64 i64) (result i32)))
     (import "k" "rw-count" (func $rw_count (param i32) (result i32)))
-    (import "k" "range-take" (func $range_take (param i32 i64 i64 i64 i64) (result i32)))
+    (import "k" "range-take" (func $range_take (param i32 i32 i32) (result i32)))
     (import "k" "range-put" (func $range_put (param i32 i32 i32 i32)))
     (import "k" "drop-wrange" (func $drop_wrange (param i32)))
     (import "k" "bucket-put" (func $bucket_put (param i32 i32)))
@@ -630,16 +631,15 @@ pub mod fixtures {
       local.get 0
       call $drop_issuer)
 
-    ;; Take every instance in [lo, hi] out of the interval and hand them
-    ;; on: the removal and the edge are one operation, so a body cannot
-    ;; pass on what it left where it was.
-    (func (export "lift") (param i32 i64 i64) (result i32)
+    ;; Take the named instances out of the interval and hand them on: the
+    ;; removal and the edge are one operation, so a body cannot pass on
+    ;; what it left where it was. The ids arrive in the framing a declared
+    ;; id list already crosses in, so they pass straight through.
+    (func (export "lift") (param i32 i32 i32) (result i32)
       (local $held i32)
       local.get 0
       local.get 1
-      i64.const 0
       local.get 2
-      i64.const 0
       call $range_take
       local.set $held
       local.get 0
@@ -648,16 +648,14 @@ pub mod fixtures {
 
     ;; Take them out and file them straight back, which has to leave the
     ;; collection as it was.
-    (func (export "relift") (param i32 i64 i64) (result i64)
+    (func (export "relift") (param i32 i32 i32) (result i64)
       i32.const 700
       i32.const 1
       i32.store8
       local.get 0
       local.get 0
       local.get 1
-      i64.const 0
       local.get 2
-      i64.const 0
       call $range_take
       i32.const 700
       i32.const 1
@@ -850,12 +848,12 @@ pub mod fixtures {
     (result (tuple (own $bucket) (own $bucket)))
     (canon lift (core func $i "take-two") (memory $a "mem")))
   (func (export "lift")
-    (param "r" (borrow $wrange)) (param "lo" u64) (param "hi" u64)
+    (param "r" (borrow $wrange)) (param "ids" (list u8))
     (result (own $bucket))
-    (canon lift (core func $i "lift")))
+    (canon lift (core func $i "lift") (memory $a "mem") (realloc (func $a "realloc"))))
   (func (export "relift")
-    (param "r" (borrow $wrange)) (param "lo" u64) (param "hi" u64) (result u64)
-    (canon lift (core func $i "relift")))
+    (param "r" (borrow $wrange)) (param "ids" (list u8)) (result u64)
+    (canon lift (core func $i "relift") (memory $a "mem") (realloc (func $a "realloc"))))
   (func (export "halve")
     (param "b" (own $bucket)) (param "amount" u64) (result (own $bucket))
     (canon lift (core func $i "halve")))
@@ -1053,8 +1051,14 @@ pub mod session_host {
                 fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason> {
                     self.0.delta_sub(rep, amount).map_err(AbortReason::from)
                 }
-                fn range_take(&mut self, rep: u32, lo: u128, hi: u128) -> Result<u32, AbortReason> {
-                    self.0.range_take(rep, lo, hi).map_err(AbortReason::from)
+                fn issuer_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
+                    self.0.issuer_put(rep, funds).map_err(AbortReason::from)
+                }
+                fn issuer_mint(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason> {
+                    self.0.issuer_mint(rep, ids).map_err(AbortReason::from)
+                }
+                fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason> {
+                    self.0.range_take(rep, ids).map_err(AbortReason::from)
                 }
                 fn range_put(
                     &mut self,

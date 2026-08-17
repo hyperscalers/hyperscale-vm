@@ -20,8 +20,8 @@ wit_bindgen::generate!({
 use hyperscale::kernel::env::clock;
 use hyperscale::kernel::events::emit;
 use hyperscale::kernel::state::{
-    Amount, bucket_amount, delta_cell_put, range_write_count, range_write_insert,
-    range_write_order, range_write_remove, reserve_cell_take, write_cell_get, write_cell_set,
+    Amount, bucket_amount, delta_cell_put, range_write_put, range_write_take, reserve_cell_take,
+    write_cell_get, write_cell_set,
 };
 
 /// A `u128` as the kernel's world names it.
@@ -36,20 +36,6 @@ const fn amount(value: u128) -> Amount {
 /// The `u128` an `amount` carries.
 const fn whole(value: Amount) -> u128 {
     (value.low as u128) | ((value.high as u128) << 64)
-}
-
-/// The ids a count-prefixed edge cell carries; traps on any other shape.
-fn cell_ids(cell: &[u8]) -> Vec<u64> {
-    let (&count, ids) = cell.split_first().expect("an id cell has a count");
-    assert!(ids.len() == usize::from(count) * 8, "malformed id cell");
-    ids.chunks_exact(8)
-        .map(|id| u64::from_le_bytes(id.try_into().unwrap()))
-        .collect()
-}
-
-/// An id's position in the holdings interval's order-key space.
-const fn order_of(id: u64) -> Amount {
-    amount(id as u128)
 }
 
 struct Account;
@@ -128,21 +114,16 @@ impl Guest for Account {
         // The gate is the kernel's; a body would have nothing to say.
     }
 
-    fn deposit_nf(holdings: &RangeWrite, funds: Vec<u8>) {
-        for id in cell_ids(&funds) {
-            range_write_insert(holdings, order_of(id), &[1]);
-        }
+    fn deposit_nf(holdings: &RangeWrite, funds: Bucket) {
+        // The filing is the kernel's: each instance lands at the order it
+        // was taken under, so the body names no id at all.
+        range_write_put(holdings, funds, &[1]);
     }
 
-    fn withdraw_nf(holdings: &RangeWrite, ids: Vec<u8>) -> Vec<u8> {
-        for id in cell_ids(&ids) {
-            let order = u128::from(id);
-            let held = (0..range_write_count(holdings))
-                .find(|&index| whole(range_write_order(holdings, index)) == order)
-                .expect("id not held");
-            range_write_remove(holdings, held);
-        }
-        ids
+    fn withdraw_nf(holdings: &RangeWrite, ids: Vec<u8>) -> Bucket {
+        // The ids pass straight through in the framing they arrived in,
+        // and what comes back is what actually left the collection.
+        range_write_take(holdings, &ids)
     }
 
     fn present_badge() {

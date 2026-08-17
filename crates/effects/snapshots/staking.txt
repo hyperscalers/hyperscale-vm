@@ -26,6 +26,7 @@ PackageMetadata {
             ),
             totality: Infallible,
             mints: None,
+            issues: None,
             params: [
                 U64,
                 U64,
@@ -94,6 +95,7 @@ PackageMetadata {
             ),
             totality: Infallible,
             mints: None,
+            issues: None,
             params: [],
             outputs: [],
             effects: [
@@ -143,6 +145,7 @@ PackageMetadata {
             ),
             totality: Infallible,
             mints: None,
+            issues: None,
             params: [
                 U64,
             ],
@@ -203,6 +206,7 @@ PackageMetadata {
             ),
             totality: Infallible,
             mints: None,
+            issues: None,
             params: [
                 U64,
                 Bytes,
@@ -253,6 +257,9 @@ PackageMetadata {
             accessibility: Public,
             totality: Infallible,
             mints: None,
+            issues: Some(
+                [],
+            ),
             params: [
                 Bucket,
             ],
@@ -316,6 +323,7 @@ PackageMetadata {
             ),
             totality: Infallible,
             mints: None,
+            issues: None,
             params: [
                 U64,
             ],
@@ -354,6 +362,7 @@ PackageMetadata {
             accessibility: Public,
             totality: Infallible,
             mints: None,
+            issues: None,
             params: [
                 Bucket,
             ],

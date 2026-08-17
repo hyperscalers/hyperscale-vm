@@ -147,6 +147,20 @@ interface state {
     /// was read off.
     issuer-take: func(i: borrow<issuer>, amount: amount) -> own<bucket>;
 
+    /// Create the named instances of the resource this invocation issues.
+    ///
+    /// The same grant and the same terms as a quantity, for the value
+    /// that is counted by name rather than by amount. `ids` is the
+    /// count-prefixed cell a declared id list crosses in.
+    issuer-mint: func(i: borrow<issuer>, ids: list<u8>) -> own<bucket>;
+
+    /// Destroy what this invocation issues, consuming the bucket.
+    ///
+    /// The inverse of the two above and under the same grant: bringing
+    /// value out of existence is as declared as bringing it in, which is
+    /// what keeps a body from simply forgetting it.
+    issuer-put: func(i: borrow<issuer>, funds: own<bucket>);
+
     /// Take the reservation, as the value it grants.
     ///
     /// No declared amount: the kernel judged and held the reservation
@@ -183,15 +197,17 @@ interface state {
     /// Remove the entry at `index`.
     range-write-remove: func(r: borrow<range-write>, index: u32);
 
-    /// Take every entry whose order lies in `[lo, hi]`, as the instances
-    /// they were.
+    /// Take the named entries, as the instances they were.
     ///
     /// The removal and the edge are one operation, which is what a
     /// movement is for an amount cell and what this is for a collection:
-    /// a body cannot hand on instances it left where they were. An empty
-    /// range yields an empty bucket, so a method that moves none needs no
-    /// way to name one.
-    range-write-take: func(r: borrow<range-write>, lo: amount, hi: amount) -> own<bucket>;
+    /// a body cannot hand on instances it left where they were. `ids` is
+    /// the same count-prefixed cell a declared id list crosses in, so a
+    /// method moving the ids it was given passes them straight through.
+    /// Naming none yields an empty bucket, which is how a method that
+    /// moves nothing gets one. Traps on an id outside the declared
+    /// interval and on one the collection does not hold.
+    range-write-take: func(r: borrow<range-write>, ids: list<u8>) -> own<bucket>;
 
     /// File every instance the bucket carries as an entry at the order it
     /// was taken under, consuming it.

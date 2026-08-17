@@ -19,8 +19,8 @@
 
 pub use hyperscale_vm_effects::METADATA_SECTION;
 use hyperscale_vm_effects::{
-    AbiParam, Clause, MethodSignature, ModeExpr, PackageMetadata, ParamType, TargetExpr, Totality,
-    attach_metadata as attach_canonical, check_abi, check_declarations, fungible, metadata_section,
+    AbiParam, Clause, MethodSignature, ModeExpr, PackageMetadata, TargetExpr, Totality,
+    attach_metadata as attach_canonical, check_abi, check_declarations, metadata_section,
 };
 use hyperscale_vm_runtime::{
     ExportParam, ExportShape, check_method, component_exports, validate_component,
@@ -165,18 +165,14 @@ fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, Gat
 
 /// Judge a method's declared outputs against what its export hands back.
 ///
-/// A fungible edge crosses as a bucket the kernel takes ownership of, so
-/// the export's result carries one own per such output. A non-fungible
-/// one still crosses as the cell its ids frame, on the byte convention,
-/// so it carries none — until ids ride the handle too, this is the one
-/// place the two conventions are told apart, and the declaration is what
-/// tells them.
+/// Every edge crosses as a bucket the kernel takes ownership of, so an
+/// export's result carries one own per declared output and nothing else.
 fn check_outputs_against_export(
     method: &str,
     signature: &MethodSignature,
     export: &ExportShape,
 ) -> Result<(), GateError> {
-    let declared = signature.outputs.iter().filter(|o| fungible(o)).count();
+    let declared = signature.outputs.len();
     if declared == export.edges {
         return Ok(());
     }
@@ -291,24 +287,11 @@ fn check_abi_against_export(
                     )));
                 }
             }
-            AbiParam::Bucket(declared) => {
-                // A fungible edge crosses as the bucket it is; a
-                // non-fungible one still crosses as the cell its ids
-                // frame, and the declared kind is what says which.
-                let fungible_edge = usize::try_from(*declared)
-                    .ok()
-                    .and_then(|index| signature.params.get(index))
-                    .is_some_and(|kind| *kind == ParamType::Bucket);
-                let wanted = if fungible_edge {
-                    ExportParam::Bucket
-                } else {
-                    ExportParam::Bytes
-                };
-                if *param != wanted {
+            AbiParam::Bucket(_) => {
+                if *param != ExportParam::Bucket {
                     return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} is a value edge \
-                         the signature declares as {wanted:?}, but the export takes \
-                         {param:?}"
+                        "method {method:?}: ABI parameter {position} is a value edge, \
+                         but the export takes {param:?}"
                     )));
                 }
             }
@@ -361,8 +344,8 @@ const fn expected_resource(clause: &Clause) -> Option<&'static str> {
 mod tests {
 
     use hyperscale_vm_effects::{AbiParam, Accessibility, Expr, MethodSignature, PackageMetadata};
-    use hyperscale_vm_fixtures::book;
-    use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, account, account_artifact, staking_artifact};
+    use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, book, lottery};
+    use hyperscale_vm_stdlib::{account, account_artifact, staking_artifact};
     use wat::parse_str;
 
     use super::{admit_protocol_package, *};
@@ -666,16 +649,18 @@ mod tests {
     /// and audited somewhere else.
     #[test]
     fn a_protocol_claim_its_artifact_refuses_does_not_admit() {
-        let mut metadata = account::metadata();
-        // `deposit-nf` is public, so it clears the gate rule and reaches
-        // the artifact — which refuses it, because filing each arriving
-        // id is a loop and a loop has no static fuel ceiling.
+        // The lottery's draw is public, so it clears the gate rule and
+        // reaches the artifact — which refuses it, because settling walks
+        // the entrants and a walk has no static fuel ceiling. The account
+        // no longer serves as the example: every body it has is a call or
+        // two, and the kernel does the work the loops used to.
+        let mut metadata = lottery::metadata();
         metadata
             .methods
-            .get_mut("deposit-nf")
-            .expect("the account files instances")
+            .get_mut("draw")
+            .expect("the lottery settles a round")
             .totality = Totality::Total;
-        let artifact = attach_metadata(ACCOUNT_COMPONENT, &metadata).expect("attaches");
+        let artifact = attach_metadata(LOTTERY_COMPONENT, &metadata).expect("attaches");
 
         let error = admit_protocol_package(&artifact)
             .expect_err("a mark the code cannot support is not admissible");

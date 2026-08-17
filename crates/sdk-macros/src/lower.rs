@@ -232,10 +232,9 @@ pub struct Lowered {
     pub values: Vec<Need>,
     /// How many fresh ids the body draws.
     pub fresh: usize,
-    /// Whether the body issues, and so whether the export takes the
-    /// grant. Set by the one call that can produce value with no cell
-    /// behind it.
-    pub issues: bool,
+    /// The mark of the resource the body issues, where it issues one, and
+    /// so whether the export takes the grant.
+    pub issues: Option<Vec<u8>>,
     /// The rewritten statements, executing against materialized handles.
     pub body: TokenStream,
     /// The tail that turns what the body computed into the byte list the
@@ -697,8 +696,8 @@ impl<'a> Lowerer<'a> {
 
     /// Bind this method's issuance grant as an export parameter, and
     /// answer the rep the issue call takes.
-    fn issuer(&mut self) -> TokenStream {
-        self.out.issues = true;
+    fn issuer(&mut self, mark: &[u8]) -> TokenStream {
+        self.out.issues = Some(mark.to_vec());
         quote!(__issuer)
     }
 
@@ -1354,7 +1353,7 @@ impl<'a> Lowerer<'a> {
                     self.expr(a).code
                 });
             let amount = self.value(amount);
-            let grant = self.issuer();
+            let grant = self.issuer(&mark);
             return Eval {
                 val: Val::Produced(Term::SelfResource(mark)),
                 code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Bucket::held(

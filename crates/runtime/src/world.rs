@@ -153,13 +153,28 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
 
-    /// Take every entry in `[lo, hi]` as the instances they were; the
+    /// Destroy what this invocation issues, consuming the bucket.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn issuer_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
+
+    /// Create the named instances under this invocation's grant; the
     /// bucket's rep.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn range_take(&mut self, rep: u32, lo: u128, hi: u128) -> Result<u32, AbortReason>;
+    fn issuer_mint(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
+
+    /// Take the named entries as the instances they were; the bucket's
+    /// rep.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
 
     /// File every instance the bucket at `funds` carries as an entry,
     /// consuming it.
@@ -443,12 +458,32 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     // lifts an owned argument out of the caller's table, so the rep
     // arrives here and the guest no longer has it.
     state.func_wrap(
-        "range-write-take",
-        |mut store: StoreContextMut<'_, T>, (r, lo, hi): (Resource<RangeWrite>, Amount, Amount)| {
-            charge_boundary_bytes(&mut store, 2 * AMOUNT_BOUNDARY_BYTES)?;
+        "issuer-put",
+        |mut store: StoreContextMut<'_, T>, (i, funds): (Resource<Issuer>, Resource<Bucket>)| {
+            store
+                .data_mut()
+                .issuer_put(i.rep(), funds.rep())
+                .map_err(host_trap)
+        },
+    )?;
+    state.func_wrap(
+        "issuer-mint",
+        |mut store: StoreContextMut<'_, T>, (i, ids): (Resource<Issuer>, Vec<u8>)| {
+            charge_boundary_bytes(&mut store, ids.len())?;
             let rep = store
                 .data_mut()
-                .range_take(r.rep(), lo.into(), hi.into())
+                .issuer_mint(i.rep(), &ids)
+                .map_err(host_trap)?;
+            Ok((Resource::<Bucket>::new_own(rep),))
+        },
+    )?;
+    state.func_wrap(
+        "range-write-take",
+        |mut store: StoreContextMut<'_, T>, (r, ids): (Resource<RangeWrite>, Vec<u8>)| {
+            charge_boundary_bytes(&mut store, ids.len())?;
+            let rep = store
+                .data_mut()
+                .range_take(r.rep(), &ids)
                 .map_err(host_trap)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },

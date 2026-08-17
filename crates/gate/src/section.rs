@@ -169,6 +169,7 @@ mod tests {
             accessibility: Accessibility::Guarded(Expr::SelfAddr),
             totality: Totality::Fallible,
             mints: None,
+            issues: None,
             abi: Vec::new(),
             params: vec![
                 ParamType::U64,

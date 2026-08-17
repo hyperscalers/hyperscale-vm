@@ -126,8 +126,7 @@ pub enum Returned {
     /// the kernel now holds again, in the order the signature declares
     /// its outputs.
     Edges(Vec<u32>),
-    /// The export returned: its byte payload, when its signature has one.
-    Values(Option<Vec<u8>>),
+
     /// The export declined, with an index into its package's error table.
     ///
     /// Not a failure of the call — the guest ran to completion and said
@@ -182,7 +181,7 @@ pub fn call_export<T: 'static>(
     // about the artifact, and an edge is told from a payload by what came
     // back rather than by what a manifest expected.
     let returned = match results.first() {
-        None | Some(Val::Result(Ok(None))) => return Ok(Returned::Values(None)),
+        None | Some(Val::Result(Ok(None))) => return Ok(Returned::Edges(Vec::new())),
         Some(Val::Result(Err(Some(code)))) => {
             return match **code {
                 Val::U32(code) => Ok(Returned::Declined(code)),
@@ -212,24 +211,8 @@ pub fn call_export<T: 'static>(
             }
             Ok(Returned::Edges(reps))
         }
-        value => byte_list(export, value).map(|bytes| Returned::Values(Some(bytes))),
+        value => Err(shape(export, &format!("{value:?}"))),
     }
-}
-
-/// The bytes of a `list<u8>` value, or a shape refusal naming what came
-/// back instead.
-fn byte_list(export: &str, value: &Val) -> Result<Vec<u8>> {
-    let Val::List(values) = value else {
-        return Err(shape(export, &format!("{value:?}")));
-    };
-    let mut bytes = Vec::with_capacity(values.len());
-    for value in values {
-        match value {
-            Val::U8(byte) => bytes.push(*byte),
-            other => return Err(shape(export, &format!("a list of {other:?}"))),
-        }
-    }
-    Ok(bytes)
 }
 
 fn shape(export: &str, found: &str) -> Error {

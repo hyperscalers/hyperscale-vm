@@ -17,7 +17,7 @@ use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, ids_cell};
 use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{
     AbiError, AbiParam, Accessibility, CallSite, InstanceMeta, InstanceRegistry, MetadataCache,
-    MethodSignature, PackageHash, Totality, check_abi, issued,
+    MethodSignature, PackageHash, Totality, check_abi,
 };
 use crate::types::{
     Address, CallTarget, EdgeContent, Effect, EffectSet, MAX_IDS_PER_EDGE, ShardId, Value,
@@ -961,7 +961,7 @@ fn lower_call(
         args,
         edges: edge_bounds(&node.inputs),
         outputs: output_kinds(signature, lowering, node_index, method)?,
-        issues: signature.outputs.iter().any(issued),
+        issues: signature.issues.is_some(),
         evidence: node.evidence.clone(),
         authority: node.authority,
     })

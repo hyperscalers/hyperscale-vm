@@ -188,7 +188,6 @@ impl GuestBackend for Bench {
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);
         let result = match outcome {
             Ok(Returned::Edges(reps)) => Invoked::Produced(reps),
-            Ok(Returned::Values(bytes)) => Invoked::Returned(bytes),
             Ok(Returned::Declined(code)) => Invoked::Declined(code),
             Err(error) => Invoked::Aborted(classify(&error)),
         };

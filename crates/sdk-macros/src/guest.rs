@@ -195,7 +195,7 @@ pub fn method(
 
     // The grant is a borrow for the call, exactly as a capability is, and
     // it sits after the handles so the binding's order is the export's.
-    if lowered.issues {
+    if lowered.issues.is_some() {
         export.params.push(Param {
             name: "issuer".to_owned(),
             shape: Shape::Issuer,

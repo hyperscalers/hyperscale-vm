@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
     AbortReason, Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, ISSUER_REP,
-    Mode, ModeKind, SubstateKey,
+    Mode, ModeKind, SubstateKey, cell_ids,
 };
 
 use crate::locality::Locality;
@@ -219,6 +219,13 @@ pub enum SessionTrap {
     /// One instance reaching two places at once.
     #[error("instance {0} is already held")]
     InstanceHeldTwice(u128),
+    /// An instance a body named and the collection does not hold, or
+    /// named twice in one take.
+    #[error("instance {0} is not held")]
+    InstanceNotHeld(u128),
+    /// An id list that is not the framing a declared one crosses in.
+    #[error("not an id cell")]
+    BadIdCell,
     /// A discarded bucket that still carried value.
     #[error("a bucket carrying {0} was let go of")]
     ValueDropped(u128),
@@ -266,6 +273,8 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::BucketOverflow => Self::BucketOverflow,
             SessionTrap::WrongEdgeKind => Self::WrongEdgeKind,
             SessionTrap::InstanceHeldTwice(_) => Self::InstanceHeldTwice,
+            SessionTrap::InstanceNotHeld(_) => Self::InstanceNotHeld,
+            SessionTrap::BadIdCell => Self::MalformedEdgeCell,
             SessionTrap::ValueDropped(_) => Self::ValueDropped,
             SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
             SessionTrap::CellUnderflow => Self::CellUnderflow,
@@ -686,41 +695,48 @@ impl KernelSession {
             .ok_or(SessionTrap::UnknownHandle(rep))
     }
 
-    /// Take every entry of a write interval whose order lies in
-    /// `[lo, hi]`, as the instances they were.
+    /// Take the named entries of a write interval, as the instances they
+    /// were.
     ///
     /// The removal and the edge are one operation, which is what a
     /// movement is for an amount cell and what this is for a collection:
-    /// a body cannot hand on instances it left where they were. An empty
-    /// range yields an empty bucket, so a method moving none needs no
-    /// constructor for one.
+    /// a body cannot hand on instances it left where they were. Naming
+    /// none yields an empty bucket, so a method that moves nothing needs
+    /// no way to name one.
     ///
     /// # Errors
     ///
-    /// Any [`SessionTrap`]: a bound outside the declared interval, or
-    /// more entries than the interval's cap admits.
-    pub fn range_take(&mut self, rep: u32, lo: u128, hi: u128) -> Result<u32, SessionTrap> {
+    /// Any [`SessionTrap`]: a malformed id cell, an id outside the
+    /// declared interval, one the collection does not hold, or more
+    /// entries than the interval's cap admits.
+    pub fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, SessionTrap> {
         let (owner, collection, low, high, cap, writable) = self.range_of(rep)?;
         if !writable {
             return Err(SessionTrap::WrongMode(rep));
         }
-        if lo > hi {
-            return Ok(self.open_bucket(Held::Instances(BTreeSet::new())));
-        }
-        if !(low..=high).contains(&lo) || !(low..=high).contains(&hi) {
-            return Err(SessionTrap::OrderOutsideInterval);
-        }
+        let ids = cell_ids(ids).ok_or(SessionTrap::BadIdCell)?;
         self.scan(rep)?;
-        let taken: Vec<u128> = self
-            .scans
-            .get(&rep)
-            .into_iter()
-            .flatten()
-            .map(|(order, _)| *order)
-            .filter(|order| (lo..=hi).contains(order))
-            .collect();
+        let mut taken = BTreeSet::new();
+        for id in ids {
+            let order = u128::from(id);
+            if !(low..=high).contains(&order) {
+                return Err(SessionTrap::OrderOutsideInterval);
+            }
+            // Held is what the declared interval currently shows: an
+            // instance a body names and does not hold is the one thing a
+            // take can be wrong about, and it is where it says so.
+            let held = self
+                .scans
+                .get(&rep)
+                .into_iter()
+                .flatten()
+                .any(|(at, _)| *at == order);
+            if !held || !taken.insert(order) {
+                return Err(SessionTrap::InstanceNotHeld(order));
+            }
+        }
         // Every entry is charged and removed, or none is: the budget is
-        // what the declaration bought and a take that overran it must
+        // what the declaration bought, and a take that overran it must
         // leave the collection alone.
         for order in &taken {
             self.charge_write(rep, *order, cap)?;
@@ -729,7 +745,7 @@ impl KernelSession {
             self.store.entry_remove(owner, collection, *order)?;
         }
         self.invalidate(owner, collection);
-        Ok(self.open_bucket(Held::Instances(taken.into_iter().collect())))
+        Ok(self.open_bucket(Held::Instances(taken)))
     }
 
     /// File every instance the bucket at `funds` carries as an entry of a
@@ -1093,6 +1109,46 @@ impl KernelSession {
             return Err(SessionTrap::IssuanceUngranted);
         }
         Ok(self.open_bucket(Held::Amount(amount)))
+    }
+
+    /// Create the named instances of what this invocation issues.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`], including a take against a grant this
+    /// invocation was never given.
+    pub fn issuer_mint(&mut self, rep: u32, ids: &[u8]) -> Result<u32, SessionTrap> {
+        if rep != ISSUER_REP {
+            return Err(SessionTrap::UnknownHandle(rep));
+        }
+        if !self.issuance {
+            return Err(SessionTrap::IssuanceUngranted);
+        }
+        let named = cell_ids(ids).ok_or(SessionTrap::BadIdCell)?;
+        let mut instances = BTreeSet::new();
+        for id in named {
+            if !instances.insert(u128::from(id)) {
+                return Err(SessionTrap::InstanceHeldTwice(u128::from(id)));
+            }
+        }
+        Ok(self.open_bucket(Held::Instances(instances)))
+    }
+
+    /// Destroy what this invocation issues, consuming the bucket.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`], including a burn by an invocation granted
+    /// nothing.
+    pub fn issuer_put(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
+        if rep != ISSUER_REP {
+            return Err(SessionTrap::UnknownHandle(rep));
+        }
+        if !self.issuance {
+            return Err(SessionTrap::IssuanceUngranted);
+        }
+        self.bucket(funds)?;
+        self.take_bucket(funds).map(|_| ())
     }
 
     /// Grant the executing invocation the authority to issue.

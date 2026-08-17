@@ -81,7 +81,13 @@ impl RefKernelHost for NoHost {
     fn delta_sub(&mut self, _rep: u32, _amount: u128) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
-    fn range_take(&mut self, _rep: u32, _lo: u128, _hi: u128) -> Result<u32, AbortReason> {
+    fn issuer_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+    fn issuer_mint(&mut self, _rep: u32, _ids: &[u8]) -> Result<u32, AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+    fn range_take(&mut self, _rep: u32, _ids: &[u8]) -> Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
     fn range_put(&mut self, _rep: u32, _funds: u32, _v: Vec<u8>) -> Result<(), AbortReason> {
@@ -283,10 +289,6 @@ const DECLINING_GUEST: &str = r#"
       (i32.store (i32.const 132) (i32.const 9))
       i32.const 128))
   (core instance $i (instantiate $m))
-  (func (export "yes") (result (result (list u8) (error u32)))
-    (canon lift (core func $i "yes") (memory $i "mem") (realloc (func $i "realloc"))))
-  (func (export "no") (result (result (list u8) (error u32)))
-    (canon lift (core func $i "no") (memory $i "mem") (realloc (func $i "realloc"))))
   (func (export "unit-yes") (result (result (error u32)))
     (canon lift (core func $i "unit-yes") (memory $i "mem") (realloc (func $i "realloc"))))
   (func (export "unit-no") (result (result (error u32)))
@@ -299,9 +301,7 @@ fn both_engines_read_the_refusal_channel_the_same_way() -> Result<()> {
     validate_component(&bytes).expect("the refusal channel is inside the profile");
 
     for (export, expected) in [
-        ("yes", Returned::Values(Some(vec![7, 8, 9]))),
-        ("no", Returned::Declined(5)),
-        ("unit-yes", Returned::Values(None)),
+        ("unit-yes", Returned::Edges(Vec::new())),
         ("unit-no", Returned::Declined(9)),
     ] {
         let engine = blessed_engine()?;
@@ -335,8 +335,7 @@ fn both_engines_read_the_refusal_channel_the_same_way() -> Result<()> {
 /// the two lanes compare in one vocabulary.
 fn lifted(values: &[CVal]) -> Returned {
     match values {
-        [] => Returned::Values(None),
-        [CVal::Bytes(bytes)] => Returned::Values(Some(bytes.clone())),
+        [] => Returned::Edges(Vec::new()),
         [CVal::Declined(code)] => Returned::Declined(*code),
         other => panic!("off-convention result {other:?}"),
     }

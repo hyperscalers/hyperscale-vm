@@ -369,7 +369,6 @@ impl GuestBackend for ReferenceBackend<'_> {
 fn invoked(outcome: Result<Returned>) -> Invoked {
     match outcome {
         Ok(Returned::Edges(reps)) => Invoked::Produced(reps),
-        Ok(Returned::Values(bytes)) => Invoked::Returned(bytes),
         Ok(Returned::Declined(code)) => Invoked::Declined(code),
         Err(error) => Invoked::Aborted(classify(&error)),
     }
@@ -378,8 +377,7 @@ fn invoked(outcome: Result<Returned>) -> Invoked {
 /// The reference interpreter's lifted results as the kernel's verdict.
 fn lifted(values: &[CVal]) -> Invoked {
     match values {
-        [] => Invoked::Returned(None),
-        [CVal::Bytes(bytes)] => Invoked::Returned(Some(bytes.clone())),
+        [] => Invoked::Produced(Vec::new()),
         // Every value is an edge, or the shape is one the convention
         // does not fix.
         edges if !edges.is_empty() && edges.iter().all(|v| matches!(v, CVal::Own(_))) => {
@@ -2426,7 +2424,10 @@ fn non_fungibles_mint_transfer_and_burn_end_to_end() -> Result<()> {
     assert!(matches!(results[0], TxResult::Completed(_)));
     assert_eq!(
         results[1],
-        TxResult::Trapped(AbortReason::Unreachable),
+        // The kernel's own class, not a guest's assertion: taking an
+        // instance is where the removal happens, so it is where the
+        // refusal belongs.
+        TxResult::Trapped(AbortReason::InstanceNotHeld),
         "moving an id you do not hold aborts"
     );
     assert!(matches!(results[2], TxResult::Completed(_)));

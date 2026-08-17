@@ -66,6 +66,8 @@ pub struct Trace {
     accessibility: Accessibility,
     /// The badge a custodial gate reads and mints.
     mints: Option<Expr>,
+    /// The mark of the resource this method may issue.
+    issues: Option<Vec<u8>>,
     /// Whether the method carries an error arm.
     totality: Totality,
 }
@@ -84,6 +86,7 @@ impl Trace {
             last_clause: None,
             accessibility: Accessibility::Public,
             mints: None,
+            issues: None,
             totality: Totality::Infallible,
         }
     }
@@ -425,13 +428,14 @@ impl Trace {
         self.values.push(AbiParam::Bucket(index));
     }
 
-    /// Bind this method's issuance grant.
+    /// Bind this method's issuance grant, for the resource `mark` names.
     ///
-    /// Called by generated code where a body issues. The grant is what
-    /// the walk hands over against this method's own declared outputs, so
-    /// a binding naming one is a method that already said it produces
-    /// what it issues.
-    pub fn bind_issuer(&mut self) {
+    /// Called by generated code where a body issues or destroys. The mark
+    /// is the material separating one of the instance's own resources
+    /// from its others, so what a method may create is fixed by the
+    /// declaration and cannot be another instance's.
+    pub fn bind_issuer(&mut self, mark: &[u8]) {
+        self.issues = Some(mark.to_vec());
         self.values.push(AbiParam::Issuer);
     }
 
@@ -513,6 +517,7 @@ impl Trace {
             abi,
             accessibility: self.accessibility,
             mints: self.mints,
+            issues: self.issues,
             totality: self.totality,
         }
     }
@@ -581,6 +586,7 @@ pub(crate) struct Recorded {
     pub(crate) abi: Vec<AbiParam>,
     pub(crate) accessibility: Accessibility,
     pub(crate) mints: Option<Expr>,
+    pub(crate) issues: Option<Vec<u8>>,
     pub(crate) totality: Totality,
 }
 

@@ -27,13 +27,14 @@ world account {
     /// body has nothing left to do.
     export authorize: func();
 
-    /// File each id the arriving cell names as a holdings entry, at the
-    /// id as the order key.
-    export deposit-nf: func(holdings: borrow<range-write>, funds: list<u8>);
+    /// File the instances the edge carries as holdings entries, each at
+    /// the order it was taken under.
+    export deposit-nf: func(holdings: borrow<range-write>, funds: own<bucket>);
 
-    /// Remove each named id from the holdings interval, trapping on one
-    /// not held, and return the same id cell as the produced edge.
-    export withdraw-nf: func(holdings: borrow<range-write>, ids: list<u8>) -> list<u8>;
+    /// Take the named instances out of the holdings interval, trapping on
+    /// one not held. The removal and the edge are one operation, so a
+    /// body cannot hand on what it left where it was.
+    export withdraw-nf: func(holdings: borrow<range-write>, ids: list<u8>) -> own<bucket>;
 
     /// Nothing but its own gate, like authorize: the kernel judges the
     /// holder's rule and the badge-keyed possession reads before the

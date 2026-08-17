@@ -189,7 +189,10 @@ pub fn declaration(lowered: &Lowered, gate: &TokenStream, declines: bool) -> Tok
     });
     // The grant binds after the values, which is where the export takes
     // it: the binding's order is the export's parameter order.
-    let issuer = lowered.issues.then(|| quote!(__t.bind_issuer();));
+    let issuer = lowered.issues.as_ref().map(|mark| {
+        let bytes = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
+        quote!(__t.bind_issuer(#bytes);)
+    });
     let fallible = declines.then(|| quote!(__t.fallible();));
     quote!(
         |__t: &mut ::hyperscale_vm_sdk::Trace| {

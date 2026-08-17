@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    RoleId, SubstateKey, TestHasher, child_key,
+    RoleId, SubstateKey, TestHasher, child_key, ids_cell,
 };
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
@@ -913,7 +913,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
 }
 
 /// The instances an interval hands over, and what it holds afterwards.
-fn lifted(fx: &Fixture, lo: u64, hi: u64) -> Result<(u128, u64)> {
+fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
     let bytes = parse_str(BUCKET_GUEST_WAT)?;
     validate_component(&bytes)?;
     let engine = blessed_engine()?;
@@ -926,10 +926,8 @@ fn lifted(fx: &Fixture, lo: u64, hi: u64) -> Result<(u128, u64)> {
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
     let (taken,) = instance
-        .get_typed_func::<(Resource<RangeWrite>, u64, u64), (Resource<Bucket>,)>(
-            &mut store, "lift",
-        )?
-        .call(&mut store, (Resource::new_borrow(held), lo, hi))?;
+        .get_typed_func::<(Resource<RangeWrite>, &[u8]), (Resource<Bucket>,)>(&mut store, "lift")?
+        .call(&mut store, (Resource::new_borrow(held), &ids_cell(ids)[..]))?;
     let mut host = store.into_data();
     let blessed = host.0.take_bucket(taken.rep())?.quantity();
 
@@ -943,8 +941,7 @@ fn lifted(fx: &Fixture, lo: u64, hi: u64) -> Result<(u128, u64)> {
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
     let args = [
         CVal::Borrow(held, ResourceKind::RangeWrite),
-        CVal::U64(lo),
-        CVal::U64(hi),
+        CVal::Bytes(ids_cell(ids)),
     ];
     let reference = match invoke(&mut instance, "lift", &args)?.as_slice() {
         [CVal::Own(rep)] => {
@@ -961,8 +958,7 @@ fn lifted(fx: &Fixture, lo: u64, hi: u64) -> Result<(u128, u64)> {
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
     let args = [
         CVal::Borrow(held, ResourceKind::RangeWrite),
-        CVal::U64(lo),
-        CVal::U64(hi),
+        CVal::Bytes(ids_cell(ids)),
     ];
     let round_trip = match invoke(&mut instance, "relift", &args)?.as_slice() {
         [CVal::U64(count)] => *count,
@@ -985,18 +981,28 @@ fn rep_where(host: &SessionHost, pred: impl Fn(&Capability) -> bool) -> u32 {
 #[test]
 fn taking_instances_out_of_a_collection_is_what_produces_them() -> Result<()> {
     let fx = fixture();
-    // Two of the three asks lie in [10, 20]; the removal and the edge are
-    // one operation, so what crosses is exactly what left.
-    let (taken, round_trip) = lifted(&fx, 10, 20)?;
+    // The removal and the edge are one operation, so what crosses is
+    // exactly what left.
+    let (taken, round_trip) = lifted(&fx, &[10, 20])?;
     assert_eq!(taken, 2);
     // And filing them straight back leaves the collection as it was.
     assert_eq!(round_trip, 3);
 
-    // An empty range yields an empty bucket, so a method that moves no
-    // instances needs no way to name one.
-    let (none, _) = lifted(&fx, 40, 50)?;
+    // Naming none yields an empty bucket, which is how a method that
+    // moves nothing gets one.
+    let (none, _) = lifted(&fx, &[])?;
     assert_eq!(none, 0);
     Ok(())
+}
+
+#[test]
+fn an_instance_a_body_does_not_hold_is_refused() {
+    let fx = fixture();
+    // The one thing a take can be wrong about: a body naming what the
+    // collection does not hold. An interval take could only have answered
+    // with silence.
+    let refusal = lifted(&fx, &[10, 99]).expect_err("an unheld instance is refused");
+    assert!(format!("{refusal:#}").contains("InstanceNotHeld"));
 }
 
 #[test]

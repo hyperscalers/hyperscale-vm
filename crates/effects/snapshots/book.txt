@@ -4,6 +4,7 @@ PackageMetadata {
             accessibility: Public,
             totality: Infallible,
             mints: None,
+            issues: None,
             params: [
                 U64,
                 U64,
@@ -106,6 +107,7 @@ PackageMetadata {
             accessibility: Public,
             totality: Infallible,
             mints: None,
+            issues: None,
             params: [
                 U64,
                 Bucket,

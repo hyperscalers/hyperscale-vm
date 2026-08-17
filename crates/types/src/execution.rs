@@ -146,6 +146,8 @@ pub enum AbortReason {
     WrongEdgeKind,
     /// One instance reaching two places at once.
     InstanceHeldTwice,
+    /// An instance a body named and the collection does not hold.
+    InstanceNotHeld,
     /// A body let go of value. The canonical ABI delivers the discard and
     /// the kernel refuses it: a bucket is put somewhere or handed back,
     /// and forgetting one is the loss the linear model exists to exclude.
