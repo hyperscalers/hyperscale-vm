@@ -266,3 +266,28 @@ fn a_refused_operation_carries_its_class_out() {
         "the panic carries the kernel's own class"
     );
 }
+
+/// A refusal that unwinds past the scope leaves the thread as it found
+/// it.
+///
+/// The engines catch inside the scope and never reach this, but a caller
+/// driving bodies itself can, and a thread that kept the interrupted
+/// kernel would fail the *next* invocation on it — a report naming the
+/// scope that met the mess rather than the one that made it.
+#[test]
+fn a_thread_a_refusal_unwound_through_runs_the_next_invocation() {
+    let vault = key(5);
+    let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let session = session(MemoryStore::new(), vec![point(vault, Mode::Write)]);
+        with_kernel(session, || {
+            let mut slot = Slot::<Amount>::at(Handle::Write(0));
+            let _: Bucket = slot.take(1);
+        });
+    }));
+    assert!(refused.is_err(), "an unfunded take refuses");
+
+    let session = session(MemoryStore::new(), vec![point(vault, Mode::Write)]);
+    let (_, read) = with_kernel(session, || Slot::<Amount>::at(Handle::Write(0)).get());
+
+    assert_eq!(read, 0, "the second scope reaches its own kernel");
+}

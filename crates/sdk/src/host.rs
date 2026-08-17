@@ -60,25 +60,69 @@ thread_local! {
     static KERNEL: RefCell<Option<Box<dyn Kernel>>> = const { RefCell::new(None) };
 }
 
+/// The installed kernel's lifetime, as a value that owns clearing the
+/// slot.
+///
+/// A guard rather than a pair of statements, because the scope has to end
+/// however the body does. An unwind past it has no kernel to hand back —
+/// the frame that would have received one is going away — but leaving the
+/// slot filled would poison the thread for every later invocation, and the
+/// failure that produced would name the scope that met the mess rather
+/// than the one that made it.
+struct Scope;
+
+impl Scope {
+    /// Install `kernel`, refusing a scope already open.
+    ///
+    /// Checked before installing: the refusal reports a defect, and one
+    /// that dropped the kernel it interrupted on the way would turn a
+    /// diagnosable mistake into two.
+    fn open(kernel: Box<dyn Kernel>) -> Self {
+        KERNEL.with_borrow_mut(|slot| {
+            assert!(
+                slot.is_none(),
+                "an invocation is already running on this thread"
+            );
+            *slot = Some(kernel);
+        });
+        Self
+    }
+}
+
+impl Drop for Scope {
+    fn drop(&mut self) {
+        KERNEL.with_borrow_mut(Option::take);
+    }
+}
+
+/// The installed kernel, out of the slot.
+///
+/// # Panics
+///
+/// Outside a scope, which only the scope itself calls this from.
+fn uninstall() -> Box<dyn Kernel> {
+    KERNEL
+        .with_borrow_mut(Option::take)
+        .expect("the scope holds the kernel it installed")
+}
+
 /// Run `body` with `kernel` reachable from every accessor it calls, and
 /// give the kernel back.
+///
+/// A body that unwinds takes the kernel with it: there is no value to
+/// return it in. The thread is left as it was found either way, so the
+/// next invocation on it starts from an empty slot.
 ///
 /// # Panics
 ///
 /// If a scope is already open on this thread, which an invocation cannot
 /// do to itself and a caller should not do at all.
 pub fn with_kernel<H: Kernel, R>(kernel: H, body: impl FnOnce() -> R) -> (H, R) {
-    KERNEL.with_borrow_mut(|slot| {
-        assert!(
-            slot.replace(Box::new(kernel)).is_none(),
-            "an invocation is already running on this thread"
-        );
-    });
+    // Bound, not discarded: the guard has to outlive the body for an
+    // unwind through it to reach the drop that clears the slot.
+    let _scope = Scope::open(Box::new(kernel));
     let value = body();
-    let installed = KERNEL
-        .with_borrow_mut(Option::take)
-        .expect("the scope holds the kernel it installed");
-    let kernel = (installed as Box<dyn Any>)
+    let kernel = (uninstall() as Box<dyn Any>)
         .downcast::<H>()
         .expect("the kernel that comes back is the one that went in");
     (*kernel, value)
