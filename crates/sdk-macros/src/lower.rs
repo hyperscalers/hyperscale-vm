@@ -276,9 +276,14 @@ pub struct Lowered {
     pub issues: Option<Vec<u8>>,
     /// The rewritten statements, executing against materialized handles.
     pub body: TokenStream,
-    /// The tail that turns what the body computed into the byte list the
-    /// export convention fixes.
-    pub result: TokenStream,
+    /// The value edges the body ends with, each as the expression that
+    /// produced it.
+    ///
+    /// Composed into a return by whichever target is emitting: a guest
+    /// hands the kernel back the handle it owns, a host the table
+    /// position it holds — which is the one place the two tails differ,
+    /// and the reason this is the edges rather than the tail.
+    pub edges: Vec<TokenStream>,
     /// Whether the method yields a value at all.
     pub returns: bool,
     /// Why the guest half cannot be emitted, if it cannot. The
@@ -486,7 +491,7 @@ impl<'a> Lowerer<'a> {
             self.out.nodes = self.scopes.pop().unwrap_or_default();
             self.out.body = quote!(#(#statements)*);
             self.out.returns = !returned.is_empty();
-            self.out.result = result_code(&returned);
+            self.out.edges = returned;
             Ok(self.out)
         } else {
             Err(self.errors)
@@ -1416,9 +1421,9 @@ impl<'a> Lowerer<'a> {
             let grant = self.issuer(&mark);
             return Eval {
                 val: Val::Produced(Term::SelfResource(mark)),
-                code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Bucket::held(
-                    ::hyperscale_vm_sdk::guest::issue(#grant, #amount),
-                ))),
+                code: Code::Rust(
+                    quote!(::hyperscale_vm_sdk::state::issue_granted(#grant, #amount)),
+                ),
             };
         }
         if name == "issued" {
@@ -1572,9 +1577,9 @@ impl<'a> Lowerer<'a> {
                     let capability = self.handle(site, call.span());
                     return Eval {
                         val: Val::Produced(resource),
-                        code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Bucket::held(
-                            ::hyperscale_vm_sdk::guest::reserve_take(#capability),
-                        ))),
+                        code: Code::Rust(
+                            quote!(::hyperscale_vm_sdk::state::take_reservation(#capability)),
+                        ),
                     };
                 }
                 let receiver_code = self.value(receiver.code);
@@ -2043,17 +2048,4 @@ fn free_call_name(call: &syn::ExprCall) -> Option<String> {
         return None;
     };
     path.path.segments.last().map(|s| s.ident.to_string())
-}
-
-/// The tail that turns what the body computed into the byte list the
-/// export convention fixes.
-fn result_code(returned: &[TokenStream]) -> TokenStream {
-    match returned {
-        [] => quote!(),
-        // One edge is the handle itself; more than one is the tuple the
-        // profile admits for exactly this, so which slot an edge lands in
-        // is the order the body produced them.
-        [one] => quote!((#one).into_handle()),
-        many => quote!((#((#many).into_handle()),*)),
-    }
 }

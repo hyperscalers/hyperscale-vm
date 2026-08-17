@@ -30,6 +30,9 @@ hyperscale-vm-embed.workspace = true
 
 [dev-dependencies]
 hyperscale-vm-fixtures.workspace = true
+# A session to dispatch against: what the generated native half is called
+# with, and the one thing the SDK itself deliberately cannot name.
+hyperscale-vm-kernel.workspace = true
 hyperscale-vm-stdlib.workspace = true
 trybuild.workspace = true
 

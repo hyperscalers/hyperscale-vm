@@ -713,6 +713,38 @@ impl<T: Cellular> Interval<T> {
     }
 }
 
+/// Take the reservation a declared handle grants, as the value it is.
+///
+/// Called by generated code, never by an author: the amount was judged
+/// and held before the body ran, so what the lowering rewrites a
+/// `reserve` to names no amount at all.
+#[doc(hidden)]
+#[must_use]
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always)]
+pub fn take_reservation(handle: Handle) -> Bucket {
+    #[cfg(target_arch = "wasm32")]
+    return Bucket::held(crate::guest::reserve_take(handle));
+    #[cfg(not(target_arch = "wasm32"))]
+    return Bucket::at(host::reserve_take(handle));
+}
+
+/// Create `amount` under this invocation's issuance grant.
+///
+/// Called by generated code, never by an author: the grant is a handle
+/// the kernel lowered against the method's own declared outputs, and
+/// which resource it creates is what the mark already fixed.
+#[doc(hidden)]
+#[must_use]
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always)]
+pub fn issue_granted(grant: u32, amount: Amount) -> Bucket {
+    #[cfg(target_arch = "wasm32")]
+    return Bucket::held(crate::guest::issue(grant, amount));
+    #[cfg(not(target_arch = "wasm32"))]
+    return Bucket::at(host::issue(grant, amount));
+}
+
 /// A 128-bit order key packed from a primary dimension over a tiebreaker.
 #[must_use]
 pub const fn pack(hi: u64, lo: u64) -> Amount {

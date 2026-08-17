@@ -33,11 +33,12 @@
 use core::any::Any;
 use core::cell::RefCell;
 
-use hyperscale_vm_effects::AbortReason;
+use hyperscale_vm_effects::{AbortReason, Address, ISSUER_REP};
 use hyperscale_vm_embed::KernelHost;
+pub use hyperscale_vm_embed::{CellKind, GuestArg, Invoked};
 
 use crate::handle::Handle;
-use crate::state::Amount;
+use crate::state::{Amount, Bucket};
 
 /// A kernel refusal, in flight through the unwind that carries it.
 ///
@@ -47,16 +48,16 @@ use crate::state::Amount;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Refusal(pub AbortReason);
 
-/// The installed kernel, for the duration of one invocation.
+/// A kernel a body can be run against.
 ///
 /// `Any` beside the surface so the scope can hand back what it was
 /// given: an engine embedding needs its own host type returned, not a
 /// trait object it would have to guess the shape of.
-trait Installed: KernelHost + Any {}
-impl<T: KernelHost + Any> Installed for T {}
+pub trait Kernel: KernelHost + Any {}
+impl<T: KernelHost + Any> Kernel for T {}
 
 thread_local! {
-    static KERNEL: RefCell<Option<Box<dyn Installed>>> = const { RefCell::new(None) };
+    static KERNEL: RefCell<Option<Box<dyn Kernel>>> = const { RefCell::new(None) };
 }
 
 /// Run `body` with `kernel` reachable from every accessor it calls, and
@@ -66,7 +67,7 @@ thread_local! {
 ///
 /// If a scope is already open on this thread, which an invocation cannot
 /// do to itself and a caller should not do at all.
-pub fn with_kernel<H: KernelHost + Any, R>(kernel: H, body: impl FnOnce() -> R) -> (H, R) {
+pub fn with_kernel<H: Kernel, R>(kernel: H, body: impl FnOnce() -> R) -> (H, R) {
     KERNEL.with_borrow_mut(|slot| {
         assert!(
             slot.replace(Box::new(kernel)).is_none(),
@@ -100,14 +101,14 @@ fn kernel<R>(operation: impl FnOnce(&mut dyn KernelHost) -> R) -> R {
 }
 
 /// A deterministic refusal, as the unwind that carries it.
-fn refuse<T>(reason: AbortReason) -> T {
+fn refuse(reason: AbortReason) -> ! {
     std::panic::panic_any(Refusal(reason))
 }
 
 /// The value a kernel operation answered with, or the trap it refused
 /// with.
 fn settled<T>(answer: Result<T, AbortReason>) -> T {
-    answer.unwrap_or_else(refuse)
+    answer.unwrap_or_else(|reason| refuse(reason))
 }
 
 /// Take what materializing an interval lifted out of the store.
@@ -343,4 +344,112 @@ pub fn hash(data: &[u8]) -> Vec<u8> {
 /// Emit one event of the package's own type index.
 pub fn emit(event_type: u32, payload: &[u8]) {
     settled(kernel(|k| k.emit(event_type, payload.to_vec())));
+}
+
+/// One export invocation, driven against `kernel`.
+///
+/// The scope, the unwind and the classification in one place, because a
+/// generated dispatch should carry no policy: what a panic means, and
+/// what comes back when one happens, is the same answer for every
+/// package.
+///
+/// A body that panics is a body that trapped — the engines' own reading
+/// of `unreachable`, which is what an `assert!`, a failed `expect` and an
+/// arithmetic overflow all compile to. The kernel comes back either way,
+/// because the caller needs it for the rollback.
+pub fn dispatch<K: Kernel>(kernel: K, body: impl FnOnce() -> Invoked) -> (K, Invoked) {
+    with_kernel(kernel, || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).unwrap_or_else(|payload| {
+            Invoked::Aborted(
+                payload
+                    .downcast_ref::<Refusal>()
+                    .map_or(AbortReason::Unreachable, |refusal| refusal.0),
+            )
+        })
+    })
+}
+
+/// The export the call named does not exist on this package.
+#[must_use]
+pub const fn no_such_export() -> Invoked {
+    Invoked::Aborted(AbortReason::AbiViolation)
+}
+
+/// The argument at `at`, or the violation of having been handed none.
+fn arg<'a>(args: &'a [GuestArg<'a>], at: usize) -> &'a GuestArg<'a> {
+    args.get(at)
+        .unwrap_or_else(|| refuse(AbortReason::AbiViolation))
+}
+
+/// The capability at `at`, as the mode the export declares.
+///
+/// A rep whose materialized kind is not the one the clause named is the
+/// canonical ABI's mode-escape trap, reached here by the same route: the
+/// kernel says what it materialized, the export says what it declared,
+/// and a disagreement is a violation rather than a cast.
+#[must_use]
+pub fn handle(args: &[GuestArg<'_>], at: usize, declared: CellKind) -> Handle {
+    let GuestArg::Handle { rep, kind } = *arg(args, at) else {
+        refuse(AbortReason::AbiViolation)
+    };
+    if kind != declared {
+        refuse(AbortReason::AbiViolation);
+    }
+    match declared {
+        CellKind::Read => Handle::Read(rep),
+        CellKind::Locked => Handle::Locked(rep),
+        CellKind::Write => Handle::Write(rep),
+        CellKind::Delta => Handle::Delta(rep),
+        CellKind::Reserve => Handle::Reserve(rep),
+        CellKind::RangeRead => Handle::RangeRead(rep),
+        CellKind::RangeWrite => Handle::RangeWrite(rep),
+    }
+}
+
+/// The scalar at `at`.
+#[must_use]
+pub fn scalar(args: &[GuestArg<'_>], at: usize) -> u64 {
+    match *arg(args, at) {
+        GuestArg::U64(value) => value,
+        _ => refuse(AbortReason::AbiViolation),
+    }
+}
+
+/// The address at `at`.
+#[must_use]
+pub fn address(args: &[GuestArg<'_>], at: usize) -> Address {
+    match *arg(args, at) {
+        GuestArg::Address(address) => address,
+        _ => refuse(AbortReason::AbiViolation),
+    }
+}
+
+/// The cell-encoded value at `at`, for the vocabulary to decode.
+#[must_use]
+pub fn cell<'a>(args: &'a [GuestArg<'a>], at: usize) -> &'a [u8] {
+    match *arg(args, at) {
+        GuestArg::Bytes(bytes) => bytes,
+        _ => refuse(AbortReason::AbiViolation),
+    }
+}
+
+/// The value edge at `at`, as the bucket a body holds it as.
+#[must_use]
+pub fn edge(args: &[GuestArg<'_>], at: usize) -> Bucket {
+    match *arg(args, at) {
+        GuestArg::Bucket(rep) => Bucket::at(rep),
+        _ => refuse(AbortReason::AbiViolation),
+    }
+}
+
+/// This invocation's issuance grant.
+///
+/// A rep the world fixes rather than a table position, because an
+/// invocation is granted at most one.
+#[must_use]
+pub fn issuer(args: &[GuestArg<'_>], at: usize) -> u32 {
+    match *arg(args, at) {
+        GuestArg::Issuer => ISSUER_REP,
+        _ => refuse(AbortReason::AbiViolation),
+    }
 }

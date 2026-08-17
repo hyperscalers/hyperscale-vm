@@ -768,6 +768,7 @@ dependencies = [
  "hyperscale-vm-effects",
  "hyperscale-vm-embed",
  "hyperscale-vm-fixtures",
+ "hyperscale-vm-kernel",
  "hyperscale-vm-sdk-macros",
  "hyperscale-vm-stdlib",
  "trybuild",

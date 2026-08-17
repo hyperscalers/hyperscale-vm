@@ -93,8 +93,10 @@
 // "the macro's model of it".
 #![allow(clippy::absolute_paths)]
 
+mod bind;
 mod emit;
 mod guest;
+mod host;
 mod lower;
 mod term;
 mod wit;
@@ -563,13 +565,20 @@ fn declines(method: &syn::ImplItemFn) -> bool {
         if path.path.segments.last().is_some_and(|s| s.ident == "Result"))
 }
 
-/// One public method, lowered to its declaration and its export.
+/// One public method, lowered to its declaration and its two executing
+/// halves.
 struct Lowered {
     /// The `.method(…)` builder call.
     declaration: TokenStream2,
     /// The export and the `impl Guest` body behind it, or why there is
     /// none.
     guest: Result<guest::Method, TokenStream2>,
+    /// The arm this method takes in the package's native dispatch.
+    ///
+    /// Emitted whether or not the guest half is, because what the two
+    /// refuse over is the component the emission cannot build — never
+    /// the body, which is the same text either way.
+    host: TokenStream2,
 }
 
 #[allow(clippy::too_many_lines)] // one pass over a method: name, params, gate, body, export
@@ -656,7 +665,12 @@ fn lower_method(
         },
         |why| Err(guest::refusal(&published, why)),
     );
-    Ok(Lowered { declaration, guest })
+    let host = host::arm(&published, &lowered, &params, config_fields, declining);
+    Ok(Lowered {
+        declaration,
+        guest,
+        host,
+    })
 }
 
 /// The tracer calls a gate becomes.
@@ -850,9 +864,10 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
                     /// The type index is this package's own, fixed by the
                     /// declaration order of its event structs.
                     pub fn emit(payload: &[u8]) {
-                        let _ = payload;
                         #[cfg(target_arch = "wasm32")]
                         ::hyperscale_vm_sdk::guest::emit(#index, payload);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        ::hyperscale_vm_sdk::host::emit(#index, payload);
                     }
                 }
             )
@@ -891,12 +906,19 @@ fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
                 }
                 (ok, no)
             });
-    let component = if refusals.is_empty() {
+    // Both executing halves stand or fall together: what the emission
+    // refuses is a body it cannot rewrite, and a package written the long
+    // way brings its own component and its own way of being called.
+    let (component, dispatch) = if refusals.is_empty() {
         let shapes: Vec<_> = exports.iter().map(|m| m.export.clone()).collect();
         let document = wit::document(&world, &shapes);
-        guest::component(&world, &document, &exports)
+        let arms: Vec<_> = methods.iter().map(|method| method.host.clone()).collect();
+        (
+            guest::component(&world, &document, &exports),
+            host::dispatch(&arms),
+        )
     } else {
-        quote!(#(#refusals)*)
+        (quote!(#(#refusals)*), quote!())
     };
 
     strip_macro_attrs(items, &state_name);
@@ -934,6 +956,7 @@ fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
         }
     ));
     items.push(syn::Item::Verbatim(component));
+    items.push(syn::Item::Verbatim(dispatch));
 
     Ok(quote!(#module))
 }
