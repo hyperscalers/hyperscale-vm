@@ -27,7 +27,7 @@
 //! what resolves a collection to one of those parameters is the lowering
 //! — which is why [`Keyed`], [`Ordered`] and [`Unordered`] have no body
 //! on either target: a call to `at` is rewritten to the handle it named,
-//! never made. The same holds for [`issue`], [`issued`] and
+//! never made. The same holds for [`mint`], [`issued`] and
 //! [`fresh_id`], each of which the lowering answers from the declaration.
 //! Reaching one at run time is reaching a stub, which is what makes an
 //! authoring half that was called directly fail rather than execute.
@@ -223,7 +223,7 @@ impl Bucket {
     ///
     /// Called by generated code, never by an author: the only ways to
     /// hold value are to be handed some, to take some from a cell the
-    /// method declared, and to issue some, and none of them is a
+    /// method declared, and to mint some, and none of them is a
     /// constructor a body can reach.
     #[cfg(target_arch = "wasm32")]
     #[must_use]
@@ -242,7 +242,7 @@ impl Bucket {
     ///
     /// Called by generated code, never by an author, on the same terms
     /// the guest's own constructor is: the ways to hold value are to be
-    /// handed some, to take some from a declared cell, and to issue
+    /// handed some, to take some from a declared cell, and to mint
     /// some, and none of them is a constructor a body can reach.
     #[cfg(not(target_arch = "wasm32"))]
     #[must_use]
@@ -398,7 +398,7 @@ impl Bucket {
 /// consumes.
 pub type NfBucket = Bucket;
 
-/// Issue `amount` of the resource this instance derives from `mark`.
+/// Mint `amount` of the resource this instance derives from `mark`.
 ///
 /// The one place value appears with no cell debited behind it, and it is
 /// the instance's own resource by construction — `mark` separates one of
@@ -407,7 +407,7 @@ pub type NfBucket = Bucket;
 /// method's declared outputs, so a body that never said it produces what
 /// it issues has none.
 #[must_use]
-pub fn issue(mark: &[u8], quantity: Quantity) -> Bucket {
+pub fn mint(mark: &[u8], quantity: Quantity) -> Bucket {
     let amount = quantity.subunits();
     let _ = (mark, amount);
     unimplemented!("{OFF_HOST}")
@@ -933,11 +933,11 @@ pub fn take_reservation(handle: Handle) -> Bucket {
 #[must_use]
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
-pub fn issue_granted(grant: u32, quantity: Quantity) -> Bucket {
+pub fn mint_granted(grant: u32, quantity: Quantity) -> Bucket {
     #[cfg(target_arch = "wasm32")]
-    return Bucket::held(crate::guest::issue(grant, quantity.subunits()));
+    return Bucket::held(crate::guest::mint(grant, quantity.subunits()));
     #[cfg(not(target_arch = "wasm32"))]
-    return Bucket::at(host::issue(grant, quantity.subunits()));
+    return Bucket::at(host::mint(grant, quantity.subunits()));
 }
 
 /// A 128-bit order key packed from a primary dimension over a tiebreaker.

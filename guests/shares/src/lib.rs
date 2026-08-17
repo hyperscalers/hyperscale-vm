@@ -44,7 +44,7 @@ use hyperscale_vm_sdk::blueprint;
 pub mod shares {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Locked, Quantity, Rounding, Vault, issue,
+        Bucket, Cell, Locked, Quantity, Rounding, Vault, mint,
     };
 
     /// What the vault is denominated in.
@@ -102,7 +102,7 @@ pub mod shares {
                 minted = paid.scale(per_asset, Rounding::Down);
             }
             self.supply.set(supply + minted);
-            Ok(issue(b"", minted))
+            Ok(mint(b"", minted))
         }
 
         /// Ask for exactly `want` shares, paying out of `funds`.
@@ -131,7 +131,7 @@ pub mod shares {
             let change = funds.take(spare);
             vault.put(funds);
             self.supply.set(supply + want);
-            Ok((issue(b"", want), change))
+            Ok((mint(b"", want), change))
         }
 
         /// Ask for exactly `want` assets, paying in shares.

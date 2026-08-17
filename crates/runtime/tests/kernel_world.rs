@@ -168,11 +168,11 @@ impl KernelHost for TestHost {
         Ok(())
     }
 
-    fn issuer_put(&mut self, _r: u32, _funds: u32) -> std::result::Result<(), AbortReason> {
+    fn burn(&mut self, _r: u32, _funds: u32) -> std::result::Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn issuer_mint(&mut self, _r: u32, _ids: &[u8]) -> std::result::Result<u32, AbortReason> {
+    fn mint_instances(&mut self, _r: u32, _ids: &[u8]) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
@@ -218,7 +218,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn issuer_take(&mut self, _rep: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
+    fn mint(&mut self, _rep: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 

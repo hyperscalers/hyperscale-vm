@@ -152,21 +152,21 @@ interface state {
     /// the reason it needs a handle rather than a function: what a body
     /// may issue is fixed before it runs, by the declaration the grant
     /// was read off.
-    issuer-take: func(i: borrow<issuer>, amount: amount) -> own<bucket>;
+    mint: func(i: borrow<issuer>, amount: amount) -> own<bucket>;
 
     /// Create the named instances of the resource this invocation issues.
     ///
     /// The same grant and the same terms as a quantity, for the value
     /// that is counted by name rather than by amount. `ids` is the
     /// count-prefixed cell a declared id list crosses in.
-    issuer-mint: func(i: borrow<issuer>, ids: list<u8>) -> own<bucket>;
+    mint-instances: func(i: borrow<issuer>, ids: list<u8>) -> own<bucket>;
 
     /// Destroy what this invocation issues, consuming the bucket.
     ///
     /// The inverse of the two above and under the same grant: bringing
     /// value out of existence is as declared as bringing it in, which is
     /// what keeps a body from simply forgetting it.
-    issuer-put: func(i: borrow<issuer>, funds: own<bucket>);
+    burn: func(i: borrow<issuer>, funds: own<bucket>);
 
     /// Take the reservation, as the value it grants.
     ///

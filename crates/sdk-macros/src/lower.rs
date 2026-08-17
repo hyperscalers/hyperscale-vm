@@ -1632,11 +1632,11 @@ impl<'a> Lowerer<'a> {
                 code: Code::Term(term),
             };
         }
-        // `issue(mark, amount)` — the one edge with no cell behind it.
+        // `mint(mark, amount)` — the one edge with no cell behind it.
         // The mark names the resource exactly as `issued` derives an
         // address from one, so the output projection and the issuance
         // grant come out of the same call.
-        if name == "issue" {
+        if name == "mint" {
             let Some(mark) = call.args.first().and_then(byte_literal) else {
                 self.error(
                     call.args.span(),
@@ -1656,9 +1656,7 @@ impl<'a> Lowerer<'a> {
             let grant = self.issuer(&mark);
             return Eval {
                 val: Val::Produced(Term::SelfResource(mark)),
-                code: Code::Rust(
-                    quote!(::hyperscale_vm_sdk::state::issue_granted(#grant, #amount)),
-                ),
+                code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#grant, #amount))),
             };
         }
         if name == "issued" {
@@ -1895,7 +1893,7 @@ impl<'a> Lowerer<'a> {
                                 &format!(
                                     "this cell holds {keyed} and the value going into it is \
                                      {held}. A credit does not convert what it moves — take \
-                                     from the cell holding what you have, or issue the \
+                                     from the cell holding what you have, or mint the \
                                      resource this one is denominated in"
                                 ),
                             );

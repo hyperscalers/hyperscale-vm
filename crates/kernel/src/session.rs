@@ -1270,9 +1270,9 @@ impl KernelSession {
     ///
     /// # Errors
     ///
-    /// Any [`SessionTrap`], including a take against a grant this
+    /// Any [`SessionTrap`], including a mint against a grant this
     /// invocation was never given.
-    pub fn issuer_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
+    pub fn mint(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
         if rep != ISSUER_REP {
             return Err(SessionTrap::UnknownHandle(rep));
         }
@@ -1286,9 +1286,9 @@ impl KernelSession {
     ///
     /// # Errors
     ///
-    /// Any [`SessionTrap`], including a take against a grant this
+    /// Any [`SessionTrap`], including a mint against a grant this
     /// invocation was never given.
-    pub fn issuer_mint(&mut self, rep: u32, ids: &[u8]) -> Result<u32, SessionTrap> {
+    pub fn mint_instances(&mut self, rep: u32, ids: &[u8]) -> Result<u32, SessionTrap> {
         if rep != ISSUER_REP {
             return Err(SessionTrap::UnknownHandle(rep));
         }
@@ -1311,7 +1311,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`], including a burn by an invocation granted
     /// nothing.
-    pub fn issuer_put(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
+    pub fn burn(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
         if rep != ISSUER_REP {
             return Err(SessionTrap::UnknownHandle(rep));
         }
@@ -1333,10 +1333,14 @@ impl KernelSession {
         self.take_bucket(funds).map(|_| ())
     }
 
-    /// Grant the executing invocation the authority to issue.
+    /// Grant the executing invocation authority over one resource: to
+    /// mint it and to burn it, which are two directions of one right.
     ///
     /// Read off the method's own declaration by whoever entered the node;
-    /// entering the next one takes it away again.
+    /// entering the next one takes it away again. The resource is the
+    /// grant's whole content — what a body may bring into or out of
+    /// existence is fixed before it runs, and there is no second one it
+    /// could name.
     pub const fn grant_issuance(&mut self, resource: Address) {
         self.issuance = Some(resource);
     }

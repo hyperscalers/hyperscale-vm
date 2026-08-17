@@ -43,11 +43,11 @@ impl KernelHost for KernelSession {
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason> {
         refused(Self::write_cell_set(self, rep, value))
     }
-    fn issuer_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
-        refused(Self::issuer_put(self, rep, funds))
+    fn burn(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
+        refused(Self::burn(self, rep, funds))
     }
-    fn issuer_mint(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason> {
-        refused(Self::issuer_mint(self, rep, ids))
+    fn mint_instances(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason> {
+        refused(Self::mint_instances(self, rep, ids))
     }
     fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason> {
         refused(Self::range_take(self, rep, ids))
@@ -73,8 +73,8 @@ impl KernelHost for KernelSession {
     fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
         refused(Self::write_put(self, rep, funds))
     }
-    fn issuer_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
-        refused(Self::issuer_take(self, rep, amount))
+    fn mint(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
+        refused(Self::mint(self, rep, amount))
     }
     fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
         refused(Self::delta_take(self, rep, amount))

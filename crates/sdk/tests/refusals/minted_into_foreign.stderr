@@ -1,0 +1,5 @@
+error: this cell holds `config.asset` and the value going into it is `issued(b"")`. A credit does not convert what it moves — take from the cell holding what you have, or mint the resource this one is denominated in
+  --> tests/refusals/minted_into_foreign.rs:23:37
+   |
+23 |             self.assets.vault().put(mint(b"", amount));
+   |                                     ^^^^

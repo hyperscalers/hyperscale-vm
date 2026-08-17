@@ -53,7 +53,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal, including an invocation granted none.
-    fn issuer_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
+    fn mint(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
 
     /// Debit the amount cell and hand the value out as a bucket, whose
     /// rep this returns.
@@ -68,7 +68,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn issuer_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
+    fn burn(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
 
     /// Create the named instances under this invocation's grant; the
     /// bucket's rep.
@@ -76,7 +76,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn issuer_mint(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
+    fn mint_instances(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
 
     /// Take the named entries as the instances they were; the bucket's
     /// rep.

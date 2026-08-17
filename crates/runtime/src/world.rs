@@ -294,12 +294,12 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     // yields: a bucket crosses as a table index, where the amount it
     // carries never crosses at all.
     state.func_wrap(
-        "issuer-take",
+        "mint",
         |mut store: StoreContextMut<'_, T>, (i, amount): (Resource<Issuer>, Amount)| {
             charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
             let rep = store
                 .data_mut()
-                .issuer_take(i.rep(), amount.into())
+                .mint(i.rep(), amount.into())
                 .map_err(host_trap)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
@@ -319,21 +319,21 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     // lifts an owned argument out of the caller's table, so the rep
     // arrives here and the guest no longer has it.
     state.func_wrap(
-        "issuer-put",
+        "burn",
         |mut store: StoreContextMut<'_, T>, (i, funds): (Resource<Issuer>, Resource<Bucket>)| {
             store
                 .data_mut()
-                .issuer_put(i.rep(), funds.rep())
+                .burn(i.rep(), funds.rep())
                 .map_err(host_trap)
         },
     )?;
     state.func_wrap(
-        "issuer-mint",
+        "mint-instances",
         |mut store: StoreContextMut<'_, T>, (i, ids): (Resource<Issuer>, Vec<u8>)| {
             charge_boundary_bytes(&mut store, ids.len())?;
             let rep = store
                 .data_mut()
-                .issuer_mint(i.rep(), &ids)
+                .mint_instances(i.rep(), &ids)
                 .map_err(host_trap)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },

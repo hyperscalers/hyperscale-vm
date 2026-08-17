@@ -607,15 +607,15 @@ impl RefComponent {
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
             ("state", "write-cell-take") => Ok(HostFn::WriteTake),
             ("state", "write-cell-put") => Ok(HostFn::WritePut),
-            ("state", "issuer-mint") => Ok(HostFn::IssuerMint),
-            ("state", "issuer-put") => Ok(HostFn::IssuerPut),
+            ("state", "mint-instances") => Ok(HostFn::IssuerMint),
+            ("state", "burn") => Ok(HostFn::IssuerPut),
             ("state", "range-write-take") => Ok(HostFn::RangeWriteTake),
             ("state", "range-write-put") => Ok(HostFn::RangeWritePut),
             ("state", "bucket-take") => Ok(HostFn::BucketTake),
             ("state", "bucket-split") => Ok(HostFn::BucketSplit),
             ("state", "bucket-put") => Ok(HostFn::BucketPut),
             ("state", "bucket-amount") => Ok(HostFn::BucketAmount),
-            ("state", "issuer-take") => Ok(HostFn::IssuerTake),
+            ("state", "mint") => Ok(HostFn::IssuerTake),
             ("state", "delta-cell-take") => Ok(HostFn::DeltaTake),
             ("state", "delta-cell-put") => Ok(HostFn::DeltaPut),
             ("state", "reserve-cell-take") => Ok(HostFn::ReserveTake),
@@ -1750,7 +1750,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
                         let funds = self.consume_bucket(args[1])?;
                         self.host
-                            .issuer_put(rep, funds)
+                            .burn(rep, funds)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(Vec::new())
                     }
@@ -1761,7 +1761,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         self.charge_boundary(store, ids.len())?;
                         let minted = self
                             .host
-                            .issuer_mint(rep, &ids)
+                            .mint_instances(rep, &ids)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(minted).cast_signed())])
                     }
@@ -1912,7 +1912,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
                         let bucket = self
                             .host
-                            .issuer_take(rep, amount)
+                            .mint(rep, amount)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }

@@ -239,8 +239,8 @@ pub fn reserve_take(handle: Handle) -> u32 {
 
 /// Issue `value` of the resource this invocation was granted.
 #[must_use]
-pub fn issue(rep: u32, value: u128) -> u32 {
-    settled(kernel(|k| k.issuer_take(rep, value)))
+pub fn mint(rep: u32, value: u128) -> u32 {
+    settled(kernel(|k| k.mint(rep, value)))
 }
 
 /// A wide word as the arithmetic's own type.

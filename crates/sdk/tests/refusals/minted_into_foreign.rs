@@ -3,7 +3,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Cell, Locked, Quantity, Vault, issue};
+    use hyperscale_vm_sdk::state::{Cell, Locked, Quantity, Vault, mint};
 
     struct Settings {
         asset: Address,
@@ -20,7 +20,7 @@ mod contract {
 
     impl Contract {
         pub fn inflate(&mut self, amount: Quantity) {
-            self.assets.vault().put(issue(b"", amount));
+            self.assets.vault().put(mint(b"", amount));
         }
     }
 }

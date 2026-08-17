@@ -149,12 +149,10 @@ fn a_grant_burns_only_what_it_issues() {
     let foreign = session.delta_take(0, 100).expect("the debit is queued");
     session.grant_issuance(Y);
 
-    let issued = session.issuer_take(ISSUER_REP, 5).expect("the grant mints");
-    assert_eq!(session.issuer_put(ISSUER_REP, issued), Ok(()));
+    let issued = session.mint(ISSUER_REP, 5).expect("the grant mints");
+    assert_eq!(session.burn(ISSUER_REP, issued), Ok(()));
     assert_eq!(
-        session
-            .issuer_put(ISSUER_REP, foreign)
-            .map_err(AbortReason::from),
+        session.burn(ISSUER_REP, foreign).map_err(AbortReason::from),
         Err(AbortReason::WrongResource)
     );
 }
@@ -165,13 +163,13 @@ fn a_grant_burns_only_what_it_issues() {
 fn minted_value_lands_only_in_its_own_cell() {
     let mut session = session(&[Some(X), Some(Y)]);
     session.grant_issuance(Y);
-    let minted = session.issuer_take(ISSUER_REP, 5).expect("the grant mints");
+    let minted = session.mint(ISSUER_REP, 5).expect("the grant mints");
 
     assert_eq!(
         session.delta_put(0, minted).map_err(AbortReason::from),
         Err(AbortReason::WrongResource)
     );
-    let minted = session.issuer_take(ISSUER_REP, 5).expect("the grant mints");
+    let minted = session.mint(ISSUER_REP, 5).expect("the grant mints");
     assert_eq!(session.delta_put(1, minted), Ok(()));
 }
 

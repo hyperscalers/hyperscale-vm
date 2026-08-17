@@ -333,8 +333,8 @@ pub fn reserve_take(handle: Handle) -> kernel::state::Bucket {
 /// given one.
 #[must_use]
 #[inline(always)]
-pub fn issue(rep: u32, value: u128) -> kernel::state::Bucket {
-    kernel::state::issuer_take(&issuer(rep), amount(value))
+pub fn mint(rep: u32, value: u128) -> kernel::state::Bucket {
+    kernel::state::mint(&issuer(rep), amount(value))
 }
 
 /// Entries currently visible in this interval, bounded by its cap.

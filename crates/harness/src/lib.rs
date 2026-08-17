@@ -63,10 +63,10 @@ pub mod fixtures {
         fn write_cell_set(&mut self, _rep: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn issuer_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
+        fn burn(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn issuer_mint(&mut self, _rep: u32, _ids: &[u8]) -> Result<u32, AbortReason> {
+        fn mint_instances(&mut self, _rep: u32, _ids: &[u8]) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn range_take(&mut self, _rep: u32, _ids: &[u8]) -> Result<u32, AbortReason> {
@@ -93,7 +93,7 @@ pub mod fixtures {
         fn write_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn issuer_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
+        fn mint(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn delta_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
@@ -645,7 +645,7 @@ pub mod fixtures {
     (type $amt_decl (record (field "low" u64) (field "high" u64)))
     (export "amount" (type $amt (eq $amt_decl)))
     (export "read-cell-get" (func (param "c" (borrow $rc)) (result (list u8))))
-    (export "issuer-take" (func (param "i" (borrow $is)) (param "amount" $amt) (result (own $bk))))
+    (export "mint" (func (param "i" (borrow $is)) (param "amount" $amt) (result (own $bk))))
     (export "write-cell-take" (func (param "c" (borrow $wc)) (param "amount" $amt) (result (own $bk))))
     (export "write-cell-put" (func (param "c" (borrow $wc)) (param "funds" (own $bk))))
     (export "bucket-amount" (func (param "b" (borrow $bk)) (result $amt)))
@@ -666,7 +666,7 @@ pub mod fixtures {
   (alias export $state "delta-cell" (type $dcell))
   (alias export $state "reserve-cell" (type $vcell))
   (alias export $state "read-cell-get" (func $read_get))
-  (alias export $state "issuer-take" (func $issue))
+  (alias export $state "mint" (func $issue))
   (alias export $state "write-cell-take" (func $write_take))
   (alias export $state "write-cell-put" (func $write_put))
   (alias export $state "bucket-amount" (func $bucket_amount))

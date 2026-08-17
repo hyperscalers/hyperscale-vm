@@ -250,7 +250,7 @@ fn reading_the_environment_declares_nothing() {
 /// the other.
 #[blueprint]
 mod issuer {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Keyed, Quantity, Rounding, Vault, issue};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Keyed, Quantity, Rounding, Vault, mint};
 
     #[state]
     struct Issuer {
@@ -278,7 +278,7 @@ mod issuer {
             let staked = funds.quantity();
             self.staked.set(staked);
             self.vaults.at(funds.resource()).put(funds);
-            issue(b"", staked)
+            mint(b"", staked)
         }
 
         /// The operator surface, gated on the badge the pool issues.
