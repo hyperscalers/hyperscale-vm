@@ -24,7 +24,7 @@ const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
 #[blueprint]
 mod till {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Keyed};
+    use hyperscale_vm_sdk::state::{Bucket, Keyed, Quantity};
 
     /// What a withdrawal declines with when the till is short.
     #[error]
@@ -35,7 +35,7 @@ mod till {
     #[state]
     struct Till {
         #[role(1)]
-        vaults: Keyed<Amount>,
+        vaults: Keyed<Quantity>,
     }
 
     impl Till {
@@ -45,7 +45,7 @@ mod till {
         }
 
         /// Hand back `amount`, declining a till that cannot cover it.
-        pub fn withdraw(&mut self, resource: Address, amount: u128) -> Result<Bucket, Error> {
+        pub fn withdraw(&mut self, resource: Address, amount: Quantity) -> Result<Bucket, Error> {
             let mut vault = self.vaults.at(resource);
             if vault.get() < amount {
                 return Err(Error::Short);
@@ -57,7 +57,7 @@ mod till {
         pub fn insist(&mut self, resource: Address) {
             assert_eq!(
                 self.vaults.at(resource).get(),
-                u128::MAX,
+                Quantity::from_subunits(u128::MAX),
                 "the till is not full"
             );
         }

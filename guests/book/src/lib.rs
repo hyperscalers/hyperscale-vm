@@ -1,16 +1,26 @@
 //! The order book, as one module: makers place asks into a declared
 //! interval, takers fill by price-time priority within it.
 //!
-//! Checked arithmetic throughout — an overflow is a deterministic trap
-//! rather than a wrap, which release-mode arithmetic would otherwise give
-//! it.
+//! A price is quote subunits per base subunit, and it is an integer
+//! because the order key is one: the key packs price over a sequence id,
+//! so the ladder's ordering and its arithmetic are the same number. What
+//! that costs is a price between two adjacent integers, which is a
+//! modelling question — a tick index against a configured tick size — and
+//! not one the arithmetic decides.
+//!
+//! A zero price is refused where an ask enters the book rather than where
+//! a fill divides by it. The two are not the same check: an ask that
+//! cannot be priced should never be standing, and refusing it at the fill
+//! would leave it standing and unfillable.
 
 use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod book {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Keyed, Locked, Ordered, fresh_id, pack};
+    use hyperscale_vm_sdk::state::{
+        Bucket, Keyed, Locked, Ordered, Quantity, Ratio, Rounding, fresh_id, pack,
+    };
 
     /// The book's creation-fixed pair.
     struct Pair {
@@ -18,12 +28,18 @@ pub mod book {
         quote: Address,
     }
 
+    /// What placing an ask declines with.
+    #[error]
+    enum Error {
+        UnpricedAsk,
+    }
+
     #[state]
     struct Book {
         #[role(16)]
-        asks: Ordered<u128>,
+        asks: Ordered<Quantity>,
         #[role(1)]
-        vaults: Keyed<Amount>,
+        vaults: Keyed<Quantity>,
         #[role(3)]
         config: Locked<Pair>,
     }
@@ -31,11 +47,15 @@ pub mod book {
     impl Book {
         /// Insert an ask at `price`, escrowing the maker's funds.
         #[name("place-ask")]
-        pub fn place_ask(&mut self, price: u64, funds: Bucket) {
+        pub fn place_ask(&mut self, price: u64, funds: Bucket) -> Result<(), Error> {
+            if price == 0 {
+                return Err(Error::UnpricedAsk);
+            }
             // Price over a fresh sequence id: unique without reading the
             // book, which is what lets the entry key be declared.
-            self.asks.at(pack(price, fresh_id())).set(funds.amount());
+            self.asks.at(pack(price, fresh_id())).set(funds.quantity());
             self.vaults.at(funds.resource()).put(funds);
+            Ok(())
         }
 
         /// Buy base within the declared price interval, best price first.
@@ -49,20 +69,33 @@ pub mod book {
             // The whole tiebreaker span at each end, so the interval covers
             // every sequence at the boundary prices.
             let mut asks = self.asks.range(pack(from, 0), pack(to, u64::MAX), 64);
-            let opening = payment.amount();
-            let mut budget = opening;
-            let mut bought: Amount = 0;
+            let mut budget = payment.quantity();
+            let mut bought = Quantity::ZERO;
 
             while asks.count() > 0 {
                 let price = asks.order(0) >> 64;
-                assert!(price > 0, "zero-priced ask");
+                // Standing asks are priced, because an unpriced one is
+                // refused where it would have been placed.
+                let Ok(per_unit) = Ratio::of(price, 1) else {
+                    break;
+                };
+                let Ok(per_quote) = per_unit.recip() else {
+                    break;
+                };
                 let available = asks.entry(0);
-                let take = available.min(budget / price);
-                if take == 0 {
+                // What the budget buys at this price, floored: a taker
+                // gets whole base units and the remainder stays in the
+                // change it walks away with.
+                let take = available.min(budget.scale(per_quote, Rounding::Down));
+                if take.is_zero() {
                     break;
                 }
-                budget -= take.checked_mul(price).unwrap();
-                bought = bought.checked_add(take).unwrap();
+                // Exact by construction — the take was floored out of the
+                // budget at this very price — so the direction decides
+                // nothing and the fused multiply carries the product
+                // whole regardless.
+                budget -= take.scale(per_unit, Rounding::Down);
+                bought += take;
                 if take == available {
                     asks.remove(0);
                 } else {

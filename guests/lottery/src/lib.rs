@@ -26,7 +26,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod lottery {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed, Unordered, randomness};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, Unordered, randomness};
 
     /// Somebody took a ticket.
     #[event]
@@ -48,7 +48,7 @@ pub mod lottery {
         #[role(17)]
         outcome: Cell<Vec<u8>>,
         #[role(1)]
-        vaults: Keyed<Amount>,
+        vaults: Keyed<Quantity>,
     }
 
     impl Lottery {

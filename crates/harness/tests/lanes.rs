@@ -19,6 +19,8 @@ use hyperscale_vm_testing::{
 };
 
 const ALICE: PrincipalAddr = principal(0x41);
+/// Thirty basis points, at the scale the pool's bounded fee type holds.
+const FEE: u128 = 30 * (1_000_000_000_000_000_000 / 10_000);
 const X: ResourceAddr = resource(0xE1);
 const Y: ResourceAddr = resource(0xE2);
 
@@ -37,7 +39,7 @@ fn amm() -> Package {
 /// A pool with a thousand of each side, and Alice holding six hundred.
 fn pool(mut chain: Chain) -> (Chain, ComponentAddr) {
     let amm = chain.publish(amm());
-    let pool = chain.instantiate(amm, (X, Y, 30u64));
+    let pool = chain.instantiate(amm, (X, Y, FEE));
     chain.credit(ALICE, X, 600);
     chain.credit(pool, X, 1_000);
     chain.credit(pool, Y, 1_000);

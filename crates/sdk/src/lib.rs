@@ -76,7 +76,7 @@
 //!
 //!     #[state]
 //!     struct Bad {
-//!         #[role(1)] vaults: Keyed<Amount>,
+//!         #[role(1)] vaults: Keyed<Quantity>,
 //!         #[role(2)] pointer: Cell<Address>,
 //!     }
 //!
@@ -125,7 +125,7 @@
 //!
 //!     #[state]
 //!     struct Bad {
-//!         vaults: Keyed<Amount>,
+//!         vaults: Keyed<Quantity>,
 //!     }
 //!
 //!     impl Bad {}

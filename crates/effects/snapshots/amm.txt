@@ -86,5 +86,6 @@ PackageMetadata {
     events: [],
     errors: [
         "slippage-exceeded",
+        "empty-pool",
     ],
 }

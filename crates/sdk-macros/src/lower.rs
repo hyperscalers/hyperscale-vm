@@ -737,7 +737,7 @@ impl<'a> Lowerer<'a> {
             });
         match need {
             // A bucket parameter is bound under the author's own name, so
-            // `funds.amount()` in a body is `funds.amount()` in the
+            // `funds.quantity()` in a body is `funds.quantity()` in the
             // guest rather than a decoded local wearing the same meaning.
             // A value edge is `Copy`: it is a resource and an amount,
             // and neither is owned by the body holding it.

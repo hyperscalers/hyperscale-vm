@@ -104,7 +104,7 @@ PackageMetadata {
         },
         "place-ask": MethodSignature {
             accessibility: Public,
-            totality: Infallible,
+            totality: Fallible,
             mints: None,
             issues: None,
             params: [
@@ -174,5 +174,7 @@ PackageMetadata {
         },
     },
     events: [],
-    errors: [],
+    errors: [
+        "unpriced-ask",
+    ],
 }

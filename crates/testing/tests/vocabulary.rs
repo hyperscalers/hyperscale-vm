@@ -18,7 +18,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_sdk::handle::Handle;
 use hyperscale_vm_sdk::host::{Refusal, with_kernel};
-use hyperscale_vm_sdk::state::{self, Amount, Bucket, Entry, Interval, Slot};
+use hyperscale_vm_sdk::state::{self, Amount, Bucket, Entry, Interval, Quantity, Slot};
 
 const OWNER: Address = Address::new([0x11; 31], AddressClass::Component);
 const CLOCK_MS: u64 = 4_000;
@@ -97,10 +97,14 @@ fn a_write_cell_reads_back_what_it_was_set_to() {
     let session = session(MemoryStore::new(), vec![point(cell, Mode::Write)]);
 
     let (session, ()) = with_kernel(session, || {
-        let mut slot = Slot::<Amount>::at(Handle::Write(0));
-        assert_eq!(slot.get(), 0, "an absent cell reads as its zero");
-        slot.set(42);
-        assert_eq!(slot.get(), 42);
+        let mut slot = Slot::<Quantity>::at(Handle::Write(0));
+        assert_eq!(
+            slot.get(),
+            Quantity::from_subunits(0),
+            "an absent cell reads as its zero"
+        );
+        slot.set(Quantity::from_subunits(42));
+        assert_eq!(slot.get(), Quantity::from_subunits(42));
     });
 
     let (receipt, _) = session
@@ -125,14 +129,14 @@ fn value_taken_from_a_cell_is_the_value_in_hand() {
     let session = session(store, vec![point(vault, Mode::Write)]);
 
     let (_, held) = with_kernel(session, || {
-        let mut slot = Slot::<Amount>::at(Handle::Write(0));
-        let funds = slot.take(30);
-        let held = funds.amount();
+        let mut slot = Slot::<Quantity>::at(Handle::Write(0));
+        let funds = slot.take(Quantity::from_subunits(30));
+        let held = funds.quantity();
         slot.put(funds);
         held
     });
 
-    assert_eq!(held, 30);
+    assert_eq!(held, Quantity::from_subunits(30));
 }
 
 /// A bucket splits and merges without a cell in between.
@@ -147,13 +151,16 @@ fn a_bucket_divides_into_what_comes_off_and_what_is_left() {
     let session = session(store, vec![point(vault, Mode::Write)]);
 
     let (_, (split, rest)) = with_kernel(session, || {
-        let mut slot = Slot::<Amount>::at(Handle::Write(0));
-        let mut funds = slot.take(50);
-        let part = funds.take(20);
-        (part.amount(), funds.amount())
+        let mut slot = Slot::<Quantity>::at(Handle::Write(0));
+        let mut funds = slot.take(Quantity::from_subunits(50));
+        let part = funds.take(Quantity::from_subunits(20));
+        (part.quantity(), funds.quantity())
     });
 
-    assert_eq!((split, rest), (20, 30));
+    assert_eq!(
+        (split, rest),
+        (Quantity::from_subunits(20), Quantity::from_subunits(30))
+    );
 }
 
 /// An interval walks its entries in order, and writes land in the store.
@@ -255,8 +262,8 @@ fn a_refused_operation_carries_its_class_out() {
     let refusal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_kernel(session, || {
             // Nothing is in the cell, so there is nothing to take.
-            let mut slot = Slot::<Amount>::at(Handle::Write(0));
-            let _: Bucket = slot.take(1);
+            let mut slot = Slot::<Quantity>::at(Handle::Write(0));
+            let _: Bucket = slot.take(Quantity::from_subunits(1));
         });
     }))
     .expect_err("an unfunded take refuses");
@@ -280,14 +287,18 @@ fn a_thread_a_refusal_unwound_through_runs_the_next_invocation() {
     let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let session = session(MemoryStore::new(), vec![point(vault, Mode::Write)]);
         with_kernel(session, || {
-            let mut slot = Slot::<Amount>::at(Handle::Write(0));
-            let _: Bucket = slot.take(1);
+            let mut slot = Slot::<Quantity>::at(Handle::Write(0));
+            let _: Bucket = slot.take(Quantity::from_subunits(1));
         });
     }));
     assert!(refused.is_err(), "an unfunded take refuses");
 
     let session = session(MemoryStore::new(), vec![point(vault, Mode::Write)]);
-    let (_, read) = with_kernel(session, || Slot::<Amount>::at(Handle::Write(0)).get());
+    let (_, read) = with_kernel(session, || Slot::<Quantity>::at(Handle::Write(0)).get());
 
-    assert_eq!(read, 0, "the second scope reaches its own kernel");
+    assert_eq!(
+        read,
+        Quantity::ZERO,
+        "the second scope reaches its own kernel"
+    );
 }

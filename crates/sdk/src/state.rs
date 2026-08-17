@@ -51,6 +51,7 @@ use hyperscale_vm_effects::Address;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host;
+pub use crate::num::{MathError, Quantity, Rate, Ratio, Rounding, UnitFixed};
 
 /// An unsigned amount, in the kernel's cell width.
 pub type Amount = u128;
@@ -81,6 +82,37 @@ impl Cellular for Amount {
 
     fn to_cell(&self) -> Vec<u8> {
         self.to_le_bytes().to_vec()
+    }
+}
+
+impl Cellular for Quantity {
+    /// The same sixteen little-endian bytes an amount cell has always
+    /// held: the tag is the guest's and erases here, where a cell is a
+    /// width and nothing else.
+    fn from_cell(cell: &[u8]) -> Self {
+        Self::from_subunits(cell.try_into().map_or(0, u128::from_le_bytes))
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.subunits().to_le_bytes().to_vec()
+    }
+}
+
+impl Cellular for UnitFixed {
+    /// # Panics
+    ///
+    /// On a cell holding a value above one. The range is checked where
+    /// the value enters state, so a cell that holds a wider one was never
+    /// written through a constructor — a defect in state rather than in
+    /// the call that found it, on the same terms a malformed address is,
+    /// and the trap is the deterministic answer to it.
+    fn from_cell(cell: &[u8]) -> Self {
+        let scaled = cell.try_into().map_or(0, u128::from_le_bytes);
+        Self::new(scaled).expect("a bounded configuration cell")
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.scaled().to_le_bytes().to_vec()
     }
 }
 
@@ -207,7 +239,8 @@ impl Bucket {
     /// off and what is left are one subtraction the kernel performs, so
     /// a body dividing an edge writes down neither half.
     #[must_use]
-    pub fn take(&mut self, amount: Amount) -> Self {
+    pub fn take(&mut self, quantity: Quantity) -> Self {
+        let amount = quantity.subunits();
         let _ = amount;
         #[cfg(target_arch = "wasm32")]
         return Self::held(crate::guest::bucket_take(&self.handle, amount));
@@ -232,11 +265,11 @@ impl Bucket {
     /// budget, a receipt — and it is the one question about value that
     /// cannot produce any.
     #[must_use]
-    pub fn amount(&self) -> Amount {
+    pub fn quantity(&self) -> Quantity {
         #[cfg(target_arch = "wasm32")]
-        return crate::guest::bucket_amount(&self.handle);
+        return Quantity::from_subunits(crate::guest::bucket_amount(&self.handle));
         #[cfg(not(target_arch = "wasm32"))]
-        return host::bucket_amount(self.rep);
+        return Quantity::from_subunits(host::bucket_amount(self.rep));
     }
 }
 
@@ -258,7 +291,8 @@ pub type NfBucket = Bucket;
 /// method's declared outputs, so a body that never said it produces what
 /// it issues has none.
 #[must_use]
-pub fn issue(mark: &[u8], amount: Amount) -> Bucket {
+pub fn issue(mark: &[u8], quantity: Quantity) -> Bucket {
+    let amount = quantity.subunits();
     let _ = (mark, amount);
     unimplemented!("{OFF_HOST}")
 }
@@ -395,7 +429,7 @@ impl<T: Cellular> Slot<T> {
 }
 
 #[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
-impl Slot<Amount> {
+impl Slot<Quantity> {
     /// Move value into the cell, consuming the bucket.
     ///
     /// What lands is exactly what crossed: the body names no amount, so
@@ -416,7 +450,8 @@ impl Slot<Amount> {
     /// cannot debit one number and hand back another.
     #[must_use]
     #[inline(always)]
-    pub fn take(&mut self, amount: Amount) -> Bucket {
+    pub fn take(&mut self, quantity: Quantity) -> Bucket {
+        let amount = quantity.subunits();
         let _ = amount;
         #[cfg(target_arch = "wasm32")]
         return Bucket::held(crate::guest::cell_take(self.handle, amount));
@@ -443,7 +478,8 @@ impl Slot<Amount> {
     /// the read this replaces answered every time it was asked.
     #[must_use]
     #[inline(always)]
-    pub fn reserve(&mut self, amount: Amount) -> Bucket {
+    pub fn reserve(&mut self, quantity: Quantity) -> Bucket {
+        let amount = quantity.subunits();
         let _ = amount;
         #[cfg(target_arch = "wasm32")]
         return Bucket::held(crate::guest::reserve_take(self.handle));
@@ -738,11 +774,11 @@ pub fn take_reservation(handle: Handle) -> Bucket {
 #[must_use]
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
-pub fn issue_granted(grant: u32, amount: Amount) -> Bucket {
+pub fn issue_granted(grant: u32, quantity: Quantity) -> Bucket {
     #[cfg(target_arch = "wasm32")]
-    return Bucket::held(crate::guest::issue(grant, amount));
+    return Bucket::held(crate::guest::issue(grant, quantity.subunits()));
     #[cfg(not(target_arch = "wasm32"))]
-    return Bucket::at(host::issue(grant, amount));
+    return Bucket::at(host::issue(grant, quantity.subunits()));
 }
 
 /// A 128-bit order key packed from a primary dimension over a tiebreaker.

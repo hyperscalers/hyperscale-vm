@@ -11,8 +11,8 @@
 //! mod account {
 //!     #[state]
 //!     struct Account {
-//!         #[role(1)] vaults: Keyed<Amount>,
-//!         #[role(2)] claims: Keyed<Amount>,
+//!         #[role(1)] vaults: Keyed<Quantity>,
+//!         #[role(2)] claims: Keyed<Quantity>,
 //!     }
 //!
 //!     impl Account {
@@ -236,7 +236,9 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         "Bucket" => quote!(Bucket),
         "NfBucket" => quote!(NfBucket),
         "Ids" => quote!(Ids),
-        "u128" => quote!(U128),
+        // A quantity is a `u128` at the boundary: the tag is the
+        // guest's and erases here, where a manifest binds a number.
+        "u128" | "Quantity" => quote!(U128),
         "u64" => quote!(U64),
         "Address" => quote!(Address),
         "Vec" | "Bytes" => quote!(Bytes),
@@ -245,8 +247,9 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         _ => {
             return Err(syn::Error::new(
                 ty.span(),
-                "a contract parameter must be one of `Bucket`, `NfBucket`, `Ids`, `u128`, \
-                 `u64`, `Address`, or bytes — these are the kinds a manifest can bind",
+                "a contract parameter must be one of `Bucket`, `NfBucket`, `Ids`, \
+                 `Quantity`, `u128`, `u64`, `Address`, or bytes — these are the kinds a \
+                 manifest can bind",
             ));
         }
     };

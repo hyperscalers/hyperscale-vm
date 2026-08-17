@@ -70,12 +70,12 @@ fn library(module: &str) -> String {
          #[blueprint]\n\
          pub mod {module} {{\n\
          \x20   use hyperscale_vm_sdk::Address;\n\
-         \x20   use hyperscale_vm_sdk::state::{{Amount, Bucket, Keyed}};\n\
+         \x20   use hyperscale_vm_sdk::state::{{Bucket, Keyed, Quantity}};\n\
          \n\
          \x20   #[state]\n\
          \x20   struct State {{\n\
          \x20       #[role(1)]\n\
-         \x20       vaults: Keyed<Amount>,\n\
+         \x20       vaults: Keyed<Quantity>,\n\
          \x20   }}\n\
          \n\
          \x20   impl State {{\n\
@@ -85,7 +85,7 @@ fn library(module: &str) -> String {
          \x20       }}\n\
          \n\
          \x20       /// Reserve `amount` of `resource` from this instance.\n\
-         \x20       pub fn withdraw(&mut self, resource: Address, amount: u128) -> Bucket {{\n\
+         \x20       pub fn withdraw(&mut self, resource: Address, amount: Quantity) -> Bucket {{\n\
          \x20           self.vaults.at(resource).reserve(amount)\n\
          \x20       }}\n\
          \x20   }}\n\

@@ -130,13 +130,15 @@ fn world() -> (MetadataCache, InstanceRegistry) {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("amm"),
-        // The pair, then the fee in basis points: the guest reads the fee
-        // as an evaluated slot, so it is configuration rather than a
-        // shape spliced into the locked leaf.
+        // The pair, then the fee: the guest reads the fee as an
+        // evaluated slot, so it is configuration rather than a shape
+        // spliced into the locked leaf. Thirty basis points, at the scale
+        // the bounded type holds — the range was checked when the value
+        // was made, and the cell carries what it made.
         config: vec![
             Value::Address(RES_X.address()),
             Value::Address(RES_Y.address()),
-            Value::U64(30),
+            Value::U128(30 * (1_000_000_000_000_000_000 / 10_000)),
         ],
         salt: Hash32([2; 32]),
     }

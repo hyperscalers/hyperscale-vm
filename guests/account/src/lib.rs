@@ -20,7 +20,7 @@ use hyperscale_vm_sdk::blueprint;
 pub mod account {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{
-        Amount, Bucket, Cell, Ids, Keyed, NfBucket, Ordered, RoleSet, clock_ms,
+        Bucket, Cell, Ids, Keyed, NfBucket, Ordered, Quantity, RoleSet, clock_ms,
     };
 
     /// Funds left the account.
@@ -38,9 +38,9 @@ pub mod account {
     #[state]
     struct Account {
         #[role(1)]
-        vaults: Keyed<Amount>,
+        vaults: Keyed<Quantity>,
         #[role(2)]
-        claims: Keyed<Amount>,
+        claims: Keyed<Quantity>,
         /// The stored authority: the cell `authorize` reads and
         /// `securify` creates. Absent for a virtual account.
         #[role(4)]
@@ -59,9 +59,9 @@ pub mod account {
         /// body ran, so there is no requested amount left to check it
         /// against and no way for the two to differ.
         #[guarded(self)]
-        pub fn withdraw(&mut self, resource: Address, amount: u128) -> Bucket {
+        pub fn withdraw(&mut self, resource: Address, amount: Quantity) -> Bucket {
             let funds = self.vaults.at(resource).reserve(amount);
-            Withdrawn::emit(&funds.amount().to_le_bytes());
+            Withdrawn::emit(&funds.quantity().subunits().to_le_bytes());
             funds
         }
 
@@ -80,10 +80,10 @@ pub mod account {
             // value is linear, so every read of what crossed — the amount
             // the event carries, the resource both cells are keyed by —
             // happens while there is still a bucket to read it from.
-            let credited = funds.amount();
+            let credited = funds.quantity();
             self.claims.at(funds.resource()).declared();
             self.vaults.at(funds.resource()).put(funds);
-            Deposited::emit(&credited.to_le_bytes());
+            Deposited::emit(&credited.subunits().to_le_bytes());
         }
 
         /// Nothing but its own gate: the kernel judges the stored rule

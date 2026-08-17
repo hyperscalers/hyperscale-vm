@@ -24,12 +24,12 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod shapes {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Keyed};
+    use hyperscale_vm_sdk::state::{Keyed, Quantity};
 
     #[state]
     struct Shapes {
         #[role(1)]
-        vaults: Keyed<Amount>,
+        vaults: Keyed<Quantity>,
     }
 
     impl Shapes {
@@ -67,12 +67,12 @@ mod shapes {
         }
 
         pub fn asserted(&mut self, a: Address) {
-            assert_eq!(self.vaults.at(a).get(), 0);
+            assert_eq!(self.vaults.at(a).get(), Quantity::ZERO);
         }
 
         #[allow(clippy::equatable_if_let)] // the spelling under test is the if-let itself
         pub fn scrutinised(&mut self, a: Address) {
-            if let 0 = self.vaults.at(a).get() {}
+            if let Quantity::ZERO = self.vaults.at(a).get() {}
         }
 
         pub fn read(&mut self, a: Address) {
@@ -197,12 +197,12 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
 #[blueprint]
 mod environment {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Cell, Keyed, clock_ms, hash, randomness};
+    use hyperscale_vm_sdk::state::{Cell, Keyed, Quantity, clock_ms, hash, randomness};
 
     #[state]
     struct Environment {
         #[role(1)]
-        vaults: Keyed<Amount>,
+        vaults: Keyed<Quantity>,
         #[role(2)]
         seen: Cell<u64>,
     }
@@ -246,20 +246,20 @@ fn reading_the_environment_declares_nothing() {
 /// the other.
 #[blueprint]
 mod issuer {
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed, issue};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, issue};
 
     #[state]
     struct Issuer {
         #[role(1)]
-        staked: Cell<Amount>,
+        staked: Cell<Quantity>,
         #[role(2)]
-        vaults: Keyed<Amount>,
+        vaults: Keyed<Quantity>,
     }
 
     impl Issuer {
         /// Take a delegation and hand back units at par.
         pub fn stake(&mut self, funds: Bucket) -> Bucket {
-            let staked = funds.amount();
+            let staked = funds.quantity();
             self.staked.set(staked);
             self.vaults.at(funds.resource()).put(funds);
             issue(b"", staked)
@@ -268,7 +268,7 @@ mod issuer {
         /// The operator surface, gated on the badge the pool issues.
         #[guarded(issued(b"owner-badge"))]
         pub fn retire(&mut self) {
-            self.staked.set(0);
+            self.staked.set(Quantity::ZERO);
         }
     }
 }

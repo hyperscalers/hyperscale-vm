@@ -33,7 +33,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod staking {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed, Locked, issue};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Locked, Quantity, issue};
 
     /// The pool's creation-fixed configuration: what a delegation is
     /// denominated in.
@@ -78,10 +78,10 @@ pub mod staking {
         #[role(3)]
         config: Locked<Settings>,
         #[role(1)]
-        vaults: Keyed<Amount>,
+        vaults: Keyed<Quantity>,
         /// What a delegation becomes on its way out.
         #[role(16)]
-        unbonding: Keyed<Amount>,
+        unbonding: Keyed<Quantity>,
         /// One leaf per validator the pool operates, so two operator
         /// actions on two validators commute.
         #[role(17)]
@@ -98,17 +98,17 @@ pub mod staking {
             // The amount is the kernel's own cell width, which is what
             // the handle carries, so neither end reformats a number it
             // was handed.
-            let staked = funds.amount();
+            let staked = funds.quantity();
             self.vaults.at(self.config.staked_resource).put(funds);
-            Staked::emit(&staked.to_le_bytes());
+            Staked::emit(&staked.subunits().to_le_bytes());
             issue(b"", staked)
         }
 
         /// Return stake units, beginning the unbonding period.
         pub fn unstake(&mut self, units: Bucket) {
-            let returned = units.amount();
+            let returned = units.quantity();
             self.unbonding.at(self.config.staked_resource).put(units);
-            Unstaked::emit(&returned.to_le_bytes());
+            Unstaked::emit(&returned.subunits().to_le_bytes());
         }
 
         /// Take on a validator, recording the key the pool registered.

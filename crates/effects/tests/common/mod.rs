@@ -68,7 +68,7 @@ pub fn pool_meta() -> InstanceMeta {
         config: vec![
             Value::Address(RES_X.address()),
             Value::Address(RES_Y.address()),
-            Value::U64(30),
+            Value::U128(30 * (1_000_000_000_000_000_000 / 10_000)),
         ],
         salt: Hash32([2; 32]),
     }

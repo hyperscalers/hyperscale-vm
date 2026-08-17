@@ -16,7 +16,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod grammar {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Keyed, Ordered, pack};
+    use hyperscale_vm_sdk::state::{Bucket, Keyed, Ordered, Quantity, pack};
 
     /// The ids a count-prefixed edge cell carries.
     fn cell_ids(cell: &[u8]) -> Vec<u64> {
@@ -30,9 +30,9 @@ pub mod grammar {
     #[state]
     struct Grammar {
         #[role(1)]
-        vaults: Keyed<Amount>,
+        vaults: Keyed<Quantity>,
         #[role(5)]
-        holdings: Ordered<u128>,
+        holdings: Ordered<Quantity>,
     }
 
     impl Grammar {
@@ -43,7 +43,7 @@ pub mod grammar {
         pub fn file(&mut self, ids: Vec<u8>) {
             let mut held = self.holdings.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
             for id in cell_ids(&ids) {
-                held.insert(u128::from(id), 1);
+                held.insert(u128::from(id), Quantity::from_subunits(1));
             }
         }
 
@@ -58,14 +58,14 @@ pub mod grammar {
                 total += held.entry(index);
                 index += 1;
             }
-            if total > 0 {
+            if !total.is_zero() {
                 held.set(0, total);
             }
         }
 
         /// A produced edge out of a conditional body, so the value path
         /// is exercised beside the statement ones.
-        pub fn take(&mut self, resource: Address, amount: u128) -> Bucket {
+        pub fn take(&mut self, resource: Address, amount: Quantity) -> Bucket {
             self.vaults.at(resource).reserve(amount)
         }
     }

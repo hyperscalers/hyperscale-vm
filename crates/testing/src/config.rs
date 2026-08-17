@@ -23,6 +23,12 @@ impl From<u64> for Slot {
     }
 }
 
+impl From<u128> for Slot {
+    fn from(value: u128) -> Self {
+        Self(Value::U128(value))
+    }
+}
+
 macro_rules! addresses {
     ($($ty:ty),*) => {
         $(
