@@ -68,7 +68,13 @@ jobs:
       # arithmetic the chain runs — and running it at all is what would
       # fail if a package crate took back `panic = "abort"`, which builds
       # a host std the test harness cannot link against.
+      #
+      # Under the guests' own pinned nightly: a package manifest opts in
+      # to `trim-paths`, which stable cargo will not parse, and the
+      # toolchain a bare `cargo` picks here is the workspace's.
       - name: Package Tests
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-06-08
         run: |
           cargo test --manifest-path guests/amm/Cargo.toml
           cargo test --release --manifest-path guests/amm/Cargo.toml

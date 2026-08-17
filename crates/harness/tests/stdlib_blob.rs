@@ -30,9 +30,7 @@ use hyperscale_vm_runtime::{
     Bucket, DeltaCell, RangeRead, RangeWrite, ReserveCell, WriteCell, add_kernel_to_linker,
     blessed_engine, validate_component,
 };
-use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
-#[cfg(target_os = "linux")]
-use hyperscale_vm_stdlib::STAKING_COMPONENT;
+use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use wasmtime::component::{Component, ComponentType, Lift, Linker, Lower, Resource};
 use wasmtime::error::Context;
 use wasmtime::{Result, Store};
@@ -255,6 +253,60 @@ fn the_committed_blob_validates_and_transfers_on_both_runtimes() -> Result<()> {
         "fuel must be identical across runtimes"
     );
     Ok(())
+}
+
+/// No committed blob carries a path from the machine that built it.
+///
+/// The bytes are the protocol artifact, and a path in them is a property
+/// of somebody's checkout rather than of the package: two builds of one
+/// source at two directories would publish under two addresses. The
+/// build already strips the name section for this reason; a panic
+/// `Location` is the same leak by another route, which is why this asks
+/// the artifact rather than trusting the flags that should have stopped
+/// it.
+///
+/// Unlike the equality below, this holds on every platform — so it fails
+/// where the leak is introduced rather than only where the canonical
+/// builder runs.
+#[test]
+fn no_committed_blob_carries_a_build_path() {
+    for (name, blob) in [
+        ("account", ACCOUNT_COMPONENT),
+        ("staking", STAKING_COMPONENT),
+        ("lottery", LOTTERY_COMPONENT),
+    ] {
+        let found = absolute_paths(blob);
+        assert!(
+            found.is_empty(),
+            "{name}: the committed blob carries {} build path(s): {found:?}",
+            found.len(),
+        );
+    }
+}
+
+/// Every absolute path the bytes spell out, as a reader would find them.
+///
+/// Printable runs rather than a wasm parse: what a path leaks through is
+/// whichever section happens to hold it, and the question is whether the
+/// bytes contain one at all.
+fn absolute_paths(blob: &[u8]) -> Vec<String> {
+    const ROOTS: [&str; 4] = ["/home/", "/Users/", "/work/", "/root/"];
+    let mut found = Vec::new();
+    let mut run = Vec::new();
+    for &byte in blob.iter().chain(std::iter::once(&0)) {
+        if byte.is_ascii_graphic() || byte == b' ' {
+            run.push(byte);
+            continue;
+        }
+        if run.len() >= 6
+            && let Ok(text) = std::str::from_utf8(&run)
+            && let Some(at) = ROOTS.iter().find_map(|root| text.find(root))
+        {
+            found.push(text[at..].to_owned());
+        }
+        run.clear();
+    }
+    found
 }
 
 /// The committed blobs are what their sources build on the canonical

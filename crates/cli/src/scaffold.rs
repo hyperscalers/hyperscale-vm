@@ -17,7 +17,10 @@ use crate::BuildError;
 /// declaration binary can link the same library the guest build compiles.
 fn manifest(name: &str, sdk: &str, testing: &str) -> String {
     format!(
-        "[package]\n\
+        "# `trim-paths` is unstable, and the toolchain is pinned anyway.\n\
+         cargo-features = [\"trim-paths\"]\n\
+         \n\
+         [package]\n\
          name = \"{name}\"\n\
          version = \"0.0.0\"\n\
          edition = \"2024\"\n\
@@ -39,6 +42,12 @@ fn manifest(name: &str, sdk: &str, testing: &str) -> String {
          [profile.release]\n\
          opt-level = \"s\"\n\
          lto = true\n\
+         # The artifact carries no path from the machine that built it.\n\
+         # Panic formatting is elided, but a `Location` survives whatever\n\
+         # formats it, and the one it names is the source file's —\n\
+         # absolute, and so as much a property of the checkout as the\n\
+         # name section this build already strips.\n\
+         trim-paths = \"all\"\n\
          # One unit per crate: nothing about the artifact's function order\n\
          # is left to codegen-unit partitioning or LTO merge order.\n\
          codegen-units = 1\n\
