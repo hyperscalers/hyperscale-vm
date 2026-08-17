@@ -54,6 +54,7 @@ use kernel::state::{
 
 use crate::Address;
 pub use crate::handle::Handle;
+use crate::num::{Rounding, Wide};
 
 /// The kernel's amount-cell width: a little-endian `u128`.
 ///
@@ -96,6 +97,68 @@ pub fn address_of(a: u64, b: u64, c: u64, d: u64) -> Address {
 /// The `u128` an `amount` carries.
 const fn whole(value: kernel::state::Amount) -> u128 {
     (value.low as u128) | ((value.high as u128) << 64)
+}
+
+/// A wide word as the vocabulary holds it.
+const fn lowered(value: kernel::math::Wide) -> Wide {
+    Wide::from_limbs([value.limb0, value.limb1, value.limb2, value.limb3])
+}
+
+/// A wide word as the world's record.
+const fn raised(value: Wide) -> kernel::math::Wide {
+    let [limb0, limb1, limb2, limb3] = value.limbs();
+    kernel::math::Wide {
+        limb0,
+        limb1,
+        limb2,
+        limb3,
+    }
+}
+
+/// The rounding direction as the world's enum.
+const fn direction(rounding: Rounding) -> kernel::math::Rounding {
+    match rounding {
+        Rounding::Down => kernel::math::Rounding::Down,
+        Rounding::Up => kernel::math::Rounding::Up,
+    }
+}
+
+/// `a * b / c`, the product held whole and rounded once.
+#[must_use]
+#[inline(always)]
+pub fn mul_div(a: Wide, b: Wide, c: Wide, rounding: Rounding) -> Wide {
+    lowered(kernel::math::mul_div(
+        raised(a),
+        raised(b),
+        raised(c),
+        direction(rounding),
+    ))
+}
+
+/// `floor(sqrt(a * b))`, the product held whole.
+#[must_use]
+#[inline(always)]
+pub fn geometric_mean(a: Wide, b: Wide) -> Wide {
+    lowered(kernel::math::geometric_mean(raised(a), raised(b)))
+}
+
+/// `(an/ad) * (bn/bd)`, as a fraction in the same width.
+#[must_use]
+#[inline(always)]
+pub fn fraction_compose(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> (Wide, Wide) {
+    let (num, den) = kernel::math::fraction_compose(raised(an), raised(ad), raised(bn), raised(bd));
+    (lowered(num), lowered(den))
+}
+
+/// `an/ad` against `bn/bd`, compared at a width their cross-products fit.
+#[must_use]
+#[inline(always)]
+pub fn fraction_cmp(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> core::cmp::Ordering {
+    match kernel::math::fraction_cmp(raised(an), raised(ad), raised(bn), raised(bd)) {
+        kernel::math::Ordering::Less => core::cmp::Ordering::Less,
+        kernel::math::Ordering::Equal => core::cmp::Ordering::Equal,
+        kernel::math::Ordering::Greater => core::cmp::Ordering::Greater,
+    }
 }
 
 /// Split `value` off a bucket, as a bucket.

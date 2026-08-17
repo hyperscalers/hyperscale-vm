@@ -482,7 +482,7 @@ fn a_transaction_that_spends_its_gas_limit_aborts_on_both_runtimes() -> Result<(
     // Enough to enter the guest and not enough to leave it. The figure
     // is between the two and moves with the code: below it the walk
     // refuses before the invocation, above it the whole tree settles.
-    let starved = entry.with_gas_limit(768);
+    let starved = entry.with_gas_limit(860);
     let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&starved))?;
 
     match &outcome.receipts[&starved.tx].outcome {

@@ -9,6 +9,7 @@ package hyperscale:sdk;
 /// Rust types for the same resources.
 world kernel-imports {
     import hyperscale:kernel/state;
+    import hyperscale:kernel/math;
     import hyperscale:kernel/env;
     import hyperscale:kernel/crypto;
     import hyperscale:kernel/events;

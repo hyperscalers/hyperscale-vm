@@ -34,10 +34,11 @@ use core::any::Any;
 use core::cell::RefCell;
 
 use hyperscale_vm_effects::{AbortReason, Address, ISSUER_REP};
-use hyperscale_vm_embed::KernelHost;
 pub use hyperscale_vm_embed::{CellKind, GuestArg, Invoked};
+use hyperscale_vm_embed::{KernelHost, math};
 
 use crate::handle::Handle;
+use crate::num::{Rounding, Wide};
 use crate::state::{Amount, Bucket};
 
 /// A kernel refusal, in flight through the unwind that carries it.
@@ -240,6 +241,89 @@ pub fn reserve_take(handle: Handle) -> u32 {
 #[must_use]
 pub fn issue(rep: u32, value: Amount) -> u32 {
     settled(kernel(|k| k.issuer_take(rep, value)))
+}
+
+/// A wide word as the arithmetic's own type.
+///
+/// Written out rather than a `From` impl: the vocabulary's type is this
+/// crate's and the arithmetic's is not, so the conversion has nowhere to
+/// live but here.
+const fn widened(value: Wide) -> math::U256 {
+    math::U256::from_limbs(value.limbs())
+}
+
+/// The arithmetic's answer as the vocabulary holds it.
+const fn narrowed(value: math::U256) -> Wide {
+    Wide::from_limbs(value.limbs())
+}
+
+/// The rounding direction as the arithmetic names it.
+const fn direction(rounding: Rounding) -> math::Rounding {
+    match rounding {
+        Rounding::Down => math::Rounding::Down,
+        Rounding::Up => math::Rounding::Up,
+    }
+}
+
+/// `a * b / c`, the product held whole and rounded once.
+///
+/// The native lane reaches the same functions the two engines do, rather
+/// than a second implementation beside them: what a guest calls through
+/// `hyperscale:kernel/math` and what an author's fast lane calls here are
+/// one body, so the lane cannot disagree with the artifact about money.
+///
+/// # Panics
+///
+/// On a zero divisor and on a result past the amount width — the same
+/// refusals the boundary raises, in the shape a host body raises them.
+#[must_use]
+pub fn mul_div(a: Wide, b: Wide, c: Wide, rounding: Rounding) -> Wide {
+    narrowed(
+        math::mul_div(widened(a), widened(b), widened(c), direction(rounding))
+            .expect("a well-formed wide multiplication"),
+    )
+}
+
+/// `floor(sqrt(a * b))`, the product held whole.
+#[must_use]
+pub fn geometric_mean(a: Wide, b: Wide) -> Wide {
+    narrowed(math::geometric_mean(widened(a), widened(b)))
+}
+
+/// `(an/ad) * (bn/bd)`, as a fraction in the same width.
+///
+/// # Panics
+///
+/// On a zero denominator and where the product does not fit reduced.
+#[must_use]
+pub fn fraction_compose(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> (Wide, Wide) {
+    let (num, den) = math::fraction_compose(widened(an), widened(ad), widened(bn), widened(bd))
+        .expect("a well-formed fraction composition");
+    (narrowed(num), narrowed(den))
+}
+
+/// `an/ad` against `bn/bd`, at a width their cross-products fit.
+///
+/// # Panics
+///
+/// On a zero denominator.
+#[must_use]
+pub fn fraction_cmp(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> core::cmp::Ordering {
+    math::fraction_cmp(widened(an), widened(ad), widened(bn), widened(bd))
+        .expect("a well-formed fraction comparison")
+}
+
+/// `base` raised to `exp` at the protocol's fixed scale.
+///
+/// # Panics
+///
+/// Where any intermediate leaves the wide width.
+#[must_use]
+pub fn fixed_pow(base: Wide, exp: u32, rounding: Rounding) -> Wide {
+    narrowed(
+        math::fixed_pow(widened(base), exp, direction(rounding))
+            .expect("a well-formed exponentiation"),
+    )
 }
 
 /// Split `value` off a bucket, as a bucket.
