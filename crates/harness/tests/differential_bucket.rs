@@ -12,21 +12,21 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
-    SubstateKey, TestHasher, child_key,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
+    RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    AbortReason, Capability, EnvInputs, ISSUER_REP, KernelSession, MemoryStore, Outcome,
+    AbortReason, Capability, EnvInputs, Held, ISSUER_REP, KernelSession, MemoryStore, Outcome,
     OverlayStore, TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
 };
 use hyperscale_vm_runtime::{
-    Bucket, DeltaCell, HostRefusal, Issuer, ReadCell, ReserveCell, WriteCell, add_kernel_to_linker,
-    blessed_engine, validate_component,
+    Bucket, DeltaCell, HostRefusal, Issuer, RangeWrite, ReadCell, ReserveCell, WriteCell,
+    add_kernel_to_linker, blessed_engine, validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::error::format_err;
@@ -62,6 +62,10 @@ const RESERVED: u128 = 75;
 const BALANCE: u128 = 100;
 /// The instance whose invocation the take lane runs inside.
 const ISSUER: Address = Address::new([0x80; 31], AddressClass::Component);
+/// The collection whose entries the instance lane moves.
+const HOLDINGS: CollectionId = CollectionId([9; 16]);
+/// The orders the fixture files instances at.
+const INSTANCES: [u128; 3] = [10, 20, 30];
 
 struct Fixture {
     declared: EffectSet,
@@ -96,6 +100,10 @@ fn fixture() -> Fixture {
     // A write cell holding something that is not an amount: state a
     // movement can only refuse, which is the narrow reading the class has.
     store.write(opaque, vec![1, 2, 3]).unwrap();
+    let holder = Address::new([0x90; 31], AddressClass::Component);
+    for order in INSTANCES {
+        store.entry_write(holder, HOLDINGS, order, vec![1]).unwrap();
+    }
     store.clear_log();
 
     let mut declared = EffectSet::new();
@@ -119,6 +127,16 @@ fn fixture() -> Fixture {
         Effect {
             target: EffectTarget::Point(reserved),
             mode: Mode::Reserve { amount: RESERVED },
+        },
+        Effect {
+            target: EffectTarget::Range {
+                owner: holder,
+                collection: HOLDINGS,
+                lo: 0,
+                hi: 100,
+                cap: 8,
+            },
+            mode: Mode::Write,
         },
     ] {
         declared.insert(effect).unwrap();
@@ -171,8 +189,8 @@ fn rep_of(host: &SessionHost, wanted: SubstateKey, mode: Mode) -> u32 {
 /// same two.
 fn session(fx: &Fixture) -> (SessionHost, u32, u32) {
     let mut session = materialize(fx);
-    let held = session.open_bucket(HELD);
-    let spent = session.open_bucket(SPENT);
+    let held = session.open_bucket(Held::Amount(HELD));
+    let spent = session.open_bucket(Held::Amount(SPENT));
     (SessionHost(session), held, spent)
 }
 
@@ -228,7 +246,7 @@ fn run_blessed(fx: &Fixture) -> Result<(Trace, u64)> {
         borrow_handle,
         released_rep,
         discard_handle,
-        released_amount: host.0.take_bucket(released_rep)?,
+        released_amount: host.0.take_bucket(released_rep)?.quantity(),
         discarded_survives: host.0.bucket(spent).is_ok(),
     };
     Ok((trace, fuel))
@@ -272,7 +290,7 @@ fn run_ref(fx: &Fixture) -> Result<(Trace, u64)> {
         borrow_handle,
         released_rep,
         discard_handle,
-        released_amount: host.0.take_bucket(released_rep)?,
+        released_amount: host.0.take_bucket(released_rep)?.quantity(),
         discarded_survives: host.0.bucket(spent).is_ok(),
     };
     Ok((trace, fuel))
@@ -407,7 +425,7 @@ fn take_blessed(fx: &Fixture, take: Take) -> Result<(Took, SessionHost, u64)> {
     let fuel = FUEL - store.get_fuel()?;
     let mut host = store.into_data();
     let took = match produced {
-        Ok((bucket,)) => Took::Value(host.0.take_bucket(bucket.rep())?),
+        Ok((bucket,)) => Took::Value(host.0.take_bucket(bucket.rep())?.quantity()),
         Err(error) => match error.downcast_ref::<HostRefusal>() {
             Some(refusal) => Took::Refusal(refusal.0),
             None => return Err(error),
@@ -446,7 +464,7 @@ fn take_ref(fx: &Fixture, take: Take) -> Result<(Took, SessionHost, u64)> {
     let mut host = instance.into_host();
     let took = match produced {
         Ok(values) => match values.as_slice() {
-            [CVal::Own(rep)] => Took::Value(host.0.take_bucket(*rep)?),
+            [CVal::Own(rep)] => Took::Value(host.0.take_bucket(*rep)?.quantity()),
             other => return Err(format_err!("{} returned {other:?}", take.export())),
         },
         Err(ExecError::Canon(CanonError::Host(reason))) => Took::Refusal(reason),
@@ -566,7 +584,7 @@ fn put_blessed(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(C
     let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut host = SessionHost(materialize(fx));
-    let funds = host.0.open_bucket(held);
+    let funds = host.0.open_bucket(Held::Amount(held));
     let (key, mode) = if delta {
         (fx.ledger, Mode::Delta)
     } else {
@@ -609,7 +627,7 @@ fn put_ref(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(Credi
     let bytes = parse_str(BUCKET_GUEST_WAT)?;
     let comp = RefComponent::decode(&bytes)?;
     let mut host = SessionHost(materialize(fx));
-    let funds = host.0.open_bucket(held);
+    let funds = host.0.open_bucket(Held::Amount(held));
     let (key, mode, kind) = if delta {
         (fx.ledger, Mode::Delta, ResourceKind::DeltaCell)
     } else {
@@ -752,8 +770,8 @@ fn pair_blessed(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
     let pair = Pair {
         reps: (one.rep(), two.rep()),
         values: (
-            host.0.take_bucket(one.rep())?,
-            host.0.take_bucket(two.rep())?,
+            host.0.take_bucket(one.rep())?.quantity(),
+            host.0.take_bucket(two.rep())?.quantity(),
         ),
     };
     Ok((pair, fuel))
@@ -784,7 +802,10 @@ fn pair_ref(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
     let pair = match produced.as_slice() {
         [CVal::Own(one), CVal::Own(two)] => Pair {
             reps: (*one, *two),
-            values: (host.0.take_bucket(*one)?, host.0.take_bucket(*two)?),
+            values: (
+                host.0.take_bucket(*one)?.quantity(),
+                host.0.take_bucket(*two)?.quantity(),
+            ),
         },
         other => return Err(format_err!("take-two returned {other:?}")),
     };
@@ -800,7 +821,7 @@ fn weighed(fx: &Fixture, held: u128) -> Result<(u64, u64)> {
     let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut host = SessionHost(materialize(fx));
-    let funds = host.0.open_bucket(held);
+    let funds = host.0.open_bucket(Held::Amount(held));
     let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
@@ -814,7 +835,7 @@ fn weighed(fx: &Fixture, held: u128) -> Result<(u64, u64)> {
 
     let comp = RefComponent::decode(&bytes)?;
     let mut host = SessionHost(materialize(fx));
-    let funds = host.0.open_bucket(held);
+    let funds = host.0.open_bucket(Held::Amount(held));
     let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
@@ -838,7 +859,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
     let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut host = SessionHost(materialize(fx));
-    let funds = host.0.open_bucket(held);
+    let funds = host.0.open_bucket(Held::Amount(held));
     let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
@@ -852,7 +873,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
             (Resource::new_own(funds), off, Resource::new_borrow(ledger)),
         )?;
     let mut host = store.into_data();
-    let blessed = host.0.take_bucket(came_off.rep())?;
+    let blessed = host.0.take_bucket(came_off.rep())?.quantity();
     let (receipt, _) = host
         .0
         .finish(Outcome::Completed { value: None }, 0)
@@ -865,7 +886,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
 
     let comp = RefComponent::decode(&bytes)?;
     let mut host = SessionHost(materialize(fx));
-    let funds = host.0.open_bucket(held);
+    let funds = host.0.open_bucket(Held::Amount(held));
     let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
@@ -878,13 +899,104 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
         [CVal::Own(rep)] => {
             let rep = *rep;
             let mut host = instance.into_host();
-            assert_eq!(host.0.take_bucket(rep)?, blessed, "the split diverged");
+            assert_eq!(
+                host.0.take_bucket(rep)?.quantity(),
+                blessed,
+                "the split diverged"
+            );
             host
         }
         other => return Err(format_err!("split returned {other:?}")),
     };
     let _ = &mut host;
     Ok((blessed, left))
+}
+
+/// The instances an interval hands over, and what it holds afterwards.
+fn lifted(fx: &Fixture, lo: u64, hi: u64) -> Result<(u128, u64)> {
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    validate_component(&bytes)?;
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<SessionHost>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let host = SessionHost(materialize(fx));
+    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite { .. }));
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+    let (taken,) = instance
+        .get_typed_func::<(Resource<RangeWrite>, u64, u64), (Resource<Bucket>,)>(
+            &mut store, "lift",
+        )?
+        .call(&mut store, (Resource::new_borrow(held), lo, hi))?;
+    let mut host = store.into_data();
+    let blessed = host.0.take_bucket(taken.rep())?.quantity();
+
+    // The same lift under the interpreter, and the round trip beside it:
+    // taking the instances out and filing them straight back has to leave
+    // the collection as it was.
+    let comp = RefComponent::decode(&bytes)?;
+    let host = SessionHost(materialize(fx));
+    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite { .. }));
+    let mut instance =
+        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+    let args = [
+        CVal::Borrow(held, ResourceKind::RangeWrite),
+        CVal::U64(lo),
+        CVal::U64(hi),
+    ];
+    let reference = match invoke(&mut instance, "lift", &args)?.as_slice() {
+        [CVal::Own(rep)] => {
+            let rep = *rep;
+            instance.into_host().0.take_bucket(rep)?.quantity()
+        }
+        other => return Err(format_err!("lift returned {other:?}")),
+    };
+    assert_eq!(blessed, reference, "the lift diverged");
+
+    let host = SessionHost(materialize(fx));
+    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite { .. }));
+    let mut instance =
+        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+    let args = [
+        CVal::Borrow(held, ResourceKind::RangeWrite),
+        CVal::U64(lo),
+        CVal::U64(hi),
+    ];
+    let round_trip = match invoke(&mut instance, "relift", &args)?.as_slice() {
+        [CVal::U64(count)] => *count,
+        other => return Err(format_err!("relift returned {other:?}")),
+    };
+    Ok((blessed, round_trip))
+}
+
+/// The rep of the first capability matching `pred`.
+fn rep_where(host: &SessionHost, pred: impl Fn(&Capability) -> bool) -> u32 {
+    let position = host
+        .0
+        .capabilities()
+        .iter()
+        .position(pred)
+        .expect("capability present");
+    u32::try_from(position).expect("bounded")
+}
+
+#[test]
+fn taking_instances_out_of_a_collection_is_what_produces_them() -> Result<()> {
+    let fx = fixture();
+    // Two of the three asks lie in [10, 20]; the removal and the edge are
+    // one operation, so what crosses is exactly what left.
+    let (taken, round_trip) = lifted(&fx, 10, 20)?;
+    assert_eq!(taken, 2);
+    // And filing them straight back leaves the collection as it was.
+    assert_eq!(round_trip, 3);
+
+    // An empty range yields an empty bucket, so a method that moves no
+    // instances needs no way to name one.
+    let (none, _) = lifted(&fx, 40, 50)?;
+    assert_eq!(none, 0);
+    Ok(())
 }
 
 #[test]
@@ -908,7 +1020,7 @@ fn a_bucket_survives_a_split_and_a_merge_whole() -> Result<()> {
     let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut host = SessionHost(materialize(fx));
-    let funds = host.0.open_bucket(100);
+    let funds = host.0.open_bucket(Held::Amount(100));
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
@@ -916,7 +1028,7 @@ fn a_bucket_survives_a_split_and_a_merge_whole() -> Result<()> {
         .get_typed_func::<(Resource<Bucket>, u64), (Resource<Bucket>,)>(&mut store, "halve")?
         .call(&mut store, (Resource::new_own(funds), 30))?;
     let mut host = store.into_data();
-    assert_eq!(host.0.take_bucket(whole.rep())?, 100);
+    assert_eq!(host.0.take_bucket(whole.rep())?.quantity(), 100);
     Ok(())
 }
 
@@ -1042,7 +1154,7 @@ fn discard_blessed(fx: &Fixture, held: u128) -> Result<(Option<AbortReason>, u64
     let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut host = SessionHost(materialize(fx));
-    let funds = host.0.open_bucket(held);
+    let funds = host.0.open_bucket(Held::Amount(held));
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
@@ -1064,7 +1176,7 @@ fn discard_ref(fx: &Fixture, held: u128) -> Result<(Option<AbortReason>, u64)> {
     let bytes = parse_str(BUCKET_GUEST_WAT)?;
     let comp = RefComponent::decode(&bytes)?;
     let mut host = SessionHost(materialize(fx));
-    let funds = host.0.open_bucket(held);
+    let funds = host.0.open_bucket(Held::Amount(held));
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
     let called = instance.invoke("discard", &[CVal::Own(funds)])?;

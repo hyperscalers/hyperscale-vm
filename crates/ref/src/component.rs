@@ -48,6 +48,8 @@ pub trait RefKernelHost {
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
     fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
     fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
+    fn range_take(&mut self, rep: u32, lo: u128, hi: u128) -> Result<u32, AbortReason>;
+    fn range_put(&mut self, rep: u32, funds: u32, value: Vec<u8>) -> Result<(), AbortReason>;
     fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), AbortReason>;
     fn bucket_amount(&mut self, rep: u32) -> Result<u128, AbortReason>;
@@ -154,6 +156,8 @@ enum HostFn {
     WriteCellSet,
     WriteTake,
     WritePut,
+    RangeWriteTake,
+    RangeWritePut,
     BucketTake,
     BucketPut,
     BucketAmount,
@@ -585,6 +589,8 @@ impl RefComponent {
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
             ("state", "write-cell-take") => Ok(HostFn::WriteTake),
             ("state", "write-cell-put") => Ok(HostFn::WritePut),
+            ("state", "range-write-take") => Ok(HostFn::RangeWriteTake),
+            ("state", "range-write-put") => Ok(HostFn::RangeWritePut),
             ("state", "bucket-take") => Ok(HostFn::BucketTake),
             ("state", "bucket-put") => Ok(HostFn::BucketPut),
             ("state", "bucket-amount") => Ok(HostFn::BucketAmount),
@@ -1548,8 +1554,8 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::Hash
                     | HostFn::Emit,
                 ) => 3,
-                CompFunc::Host(HostFn::RangeWriteSet) => 4,
-                CompFunc::Host(HostFn::RangeWriteInsert) => 5,
+                CompFunc::Host(HostFn::RangeWritePut | HostFn::RangeWriteSet) => 4,
+                CompFunc::Host(HostFn::RangeWriteInsert | HostFn::RangeWriteTake) => 5,
                 CompFunc::Host(HostFn::Clock) | CompFunc::Lifted { .. } => 0,
             },
             CoreFuncDef::Alias { .. } => unreachable!("aliases resolve to wasm addresses"),
@@ -1663,6 +1669,28 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let bucket = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
+                    }
+                    HostFn::RangeWriteTake => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
+                        let lo = flat_amount(args[1], args[2]);
+                        let hi = flat_amount(args[3], args[4]);
+                        self.charge_boundary(store, 2 * AMOUNT_BOUNDARY_BYTES)?;
+                        let taken = self
+                            .host
+                            .range_take(rep, lo, hi)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(vec![Value::I32(self.seat_bucket(taken).cast_signed())])
+                    }
+                    HostFn::RangeWritePut => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
+                        let funds = self.consume_bucket(args[1])?;
+                        let mem = self.mem_opt(id)?;
+                        let value = Self::read_guest_bytes(store, mem, args[2], args[3])?;
+                        self.charge_boundary(store, value.len())?;
+                        self.host
+                            .range_put(rep, funds, value)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(Vec::new())
                     }
                     HostFn::BucketTake => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;

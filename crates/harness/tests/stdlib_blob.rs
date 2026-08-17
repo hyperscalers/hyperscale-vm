@@ -23,8 +23,8 @@ use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, Event, KernelSession, MemoryStore, Movement, Outcome, OverlayStore,
-    Receipt, TxHash, WorkingStore, encode_amount,
+    Capability, EnvInputs, Event, Held, KernelSession, MemoryStore, Movement, Outcome,
+    OverlayStore, Receipt, TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
@@ -475,7 +475,7 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     // byte list. The kernel never sees this shape — metadata and world
     // are derived together — which is why a direct drive is the one
     // reader that has to follow.
-    let funds = store.data_mut().0.open_bucket(AMOUNT);
+    let funds = store.data_mut().0.open_bucket(Held::Amount(AMOUNT));
     let enter = instance.get_typed_func::<(
         Resource<RangeWrite>,
         Resource<DeltaCell>,
@@ -542,7 +542,7 @@ fn reference_round() -> Result<(Receipt, u64)> {
         &Capability::Delta(child_key(&TestHasher, LOTTERY, VAULT, &[])),
     );
     let mut host = host;
-    let funds = host.0.open_bucket(AMOUNT);
+    let funds = host.0.open_bucket(Held::Amount(AMOUNT));
     let mut instance =
         RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(

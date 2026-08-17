@@ -79,6 +79,45 @@ pub enum Capability {
     },
 }
 
+/// What a bucket carries.
+///
+/// The two are one object because they are one thing to a manifest — value
+/// in flight between a producer and a consumer — and they differ in what
+/// quantity means: a fungible edge has an amount nothing declares, and a
+/// non-fungible one names the instances it moves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Held {
+    /// A quantity of a fungible resource.
+    Amount(u128),
+    /// The instances a non-fungible edge moves, by the order key each was
+    /// filed at in its collection.
+    Instances(BTreeSet<u128>),
+}
+
+impl Held {
+    /// What a signed bound is judged over: an amount, or how many
+    /// instances.
+    ///
+    /// # Panics
+    ///
+    /// Never: an instance set is bounded by the per-edge cap, well below
+    /// `u128`.
+    #[must_use]
+    pub fn quantity(&self) -> u128 {
+        match self {
+            Self::Amount(amount) => *amount,
+            Self::Instances(ids) => u128::try_from(ids.len()).expect("bounded by the edge cap"),
+        }
+    }
+
+    /// Whether it carries nothing, which is what a bucket must for a
+    /// guest to let go of it.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.quantity() == 0
+    }
+}
+
 /// Why materialization refused a declared effect set — each an abort
 /// before any guest execution.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -173,6 +212,13 @@ pub enum SessionTrap {
     /// A merge whose total is past the width an amount has.
     #[error("merging two buckets overflows an amount")]
     BucketOverflow,
+    /// An operation reaching for the other kind of edge than the bucket
+    /// carries: an amount where instances are held, or the reverse.
+    #[error("this edge does not carry what the operation moves")]
+    WrongEdgeKind,
+    /// One instance reaching two places at once.
+    #[error("instance {0} is already held")]
+    InstanceHeldTwice(u128),
     /// A discarded bucket that still carried value.
     #[error("a bucket carrying {0} was let go of")]
     ValueDropped(u128),
@@ -218,6 +264,8 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::IssuanceUngranted => Self::IssuanceUngranted,
             SessionTrap::BucketUnderflow { .. } => Self::BucketUnderflow,
             SessionTrap::BucketOverflow => Self::BucketOverflow,
+            SessionTrap::WrongEdgeKind => Self::WrongEdgeKind,
+            SessionTrap::InstanceHeldTwice(_) => Self::InstanceHeldTwice,
             SessionTrap::ValueDropped(_) => Self::ValueDropped,
             SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
             SessionTrap::CellUnderflow => Self::CellUnderflow,
@@ -450,12 +498,12 @@ pub struct KernelSession {
     /// kernel — and is never reused, so one rep names one bucket for the
     /// transaction's life.
     ///
-    /// A bucket is an amount and nothing else. Which resource it is
-    /// denominated in is the declaration's answer wherever it is asked —
+    /// Which resource a bucket is denominated in is the declaration's
+    /// answer wherever it is asked —
     /// `outputs` for a produced edge, the cell's own key for a movement —
     /// and the kernel cannot invert a cell key to recover one, so a field
     /// for it would be right in one case and a guess in the rest.
-    buckets: Vec<Option<u128>>,
+    buckets: Vec<Option<Held>>,
     /// Whether the executing invocation may create value.
     ///
     /// One bit rather than a table of resources. What a grant fixes is
@@ -591,9 +639,9 @@ impl KernelSession {
     ///
     /// Only past `u32` buckets in one transaction, which the declared
     /// edge and clause counts exclude.
-    pub fn open_bucket(&mut self, amount: u128) -> u32 {
+    pub fn open_bucket(&mut self, held: Held) -> u32 {
         let rep = u32::try_from(self.buckets.len()).expect("bounded");
-        self.buckets.push(Some(amount));
+        self.buckets.push(Some(held));
         rep
     }
 
@@ -602,13 +650,26 @@ impl KernelSession {
     /// # Errors
     ///
     /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
-    pub fn bucket(&self, rep: u32) -> Result<u128, SessionTrap> {
+    pub fn bucket(&self, rep: u32) -> Result<Held, SessionTrap> {
         usize::try_from(rep)
             .ok()
             .and_then(|index| self.buckets.get(index))
-            .copied()
+            .cloned()
             .flatten()
             .ok_or(SessionTrap::UnknownHandle(rep))
+    }
+
+    /// The amount the bucket at `rep` carries.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::WrongEdgeKind`] for a bucket carrying instances:
+    /// what a movement moves is an amount, and a named thing is not one.
+    pub fn bucket_amount(&self, rep: u32) -> Result<u128, SessionTrap> {
+        match self.bucket(rep)? {
+            Held::Amount(amount) => Ok(amount),
+            Held::Instances(_) => Err(SessionTrap::WrongEdgeKind),
+        }
     }
 
     /// Takes the bucket at `rep` back out of the table: the kernel holds
@@ -617,12 +678,89 @@ impl KernelSession {
     /// # Errors
     ///
     /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
-    pub fn take_bucket(&mut self, rep: u32) -> Result<u128, SessionTrap> {
+    pub fn take_bucket(&mut self, rep: u32) -> Result<Held, SessionTrap> {
         usize::try_from(rep)
             .ok()
             .and_then(|index| self.buckets.get_mut(index))
             .and_then(Option::take)
             .ok_or(SessionTrap::UnknownHandle(rep))
+    }
+
+    /// Take every entry of a write interval whose order lies in
+    /// `[lo, hi]`, as the instances they were.
+    ///
+    /// The removal and the edge are one operation, which is what a
+    /// movement is for an amount cell and what this is for a collection:
+    /// a body cannot hand on instances it left where they were. An empty
+    /// range yields an empty bucket, so a method moving none needs no
+    /// constructor for one.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`]: a bound outside the declared interval, or
+    /// more entries than the interval's cap admits.
+    pub fn range_take(&mut self, rep: u32, lo: u128, hi: u128) -> Result<u32, SessionTrap> {
+        let (owner, collection, low, high, cap, writable) = self.range_of(rep)?;
+        if !writable {
+            return Err(SessionTrap::WrongMode(rep));
+        }
+        if lo > hi {
+            return Ok(self.open_bucket(Held::Instances(BTreeSet::new())));
+        }
+        if !(low..=high).contains(&lo) || !(low..=high).contains(&hi) {
+            return Err(SessionTrap::OrderOutsideInterval);
+        }
+        self.scan(rep)?;
+        let taken: Vec<u128> = self
+            .scans
+            .get(&rep)
+            .into_iter()
+            .flatten()
+            .map(|(order, _)| *order)
+            .filter(|order| (lo..=hi).contains(order))
+            .collect();
+        // Every entry is charged and removed, or none is: the budget is
+        // what the declaration bought and a take that overran it must
+        // leave the collection alone.
+        for order in &taken {
+            self.charge_write(rep, *order, cap)?;
+        }
+        for order in &taken {
+            self.store.entry_remove(owner, collection, *order)?;
+        }
+        self.invalidate(owner, collection);
+        Ok(self.open_bucket(Held::Instances(taken.into_iter().collect())))
+    }
+
+    /// File every instance the bucket at `funds` carries as an entry of a
+    /// write interval, at the order it was taken under.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`]: an instance outside the declared interval, a
+    /// bucket carrying an amount, or a cap the filing would overrun.
+    pub fn range_put(&mut self, rep: u32, funds: u32, value: &[u8]) -> Result<(), SessionTrap> {
+        let (owner, collection, low, high, cap, writable) = self.range_of(rep)?;
+        if !writable {
+            return Err(SessionTrap::WrongMode(rep));
+        }
+        let Held::Instances(ids) = self.bucket(funds)? else {
+            return Err(SessionTrap::WrongEdgeKind);
+        };
+        for order in &ids {
+            if !(low..=high).contains(order) {
+                return Err(SessionTrap::OrderOutsideInterval);
+            }
+        }
+        for order in &ids {
+            self.charge_write(rep, *order, cap)?;
+        }
+        for order in &ids {
+            self.store
+                .entry_write(owner, collection, *order, value.to_vec())?;
+        }
+        self.invalidate(owner, collection);
+        self.take_bucket(funds).map(|_| ())
     }
 
     /// Split `amount` off the bucket at `rep`, as a new bucket.
@@ -635,12 +773,15 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`], including a split past what the bucket holds.
     pub fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
-        let held = self.bucket(rep)?;
+        // A quantity divides what a quantity is. Splitting an instance
+        // set by a number has no answer — which instances? — so the
+        // vocabulary refuses rather than picking.
+        let held = self.bucket_amount(rep)?;
         let left = held
             .checked_sub(amount)
             .ok_or(SessionTrap::BucketUnderflow { amount, held })?;
-        self.set_bucket(rep, left);
-        Ok(self.open_bucket(amount))
+        self.set_bucket(rep, Held::Amount(left));
+        Ok(self.open_bucket(Held::Amount(amount)))
     }
 
     /// Merge the bucket at `other` into the one at `rep`, consuming it.
@@ -649,22 +790,35 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`], including a total past an amount's width.
     pub fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), SessionTrap> {
-        let held = self.bucket(rep)?;
-        let added = self.bucket(other)?;
-        let total = held.checked_add(added).ok_or(SessionTrap::BucketOverflow)?;
+        let merged = match (self.bucket(rep)?, self.bucket(other)?) {
+            (Held::Amount(held), Held::Amount(added)) => {
+                Held::Amount(held.checked_add(added).ok_or(SessionTrap::BucketOverflow)?)
+            }
+            // Instances are named, so a merge is a union and a name
+            // appearing twice is one instance in two places.
+            (Held::Instances(mut held), Held::Instances(added)) => {
+                for id in added {
+                    if !held.insert(id) {
+                        return Err(SessionTrap::InstanceHeldTwice(id));
+                    }
+                }
+                Held::Instances(held)
+            }
+            _ => return Err(SessionTrap::WrongEdgeKind),
+        };
         self.take_bucket(other)?;
-        self.set_bucket(rep, total);
+        self.set_bucket(rep, merged);
         Ok(())
     }
 
     /// Replace what a live bucket carries. The rep is one `bucket` has
     /// already resolved, so there is no slot to miss.
-    fn set_bucket(&mut self, rep: u32, amount: u128) {
+    fn set_bucket(&mut self, rep: u32, held: Held) {
         if let Some(slot) = usize::try_from(rep)
             .ok()
             .and_then(|index| self.buckets.get_mut(index))
         {
-            *slot = Some(amount);
+            *slot = Some(held);
         }
     }
 
@@ -685,9 +839,9 @@ impl KernelSession {
     /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket,
     /// and [`SessionTrap::ValueDropped`] for one that still carries value.
     pub fn drop_bucket(&mut self, rep: u32) -> Result<(), SessionTrap> {
-        let amount = self.bucket(rep)?;
-        if amount > 0 {
-            return Err(SessionTrap::ValueDropped(amount));
+        let held = self.bucket(rep)?;
+        if !held.is_empty() {
+            return Err(SessionTrap::ValueDropped(held.quantity()));
         }
         self.take_bucket(rep).map(|_| ())
     }
@@ -847,7 +1001,7 @@ impl KernelSession {
     /// Any [`SessionTrap`].
     pub fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
         self.delta(rep, amount, DeltaOp::Sub)?;
-        Ok(self.open_bucket(amount))
+        Ok(self.open_bucket(Held::Amount(amount)))
     }
 
     /// Credit a delta capability with what the bucket at `funds` carries.
@@ -867,7 +1021,7 @@ impl KernelSession {
         let Capability::Delta(_) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
-        let amount = self.bucket(funds)?;
+        let amount = self.bucket_amount(funds)?;
         self.delta(rep, amount, DeltaOp::Add)?;
         self.take_bucket(funds).map(|_| ())
     }
@@ -883,7 +1037,7 @@ impl KernelSession {
             return Err(SessionTrap::WrongMode(rep));
         };
         let held = self.amount_cell(key)?;
-        let amount = self.bucket(funds)?;
+        let amount = self.bucket_amount(funds)?;
         let total = held.checked_add(amount).ok_or(SessionTrap::CellOverflow)?;
         self.store.write(key, encode_amount(total).to_vec())?;
         self.take_bucket(funds).map(|_| ())
@@ -918,7 +1072,7 @@ impl KernelSession {
         let held = self.amount_cell(key)?;
         let left = held.checked_sub(amount).ok_or(SessionTrap::CellUnderflow)?;
         self.store.write(key, encode_amount(left).to_vec())?;
-        Ok(self.open_bucket(amount))
+        Ok(self.open_bucket(Held::Amount(amount)))
     }
 
     /// Create `amount` of what this invocation issues, as a bucket.
@@ -938,7 +1092,7 @@ impl KernelSession {
         if !self.issuance {
             return Err(SessionTrap::IssuanceUngranted);
         }
-        Ok(self.open_bucket(amount))
+        Ok(self.open_bucket(Held::Amount(amount)))
     }
 
     /// Grant the executing invocation the authority to issue.
@@ -963,7 +1117,7 @@ impl KernelSession {
         if !self.taken.insert(rep) {
             return Err(SessionTrap::ReservationTaken);
         }
-        Ok(self.open_bucket(amount))
+        Ok(self.open_bucket(Held::Amount(amount)))
     }
 
     fn range_of(

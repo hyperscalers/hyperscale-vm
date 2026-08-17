@@ -44,7 +44,7 @@ impl Edge {
     /// producer declared, never sniffed from the bytes.
     fn quantity(&self, kind: EdgeKind, session: &KernelSession) -> Option<u128> {
         match self {
-            Self::Bucket(rep) => session.bucket(*rep).ok(),
+            Self::Bucket(rep) => session.bucket(*rep).ok().map(|held| held.quantity()),
             Self::Cell(cell) => match kind {
                 EdgeKind::Fungible => decode_amount(cell).ok(),
                 EdgeKind::NonFungible => {
