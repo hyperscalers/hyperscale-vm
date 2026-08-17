@@ -708,6 +708,7 @@ dependencies = [
  "hyperscale-vm-ref",
  "hyperscale-vm-runtime",
  "hyperscale-vm-stdlib",
+ "hyperscale-vm-testing",
  "wasm-smith",
  "wasmtime",
  "wat",

@@ -15,6 +15,12 @@ use hyperscale_vm_manifest_builder::{Bucket, BucketArg, TypedBuilder, TypedError
 #[path = "../../../guests/amm/src/lib.rs"]
 mod package;
 
+/// The package's own bodies, dispatched natively.
+///
+/// The same module the declaration is traced from, so a lane running
+/// this is running the code the artifact was built from.
+pub use package::amm::invoke;
+
 /// The code `swap` declines with when the output misses its floor.
 pub const SLIPPAGE_EXCEEDED: u32 = 0;
 

@@ -15,7 +15,7 @@ use crate::BuildError;
 
 /// The manifest: a `cdylib` for the chain and an `rlib` so the
 /// declaration binary can link the same library the guest build compiles.
-fn manifest(name: &str, sdk: &str) -> String {
+fn manifest(name: &str, sdk: &str, testing: &str) -> String {
     format!(
         "[package]\n\
          name = \"{name}\"\n\
@@ -29,6 +29,12 @@ fn manifest(name: &str, sdk: &str) -> String {
          [dependencies]\n\
          wit-bindgen = \"=0.60.0\"\n\
          hyperscale-vm-sdk = {sdk}\n\
+         \n\
+         [dev-dependencies]\n\
+         # The chain a test runs on: publish, seed, call, assert. Native\n\
+         # by default; `features = [\"wasm\"]` adds the lane that builds\n\
+         # this crate to its artifact and runs that instead.\n\
+         hyperscale-vm-testing = {testing}\n\
          \n\
          [profile.release]\n\
          opt-level = \"s\"\n\
@@ -105,6 +111,41 @@ fn declaration_bin(krate: &str, module: &str) -> String {
     )
 }
 
+/// The package's first test: the loop an author works in.
+///
+/// Written beside the first method rather than left to be discovered,
+/// because a package with no test is a package whose author's only
+/// feedback is a deploy.
+fn first_test(module: &str) -> String {
+    format!(
+        "//! What this package does, against the real kernel.\n\
+         \n\
+         use hyperscale_vm_testing::{{Chain, account, package, principal, resource}};\n\
+         \n\
+         #[test]\n\
+         fn a_deposit_lands_in_the_vault() {{\n\
+         \x20   let alice = principal(1);\n\
+         \x20   let xrd = resource(0xE1);\n\
+         \n\
+         \x20   let mut chain = Chain::native();\n\
+         \x20   let package = chain.publish(package!({module}::{module}));\n\
+         \x20   let instance = chain.instantiate(package, ());\n\
+         \x20   chain.credit(alice, xrd, 100);\n\
+         \n\
+         \x20   chain\n\
+         \x20       .transact(alice, |b| {{\n\
+         \x20           let signed_in = account::authorize(b, alice)?;\n\
+         \x20           let funds = account::withdraw(b, signed_in, xrd, 40)?;\n\
+         \x20           b.call(instance, \"deposit\", (funds,))?.none()\n\
+         \x20       }})\n\
+         \x20       .expect_completed();\n\
+         \n\
+         \x20   assert_eq!(chain.balance(instance, xrd), 40);\n\
+         \x20   assert_eq!(chain.balance(alice, xrd), 60);\n\
+         }}\n"
+    )
+}
+
 /// The link terms a package's code is built under.
 ///
 /// Copied rather than derived, because every line is a property of the
@@ -162,12 +203,25 @@ targets = [\"wasm32-unknown-unknown\"]
 /// only judge that if it can reach the same line the command emits.
 #[must_use]
 pub fn sdk_dependency(dir: &Path) -> String {
-    let sdk = Path::new(env!("CARGO_MANIFEST_DIR"))
+    crate_dependency(dir, "sdk", "\"0.1\"")
+}
+
+/// The test harness as a scaffolded package reaches it, on the terms
+/// [`sdk_dependency`] describes.
+#[must_use]
+pub fn testing_dependency(dir: &Path) -> String {
+    crate_dependency(dir, "testing", "\"0.1\"")
+}
+
+/// One sibling crate as reached from `dir`, or `published` where this
+/// build carries no path to it.
+fn crate_dependency(dir: &Path, name: &str, published: &str) -> String {
+    let sibling = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|crates| crates.join("sdk"));
-    sdk.map_or_else(
-        || "\"0.1\"".to_owned(),
-        |sdk| format!("{{ path = \"{}\" }}", relative(dir, &sdk).display()),
+        .map(|crates| crates.join(name));
+    sibling.map_or_else(
+        || published.to_owned(),
+        |path| format!("{{ path = \"{}\" }}", relative(dir, &path).display()),
     )
 }
 
@@ -206,7 +260,7 @@ fn relative(dir: &Path, sdk: &Path) -> PathBuf {
 ///
 /// [`BuildError`] if the directory already holds a crate, or if any file
 /// cannot be written.
-pub fn package(dir: &Path, sdk: &str) -> Result<PathBuf, BuildError> {
+pub fn package(dir: &Path) -> Result<PathBuf, BuildError> {
     let name = dir
         .file_name()
         .and_then(|name| name.to_str())
@@ -231,12 +285,16 @@ pub fn package(dir: &Path, sdk: &str) -> Result<PathBuf, BuildError> {
             .map_err(|error| BuildError(format!("write {}: {error}", path.display())))
     };
 
-    write(dir.join("Cargo.toml"), manifest(&name, sdk))?;
+    write(
+        dir.join("Cargo.toml"),
+        manifest(&name, &sdk_dependency(dir), &testing_dependency(dir)),
+    )?;
     write(dir.join("src/lib.rs"), library(&module))?;
     write(
         dir.join("src/bin/metadata.rs"),
         declaration_bin(&module, &module),
     )?;
+    write(dir.join("tests/first.rs"), first_test(&module))?;
     write(dir.join(".cargo/config.toml"), CARGO_CONFIG.to_owned())?;
     write(dir.join("rust-toolchain.toml"), TOOLCHAIN.to_owned())?;
     Ok(dir.to_path_buf())

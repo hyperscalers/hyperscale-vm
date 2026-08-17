@@ -5,18 +5,21 @@ use std::path::PathBuf;
 
 use hyperscale_vm_effects::PackageMetadata;
 
+use crate::native::Dispatch;
+
 /// One package a [`Chain`](crate::Chain) can publish.
 ///
-/// The declaration is the package's own — `blueprint().metadata()`, the
-/// same trace the build attaches to the artifact — and the crate
-/// directory is how a chain that needs the compiled component finds one
-/// to compile. A chain that runs bodies natively reads only the
-/// declaration.
+/// Everything a chain could need to run it, whichever engine it has:
+/// the declaration `blueprint()` traces, the crate directory a build
+/// compiles from, and the bodies' own native dispatch. A test names the
+/// package once and each chain takes the half it uses.
 pub struct Package {
     /// The traced declaration.
     pub metadata: PackageMetadata,
     /// The package crate's root, as `CARGO_MANIFEST_DIR` names it.
     pub crate_dir: PathBuf,
+    /// The bodies, callable without an engine.
+    pub dispatch: Dispatch,
 }
 
 impl Package {
@@ -26,10 +29,15 @@ impl Package {
     /// directory from the call site: the crate under test is the one the
     /// test is compiled in, and only the macro's expansion is there.
     #[must_use]
-    pub fn new(metadata: PackageMetadata, crate_dir: impl Into<PathBuf>) -> Self {
+    pub fn new(
+        metadata: PackageMetadata,
+        crate_dir: impl Into<PathBuf>,
+        dispatch: Dispatch,
+    ) -> Self {
         Self {
             metadata,
             crate_dir: crate_dir.into(),
+            dispatch,
         }
     }
 }
@@ -49,6 +57,7 @@ macro_rules! package {
         $crate::Package::new(
             $($module)*::blueprint().metadata(),
             ::core::env!("CARGO_MANIFEST_DIR"),
+            $($module)*::invoke,
         )
     };
 }

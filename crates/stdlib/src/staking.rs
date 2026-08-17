@@ -16,6 +16,13 @@ use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, Typ
 #[path = "../../../guests/staking/src/lib.rs"]
 mod package;
 
+/// The package's own bodies, dispatched natively.
+///
+/// The same module the declaration is traced from, so a test running
+/// this is running the code the artifact was built from rather than a
+/// stand-in for it.
+pub use package::staking::invoke;
+
 /// A stake pool's total awaiting release to the delegators who returned
 /// their units.
 pub const UNBONDING: RoleId = package_role(0);

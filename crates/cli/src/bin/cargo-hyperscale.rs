@@ -66,7 +66,7 @@ fn run(args: &[String]) -> Result<String, BuildError> {
             // form can be taken against somewhere that exists.
             std::fs::create_dir_all(&dir)
                 .map_err(|error| BuildError(format!("create {}: {error}", dir.display())))?;
-            scaffold::package(&dir, &scaffold::sdk_dependency(&dir))?;
+            scaffold::package(&dir)?;
             Ok(format!(
                 "scaffolded {}\n    cargo hyperscale check {}",
                 dir.display(),

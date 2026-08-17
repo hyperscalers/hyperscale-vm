@@ -65,7 +65,13 @@ fn the_scaffold_builds_and_admits_as_it_stands() {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("scaffold");
     // The template's own files, and nothing else: a `target` left from a
     // previous run is what keeps this from rebuilding the SDK each time.
-    for stale in ["Cargo.toml", "src", ".cargo", "rust-toolchain.toml"] {
+    for stale in [
+        "Cargo.toml",
+        "src",
+        "tests",
+        ".cargo",
+        "rust-toolchain.toml",
+    ] {
         let path = dir.join(stale);
         let _ = if path.is_dir() {
             std::fs::remove_dir_all(&path)
@@ -75,9 +81,29 @@ fn the_scaffold_builds_and_admits_as_it_stands() {
     }
     std::fs::create_dir_all(&dir).expect("the scaffold directory");
 
-    scaffold::package(&dir, &scaffold::sdk_dependency(&dir)).expect("the scaffold writes");
+    scaffold::package(&dir).expect("the scaffold writes");
     artifact(&dir, Provenance::Published)
         .unwrap_or_else(|error| panic!("the scaffolded package must admit: {error}"));
+
+    // And the test it ships with passes. An author's first command is
+    // `new` and the second is `cargo test`, so a template whose test did
+    // not compile would be the first thing anyone met.
+    let ran = std::process::Command::new("cargo")
+        .args(["test", "--quiet"])
+        .current_dir(&dir)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("CARGO")
+        .env_remove("CARGO_HOME")
+        .env_remove("RUSTC")
+        .env_remove("RUSTUP_HOME")
+        .output()
+        .expect("cargo runs in the scaffold");
+    assert!(
+        ran.status.success(),
+        "the scaffolded package's own test must pass:\n{}\n{}",
+        String::from_utf8_lossy(&ran.stdout),
+        String::from_utf8_lossy(&ran.stderr),
+    );
 }
 
 /// The declaration a package publishes is the one its module traced.

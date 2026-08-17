@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use hyperscale_vm_cli::compile;
-use hyperscale_vm_effects::{AbortReason, PackageHash, TestHasher, package_hash};
+use hyperscale_vm_effects::{AbortReason, PackageHash};
 use hyperscale_vm_kernel::{GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession};
 use hyperscale_vm_runtime::{
     Returned, add_kernel_to_linker, blessed_engine, call_export, classify, exhausted,
@@ -48,13 +48,12 @@ impl Blessed {
         );
     }
 
-    /// Build the package crate and take what it produced.
-    pub fn build(&mut self, package: &Package) -> PackageHash {
-        let component = compile(&package.crate_dir)
+    /// Build the package crate and take what it produced, under the
+    /// address the chain publishes it at.
+    pub fn build(&mut self, package: PackageHash, at: &Package) {
+        let component = compile(&at.crate_dir)
             .unwrap_or_else(|error| panic!("the package crate did not build: {error}"));
-        let hash = package_hash(&TestHasher, &component);
-        self.seed(hash, &component);
-        hash
+        self.seed(package, &component);
     }
 }
 

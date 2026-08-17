@@ -15,6 +15,13 @@ use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, Typ
 #[path = "../../../guests/account/src/lib.rs"]
 mod package;
 
+/// The package's own bodies, dispatched natively.
+///
+/// The same module the declaration is traced from, so a test running
+/// this is running the code the artifact was built from rather than a
+/// stand-in for it.
+pub use package::account::invoke;
+
 /// The fungible account.
 ///
 /// `withdraw(resource, amount)`: reserve `amount` on the caller's vault

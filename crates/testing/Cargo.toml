@@ -14,11 +14,19 @@ hyperscale-vm-manifest-builder.workspace = true
 # vault, so the package is part of the world rather than part of a test.
 hyperscale-vm-stdlib.workspace = true
 
-# The blessed engine, and the guest build that feeds it: a package crate
-# under test is compiled to the artifact a network would run, and run.
-hyperscale-vm-cli.workspace = true
-hyperscale-vm-runtime.workspace = true
-wasmtime.workspace = true
+# The blessed engine, and the guest build that feeds it. Behind a
+# feature because it is the heavy half — wasmtime, and a wasm build of
+# the crate under test — and the lane it buys answers a different
+# question: whether the artifact is admissible, rather than whether the
+# contract is right.
+hyperscale-vm-cli = { workspace = true, optional = true }
+hyperscale-vm-runtime = { workspace = true, optional = true }
+wasmtime = { workspace = true, optional = true }
+
+[features]
+# Native by default: what an author runs while writing a contract.
+default = []
+wasm = ["dep:hyperscale-vm-cli", "dep:hyperscale-vm-runtime", "dep:wasmtime"]
 
 [dev-dependencies]
 hyperscale-vm-fixtures.workspace = true

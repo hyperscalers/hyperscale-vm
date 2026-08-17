@@ -15,11 +15,24 @@
 //!
 //! # Which engine ran it
 //!
-//! Nothing in a test says but the constructor. [`Chain::wasm`] builds the
-//! package crate and runs the artifact under the blessed engine, which is
-//! what a network would execute. Everything after that line is engine-
-//! neutral on purpose: a test written once is a test more than one engine
-//! can be held to.
+//! Nothing in a test says but the constructor. [`Chain::native`] calls
+//! the package's own bodies; `Chain::wasm` — behind the `wasm` feature —
+//! builds the crate to its artifact and runs that under the blessed
+//! engine, which is what a network would execute. Everything after that
+//! line is engine-neutral on purpose: a test written once is a test more
+//! than one engine can be held to, and the harness holds them to each
+//! other.
+//!
+//! # What the fast lane does not answer
+//!
+//! Fuel, the canonical ABI's copy accounting, the deploy-time profile
+//! and the totality scan are all the artifact's, and the native lane has
+//! none of them. It also runs under the test profile's arithmetic rather
+//! than the artifact's: a package is built in release, where an overflow
+//! wraps, and `cargo test` builds in debug, where it panics. That is the
+//! stricter reading of the two and the useful one — a body that wraps is
+//! a body whose author wanted `checked_add` — but it is a difference,
+//! and it is why a package that matters runs both lanes.
 
 use std::sync::Arc;
 
@@ -27,18 +40,23 @@ use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 pub use hyperscale_vm_effects::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
-    PrefixShardResolver, SubstateKey, TestHasher, Value, admit, child_key, route,
+    PrefixShardResolver, SubstateKey, TestHasher, Value, admit, child_key, encode_metadata,
+    package_hash, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, ExecutionMode, Locality, ManifestWalk, MemoryStore, Outcome as KernelOutcome, TxHash,
     WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, account_package_hash};
+#[cfg(feature = "wasm")]
+use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
+use hyperscale_vm_stdlib::account_package_hash;
 
 mod config;
+mod native;
 mod outcome;
 mod package;
+#[cfg(feature = "wasm")]
 mod wasm;
 
 pub use config::{Config, Slot};
@@ -66,7 +84,7 @@ pub struct Chain {
     store: MemoryStore,
     cache: MetadataCache,
     instances: InstanceRegistry,
-    engine: wasm::Blessed,
+    engine: Engine,
     clock_ms: u64,
     /// Distinguishes one transaction's hash from the next, so a chain
     /// running the same call twice is running two transactions.
@@ -76,28 +94,63 @@ pub struct Chain {
     created: u64,
 }
 
+/// Whatever runs a package's code, behind the walk.
+enum Engine {
+    /// The artifact a network would run, under the blessed engine.
+    #[cfg(feature = "wasm")]
+    Blessed(wasm::Blessed),
+    /// The bodies themselves, called directly.
+    Native(native::Native),
+}
+
 impl Chain {
-    /// A chain whose packages are built to artifacts and executed under
-    /// the blessed engine.
+    /// A chain that runs the packages' own bodies, with no engine under
+    /// them.
     ///
-    /// The account is published already: value has to come from
-    /// somewhere, and every principal address is answered by that
-    /// package.
+    /// The fast lane, and the default: a call is a call, a failure has a
+    /// backtrace, and nothing is compiled to wasm to get there.
+    #[must_use]
+    pub fn native() -> Self {
+        let mut native = native::Native::default();
+        native.seed(account_package_hash(&TestHasher), account::invoke);
+        Self::new(Engine::Native(native))
+    }
+
+    /// A chain that builds each package to its artifact and runs it
+    /// under the blessed engine.
+    ///
+    /// The slow lane, and the faithful one: fuel, the canonical ABI and
+    /// the deploy-time profile all stand here, and a test that passes on
+    /// both has been held to what a network would do as well as to what
+    /// its author meant.
+    #[cfg(feature = "wasm")]
     #[must_use]
     pub fn wasm() -> Self {
+        let mut blessed = wasm::Blessed::new();
+        blessed.seed(account_package_hash(&TestHasher), ACCOUNT_COMPONENT);
+        Self::new(Engine::Blessed(blessed))
+    }
+
+    /// A chain with the account published, whichever engine runs it.
+    ///
+    /// Value has to come from somewhere, and every principal address is
+    /// answered by that package.
+    fn new(engine: Engine) -> Self {
         let mut chain = Self {
             store: MemoryStore::new(),
             cache: MetadataCache::new(),
             instances: InstanceRegistry::new(),
-            engine: wasm::Blessed::new(),
+            engine,
             clock_ms: CLOCK_MS,
             sequence: 0,
             created: 0,
         };
-        let package = account_package_hash(&TestHasher);
-        chain.cache.publish(package, account::metadata());
-        chain.instances.serve_principals(package);
-        chain.engine.seed(package, ACCOUNT_COMPONENT);
+        chain
+            .cache
+            .publish(account_package_hash(&TestHasher), account::metadata());
+        chain
+            .instances
+            .serve_principals(account_package_hash(&TestHasher));
         chain
     }
 
@@ -108,7 +161,14 @@ impl Chain {
         self
     }
 
-    /// Build a package and publish it, at its code's content address.
+    /// Publish a package, at the address its declaration derives.
+    ///
+    /// The declaration rather than the code, because the address has to
+    /// be the same in both lanes: an instance's address folds the
+    /// package's in, so a chain that keyed one lane on an artifact and
+    /// the other on a module would put the same pool at two addresses
+    /// and make the receipts incomparable. Content-addressed either way
+    /// — two packages that declare differently publish differently.
     ///
     /// # Panics
     ///
@@ -116,7 +176,13 @@ impl Chain {
     /// clear the deploy-time profile — both of which are the author's
     /// answer rather than a test's.
     pub fn publish(&mut self, package: Package) -> PackageHash {
-        let hash = self.engine.build(&package);
+        let declaration = encode_metadata(&package.metadata).expect("a traced declaration encodes");
+        let hash = package_hash(&TestHasher, &declaration);
+        match &mut self.engine {
+            #[cfg(feature = "wasm")]
+            Engine::Blessed(blessed) => blessed.build(hash, &package),
+            Engine::Native(native) => native.seed(hash, package.dispatch),
+        }
         self.cache.publish(hash, package.metadata);
         hash
     }
@@ -228,16 +294,27 @@ impl Chain {
             BatchTx::new(tx, declaration, self.clock_ms, RANDOMNESS).with_calls(routing.calls);
 
         let before = self.store.clone();
-        let outcome = execute_batch(
-            Arc::new(before.clone()),
-            std::slice::from_ref(&entry),
-            &ManifestWalk {
-                backend: &self.engine,
-            },
-            hash,
-            ExecutionMode::Serial,
-            &Locality::All,
-        )
+        let batch = std::slice::from_ref(&entry);
+        let base = Arc::new(before.clone());
+        let outcome = match &self.engine {
+            #[cfg(feature = "wasm")]
+            Engine::Blessed(backend) => execute_batch(
+                base,
+                batch,
+                &ManifestWalk { backend },
+                hash,
+                ExecutionMode::Serial,
+                &Locality::All,
+            ),
+            Engine::Native(backend) => execute_batch(
+                base,
+                batch,
+                &ManifestWalk { backend },
+                hash,
+                ExecutionMode::Serial,
+                &Locality::All,
+            ),
+        }
         .expect("the batch is well formed");
 
         self.store = outcome.store.collapse_onto(before);

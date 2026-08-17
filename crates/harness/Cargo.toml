@@ -20,6 +20,7 @@ arbitrary.workspace = true
 hyperscale-vm-fixtures.workspace = true
 hyperscale-vm-manifest-builder.workspace = true
 hyperscale-vm-stdlib.workspace = true
+hyperscale-vm-testing = { workspace = true, features = ["wasm"] }
 wasm-smith.workspace = true
 wat.workspace = true
 
