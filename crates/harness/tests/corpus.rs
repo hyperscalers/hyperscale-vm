@@ -22,7 +22,7 @@ use hyperscale_vm_effects::{
     child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
     resource_address, route,
 };
-use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry};
+use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_kernel::{
     AbortReason, BatchTx, EnvInputs, Event, GuestBackend, GuestCall, GuestRunner, InvokeResult,
@@ -114,6 +114,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     cache.publish(pkg("registry"), registry::metadata());
     cache.publish(pkg("nf"), nf::metadata());
     cache.publish(pkg("lottery"), lottery::metadata());
+    cache.publish(pkg("shares"), shares::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, pool_meta());
@@ -125,6 +126,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     instances.create(&TestHasher, gated_meta(nf_resource().address(), 9));
     instances.create(&TestHasher, gated_meta(RES_X.address(), 10));
     instances.create(&TestHasher, lottery_meta());
+    instances.create(&TestHasher, shares_meta());
     (cache, instances)
 }
 
@@ -148,6 +150,25 @@ fn pool_meta() -> InstanceMeta {
 /// The pool instance, at the address its record derives.
 fn pool() -> ComponentAddr {
     pool_meta().address(&TestHasher)
+}
+
+/// The share vault, over the asset it prices shares against.
+fn shares_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("shares"),
+        config: vec![Value::Address(RES_X.address())],
+        salt: Hash32([11; 32]),
+    }
+}
+
+/// The share vault instance.
+fn shares_vault() -> ComponentAddr {
+    shares_meta().address(&TestHasher)
+}
+
+/// The share the vault issues against deposits.
+fn shares_unit() -> ResourceAddr {
+    resource_address(&TestHasher, shares_vault().address(), &[])
 }
 
 fn book_meta() -> InstanceMeta {
@@ -258,6 +279,7 @@ const PACKAGES: &[(&str, &str)] = &[
     ("registry", "registry"),
     ("nf", "nf"),
     ("lottery", "lottery"),
+    ("shares", "shares"),
     ("mirror", "account"),
 ];
 
@@ -276,7 +298,9 @@ impl Engines {
         let engine = blessed_engine()?;
         let mut blessed = BTreeMap::new();
         let mut reference = BTreeMap::new();
-        for name in ["account", "amm", "book", "registry", "nf", "lottery"] {
+        for name in [
+            "account", "amm", "book", "registry", "nf", "lottery", "shares",
+        ] {
             let bytes = build_guest(name)?;
             validate_component(&bytes).with_context(|| format!("profile validation of {name}"))?;
             blessed.insert(name, Component::new(&engine, &bytes)?);
@@ -2616,5 +2640,109 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
         Some(settled),
         "the round settles on the draw and the entrant it selects"
     );
+    Ok(())
+}
+
+/// The share vault seeded so that neither direction divides evenly.
+///
+/// A thousand assets against seven hundred and seventy-seven shares. The
+/// ratio is what makes the test worth running: every step truncates, and
+/// which way it truncates is the whole of what the four entry points are
+/// for.
+fn shares_store() -> MemoryStore {
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(1_000).to_vec())
+        .unwrap();
+    store
+        .write(vault(shares_vault(), RES_X), encode_amount(1_000).to_vec())
+        .unwrap();
+    store
+        .write(supply_leaf(shares_vault()), encode_amount(777).to_vec())
+        .unwrap();
+    store
+        .write(
+            config_leaf(shares_vault()),
+            shares_meta().config_bytes().unwrap(),
+        )
+        .unwrap();
+    store.lock(config_leaf(shares_vault()));
+    store.clear_log();
+    store
+}
+
+/// The vault's circulating-supply leaf.
+fn supply_leaf(owner: impl Into<Address>) -> SubstateKey {
+    child_key(&TestHasher, owner, RoleId(17), &[])
+}
+
+/// A deposit and a redemption of what it bought, on both runtimes, over a
+/// ratio that truncates in both directions.
+///
+/// Here rather than in the guest's own crate because of what it computes.
+/// Every step is a rounding decision over the widest arithmetic the
+/// vocabulary has, and a subunit's disagreement between two engines is a
+/// fork no test running one of them can see. The arithmetic is computed
+/// here rather than read off the body, and `run_both` is what asserts the
+/// two engines reached it.
+///
+/// The invariant underneath is that assets per share never falls: a
+/// depositor who immediately redeems gets back less than they put in, and
+/// the difference stayed with the pool rather than going anywhere.
+#[test]
+fn the_share_vault_rounds_toward_the_pool_on_both_runtimes() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+
+    // 100 assets into 1000 assets against 777 shares mints
+    // floor(100 * 777 / 1000) = 77 shares, not 77.7.
+    let deposit = graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, RES_X, 100)?;
+        let units = shares::deposit(b, shares_vault(), funds)?;
+        account::deposit(b, ALICE, units)
+    });
+    let (results, store) = run_both(
+        &engines,
+        &world,
+        &shares_store(),
+        &[(&deposit, TxHash(Hash32([0x40; 32])))],
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("the deposit must complete: {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.supply.minted(shares_unit().address()),
+        77,
+        "the shares are minted rather than moved, so supply says so"
+    );
+
+    // Redeeming all 77 against 1100 assets and 854 shares returns
+    // floor(77 * 1100 / 854) = 99 assets, not 99.18 — so the depositor
+    // is one subunit down and the pool is one subunit up.
+    let redeem = graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let units = account::withdraw(b, alice, shares_unit(), 77)?;
+        let assets = shares::redeem(b, shares_vault(), units)?;
+        account::deposit(b, ALICE, assets)
+    });
+    let (results, mut end) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[(&redeem, TxHash(Hash32([0x41; 32])))],
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("the redemption must complete: {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.supply.burned(shares_unit().address()),
+        77,
+        "the shares are destroyed rather than parked"
+    );
+
+    assert_eq!(amount_of(&mut end, vault(ALICE, RES_X)), 999);
+    assert_eq!(amount_of(&mut end, vault(shares_vault(), RES_X)), 1_001);
+    assert_eq!(amount_of(&mut end, vault(ALICE, shares_unit())), 0);
     Ok(())
 }

@@ -49,9 +49,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod shares {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Locked, Quantity, Rounding, Vault, burn, mint,
-    };
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Locked, Quantity, Rounding, Vault, burn, mint};
 
     /// What the vault is denominated in.
     struct Settings {
@@ -87,7 +85,6 @@ pub mod shares {
         /// Down: the pool keeps the subunit, so assets per share does not
         /// fall.
         pub fn deposit(&mut self, funds: Bucket) -> Result<Bucket, Error> {
-            let settings = self.config.locked();
             let mut vault = self.assets.vault();
             let assets = vault.balance();
             let supply = self.supply.get();
@@ -96,13 +93,14 @@ pub mod shares {
 
             // An unfunded pool prices a share at par, which is the only
             // rate that does not divide by nothing.
-            let mut minted = paid;
-            if !supply.is_zero() && !assets.is_zero() {
+            let minted = if supply.is_zero() || assets.is_zero() {
+                paid
+            } else {
                 let Ok(per_asset) = supply.ratio_to(assets) else {
                     return Err(Error::EmptyVault);
                 };
-                minted = paid.scale(per_asset, Rounding::Down);
-            }
+                paid.scale(per_asset, Rounding::Down)
+            };
             self.supply.set(supply + minted);
             Ok(mint(b"", minted))
         }
@@ -111,19 +109,23 @@ pub mod shares {
         ///
         /// Up: the pool charges the subunit rather than absorbing it, so
         /// again assets per share does not fall. The change comes back.
-        pub fn mint(&mut self, want: Quantity, mut funds: Bucket) -> Result<(Bucket, Bucket), Error> {
-            let settings = self.config.locked();
+        pub fn mint(
+            &mut self,
+            want: Quantity,
+            mut funds: Bucket,
+        ) -> Result<(Bucket, Bucket), Error> {
             let mut vault = self.assets.vault();
             let assets = vault.balance();
             let supply = self.supply.get();
 
-            let mut needed = want;
-            if !supply.is_zero() && !assets.is_zero() {
+            let needed = if supply.is_zero() || assets.is_zero() {
+                want
+            } else {
                 let Ok(per_share) = assets.ratio_to(supply) else {
                     return Err(Error::EmptyVault);
                 };
-                needed = want.scale(per_share, Rounding::Up);
-            }
+                want.scale(per_share, Rounding::Up)
+            };
 
             let Some(spare) = funds.quantity().try_sub(needed) else {
                 return Err(Error::Insufficient);
@@ -145,7 +147,6 @@ pub mod shares {
             want: Quantity,
             mut units: Bucket,
         ) -> Result<(Bucket, Bucket), Error> {
-            let settings = self.config.locked();
             let mut vault = self.assets.vault();
             let assets = vault.balance();
             let supply = self.supply.get();
@@ -168,7 +169,6 @@ pub mod shares {
         ///
         /// Down: the pool keeps the subunit.
         pub fn redeem(&mut self, units: Bucket) -> Result<Bucket, Error> {
-            let settings = self.config.locked();
             let mut vault = self.assets.vault();
             let assets = vault.balance();
             let supply = self.supply.get();

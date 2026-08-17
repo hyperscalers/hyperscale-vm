@@ -26,6 +26,7 @@ pub mod book;
 pub mod lottery;
 pub mod nf;
 pub mod registry;
+pub mod shares;
 pub mod splitter;
 
 use std::sync::LazyLock;
