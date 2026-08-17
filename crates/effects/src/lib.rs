@@ -10,9 +10,7 @@
 //! nothing else.
 //!
 //! [`route`] folds signature evaluation over a manifest's nodes and returns
-//! the transaction's routing: per-shard effect sets, the
-//! obligations, and the static call graph, whose acyclicity makes the
-//! transitive effect fold a DAG fold.
+//! the transaction's routing: per-shard effect sets and the obligations.
 //!
 //! The crate is isolated: protocol hashing binds through the [`Hasher`]
 //! seam, shard topology through [`ShardResolver`], and nothing here touches
@@ -71,7 +69,7 @@ pub use hyperscale_vm_types::{
 pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, cell_ids, ids_cell};
 pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
-    AbiError, AbiParam, Accessibility, CallSite, DeclarationError, InstanceMeta, InstanceRegistry,
+    AbiError, AbiParam, Accessibility, DeclarationError, InstanceMeta, InstanceRegistry,
     MetadataBoundsError, MetadataCache, MethodSignature, PACKAGE_ROLE, PackageHash,
     PackageMetadata, ParamType, Totality, check_abi, check_declarations, check_metadata,
     package_hash, package_key,
@@ -81,9 +79,8 @@ pub use resource::{
     resource_record_key,
 };
 pub use route::{
-    CallEdge, CallGraph, FrameDeclaration, MAX_CALL_EVALUATIONS, MAX_MANIFEST_NODES,
-    MAX_STAGED_DEPTH, MethodRef, PrefixShardResolver, Role, RouteError, Routing, ShardResolver,
-    Strategy, route,
+    FrameDeclaration, MAX_MANIFEST_NODES, MAX_STAGED_DEPTH, MethodRef, PrefixShardResolver, Role,
+    RouteError, Routing, ShardResolver, Strategy, route,
 };
 pub use rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule};
 pub use types::{

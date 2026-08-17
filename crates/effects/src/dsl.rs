@@ -362,10 +362,9 @@ pub struct EvalInputs<'a> {
     pub config: &'a [Value],
     /// The invoking manifest node's index; namespaces fresh IDs.
     pub node_index: u32,
-    /// This frame's preorder position in the invoking node's transitive
-    /// call tree; the node's own frame is zero. Namespaces fresh IDs per
-    /// frame, so independently authored caller and callee slots never
-    /// collide.
+    /// The frame's position under its node. A node evaluates one frame,
+    /// so this is zero; it stays in the fresh-ID preimage because that
+    /// derivation is what an object's address commits to.
     pub frame: u32,
     /// The transaction's identity — the signed graph's hash; the one root
     /// of every fresh-ID derivation.

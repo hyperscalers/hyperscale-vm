@@ -61,7 +61,6 @@ pub fn metadata() -> PackageMetadata {
                 }),
                 mode: ModeExpr::Write,
             }],
-            calls: vec![],
         },
     );
     methods.methods.insert(
@@ -97,7 +96,6 @@ pub fn metadata() -> PackageMetadata {
                 target: holdings_range(Expr::Arg(0), NF_MOVE_CAP),
                 mode: ModeExpr::Write,
             }],
-            ..MethodSignature::default()
         },
     );
     methods.methods.insert(

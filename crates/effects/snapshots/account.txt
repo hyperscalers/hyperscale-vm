@@ -22,7 +22,6 @@ PackageMetadata {
                 },
             ],
             abi: [],
-            calls: [],
         },
         "cancel": MethodSignature {
             accessibility: RoleGated(
@@ -52,7 +51,6 @@ PackageMetadata {
                     0,
                 ),
             ],
-            calls: [],
         },
         "confirm": MethodSignature {
             accessibility: RoleGated(
@@ -82,7 +80,6 @@ PackageMetadata {
                     0,
                 ),
             ],
-            calls: [],
         },
         "deposit": MethodSignature {
             accessibility: Public,
@@ -139,7 +136,6 @@ PackageMetadata {
                     0,
                 ),
             ],
-            calls: [],
         },
         "deposit-nf": MethodSignature {
             accessibility: Public,
@@ -187,7 +183,6 @@ PackageMetadata {
                     0,
                 ),
             ],
-            calls: [],
         },
         "present-badge": MethodSignature {
             accessibility: Custodial,
@@ -258,7 +253,6 @@ PackageMetadata {
                 },
             ],
             abi: [],
-            calls: [],
         },
         "propose": MethodSignature {
             accessibility: RoleGated(
@@ -301,7 +295,6 @@ PackageMetadata {
                     ),
                 ),
             ],
-            calls: [],
         },
         "securify": MethodSignature {
             accessibility: Guarded(
@@ -344,7 +337,6 @@ PackageMetadata {
                     ),
                 ),
             ],
-            calls: [],
         },
         "withdraw": MethodSignature {
             accessibility: Guarded(
@@ -389,7 +381,6 @@ PackageMetadata {
                     0,
                 ),
             ],
-            calls: [],
         },
         "withdraw-nf": MethodSignature {
             accessibility: Guarded(
@@ -449,7 +440,6 @@ PackageMetadata {
                     ),
                 ),
             ],
-            calls: [],
         },
     },
     events: [

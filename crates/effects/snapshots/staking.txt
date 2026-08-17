@@ -67,7 +67,6 @@ PackageMetadata {
                     ),
                 ),
             ],
-            calls: [],
         },
         "clear-param-vote": MethodSignature {
             accessibility: Guarded(
@@ -117,7 +116,6 @@ PackageMetadata {
                     0,
                 ),
             ],
-            calls: [],
         },
         "deactivate-validator": MethodSignature {
             accessibility: Guarded(
@@ -178,7 +176,6 @@ PackageMetadata {
                     ),
                 ),
             ],
-            calls: [],
         },
         "register-validator": MethodSignature {
             accessibility: Guarded(
@@ -251,7 +248,6 @@ PackageMetadata {
                     ),
                 ),
             ],
-            calls: [],
         },
         "stake": MethodSignature {
             accessibility: Public,
@@ -295,7 +291,6 @@ PackageMetadata {
                 ),
                 Issuer,
             ],
-            calls: [],
         },
         "unjail": MethodSignature {
             accessibility: Guarded(
@@ -356,7 +351,6 @@ PackageMetadata {
                     ),
                 ),
             ],
-            calls: [],
         },
         "unstake": MethodSignature {
             accessibility: Public,
@@ -393,7 +387,6 @@ PackageMetadata {
                     0,
                 ),
             ],
-            calls: [],
         },
     },
     events: [

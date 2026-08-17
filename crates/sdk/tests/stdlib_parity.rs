@@ -226,7 +226,6 @@ fn assert_parity(traced: &Blueprint, authored: &PackageMetadata, package: &str) 
         assert_eq!(got.params, signature.params, "{package}::{name} params");
         assert_eq!(got.outputs, signature.outputs, "{package}::{name} outputs");
         assert_eq!(got.effects, signature.effects, "{package}::{name} effects");
-        assert_eq!(got.calls, signature.calls, "{package}::{name} calls");
     }
     assert_eq!(
         traced.methods.keys().collect::<Vec<_>>(),

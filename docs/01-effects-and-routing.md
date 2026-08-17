@@ -4,7 +4,7 @@ Every callable method carries an **effect signature**: a total function from `(c
 
 Signature inputs are manifest arguments, bound yield parameters ([02-manifests-and-intents.md](02-manifests-and-intents.md) §3), and the target instance's immutable creation-fixed configuration. Argument constraints extend past structural typing: a reference argument can require its target's package and blueprint, checked at admission.
 
-A signature is derived from the method body rather than written beside it (§9). Nothing checks that the derived declaration over-approximates the body, and nothing needs to: a method that under-declares does not get an unchecked access, it gets a handle that was never materialized. A wrong declaration therefore costs its author a trap and costs no one else safety, which is what makes a derived declaration acceptable inside a content-addressed package at all. Residual looseness is a contention and fee cost, never a correctness event. Signatures are fixed at publish and immutable with their package ([06-stdlib-and-upgrades.md](06-stdlib-and-upgrades.md)), so the global metadata cache is content-addressed and never invalidates. A method's *transitive* effect set is the fold of its callees' signatures over the static call graph, which is checked acyclic at admission — composition is a DAG fold, not a fixpoint.
+A signature is derived from the method body rather than written beside it (§9). Nothing checks that the derived declaration over-approximates the body, and nothing needs to: a method that under-declares does not get an unchecked access, it gets a handle that was never materialized. A wrong declaration therefore costs its author a trap and costs no one else safety, which is what makes a derived declaration acceptable inside a content-addressed package at all. Residual looseness is a contention and fee cost, never a correctness event. Signatures are fixed at publish and immutable with their package ([06-stdlib-and-upgrades.md](06-stdlib-and-upgrades.md)), so the global metadata cache is content-addressed and never invalidates. A signature answers for its own method and nothing further: a frame may declare only under its own instance's prefix, so state that is not a package's to declare is reached by naming its owner's method in the manifest, as a node of its own.
 
 ## 1. Total static access
 
@@ -76,7 +76,7 @@ One pure function, evaluable by any node — validator, RPC, wallet, gossip rela
 ```
 route(tx, metadata_cache) -> { participating shards,
                                per-shard (key, mode) sets,
-                               static call graph }
+                               per-node declared frames }
 ```
 
 Consumed at gossip admission, mempool analysis, proposal selection, provision-set assembly, and fee estimation. Shard resolution (prefix → live shard) comes from the host's topology state, never from a peer. A wrong `route` output is impossible while metadata is immutable (INV-VM-2); a *loose* one costs the sender fees.

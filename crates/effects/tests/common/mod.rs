@@ -4,11 +4,10 @@
 
 pub use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    Address, CallSite, Clause, ComponentAddr, Effect, EffectSet, Expr, Hash32, Hasher,
-    InstanceMeta, InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr,
-    PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, ResourceAddr,
-    RoleId, ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Totality, Value,
-    child_key,
+    Address, Clause, ComponentAddr, Effect, EffectSet, Expr, Hash32, Hasher, InstanceMeta,
+    InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr, PackageHash,
+    PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, ResourceAddr, RoleId, ShardId,
+    ShardResolver, SubstateKey, TargetExpr, TestHasher, Totality, Value, child_key,
 };
 pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
 pub use hyperscale_vm_fixtures::{amm, book, splitter};
@@ -173,26 +172,6 @@ pub fn wide_account_metadata() -> PackageMetadata {
             abi: Vec::new(),
             outputs: vec![Expr::Arg(0)],
             effects,
-            ..MethodSignature::default()
-        },
-    );
-    methods
-}
-
-/// A router package whose single method forwards to an argument-named
-/// account — the call-site shape the aggregator pattern uses.
-#[must_use]
-pub fn router_metadata() -> PackageMetadata {
-    let mut methods = PackageMetadata::default();
-    methods.methods.insert(
-        "forward".into(),
-        MethodSignature {
-            totality: Totality::Fallible,
-            calls: vec![CallSite {
-                target: Expr::Arg(0),
-                method: "deposit".into(),
-                args: vec![Expr::Arg(1)],
-            }],
             ..MethodSignature::default()
         },
     );

@@ -61,7 +61,7 @@ mod tests {
     use hyperscale_hbor::to_vec_with_depth;
     use hyperscale_vm_effects::vocabulary::VAULT;
     use hyperscale_vm_effects::{
-        Accessibility, Address, AddressClass, CallSite, Clause, EdgeContent, Expr, LocalKey,
+        Accessibility, Address, AddressClass, Clause, EdgeContent, Expr, LocalKey,
         MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_VALUE_DEPTH,
         METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType, RoleId, SubstateKey, TargetExpr,
         Totality, Value,
@@ -246,11 +246,6 @@ mod tests {
                     mode: ModeExpr::Read,
                 },
             ],
-            calls: vec![CallSite {
-                target: Expr::Config(1),
-                method: "deposit".into(),
-                args: vec![Expr::Arg(4), Expr::Literal(Value::U64(11))],
-            }],
         };
         let mut metadata = one_method(signature);
         metadata

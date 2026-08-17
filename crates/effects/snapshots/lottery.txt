@@ -50,7 +50,6 @@ PackageMetadata {
                     1,
                 ),
             ],
-            calls: [],
         },
         "enter": MethodSignature {
             accessibility: Public,
@@ -132,7 +131,6 @@ PackageMetadata {
                     1,
                 ),
             ],
-            calls: [],
         },
     },
     events: [

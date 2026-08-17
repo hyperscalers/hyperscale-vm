@@ -1,5 +1,5 @@
-//! The routing fold: from a manifest to per-shard effect sets, the
-//! proof obligations, and the static call graph.
+//! The routing fold: from a manifest to per-shard effect sets and proof
+//! obligations.
 //!
 //! Routing is a pure function of the manifest and content-addressed
 //! metadata, evaluable by any node — validator, RPC, wallet, relay — with
@@ -16,8 +16,8 @@ use crate::hash::Hasher;
 use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, ids_cell};
 use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{
-    AbiError, AbiParam, Accessibility, CallSite, InstanceMeta, InstanceRegistry, MetadataCache,
-    MethodSignature, PackageHash, Totality, check_abi,
+    AbiError, AbiParam, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature,
+    PackageHash, Totality, check_abi,
 };
 use crate::types::{
     Address, CallTarget, EdgeContent, Effect, EffectSet, MAX_IDS_PER_EDGE, ShardId, Value,
@@ -59,33 +59,13 @@ impl ShardResolver for PrefixShardResolver {
     }
 }
 
-/// A method on an instance — a static call graph vertex.
+/// A method on an instance: what a frame evaluated.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MethodRef {
     /// The instance the method runs on.
     pub instance: Address,
     /// The method name.
     pub method: String,
-}
-
-/// One static call edge.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct CallEdge {
-    /// The calling method.
-    pub caller: MethodRef,
-    /// The called method.
-    pub callee: MethodRef,
-}
-
-/// The transaction's static call graph: manifest-invoked roots plus every
-/// transitive call edge. Acyclic — a cycle is a routing error, so the
-/// transitive effect fold is a DAG fold.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CallGraph {
-    /// The methods the manifest invokes directly.
-    pub roots: BTreeSet<MethodRef>,
-    /// Every caller-to-callee edge reached from the roots.
-    pub edges: BTreeSet<CallEdge>,
 }
 
 /// A routed transaction: what admission, scheduling, provisioning, and fee
@@ -112,8 +92,6 @@ pub struct Routing {
     /// position its signature gives it however many subintents the envelope
     /// carries.
     pub kernel_effects: Vec<Effect>,
-    /// The static call graph.
-    pub call_graph: CallGraph,
     /// How many times the longest dependency chain changes shard. Zero
     /// exactly when the whole structure sits on one shard, which is what
     /// says there is nothing to decompose.
@@ -131,17 +109,13 @@ pub struct Routing {
 
 /// One frame's contribution to the transaction's declaration.
 ///
-/// A frame is one signature evaluation: a manifest node, or one of its
-/// transitive callees. Frames appear in [`Routing::frames`] in preorder —
-/// node index, then the node's own frame ordinal — which is the order the
-/// kernel materializes capabilities in.
+/// A frame is one manifest node's signature evaluation. Frames appear in
+/// [`Routing::frames`] in node order, which is the order the kernel
+/// materializes capabilities in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrameDeclaration {
     /// The invoking manifest node.
     pub node: u32,
-    /// The frame's preorder position in that node's call tree; the node's
-    /// own frame is zero.
-    pub frame: u32,
     /// The method this frame evaluated.
     pub method: MethodRef,
     /// This frame's effects in clause order — one entry per clause the
@@ -194,27 +168,6 @@ impl Routing {
 /// The bound on manifest nodes admission or routing will address.
 pub const MAX_MANIFEST_NODES: usize = 4096;
 
-/// The bound on call-site evaluations across one routing fold — a totality
-/// backstop against fan-out blowup in pathological metadata.
-///
-/// Every manifest node costs at least one evaluation, so the budget has to
-/// dominate [`MAX_MANIFEST_NODES`] or an admissible manifest could fail
-/// routing on arithmetic alone; the surplus is the transitive fan-out
-/// allowance the whole fold shares.
-pub const MAX_CALL_EVALUATIONS: usize = 16 * MAX_MANIFEST_NODES;
-
-const _: () = assert!(
-    MAX_CALL_EVALUATIONS > MAX_MANIFEST_NODES,
-    "a manifest at the node cap must be routable"
-);
-
-/// The bound on static call chain depth.
-///
-/// Separate from [`MAX_CALL_EVALUATIONS`] because the fold recurses per
-/// frame: depth is what native stack consumption follows, and no
-/// legitimate composition approaches it.
-pub const MAX_CALL_DEPTH: usize = 64;
-
 /// Why routing rejected a transaction. Deterministic: every node reaches
 /// the identical verdict.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -244,20 +197,9 @@ pub enum RouteError {
         /// The method requested.
         method: String,
     },
-    /// A cycle in the static call graph.
-    #[error("static call graph cycle at {package:?}::{method}")]
-    CyclicCalls {
-        /// The package whose method re-entered the fold.
-        package: PackageHash,
-        /// The re-entered method.
-        method: String,
-    },
-    /// The transitive fold exceeded [`MAX_CALL_EVALUATIONS`].
-    #[error("transitive signature fold exceeded {MAX_CALL_EVALUATIONS} call evaluations")]
-    CallBudgetExhausted,
-    /// A static call chain deeper than [`MAX_CALL_DEPTH`].
-    #[error("static call chain exceeds {MAX_CALL_DEPTH} frames")]
-    CallDepthExceeded,
+    /// The capability table outgrew the index a handle is named by.
+    #[error("the capability table exceeds the addressable handle space")]
+    TableOverflow,
     /// Folding reserve amounts across shards overflowed.
     #[error("declared reserve amounts overflow")]
     ReserveOverflow,
@@ -279,19 +221,6 @@ pub enum RouteError {
         clause: u32,
         /// The prefix it reached for.
         owner: Address,
-    },
-    /// A static call site naming a method that is not public.
-    ///
-    /// Authority does not propagate through a call: a callee frame holds
-    /// no proof and no signature, so a method requiring either — guarded,
-    /// authorizing, or role-gated — is unreachable from a call site,
-    /// however the caller itself was authorized.
-    #[error("node {node} reaches `{method}`, which needs evidence no call site holds")]
-    GatedCallSite {
-        /// The manifest node whose fold reached it.
-        node: u32,
-        /// The gated method reached.
-        method: String,
     },
     /// A handle binding naming a clause that did not evaluate to exactly
     /// one declared access.
@@ -353,9 +282,8 @@ pub enum RouteError {
     },
 }
 
-/// Route an admitted transaction: evaluate every node's transitive effect
-/// signature and fold the results into per-shard effect sets, the
-/// obligations, and the static call graph.
+/// Route an admitted transaction: evaluate every node's effect signature
+/// and fold the results into per-shard effect sets and the obligations.
 ///
 /// Admission and routing evaluate fresh derivations at one root — the
 /// signed form's hash, carried on the [`Admitted`] — so declared and routed
@@ -387,11 +315,7 @@ pub fn route(
         frames_log: Vec::new(),
         calls: Vec::new(),
         table_len: 0,
-        edges: BTreeSet::new(),
-        evaluations: 0,
-        frames: 0,
     };
-    let mut roots = BTreeSet::new();
     for (index, node) in manifest.nodes.iter().enumerate() {
         let node_index = u32::try_from(index).map_err(|_| RouteError::TooManyNodes)?;
         let mut args = Vec::with_capacity(node.inputs.len());
@@ -417,31 +341,11 @@ pub fn route(
                 }
             }
         }
-        roots.insert(MethodRef {
-            instance: node.target,
-            method: node.method.clone(),
-        });
-        let mut stack = Vec::new();
-        fold.frames = 0;
-        fold.call(
-            &Frame {
-                instance: node.target,
-                method: &node.method,
-                args: &args,
-                node_index,
-                node: Some(node),
-                caller: None,
-            },
-            &mut stack,
-        )?;
+        fold.frame(node_index, node, &args)?;
     }
 
-    let call_graph = CallGraph {
-        roots,
-        edges: fold.edges,
-    };
     let roles = classify_roles(manifest, cache, instances);
-    let (alternation_depth, staged_depth) = chain_depths(manifest, &call_graph, shards, &roles);
+    let (alternation_depth, staged_depth) = chain_depths(manifest, shards, &roles);
     let strategy = classify_strategy(manifest, &roles, alternation_depth, staged_depth);
 
     Ok(Routing {
@@ -449,7 +353,6 @@ pub fn route(
         frames: fold.frames_log,
         calls: fold.calls,
         kernel_effects: Vec::new(),
-        call_graph,
         alternation_depth,
         staged_depth,
         roles,
@@ -634,20 +537,6 @@ fn classify_strategy(
     Strategy::LegLocal
 }
 
-/// One vertex of the dependency graph [`chain_depths`] walks.
-///
-/// Manifest nodes stay distinct from the methods they invoke because two
-/// nodes can name the same instance and method — a vault withdrawn from
-/// twice — and collapsing them onto one vertex would turn the edge between
-/// them into a self-loop.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Vertex<'a> {
-    /// A manifest node, by index.
-    Node(u32),
-    /// A method reached through the static call graph.
-    Call(&'a MethodRef),
-}
-
 /// How far the longest dependency chain reaches, counted two ways.
 ///
 /// Returns `(crossings, stages)`. Both walk the same graph and differ
@@ -673,49 +562,18 @@ enum Vertex<'a> {
 /// edges run from lower node indices to higher, and the call graph is a
 /// DAG by construction — so the longest path settles rather than
 /// searches.
-fn chain_depths(
-    manifest: &Manifest,
-    call_graph: &CallGraph,
-    shards: &dyn ShardResolver,
-    roles: &[Role],
-) -> (u32, u32) {
-    let shard_of = |vertex: &Vertex<'_>| -> ShardId {
-        match vertex {
-            Vertex::Node(index) => shards.shard_of(manifest.nodes[*index as usize].target),
-            Vertex::Call(method) => shards.shard_of(method.instance),
-        }
-    };
+fn chain_depths(manifest: &Manifest, shards: &dyn ShardResolver, roles: &[Role]) -> (u32, u32) {
+    let shard_of = |node: u32| -> ShardId { shards.shard_of(manifest.nodes[node as usize].target) };
 
-    // Successors, built once: a node's consumers, a node's callees, and a
-    // callee's own callees.
-    let mut successors: BTreeMap<Vertex<'_>, BTreeSet<Vertex<'_>>> = BTreeMap::new();
+    // Successors, built once: a node's consumers.
+    let mut successors: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
     for (index, node) in manifest.nodes.iter().enumerate() {
         let consumer = u32::try_from(index).unwrap_or(u32::MAX);
         for input in &node.inputs {
             if let NodeInput::Edge { source, .. } = *input {
-                successors
-                    .entry(Vertex::Node(source))
-                    .or_default()
-                    .insert(Vertex::Node(consumer));
+                successors.entry(source).or_default().insert(consumer);
             }
         }
-        // The node's own frame is the root of its call tree, so every edge
-        // this node's method calls hangs off the node rather than off a
-        // shared method vertex.
-        for edge in &call_graph.edges {
-            if edge.caller.instance == node.target && edge.caller.method == node.method {
-                successors
-                    .entry(Vertex::Node(consumer))
-                    .or_default()
-                    .insert(Vertex::Call(&edge.callee));
-            }
-        }
-    }
-    for edge in &call_graph.edges {
-        successors
-            .entry(Vertex::Call(&edge.caller))
-            .or_default()
-            .insert(Vertex::Call(&edge.callee));
     }
 
     // A crossing whose destination is an outbound leg costs no stage:
@@ -723,50 +581,45 @@ fn chain_depths(
     // on and the chain ends there as far as latency is concerned. Every
     // other crossing is a stage, including one into a call the roles do
     // not describe, which is the conservative reading.
-    let waited_on = |vertex: &Vertex<'_>| -> bool {
-        match vertex {
-            Vertex::Node(index) => !matches!(roles.get(*index as usize), Some(Role::Outbound)),
-            Vertex::Call(_) => true,
-        }
-    };
+    let waited_on =
+        |node: u32| -> bool { !matches!(roles.get(node as usize), Some(Role::Outbound)) };
 
-    // Longest path, relaxed until it settles. Every vertex starts a chain
+    // Longest path, relaxed until it settles. Every node starts a chain
     // so each is seeded at zero; the manifest's producer-before-consumer
-    // rule and the call graph's acyclicity bound the settling at one
-    // round per vertex.
-    let mut crossings: BTreeMap<Vertex<'_>, u32> = BTreeMap::new();
-    let mut stages: BTreeMap<Vertex<'_>, u32> = BTreeMap::new();
-    for vertex in successors
+    // rule bounds the settling at one round per node.
+    let mut crossings: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut stages: BTreeMap<u32, u32> = BTreeMap::new();
+    for node in successors
         .keys()
-        .cloned()
-        .chain(successors.values().flatten().cloned())
+        .copied()
+        .chain(successors.values().flatten().copied())
     {
-        crossings.entry(vertex.clone()).or_insert(0);
-        stages.entry(vertex).or_insert(0);
+        crossings.entry(node).or_insert(0);
+        stages.entry(node).or_insert(0);
     }
     let mut settled = false;
     let mut rounds = 0;
     while !settled && rounds <= crossings.len() {
         settled = true;
         rounds += 1;
-        for (vertex, successor_set) in &successors {
+        for (node, successor_set) in &successors {
             let (crossed_here, staged_here) = (
-                crossings.get(vertex).copied().unwrap_or(0),
-                stages.get(vertex).copied().unwrap_or(0),
+                crossings.get(node).copied().unwrap_or(0),
+                stages.get(node).copied().unwrap_or(0),
             );
-            let from = shard_of(vertex);
+            let from = shard_of(*node);
             for successor in successor_set {
-                let crossed = shard_of(successor) != from;
+                let crossed = shard_of(*successor) != from;
                 for (map, here, step) in [
                     (&mut crossings, crossed_here, u32::from(crossed)),
                     (
                         &mut stages,
                         staged_here,
-                        u32::from(crossed && waited_on(successor)),
+                        u32::from(crossed && waited_on(*successor)),
                     ),
                 ] {
                     let candidate = here.saturating_add(step);
-                    let slot = map.entry(successor.clone()).or_insert(0);
+                    let slot = map.entry(*successor).or_insert(0);
                     if candidate > *slot {
                         *slot = candidate;
                         settled = false;
@@ -837,40 +690,11 @@ fn own_prefix_only(
     Ok(())
 }
 
-/// Refuse a static call site naming a method that takes evidence.
-///
-/// Authority does not propagate through a call: a callee frame presents
-/// nothing — its caller's proof was handed to the caller, not through it
-/// — so a guarded method is unreachable from one, and reaching for it is
-/// a refusal rather than a silent pass. An authorizing method is doubly
-/// so: what it mints is a proof admission judged, and admission never
-/// saw a callee frame.
-fn reachable_from_a_call_site(
-    is_callee: bool,
-    signature: &MethodSignature,
-    node_index: u32,
-    method: &str,
-) -> Result<(), RouteError> {
-    if is_callee && !matches!(signature.accessibility, Accessibility::Public) {
-        return Err(RouteError::GatedCallSite {
-            node: node_index,
-            method: method.to_owned(),
-        });
-    }
-    Ok(())
-}
-
 fn lower_call(
-    site: &Frame<'_>,
+    node_index: u32,
     signature: &MethodSignature,
     lowering: &Lowering<'_>,
 ) -> Result<NodeCall, RouteError> {
-    let Frame {
-        instance,
-        method,
-        node_index,
-        ..
-    } = *site;
     let Lowering {
         package,
         declaration,
@@ -879,6 +703,8 @@ fn lower_call(
         inputs,
         hasher,
     } = *lowering;
+    let instance = node.target;
+    let method = node.method.as_str();
     // The publish gate judges this first, from the artifact's bytes
     // alone. Judging it again here is what makes it hold for a package
     // that reached the cache without one — a genesis static, a
@@ -1069,36 +895,14 @@ struct Fold<'a> {
     // frame's clause spans are relative to, and therefore the base of
     // every handle position that frame's binding resolves to.
     table_len: u32,
-    edges: BTreeSet<CallEdge>,
-    evaluations: usize,
-    // The current node's frame ordinal: preorder over its call tree, reset
-    // per root node, the node's own frame being zero.
-    frames: u32,
-}
-
-/// One frame to evaluate: whose method, over what inputs, under which
-/// manifest node.
-struct Frame<'a> {
-    instance: Address,
-    method: &'a str,
-    args: &'a [Value],
-    node_index: u32,
-    /// Present only for a manifest node's own frame: a callee is invoked
-    /// by its caller's code, so there is no lowered invocation for the
-    /// walk to perform, and no evidence beyond what its caller was
-    /// handed — which is nothing.
-    node: Option<&'a Node>,
-    caller: Option<&'a MethodRef>,
 }
 
 impl Fold<'_> {
     /// The record serving `instance`, whose class the fold has to check
     /// itself.
     ///
-    /// A callee's address is evaluated from its caller's inputs and
-    /// configuration, so unlike a manifest node's target it arrives
-    /// unclassified. An address that answers no calls is an address no
-    /// record serves, which is the refusal it already had.
+    /// An address that answers no calls is an address no record serves,
+    /// which is the refusal it already had.
     fn record_of(
         instances: &InstanceRegistry,
         instance: Address,
@@ -1110,28 +914,9 @@ impl Fold<'_> {
             .ok_or(RouteError::UnknownInstance(instance))
     }
 
-    fn call(
-        &mut self,
-        site: &Frame<'_>,
-        stack: &mut Vec<(PackageHash, String)>,
-    ) -> Result<(), RouteError> {
-        let Frame {
-            instance,
-            method,
-            args,
-            node_index,
-            node,
-            caller,
-        } = *site;
-        self.evaluations += 1;
-        if self.evaluations > MAX_CALL_EVALUATIONS {
-            return Err(RouteError::CallBudgetExhausted);
-        }
-        if stack.len() >= MAX_CALL_DEPTH {
-            return Err(RouteError::CallDepthExceeded);
-        }
-        let frame = self.frames;
-        self.frames += 1;
+    fn frame(&mut self, node_index: u32, node: &Node, args: &[Value]) -> Result<(), RouteError> {
+        let instance = node.target;
+        let method = node.method.as_str();
         let meta = Self::record_of(self.instances, instance)?;
         let package = self
             .cache
@@ -1144,22 +929,13 @@ impl Fold<'_> {
                 package: meta.package,
                 method: method.to_owned(),
             })?;
-        reachable_from_a_call_site(node.is_none(), signature, node_index, method)?;
-        let vertex = (meta.package, method.to_owned());
-        if stack.contains(&vertex) {
-            return Err(RouteError::CyclicCalls {
-                package: meta.package,
-                method: method.to_owned(),
-            });
-        }
-        stack.push(vertex);
-
         let inputs = EvalInputs {
             self_addr: instance,
             args,
             config: &meta.config,
             node_index,
-            frame,
+            // A node evaluates one frame, which is the zeroth under it.
+            frame: 0,
             identity: self.identity,
         };
         let eval_context = |source| RouteError::Eval {
@@ -1173,25 +949,21 @@ impl Fold<'_> {
         // The frame's handles occupy the run of the table starting here,
         // so the offset has to be taken before the frame is logged.
         let offset = self.table_len;
-        if let Some(node) = node {
-            let lowering = Lowering {
-                package: meta.package,
-                declaration: &declaration,
-                offset,
-                node,
-                inputs: &inputs,
-                hasher: self.hasher,
-            };
-            self.calls.push(lower_call(site, signature, &lowering)?);
-        }
+        let lowering = Lowering {
+            package: meta.package,
+            declaration: &declaration,
+            offset,
+            node,
+            inputs: &inputs,
+            hasher: self.hasher,
+        };
+        self.calls
+            .push(lower_call(node_index, signature, &lowering)?);
         self.table_len = offset
             .checked_add(u32::try_from(declaration.ordered.len()).unwrap_or(u32::MAX))
-            .ok_or(RouteError::CallBudgetExhausted)?;
-        // Recorded before descending into callees, so the log is preorder
-        // — the order capability materialization walks.
+            .ok_or(RouteError::TableOverflow)?;
         self.frames_log.push(FrameDeclaration {
             node: node_index,
-            frame,
             method: MethodRef {
                 instance,
                 method: method.to_owned(),
@@ -1206,64 +978,6 @@ impl Fold<'_> {
                 .insert(effect)
                 .map_err(|_| RouteError::ReserveOverflow)?;
         }
-
-        let this_ref = MethodRef {
-            instance,
-            method: method.to_owned(),
-        };
-        if let Some(caller) = caller {
-            self.edges.insert(CallEdge {
-                caller: caller.clone(),
-                callee: this_ref.clone(),
-            });
-        }
-        self.descend(&signature.calls, &this_ref, &inputs, node_index, stack)?;
-
-        stack.pop();
-        Ok(())
-    }
-
-    /// Fold the frame's static call sites: each callee's target and
-    /// arguments evaluated over this frame's inputs, then recursed into.
-    fn descend(
-        &mut self,
-        sites: &[CallSite],
-        caller: &MethodRef,
-        inputs: &EvalInputs<'_>,
-        node_index: u32,
-        stack: &mut Vec<(PackageHash, String)>,
-    ) -> Result<(), RouteError> {
-        let eval_context = |source| RouteError::Eval {
-            node: node_index,
-            method: caller.method.clone(),
-            source,
-        };
-        for site in sites {
-            let target = evaluate_expr(&site.target, inputs, self.hasher)
-                .map_err(eval_context)
-                .and_then(|value| match value {
-                    Value::Address(addr) => Ok(addr),
-                    other => Err(eval_context(EvalError::TypeMismatch {
-                        expected: "address",
-                        found: other.kind(),
-                    })),
-                })?;
-            let mut call_args = Vec::with_capacity(site.args.len());
-            for expr in &site.args {
-                call_args.push(evaluate_expr(expr, inputs, self.hasher).map_err(eval_context)?);
-            }
-            self.call(
-                &Frame {
-                    instance: target,
-                    method: &site.method,
-                    args: &call_args,
-                    node_index,
-                    node: None,
-                    caller: Some(caller),
-                },
-                stack,
-            )?;
-        }
         Ok(())
     }
 }
@@ -1273,20 +987,19 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        AbiParam, Accessibility, Admitted, CallArg, CallEdge, EdgeBound, EdgeKind, MAX_CALL_DEPTH,
-        MAX_MANIFEST_NODES, MAX_STAGED_DEPTH, MethodRef, PrefixShardResolver, Role, RouteError,
-        ShardResolver, Strategy, classify_strategy, route,
+        AbiParam, Admitted, CallArg, EdgeBound, EdgeKind, MAX_MANIFEST_NODES, MAX_STAGED_DEPTH,
+        PrefixShardResolver, Role, RouteError, ShardResolver, Strategy, classify_strategy, route,
     };
-    use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, fresh_id};
+    use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::hash::{Hash32, Hasher, TestHasher};
     use crate::manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
     use crate::metadata::{
-        CallSite, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
+        InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
         PackageMetadata, ParamType, Totality,
     };
     use crate::types::{
         Address, AddressClass, ComponentAddr, EdgeContent, Effect, EffectSet, EffectTarget,
-        MAX_IDS_PER_EDGE, Mode, RoleId, ShardId, Value, child_key, collection_id,
+        MAX_IDS_PER_EDGE, Mode, RoleId, ShardId, Value, child_key,
     };
 
     fn pkg(name: &str) -> PackageHash {
@@ -1338,11 +1051,10 @@ mod tests {
         }
     }
 
-    fn method(effects: Vec<Clause>, calls: Vec<CallSite>) -> MethodSignature {
+    fn method(effects: Vec<Clause>) -> MethodSignature {
         MethodSignature {
             totality: Totality::Fallible,
             effects,
-            calls,
             ..MethodSignature::default()
         }
     }
@@ -1429,36 +1141,37 @@ mod tests {
         (cache, instances, manifest)
     }
 
-    /// A payer calling a payee: one manifest node, one transitive callee,
-    /// and the two instances landing on different shards.
+    /// A payer and a payee on different shards, joined by a value edge:
+    /// two manifest nodes, one crossing between them.
     fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
         let mut cache = MetadataCache::new();
         let mut sender_pkg = PackageMetadata::default();
         sender_pkg.methods.insert(
             "pay".into(),
-            method(
-                vec![self_point(RoleId(1), ModeExpr::Delta)],
-                vec![CallSite {
-                    target: Expr::Arg(0),
-                    method: "recv".into(),
-                    args: vec![Expr::Arg(1)],
-                }],
-            ),
+            MethodSignature {
+                totality: Totality::Fallible,
+                params: vec![ParamType::Address, ParamType::U128],
+                outputs: vec![Expr::Literal(Value::Address(addr(0xE1)))],
+                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                ..MethodSignature::default()
+            },
         );
         let mut receiver_pkg = PackageMetadata::default();
         receiver_pkg.methods.insert(
             "recv".into(),
-            method(
-                vec![Clause::Effect {
+            MethodSignature {
+                totality: Totality::Fallible,
+                params: vec![ParamType::Bucket],
+                effects: vec![Clause::Effect {
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
                         role: RoleId(2),
                         material: vec![],
                     }),
-                    mode: ModeExpr::Reserve(Expr::Arg(0)),
+                    mode: ModeExpr::Delta,
                 }],
-                vec![],
-            ),
+                ..MethodSignature::default()
+            },
         );
         cache.publish(pkg("payer"), sender_pkg);
         cache.publish(pkg("payee"), receiver_pkg);
@@ -1466,67 +1179,33 @@ mod tests {
         instances.create(&TestHasher, meta_of("payer"));
         instances.create(&TestHasher, meta_of("payee"));
         let manifest = Manifest {
-            nodes: vec![Node {
-                target: instance_of("payer").into(),
-                method: "pay".into(),
-                inputs: vec![
-                    NodeInput::Literal(Value::Address(instance_of("payee").into())),
-                    NodeInput::Literal(Value::U128(9)),
-                ],
-                evidence: Vec::new(),
-                authority: None,
-            }],
+            nodes: vec![
+                Node {
+                    target: instance_of("payer").into(),
+                    method: "pay".into(),
+                    inputs: vec![
+                        NodeInput::Literal(Value::Address(instance_of("payee").into())),
+                        NodeInput::Literal(Value::U128(9)),
+                    ],
+                    evidence: Vec::new(),
+                    authority: None,
+                },
+                Node {
+                    target: instance_of("payee").into(),
+                    method: "recv".into(),
+                    inputs: vec![NodeInput::Edge {
+                        source: 0,
+                        output: 0,
+                        resource: addr(0xE1),
+                        content: EdgeContent::Fungible,
+                        bounds: Bounds::default(),
+                    }],
+                    evidence: Vec::new(),
+                    authority: None,
+                },
+            ],
         };
         (cache, instances, manifest)
-    }
-
-    #[test]
-    fn transitive_fold_unions_effects_and_records_edges() {
-        let (cache, instances, manifest) = payer_payee_world();
-        let routing = route(
-            &admitted(&manifest),
-            &cache,
-            &instances,
-            &TestHasher,
-            &resolver(),
-        )
-        .unwrap();
-        // Asked of the resolver rather than restated: what a shard is
-        // called is its business, and the claim here is that the two
-        // instances land apart and keep their own effects.
-        let (sender, recipient) = (
-            resolver().shard_of(instance_of("payer").into()),
-            resolver().shard_of(instance_of("payee").into()),
-        );
-        assert_ne!(sender, recipient);
-        // `shards()` is ascending, so the claim is the participating set
-        // rather than the order two derived addresses happen to sort in.
-        let shards: BTreeSet<_> = routing.shards().collect();
-        assert_eq!(shards, BTreeSet::from([sender, recipient]));
-        assert!(routing.per_shard[&sender].contains(&Effect {
-            target: point(instance_of("payer"), RoleId(1)),
-            mode: Mode::Delta,
-        }));
-        assert!(routing.per_shard[&recipient].contains(&Effect {
-            target: point(instance_of("payee"), RoleId(2)),
-            mode: Mode::Reserve { amount: 9 },
-        }));
-        let pay_ref = MethodRef {
-            instance: instance_of("payer").into(),
-            method: "pay".into(),
-        };
-        let recv_ref = MethodRef {
-            instance: instance_of("payee").into(),
-            method: "recv".into(),
-        };
-        assert_eq!(routing.call_graph.roots, BTreeSet::from([pay_ref.clone()]));
-        assert_eq!(
-            routing.call_graph.edges,
-            BTreeSet::from([CallEdge {
-                caller: pay_ref,
-                callee: recv_ref,
-            }])
-        );
     }
 
     /// A call that stays on one shard crosses nothing, so a staged
@@ -1537,7 +1216,7 @@ mod tests {
         let mut solo = PackageMetadata::default();
         solo.methods.insert(
             "act".into(),
-            method(vec![self_point(RoleId(1), ModeExpr::Delta)], vec![]),
+            method(vec![self_point(RoleId(1), ModeExpr::Delta)]),
         );
         cache.publish(pkg("solo"), solo);
         let mut instances = InstanceRegistry::new();
@@ -1606,7 +1285,7 @@ mod tests {
         let mut consuming = PackageMetadata::default();
         consuming.methods.insert(
             "take".into(),
-            method(vec![self_point(RoleId(2), ModeExpr::Delta)], vec![]),
+            method(vec![self_point(RoleId(2), ModeExpr::Delta)]),
         );
         cache.publish(pkg("producer"), producing);
         cache.publish(pkg("consumer"), consuming);
@@ -1762,7 +1441,7 @@ mod tests {
         let mut solo = PackageMetadata::default();
         solo.methods.insert(
             "act".into(),
-            method(vec![self_point(RoleId(1), ModeExpr::Delta)], vec![]),
+            method(vec![self_point(RoleId(1), ModeExpr::Delta)]),
         );
         cache.publish(pkg("solo"), solo);
         let mut instances = InstanceRegistry::new();
@@ -1881,17 +1560,16 @@ mod tests {
         )
         .unwrap();
 
-        // Preorder: the caller's frame before the callee it reached. This
-        // is the order `KernelSession::materialize` builds its capability
-        // table in, so it is the order a generated guest's handle
-        // parameters are in.
+        // Node order: one frame each, which is the order
+        // `KernelSession::materialize` builds its capability table in, so
+        // it is the order a generated guest's handle parameters are in.
         assert_eq!(
             routing
                 .frames
                 .iter()
-                .map(|frame| (frame.node, frame.frame, frame.method.method.clone()))
+                .map(|frame| (frame.node, frame.method.method.clone()))
                 .collect::<Vec<_>>(),
-            vec![(0, 0, "pay".to_owned()), (0, 1, "recv".to_owned())],
+            vec![(0, "pay".to_owned()), (1, "recv".to_owned())],
         );
 
         // The transaction-wide declaration reaches every effect routing
@@ -1915,264 +1593,11 @@ mod tests {
                 },
                 Effect {
                     target: point(instance_of("payee"), RoleId(2)),
-                    mode: Mode::Reserve { amount: 9 },
+                    mode: Mode::Delta,
                 },
             ],
-            "the caller's clause first, then its callee's"
+            "each node's clauses in node order"
         );
-    }
-
-    #[test]
-    fn caller_and_callee_fresh_slots_never_collide() {
-        // One package's slot 0 and its callee's slot 0 are authored
-        // independently; the frame ordinal keeps their fresh IDs apart.
-        // Each frame writes into its own collection, because that is the
-        // only prefix a frame may declare against — so what the two
-        // entries share is the slot, which is the whole question.
-        let fresh_entry = || Clause::Effect {
-            target: TargetExpr::Entry {
-                owner: Expr::SelfAddr,
-                collection: RoleId(6),
-                material: vec![],
-                order: Expr::Pack {
-                    hi: Box::new(Expr::Literal(Value::U64(0))),
-                    lo: Box::new(Expr::FreshId { slot: 0 }),
-                },
-            },
-            mode: ModeExpr::Write,
-        };
-        let mut cache = MetadataCache::new();
-        // An address is a function of the record, so a package can name
-        // an instance created after it.
-        let helper_meta = InstanceMeta {
-            package: pkg("helper"),
-            config: vec![],
-            salt: Hash32([4; 32]),
-        };
-        let a_2 = helper_meta.address(&TestHasher);
-        let mut maker = PackageMetadata::default();
-        maker.methods.insert(
-            "make".into(),
-            method(
-                vec![fresh_entry()],
-                vec![CallSite {
-                    target: Expr::Literal(Value::Address(a_2.into())),
-                    method: "assist".into(),
-                    args: vec![],
-                }],
-            ),
-        );
-        let mut helper = PackageMetadata::default();
-        helper
-            .methods
-            .insert("assist".into(), method(vec![fresh_entry()], vec![]));
-        cache.publish(pkg("maker"), maker);
-        cache.publish(pkg("helper"), helper);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("maker"));
-        assert_eq!(instances.create(&TestHasher, helper_meta), a_2);
-        let manifest = Manifest {
-            nodes: vec![Node {
-                target: instance_of("maker").into(),
-                method: "make".into(),
-                inputs: vec![],
-                evidence: Vec::new(),
-                authority: None,
-            }],
-        };
-
-        let routing = route(
-            &admitted(&manifest),
-            &cache,
-            &instances,
-            &TestHasher,
-            &resolver(),
-        )
-        .unwrap();
-        let orders: Vec<u128> = (0..2u32)
-            .map(|frame| u128::from(fresh_id(&TestHasher, identity(), 0, frame, 0)))
-            .collect();
-        assert_ne!(orders[0], orders[1]);
-        for (owner, order) in [
-            (instance_of("maker").address(), orders[0]),
-            (a_2.address(), orders[1]),
-        ] {
-            let set = &routing.per_shard[&resolver().shard_of(owner)];
-            assert!(set.contains(&Effect {
-                target: EffectTarget::Entry {
-                    owner,
-                    collection: collection_id(&TestHasher, owner, RoleId(6), &[]),
-                    order,
-                },
-                mode: Mode::Write,
-            }));
-        }
-    }
-
-    #[test]
-    fn self_recursion_is_a_cycle() {
-        let mut cache = MetadataCache::new();
-        let mut meta = PackageMetadata::default();
-        meta.methods.insert(
-            "m".into(),
-            method(
-                vec![],
-                vec![CallSite {
-                    target: Expr::SelfAddr,
-                    method: "m".into(),
-                    args: vec![],
-                }],
-            ),
-        );
-        cache.publish(pkg("loop"), meta);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("loop"));
-        let manifest = Manifest {
-            nodes: vec![Node {
-                target: instance_of("loop").into(),
-                method: "m".into(),
-                inputs: vec![],
-                evidence: Vec::new(),
-                authority: None,
-            }],
-        };
-        assert_eq!(
-            route(
-                &admitted(&manifest),
-                &cache,
-                &instances,
-                &TestHasher,
-                &resolver()
-            ),
-            Err(RouteError::CyclicCalls {
-                package: pkg("loop"),
-                method: "m".into(),
-            })
-        );
-    }
-
-    #[test]
-    fn mutual_recursion_is_a_cycle() {
-        let mut cache = MetadataCache::new();
-        // Two instances naming each other: the addresses derive from the
-        // records, which name no address, so there is no cycle to break
-        // — only an order to respect.
-        let first_meta = InstanceMeta {
-            package: pkg("first"),
-            config: vec![],
-            salt: Hash32([6; 32]),
-        };
-        let second_meta = InstanceMeta {
-            package: pkg("second"),
-            config: vec![],
-            salt: Hash32([7; 32]),
-        };
-        let a_1_3 = first_meta.address(&TestHasher);
-        let a_2_2 = second_meta.address(&TestHasher);
-        let mut first = PackageMetadata::default();
-        first.methods.insert(
-            "m".into(),
-            method(
-                vec![],
-                vec![CallSite {
-                    target: Expr::Literal(Value::Address(a_2_2.into())),
-                    method: "n".into(),
-                    args: vec![],
-                }],
-            ),
-        );
-        let mut second = PackageMetadata::default();
-        second.methods.insert(
-            "n".into(),
-            method(
-                vec![],
-                vec![CallSite {
-                    target: Expr::Literal(Value::Address(a_1_3.into())),
-                    method: "m".into(),
-                    args: vec![],
-                }],
-            ),
-        );
-        cache.publish(pkg("first"), first);
-        cache.publish(pkg("second"), second);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, first_meta);
-        instances.create(&TestHasher, second_meta);
-        let manifest = Manifest {
-            nodes: vec![Node {
-                target: a_1_3.into(),
-                method: "m".into(),
-                inputs: vec![],
-                evidence: Vec::new(),
-                authority: None,
-            }],
-        };
-        assert_eq!(
-            route(
-                &admitted(&manifest),
-                &cache,
-                &instances,
-                &TestHasher,
-                &resolver()
-            ),
-            Err(RouteError::CyclicCalls {
-                package: pkg("first"),
-                method: "m".into(),
-            })
-        );
-    }
-
-    #[test]
-    fn a_diamond_is_not_a_cycle() {
-        let mut cache = MetadataCache::new();
-        let call = |target: &str, name: &str| CallSite {
-            target: Expr::Literal(Value::Address(instance_of(target).into())),
-            method: name.into(),
-            args: vec![],
-        };
-        let mut root = PackageMetadata::default();
-        root.methods.insert(
-            "r".into(),
-            method(vec![], vec![call("left", "p"), call("right", "q")]),
-        );
-        let mut left = PackageMetadata::default();
-        left.methods
-            .insert("p".into(), method(vec![], vec![call("shared", "h")]));
-        let mut right = PackageMetadata::default();
-        right
-            .methods
-            .insert("q".into(), method(vec![], vec![call("shared", "h")]));
-        let mut shared = PackageMetadata::default();
-        shared.methods.insert(
-            "h".into(),
-            method(vec![self_point(RoleId(7), ModeExpr::Delta)], vec![]),
-        );
-        cache.publish(pkg("root"), root);
-        cache.publish(pkg("left"), left);
-        cache.publish(pkg("right"), right);
-        cache.publish(pkg("shared"), shared);
-        let mut instances = InstanceRegistry::new();
-        for name in ["root", "left", "right", "shared"] {
-            instances.create(&TestHasher, meta_of(name));
-        }
-        let manifest = Manifest {
-            nodes: vec![Node {
-                target: instance_of("root").into(),
-                method: "r".into(),
-                inputs: vec![],
-                evidence: Vec::new(),
-                authority: None,
-            }],
-        };
-        let routing = route(
-            &admitted(&manifest),
-            &cache,
-            &instances,
-            &TestHasher,
-            &resolver(),
-        )
-        .unwrap();
-        assert_eq!(routing.call_graph.edges.len(), 4);
     }
 
     #[test]
@@ -2268,13 +1693,10 @@ mod tests {
         let mut meta = PackageMetadata::default();
         meta.methods.insert(
             "peek".into(),
-            method(
-                vec![
-                    self_point(RoleId(1), ModeExpr::Locked),
-                    self_point(RoleId(2), ModeExpr::Locked),
-                ],
-                vec![],
-            ),
+            method(vec![
+                self_point(RoleId(1), ModeExpr::Locked),
+                self_point(RoleId(2), ModeExpr::Locked),
+            ]),
         );
         cache.publish(pkg("oracle"), meta);
         let mut instances = InstanceRegistry::new();
@@ -2310,100 +1732,6 @@ mod tests {
     }
 
     #[test]
-    fn fan_out_exhausts_the_call_budget() {
-        // Wide but shallow: 256 mid methods each calling the same 256
-        // leaves re-evaluates every leaf per caller — 65,793 evaluations
-        // at depth 3, over the budget.
-        const WIDTH: usize = 256;
-        let mut meta = PackageMetadata::default();
-        let self_call = |name: String| CallSite {
-            target: Expr::SelfAddr,
-            method: name,
-            args: vec![],
-        };
-        meta.methods.insert(
-            "root".into(),
-            method(
-                vec![],
-                (0..WIDTH).map(|i| self_call(format!("mid{i}"))).collect(),
-            ),
-        );
-        for mid in 0..WIDTH {
-            meta.methods.insert(
-                format!("mid{mid}"),
-                method(
-                    vec![],
-                    (0..WIDTH).map(|i| self_call(format!("leaf{i}"))).collect(),
-                ),
-            );
-        }
-        for leaf in 0..WIDTH {
-            meta.methods
-                .insert(format!("leaf{leaf}"), method(vec![], vec![]));
-        }
-        let mut cache = MetadataCache::new();
-        cache.publish(pkg("wide"), meta);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("wide"));
-        let manifest = Manifest {
-            nodes: vec![Node {
-                target: instance_of("wide").into(),
-                method: "root".into(),
-                inputs: vec![],
-                evidence: Vec::new(),
-                authority: None,
-            }],
-        };
-        assert_eq!(
-            route(
-                &admitted(&manifest),
-                &cache,
-                &instances,
-                &TestHasher,
-                &resolver()
-            ),
-            Err(RouteError::CallBudgetExhausted)
-        );
-    }
-
-    #[test]
-    fn deep_chains_exhaust_the_depth_bound() {
-        let mut meta = PackageMetadata::default();
-        for index in 0..=MAX_CALL_DEPTH {
-            let calls = vec![CallSite {
-                target: Expr::SelfAddr,
-                method: format!("m{}", index + 1),
-                args: vec![],
-            }];
-            meta.methods
-                .insert(format!("m{index}"), method(vec![], calls));
-        }
-        let mut cache = MetadataCache::new();
-        cache.publish(pkg("chain"), meta);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("chain"));
-        let manifest = Manifest {
-            nodes: vec![Node {
-                target: instance_of("chain").into(),
-                method: "m0".into(),
-                inputs: vec![],
-                evidence: Vec::new(),
-                authority: None,
-            }],
-        };
-        assert_eq!(
-            route(
-                &admitted(&manifest),
-                &cache,
-                &instances,
-                &TestHasher,
-                &resolver()
-            ),
-            Err(RouteError::CallDepthExceeded)
-        );
-    }
-
-    #[test]
     fn a_manifest_at_the_node_cap_routes_within_the_budget() {
         // Every node costs one evaluation, so a call-free manifest at the
         // node cap must route: the budget is sized from the cap, and a
@@ -2411,7 +1739,7 @@ mod tests {
         // arithmetic.
         let mut cache = MetadataCache::new();
         let mut meta = PackageMetadata::default();
-        meta.methods.insert("m".into(), method(vec![], vec![]));
+        meta.methods.insert("m".into(), method(vec![]));
         cache.publish(pkg("wide"), meta);
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, meta_of("wide"));
@@ -2455,17 +1783,14 @@ mod tests {
         let mut meta = PackageMetadata::default();
         meta.methods.insert(
             "take".into(),
-            method(
-                vec![Clause::Effect {
-                    target: TargetExpr::Point(Expr::ChildKey {
-                        owner: Box::new(Expr::SelfAddr),
-                        role: RoleId(1),
-                        material: vec![],
-                    }),
-                    mode: ModeExpr::Reserve(Expr::Arg(0)),
-                }],
-                vec![],
-            ),
+            method(vec![Clause::Effect {
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    role: RoleId(1),
+                    material: vec![],
+                }),
+                mode: ModeExpr::Reserve(Expr::Arg(0)),
+            }]),
         );
         cache.publish(pkg("vault"), meta);
         let mut instances = InstanceRegistry::new();
@@ -2827,8 +2152,8 @@ mod tests {
             "the consumed edge carries its signed bound to the walk"
         );
     }
-    /// A world whose `forward` hands its bucket to a callee rather than
-    /// reading the amount itself, plus a producer to feed it.
+    /// A world whose `forward` consumes a bucket without reading its
+    /// amount, plus a producer to feed it.
     fn forwarding_world() -> (MetadataCache, InstanceRegistry, Manifest) {
         let mut router = PackageMetadata::default();
         router.methods.insert(
@@ -2836,14 +2161,10 @@ mod tests {
             MethodSignature {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
-                // Nothing carries the bucket: the callee reads it.
+                // Nothing in the ABI carries the bucket: the method
+                // consumes the edge without reading what crossed.
                 abi: vec![AbiParam::Handle(0)],
                 effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
-                calls: vec![CallSite {
-                    target: Expr::Literal(Value::Address(instance_of("callee").into())),
-                    method: "take".into(),
-                    args: vec![Expr::Arg(0)],
-                }],
                 ..MethodSignature::default()
             },
         );
@@ -2855,23 +2176,10 @@ mod tests {
                 ..MethodSignature::default()
             },
         );
-        let mut callee = PackageMetadata::default();
-        callee.methods.insert(
-            "take".into(),
-            MethodSignature {
-                totality: Totality::Fallible,
-                params: vec![ParamType::Bucket],
-                abi: vec![AbiParam::Bucket(0)],
-                effects: vec![self_point(RoleId(2), ModeExpr::Delta)],
-                ..MethodSignature::default()
-            },
-        );
         let mut cache = MetadataCache::new();
         cache.publish(pkg("router"), router);
-        cache.publish(pkg("callee"), callee);
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, meta_of("router"));
-        instances.create(&TestHasher, meta_of("callee"));
         let manifest = Manifest {
             nodes: vec![
                 Node {
@@ -2905,10 +2213,9 @@ mod tests {
     #[test]
     fn a_forwarded_bucket_still_carries_its_edge_bound() {
         // The bound belongs to the edge, not to the argument list. A
-        // method that hands its funds to a callee reads no amount, so
-        // nothing in its own ABI carries the edge — and the signer's
-        // bound is owed a check all the same, at the node where the edge
-        // resolves.
+        // method that consumes its funds without reading them carries no
+        // bucket in its own ABI — and the signer's bound is owed a check
+        // all the same, at the node where the edge resolves.
         let (cache, instances, manifest) = forwarding_world();
         let routing = route(
             &admitted(&manifest),
@@ -2924,7 +2231,7 @@ mod tests {
                 .args
                 .iter()
                 .any(|arg| matches!(arg, CallArg::Bucket { .. })),
-            "the forwarding method's own ABI carries no bucket"
+            "the consuming method's own ABI carries no bucket"
         );
         assert_eq!(
             call.edges,
@@ -3002,59 +2309,6 @@ mod tests {
         // Its own prefix is the admitted case, so what bites is whose
         // cells the clause names and not the shape of the declaration.
         assert!(foreign(Expr::SelfAddr).is_ok());
-    }
-
-    /// Authority does not propagate through a call: a package cannot
-    /// reach a guarded method by naming it from a call site, however its
-    /// own caller was authorized.
-    #[test]
-    fn a_call_site_cannot_reach_a_guarded_method() {
-        let mut package = PackageMetadata::default();
-        package.methods.insert(
-            "reach".into(),
-            MethodSignature {
-                totality: Totality::Fallible,
-                calls: vec![CallSite {
-                    target: Expr::SelfAddr,
-                    method: "guarded".into(),
-                    args: vec![],
-                }],
-                ..MethodSignature::default()
-            },
-        );
-        package.methods.insert(
-            "guarded".into(),
-            MethodSignature {
-                totality: Totality::Fallible,
-                accessibility: Accessibility::Guarded(Expr::SelfAddr),
-                ..MethodSignature::default()
-            },
-        );
-        let mut cache = MetadataCache::new();
-        cache.publish(pkg("reacher"), package);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("reacher"));
-        let manifest = Manifest {
-            nodes: vec![Node {
-                target: instance_of("reacher").into(),
-                method: "reach".into(),
-                inputs: vec![],
-                evidence: Vec::new(),
-                authority: None,
-            }],
-        };
-        let error = route(
-            &admitted(&manifest),
-            &cache,
-            &instances,
-            &TestHasher,
-            &resolver(),
-        )
-        .expect_err("a call site holds no proof");
-        assert!(
-            matches!(error, RouteError::GatedCallSite { node: 0, .. }),
-            "unexpected refusal: {error:?}"
-        );
     }
 
     #[test]

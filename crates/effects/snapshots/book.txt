@@ -101,7 +101,6 @@ PackageMetadata {
                     2,
                 ),
             ],
-            calls: [],
         },
         "place-ask": MethodSignature {
             accessibility: Public,
@@ -172,7 +171,6 @@ PackageMetadata {
                     1,
                 ),
             ],
-            calls: [],
         },
     },
     events: [],

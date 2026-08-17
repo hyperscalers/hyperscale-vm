@@ -218,7 +218,6 @@ impl Builder {
                 abi: recorded.abi,
                 outputs: recorded.outputs,
                 effects: recorded.clauses,
-                calls: recorded.calls,
             },
             handles,
             worst_case: recorded.worst_case,

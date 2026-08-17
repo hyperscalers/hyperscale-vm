@@ -1,5 +1,4 @@
-//! Package metadata: effect signatures and static call sites, cached by
-//! content address.
+//! Package metadata: effect signatures, cached by content address.
 
 use std::collections::BTreeMap;
 
@@ -59,19 +58,6 @@ pub fn package_key(
     package: PackageHash,
 ) -> SubstateKey {
     child_key(hasher, publisher, PACKAGE_ROLE, &[package.0.0.to_vec()])
-}
-
-/// A static call site: the callee named by an input-derived address, its
-/// method, and the callee's arguments as expressions over the caller's
-/// inputs.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-pub struct CallSite {
-    /// The callee instance; must evaluate to an address.
-    pub target: Expr,
-    /// The callee method.
-    pub method: String,
-    /// The callee's arguments, bound from the caller's inputs.
-    pub args: Vec<Expr>,
 }
 
 /// A method parameter's admitted kind. Bucket parameters consume a value
@@ -293,7 +279,7 @@ pub enum Totality {
     #[default]
     Infallible,
     /// No error arm, and the publish-time checker established the rest:
-    /// no partial operation anywhere in the transitive body, and a static
+    /// no partial operation anywhere in the body, and a static
     /// fuel bound the transaction pre-charges so exhaustion cannot occur
     /// at execution. Never authored — a package claims it and the check
     /// grants it, because a claim a package could simply assert about
@@ -309,9 +295,9 @@ impl Totality {
     }
 }
 
-/// A method's declared access. Its transitive effect set is the fold of its
-/// callees' signatures over the static call graph, which is acyclic — a DAG
-/// fold, never a fixpoint.
+/// A method's declared access: every effect the method itself reaches,
+/// and no further — a frame declares only under its own instance's
+/// prefix.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct MethodSignature {
     /// Whose authority naming this method on this target requires.
@@ -367,8 +353,6 @@ pub struct MethodSignature {
     /// Authored beside the signature and content-addressed with the code,
     /// so the binding cannot drift from the ABI it describes.
     pub abi: Vec<AbiParam>,
-    /// The method's static call sites.
-    pub calls: Vec<CallSite>,
 }
 
 impl MethodSignature {
@@ -669,10 +653,6 @@ pub enum DeclarationError {
     /// A method claiming totality behind a gate that can turn it away.
     #[error("a total method admits every caller, and this one is gated")]
     GatedTotality,
-    /// A method claiming totality over a body that calls out of the
-    /// package.
-    #[error("a total method answers for its whole body, and this one calls out of it")]
-    CallingTotality,
 }
 
 /// Whether a target names the declaring instance's own prefix.
@@ -734,17 +714,6 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     if signature.totality.is_total() && signature.accessibility != Accessibility::Public {
         return Err(DeclarationError::GatedTotality);
     }
-    // A declared call is a second method, on a second package, reached
-    // through the kernel rather than through the caller's own code — so
-    // the artifact scan never sees it, and the gate that judges the mark
-    // holds one package's bytes and cannot resolve the callee's at all.
-    // What the callee's own mark says is therefore unavailable exactly
-    // where it would have to be folded in, and a mark standing for a body
-    // half of which was never judged stands for nothing. The rule is
-    // consequently that a total method answers for itself: no calls out.
-    if signature.totality.is_total() && !signature.calls.is_empty() {
-        return Err(DeclarationError::CallingTotality);
-    }
     walk(&signature.effects, &mut 0)
 }
 
@@ -797,12 +766,6 @@ fn check_signature_bounds(signature: &MethodSignature) -> Result<(), MetadataBou
     for param in &signature.abi {
         if let AbiParam::Derived(expr) = param {
             check_expr_bounds(expr, 0)?;
-        }
-    }
-    for call in &signature.calls {
-        check_expr_bounds(&call.target, 0)?;
-        for arg in &call.args {
-            check_expr_bounds(arg, 0)?;
         }
     }
     let mut declared = 0usize;
@@ -1760,17 +1723,14 @@ mod tests {
         );
     }
 
-    /// The two things a total mark cannot survive, both read off the
-    /// declaration rather than off the code.
+    /// What a total mark cannot survive, read off the declaration rather
+    /// than off the code.
     ///
     /// A leg reads the mark and commits without waiting, so what it has
     /// to exclude is every way the method could still come back with a
-    /// refusal. The artifact scan covers the one way that leaves the type
-    /// system — a trap — and these are the two it cannot see: a gate that
-    /// turns the caller away before the body runs, and a call to a method
-    /// on another package, whose bytes the gate does not hold and whose
-    /// own mark is therefore unreadable where it would have to be folded
-    /// in.
+    /// refusal. The artifact scan covers the one that leaves the type
+    /// system — a trap — and this is the one it cannot see: a gate that
+    /// turns the caller away before the body runs.
     #[test]
     fn a_total_mark_needs_a_body_the_declaration_answers_for() {
         let total = |signature: MethodSignature| MethodSignature {
@@ -1799,23 +1759,6 @@ mod tests {
                 Err(DeclarationError::GatedTotality),
             );
         }
-
-        // A call out of the package, whose callee nothing here can judge.
-        let calling = MethodSignature {
-            calls: vec![CallSite {
-                target: Expr::Arg(0),
-                method: "settle".to_owned(),
-                args: vec![],
-            }],
-            ..MethodSignature::default()
-        };
-        assert_eq!(
-            check_declarations(&total(calling.clone())),
-            Err(DeclarationError::CallingTotality),
-        );
-        // And the same call sites are unremarkable without the mark: what
-        // is refused is the claim, never the calling.
-        assert_eq!(check_declarations(&calling), Ok(()));
     }
 
     /// Every way a signature can write somebody else's prefix, refused

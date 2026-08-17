@@ -30,7 +30,7 @@
 //! published contract whose method can never be called.
 
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, AuthRole, CallSite, Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
+    AbiParam, Accessibility, AuthRole, Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
     MAX_FOREACH_ELEMENTS, ModeExpr, ParamType, RoleId, TargetExpr, Totality, Value,
 };
 
@@ -51,7 +51,6 @@ pub struct Trace {
     /// Resource expressions for the value edges this method produces.
     outputs: Vec<Expr>,
     /// The method's static call sites.
-    calls: Vec<CallSite>,
     /// The worst-case effect count, folding `for-each` width per nesting
     /// level.
     worst_case: usize,
@@ -79,7 +78,6 @@ impl Trace {
             scopes: vec![Vec::new()],
             next_slot: 0,
             outputs: Vec::new(),
-            calls: Vec::new(),
             worst_case: 0,
             handles: Vec::new(),
             values: Vec::new(),
@@ -519,16 +517,6 @@ impl Trace {
         self.outputs.push(expr);
     }
 
-    /// Record a static call to `method` on `target`.
-    pub fn call<K: Kind>(&mut self, target: &Sym<Addr>, method: &str, args: &[Sym<K>]) {
-        let site = CallSite {
-            target: self.lower(target.expr().clone()),
-            method: method.to_owned(),
-            args: args.iter().map(|a| self.lower(a.expr().clone())).collect(),
-        };
-        self.calls.push(site);
-    }
-
     /// Consume the trace into what it recorded.
     pub(crate) fn finish(mut self) -> Recorded {
         assert_eq!(
@@ -542,7 +530,6 @@ impl Trace {
         Recorded {
             clauses,
             outputs: self.outputs,
-            calls: self.calls,
             worst_case: self.worst_case,
             abi,
             accessibility: self.accessibility,
@@ -611,7 +598,6 @@ impl Access<'_> {
 pub(crate) struct Recorded {
     pub(crate) clauses: Vec<Clause>,
     pub(crate) outputs: Vec<Expr>,
-    pub(crate) calls: Vec<CallSite>,
     pub(crate) worst_case: usize,
     pub(crate) abi: Vec<AbiParam>,
     pub(crate) accessibility: Accessibility,

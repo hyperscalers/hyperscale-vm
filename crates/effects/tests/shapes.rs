@@ -86,7 +86,6 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
         ),
     ]);
     assert_eq!(routing.per_shard, expected);
-    assert!(routing.call_graph.edges.is_empty());
 }
 
 #[test]

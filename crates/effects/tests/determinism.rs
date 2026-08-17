@@ -8,10 +8,9 @@ use std::collections::BTreeSet;
 
 use common::{ALICE, account, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
-    Address, AddressClass, CallSite, ComponentAddr, EdgeContent, EdgeRef, Effect, EffectTarget,
-    EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
-    ManifestGraph, ManifestHash, MetadataCache, MethodSignature, Mode, PackageMetadata, ParamType,
-    RoleId, TestHasher, Totality, Value, admit, evaluate_expr, route,
+    Address, AddressClass, ComponentAddr, EdgeContent, EdgeRef, Effect, EffectTarget, EvalInputs,
+    EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph,
+    ManifestHash, MetadataCache, Mode, RoleId, TestHasher, Value, admit, evaluate_expr, route,
 };
 use proptest::collection::vec;
 use proptest::option;
@@ -193,26 +192,10 @@ proptest! {
         let resource = Address::new([resource_byte; 31], AddressClass::Component);
         let mut cache = MetadataCache::new();
         cache.publish(pkg("account"), account::metadata());
-        let mut forward = PackageMetadata::default();
-        forward.methods.insert(
-            "forward".into(),
-            MethodSignature {
-                totality: Totality::Fallible,
-                params: vec![ParamType::Address, ParamType::Bucket],
-                calls: vec![CallSite {
-                    target: Expr::Arg(0),
-                    method: "deposit".into(),
-                    args: vec![Expr::Arg(1)],
-                }],
-                ..MethodSignature::default()
-            },
-        );
-        cache.publish(pkg("router"), forward);
         // Each instance sits at the address its own record derives, so
-        // distinct salt lanes are what keep the router, the sender and
-        // any generated recipient apart — no address is picked.
+        // distinct salt lanes are what keep the sender and any generated
+        // recipient apart — no address is picked.
         let mut instances = InstanceRegistry::new();
-        let router = instance(&mut instances, "router", 0, 0);
         let recipient = instance(&mut instances, "account", 1, recipient_byte);
         let sender = instance(&mut instances, "account", 0, 0);
         let graph = ManifestGraph {
@@ -233,15 +216,12 @@ proptest! {
                     evidence: [EvidenceRef::Node(0)].into(),
                 },
                 GraphNode {
-                    target: router.into(),
-                    method: "forward".into(),
-                    args: vec![
-                        GraphArg::Literal(Value::Address(recipient.into())),
-                        GraphArg::Edge {
-                            edge: EdgeRef { producer: 1, output: 0 },
-                            constraints: vec![],
-                        },
-                    ],
+                    target: recipient.into(),
+                    method: "deposit".into(),
+                    args: vec![GraphArg::Edge {
+                        edge: EdgeRef { producer: 1, output: 0 },
+                        constraints: vec![],
+                    }],
                     evidence: BTreeSet::new(),
                 },
             ],
@@ -250,7 +230,7 @@ proptest! {
         let first = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
         let second = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
         assert_eq!(first, second);
-        assert_eq!(first.call_graph.edges.len(), 1);
+        assert_eq!(first.frames.len(), 3, "one frame per manifest node");
         assert!(first.per_shard[&shard_of(recipient)].contains(&Effect {
             target: EffectTarget::Point(vault(recipient, resource)),
             mode: Mode::Delta,
