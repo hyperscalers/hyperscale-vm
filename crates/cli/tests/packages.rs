@@ -28,6 +28,7 @@ const PACKAGES: &[(&str, Provenance)] = &[
     ("book", Provenance::Published),
     ("lottery", Provenance::Published),
     ("grammar", Provenance::Published),
+    ("shares", Provenance::Published),
 ];
 
 fn guests() -> PathBuf {
