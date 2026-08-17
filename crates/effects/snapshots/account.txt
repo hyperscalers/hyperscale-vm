@@ -99,7 +99,7 @@ PackageMetadata {
                         ChildKey {
                             owner: SelfAddr,
                             role: RoleId(
-                                1,
+                                2,
                             ),
                             material: [
                                 ResourceOf(
@@ -117,7 +117,7 @@ PackageMetadata {
                         ChildKey {
                             owner: SelfAddr,
                             role: RoleId(
-                                2,
+                                1,
                             ),
                             material: [
                                 ResourceOf(
@@ -133,7 +133,7 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    0,
+                    1,
                 ),
                 Bucket(
                     0,

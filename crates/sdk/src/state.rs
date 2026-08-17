@@ -137,7 +137,13 @@ pub use crate::guest::Handle;
 /// evaluates, and `#[blueprint]` binds one — but only where a body
 /// genuinely reads it, so an edge that is merely moved or returned costs
 /// nothing.
-#[cfg_attr(not(target_arch = "wasm32"), derive(Clone, Copy, Debug, PartialEq, Eq))]
+/// Not `Copy`, and not `Clone`, on either target. The authoring half is
+/// where an author's own tokens are type-checked — the guest build
+/// compiles the rewritten export bodies instead — so a bucket that
+/// duplicated here would let a body spend one edge twice and be told
+/// about it, if at all, by a borrow error against generated code. What
+/// makes the two halves agree is that value is linear in both.
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq, Eq))]
 pub struct Bucket {
     #[cfg(not(target_arch = "wasm32"))]
     resource: Address,
@@ -374,6 +380,7 @@ impl Slot<Amount> {
     /// What lands is exactly what crossed: the body names no amount, so
     /// there is no second number for the credit to disagree with.
     #[inline(always)]
+    #[allow(clippy::needless_pass_by_value)] // the credit consumes the edge; off host nothing runs
     pub fn put(&mut self, funds: Bucket) {
         let _ = &funds;
         #[cfg(target_arch = "wasm32")]
@@ -664,6 +671,7 @@ impl<T: Cellular> Interval<T> {
     /// what keeps a body filing a marker away from the allocator, and so
     /// eligible for the total mark.
     #[inline(always)]
+    #[allow(clippy::needless_pass_by_value)] // the filing consumes the edge; off host nothing runs
     pub fn put(&mut self, funds: Bucket, value: &[u8]) {
         let _ = (&funds, value);
         #[cfg(target_arch = "wasm32")]

@@ -170,8 +170,15 @@ pub fn declaration(dir: &Path) -> Result<PackageMetadata, BuildError> {
 /// [`BuildError`] from either build, or carrying the gate's own sentence
 /// when the artifact is one the chain would refuse.
 pub fn artifact(dir: &Path, provenance: Provenance) -> Result<Vec<u8>, BuildError> {
-    let component = compile(dir)?;
+    // The declaration first, and the order is the author's diagnostics.
+    // Both builds compile the same module, but only the host one compiles
+    // the bodies as they were written — the guest build compiles what the
+    // lowering rewrote them into, and a borrow error there lands on
+    // generated tokens with the attribute's span. So the build that can
+    // say which line is wrong runs first, and the one that cannot is
+    // reached only by a module that already type-checked.
     let metadata = declaration(dir)?;
+    let component = compile(dir)?;
     let artifact = attach_metadata(&component, &metadata)
         .map_err(|error| BuildError::new(format!("attach the declaration: {error}")))?;
     // The whole verdict, off the bytes the publish would carry. A

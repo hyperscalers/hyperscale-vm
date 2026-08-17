@@ -47,12 +47,15 @@ fn account() -> Blueprint {
             let resource = funds.resource();
             let holder = t.self_addr();
 
-            // The vault and the guaranteed-delivery fallback beside it,
-            // both keyed by the arriving bucket's resource.
-            let vault = holder.child(VAULT, &[resource.clone().cast()]);
-            let claims = holder.child(CLAIMS, &[resource.cast()]);
-            t.point(&vault).delta();
+            // The guaranteed-delivery fallback and the vault beside it,
+            // both keyed by the arriving bucket's resource. The fallback
+            // is declared first because the body states it first: the
+            // credit consumes the edge, so it comes after every read of
+            // what the edge carries.
+            let claims = holder.child(CLAIMS, &[resource.clone().cast()]);
+            let vault = holder.child(VAULT, &[resource.cast()]);
             t.point(&claims).delta();
+            t.point(&vault).delta();
         })
         // The sign-in's whole body is its gate's read: the cell the
         // account's stored rule lives in.

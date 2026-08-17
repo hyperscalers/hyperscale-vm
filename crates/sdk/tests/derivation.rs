@@ -246,12 +246,14 @@ fn reading_the_environment_declares_nothing() {
 /// the other.
 #[blueprint]
 mod issuer {
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, issue};
+    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed, issue};
 
     #[state]
     struct Issuer {
         #[role(1)]
         staked: Cell<Amount>,
+        #[role(2)]
+        vaults: Keyed<Amount>,
     }
 
     impl Issuer {
@@ -259,7 +261,7 @@ mod issuer {
         pub fn stake(&mut self, funds: Bucket) -> Bucket {
             let staked = funds.amount();
             self.staked.set(staked);
-            let _ = funds;
+            self.vaults.at(funds.resource()).put(funds);
             issue(b"", staked)
         }
 

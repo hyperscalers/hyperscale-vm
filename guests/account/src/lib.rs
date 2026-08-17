@@ -76,11 +76,13 @@ pub mod account {
         /// callee's totality to fold in.
         #[total]
         pub fn deposit(&mut self, funds: Bucket) {
-            // What the event says is what crossed, read before the put
-            // consumes the handle it was read through.
+            // The credit comes last because it is what consumes the edge:
+            // value is linear, so every read of what crossed — the amount
+            // the event carries, the resource both cells are keyed by —
+            // happens while there is still a bucket to read it from.
             let credited = funds.amount();
-            self.vaults.at(funds.resource()).put(funds);
             self.claims.at(funds.resource()).declared();
+            self.vaults.at(funds.resource()).put(funds);
             Deposited::emit(&credited.to_le_bytes());
         }
 
