@@ -27,12 +27,16 @@
 //!
 //! Fuel, the canonical ABI's copy accounting, the deploy-time profile
 //! and the totality scan are all the artifact's, and the native lane has
-//! none of them. It also runs under the test profile's arithmetic rather
-//! than the artifact's: a package is built in release, where an overflow
-//! wraps, and `cargo test` builds in debug, where it panics. That is the
-//! stricter reading of the two and the useful one — a body that wraps is
-//! a body whose author wanted `checked_add` — but it is a difference,
-//! and it is why a package that matters runs both lanes.
+//! none of them. What it does answer is whether the bodies are right,
+//! and the harness holds that answer to the artifact's.
+//!
+//! It runs under whichever profile the test was built in, and the two
+//! read differently: a package is built in release, where an overflow
+//! wraps, and `cargo test` builds in debug, where it panics. Debug is
+//! the stricter of the two and worth having — a body that wraps is a
+//! body whose author wanted `checked_add`, and one that means it says
+//! `wrapping_add` and passes both. Release is the arithmetic the chain
+//! runs. Neither is wrong to run; running only one is.
 
 use std::sync::Arc;
 

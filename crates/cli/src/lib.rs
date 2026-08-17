@@ -18,8 +18,8 @@
 //! cannot be both.
 //!
 //! Package crates therefore stay outside any host workspace, for the
-//! reason they already do: a pinned nightly, `panic = "abort"` and one
-//! codegen unit are per-workspace settings a host build must not inherit.
+//! reason they already do: a pinned nightly and one codegen unit are
+//! per-workspace settings a host build must not inherit.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

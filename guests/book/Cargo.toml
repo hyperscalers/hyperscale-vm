@@ -19,7 +19,6 @@ lto = true
 # One unit per crate: nothing about the artifact's function order is
 # left to codegen-unit partitioning or LTO merge order.
 codegen-units = 1
-panic = "abort"
 
 # Deliberately outside the host workspace: this crate compiles to
 # wasm32-unknown-unknown and is built by the harness, not by workspace builds.

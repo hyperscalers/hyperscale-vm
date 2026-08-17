@@ -42,11 +42,9 @@ fn manifest(name: &str, sdk: &str, testing: &str) -> String {
          # One unit per crate: nothing about the artifact's function order\n\
          # is left to codegen-unit partitioning or LTO merge order.\n\
          codegen-units = 1\n\
-         panic = \"abort\"\n\
          \n\
-         # Deliberately its own workspace: a pinned nightly, `panic = \"abort\"`\n\
-         # and one codegen unit are per-workspace settings a host build must\n\
-         # not inherit.\n\
+         # Deliberately its own workspace: a pinned nightly and one codegen\n\
+         # unit are per-workspace settings a host build must not inherit.\n\
          [workspace]\n"
     )
 }
@@ -159,6 +157,10 @@ const CARGO_CONFIG: &str = "\
 # `core::fmt` machinery calls itself, which leaves the core call graph
 # cyclic and the deploy-time stack bound unprovable. `immediate-abort`
 # elides it, and the profile does not bend per toolchain.
+#
+# It carries the abort strategy with it, which is why the release profile
+# names none: `panic = \"abort\"` there would reach the crate's host builds
+# too, and a test binary is compiled to unwind whatever the profile says.
 [unstable]
 build-std = [\"std\", \"panic_abort\"]
 

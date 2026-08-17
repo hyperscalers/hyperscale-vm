@@ -61,5 +61,14 @@ jobs:
         run: cargo test --release --doc
       # A package crate's own tests, run the way its author runs them.
       # Outside the workspace by design, so nothing above reaches them.
+      #
+      # Both profiles, because they differ in what they catch and in what
+      # they prove. Debug checks arithmetic the artifact wraps, so it is
+      # the one that catches a body wanting `checked_add`. Release is the
+      # arithmetic the chain runs — and running it at all is what would
+      # fail if a package crate took back `panic = "abort"`, which builds
+      # a host std the test harness cannot link against.
       - name: Package Tests
-        run: cargo test --manifest-path guests/amm/Cargo.toml
+        run: |
+          cargo test --manifest-path guests/amm/Cargo.toml
+          cargo test --release --manifest-path guests/amm/Cargo.toml

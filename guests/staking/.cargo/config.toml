@@ -2,6 +2,10 @@
 # `core::fmt` machinery calls itself, which leaves the core call graph
 # cyclic and the deploy-time stack bound unprovable. `immediate-abort`
 # elides it, and the profile does not bend per toolchain.
+#
+# It carries the abort strategy with it, which is why the release profile
+# names none: `panic = "abort"` there would reach the crate's host builds
+# too, and a test binary is compiled to unwind whatever the profile says.
 [unstable]
 build-std = ["std", "panic_abort"]
 
