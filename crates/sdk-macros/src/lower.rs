@@ -755,6 +755,31 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// A resource term as the author wrote it.
+    ///
+    /// A diagnostic naming `Config(1)` sends a reader to count fields; one
+    /// naming `config.y` sends them to the line they wrote. The terms that
+    /// can denominate anything are few, so the rest fall back to a phrase
+    /// rather than to a dump of the tracer's own model.
+    fn describe(&self, term: &Term) -> String {
+        match term {
+            Term::Config(slot) => self.config_fields.get(*slot as usize).map_or_else(
+                || format!("configuration slot {slot}"),
+                |(name, _)| format!("`config.{name}`"),
+            ),
+            Term::SelfResource(mark) => core::str::from_utf8(mark).map_or_else(
+                |_| "a resource this instance issues".into(),
+                |mark| format!("`issued(b\"{mark}\")`"),
+            ),
+            Term::ResourceOf(inner) => match **inner {
+                Term::Arg(index) => format!("argument {index}'s resource"),
+                _ => "the resource of a value the body holds".into(),
+            },
+            Term::Arg(index) => format!("argument {index}"),
+            _ => "a derived resource".into(),
+        }
+    }
+
     /// The resource an evaluated expression's value edge carries, where
     /// it is one and the lowering can see what it holds.
     ///
@@ -778,18 +803,59 @@ impl<'a> Lowerer<'a> {
     /// resources at once — so the second one is refused where the body
     /// wrote it rather than left for a caller to discover.
     fn denominate(&mut self, param: u32, resource: Term, span: Span) {
-        if let Some(held) = self.out.denominations.get(&param)
-            && *held != resource
+        if let Some(held) = self.out.denominations.get(&param).cloned()
+            && held != resource
         {
+            let (held, resource) = (self.describe(&held), self.describe(&resource));
             self.error(
                 span,
-                "this edge is credited to two cells keyed by different resources, and \
-                 no edge carries both. Key one of them by the edge's own resource, or \
-                 take the second cell's value from a separate parameter",
+                &format!(
+                    "this edge is credited to a cell holding {held} and to one holding \
+                     {resource}, and no edge carries both. Key one of them by the edge's \
+                     own resource, or take the second cell's value from a separate \
+                     parameter"
+                ),
             );
             return;
         }
         self.out.denominations.insert(param, resource);
+    }
+
+    /// Hold two edges being merged to one resource.
+    ///
+    /// A merge makes two edges one, so whatever the result carries both
+    /// halves carried. Where one half is a parameter, that is where a
+    /// caller supplies it and so where the constraint is stated — against
+    /// the other half's resource, which may itself be a parameter's.
+    /// Where neither is, both resources are already fixed and a merge
+    /// across them is a body converting value by writing it down.
+    fn unify(&mut self, into: &Term, from: &Term, span: Span) {
+        if into == from {
+            return;
+        }
+        match (into, from) {
+            (_, Term::ResourceOf(inner)) if matches!(**inner, Term::Arg(_)) => {
+                if let Term::Arg(param) = **inner {
+                    self.denominate(param, into.clone(), span);
+                }
+            }
+            (Term::ResourceOf(inner), _) if matches!(**inner, Term::Arg(_)) => {
+                if let Term::Arg(param) = **inner {
+                    self.denominate(param, from.clone(), span);
+                }
+            }
+            _ => {
+                let (into, from) = (self.describe(into), self.describe(from));
+                self.error(
+                    span,
+                    &format!(
+                        "this merges {from} into {into}, and one edge carries one resource. \
+                         A merge moves value without converting it, so the two have to be \
+                         the same resource"
+                    ),
+                );
+            }
+        }
     }
 
     // ---- guest values ---------------------------------------------------
@@ -1651,6 +1717,17 @@ impl<'a> Lowerer<'a> {
         let evals: Vec<Eval> = call.args.iter().map(|a| self.expr(a)).collect();
         let args: Vec<Val> = evals.iter().map(|e| e.val.clone()).collect();
 
+        // A merge of one value edge into another. The receiver is an edge
+        // the body holds rather than a cell, so this is the one `put` that
+        // moves nothing into state — what it fixes is that the two halves
+        // are the same resource.
+        if method == "put"
+            && let Some(into) = Self::edge_resource(&receiver)
+            && let Some(from) = evals.first().and_then(Self::edge_resource)
+        {
+            self.unify(&into, &from, call.span());
+        }
+
         // A division of a value edge yields parts that each carry what the
         // whole carried. The kernel performs the subtraction, so the parts
         // are the whole and nothing about them is the body's to choose —
@@ -1790,15 +1867,29 @@ impl<'a> Lowerer<'a> {
                         // An edge a caller supplies, credited to a cell
                         // keyed by something else: that key is what the
                         // caller has to send.
-                        Some(Term::ResourceOf(inner)) => {
+                        Some(Term::ResourceOf(inner)) if matches!(**inner, Term::Arg(_)) => {
                             if let Term::Arg(param) = **inner {
                                 self.denominate(param, keyed, call.span());
                             }
                         }
-                        // An edge the body produced, whose resource is
-                        // whatever produced it named. No parameter carries
-                        // it, so no caller can get it wrong.
-                        Some(_) => {}
+                        // An edge the body produced — issued, or debited
+                        // from another vault — carries a resource nothing
+                        // about this call can change, and it is not the
+                        // one this cell holds. No caller is involved, so
+                        // there is no constraint to state: the body is
+                        // simply wrong.
+                        Some(held) => {
+                            let (held, keyed) = (self.describe(held), self.describe(&keyed));
+                            self.error(
+                                call.args.span(),
+                                &format!(
+                                    "this cell holds {keyed} and the value going into it is \
+                                     {held}. A credit does not convert what it moves — take \
+                                     from the cell holding what you have, or issue the \
+                                     resource this one is denominated in"
+                                ),
+                            );
+                        }
                         None => self.error(
                             call.args.span(),
                             "this cell is keyed by one resource and the lowering cannot see \

@@ -1,4 +1,4 @@
-error: this edge is credited to two cells keyed by different resources, and no edge carries both. Key one of them by the edge's own resource, or take the second cell's value from a separate parameter
+error: this edge is credited to a cell holding `config.base` and to one holding `config.quote`, and no edge carries both. Key one of them by the edge's own resource, or take the second cell's value from a separate parameter
   --> tests/refusals/two_denominations.rs:26:13
    |
 26 |             self.vaults.at(settings.quote).put(rest);

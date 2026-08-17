@@ -323,3 +323,55 @@ fn an_instance_issues_resources_its_own_address_derives() {
         }),
     );
 }
+
+/// A method taking two edges and banking them as one. Whatever the merge
+/// produces is credited to a configured vault, so both halves are fixed —
+/// the one the body names at the cell, and the one it names at the merge.
+#[blueprint]
+mod counter {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Locked, Vault};
+
+    struct Settings {
+        asset: Address,
+    }
+
+    #[state]
+    struct Counter {
+        #[role(3)]
+        config: Locked<Settings>,
+        #[role(1)]
+        #[denomination(config.asset)]
+        assets: Cell<Vault>,
+    }
+
+    impl Counter {
+        /// Bank both edges, merged.
+        pub fn bank(&mut self, mut first: Bucket, second: Bucket) {
+            first.put(second);
+            self.assets.vault().put(first);
+        }
+    }
+}
+
+/// A merge fixes both halves, and the second is stated against the first
+/// rather than against the cell.
+///
+/// Both spellings mean the same resource at execution — the router
+/// evaluates `ResourceOf(Arg(0))` to whatever argument zero carries, and
+/// argument zero is itself held to the configured asset — but stating it
+/// this way is what keeps the constraint true of the merge rather than of
+/// the cell that happened to consume it.
+#[test]
+fn a_merge_denominates_both_of_the_edges_it_joins() {
+    use hyperscale_vm_effects::Expr;
+
+    let metadata = counter::blueprint().metadata();
+    assert_eq!(
+        metadata.methods["bank"].denominations,
+        vec![
+            Some(Expr::Config(0)),
+            Some(Expr::ResourceOf(Box::new(Expr::Arg(0)))),
+        ],
+    );
+}

@@ -28,6 +28,9 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/assigned_balance.rs");
     refuse.compile_fail("tests/refusals/undenominated_vault.rs");
     refuse.compile_fail("tests/refusals/keyed_denomination.rs");
+    refuse.compile_fail("tests/refusals/issued_into_foreign.rs");
+    refuse.compile_fail("tests/refusals/rebalanced_across.rs");
+    refuse.compile_fail("tests/refusals/merged_across.rs");
 }
 
 /// A mark the macro can already tell is unsupportable, refused where the
