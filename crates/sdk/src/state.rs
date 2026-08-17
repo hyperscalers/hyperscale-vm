@@ -51,7 +51,7 @@ use hyperscale_vm_effects::Address;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host;
-pub use crate::num::{MathError, Quantity, Rate, Ratio, Rounding, UnitFixed};
+pub use crate::num::{Fixed, MathError, Quantity, Rate, Ratio, Rounding, UnitFixed, Wide};
 
 /// Where an entry sits in a collection's ordering.
 ///
@@ -101,6 +101,34 @@ impl Cellular for Quantity {
 
     fn to_cell(&self) -> Vec<u8> {
         self.subunits().to_le_bytes().to_vec()
+    }
+}
+
+impl<A, B> Cellular for Fixed<A, B> {
+    /// Thirty-two little-endian bytes, one per limb, least significant
+    /// first. A wider cell than an amount, and affordable for the reason
+    /// balance cells are not: an index is one leaf per market where a
+    /// balance is one per holder, so widening the O(pools) object costs
+    /// at a scale widening the O(users) one never could.
+    ///
+    /// The kernel never parses it. A stored rate is not a bucket, so its
+    /// site folds to an exclusive read-modify-write and the commutative
+    /// movement semantics that read an amount cell are unreachable for
+    /// it.
+    fn from_cell(cell: &[u8]) -> Self {
+        let mut limbs = [0u64; 4];
+        for (limb, chunk) in limbs.iter_mut().zip(cell.chunks_exact(8)) {
+            *limb = u64::from_le_bytes(chunk.try_into().expect("eight bytes"));
+        }
+        Self::from_scaled(Wide::from_limbs(limbs))
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(32);
+        for limb in self.scaled().limbs() {
+            out.extend_from_slice(&limb.to_le_bytes());
+        }
+        out
     }
 }
 

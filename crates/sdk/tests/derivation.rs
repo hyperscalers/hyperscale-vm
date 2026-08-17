@@ -16,6 +16,7 @@
 // the appearance is an artifact of a contract living inside a test binary.
 #![allow(dead_code)]
 
+use hyperscale_vm_effects::{Clause, ModeExpr};
 use hyperscale_vm_sdk::blueprint;
 
 /// Control-flow spellings of one access set, each beside its straight-line
@@ -246,17 +247,29 @@ fn reading_the_environment_declares_nothing() {
 /// the other.
 #[blueprint]
 mod issuer {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, issue};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Keyed, Quantity, Rounding, issue};
 
     #[state]
     struct Issuer {
         #[role(1)]
         staked: Cell<Quantity>,
+        /// A stored rate, to pin the mode a value-shaped cell that is not
+        /// value folds to.
+        #[role(3)]
+        index: Cell<Fixed<(), ()>>,
         #[role(2)]
         vaults: Keyed<Quantity>,
     }
 
     impl Issuer {
+        /// Accrue the stored index, which is a read-modify-write and
+        /// never a movement.
+        pub fn accrue(&mut self) {
+            let index = self.index.get();
+            self.index.set(index + Fixed::ONE);
+            let _ = Rounding::Down;
+        }
+
         /// Take a delegation and hand back units at par.
         pub fn stake(&mut self, funds: Bucket) -> Bucket {
             let staked = funds.quantity();
@@ -271,6 +284,24 @@ mod issuer {
             self.staked.set(Quantity::ZERO);
         }
     }
+}
+
+#[test]
+fn a_stored_rate_folds_to_an_exclusive_write_never_a_movement() {
+    let blueprint = issuer::blueprint();
+    let metadata = blueprint.metadata();
+    let modes: Vec<ModeExpr> = metadata.methods["accrue"]
+        .effects
+        .iter()
+        .map(|clause| match clause {
+            Clause::Effect { mode, .. } => mode.clone(),
+            Clause::ForEach { .. } => panic!("the accrual maps over nothing"),
+        })
+        .collect();
+    // A rate is not value: nothing moves into or out of the cell, so the
+    // site folds to the exclusive read-modify-write and the commutative
+    // movement semantics that read an amount cell are unreachable for it.
+    assert_eq!(modes, vec![ModeExpr::Write]);
 }
 
 #[test]

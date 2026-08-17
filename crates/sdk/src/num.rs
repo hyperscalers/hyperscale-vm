@@ -119,6 +119,25 @@ impl Wide {
         self.0 == [0; 4]
     }
 
+    /// The sum, or `None` past the width.
+    ///
+    /// Guest-side and exact. A stored rate is a thing bodies add to, and
+    /// a cumulative index is added to once per update forever — a
+    /// boundary crossing per addition would be absurd, and there is no
+    /// rounding question for one to answer.
+    #[must_use]
+    pub const fn checked_add(self, other: Self) -> Option<Self> {
+        let (sum, carry) = limb_add(self.0, other.0);
+        if carry { None } else { Some(Self(sum)) }
+    }
+
+    /// The difference, or `None` below zero.
+    #[must_use]
+    pub const fn checked_sub(self, other: Self) -> Option<Self> {
+        let (difference, borrow) = limb_sub(self.0, other.0);
+        if borrow { None } else { Some(Self(difference)) }
+    }
+
     /// The value as a `u128`.
     ///
     /// # Panics
@@ -134,6 +153,52 @@ impl Wide {
         );
         (self.0[0] as u128) | ((self.0[1] as u128) << 64)
     }
+}
+
+impl Ord for Wide {
+    fn cmp(&self, other: &Self) -> Ordering {
+        for i in (0..4).rev() {
+            match self.0[i].cmp(&other.0[i]) {
+                Ordering::Equal => {}
+                unequal => return unequal,
+            }
+        }
+        Ordering::Equal
+    }
+}
+
+impl PartialOrd for Wide {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+const fn limb_add(a: [u64; 4], b: [u64; 4]) -> ([u64; 4], bool) {
+    let mut out = [0u64; 4];
+    let mut carry = 0u64;
+    let mut i = 0;
+    while i < 4 {
+        let (partial, first) = a[i].overflowing_add(b[i]);
+        let (total, second) = partial.overflowing_add(carry);
+        out[i] = total;
+        carry = if first || second { 1 } else { 0 };
+        i += 1;
+    }
+    (out, carry != 0)
+}
+
+const fn limb_sub(a: [u64; 4], b: [u64; 4]) -> ([u64; 4], bool) {
+    let mut out = [0u64; 4];
+    let mut borrow = 0u64;
+    let mut i = 0;
+    while i < 4 {
+        let (partial, first) = a[i].overflowing_sub(b[i]);
+        let (total, second) = partial.overflowing_sub(borrow);
+        out[i] = total;
+        borrow = if first || second { 1 } else { 0 };
+        i += 1;
+    }
+    (out, borrow != 0)
 }
 
 /// An amount of one resource, in integer subunits.
@@ -500,6 +565,22 @@ impl Ratio {
         arith::fraction_cmp(self.num, self.den, other.num, other.den)
     }
 
+    /// This fraction quantized as a stored rate under a stated
+    /// dimension.
+    ///
+    /// A dimensionless fraction has no dimension of its own, so storing
+    /// one means saying what it is a rate *of* — which is a claim the
+    /// author makes rather than one the type carries.
+    #[must_use]
+    pub fn quantize_as<A, B>(self, rounding: Rounding) -> Fixed<A, B> {
+        Fixed::from_scaled(arith::mul_div(
+            self.num,
+            Wide::from_u128(FIXED_SCALE),
+            self.den,
+            rounding,
+        ))
+    }
+
     /// The smaller of two, by value.
     #[must_use]
     pub fn min(self, other: Self) -> Self {
@@ -571,6 +652,214 @@ impl<A, B> Rate<A, B> {
             ratio: self.ratio.recip()?,
             dimension: PhantomData,
         })
+    }
+}
+
+/// A stored rate: a quantity of `A` per quantity of `B`, quantized.
+///
+/// The storage half of the rate story, and the only numeric object here
+/// that outlives a transaction. An oracle reading, a redemption index, a
+/// share price, a funding rate and a reward-per-share accumulator are one
+/// object — a rate that has to persist — so they are one type.
+///
+/// # Why 256 bits at `10^36`
+///
+/// Because a `Fixed` is a rate between *subunits*, the two resources'
+/// decimal offsets span `1e-18` to `1e18` before any market price enters,
+/// so the useful part of the range is the bottom. `u128` at `10^18` is
+/// not merely tight — it is the wrong end. Rescaling moves the floor
+/// instead of the ceiling: the range here is `1e-36` to roughly `1.16e41`
+/// with significance holding to about `1e-30`, which needs a whole-unit
+/// price under `1e-12` against an eighteen-decimal spread to reach.
+///
+/// A scale-free representation — a normalized fraction, or a mantissa and
+/// an exponent — holds its digits wherever the value sits, and is
+/// rejected for two reasons that bind harder. Addition at one scale is
+/// **exact**, and a cumulative index is a thing you add to a billion
+/// times; every scale-free form re-rounds on every addition. And a
+/// fixed-point cell is canonically encoded by construction, where a
+/// fraction needs reduction and a mantissa needs normalization before two
+/// equal values are one state root.
+///
+/// # Nothing lossy happens here
+///
+/// `Fixed` has no arithmetic of its own beyond exact addition. It
+/// converts to a [`Rate`] for free — a `Fixed` *is* the fraction
+/// `scaled / 10^36` — and every lossy operation happens there, at full
+/// precision, quantizing once at the end where the author writes a
+/// [`Rounding`]. That is what removes the bug where a fixed-point rate is
+/// inverted and multiplied back: the reciprocal is taken on the exact
+/// fraction, where it is free and lossless.
+#[derive(Debug)]
+pub struct Fixed<A, B> {
+    scaled: Wide,
+    dimension: PhantomData<(A, B)>,
+}
+
+impl<A, B> Clone for Fixed<A, B> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<A, B> Copy for Fixed<A, B> {}
+
+impl<A, B> PartialEq for Fixed<A, B> {
+    fn eq(&self, other: &Self) -> bool {
+        self.scaled == other.scaled
+    }
+}
+
+impl<A, B> Eq for Fixed<A, B> {}
+
+impl<A, B> PartialOrd for Fixed<A, B> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<A, B> Ord for Fixed<A, B> {
+    /// Cheap: two values at one scale compare as their scaled integers,
+    /// where two fractions would need a cross-multiplication.
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.scaled.cmp(&other.scaled)
+    }
+}
+
+impl<A, B> Default for Fixed<A, B> {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+impl<A, B> Fixed<A, B> {
+    /// Nothing.
+    pub const ZERO: Self = Self {
+        scaled: Wide::ZERO,
+        dimension: PhantomData,
+    };
+
+    /// One of `A` per one of `B`.
+    pub const ONE: Self = Self {
+        scaled: Wide::from_u128(FIXED_SCALE),
+        dimension: PhantomData,
+    };
+
+    /// The value `scaled` names, at [`FIXED_SCALE`].
+    #[must_use]
+    pub const fn from_scaled(scaled: Wide) -> Self {
+        Self {
+            scaled,
+            dimension: PhantomData,
+        }
+    }
+
+    /// The scaled integer this holds.
+    #[must_use]
+    pub const fn scaled(self) -> Wide {
+        self.scaled
+    }
+
+    /// Whether the rate is zero.
+    #[must_use]
+    pub fn is_zero(self) -> bool {
+        self.scaled.is_zero()
+    }
+
+    /// This rate as an exact fraction: `scaled / 10^36`.
+    ///
+    /// Free and lossless, which is what makes every operation on a stored
+    /// rate an operation on a transient one.
+    #[must_use]
+    pub const fn rate(self) -> Rate<A, B> {
+        Rate {
+            ratio: Ratio {
+                num: self.scaled,
+                den: Wide::from_u128(FIXED_SCALE),
+            },
+            dimension: PhantomData,
+        }
+    }
+
+    /// The reciprocal, as an exact fraction: `10^36 / scaled`.
+    ///
+    /// # Errors
+    ///
+    /// [`MathError::ZeroDenominator`] on a zero rate.
+    pub fn recip_rate(self) -> Result<Rate<B, A>, MathError> {
+        self.rate().recip()
+    }
+
+    /// This rate raised to `exp`, at the scale.
+    ///
+    /// What per-period compounding needs. The rounding applies to each
+    /// multiplication rather than to the result, which is the most a
+    /// fixed intermediate width allows.
+    #[must_use]
+    pub fn pow_int(self, exp: u32, rounding: Rounding) -> Self {
+        Self::from_scaled(arith::fixed_pow(self.scaled, exp, rounding))
+    }
+}
+
+impl<A, B> core::ops::Add for Fixed<A, B> {
+    type Output = Self;
+
+    /// Exact, and an operator for the same reason a quantity's is: at one
+    /// scale there is no width subtlety and no rounding question, which
+    /// is the whole argument for storing at a scale rather than as a
+    /// fraction.
+    ///
+    /// # Panics
+    ///
+    /// Past the width, which for an accumulator means the increments were
+    /// computed against a denominator far smaller than the contract
+    /// intends — a minimum stake is what bounds it.
+    fn add(self, other: Self) -> Self {
+        Self::from_scaled(
+            self.scaled
+                .checked_add(other.scaled)
+                .expect("a stored rate within the width"),
+        )
+    }
+}
+
+impl<A, B> core::ops::Sub for Fixed<A, B> {
+    type Output = Self;
+
+    /// The shape every reward accumulator settles through: what a holder
+    /// is owed is the index now less the index when they last settled.
+    ///
+    /// # Panics
+    ///
+    /// Below zero, which for a monotone accumulator is a defect.
+    fn sub(self, other: Self) -> Self {
+        Self::from_scaled(
+            self.scaled
+                .checked_sub(other.scaled)
+                .expect("a monotone accumulator"),
+        )
+    }
+}
+
+impl<A, B> core::ops::AddAssign for Fixed<A, B> {
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
+
+impl<A, B> Rate<A, B> {
+    /// This exact rate, quantized for storage.
+    ///
+    /// The one lossy step between a computed rate and a stored one, and
+    /// it names its direction.
+    #[must_use]
+    pub fn quantize(self, rounding: Rounding) -> Fixed<A, B> {
+        Fixed::from_scaled(arith::mul_div(
+            self.ratio.num,
+            Wide::from_u128(FIXED_SCALE),
+            self.ratio.den,
+            rounding,
+        ))
     }
 }
 
@@ -662,7 +951,7 @@ impl UnitFixed {
 
 #[cfg(test)]
 mod tests {
-    use super::{MathError, Quantity, Ratio, Rounding, UnitFixed};
+    use super::{Fixed, MathError, Quantity, Rate, Ratio, Rounding, UnitFixed, Wide, arith};
 
     fn q(n: u128) -> Quantity {
         Quantity::from_subunits(n)
@@ -801,6 +1090,110 @@ mod tests {
             q(350),
             "no step is no quantization"
         );
+    }
+
+    /// A stored rate converts back to the exact fraction it stands for,
+    /// which is what makes every operation on one an operation on a
+    /// transient fraction.
+    #[test]
+    fn a_stored_rate_is_the_fraction_it_quantized() {
+        let rate: Rate<(), ()> = q(1).per(q(4)).expect("funded");
+        let stored = rate.quantize(Rounding::Down);
+        assert_eq!(
+            stored
+                .rate()
+                .ratio()
+                .cmp_with(Ratio::of(1, 4).expect("non-zero")),
+            core::cmp::Ordering::Equal
+        );
+    }
+
+    /// The bug this representation removes: a fixed-point rate inverted
+    /// and multiplied back does not round-trip, so the inversion happens
+    /// on the exact fraction where it is free.
+    #[test]
+    fn a_reciprocal_of_a_stored_rate_round_trips() {
+        let stored: Fixed<(), ()> = q(1).per(q(3)).expect("funded").quantize(Rounding::Down);
+        let there = stored.rate().ratio();
+        let back = stored
+            .recip_rate()
+            .expect("non-zero")
+            .ratio()
+            .recip()
+            .expect("non-zero");
+        assert_eq!(there.cmp_with(back), core::cmp::Ordering::Equal);
+    }
+
+    /// The reason storage is fixed-point rather than scale-free:
+    /// addition at one scale is exact, and an index is a thing bodies add
+    /// to without bound. The control is the same total accumulated the
+    /// way a body would if it materialized each increment as a quantity,
+    /// which drifts by a subunit per operation in either direction.
+    #[test]
+    fn an_index_accumulates_without_drift() {
+        let increment: Fixed<(), ()> = Ratio::of(1, 3)
+            .expect("non-zero")
+            .quantize_as::<(), ()>(Rounding::Down);
+        let mut index = Fixed::<(), ()>::ZERO;
+        for _ in 0..100_000 {
+            index += increment;
+        }
+        // Exact: a hundred thousand additions of one quantized value is
+        // that value's scaled integer times a hundred thousand, with no
+        // term rounded on the way.
+        let expected = arith::mul_div(
+            increment.scaled(),
+            Wide::from_u128(100_000),
+            Wide::ONE,
+            Rounding::Down,
+        );
+        assert_eq!(
+            index.scaled(),
+            expected,
+            "an index drifted while accumulating"
+        );
+
+        // The control: materialize each increment against a pool and sum
+        // the quantities, which is the shape that loses a subunit an
+        // operation. It falls short, and by a lot more than one.
+        let mut materialized = Quantity::ZERO;
+        for _ in 0..100_000 {
+            materialized += q(1_000).scale(Ratio::of(1, 3).expect("non-zero"), Rounding::Down);
+        }
+        let exact = q(1_000 * 100_000).scale(Ratio::of(1, 3).expect("non-zero"), Rounding::Down);
+        assert!(
+            materialized < exact,
+            "the materialized control is meant to drift, and did not"
+        );
+    }
+
+    #[test]
+    fn stored_rates_order_by_their_scaled_value() {
+        let third: Fixed<(), ()> = Ratio::of(1, 3)
+            .expect("non-zero")
+            .quantize_as(Rounding::Down);
+        let half: Fixed<(), ()> = Ratio::of(1, 2)
+            .expect("non-zero")
+            .quantize_as(Rounding::Down);
+        assert!(third < half);
+        assert_eq!(
+            Fixed::<(), ()>::ONE.rate().ratio().cmp_with(Ratio::ONE),
+            core::cmp::Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn compounding_a_stored_rate_squares_it() {
+        let one_and_a_half: Fixed<(), ()> = Ratio::of(3, 2)
+            .expect("non-zero")
+            .quantize_as(Rounding::Down);
+        let squared = one_and_a_half.pow_int(2, Rounding::Down);
+        let expected: Fixed<(), ()> = Ratio::of(9, 4)
+            .expect("non-zero")
+            .quantize_as(Rounding::Down);
+        assert_eq!(squared, expected);
+        assert_eq!(one_and_a_half.pow_int(0, Rounding::Down), Fixed::ONE);
+        assert_eq!(one_and_a_half.pow_int(1, Rounding::Down), one_and_a_half);
     }
 
     #[test]
