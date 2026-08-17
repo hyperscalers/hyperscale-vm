@@ -21,7 +21,6 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
 #[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::build_guest;
-use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, Event, Held, Interval, KernelSession, MemoryStore, Movement, Outcome,
     OverlayStore, Receipt, TxHash, WorkingStore, encode_amount,
@@ -61,8 +60,8 @@ fn keys() -> (SubstateKey, SubstateKey) {
 
 /// Enter the account whose method runs next. Emission is stamped from
 /// here, so the caller driving the sequence is what supplies it.
-const fn entering(mut host: SessionHost, who: Address) -> SessionHost {
-    host.0.enter_invocation(who);
+const fn entering(mut host: KernelSession, who: Address) -> KernelSession {
+    host.enter_invocation(who);
     host
 }
 
@@ -124,13 +123,13 @@ fn finish(session: KernelSession, fuel: u64) -> Receipt {
 fn blessed_transfer() -> Result<(Receipt, u64)> {
     let engine = blessed_engine()?;
     let compiled = Component::new(&engine, ACCOUNT_COMPONENT)?;
-    let mut linker = Linker::<SessionHost>::new(&engine);
+    let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
 
-    let host = entering(SessionHost(session()), SENDER);
+    let host = entering(session(), SENDER);
     let (sender, recipient) = keys();
     let sender_rep = rep_of(
-        &host.0,
+        &host,
         &Capability::Reserve {
             key: sender,
             amount: AMOUNT,
@@ -148,7 +147,7 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
     let withdraw_fuel = FUEL - store.get_fuel()?;
     let host = entering(store.into_data(), RECIPIENT);
 
-    let recipient_rep = rep_of(&host.0, &Capability::Delta(recipient));
+    let recipient_rep = rep_of(&host, &Capability::Delta(recipient));
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &compiled)?;
@@ -164,7 +163,7 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
     let deposit_fuel = FUEL - store.get_fuel()?;
     let fuel = withdraw_fuel + deposit_fuel;
 
-    Ok((finish(store.into_data().0, fuel), fuel))
+    Ok((finish(store.into_data(), fuel), fuel))
 }
 
 /// The same transfer on the reference interpreter, instantiated per call
@@ -173,9 +172,9 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
     let component = RefComponent::decode(ACCOUNT_COMPONENT)?;
     let (sender, recipient) = keys();
 
-    let host = entering(SessionHost(session()), SENDER);
+    let host = entering(session(), SENDER);
     let sender_rep = rep_of(
-        &host.0,
+        &host,
         &Capability::Reserve {
             key: sender,
             amount: AMOUNT,
@@ -196,7 +195,7 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
     let withdraw_fuel = instance.fuel_consumed();
     let host = entering(instance.into_host(), RECIPIENT);
 
-    let recipient_rep = rep_of(&host.0, &Capability::Delta(recipient));
+    let recipient_rep = rep_of(&host, &Capability::Delta(recipient));
     let mut instance =
         RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(
@@ -210,7 +209,7 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
     let deposit_fuel = instance.fuel_consumed();
     let fuel = withdraw_fuel + deposit_fuel;
 
-    Ok((finish(instance.into_host().0, fuel), fuel))
+    Ok((finish(instance.into_host(), fuel), fuel))
 }
 
 #[test]
@@ -452,9 +451,9 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     let mut linker = Linker::new(&engine);
     add_kernel_to_linker(&mut linker)?;
 
-    let host = entering(SessionHost(lottery_session()), LOTTERY);
+    let host = entering(lottery_session(), LOTTERY);
     let entry_rep = rep_of(
-        &host.0,
+        &host,
         &Capability::RangeWrite(Interval {
             owner: LOTTERY,
             collection: ticket_collection(),
@@ -464,7 +463,7 @@ fn blessed_round() -> Result<(Receipt, u64)> {
         }),
     );
     let pot_rep = rep_of(
-        &host.0,
+        &host,
         &Capability::Delta(child_key(&TestHasher, LOTTERY, VAULT, &[])),
     );
     let mut store = Store::new(&engine, host);
@@ -475,7 +474,7 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     // byte list. The kernel never sees this shape — metadata and world
     // are derived together — which is why a direct drive is the one
     // reader that has to follow.
-    let funds = store.data_mut().0.open_bucket(Held::Amount(AMOUNT));
+    let funds = store.data_mut().open_bucket(Held::Amount(AMOUNT));
     let enter = instance.get_typed_func::<(
         Resource<RangeWrite>,
         Resource<DeltaCell>,
@@ -496,9 +495,9 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     let enter_fuel = FUEL - store.get_fuel()?;
     let host = entering(store.into_data(), LOTTERY);
 
-    let outcome_rep = rep_of(&host.0, &Capability::Write(draw_key()));
+    let outcome_rep = rep_of(&host, &Capability::Write(draw_key()));
     let round_rep = rep_of(
-        &host.0,
+        &host,
         &Capability::RangeRead(Interval {
             owner: LOTTERY,
             collection: ticket_collection(),
@@ -521,14 +520,14 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     )?;
     let fuel = enter_fuel + (FUEL - store.get_fuel()?);
 
-    Ok((finish(store.into_data().0, fuel), fuel))
+    Ok((finish(store.into_data(), fuel), fuel))
 }
 
 fn reference_round() -> Result<(Receipt, u64)> {
     let component = RefComponent::decode(LOTTERY_COMPONENT)?;
-    let host = entering(SessionHost(lottery_session()), LOTTERY);
+    let host = entering(lottery_session(), LOTTERY);
     let entry_rep = rep_of(
-        &host.0,
+        &host,
         &Capability::RangeWrite(Interval {
             owner: LOTTERY,
             collection: ticket_collection(),
@@ -538,11 +537,11 @@ fn reference_round() -> Result<(Receipt, u64)> {
         }),
     );
     let pot_rep = rep_of(
-        &host.0,
+        &host,
         &Capability::Delta(child_key(&TestHasher, LOTTERY, VAULT, &[])),
     );
     let mut host = host;
-    let funds = host.0.open_bucket(Held::Amount(AMOUNT));
+    let funds = host.open_bucket(Held::Amount(AMOUNT));
     let mut instance =
         RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(
@@ -559,9 +558,9 @@ fn reference_round() -> Result<(Receipt, u64)> {
     let enter_fuel = instance.fuel_consumed();
     let host = entering(instance.into_host(), LOTTERY);
 
-    let outcome_rep = rep_of(&host.0, &Capability::Write(draw_key()));
+    let outcome_rep = rep_of(&host, &Capability::Write(draw_key()));
     let round_rep = rep_of(
-        &host.0,
+        &host,
         &Capability::RangeRead(Interval {
             owner: LOTTERY,
             collection: ticket_collection(),
@@ -582,7 +581,7 @@ fn reference_round() -> Result<(Receipt, u64)> {
     outcome.map_err(|trap| wasmtime::error::format_err!("draw trapped: {trap:?}"))?;
     let fuel = enter_fuel + instance.fuel_consumed();
 
-    Ok((finish(instance.into_host().0, fuel), fuel))
+    Ok((finish(instance.into_host(), fuel), fuel))
 }
 
 /// Randomness reaching the committed bytes, identically on both

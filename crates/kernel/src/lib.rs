@@ -20,6 +20,7 @@
 
 pub mod conflict;
 pub mod executor;
+pub mod host;
 pub mod ledger;
 pub mod locality;
 pub mod modes;

@@ -11,7 +11,6 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{EffectSet, Hash32, Hasher, TestHasher};
 use hyperscale_vm_harness::fixtures::{REENTRANT_DROP_WAT, REENTRANT_REALLOC_WAT};
-use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash};
 use hyperscale_vm_ref::{CanonError, ExecError, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{add_kernel_to_linker, blessed_engine, validate_component};
@@ -43,9 +42,9 @@ fn session() -> KernelSession {
 fn run_blessed(bytes: &[u8]) -> Result<Error> {
     let engine = blessed_engine()?;
     let component = Component::new(&engine, bytes)?;
-    let mut linker = Linker::<SessionHost>::new(&engine);
+    let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
-    let mut store = Store::new(&engine, SessionHost(session()));
+    let mut store = Store::new(&engine, session());
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
     let draw = instance.get_typed_func::<(), (u64,)>(&mut store, "draw")?;
@@ -56,8 +55,8 @@ fn run_blessed(bytes: &[u8]) -> Result<Error> {
 
 fn run_ref(bytes: &[u8]) -> Result<ExecError> {
     let comp = RefComponent::decode(bytes)?;
-    let mut instance = RefComponentInstance::instantiate(&comp, SessionHost(session()))
-        .map_err(|(_, error)| error)?;
+    let mut instance =
+        RefComponentInstance::instantiate(&comp, session()).map_err(|(_, error)| error)?;
     instance.set_fuel_limit(FUEL);
     Ok(instance
         .invoke("draw", &[])?

@@ -13,7 +13,6 @@ use hyperscale_vm_effects::{
     SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
-use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner,
     KernelSession, Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, WorkingStore,
@@ -173,9 +172,9 @@ impl GuestRunner for BlessedRunner {
             stall(id);
         }
         let shape = self.shapes[&id];
-        let mut linker = Linker::<SessionHost>::new(&self.engine);
+        let mut linker = Linker::<KernelSession>::new(&self.engine);
         add_kernel_to_linker(&mut linker).expect("wiring");
-        let mut store = Store::new(&self.engine, SessionHost(session));
+        let mut store = Store::new(&self.engine, session);
         store.set_fuel(FUEL).expect("fuel");
         let instance = linker
             .instantiate(&mut store, &self.component)
@@ -185,7 +184,6 @@ impl GuestRunner for BlessedRunner {
                 let a = u32::try_from(
                     store
                         .data()
-                        .0
                         .capabilities()
                         .iter()
                         .position(
@@ -194,7 +192,7 @@ impl GuestRunner for BlessedRunner {
                         .expect("capability present"),
                 )
                 .expect("bounded");
-                let b = rep_of(&store.data().0, &Capability::Delta(recipient));
+                let b = rep_of(store.data(), &Capability::Delta(recipient));
                 instance
                     .get_typed_func::<(Resource<ReserveCell>, Resource<DeltaCell>), (u64,)>(
                         &mut store, "transfer",
@@ -208,7 +206,7 @@ impl GuestRunner for BlessedRunner {
                     })
             }
             Shape::Rmw { cell } => {
-                let rep = rep_of(&store.data().0, &Capability::Write(cell));
+                let rep = rep_of(store.data(), &Capability::Write(cell));
                 instance
                     .get_typed_func::<(Resource<WriteCell>,), (u64,)>(&mut store, "rmw")
                     .and_then(|f| {
@@ -225,7 +223,7 @@ impl GuestRunner for BlessedRunner {
         );
         let fuel = FUEL - store.get_fuel().expect("fuel");
         RunResult {
-            session: store.into_data().0,
+            session: store.into_data(),
             outcome,
             fuel,
         }
@@ -287,7 +285,7 @@ impl GuestRunner for RefRunner {
                 )],
             ),
         };
-        let mut instance = RefComponentInstance::instantiate(&self.comp, SessionHost(session))
+        let mut instance = RefComponentInstance::instantiate(&self.comp, session)
             .map_err(|(_, error)| error)
             .expect("decode");
         let outcome = instance.invoke(export, &args).expect("invoke").map_or_else(
@@ -303,7 +301,7 @@ impl GuestRunner for RefRunner {
         );
         let fuel = instance.fuel_consumed();
         RunResult {
-            session: instance.into_host().0,
+            session: instance.into_host(),
             outcome,
             fuel,
         }

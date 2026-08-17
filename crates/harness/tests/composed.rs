@@ -13,7 +13,6 @@ use hyperscale_vm_effects::{
     admit_tree, child_key, route_tree,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
-use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall,
     InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, TxHash,
@@ -162,9 +161,9 @@ struct BlessedComposed {
 
 impl GuestBackend for BlessedComposed {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
-        let mut linker = Linker::<SessionHost>::new(&self.engine);
+        let mut linker = Linker::<KernelSession>::new(&self.engine);
         add_kernel_to_linker(&mut linker).expect("wiring");
-        let mut store = Store::new(&self.engine, SessionHost(session));
+        let mut store = Store::new(&self.engine, session);
         store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
         let instance = linker
             .instantiate(&mut store, &self.component)
@@ -174,7 +173,7 @@ impl GuestBackend for BlessedComposed {
         let result = invoked(outcome);
         let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
         InvokeResult {
-            session: store.into_data().0,
+            session: store.into_data(),
             fuel,
             result,
             exhausted,
@@ -190,7 +189,7 @@ struct RefComposed {
 impl GuestBackend for RefComposed {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
         let args: Vec<CVal> = call.args.iter().map(CVal::from).collect();
-        let mut instance = RefComponentInstance::instantiate(&self.component, SessionHost(session))
+        let mut instance = RefComponentInstance::instantiate(&self.component, session)
             .map_err(|(_, error)| error)
             .expect("instantiate");
         instance.set_fuel_limit(call.fuel_budget.min(FUEL));
@@ -202,7 +201,7 @@ impl GuestBackend for RefComposed {
             Err(error) => Invoked::Aborted(error.abort_reason()),
         };
         InvokeResult {
-            session: instance.into_host().0,
+            session: instance.into_host(),
             fuel,
             result,
             exhausted,

@@ -11,7 +11,6 @@ use hyperscale_vm_effects::{
     Mode, RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
-use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     AbortReason, Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome,
     OverlayStore, Receipt, TxHash, WorkingStore, encode_amount,
@@ -250,7 +249,7 @@ fn classify_blessed(error: &Error) -> LaneOutcome {
 }
 
 fn call1<T: 'static>(
-    store: &mut Store<SessionHost>,
+    store: &mut Store<KernelSession>,
     instance: &Instance,
     export: &str,
     rep: u32,
@@ -260,15 +259,15 @@ fn call1<T: 'static>(
         .map(|(v,)| v)
 }
 
-fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, u64)> {
+fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, KernelSession, u64)> {
     let bytes = parse_str(KERNEL_GUEST_WAT)?;
     validate_component(&bytes)?;
     let engine = blessed_engine()?;
     let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<SessionHost>::new(&engine);
+    let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
-    let host = SessionHost(session(fx));
-    let args = args_for(fx, host.0.capabilities(), export);
+    let host = session(fx);
+    let args = args_for(fx, host.capabilities(), export);
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
@@ -314,11 +313,11 @@ fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, 
     Ok((outcome, store.into_data(), fuel))
 }
 
-fn run_ref(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, u64)> {
+fn run_ref(fx: &Fixture, export: &str) -> Result<(LaneOutcome, KernelSession, u64)> {
     let bytes = parse_str(KERNEL_GUEST_WAT)?;
     let comp = RefComponent::decode(&bytes)?;
-    let host = SessionHost(session(fx));
-    let args: Vec<CVal> = args_for(fx, host.0.capabilities(), export)
+    let host = session(fx);
+    let args: Vec<CVal> = args_for(fx, host.capabilities(), export)
         .into_iter()
         .map(|(rep, kind)| CVal::Borrow(rep, kind))
         .collect();
@@ -341,15 +340,15 @@ fn run_ref(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, u64)
 
 /// Runs one export on both lanes, comparing outcome, access log, and fuel;
 /// returns the blessed side for further assertions.
-fn both(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, u64)> {
+fn both(fx: &Fixture, export: &str) -> Result<(LaneOutcome, KernelSession, u64)> {
     let (blessed, blessed_host, blessed_fuel) =
         run_blessed(fx, export).with_context(|| format!("blessed {export}"))?;
     let (reference, ref_host, ref_fuel) =
         run_ref(fx, export).with_context(|| format!("ref {export}"))?;
     assert_eq!(blessed, reference, "{export} outcome diverged");
     assert_eq!(
-        blessed_host.0.store().access_log(),
-        ref_host.0.store().access_log(),
+        blessed_host.store().access_log(),
+        ref_host.store().access_log(),
         "{export} access log diverged"
     );
     assert_eq!(blessed_fuel, ref_fuel, "{export} fuel diverged");
@@ -369,11 +368,9 @@ fn receipts_agree(fx: &Fixture, export: &str) -> Result<Receipt> {
     };
     let outcome = Outcome::Completed { value: Some(value) };
     let (blessed_receipt, _) = blessed_host
-        .0
         .finish(outcome.clone(), blessed_fuel)
         .expect("oracle clean on the blessed side");
     let (ref_receipt, _) = ref_host
-        .0
         .finish(outcome, ref_fuel)
         .expect("oracle clean on the reference side");
     assert_eq!(blessed_receipt, ref_receipt, "{export} receipts diverged");
@@ -466,14 +463,14 @@ fn undeclared_key_and_mode_trap_identically_with_untouched_state() -> Result<()>
     // A handle index the host never lowered.
     let (forge, forge_host, _) = both(&fx, "forge")?;
     assert_eq!(forge, LaneOutcome::UnknownHandle);
-    assert_eq!(forge_host.0.store().access_log(), baseline);
+    assert_eq!(forge_host.store().access_log(), baseline);
 
     // A delta handle passed where a read-cell borrow is expected: the
     // undeclared *mode* has no handle type to receive, and the canonical
     // ABI rejects it before any host code runs.
     let (escape, escape_host, _) = both(&fx, "escape")?;
     assert_eq!(escape, LaneOutcome::WrongHandleType);
-    assert_eq!(escape_host.0.store().access_log(), baseline);
+    assert_eq!(escape_host.store().access_log(), baseline);
     Ok(())
 }
 
@@ -507,11 +504,11 @@ fn freed_handle_slots_reuse_most_recent_first_across_invokes() -> Result<()> {
 
     let engine = blessed_engine()?;
     let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<SessionHost>::new(&engine);
+    let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
-    let host = SessionHost(session(&fx));
-    let transfer_args = args_for(&fx, host.0.capabilities(), "transfer");
-    let value_args = args_for(&fx, host.0.capabilities(), "handle-value");
+    let host = session(&fx);
+    let transfer_args = args_for(&fx, host.capabilities(), "transfer");
+    let value_args = args_for(&fx, host.capabilities(), "handle-value");
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
@@ -531,7 +528,7 @@ fn freed_handle_slots_reuse_most_recent_first_across_invokes() -> Result<()> {
         .call(&mut store, (Resource::new_borrow(value_args[0].0),))?;
 
     let comp = RefComponent::decode(&bytes)?;
-    let host = SessionHost(session(&fx));
+    let host = session(&fx);
     let to_cvals = |args: &[(u32, ResourceKind)]| -> Vec<CVal> {
         args.iter()
             .map(|(rep, kind)| CVal::Borrow(*rep, *kind))

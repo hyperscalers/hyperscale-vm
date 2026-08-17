@@ -23,7 +23,6 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry};
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
-use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     AbortReason, BatchTx, EnvInputs, Event, GuestBackend, GuestCall, GuestRunner, InvokeResult,
     Invoked, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt, TxHash,
@@ -311,9 +310,9 @@ struct BlessedBackend<'a> {
 
 impl GuestBackend for BlessedBackend<'_> {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
-        let mut linker = Linker::<SessionHost>::new(&self.engines.engine);
+        let mut linker = Linker::<KernelSession>::new(&self.engines.engine);
         add_kernel_to_linker(&mut linker).expect("wiring");
-        let mut store = Store::new(&self.engines.engine, SessionHost(session));
+        let mut store = Store::new(&self.engines.engine, session);
         store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
         let component = &self.engines.blessed[self.engines.guest_for(call.package)];
         let instance = linker
@@ -324,7 +323,7 @@ impl GuestBackend for BlessedBackend<'_> {
         let result = invoked(outcome);
         let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
         InvokeResult {
-            session: store.into_data().0,
+            session: store.into_data(),
             fuel,
             result,
             exhausted,
@@ -341,7 +340,7 @@ impl GuestBackend for ReferenceBackend<'_> {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
         let args: Vec<CVal> = call.args.iter().map(CVal::from).collect();
         let component = &self.engines.reference[self.engines.guest_for(call.package)];
-        let mut instance = RefComponentInstance::instantiate(component, SessionHost(session))
+        let mut instance = RefComponentInstance::instantiate(component, session)
             .map_err(|(_, error)| error)
             .expect("instantiate");
         instance.set_fuel_limit(call.fuel_budget.min(FUEL));
@@ -353,7 +352,7 @@ impl GuestBackend for ReferenceBackend<'_> {
             Err(error) => Invoked::Aborted(error.abort_reason()),
         };
         InvokeResult {
-            session: instance.into_host().0,
+            session: instance.into_host(),
             fuel,
             result,
             exhausted,

@@ -25,7 +25,6 @@ use hyperscale_vm_effects::{
     PrincipalAddr, ResourceAddr, ResourceRecord, SubstateKey, TestHasher, Value, admit_tree,
     child_key, holdings_collection, resource_address, resource_record_key, route_tree,
 };
-use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall,
     InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, TxHash,
@@ -280,9 +279,9 @@ impl GuestBackend for BlessedPackages {
             .components
             .get(&call.package)
             .expect("the call names a published package");
-        let mut linker = Linker::<SessionHost>::new(&self.engine);
+        let mut linker = Linker::<KernelSession>::new(&self.engine);
         add_kernel_to_linker(&mut linker).expect("wiring");
-        let mut store = Store::new(&self.engine, SessionHost(session));
+        let mut store = Store::new(&self.engine, session);
         store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
         let instance = linker
             .instantiate(&mut store, component)
@@ -292,7 +291,7 @@ impl GuestBackend for BlessedPackages {
         let result = invoked(outcome);
         let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
         InvokeResult {
-            session: store.into_data().0,
+            session: store.into_data(),
             fuel,
             result,
             exhausted,
@@ -312,7 +311,7 @@ impl GuestBackend for RefPackages {
             .get(&call.package)
             .expect("the call names a published package");
         let args: Vec<CVal> = call.args.iter().map(CVal::from).collect();
-        let mut instance = RefComponentInstance::instantiate(component, SessionHost(session))
+        let mut instance = RefComponentInstance::instantiate(component, session)
             .map_err(|(_, error)| error)
             .expect("instantiate");
         instance.set_fuel_limit(call.fuel_budget.min(FUEL));
@@ -324,7 +323,7 @@ impl GuestBackend for RefPackages {
             Err(error) => Invoked::Aborted(error.abort_reason()),
         };
         InvokeResult {
-            session: instance.into_host().0,
+            session: instance.into_host(),
             fuel,
             result,
             exhausted,

@@ -18,7 +18,6 @@ use hyperscale_vm_effects::{
     admit, child_key, route,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
-use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, GuestRunner,
     InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome,
@@ -148,7 +147,7 @@ fn funded_store(senders: u32) -> MemoryStore {
 
 struct Bench {
     engine: Engine,
-    pre: InstancePre<SessionHost>,
+    pre: InstancePre<KernelSession>,
 }
 
 impl Bench {
@@ -157,7 +156,7 @@ impl Bench {
         let bytes = build_guest("account")?;
         validate_component(&bytes).context("profile")?;
         let component = Component::new(&engine, &bytes)?;
-        let mut linker = Linker::<SessionHost>::new(&engine);
+        let mut linker = Linker::<KernelSession>::new(&engine);
         add_kernel_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
         Ok(Self { engine, pre })
@@ -166,7 +165,7 @@ impl Bench {
 
 impl GuestBackend for Bench {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
-        let mut store = Store::new(&self.engine, SessionHost(session));
+        let mut store = Store::new(&self.engine, session);
         store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
         let instance = self.pre.instantiate(&mut store).expect("instantiate");
         let outcome = call_export(&mut store, &instance, call.export, call.args);
@@ -178,7 +177,7 @@ impl GuestBackend for Bench {
         };
         let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
         InvokeResult {
-            session: store.into_data().0,
+            session: store.into_data(),
             fuel,
             result,
             exhausted,
