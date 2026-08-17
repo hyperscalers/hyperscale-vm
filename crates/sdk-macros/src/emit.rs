@@ -171,6 +171,19 @@ fn node(node: &Node, lowered: &Lowered) -> TokenStream {
                 return quote!();
             };
             let target = target(&site.target);
+            // What the cell holds, stated on the clause that names it, so
+            // execution can refuse a movement across two resources without
+            // consulting anything a caller wrote. Resolved before the
+            // access opens, because the term reads the tracer and the open
+            // access is holding it.
+            let held = site.denomination.as_ref().map(|resource| {
+                let resource = resource.emit();
+                quote!(let __held = #resource.cast::<::hyperscale_vm_sdk::Addr>();)
+            });
+            let holding = site
+                .denomination
+                .as_ref()
+                .map(|_| quote!(.holding(&__held)));
             // A handle parameter names the clause just declared, so the
             // binding rides beside the declaration rather than being
             // recomputed from it.
@@ -178,7 +191,7 @@ fn node(node: &Node, lowered: &Lowered) -> TokenStream {
                 .handles
                 .contains(index)
                 .then(|| quote!(__t.bind_handle();));
-            quote!({ #prelude #target __access #call; #bind })
+            quote!({ #prelude #held #target __access #holding #call; #bind })
         }
         Node::ForEach { list, depth, body } => {
             let list = list.emit();

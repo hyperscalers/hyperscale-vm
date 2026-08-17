@@ -60,6 +60,7 @@ pub fn metadata() -> PackageMetadata {
                     material: vec![minted_resource, minted_id],
                 }),
                 mode: ModeExpr::Write,
+                denomination: None,
             }],
             ..MethodSignature::default()
         },
@@ -76,6 +77,7 @@ pub fn metadata() -> PackageMetadata {
             effects: vec![Clause::Effect {
                 target: holdings_range(Expr::ResourceOf(Box::new(Expr::Arg(0))), NF_MOVE_CAP),
                 mode: ModeExpr::Write,
+                denomination: None,
             }],
             ..MethodSignature::default()
         },
@@ -96,6 +98,7 @@ pub fn metadata() -> PackageMetadata {
             effects: vec![Clause::Effect {
                 target: holdings_range(Expr::Arg(0), NF_MOVE_CAP),
                 mode: ModeExpr::Write,
+                denomination: None,
             }],
             ..MethodSignature::default()
         },

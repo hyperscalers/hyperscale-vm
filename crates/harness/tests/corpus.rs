@@ -490,6 +490,7 @@ fn execute_manifest(
         OverlayStore::new(Arc::new(store)),
         &entry.declared,
         &entry.ordered,
+        &[],
         tx,
         EnvInputs {
             clock_ms,
@@ -688,10 +689,12 @@ fn mirror_metadata() -> PackageMetadata {
                 Clause::Effect {
                     target: TargetExpr::Point(self_child(CLAIMS, vec![resource_of_arg0()])),
                     mode: ModeExpr::Delta,
+                    denomination: None,
                 },
                 Clause::Effect {
                     target: TargetExpr::Point(self_child(VAULT, vec![resource_of_arg0()])),
                     mode: ModeExpr::Delta,
+                    denomination: None,
                 },
             ],
             ..MethodSignature::default()

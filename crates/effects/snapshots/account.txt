@@ -20,6 +20,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Read,
+                    denomination: None,
                 },
             ],
             abi: [],
@@ -46,6 +47,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write,
+                    denomination: None,
                 },
             ],
             abi: [
@@ -76,6 +78,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write,
+                    denomination: None,
                 },
             ],
             abi: [
@@ -112,6 +115,13 @@ PackageMetadata {
                         },
                     ),
                     mode: Delta,
+                    denomination: Some(
+                        ResourceOf(
+                            Arg(
+                                0,
+                            ),
+                        ),
+                    ),
                 },
                 Effect {
                     target: Point(
@@ -130,6 +140,13 @@ PackageMetadata {
                         },
                     ),
                     mode: Delta,
+                    denomination: Some(
+                        ResourceOf(
+                            Arg(
+                                0,
+                            ),
+                        ),
+                    ),
                 },
             ],
             abi: [
@@ -178,6 +195,13 @@ PackageMetadata {
                         cap: 64,
                     },
                     mode: Write,
+                    denomination: Some(
+                        ResourceOf(
+                            Arg(
+                                0,
+                            ),
+                        ),
+                    ),
                 },
             ],
             abi: [
@@ -215,6 +239,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Read,
+                    denomination: None,
                 },
                 Effect {
                     target: Point(
@@ -231,6 +256,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Read,
+                    denomination: None,
                 },
                 Effect {
                     target: Range {
@@ -256,6 +282,7 @@ PackageMetadata {
                         cap: 1,
                     },
                     mode: Read,
+                    denomination: None,
                 },
             ],
             abi: [],
@@ -285,6 +312,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write,
+                    denomination: None,
                 },
             ],
             abi: [
@@ -328,6 +356,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write,
+                    denomination: None,
                 },
             ],
             abi: [
@@ -381,6 +410,11 @@ PackageMetadata {
                     mode: Reserve(
                         Arg(
                             1,
+                        ),
+                    ),
+                    denomination: Some(
+                        Arg(
+                            0,
                         ),
                     ),
                 },
@@ -438,6 +472,11 @@ PackageMetadata {
                         cap: 64,
                     },
                     mode: Write,
+                    denomination: Some(
+                        Arg(
+                            0,
+                        ),
+                    ),
                 },
             ],
             abi: [

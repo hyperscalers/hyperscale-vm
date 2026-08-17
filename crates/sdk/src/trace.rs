@@ -236,6 +236,7 @@ impl Trace {
         Access {
             trace: self,
             target,
+            denomination: None,
         }
     }
 
@@ -261,6 +262,7 @@ impl Trace {
         Access {
             trace: self,
             target,
+            denomination: None,
         }
     }
 
@@ -302,6 +304,7 @@ impl Trace {
         Access {
             trace: self,
             target,
+            denomination: None,
         }
     }
 
@@ -331,6 +334,7 @@ impl Trace {
         Access {
             trace: self,
             target,
+            denomination: None,
         }
     }
 
@@ -360,6 +364,7 @@ impl Trace {
         Access {
             trace: self,
             target,
+            denomination: None,
         }
     }
 
@@ -599,6 +604,7 @@ impl Trace {
 pub struct Access<'a> {
     trace: &'a mut Trace,
     target: TargetExpr,
+    denomination: Option<Box<Expr>>,
 }
 
 impl Access<'_> {
@@ -606,7 +612,23 @@ impl Access<'_> {
         self.trace.emit(Clause::Effect {
             target: self.target,
             mode,
+            denomination: self.denomination,
         });
+    }
+
+    /// State what the accessed cell holds.
+    ///
+    /// Read by execution rather than by routing: a key is a hash, so a
+    /// movement landing on one cannot say which resource it moved unless
+    /// the clause that named the cell says so. Stated here, a credit
+    /// carrying some other resource is refused by the kernel — which is
+    /// what makes the property hold for a package whose metadata nobody
+    /// derived.
+    #[must_use]
+    pub fn holding(mut self, resource: &Sym<Addr>) -> Self {
+        let expr = self.trace.lower(resource.expr().clone());
+        self.denomination = Some(Box::new(expr));
+        self
     }
 
     /// A fresh coherent read of committed state.

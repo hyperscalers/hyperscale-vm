@@ -69,6 +69,13 @@ pub struct BatchTx {
     ///
     /// Must fold to [`BatchTx::declared`]; [`execute_batch`] checks it.
     pub ordered: Vec<Effect>,
+    /// What each entry of [`BatchTx::ordered`] holds, where it holds
+    /// value, aligned index for index with it.
+    ///
+    /// A capability's rep is its index here, so this is where a movement
+    /// asks what the cell it is moving into is denominated in — the one
+    /// question a hashed key cannot answer.
+    pub denominations: Vec<Option<Address>>,
     /// The transaction's lowered invocations, in manifest node order:
     /// what [`crate::walk::ManifestWalk`] performs.
     ///
@@ -125,6 +132,7 @@ impl BatchTx {
             tx,
             declared: declaration.set,
             ordered: declaration.ordered,
+            denominations: declaration.denominations,
             calls: Vec::new(),
             nullifiers: Vec::new(),
             clock_ms,
@@ -688,6 +696,7 @@ fn run_group<R: GuestRunner>(
             store,
             &entry.declared,
             &entry.ordered,
+            &entry.denominations,
             entry.tx,
             env,
             hash_fn,

@@ -397,6 +397,7 @@ impl MethodSignature {
                 Clause::Effect {
                     target: TargetExpr::Point(cell),
                     mode: declared,
+                    ..
                 },
             ] if *declared == mode => Some((cell, role)),
             _ => None,
@@ -426,14 +427,17 @@ impl MethodSignature {
             Clause::Effect {
                 target: TargetExpr::Point(rule),
                 mode: ModeExpr::Read,
+                ..
             },
             Clause::Effect {
                 target: TargetExpr::Point(vault),
                 mode: ModeExpr::Read,
+                ..
             },
             Clause::Effect {
                 target: holdings @ TargetExpr::Range { cap, .. },
                 mode: ModeExpr::Read,
+                ..
             },
         ] = self.effects.as_slice()
         else {
@@ -844,7 +848,11 @@ fn check_clause_bounds(
     }
     for clause in clauses {
         match clause {
-            Clause::Effect { target, mode } => {
+            Clause::Effect {
+                target,
+                mode,
+                denomination,
+            } => {
                 *declared += 1;
                 if *declared > MAX_EFFECTS_PER_SIGNATURE {
                     return Err(MetadataBoundsError(format!(
@@ -853,6 +861,9 @@ fn check_clause_bounds(
                 }
                 check_target_bounds(target)?;
                 check_mode_bounds(mode)?;
+                if let Some(denomination) = denomination {
+                    check_expr_bounds(denomination, 0)?;
+                }
             }
             Clause::ForEach { list, body } => {
                 check_expr_bounds(list, 0)?;
@@ -1232,6 +1243,7 @@ mod tests {
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(expr),
                 mode: ModeExpr::Write,
+                denomination: None,
             }],
             ..MethodSignature::default()
         }
@@ -1267,6 +1279,7 @@ mod tests {
         let mut clause = Clause::Effect {
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
+            denomination: None,
         };
         for _ in 0..depth {
             clause = Clause::ForEach {
@@ -1333,6 +1346,7 @@ mod tests {
                         cap,
                     },
                     mode: ModeExpr::Read,
+                    denomination: None,
                 }],
                 ..MethodSignature::default()
             })
@@ -1345,6 +1359,7 @@ mod tests {
         let effect = Clause::Effect {
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
+            denomination: None,
         };
         let with = |count: usize| {
             one_method(MethodSignature {
@@ -1520,6 +1535,7 @@ mod tests {
         Clause::Effect {
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Delta,
+            denomination: None,
         }
     }
 
@@ -1579,6 +1595,7 @@ mod tests {
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(Expr::SelfAddr),
                 mode,
+                denomination: None,
             }],
             ..MethodSignature::default()
         };
@@ -1673,6 +1690,7 @@ mod tests {
                 Clause::Effect {
                     target: TargetExpr::Point(Expr::SelfAddr),
                     mode: ModeExpr::Read,
+                    denomination: None,
                 },
                 Clause::Effect {
                     target: TargetExpr::Point(Expr::ChildKey {
@@ -1681,10 +1699,12 @@ mod tests {
                         material: vec![vault_key],
                     }),
                     mode: ModeExpr::Read,
+                    denomination: None,
                 },
                 Clause::Effect {
                     target: holdings_range(holdings_key, 1),
                     mode: ModeExpr::Read,
+                    denomination: None,
                 },
             ]
         };
@@ -1720,6 +1740,7 @@ mod tests {
                 vec![Clause::Effect {
                     target: TargetExpr::Point(Expr::SelfAddr),
                     mode: ModeExpr::Read,
+                    denomination: None,
                 }],
             )),
             Err(AbiError::CustodialShape)
@@ -1741,6 +1762,7 @@ mod tests {
                     effects: vec![Clause::Effect {
                         target: TargetExpr::Point(Expr::SelfAddr),
                         mode: ModeExpr::Read,
+                        denomination: None,
                     }],
                     ..MethodSignature::default()
                 }),
@@ -1890,6 +1912,7 @@ mod tests {
             effects: vec![Clause::Effect {
                 target,
                 mode: ModeExpr::Delta,
+                denomination: None,
             }],
             ..MethodSignature::default()
         };
@@ -1944,6 +1967,7 @@ mod tests {
                 body: vec![Clause::Effect {
                     target: child_of(Expr::Binding(0)),
                     mode: ModeExpr::Delta,
+                    denomination: None,
                 }],
             }],
             ..MethodSignature::default()

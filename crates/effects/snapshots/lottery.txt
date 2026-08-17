@@ -29,6 +29,7 @@ PackageMetadata {
                         cap: 64,
                     },
                     mode: Read,
+                    denomination: None,
                 },
                 Effect {
                     target: Point(
@@ -41,6 +42,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write,
+                    denomination: None,
                 },
             ],
             abi: [
@@ -84,6 +86,7 @@ PackageMetadata {
                         },
                     },
                     mode: Write,
+                    denomination: None,
                 },
                 Effect {
                     target: Point(
@@ -102,6 +105,13 @@ PackageMetadata {
                         },
                     ),
                     mode: Delta,
+                    denomination: Some(
+                        ResourceOf(
+                            Arg(
+                                1,
+                            ),
+                        ),
+                    ),
                 },
             ],
             abi: [

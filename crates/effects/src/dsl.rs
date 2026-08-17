@@ -254,6 +254,7 @@ pub enum TargetExpr {
 
 /// One clause of an effect signature.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[allow(clippy::large_enum_variant)] // an access carries a target; a loop carries none
 pub enum Clause {
     /// A single declared access.
     Effect {
@@ -261,6 +262,19 @@ pub enum Clause {
         target: TargetExpr,
         /// How it is accessed.
         mode: ModeExpr,
+        /// The resource the accessed cell holds, where it holds value.
+        ///
+        /// Carried on the clause rather than derived from the key, because
+        /// a key is a hash and nothing inverts it — which is what left the
+        /// kernel unable to say which resource a movement moved. Stated
+        /// here, it reaches execution, where value crossing between two
+        /// resources stops being expressible even by a package whose
+        /// metadata was authored to allow it.
+        ///
+        /// Boxed because most clauses carry none, and an inline
+        /// expression would widen every clause in the tree to the size of
+        /// the rare one that does.
+        denomination: Option<Box<Expr>>,
     },
     /// One access set per element of a bounded input collection; inside
     /// the body, the element is the innermost [`Expr::Binding`].
@@ -467,6 +481,16 @@ pub struct Declaration {
     /// and folding makes its *length* depend on whether two clauses
     /// happened to evaluate to one target.
     pub ordered: Vec<Effect>,
+    /// The resource each entry of [`Declaration::ordered`] holds, where it
+    /// holds value, aligned index for index with it.
+    ///
+    /// Parallel rather than folded into [`Effect`] because an effect is
+    /// what the set is keyed by: two accesses on one cell are one target
+    /// whatever else is true of them, and a denomination riding the key
+    /// would split them. Aligned with `ordered` because a capability's rep
+    /// is its index there, which is the one place a movement can ask what
+    /// the cell it is moving into holds.
+    pub denominations: Vec<Option<Address>>,
     /// Where each top-level clause's effects sit in [`Declaration::ordered`],
     /// as `(start, len)` pairs in clause order.
     ///
@@ -502,6 +526,9 @@ impl Declaration {
             .map(|index| (index, 1))
             .collect();
         Self {
+            // A set has already discarded which clause declared what, so
+            // there is nothing left to say a cell holds.
+            denominations: vec![None; ordered.len()],
             set,
             ordered,
             clause_spans,
@@ -609,13 +636,33 @@ fn eval_clauses(
     }
     for clause in clauses {
         match clause {
-            Clause::Effect { target, mode } => {
+            Clause::Effect {
+                target,
+                mode,
+                denomination,
+            } => {
                 let target = eval_target(target, inputs, hasher, bindings)?;
                 let mode = eval_mode(mode, inputs, hasher, bindings)?;
                 budget.charge()?;
+                // Evaluated beside the key it belongs to and kept parallel
+                // to `ordered`, because a capability's rep is its index
+                // there — the same alignment the guest's handles ride.
+                let held = match denomination {
+                    Some(expr) => match eval_expr(expr, inputs, hasher, bindings, 0)? {
+                        Value::Address(resource) => Some(resource),
+                        found => {
+                            return Err(EvalError::TypeMismatch {
+                                expected: "resource",
+                                found: found.kind(),
+                            });
+                        }
+                    },
+                    None => None,
+                };
                 let effect = Effect { target, mode };
                 out.set.insert(effect)?;
                 out.ordered.push(effect);
+                out.denominations.push(held);
             }
             Clause::ForEach { list, body } => {
                 let items = as_list(eval_expr(list, inputs, hasher, bindings, 0)?)?;
@@ -1029,16 +1076,19 @@ mod tests {
             Clause::Effect {
                 target: point(0xF0),
                 mode: ModeExpr::Write,
+                denomination: None,
             },
             Clause::Effect {
                 target: point(0x0F),
                 mode: ModeExpr::Write,
+                denomination: None,
             },
             // The same target as the first clause: a degenerate instance
             // configuration produces exactly this shape.
             Clause::Effect {
                 target: point(0xF0),
                 mode: ModeExpr::Write,
+                denomination: None,
             },
         ];
         let ins = inputs(&[], &[]);
@@ -1153,6 +1203,7 @@ mod tests {
                     material: vec![Expr::Field(Box::new(Expr::Binding(0)), 1)],
                 }),
                 mode: ModeExpr::Delta,
+                denomination: None,
             }],
         }];
         let set = evaluate_effects(&clauses, &ins, &TestHasher).unwrap();
@@ -1217,6 +1268,7 @@ mod tests {
                 material: vec![],
             }),
             mode: ModeExpr::Read,
+            denomination: None,
         };
         let nest = |depth: usize| {
             let mut clause = effect.clone();
@@ -1301,6 +1353,7 @@ mod tests {
                 material: vec![],
             }),
             mode: ModeExpr::Read,
+            denomination: None,
         };
         for _ in 0..MAX_CLAUSE_DEPTH {
             clause = Clause::ForEach {
@@ -1326,6 +1379,7 @@ mod tests {
                     cap: 16,
                 },
                 mode: ModeExpr::Write,
+                denomination: None,
             },
             Clause::Effect {
                 target: TargetExpr::Point(Expr::ChildKey {
@@ -1334,6 +1388,7 @@ mod tests {
                     material: vec![],
                 }),
                 mode: ModeExpr::Locked,
+                denomination: None,
             },
         ];
         let set = evaluate_effects(&clauses, &ins, &TestHasher).unwrap();
@@ -1362,6 +1417,7 @@ mod tests {
                 cap: 16,
             },
             mode: ModeExpr::Write,
+            denomination: None,
         }];
         assert_eq!(
             evaluate_effects(&inverted, &ins, &TestHasher),
@@ -1386,6 +1442,7 @@ mod tests {
                 order: Expr::Literal(Value::U128(9)),
             },
             mode: ModeExpr::Write,
+            denomination: None,
         };
         let set = evaluate_effects(&[entry_for(0), entry_for(1)], &ins, &TestHasher).unwrap();
         let id_for = |resource: &Value| {
@@ -1440,6 +1497,7 @@ mod tests {
                 },
             },
             mode: ModeExpr::Write,
+            denomination: None,
         };
         let set = evaluate_effects(&[entry_for(0), entry_for(1)], &ins, &TestHasher).unwrap();
         let order_for = |name: &Value| {
@@ -1593,6 +1651,7 @@ mod tests {
                 material: vec![Expr::Arg(0)],
             }),
             mode: ModeExpr::Reserve(Expr::Arg(1)),
+            denomination: None,
         }];
         let set = evaluate_effects(&clauses, &ins, &TestHasher).unwrap();
         let expected = child_key(

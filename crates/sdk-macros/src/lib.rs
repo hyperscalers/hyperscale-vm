@@ -257,7 +257,7 @@ fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
 }
 
 /// Whether a type's last path segment is `name`.
-fn is_named(ty: &syn::Type, name: &str) -> bool {
+pub(crate) fn is_named(ty: &syn::Type, name: &str) -> bool {
     matches!(ty, syn::Type::Path(path)
         if path.path.segments.last().is_some_and(|s| s.ident == name))
 }

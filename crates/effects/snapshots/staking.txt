@@ -46,6 +46,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write,
+                    denomination: None,
                 },
             ],
             abi: [
@@ -111,6 +112,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write,
+                    denomination: None,
                 },
             ],
             abi: [
@@ -167,6 +169,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write,
+                    denomination: None,
                 },
             ],
             abi: [
@@ -230,6 +233,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write,
+                    denomination: None,
                 },
             ],
             abi: [
@@ -291,6 +295,11 @@ PackageMetadata {
                         },
                     ),
                     mode: Delta,
+                    denomination: Some(
+                        Config(
+                            0,
+                        ),
+                    ),
                 },
             ],
             abi: [
@@ -351,6 +360,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write,
+                    denomination: None,
                 },
             ],
             abi: [
@@ -396,6 +406,11 @@ PackageMetadata {
                         },
                     ),
                     mode: Delta,
+                    denomination: Some(
+                        SelfResource {
+                            material: [],
+                        },
+                    ),
                 },
             ],
             abi: [

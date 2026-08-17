@@ -256,7 +256,7 @@ fn plan(clauses: &[Clause], depth: usize) -> Vec<HandleShape> {
     let mut shapes = Vec::new();
     for clause in clauses {
         match clause {
-            Clause::Effect { target, mode } => shapes.push(HandleShape {
+            Clause::Effect { target, mode, .. } => shapes.push(HandleShape {
                 mode: mode_kind(mode),
                 target: target_shape(target),
                 repeat_depth: depth,

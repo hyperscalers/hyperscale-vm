@@ -194,6 +194,13 @@ pub enum AbortReason {
     /// A proportional split by a share above one, which would leave a
     /// negative remainder.
     ShareAboveOne,
+    /// Value moved into a cell denominated in some other resource, or
+    /// merged into an edge carrying one.
+    ///
+    /// A package's declaration says what each cell it names holds; this
+    /// is execution holding the code to it, so the property survives a
+    /// metadata section nobody derived.
+    WrongResource,
     /// A declared mode and target combination the world cannot hand out.
     EffectUnsupported,
     /// A mutation declared on a permanently locked substate.

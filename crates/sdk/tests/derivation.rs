@@ -162,6 +162,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
         vec![Clause::Effect {
             target: hashed_entry(),
             mode: ModeExpr::Write,
+            denomination: None,
         }],
     );
     assert_eq!(
@@ -169,6 +170,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
         vec![Clause::Effect {
             target: hashed_entry(),
             mode: ModeExpr::Read,
+            denomination: None,
         }],
     );
     assert_eq!(
@@ -183,6 +185,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
                 cap: 8,
             },
             mode: ModeExpr::Read,
+            denomination: None,
         }],
     );
 }

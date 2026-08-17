@@ -234,6 +234,7 @@ fn session(fx: &Fx) -> Option<KernelSession> {
         OverlayStore::new(Arc::new(fx.store.clone())),
         &fx.declared,
         &fx.declared.iter().collect::<Vec<_>>(),
+        &[],
         TxHash(Hash32([0x33; 32])),
         EnvInputs {
             clock_ms: 424_242,

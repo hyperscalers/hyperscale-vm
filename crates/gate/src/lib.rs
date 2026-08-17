@@ -323,7 +323,7 @@ fn check_abi_against_export(
 /// is a deterministic refusal at materialization, so there is no single
 /// resource to hold the export to here.
 const fn expected_resource(clause: &Clause) -> Option<&'static str> {
-    let Clause::Effect { target, mode } = clause else {
+    let Clause::Effect { target, mode, .. } = clause else {
         return None;
     };
     match (target, mode) {
@@ -706,6 +706,7 @@ mod tests {
                     material: vec![],
                 }),
                 mode: ModeExpr::Write,
+                denomination: None,
             }];
             signature.abi = vec![AbiParam::Handle(0)];
         }
@@ -737,6 +738,7 @@ mod tests {
                     material: vec![],
                 }),
                 mode: ModeExpr::Reserve(Expr::Arg(0)),
+                denomination: None,
             }];
             signature.abi = vec![AbiParam::Handle(0)];
         }
@@ -756,6 +758,7 @@ mod tests {
                     material: vec![],
                 }),
                 mode: ModeExpr::Delta,
+                denomination: None,
             }];
             signature.abi = vec![AbiParam::Handle(0)];
         }

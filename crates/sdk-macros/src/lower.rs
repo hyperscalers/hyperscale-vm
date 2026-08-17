@@ -44,6 +44,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
 
+use crate::is_named;
 use crate::term::{Op, Slot, Term};
 
 /// What kind of state a component field holds, and under which role.
@@ -643,12 +644,21 @@ impl<'a> Lowerer<'a> {
         // A field that states its resource answers for every leaf under
         // it; one that does not is keyed by the resource, and the key is
         // the material a body named it at.
+        //
+        // Only where the leaf holds value at all. A point cell says so by
+        // its element type, and a cell holding anything else is keyed by
+        // whatever its author found useful — a validator id, a name —
+        // which is a key and not a resource however it is spelled. An
+        // instance collection is narrowed by the resource whose holdings
+        // it is, which is the same statement in collection form.
+        let holds_value = matches!(&element, Some(ty) if is_named(ty, "Vault"));
         let denomination = declared.or_else(|| match &target {
-            Target::Point { material, .. }
-            | Target::Range { material, .. }
-            | Target::Entry { material, .. } => material.first().cloned(),
+            Target::Point { material, .. } if holds_value => material.first().cloned(),
+            Target::Range { material, .. } | Target::Entry { material, .. } => {
+                material.first().cloned()
+            }
             // A hashed key and a cursor name an entry, never a resource.
-            Target::KeyedEntry { .. } | Target::Sweep { .. } => None,
+            Target::Point { .. } | Target::KeyedEntry { .. } | Target::Sweep { .. } => None,
         });
         self.out.sites.push(Site {
             target,

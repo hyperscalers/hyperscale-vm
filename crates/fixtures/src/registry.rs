@@ -61,6 +61,7 @@ pub fn metadata() -> PackageMetadata {
             effects: vec![Clause::Effect {
                 target,
                 mode: ModeExpr::Write,
+                denomination: None,
             }],
             ..MethodSignature::default()
         },
@@ -78,6 +79,7 @@ pub fn metadata() -> PackageMetadata {
             effects: vec![Clause::Effect {
                 target,
                 mode: ModeExpr::Read,
+                denomination: None,
             }],
             ..MethodSignature::default()
         },
@@ -101,6 +103,7 @@ pub fn metadata() -> PackageMetadata {
                     cap: DRAIN_CAP,
                 },
                 mode: ModeExpr::Write,
+                denomination: None,
             }],
             ..MethodSignature::default()
         },

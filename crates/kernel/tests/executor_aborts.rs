@@ -314,6 +314,7 @@ fn nullifier_tx(id: u8) -> BatchTx {
         tx: tx(id),
         declared: point(nullifier(), Mode::Write),
         ordered: point(nullifier(), Mode::Write).iter().collect(),
+        denominations: Vec::new(),
         calls: Vec::new(),
         nullifiers: vec![nullifier()],
         clock_ms: env().clock_ms,
@@ -455,6 +456,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         tx: tx(0x01),
         declared: point(nullifier(), Mode::Read),
         ordered: point(nullifier(), Mode::Read).iter().collect(),
+        denominations: Vec::new(),
         calls: Vec::new(),
         nullifiers: vec![nullifier()],
         clock_ms: env().clock_ms,
@@ -497,6 +499,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
         // A different cell entirely: folding this does not reproduce
         // `declared`.
         ordered: point(cell(0xB), Mode::Write).iter().collect(),
+        denominations: Vec::new(),
         calls: Vec::new(),
         nullifiers: vec![],
         clock_ms: env().clock_ms,

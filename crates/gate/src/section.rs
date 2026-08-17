@@ -87,6 +87,7 @@ mod tests {
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(expr),
                 mode: ModeExpr::Write,
+                denomination: None,
             }],
             ..MethodSignature::default()
         }
@@ -135,6 +136,7 @@ mod tests {
         let mut clause = Clause::Effect {
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
+            denomination: None,
         };
         for _ in 0..depth {
             clause = Clause::ForEach {
@@ -205,6 +207,7 @@ mod tests {
                         material: vec![Expr::Arg(3), Expr::FreshKey { slot: 1 }],
                     }),
                     mode: ModeExpr::Reserve(Expr::Arg(1)),
+                    denomination: None,
                 },
                 Clause::Effect {
                     target: TargetExpr::Entry {
@@ -217,6 +220,7 @@ mod tests {
                         },
                     },
                     mode: ModeExpr::Locked,
+                    denomination: None,
                 },
                 Clause::Effect {
                     target: TargetExpr::Range {
@@ -228,6 +232,7 @@ mod tests {
                         cap: 64,
                     },
                     mode: ModeExpr::Locked,
+                    denomination: None,
                 },
                 Clause::ForEach {
                     list: Expr::Arg(2),
@@ -239,12 +244,14 @@ mod tests {
                                 key: Box::new(Expr::Binding(0)),
                             }),
                             mode: ModeExpr::Delta,
+                            denomination: None,
                         }],
                     }],
                 },
                 Clause::Effect {
                     target: TargetExpr::Point(Expr::SelfAddr),
                     mode: ModeExpr::Read,
+                    denomination: None,
                 },
             ],
         };
@@ -367,6 +374,7 @@ mod tests {
                 cap: 1,
             },
             mode: ModeExpr::Locked,
+            denomination: None,
         };
         for _ in 0..MAX_CLAUSE_DEPTH {
             clause = Clause::ForEach {
@@ -410,6 +418,7 @@ mod tests {
         let effect = Clause::Effect {
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
+            denomination: None,
         };
         let with = |count: usize| {
             one_method(MethodSignature {

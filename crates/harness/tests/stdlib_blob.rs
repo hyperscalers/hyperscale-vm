@@ -87,6 +87,7 @@ fn session() -> KernelSession {
         OverlayStore::new(Arc::new(store)),
         &declared,
         &declared.iter().collect::<Vec<_>>(),
+        &[],
         TxHash(Hash32([0x77; 32])),
         EnvInputs {
             clock_ms: CLOCK_MS,
@@ -479,6 +480,7 @@ fn lottery_session() -> KernelSession {
         OverlayStore::new(Arc::new(MemoryStore::new())),
         &declared,
         &declared.iter().collect::<Vec<_>>(),
+        &[],
         TxHash(Hash32([0x78; 32])),
         EnvInputs {
             clock_ms: CLOCK_MS,
@@ -526,7 +528,7 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     // byte list. The kernel never sees this shape — metadata and world
     // are derived together — which is why a direct drive is the one
     // reader that has to follow.
-    let funds = store.data_mut().open_bucket(Held::Amount(AMOUNT));
+    let funds = store.data_mut().open_bucket(Held::Amount(AMOUNT), None);
     let enter = instance.get_typed_func::<(
         Resource<RangeWrite>,
         Resource<DeltaCell>,
@@ -593,7 +595,7 @@ fn reference_round() -> Result<(Receipt, u64)> {
         &Capability::Delta(child_key(&TestHasher, LOTTERY, VAULT, &[])),
     );
     let mut host = host;
-    let funds = host.open_bucket(Held::Amount(AMOUNT));
+    let funds = host.open_bucket(Held::Amount(AMOUNT), None);
     let mut instance =
         RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(

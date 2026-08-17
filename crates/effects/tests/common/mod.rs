@@ -163,6 +163,7 @@ pub fn wide_account_metadata() -> PackageMetadata {
     effects.push(Clause::Effect {
         target: TargetExpr::Point(self_child(RoleId(99), vec![])),
         mode: ModeExpr::Write,
+        denomination: None,
     });
     methods.methods.insert(
         "withdraw_wide".into(),

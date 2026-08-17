@@ -99,6 +99,7 @@ fn session(mode: Mode, funded: u128) -> KernelSession {
         OverlayStore::new(Arc::new(store)),
         &declared,
         &ordered,
+        &[],
         TxHash(Hash32([4; 32])),
         EnvInputs {
             clock_ms: 1_000,
@@ -126,7 +127,7 @@ const fn wide(value: u128) -> [u8; 16] {
 #[test]
 fn an_edge_the_body_credits_lands_in_the_declared_cell() {
     let mut session = session(Mode::Delta, 0);
-    let funds = session.open_bucket(Held::Amount(70));
+    let funds = session.open_bucket(Held::Amount(70), None);
 
     let (session, invoked) = till::invoke(
         "deposit",

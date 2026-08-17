@@ -296,6 +296,7 @@ fn custodian_world(
             material: vec![],
         }),
         mode: ModeExpr::Read,
+        denomination: None,
     };
     let effects = match accessibility {
         Accessibility::Custodial => vec![
@@ -307,10 +308,12 @@ fn custodian_world(
                     material: vec![Expr::Config(0)],
                 }),
                 mode: ModeExpr::Read,
+                denomination: None,
             },
             Clause::Effect {
                 target: holdings_range(Expr::Config(0), 1),
                 mode: ModeExpr::Read,
+                denomination: None,
             },
         ],
         _ => vec![rule],

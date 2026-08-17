@@ -21,6 +21,7 @@ use crate::metadata::{
 };
 use crate::types::{
     Address, CallTarget, EdgeContent, Effect, EffectSet, MAX_IDS_PER_EDGE, ShardId, Value,
+    resource_address,
 };
 
 /// Resolves an owner prefix to the shard holding it.
@@ -124,6 +125,9 @@ pub struct FrameDeclaration {
     /// A frame's handles occupy a contiguous run of the capability table,
     /// so a generated guest's positional parameters are this slice.
     pub ordered: Vec<Effect>,
+    /// What each of those entries holds, where it holds value, aligned
+    /// index for index with `ordered`.
+    pub denominations: Vec<Option<Address>>,
 }
 
 impl Routing {
@@ -149,15 +153,28 @@ impl Routing {
     pub fn declaration(&self) -> Result<Declaration, RouteError> {
         let mut set = EffectSet::new();
         let mut ordered = Vec::new();
-        let frame_effects = self.frames.iter().flat_map(|frame| frame.ordered.iter());
-        for effect in frame_effects.chain(self.kernel_effects.iter()) {
+        let mut denominations = Vec::new();
+        // The kernel's own effects are the fee reservation and its
+        // settlement, which move value the payer's account already
+        // denominates; nothing about them is a package's declaration, so
+        // they carry no resource of their own.
+        let frame_effects = self.frames.iter().flat_map(|frame| {
+            frame
+                .ordered
+                .iter()
+                .zip(frame.denominations.iter().copied())
+        });
+        let kernel_effects = self.kernel_effects.iter().map(|effect| (effect, None));
+        for (effect, held) in frame_effects.chain(kernel_effects) {
             set.insert(*effect)
                 .map_err(|_| RouteError::ReserveOverflow)?;
             ordered.push(*effect);
+            denominations.push(held);
         }
         Ok(Declaration {
             set,
             ordered,
+            denominations,
             // A clause index is a method's; this is every frame's clauses
             // concatenated, so there is no clause to index.
             clause_spans: Vec::new(),
@@ -787,7 +804,17 @@ fn lower_call(
         args,
         edges: edge_bounds(&node.inputs),
         outputs: output_kinds(signature, lowering, node_index, method)?,
-        issues: signature.issues.is_some(),
+        // The same derivation the declaration's own `SelfResource` runs,
+        // over the same material: an empty mark separates nothing and
+        // names the instance's primary issue.
+        issues: signature.issues.as_ref().map(|mark| {
+            let material = if mark.is_empty() {
+                Vec::new()
+            } else {
+                vec![Value::Bytes(mark.clone()).canonical_bytes()]
+            };
+            resource_address(lowering.hasher, instance, &material).address()
+        }),
         evidence: node.evidence.clone(),
         authority: node.authority,
     })
@@ -969,6 +996,7 @@ impl Fold<'_> {
                 method: method.to_owned(),
             },
             ordered: declaration.ordered,
+            denominations: declaration.denominations,
         });
         for effect in declaration.set.iter() {
             let shard = self.shards.shard_of(effect.target.owner());
@@ -1048,6 +1076,7 @@ mod tests {
                 material: vec![],
             }),
             mode,
+            denomination: None,
         }
     }
 
@@ -1169,6 +1198,7 @@ mod tests {
                         material: vec![],
                     }),
                     mode: ModeExpr::Delta,
+                    denomination: None,
                 }],
                 ..MethodSignature::default()
             },
@@ -1790,6 +1820,7 @@ mod tests {
                     material: vec![],
                 }),
                 mode: ModeExpr::Reserve(Expr::Arg(0)),
+                denomination: None,
             }]),
         );
         cache.publish(pkg("vault"), meta);
@@ -1893,6 +1924,7 @@ mod tests {
                                 material: vec![Expr::Binding(0)],
                             }),
                             mode: ModeExpr::Delta,
+                            denomination: None,
                         }],
                     },
                     self_point(RoleId(1), ModeExpr::Write),
@@ -2267,6 +2299,7 @@ mod tests {
                             material: vec![],
                         }),
                         mode: ModeExpr::Delta,
+                        denomination: None,
                     }],
                     ..MethodSignature::default()
                 },

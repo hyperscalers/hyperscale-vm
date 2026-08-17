@@ -174,8 +174,8 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
         // Issuance is one node's, read off the outputs it declared: a
         // method producing a resource derived from its own address is a
         // method saying it issues one.
-        if call.issues {
-            session.grant_issuance();
+        if let Some(resource) = call.issues {
+            session.grant_issuance(resource);
         }
 
         let invoked = self.backend.invoke(

@@ -60,6 +60,7 @@ PackageMetadata {
                         cap: 64,
                     },
                     mode: Write,
+                    denomination: None,
                 },
                 Effect {
                     target: Point(
@@ -76,6 +77,11 @@ PackageMetadata {
                         },
                     ),
                     mode: Delta,
+                    denomination: Some(
+                        Config(
+                            0,
+                        ),
+                    ),
                 },
                 Effect {
                     target: Point(
@@ -92,6 +98,11 @@ PackageMetadata {
                         },
                     ),
                     mode: Delta,
+                    denomination: Some(
+                        Config(
+                            1,
+                        ),
+                    ),
                 },
             ],
             abi: [
@@ -145,6 +156,7 @@ PackageMetadata {
                         },
                     },
                     mode: Write,
+                    denomination: None,
                 },
                 Effect {
                     target: Point(
@@ -161,6 +173,11 @@ PackageMetadata {
                         },
                     ),
                     mode: Delta,
+                    denomination: Some(
+                        Config(
+                            0,
+                        ),
+                    ),
                 },
             ],
             abi: [

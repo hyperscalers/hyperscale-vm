@@ -47,6 +47,7 @@ fn session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
         OverlayStore::new(Arc::new(store)),
         &declared,
         &ordered,
+        &[],
         TxHash(Hash32([9; 32])),
         EnvInputs {
             clock_ms: CLOCK_MS,

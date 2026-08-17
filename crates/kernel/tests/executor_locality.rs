@@ -181,6 +181,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
     BatchTx {
         tx: TxHash(Hash32([id; 32])),
         ordered: declared.iter().collect(),
+        denominations: Vec::new(),
         declared,
         calls: Vec::new(),
         nullifiers: vec![signed_nullifier()],

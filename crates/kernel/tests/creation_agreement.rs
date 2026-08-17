@@ -28,6 +28,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
                 Clause::Effect {
                     target: TargetExpr::Point(Expr::FreshKey { slot: 0 }),
                     mode: ModeExpr::Write,
+                    denomination: None,
                 },
                 Clause::Effect {
                     target: TargetExpr::Entry {
@@ -40,6 +41,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
                         },
                     },
                     mode: ModeExpr::Write,
+                    denomination: None,
                 },
             ],
             ..MethodSignature::default()

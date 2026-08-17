@@ -356,6 +356,7 @@ mod tests {
                 effects: vec![Clause::Effect {
                     target: TargetExpr::Point(expr),
                     mode: ModeExpr::Write,
+                    denomination: None,
                 }],
                 ..MethodSignature::default()
             },

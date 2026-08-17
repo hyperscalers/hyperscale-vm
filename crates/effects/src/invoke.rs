@@ -186,14 +186,15 @@ pub struct NodeCall {
     /// fungible one as a bucket the kernel takes back, a non-fungible one
     /// as the cell its ids frame.
     pub outputs: Vec<EdgeKind>,
-    /// Whether this node's method declares an output the invoked instance
-    /// issues itself.
+    /// The resource this node's method may bring into being, where its
+    /// declaration says it brings one.
     ///
-    /// Evaluated at routing from the same output projections that fixed
-    /// the edge kinds: a resource derived from the target's own address
-    /// is a method saying it produces what it issues, which is the whole
-    /// of what grants the authority.
-    pub issues: bool,
+    /// Evaluated at routing from the mark the signature carries, against
+    /// the target's own address — so an instance can issue what its own
+    /// address derives and nothing else, which is the whole of what
+    /// grants the authority. Carrying the address rather than a bit is
+    /// what lets an issued edge be stamped with what it holds.
+    pub issues: Option<Address>,
     /// The identities this call presents, resolved from the signed
     /// evidence the manifest node names.
     pub evidence: Vec<Address>,

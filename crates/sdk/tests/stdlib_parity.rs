@@ -38,7 +38,7 @@ fn account() -> Blueprint {
                 let holder = t.self_addr();
 
                 let vault = holder.child(VAULT, &[resource.clone().cast()]);
-                t.point(&vault).reserve(&amount);
+                t.point(&vault).holding(&resource).reserve(&amount);
                 t.output(&resource);
             },
         )
@@ -53,9 +53,9 @@ fn account() -> Blueprint {
             // credit consumes the edge, so it comes after every read of
             // what the edge carries.
             let claims = holder.child(CLAIMS, &[resource.clone().cast()]);
-            let vault = holder.child(VAULT, &[resource.cast()]);
-            t.point(&claims).delta();
-            t.point(&vault).delta();
+            let vault = holder.child(VAULT, &[resource.clone().cast()]);
+            t.point(&claims).holding(&resource).delta();
+            t.point(&vault).holding(&resource).delta();
         })
         // The sign-in's whole body is its gate's read: the cell the
         // account's stored rule lives in.
@@ -114,8 +114,12 @@ fn amm() -> Blueprint {
 
                 let config = pool.child(CONFIG, &[]);
                 t.point(&config).locked();
-                t.point(&pool.child(VAULT, &[x.clone().cast()])).write();
-                t.point(&pool.child(VAULT, &[y.clone().cast()])).write();
+                t.point(&pool.child(VAULT, &[x.clone().cast()]))
+                    .holding(&x)
+                    .write();
+                t.point(&pool.child(VAULT, &[y.clone().cast()]))
+                    .holding(&y)
+                    .write();
 
                 // The payment is credited to the side the pool buys, so
                 // that side is what a caller has to pay in.
@@ -148,7 +152,7 @@ fn book() -> Blueprint {
                 // is what fixes the parameter to that side.
                 let base: Sym<Addr> = t.config(0);
                 let escrow = venue.child(VAULT, &[base.clone().cast()]);
-                t.point(&escrow).delta();
+                t.point(&escrow).holding(&base).delta();
                 t.denomination(1, &base);
             },
         )
@@ -177,8 +181,11 @@ fn book() -> Blueprint {
                 .write();
 
                 let quote: Sym<Addr> = t.config(1);
-                t.point(&venue.child(VAULT, &[base.clone().cast()])).delta();
+                t.point(&venue.child(VAULT, &[base.clone().cast()]))
+                    .holding(&base)
+                    .delta();
                 t.point(&venue.child(VAULT, &[quote.clone().cast()]))
+                    .holding(&quote)
                     .delta();
                 t.denomination(2, &quote);
 
