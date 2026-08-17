@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 
+use hyperscale_vm_embed::math::{self, Rounding, U256};
 use hyperscale_vm_embed::{CellKind, GuestArg, KernelHost};
 use hyperscale_vm_types::ISSUER_REP;
 use wasmparser::{
@@ -170,6 +171,11 @@ enum HostFn {
     Randomness,
     Hash,
     Emit,
+    MulDiv,
+    GeometricMean,
+    FractionCompose,
+    FractionCmp,
+    FixedPow,
 }
 
 /// A component-level function.
@@ -234,12 +240,38 @@ const RESULT_PAYLOAD: usize = 4;
 /// area. The blessed engine charges the same figure.
 const AMOUNT_BOUNDARY_BYTES: usize = 16;
 
+/// What a wide word costs at the boundary: the width it has.
+const WIDE_BOUNDARY_BYTES: usize = 32;
+
 /// A handle's width in a spilled result: the core `i32` it is.
 const HANDLE_BYTES: usize = 4;
 
 /// The amount a flattened `record { low: u64, high: u64 }` carries.
 fn flat_amount(low: Value, high: Value) -> u128 {
     u128::from(low.as_i64().cast_unsigned()) | (u128::from(high.as_i64().cast_unsigned()) << 64)
+}
+
+/// The wide word four consecutive flattened arguments carry, starting at
+/// `at`, least significant limb first.
+fn flat_wide(args: &[Value], at: usize) -> U256 {
+    U256::from_limbs([
+        args[at].as_i64().cast_unsigned(),
+        args[at + 1].as_i64().cast_unsigned(),
+        args[at + 2].as_i64().cast_unsigned(),
+        args[at + 3].as_i64().cast_unsigned(),
+    ])
+}
+
+/// The rounding a flattened enum discriminant names.
+///
+/// Anything past the declared cases is a canonical-ABI violation the
+/// engine rejects before a host body runs; here it resolves to the
+/// direction that keeps a lossy operation from creating value.
+fn flat_rounding(value: Value) -> Rounding {
+    match value.as_i32() {
+        1 => Rounding::Up,
+        _ => Rounding::Down,
+    }
 }
 
 /// A component value type.
@@ -594,6 +626,11 @@ impl RefComponent {
             ("state", "range-write-set") => Ok(HostFn::RangeWriteSet),
             ("state", "range-write-insert") => Ok(HostFn::RangeWriteInsert),
             ("state", "range-write-remove") => Ok(HostFn::RangeWriteRemove),
+            ("math", "mul-div") => Ok(HostFn::MulDiv),
+            ("math", "geometric-mean") => Ok(HostFn::GeometricMean),
+            ("math", "fraction-compose") => Ok(HostFn::FractionCompose),
+            ("math", "fraction-cmp") => Ok(HostFn::FractionCmp),
+            ("math", "fixed-pow") => Ok(HostFn::FixedPow),
             ("env", "clock") => Ok(HostFn::Clock),
             ("env", "randomness") => Ok(HostFn::Randomness),
             ("crypto", "hash") => Ok(HostFn::Hash),
@@ -1500,6 +1537,35 @@ impl<H: KernelHost> KernelCanon<'_, H> {
         Ok(())
     }
 
+    /// Writes a wide word whole into the guest's return area.
+    ///
+    /// Two amounts wide and on the same terms as one: a flat record's
+    /// result travels in the area the caller reserved.
+    fn write_wide(
+        store: &mut Store,
+        mem_idx: u32,
+        retptr: Value,
+        at_offset: usize,
+        value: U256,
+    ) -> Result<(), ExecError> {
+        let mem = &mut store.memories[mem_idx as usize];
+        let at = usize::try_from(retptr.as_i32().cast_unsigned()).expect("32-bit") + at_offset;
+        let end = at
+            .checked_add(WIDE_BOUNDARY_BYTES)
+            .ok_or(ExecError::Trap(Trap::MemoryOutOfBounds))?;
+        if end > mem.data.len() {
+            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+        }
+        for (limb, chunk) in value
+            .limbs()
+            .iter()
+            .zip(mem.data[at..end].chunks_exact_mut(8))
+        {
+            chunk.copy_from_slice(&limb.to_le_bytes());
+        }
+        Ok(())
+    }
+
     fn read_guest_bytes(
         store: &Store,
         mem_idx: u32,
@@ -1563,6 +1629,15 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                 CompFunc::Host(HostFn::RangeWritePut | HostFn::RangeWriteSet) => 4,
 
                 CompFunc::Host(HostFn::RangeWriteInsert) => 5,
+                // A `wide` flattens to four `i64`s, and a result wider
+                // than one flat value travels through a return pointer
+                // the caller appends: `fraction-cmp` returns an enum and
+                // so has none, and every other arm here does.
+                CompFunc::Host(HostFn::FixedPow) => 7,
+                CompFunc::Host(HostFn::GeometricMean) => 9,
+                CompFunc::Host(HostFn::MulDiv) => 14,
+                CompFunc::Host(HostFn::FractionCmp) => 16,
+                CompFunc::Host(HostFn::FractionCompose) => 17,
                 CompFunc::Host(HostFn::Clock) | CompFunc::Lifted { .. } => 0,
             },
             CoreFuncDef::Alias { .. } => unreachable!("aliases resolve to wasm addresses"),
@@ -1725,6 +1800,72 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         self.host
                             .bucket_put(rep, other)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(Vec::new())
+                    }
+                    // Wide arithmetic reaches no state, so these call the
+                    // shared functions rather than the host trait. What
+                    // the interpreter contributes is the same charge the
+                    // blessed engine makes and the lowering of a result
+                    // wider than one flat value.
+                    HostFn::MulDiv => {
+                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 4)?;
+                        let answer = math::mul_div(
+                            flat_wide(&args, 0),
+                            flat_wide(&args, 4),
+                            flat_wide(&args, 8),
+                            flat_rounding(args[12]),
+                        )
+                        .map_err(|e| ExecError::Canon(CanonError::Host(e.into())))?;
+                        let mem = self.mem_opt(id)?;
+                        Self::write_wide(store, mem, args[13], 0, answer)?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::GeometricMean => {
+                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 3)?;
+                        let answer = math::geometric_mean(flat_wide(&args, 0), flat_wide(&args, 4));
+                        let mem = self.mem_opt(id)?;
+                        Self::write_wide(store, mem, args[8], 0, answer)?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::FractionCompose => {
+                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 6)?;
+                        let (num, den) = math::fraction_compose(
+                            flat_wide(&args, 0),
+                            flat_wide(&args, 4),
+                            flat_wide(&args, 8),
+                            flat_wide(&args, 12),
+                        )
+                        .map_err(|e| ExecError::Canon(CanonError::Host(e.into())))?;
+                        let mem = self.mem_opt(id)?;
+                        Self::write_wide(store, mem, args[16], 0, num)?;
+                        Self::write_wide(store, mem, args[16], WIDE_BOUNDARY_BYTES, den)?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::FractionCmp => {
+                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 4)?;
+                        let order = math::fraction_cmp(
+                            flat_wide(&args, 0),
+                            flat_wide(&args, 4),
+                            flat_wide(&args, 8),
+                            flat_wide(&args, 12),
+                        )
+                        .map_err(|e| ExecError::Canon(CanonError::Host(e.into())))?;
+                        Ok(vec![Value::I32(match order {
+                            std::cmp::Ordering::Less => 0,
+                            std::cmp::Ordering::Equal => 1,
+                            std::cmp::Ordering::Greater => 2,
+                        })])
+                    }
+                    HostFn::FixedPow => {
+                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 2)?;
+                        let answer = math::fixed_pow(
+                            flat_wide(&args, 0),
+                            args[4].as_i32().cast_unsigned(),
+                            flat_rounding(args[5]),
+                        )
+                        .map_err(|e| ExecError::Canon(CanonError::Host(e.into())))?;
+                        let mem = self.mem_opt(id)?;
+                        Self::write_wide(store, mem, args[6], 0, answer)?;
                         Ok(Vec::new())
                     }
                     HostFn::BucketAmount => {

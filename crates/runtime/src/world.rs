@@ -20,7 +20,10 @@
 //! and so are invisible to the first. Charged whether the call then
 //! succeeds or refuses, because the page was read either way.
 
+use core::cmp::Ordering;
+
 use hyperscale_vm_embed::KernelHost;
+use hyperscale_vm_embed::math::{self, Rounding, U256};
 use hyperscale_vm_types::AbortReason;
 use wasmtime::component::{ComponentType, Lift, Linker, Lower, Resource, ResourceType};
 use wasmtime::{Error, Result, StoreContextMut};
@@ -65,6 +68,94 @@ impl From<u128> for Amount {
 impl From<Amount> for u128 {
     fn from(value: Amount) -> Self {
         Self::from(value.low) | (Self::from(value.high) << 64)
+    }
+}
+
+/// What a wide word costs at the boundary: the width it has.
+const WIDE_BOUNDARY_BYTES: usize = 32;
+
+/// The `math` interface's `wide`: a 256-bit word as four limbs, least
+/// significant first.
+///
+/// Flat rather than a pair of [`Amount`]s, because the profile admits a
+/// record whose every field is a scalar — the property that makes it
+/// flatten into registers — and a record of records is outside it.
+#[derive(Clone, Copy, ComponentType, Lift, Lower)]
+#[component(record)]
+pub struct Wide {
+    /// Bits 0 to 63.
+    pub limb0: u64,
+    /// Bits 64 to 127.
+    pub limb1: u64,
+    /// Bits 128 to 191.
+    pub limb2: u64,
+    /// Bits 192 to 255.
+    pub limb3: u64,
+}
+
+impl From<U256> for Wide {
+    fn from(value: U256) -> Self {
+        let [limb0, limb1, limb2, limb3] = value.limbs();
+        Self {
+            limb0,
+            limb1,
+            limb2,
+            limb3,
+        }
+    }
+}
+
+impl From<Wide> for U256 {
+    fn from(value: Wide) -> Self {
+        Self::from_limbs([value.limb0, value.limb1, value.limb2, value.limb3])
+    }
+}
+
+/// The `math` interface's `rounding`.
+#[derive(Clone, Copy, ComponentType, Lift, Lower)]
+#[component(enum)]
+#[repr(u8)]
+pub enum WitRounding {
+    /// Toward zero.
+    #[component(name = "down")]
+    Down,
+    /// Away from zero.
+    #[component(name = "up")]
+    Up,
+}
+
+impl From<WitRounding> for Rounding {
+    fn from(value: WitRounding) -> Self {
+        match value {
+            WitRounding::Down => Self::Down,
+            WitRounding::Up => Self::Up,
+        }
+    }
+}
+
+/// The `math` interface's `ordering`.
+#[derive(Clone, Copy, ComponentType, Lift, Lower)]
+#[component(enum)]
+#[repr(u8)]
+pub enum WitOrdering {
+    /// The first is smaller.
+    #[component(name = "less")]
+    Less,
+    /// The two are equal.
+    #[component(name = "equal")]
+    Equal,
+    /// The first is larger.
+    #[component(name = "greater")]
+    Greater,
+}
+
+impl From<Ordering> for WitOrdering {
+    fn from(value: Ordering) -> Self {
+        match value {
+            Ordering::Less => Self::Less,
+            Ordering::Equal => Self::Equal,
+            Ordering::Greater => Self::Greater,
+        }
     }
 }
 
@@ -414,6 +505,56 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             let removed = store.data_mut().range_remove(r.rep(), index);
             charge_scan(&mut store)?;
             removed.map_err(host_trap)
+        },
+    )?;
+
+    // Wide arithmetic reaches no state and asks the host nothing, so
+    // these call the shared functions rather than a trait the embedder
+    // could answer differently. What the engine contributes is the
+    // charge: the operands and the result cross, and both engines price
+    // them at the width they have.
+    let mut wide_math = linker.instance("hyperscale:kernel/math")?;
+    wide_math.func_wrap(
+        "mul-div",
+        |mut store: StoreContextMut<'_, T>, (a, b, c, r): (Wide, Wide, Wide, WitRounding)| {
+            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 4)?;
+            let product = math::mul_div(a.into(), b.into(), c.into(), r.into())
+                .map_err(|error| host_trap(error.into()))?;
+            Ok((Wide::from(product),))
+        },
+    )?;
+    wide_math.func_wrap(
+        "geometric-mean",
+        |mut store: StoreContextMut<'_, T>, (a, b): (Wide, Wide)| {
+            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 3)?;
+            Ok((Wide::from(math::geometric_mean(a.into(), b.into())),))
+        },
+    )?;
+    wide_math.func_wrap(
+        "fraction-compose",
+        |mut store: StoreContextMut<'_, T>, (an, ad, bn, bd): (Wide, Wide, Wide, Wide)| {
+            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 6)?;
+            let (num, den) = math::fraction_compose(an.into(), ad.into(), bn.into(), bd.into())
+                .map_err(|error| host_trap(error.into()))?;
+            Ok(((Wide::from(num), Wide::from(den)),))
+        },
+    )?;
+    wide_math.func_wrap(
+        "fraction-cmp",
+        |mut store: StoreContextMut<'_, T>, (an, ad, bn, bd): (Wide, Wide, Wide, Wide)| {
+            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 4)?;
+            let order = math::fraction_cmp(an.into(), ad.into(), bn.into(), bd.into())
+                .map_err(|error| host_trap(error.into()))?;
+            Ok((WitOrdering::from(order),))
+        },
+    )?;
+    wide_math.func_wrap(
+        "fixed-pow",
+        |mut store: StoreContextMut<'_, T>, (base, exp, r): (Wide, u32, WitRounding)| {
+            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 2)?;
+            let raised = math::fixed_pow(base.into(), exp, r.into())
+                .map_err(|error| host_trap(error.into()))?;
+            Ok((Wide::from(raised),))
         },
     )?;
 

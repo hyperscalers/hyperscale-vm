@@ -205,6 +205,106 @@ interface state {
     range-write-put: func(r: borrow<range-write>, funds: own<bucket>, value: list<u8>);
 }
 
+/// Wide arithmetic: the operations a contract cannot write itself without
+/// either overflowing or rounding twice.
+///
+/// Not here for determinism — the profile has no floats and a guest's own
+/// integer arithmetic is already reproducible. Here because each of these
+/// holds an intermediate wider than its operands, which a guest can only
+/// emulate: `a * b / c` computed as two guest operations overflows on the
+/// product and rounds on the way out of it, where one call holds the whole
+/// product and rounds once, at a direction the caller states. The
+/// emulation is not underpriced — fuel meters every instruction it takes —
+/// it is simply more expensive than the native operation, and it is a
+/// second semantics for the two engines to agree on.
+///
+/// Every function is total on its declared inputs or traps deterministically:
+/// there is no arm that returns an approximation.
+interface math {
+    /// A 256-bit unsigned integer, as four 64-bit limbs, least
+    /// significant first.
+    ///
+    /// The width a fraction's terms travel in. A rate derived from two
+    /// balances carries terms at the balances' own scale, and composing
+    /// two of them — a cross rate through a numeraire, a health factor
+    /// over two prices — squares that, which is past `amount` for any
+    /// pool a real market reaches.
+    ///
+    /// Flat limbs rather than a pair of `amount`s: the profile admits a
+    /// record whose every field is a scalar, because that is what makes
+    /// it flatten into registers instead of crossing through linear
+    /// memory, and a record of records does not satisfy it.
+    record wide {
+        /// Bits 0 to 63.
+        limb0: u64,
+        /// Bits 64 to 127.
+        limb1: u64,
+        /// Bits 128 to 191.
+        limb2: u64,
+        /// Bits 192 to 255.
+        limb3: u64,
+    }
+
+    /// Which way a lossy operation resolves a non-zero remainder.
+    ///
+    /// Required at every call site rather than defaulted, because the
+    /// direction decides who keeps the truncated subunit and a default
+    /// would answer that question silently.
+    enum rounding {
+        /// Toward zero.
+        down,
+        /// Away from zero.
+        up,
+    }
+
+    /// How two values compare.
+    enum ordering {
+        /// The first is smaller.
+        less,
+        /// The two are equal.
+        equal,
+        /// The first is larger.
+        greater,
+    }
+
+    /// `a * b / c`, with the product held at 512 bits and one rounding at
+    /// the end.
+    ///
+    /// Traps on a zero divisor and on a quotient past `wide`.
+    mul-div: func(a: wide, b: wide, c: wide, r: rounding) -> wide;
+
+    /// `floor(sqrt(a * b))`, with the product held at 512 bits.
+    ///
+    /// Two arguments rather than one because the caller that needs it is
+    /// an initial liquidity mint, where forming `a * b` first is the
+    /// overflow this function exists to avoid. A plain square root is
+    /// this with `b` at one.
+    geometric-mean: func(a: wide, b: wide) -> wide;
+
+    /// `(an/ad) * (bn/bd)`, as a fraction in the same width.
+    ///
+    /// Multiplies across and reduces by GCD only where the product does
+    /// not fit: two terms drawn from a quantity quotient are coprime more
+    /// often than not, so reducing every composition would be paying for
+    /// the uncommon case. Traps on a zero denominator and where the
+    /// product does not fit even reduced.
+    fraction-compose: func(an: wide, ad: wide, bn: wide, bd: wide) -> tuple<wide, wide>;
+
+    /// `an/ad` against `bn/bd`, by cross-multiplication at 512 bits.
+    ///
+    /// A host function because the cross-products leave `wide` for terms
+    /// well inside it, so a guest comparing two rates by multiplying
+    /// would be comparing the wrong numbers. Traps on a zero denominator.
+    fraction-cmp: func(an: wide, ad: wide, bn: wide, bd: wide) -> ordering;
+
+    /// `base` raised to `exp`, at the protocol's fixed scale, by squaring.
+    ///
+    /// The rounding applies per multiplication rather than to the result,
+    /// which is the most a fixed intermediate width allows. Traps where
+    /// any intermediate leaves `wide`.
+    fixed-pow: func(base: wide, exp: u32, r: rounding) -> wide;
+}
+
 /// The deterministic environment: identical on every replica for a given
 /// transaction, by construction.
 interface env {
@@ -236,6 +336,7 @@ interface events {
 /// The world every contract component targets.
 world contract {
     import state;
+    import math;
     import env;
     import crypto;
     import events;

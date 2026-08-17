@@ -7,6 +7,7 @@ description = "The engine embedding seam: the kernel's host surface, and one ass
 
 [dependencies]
 hyperscale-vm-types.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

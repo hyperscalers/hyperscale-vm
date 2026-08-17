@@ -183,6 +183,14 @@ pub enum AbortReason {
     CellUnderflow,
     /// A supply accumulator update past its bounds.
     SupplyOutOfBounds,
+    /// A wide operation asked to divide by zero, or handed a fraction
+    /// with a zero denominator.
+    ///
+    /// Range-checked by the host regardless of what a guest's own types
+    /// proved, because the ABI is not trusted.
+    MathDivideByZero,
+    /// A wide result past 256 bits.
+    MathOverflow,
     /// A declared mode and target combination the world cannot hand out.
     EffectUnsupported,
     /// A mutation declared on a permanently locked substate.

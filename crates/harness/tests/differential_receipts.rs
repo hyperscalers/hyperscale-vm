@@ -9,7 +9,8 @@
 //! is, because the class decides the outcome variant and the outcome
 //! variant decides the fee.
 
-use hyperscale_vm_kernel::{AbortReason, KernelHost};
+use hyperscale_vm_harness::fixtures::NoHost;
+use hyperscale_vm_kernel::AbortReason;
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{Returned, blessed_engine, call_export, classify, validate_component};
 use wasmtime::component::{Component, Linker};
@@ -56,101 +57,6 @@ const TRAPPING_GUEST: &str = r#"
   (func (export "nullcall") (result u64) (canon lift (core func $i "nullcall")))
   (func (export "fine") (result u64) (canon lift (core func $i "fine"))))
 "#;
-
-/// A host with no capabilities: this guest imports none, and the
-/// interpreter still wants one to instantiate against.
-struct NoHost;
-
-#[allow(clippy::missing_errors_doc)] // unreachable: the guest imports nothing
-impl KernelHost for NoHost {
-    fn read_cell(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn locked_cell(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn write_cell_get(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn write_cell_set(&mut self, _rep: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn issuer_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn issuer_mint(&mut self, _rep: u32, _ids: &[u8]) -> Result<u32, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn range_take(&mut self, _rep: u32, _ids: &[u8]) -> Result<u32, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn range_put(&mut self, _rep: u32, _funds: u32, _v: Vec<u8>) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn bucket_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn bucket_put(&mut self, _rep: u32, _other: u32) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn bucket_amount(&mut self, _rep: u32) -> Result<u128, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn delta_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn write_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn issuer_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn delta_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn write_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn reserve_take(&mut self, _rep: u32) -> Result<u32, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn take_scan_debt(&mut self) -> usize {
-        0
-    }
-    fn range_count(&mut self, _rep: u32) -> Result<u32, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn range_order(&mut self, _rep: u32, _index: u32) -> Result<u128, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn range_entry(&mut self, _rep: u32, _index: u32) -> Result<Vec<u8>, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn range_set(&mut self, _rep: u32, _index: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn range_insert(&mut self, _rep: u32, _order: u128, _v: Vec<u8>) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn range_remove(&mut self, _rep: u32, _index: u32) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn bucket_drop(&mut self, _rep: u32) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn clock_ms(&self) -> u64 {
-        0
-    }
-    fn randomness(&self) -> [u8; 32] {
-        [0; 32]
-    }
-    fn hash(&self, _data: &[u8]) -> [u8; 32] {
-        [0; 32]
-    }
-    fn emit(&mut self, _event_type: u32, _payload: Vec<u8>) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-}
 
 /// One export's verdict on the blessed engine: its value, or its class.
 fn blessed(bytes: &[u8], export: &str) -> Result<std::result::Result<u64, AbortReason>> {
