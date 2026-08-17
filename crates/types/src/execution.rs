@@ -191,6 +191,9 @@ pub enum AbortReason {
     MathDivideByZero,
     /// A wide result past 256 bits.
     MathOverflow,
+    /// A proportional split by a share above one, which would leave a
+    /// negative remainder.
+    ShareAboveOne,
     /// A declared mode and target combination the world cannot hand out.
     EffectUnsupported,
     /// A mutation declared on a permanently locked substate.

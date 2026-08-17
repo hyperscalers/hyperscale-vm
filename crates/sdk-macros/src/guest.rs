@@ -218,6 +218,7 @@ pub fn component(world: &str, document: &str, methods: &[&Method]) -> TokenStrea
             world: #world,
             with: {
                 "hyperscale:kernel/state": ::hyperscale_vm_sdk::guest::kernel::state,
+                "hyperscale:kernel/math": ::hyperscale_vm_sdk::guest::kernel::math,
                 "hyperscale:kernel/env": ::hyperscale_vm_sdk::guest::kernel::env,
                 "hyperscale:kernel/crypto": ::hyperscale_vm_sdk::guest::kernel::crypto,
                 "hyperscale:kernel/events": ::hyperscale_vm_sdk::guest::kernel::events,

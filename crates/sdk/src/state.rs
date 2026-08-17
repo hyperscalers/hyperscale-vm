@@ -254,6 +254,88 @@ impl Bucket {
         return Self::at(host::bucket_take(self.rep, amount));
     }
 
+    /// Divide this edge by `share`: the part, and the remainder.
+    ///
+    /// The primitive a linear value model can have and a non-linear one
+    /// cannot. The first output is `floor(held * share)` and the second
+    /// is what is left — derived by subtraction inside the kernel, not
+    /// computed a second time — so the two sum to the input exactly.
+    /// That is conservation by construction: there is no rounding
+    /// argument to supply and no way to write the bug where distributed
+    /// parts do not sum to the whole.
+    ///
+    /// One knob decides where the truncated subunit lands, and it is the
+    /// argument order: **the party that should absorb the dust is named
+    /// second.** A second knob pointing the other way would make the same
+    /// question answerable two ways.
+    ///
+    /// # Panics
+    ///
+    /// On a share above one, which would leave a negative remainder and
+    /// denominates nothing.
+    #[must_use]
+    pub fn split(mut self, share: Ratio) -> (Self, Self) {
+        let (num, den) = share.terms();
+        let _ = (num, den);
+        #[cfg(target_arch = "wasm32")]
+        let part = Self::held(crate::guest::bucket_split(&self.handle, num, den));
+        #[cfg(not(target_arch = "wasm32"))]
+        let part = Self::at(host::bucket_split(self.rep, num, den));
+        let _ = &mut self;
+        (part, self)
+    }
+
+    /// Divide this edge by each share in turn: the parts, and what no
+    /// share claimed.
+    ///
+    /// Every share is of the *whole*, which is what a caller writing a
+    /// weight table means, so the parts do not depend on the order they
+    /// are taken in. The remainder is returned rather than folded into
+    /// the last part: a slice whose shares fall short of one would
+    /// otherwise hand its final claimant everything the others left,
+    /// which is a silent answer to a question nobody asked — and the
+    /// kernel refuses a dropped bucket, so an explicit remainder is one
+    /// the body must dispose of rather than one it can ignore.
+    ///
+    /// Conservation still holds by construction: each part leaves through
+    /// the kernel's own subtraction and the remainder is whatever is
+    /// still in hand, so no number here is written twice.
+    ///
+    /// # Panics
+    ///
+    /// Where the shares claim more than the whole, which the kernel
+    /// refuses when a take runs past what is left.
+    #[must_use]
+    pub fn split_n(mut self, shares: &[Ratio]) -> (Vec<Self>, Self) {
+        let whole = self.quantity();
+        let mut parts = Vec::with_capacity(shares.len());
+        for share in shares {
+            parts.push(self.take(whole.scale(*share, Rounding::Down)));
+        }
+        (parts, self)
+    }
+
+    /// Divide this edge by shares that must claim all of it.
+    ///
+    /// For a distribution where truncating is worse than refusing — a
+    /// treasury schedule, a merkle drop — a non-zero remainder is the
+    /// refusal, and giving that its own name is cheaper than every such
+    /// body asserting on it.
+    ///
+    /// # Errors
+    ///
+    /// The parts and the leftover edge, where the shares did not claim
+    /// all of it. The caller still holds every piece, which is what lets
+    /// it decline without dropping any.
+    pub fn split_exact(self, shares: &[Ratio]) -> Result<Vec<Self>, (Vec<Self>, Self)> {
+        let (parts, rest) = self.split_n(shares);
+        if rest.quantity().is_zero() {
+            Ok(parts)
+        } else {
+            Err((parts, rest))
+        }
+    }
+
     /// Merge `other` in, consuming it.
     #[allow(clippy::needless_pass_by_value)] // a merge consumes what it takes
     pub fn put(&mut self, other: Self) {

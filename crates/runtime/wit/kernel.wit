@@ -17,6 +17,8 @@ package hyperscale:kernel;
 
 /// Declared-state access, one resource per mode.
 interface state {
+    use math.{wide};
+
     /// A quantity at the kernel's own cell width, as its two halves.
     ///
     /// A type rather than the sixteen bytes it is stored as: the width is
@@ -102,6 +104,20 @@ interface state {
     /// performs, so a body that divides an edge never writes down either
     /// half. Traps past what the bucket holds.
     bucket-take: func(b: borrow<bucket>, amount: amount) -> own<bucket>;
+
+    /// Split a share off a bucket, as a bucket.
+    ///
+    /// The sibling of `bucket-take`, for the division a body states as a
+    /// proportion rather than as a number. What comes off is
+    /// `floor(held * num / den)` and what is left is the *remainder* —
+    /// derived by subtraction rather than computed a second time — so
+    /// the two sum to the input exactly and no rounding argument decides
+    /// anything. The dust stays with the bucket that was split, which is
+    /// what makes the caller's argument order the whole of the question.
+    ///
+    /// Traps on a zero denominator and on a share above one, which would
+    /// make the remainder negative and denominates nothing.
+    bucket-split: func(b: borrow<bucket>, num: wide, den: wide) -> own<bucket>;
 
     /// Merge `other` into a bucket, consuming it.
     ///

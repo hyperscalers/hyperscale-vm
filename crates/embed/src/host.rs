@@ -3,6 +3,8 @@
 
 use hyperscale_vm_types::AbortReason;
 
+use crate::math::U256;
+
 /// The kernel's operations, as reps and bytes.
 ///
 /// Implementations hold per-transaction state: the materialized capability
@@ -98,6 +100,13 @@ pub trait KernelHost: Send {
     ///
     /// A deterministic refusal.
     fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
+
+    /// Split `num/den` off the bucket at `rep`; the new bucket's rep.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn bucket_split(&mut self, rep: u32, num: U256, den: U256) -> Result<u32, AbortReason>;
 
     /// Merge the bucket at `other` into the one at `rep`, consuming it.
     ///

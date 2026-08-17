@@ -152,6 +152,7 @@ enum HostFn {
     RangeWriteTake,
     RangeWritePut,
     BucketTake,
+    BucketSplit,
     BucketPut,
     BucketAmount,
     IssuerTake,
@@ -611,6 +612,7 @@ impl RefComponent {
             ("state", "range-write-take") => Ok(HostFn::RangeWriteTake),
             ("state", "range-write-put") => Ok(HostFn::RangeWritePut),
             ("state", "bucket-take") => Ok(HostFn::BucketTake),
+            ("state", "bucket-split") => Ok(HostFn::BucketSplit),
             ("state", "bucket-put") => Ok(HostFn::BucketPut),
             ("state", "bucket-amount") => Ok(HostFn::BucketAmount),
             ("state", "issuer-take") => Ok(HostFn::IssuerTake),
@@ -1634,7 +1636,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                 // the caller appends: `fraction-cmp` returns an enum and
                 // so has none, and every other arm here does.
                 CompFunc::Host(HostFn::FixedPow) => 7,
-                CompFunc::Host(HostFn::GeometricMean) => 9,
+                CompFunc::Host(HostFn::BucketSplit | HostFn::GeometricMean) => 9,
                 CompFunc::Host(HostFn::MulDiv) => 14,
                 CompFunc::Host(HostFn::FractionCmp) => 16,
                 CompFunc::Host(HostFn::FractionCompose) => 17,
@@ -1867,6 +1869,15 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let mem = self.mem_opt(id)?;
                         Self::write_wide(store, mem, args[6], 0, answer)?;
                         Ok(Vec::new())
+                    }
+                    HostFn::BucketSplit => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
+                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 2)?;
+                        let split = self
+                            .host
+                            .bucket_split(rep, flat_wide(&args, 1), flat_wide(&args, 5))
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(vec![Value::I32(self.seat_bucket(split).cast_signed())])
                     }
                     HostFn::BucketAmount => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;

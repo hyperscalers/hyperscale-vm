@@ -370,6 +370,17 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         },
     )?;
     state.func_wrap(
+        "bucket-split",
+        |mut store: StoreContextMut<'_, T>, (b, num, den): (Resource<Bucket>, Wide, Wide)| {
+            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 2)?;
+            let rep = store
+                .data_mut()
+                .bucket_split(b.rep(), num.into(), den.into())
+                .map_err(host_trap)?;
+            Ok((Resource::<Bucket>::new_own(rep),))
+        },
+    )?;
+    state.func_wrap(
         "bucket-put",
         |mut store: StoreContextMut<'_, T>, (b, other): (Resource<Bucket>, Resource<Bucket>)| {
             store

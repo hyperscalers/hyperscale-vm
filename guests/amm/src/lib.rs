@@ -61,14 +61,14 @@ pub mod amm {
 
             let x = sold.get();
             let y = bought.get();
-            let paid = input.quantity();
-
-            // The fee is the part of the payment the curve does not see.
-            // Taking it as the remainder of the traded share means the
-            // truncated subunit stays with the pool, and that the two
-            // halves sum to what arrived without either being written
-            // down.
-            let (dx, _fee) = paid.divide(settings.fee.complement().ratio());
+            // The fee is the part of the payment the curve does not see,
+            // and it is a real division of the edge rather than a number
+            // beside it: the traded side is computed, the fee is the
+            // remainder, and the two sum to what arrived because the
+            // kernel performed the subtraction. The fee is named second,
+            // so the truncated subunit stays with the pool.
+            let (traded, fee) = input.split(settings.fee.complement().ratio());
+            let dx = traded.quantity();
 
             // An empty pool has no share to quote, which is a refusal an
             // author can word rather than a division the machine traps
@@ -86,7 +86,8 @@ pub mod amm {
             // be dropping value, which the kernel refuses. A decline
             // discards the whole transaction, so the credit lands only on
             // the path that also takes the output.
-            sold.put(input);
+            sold.put(traded);
+            sold.put(fee);
             if out < min_out {
                 return Err(Error::SlippageExceeded);
             }

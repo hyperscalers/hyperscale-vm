@@ -132,6 +132,7 @@ pub fn document(world: &str, exports: &[Export]) -> String {
     let _ = writeln!(out, "world {world} {{");
     out.push_str(
         "    import hyperscale:kernel/state;\n    \
+         import hyperscale:kernel/math;\n    \
          import hyperscale:kernel/env;\n    \
          import hyperscale:kernel/crypto;\n    \
          import hyperscale:kernel/events;\n",

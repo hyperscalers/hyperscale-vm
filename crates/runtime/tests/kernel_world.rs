@@ -3,6 +3,7 @@
 //! the boundary supplement charged against fuel.
 
 use hyperscale_vm_embed::KernelHost;
+use hyperscale_vm_embed::math::U256;
 use hyperscale_vm_runtime::gas::FUEL_PER_BOUNDARY_BYTE;
 use hyperscale_vm_runtime::{
     ReadCell, WriteCell, add_kernel_to_linker, blessed_engine, validate_component,
@@ -189,6 +190,15 @@ impl KernelHost for TestHost {
     }
 
     fn bucket_take(&mut self, _rep: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+
+    fn bucket_split(
+        &mut self,
+        _rep: u32,
+        _num: U256,
+        _den: U256,
+    ) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 

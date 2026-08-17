@@ -332,6 +332,12 @@ pub fn bucket_take(rep: u32, value: u128) -> u32 {
     settled(kernel(|k| k.bucket_take(rep, value)))
 }
 
+/// Split `num/den` off a bucket, as a bucket.
+#[must_use]
+pub fn bucket_split(rep: u32, num: Wide, den: Wide) -> u32 {
+    settled(kernel(|k| k.bucket_split(rep, widened(num), widened(den))))
+}
+
 /// Merge one bucket into another, consuming it.
 pub fn bucket_put(rep: u32, other: u32) {
     settled(kernel(|k| k.bucket_put(rep, other)));

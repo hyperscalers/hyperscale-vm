@@ -20,6 +20,7 @@ use hyperscale_vm_effects::{
     AbortReason, Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, ISSUER_REP,
     Mode, SubstateKey, cell_ids,
 };
+use hyperscale_vm_embed::math::{MathError, Rounding, U256, mul_div};
 
 use crate::ledger::AmountLedger;
 use crate::locality::Locality;
@@ -259,6 +260,12 @@ pub enum SessionTrap {
     /// An event payload past the per-event byte cap.
     #[error("event payload of {0} bytes past the cap of {MAX_EVENT_PAYLOAD_BYTES}")]
     EventPayloadTooLarge(usize),
+    /// A proportional split by a share above one.
+    #[error("a split by a share above one leaves no remainder")]
+    ShareAboveOne,
+    /// A wide arithmetic refusal.
+    #[error(transparent)]
+    Math(#[from] MathError),
     /// A store refusal.
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -289,6 +296,8 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::EventTypeOutOfRange(_) => Self::EventTypeOutOfRange,
             SessionTrap::TooManyEvents => Self::EventCountExceeded,
             SessionTrap::EventPayloadTooLarge(_) => Self::EventPayloadTooLarge,
+            SessionTrap::ShareAboveOne => Self::ShareAboveOne,
+            SessionTrap::Math(error) => error.into(),
             SessionTrap::Store(store) => store.into(),
         }
     }
@@ -823,6 +832,46 @@ impl KernelSession {
             .ok_or(SessionTrap::BucketUnderflow { amount, held })?;
         self.set_bucket(rep, Held::Amount(left));
         Ok(self.open_bucket(Held::Amount(amount)))
+    }
+
+    /// Split `num/den` of the bucket at `rep` off, as a bucket.
+    ///
+    /// The share is computed and the remainder is *derived*: what stays
+    /// behind is the subtraction, never a second multiplication. That is
+    /// what makes conservation arithmetic rather than checked — the two
+    /// outputs sum to the input because one of them is defined as the
+    /// difference, so there is no rounding argument to get wrong and no
+    /// way to write the bug where distributed parts do not sum to the
+    /// whole. The supply accumulators downstream assume exactly that.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::WrongEdgeKind`] for an instance edge, which a
+    /// proportion cannot divide; [`SessionTrap::Math`] on a zero
+    /// denominator; [`SessionTrap::ShareAboveOne`] past one.
+    pub fn bucket_split(&mut self, rep: u32, num: U256, den: U256) -> Result<u32, SessionTrap> {
+        let held = self.bucket_amount(rep)?;
+        if den.is_zero() {
+            return Err(SessionTrap::Math(MathError::DivideByZero));
+        }
+        if num > den {
+            return Err(SessionTrap::ShareAboveOne);
+        }
+        // The share is at most what is held, because the ratio is at most
+        // one — so the narrowing and the subtraction below are both
+        // total, and neither needs a check the type system would then
+        // have to explain.
+        let share = mul_div(U256::from_u128(held), num, den, Rounding::Down)?
+            .to_u128()
+            .ok_or(SessionTrap::Math(MathError::Overflow))?;
+        let left = held
+            .checked_sub(share)
+            .ok_or(SessionTrap::BucketUnderflow {
+                amount: share,
+                held,
+            })?;
+        self.set_bucket(rep, Held::Amount(left));
+        Ok(self.open_bucket(Held::Amount(share)))
     }
 
     /// Merge the bucket at `other` into the one at `rep`, consuming it.
@@ -1876,8 +1925,8 @@ mod tests {
 
     use super::{
         Capability, EnvInputs, Event, Held, KernelSession, MAX_EVENT_PAYLOAD_BYTES,
-        MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, Outcome, SCAN_SEEK_BYTES,
-        SessionTrap,
+        MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, MathError, Outcome, SCAN_SEEK_BYTES,
+        SessionTrap, U256,
     };
     use crate::ledger::AmountLedger;
     use crate::modes::{AMOUNT_CELL_BYTES, TxHash, decode_amount, encode_amount};
@@ -2068,6 +2117,140 @@ mod tests {
             hash,
         )
         .expect("materializes")
+    }
+
+    /// A deterministic generator: the property is exact, so the corpus
+    /// only has to be wide and reproducible.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        /// A `u128` with a uniformly chosen bit width, so small values
+        /// are as common as wide ones.
+        fn amount(&mut self) -> u128 {
+            let bits = self.next() % 129;
+            if bits == 0 {
+                return 0;
+            }
+            let value = u128::from(self.next()) | (u128::from(self.next()) << 64);
+            value >> (128 - bits)
+        }
+    }
+
+    /// The property the primitive exists for: the two outputs sum to the
+    /// input, for every quantity and every share at or under one, with no
+    /// rounding argument anywhere in the statement.
+    #[test]
+    fn a_split_conserves_what_it_divides() {
+        let set = declared(&[]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        let mut rng = Rng(0x5eed_0f0f_1234_0001);
+        for _ in 0..2_000 {
+            let held = rng.amount();
+            let den = rng.amount().max(1);
+            let num = rng.amount() % (den + 1);
+            let rep = session.open_bucket(Held::Amount(held));
+            let part = session
+                .bucket_split(rep, U256::from_u128(num), U256::from_u128(den))
+                .expect("a share at or under one");
+            let share = session.bucket_amount(part).expect("a fungible edge");
+            let rest = session.bucket_amount(rep).expect("a fungible edge");
+            assert_eq!(
+                share.checked_add(rest),
+                Some(held),
+                "split({num}/{den}) of {held} lost or made value"
+            );
+            assert!(share <= held);
+        }
+    }
+
+    /// The dust falls to the bucket that was split, always: the share is
+    /// the floor, so the remainder is what absorbs the truncation. That
+    /// is the whole of the rounding policy, and it is a consequence of
+    /// deriving one output rather than a direction anyone supplies.
+    #[test]
+    fn a_split_leaves_its_dust_with_the_remainder() {
+        let set = declared(&[]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        let rep = session.open_bucket(Held::Amount(10));
+        let part = session
+            .bucket_split(rep, U256::from_u128(1), U256::from_u128(3))
+            .expect("a third");
+        assert_eq!(session.bucket_amount(part), Ok(3));
+        assert_eq!(session.bucket_amount(rep), Ok(7));
+    }
+
+    /// The widest quantity there is, split by the finest share that is
+    /// not zero: the product leaves the amount width entirely, which is
+    /// what makes the operation the kernel's rather than a guest's.
+    #[test]
+    fn a_split_holds_a_product_the_amount_width_cannot() {
+        let set = declared(&[]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        let rep = session.open_bucket(Held::Amount(u128::MAX));
+        let part = session
+            .bucket_split(
+                rep,
+                U256::from_u128(u128::MAX - 1),
+                U256::from_u128(u128::MAX),
+            )
+            .expect("a share under one");
+        let share = session.bucket_amount(part).expect("a fungible edge");
+        let rest = session.bucket_amount(rep).expect("a fungible edge");
+        assert_eq!(share.checked_add(rest), Some(u128::MAX));
+        assert_eq!(rest, 1);
+    }
+
+    /// A share above one leaves a negative remainder, which denominates
+    /// nothing — so it is refused rather than saturated. Saturating would
+    /// answer `(everything, nothing)`, which is the kind of answer a
+    /// caller builds on.
+    #[test]
+    fn a_share_above_one_is_refused_rather_than_saturated() {
+        let set = declared(&[]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        let rep = session.open_bucket(Held::Amount(100));
+        assert_eq!(
+            session.bucket_split(rep, U256::from_u128(3), U256::from_u128(2)),
+            Err(SessionTrap::ShareAboveOne)
+        );
+        assert_eq!(
+            session.bucket_amount(rep),
+            Ok(100),
+            "a refused split moves nothing"
+        );
+    }
+
+    /// A zero denominator is the empty pool's share, and it is a refusal
+    /// rather than a trap in the arithmetic below it.
+    #[test]
+    fn a_split_by_nothing_is_refused() {
+        let set = declared(&[]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        let rep = session.open_bucket(Held::Amount(100));
+        assert_eq!(
+            session.bucket_split(rep, U256::from_u128(1), U256::ZERO),
+            Err(SessionTrap::Math(MathError::DivideByZero))
+        );
+    }
+
+    /// A proportion cannot divide named instances: which ones would it
+    /// take? The vocabulary refuses rather than picking.
+    #[test]
+    fn a_proportion_does_not_divide_an_instance_edge() {
+        let set = declared(&[]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        let rep = session.open_bucket(Held::Instances([1u128, 2, 3].into_iter().collect()));
+        assert_eq!(
+            session.bucket_split(rep, U256::from_u128(1), U256::from_u128(2)),
+            Err(SessionTrap::WrongEdgeKind)
+        );
     }
 
     #[test]

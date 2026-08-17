@@ -703,6 +703,7 @@ dependencies = [
  "arbitrary",
  "hyperscale-vm-cli",
  "hyperscale-vm-effects",
+ "hyperscale-vm-embed",
  "hyperscale-vm-fixtures",
  "hyperscale-vm-kernel",
  "hyperscale-vm-manifest-builder",

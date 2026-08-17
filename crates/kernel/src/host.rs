@@ -14,6 +14,7 @@
 
 use hyperscale_vm_effects::AbortReason;
 use hyperscale_vm_embed::KernelHost;
+use hyperscale_vm_embed::math::U256;
 
 use crate::session::{KernelSession, SessionTrap};
 
@@ -56,6 +57,9 @@ impl KernelHost for KernelSession {
     }
     fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
         refused(Self::bucket_take(self, rep, amount))
+    }
+    fn bucket_split(&mut self, rep: u32, num: U256, den: U256) -> Result<u32, AbortReason> {
+        refused(Self::bucket_split(self, rep, num, den))
     }
     fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), AbortReason> {
         refused(Self::bucket_put(self, rep, other))

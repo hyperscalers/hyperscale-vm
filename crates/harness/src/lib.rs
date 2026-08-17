@@ -36,6 +36,7 @@ pub mod fixtures {
     use std::path::PathBuf;
 
     use hyperscale_vm_cli::compile;
+    use hyperscale_vm_embed::math::U256;
     use hyperscale_vm_kernel::{AbortReason, KernelHost};
     use wasmtime::Result;
     use wasmtime::error::format_err;
@@ -75,6 +76,9 @@ pub mod fixtures {
             Err(AbortReason::HandleUnknown)
         }
         fn bucket_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
+            Err(AbortReason::HandleUnknown)
+        }
+        fn bucket_split(&mut self, _rep: u32, _num: U256, _den: U256) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn bucket_put(&mut self, _rep: u32, _other: u32) -> Result<(), AbortReason> {

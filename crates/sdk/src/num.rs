@@ -443,6 +443,13 @@ impl Ratio {
         Self::of(percent as u128, 100)
     }
 
+    /// The two terms, for the one operation that carries a fraction
+    /// across the boundary rather than applying it.
+    #[must_use]
+    pub const fn terms(self) -> (Wide, Wide) {
+        (self.num, self.den)
+    }
+
     /// Whether the fraction is zero.
     #[must_use]
     pub fn is_zero(self) -> bool {

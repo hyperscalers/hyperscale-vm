@@ -178,6 +178,12 @@ pub fn bucket_take(funds: &kernel::state::Bucket, value: u128) -> kernel::state:
     kernel::state::bucket_take(funds, amount(value))
 }
 
+/// Split `num/den` off a bucket, as a bucket.
+#[must_use]
+pub fn bucket_split(funds: &kernel::state::Bucket, num: Wide, den: Wide) -> kernel::state::Bucket {
+    kernel::state::bucket_split(funds, raised(num), raised(den))
+}
+
 /// Merge `other` into a bucket, consuming it.
 pub fn bucket_put(funds: &kernel::state::Bucket, other: kernel::state::Bucket) {
     kernel::state::bucket_put(funds, other);
