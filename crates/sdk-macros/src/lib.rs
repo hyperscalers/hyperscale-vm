@@ -538,13 +538,18 @@ fn error_names(items: &[syn::Item]) -> Vec<String> {
         .collect()
 }
 
-/// Whether a method claims the total mark, which the publish gate then
-/// checks against the artifact the claim rides on.
-fn claims_total(method: &syn::ImplItemFn) -> bool {
+/// The `#[total]` attribute, where a method claims the mark the publish
+/// gate then checks against the artifact the claim rides on.
+///
+/// Returned rather than reduced to a flag so a refusal can point at the
+/// claim: the mark is one attribute an author adds or removes, and an
+/// error on the method's name asks them to work out which of the lines
+/// above it is the one being complained about.
+fn total_attr(method: &syn::ImplItemFn) -> Option<&syn::Attribute> {
     method
         .attrs
         .iter()
-        .any(|attr| attr.path().is_ident("total"))
+        .find(|attr| attr.path().is_ident("total"))
 }
 
 /// Whether a method's return type carries an error arm, which is the whole
@@ -606,14 +611,33 @@ fn lower_method(
     check_gate_shape(&gate, &lowered, method)?;
 
     let declining = declines(method);
-    let total = claims_total(method);
-    if declining && total {
-        return Err(syn::Error::new(
-            method.sig.ident.span(),
-            "a method carrying an error arm can refuse, and a total method cannot: the \
-             two marks describe the same signature and only one of them is true",
-        ));
+    let claim = total_attr(method);
+    // What the mark promises is that a caller committing against this
+    // method has nothing to hear back. Three things could break that, and
+    // the macro can see two of them: an error arm the method declines
+    // through, and a gate that turns callers away before the body runs.
+    // The third is a trap, which is a property of compiled code the macro
+    // has not emitted yet — so that one is the publish gate's, read off
+    // the artifact. Refusing the two that are visible here is what keeps
+    // an author from meeting them later as a metadata error about a
+    // package rather than as a mistake on a line.
+    if let Some(claim) = claim {
+        if declining {
+            return Err(syn::Error::new_spanned(
+                claim,
+                "a method carrying an error arm can refuse, and a total method cannot: the \
+                 two marks describe the same signature and only one of them is true",
+            ));
+        }
+        if !matches!(gate, Gate::Public) {
+            return Err(syn::Error::new_spanned(
+                claim,
+                "a total method admits every caller, and a gate turns some away before the \
+                 body runs: drop the mark, or drop the gate",
+            ));
+        }
     }
+    let total = claim.is_some();
     let closure = emit::declaration(&lowered, &gate_calls(&gate), declining, total);
     let declaration = quote!(
         .method(#published, &[#(#kinds),*], #closure)

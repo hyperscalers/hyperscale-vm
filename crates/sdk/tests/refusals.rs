@@ -24,3 +24,17 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/reassigned_key.rs");
     refuse.compile_fail("tests/refusals/early_return_output.rs");
 }
+
+/// A mark the macro can already tell is unsupportable, refused where the
+/// author wrote it rather than at the publish gate.
+///
+/// The artifact scan belongs to the gate, because it reads compiled code
+/// the macro has not produced yet. What a gate does is not: the attribute
+/// sits right beside the claim, and a refusal that waits for a publish is
+/// one the author meets as a metadata error about a package rather than
+/// as a mistake on a line.
+#[test]
+fn the_lowering_refuses_a_mark_it_can_see_is_wrong() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/total_gated.rs");
+}
