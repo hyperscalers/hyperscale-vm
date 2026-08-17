@@ -33,7 +33,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod staking {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Locked, Vault, mint};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Locked, Vault, burn, mint};
 
     /// The pool's creation-fixed configuration: what a delegation is
     /// denominated in.
@@ -81,11 +81,6 @@ pub mod staking {
         #[role(1)]
         #[denomination(config.staked_resource)]
         staked: Cell<Vault>,
-        /// What a delegation becomes on its way out: the units handed
-        /// back, held until their release leg.
-        #[role(16)]
-        #[denomination(issued(b""))]
-        unbonding: Cell<Vault>,
         /// One leaf per validator the pool operates, so two operator
         /// actions on two validators commute.
         #[role(17)]
@@ -109,9 +104,17 @@ pub mod staking {
         }
 
         /// Return stake units, beginning the unbonding period.
+        ///
+        /// The units are destroyed rather than parked: a delegator who
+        /// has asked to leave no longer holds a claim on the pool, and
+        /// the supply should say so. What replaces the claim is the
+        /// event — the same answer this pool gives to every aggregate,
+        /// and the one that keeps two delegators leaving at once from
+        /// contending on a total neither of them reads.
+        #[allow(clippy::unused_self)] // a method of the pool; the emitter is the invocation's
         pub fn unstake(&mut self, units: Bucket) {
             let returned = units.quantity();
-            self.unbonding.vault().put(units);
+            burn(b"", units);
             Unstaked::emit(&returned.subunits().to_le_bytes());
         }
 

@@ -806,6 +806,47 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Lower `burn(mark, funds)`.
+    ///
+    /// What it destroys is the resource the mark derives, so an edge a
+    /// caller supplied is held to that resource exactly as a credit to a
+    /// cell holding it would be — and one the body produced is compared
+    /// outright, because no caller is involved to be constrained.
+    fn lower_burn(&mut self, mark: &[u8], call: &syn::ExprCall) -> Eval {
+        let Some(destroyed) = call.args.iter().nth(1).map(|a| self.expr(a)) else {
+            self.error(call.args.span(), "a burn with nothing to destroy");
+            return Eval::absent("a burn with no value");
+        };
+        let held = Term::SelfResource(mark.to_vec());
+        match Self::edge_resource(&destroyed) {
+            Some(Term::ResourceOf(inner)) if matches!(*inner, Term::Arg(_)) => {
+                if let Term::Arg(param) = *inner {
+                    self.denominate(param, held, call.span());
+                }
+            }
+            Some(carried) if carried != held => {
+                let (carried, held) = (self.describe(&carried), self.describe(&held));
+                self.error(
+                    call.args.span(),
+                    &format!(
+                        "this destroys {carried} against a grant over {held}. A grant is \
+                         authority over one resource, and burning is that authority in the \
+                         other direction"
+                    ),
+                );
+            }
+            Some(_) => {}
+            None => self.error(
+                call.args.span(),
+                "the lowering cannot see what this destroys. Burn an edge the method was \
+                 handed, one taken from a declared cell, or one it minted",
+            ),
+        }
+        let funds = self.value(destroyed.code);
+        let grant = self.issuer(mark);
+        Eval::plain(quote!(::hyperscale_vm_sdk::state::burn_granted(#grant, #funds)))
+    }
+
     /// Fix what the edge at `param` carries.
     ///
     /// One parameter credited to two cells with different keys is a
@@ -1658,6 +1699,18 @@ impl<'a> Lowerer<'a> {
                 val: Val::Produced(Term::SelfResource(mark)),
                 code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#grant, #amount))),
             };
+        }
+        // `burn(mark, funds)` — the inverse, under the same grant.
+        if name == "burn" {
+            let Some(mark) = call.args.first().and_then(byte_literal) else {
+                self.error(
+                    call.args.span(),
+                    "the mark separating an instance's resources is part of every key \
+                     derived from one, so it must be a byte-string literal",
+                );
+                return Eval::absent("a computed resource mark");
+            };
+            return self.lower_burn(&mark, call);
         }
         if name == "issued" {
             let mark = call.args.first().and_then(byte_literal);

@@ -378,7 +378,9 @@ PackageMetadata {
             accessibility: Public,
             totality: Infallible,
             mints: None,
-            issues: None,
+            issues: Some(
+                [],
+            ),
             params: [
                 Bucket,
             ],
@@ -390,36 +392,12 @@ PackageMetadata {
                     },
                 ),
             ],
-            effects: [
-                Effect {
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            role: RoleId(
-                                16,
-                            ),
-                            material: [
-                                SelfResource {
-                                    material: [],
-                                },
-                            ],
-                        },
-                    ),
-                    mode: Delta,
-                    denomination: Some(
-                        SelfResource {
-                            material: [],
-                        },
-                    ),
-                },
-            ],
+            effects: [],
             abi: [
-                Handle(
-                    0,
-                ),
                 Bucket(
                     0,
                 ),
+                Issuer,
             ],
         },
     },

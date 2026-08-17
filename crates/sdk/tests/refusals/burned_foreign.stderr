@@ -1,0 +1,5 @@
+error: this destroys `config.asset` against a grant over `issued(b"")`. A grant is authority over one resource, and burning is that authority in the other direction
+  --> tests/refusals/burned_foreign.rs:24:18
+   |
+24 |             burn(b"", taken);
+   |                  ^^^

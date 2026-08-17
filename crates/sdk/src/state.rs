@@ -413,6 +413,22 @@ pub fn mint(mark: &[u8], quantity: Quantity) -> Bucket {
     unimplemented!("{OFF_HOST}")
 }
 
+/// Destroy `funds`, which must be the resource `mark` derives.
+///
+/// The inverse of [`mint`] and under the same authority: bringing value
+/// out of existence is as declared as bringing it in. What separates it
+/// from moving value into a cell nobody spends from is that the shard's
+/// own supply falls — a retired balance is still supply, and this is not.
+///
+/// Consumes the edge, so the value is gone rather than held somewhere the
+/// body forgot about; a mark naming another instance's resource has no
+/// grant behind it and the kernel refuses.
+#[allow(clippy::needless_pass_by_value)] // a burn consumes what it destroys
+pub fn burn(mark: &[u8], funds: Bucket) {
+    let _ = (mark, &funds);
+    unimplemented!("{OFF_HOST}")
+}
+
 /// A permanently locked configuration leaf.
 ///
 /// Read through [`Locked::locked`], which declares a locked read that excludes
@@ -938,6 +954,23 @@ pub fn mint_granted(grant: u32, quantity: Quantity) -> Bucket {
     return Bucket::held(crate::guest::mint(grant, quantity.subunits()));
     #[cfg(not(target_arch = "wasm32"))]
     return Bucket::at(host::mint(grant, quantity.subunits()));
+}
+
+/// Destroy the value at `funds` against the grant at `grant`.
+///
+/// Called by generated code, never by an author, on the same terms
+/// [`mint_granted`] is: the grant is a handle the kernel lowered against
+/// the method's own declaration, and which resource it destroys is what
+/// the mark already fixed.
+#[doc(hidden)]
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always, clippy::needless_pass_by_value)]
+pub fn burn_granted(grant: u32, funds: Bucket) {
+    let _ = &funds;
+    #[cfg(target_arch = "wasm32")]
+    return crate::guest::burn(grant, funds.into_handle());
+    #[cfg(not(target_arch = "wasm32"))]
+    return host::burn(grant, funds.rep());
 }
 
 /// A 128-bit order key packed from a primary dimension over a tiebreaker.

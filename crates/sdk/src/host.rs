@@ -243,6 +243,11 @@ pub fn mint(rep: u32, value: u128) -> u32 {
     settled(kernel(|k| k.mint(rep, value)))
 }
 
+/// Destroy what the bucket at `funds` carries, against the grant at `rep`.
+pub fn burn(rep: u32, funds: u32) {
+    settled(kernel(|k| k.burn(rep, funds)));
+}
+
 /// A wide word as the arithmetic's own type.
 ///
 /// Written out rather than a `From` impl: the vocabulary's type is this

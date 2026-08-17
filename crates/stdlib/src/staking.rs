@@ -23,9 +23,6 @@ mod package;
 /// stand-in for it.
 pub use package::staking::invoke;
 
-/// A stake pool's total awaiting release to the delegators who returned
-/// their units.
-pub const UNBONDING: RoleId = package_role(0);
 /// A stake pool's record of one validator it operates.
 pub const VALIDATORS: RoleId = package_role(1);
 /// A stake pool's one active network-parameter vote.
@@ -41,7 +38,8 @@ pub const OWNER_BADGE: &[u8] = b"owner-badge";
 /// pool's own stake-unit resource — the delegator's position, held as an
 /// ordinary fungible balance in their own account rather than as a record
 /// only the pool can read. `unstake(units)`: the returned units are
-/// consumed and the pool's unbonding total grows by what they represent.
+/// destroyed, and the event is what records that the pool owes their
+/// stake back.
 ///
 /// Both are `delta`, and that is the whole contention story: a delegation
 /// commutes with every other delegation, so a pool's popularity costs its

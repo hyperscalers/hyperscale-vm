@@ -337,6 +337,11 @@ pub fn mint(rep: u32, value: u128) -> kernel::state::Bucket {
     kernel::state::mint(&issuer(rep), amount(value))
 }
 
+/// Destroy what a bucket carries, against this invocation's grant.
+pub fn burn(rep: u32, funds: kernel::state::Bucket) {
+    kernel::state::burn(&issuer(rep), funds);
+}
+
 /// Entries currently visible in this interval, bounded by its cap.
 ///
 /// # Panics

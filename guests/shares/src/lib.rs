@@ -31,12 +31,18 @@
 //! travels it: it establishes that assets cannot arrive unaccompanied by
 //! a mint, and says nothing about which resource arrives.
 //!
-//! # Shares retired rather than burned
+//! # Returned shares are destroyed
 //!
-//! Returned shares go to a vault outside circulation and `supply` is
-//! decremented, because the vocabulary can issue a resource and cannot
-//! un-issue one. The accounting is the same; what differs is that the
-//! retired units still exist somewhere a reader can point at.
+//! A share handed back is burned rather than parked: the units stop
+//! existing and the shard's own supply falls with them, which is what a
+//! redemption means. Parking them would leave the same arithmetic over a
+//! balance nobody can spend — indistinguishable from a redemption to
+//! anyone reading this contract, and a lie to anyone reading the shard's
+//! supply.
+//!
+//! `supply` is still a cell here, because it is the *circulating* total
+//! this vault prices against and a contract cannot read the shard's
+//! accumulator. What changed is that the two now agree.
 
 use hyperscale_vm_sdk::blueprint;
 
@@ -44,7 +50,7 @@ use hyperscale_vm_sdk::blueprint;
 pub mod shares {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Locked, Quantity, Rounding, Vault, mint,
+        Bucket, Cell, Locked, Quantity, Rounding, Vault, burn, mint,
     };
 
     /// What the vault is denominated in.
@@ -69,12 +75,8 @@ pub mod shares {
         #[role(1)]
         #[denomination(config.asset)]
         assets: Cell<Vault>,
-        /// Shares handed back, out of circulation.
-        #[role(16)]
-        #[denomination(issued(b""))]
-        retired: Cell<Vault>,
-        /// Shares in circulation. Kept here because the resource's own
-        /// supply counts the retired ones too.
+        /// Shares in circulation, which is what a redemption is priced
+        /// against.
         #[role(17)]
         supply: Cell<Quantity>,
     }
@@ -87,7 +89,7 @@ pub mod shares {
         pub fn deposit(&mut self, funds: Bucket) -> Result<Bucket, Error> {
             let settings = self.config.locked();
             let mut vault = self.assets.vault();
-            let assets = vault.get();
+            let assets = vault.balance();
             let supply = self.supply.get();
             let paid = funds.quantity();
             vault.put(funds);
@@ -112,7 +114,7 @@ pub mod shares {
         pub fn mint(&mut self, want: Quantity, mut funds: Bucket) -> Result<(Bucket, Bucket), Error> {
             let settings = self.config.locked();
             let mut vault = self.assets.vault();
-            let assets = vault.get();
+            let assets = vault.balance();
             let supply = self.supply.get();
 
             let mut needed = want;
@@ -145,7 +147,7 @@ pub mod shares {
         ) -> Result<(Bucket, Bucket), Error> {
             let settings = self.config.locked();
             let mut vault = self.assets.vault();
-            let assets = vault.get();
+            let assets = vault.balance();
             let supply = self.supply.get();
 
             let Ok(per_asset) = supply.ratio_to(assets) else {
@@ -157,7 +159,7 @@ pub mod shares {
                 return Err(Error::Insufficient);
             };
             let back = units.take(spare);
-            self.retired.vault().put(units);
+            burn(b"", units);
             self.supply.set(supply - needed);
             Ok((vault.take(want), back))
         }
@@ -168,7 +170,7 @@ pub mod shares {
         pub fn redeem(&mut self, units: Bucket) -> Result<Bucket, Error> {
             let settings = self.config.locked();
             let mut vault = self.assets.vault();
-            let assets = vault.get();
+            let assets = vault.balance();
             let supply = self.supply.get();
             let returned = units.quantity();
 
@@ -177,7 +179,7 @@ pub mod shares {
             };
             let out = returned.scale(per_share, Rounding::Down);
 
-            self.retired.vault().put(units);
+            burn(b"", units);
             self.supply.set(supply - returned);
             Ok(vault.take(out))
         }

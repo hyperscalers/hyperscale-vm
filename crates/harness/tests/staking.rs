@@ -149,15 +149,6 @@ fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey
     )
 }
 
-fn unbonding(pool: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
-    child_key(
-        &TestHasher,
-        pool,
-        staking::UNBONDING,
-        &[Value::Address(resource.into()).canonical_bytes()],
-    )
-}
-
 /// Build against this world's metadata, so every call is typed by the
 /// signature it names and every edge carries the resource that signature
 /// declares — neither of which is written out below.
@@ -179,9 +170,8 @@ fn stake_graph(amount: u128) -> ManifestGraph {
     })
 }
 
-/// `alice.withdraw(UNIT) -> pool.unstake`: the units are consumed and the
-/// pool's unbonding total grows. Nothing comes back — the release leg is
-/// not built.
+/// `alice.withdraw(UNIT) -> pool.unstake`: the units are destroyed.
+/// Nothing comes back — the release leg is not built.
 fn unstake_graph(amount: u128) -> ManifestGraph {
     graph(|b| {
         let alice = account::authorize(b, ALICE)?;
@@ -585,7 +575,7 @@ fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
 }
 
 #[test]
-fn returned_units_are_consumed_and_recorded_as_unbonding() -> Result<()> {
+fn returned_units_are_destroyed_and_the_pool_says_what_it_owes() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(unstake_graph(40)), ALICE)?;
 
@@ -594,11 +584,11 @@ fn returned_units_are_consumed_and_recorded_as_unbonding() -> Result<()> {
     assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
 
     assert_eq!(amount_of(&end, vault(ALICE, unit())), 60);
-    // The unbonding leaf is keyed by what lands in it, which is the units
-    // the pool issued rather than the stake they are a claim on.
-    assert_eq!(amount_of(&end, unbonding(pool(), unit())), 40);
-    // Nothing came back: the release leg is a later method, so the units
-    // are gone and the delegator holds no claim on the pool's vault yet.
+    // The returned units are destroyed rather than parked, so the pool
+    // holds no leaf of them and the shard's supply of them fell.
+    assert_eq!(receipt.supply.burned(unit().address()), 40);
+    // Nothing came back either: the release leg is a later method, so the
+    // delegator holds no claim on the pool's vault yet.
     assert_eq!(amount_of(&end, vault(ALICE, XRD)), 0);
     assert_eq!(amount_of(&end, vault(pool(), XRD)), 0);
 
