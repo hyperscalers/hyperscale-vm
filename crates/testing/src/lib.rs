@@ -44,7 +44,8 @@ use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 pub use hyperscale_vm_effects::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
-    PrefixShardResolver, SubstateKey, TestHasher, Value, admit, child_key, declaration_hash, route,
+    PrefixShardResolver, SubstateKey, TestHasher, Value, admit, child_key, declaration_hash,
+    resource_address, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, ExecutionMode, Locality, ManifestWalk, MemoryStore, Outcome as KernelOutcome, TxHash,
@@ -224,6 +225,27 @@ impl Chain {
         self.store.lock(leaf);
         self.store.clear_log();
         address
+    }
+
+    /// The resource an instance issues under `mark`.
+    ///
+    /// The same derivation `issued(mark)` reaches inside a body: an
+    /// instance's own address over the mark that separates one of its
+    /// resources from another. A test naming a contract's shares or its
+    /// badge is asking for this, and spelling it out per test is how two
+    /// spellings of one address get written.
+    ///
+    /// An empty mark is no material rather than one empty element, which
+    /// is what the tracer means by it and the only spelling that reaches
+    /// the address the body does.
+    #[must_use]
+    pub fn issued(instance: ComponentAddr, mark: &[u8]) -> ResourceAddr {
+        let material: Vec<Vec<u8>> = if mark.is_empty() {
+            Vec::new()
+        } else {
+            vec![mark.to_vec()]
+        };
+        resource_address(&TestHasher, instance, &material)
     }
 
     /// Put `amount` of `resource` in `owner`'s vault, as though it had

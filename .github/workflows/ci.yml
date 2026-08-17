@@ -78,3 +78,5 @@ jobs:
         run: |
           cargo test --manifest-path guests/amm/Cargo.toml
           cargo test --release --manifest-path guests/amm/Cargo.toml
+          cargo test --manifest-path guests/shares/Cargo.toml
+          cargo test --release --manifest-path guests/shares/Cargo.toml
