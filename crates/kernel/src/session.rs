@@ -162,6 +162,9 @@ pub enum SessionTrap {
     /// through a lowered handle, kept as an honest error.
     #[error("this invocation issues nothing")]
     IssuanceUngranted,
+    /// A discarded bucket that still carried value.
+    #[error("a bucket carrying {0} was let go of")]
+    ValueDropped(u128),
     /// A stored cell a movement reads as an amount and cannot: a defect
     /// in state rather than in the call that found it.
     #[error("substate {0:?} is not an amount cell")]
@@ -202,6 +205,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::ReservationMissing => Self::ReservationMissing,
             SessionTrap::ReservationTaken => Self::ReservationAlreadyTaken,
             SessionTrap::IssuanceUngranted => Self::IssuanceUngranted,
+            SessionTrap::ValueDropped(_) => Self::ValueDropped,
             SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
             SessionTrap::CellUnderflow => Self::CellUnderflow,
             SessionTrap::CellOverflow => Self::CellOverflow,
@@ -611,13 +615,24 @@ impl KernelSession {
     /// A bucket handle the guest let go of.
     ///
     /// The canonical ABI delivers the drop and the kernel decides what it
-    /// means; that delivery is the whole of what an owned handle buys
-    /// over a value a body could simply forget.
+    /// means. What it decides is that value is not forgotten: a bucket is
+    /// put into a cell or handed back, and one carrying anything at all
+    /// that reaches here is the loss the linear model exists to exclude.
+    /// That delivery is the whole of what an owned handle buys over a
+    /// value a body could simply let fall out of scope, and it is why a
+    /// record could not have carried this.
+    ///
+    /// An empty bucket drops freely, because there is nothing to lose.
     ///
     /// # Errors
     ///
-    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
+    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket,
+    /// and [`SessionTrap::ValueDropped`] for one that still carries value.
     pub fn drop_bucket(&mut self, rep: u32) -> Result<(), SessionTrap> {
+        let amount = self.bucket(rep)?;
+        if amount > 0 {
+            return Err(SessionTrap::ValueDropped(amount));
+        }
         self.take_bucket(rep).map(|_| ())
     }
 

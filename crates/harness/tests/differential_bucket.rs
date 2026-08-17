@@ -37,8 +37,9 @@ const FUEL: u64 = 1_000_000_000;
 /// What the held bucket carries; the guest never learns it, which is the
 /// point of the handle.
 const HELD: u128 = 40;
-/// What the discarded bucket carries.
-const SPENT: u128 = 2;
+/// What the discarded bucket carries: nothing, because a bucket that
+/// carries anything cannot be discarded at all.
+const SPENT: u128 = 0;
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
@@ -800,19 +801,28 @@ fn weighed(fx: &Fixture, held: u128) -> Result<(u64, u64)> {
     add_kernel_to_linker(&mut linker)?;
     let mut host = SessionHost(materialize(fx));
     let funds = host.0.open_bucket(held);
+    let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
     let (blessed,) = instance
-        .get_typed_func::<(Resource<Bucket>,), (u64,)>(&mut store, "weigh")?
-        .call(&mut store, (Resource::new_own(funds),))?;
+        .get_typed_func::<(Resource<Bucket>, Resource<DeltaCell>), (u64,)>(&mut store, "weigh")?
+        .call(
+            &mut store,
+            (Resource::new_own(funds), Resource::new_borrow(ledger)),
+        )?;
 
     let comp = RefComponent::decode(&bytes)?;
     let mut host = SessionHost(materialize(fx));
     let funds = host.0.open_bucket(held);
+    let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
-    let reference = match invoke(&mut instance, "weigh", &[CVal::Own(funds)])?.as_slice() {
+    let args = [
+        CVal::Own(funds),
+        CVal::Borrow(ledger, ResourceKind::DeltaCell),
+    ];
+    let reference = match invoke(&mut instance, "weigh", &args)?.as_slice() {
         [CVal::U64(v)] => *v,
         other => return Err(format_err!("weigh returned {other:?}")),
     };
@@ -903,7 +913,7 @@ fn a_returned_bucket_comes_back_to_the_kernel_whole() -> Result<()> {
 }
 
 #[test]
-fn a_dropped_bucket_reaches_the_host() -> Result<()> {
+fn an_empty_bucket_drops_and_reaches_the_host() -> Result<()> {
     let fx = fixture();
     let (blessed, _) = run_blessed(&fx)?;
     let (reference, _) = run_ref(&fx)?;
@@ -912,4 +922,65 @@ fn a_dropped_bucket_reaches_the_host() -> Result<()> {
     assert!(!blessed.discarded_survives);
     assert!(!reference.discarded_survives);
     Ok(())
+}
+
+#[test]
+fn letting_go_of_value_is_refused_by_the_hosts_own_hand() -> Result<()> {
+    let fx = fixture();
+    // The property the handle exists for. A record could carry the
+    // amount and could not notice being forgotten; the canonical ABI
+    // routes a discarded owned handle to the host, and the host says no.
+    let (blessed, _) = discard_blessed(&fx, 40)?;
+    let (reference, _) = discard_ref(&fx, 40)?;
+    assert_eq!(blessed, reference, "the discard diverged");
+    assert_eq!(blessed, Some(AbortReason::ValueDropped));
+
+    // And nothing to lose is nothing to refuse.
+    let (empty, _) = discard_blessed(&fx, 0)?;
+    assert_eq!(empty, None);
+    Ok(())
+}
+
+/// One discard under the blessed engine: the class it was refused with,
+/// or nothing where it was allowed.
+fn discard_blessed(fx: &Fixture, held: u128) -> Result<(Option<AbortReason>, u64)> {
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    validate_component(&bytes)?;
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<SessionHost>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let mut host = SessionHost(materialize(fx));
+    let funds = host.0.open_bucket(held);
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+    let called = instance
+        .get_typed_func::<(Resource<Bucket>,), (u64,)>(&mut store, "discard")?
+        .call(&mut store, (Resource::new_own(funds),));
+    let fuel = FUEL - store.get_fuel()?;
+    let Err(error) = called else {
+        return Ok((None, fuel));
+    };
+    if let Some(refusal) = error.downcast_ref::<HostRefusal>() {
+        return Ok((Some(refusal.0), fuel));
+    }
+    Err(error)
+}
+
+/// The same discard under the reference interpreter.
+fn discard_ref(fx: &Fixture, held: u128) -> Result<(Option<AbortReason>, u64)> {
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    let comp = RefComponent::decode(&bytes)?;
+    let mut host = SessionHost(materialize(fx));
+    let funds = host.0.open_bucket(held);
+    let mut instance =
+        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+    let called = instance.invoke("discard", &[CVal::Own(funds)])?;
+    let fuel = instance.fuel_consumed();
+    match called {
+        Ok(_) => Ok((None, fuel)),
+        Err(ExecError::Canon(CanonError::Host(reason))) => Ok((Some(reason), fuel)),
+        Err(other) => Err(format_err!("ref discard failed: {other:?}")),
+    }
 }

@@ -57,14 +57,16 @@ pub mod amm {
                 .unwrap()
                 / 10_000;
             let out = y.checked_mul(dx).unwrap() / x.checked_add(dx).unwrap();
-            // Nothing below reads the pool again: the credit and the
-            // debit are the kernel's own arithmetic over the cells it
-            // just answered from.
+            // The payment goes in before the floor is judged, because a
+            // body disposes of what it holds on every path it can leave
+            // by — a refusal that let the input fall out of scope would
+            // be dropping value, which the kernel refuses. A decline
+            // discards the whole transaction, so the credit lands only on
+            // the path that also takes the output.
+            sold.put(input);
             if out < min_out {
                 return Err(Error::SlippageExceeded);
             }
-
-            sold.put(input);
             Ok(bought.take(out))
         }
     }

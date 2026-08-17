@@ -603,16 +603,20 @@ pub mod fixtures {
       local.get 0
       call $drop_issuer)
 
-    ;; Read what the bucket carries without moving it, then hand it back:
-    ;; a borrow costs the body nothing and leaves the value where it was.
-    (func (export "weigh") (param i32) (result i64)
+    ;; Read what the bucket carries without moving it, then put it
+    ;; somewhere: a borrow costs the body nothing and leaves the value
+    ;; where it was, and what a body holds it has to put down.
+    (func (export "weigh") (param i32 i32) (result i64)
       local.get 0
       i32.const 32
       call $bucket_amount
       i32.const 32
       i64.load
+      local.get 1
       local.get 0
-      call $drop_bucket)
+      call $delta_put
+      local.get 1
+      call $drop_delta)
 
     ;; Credit the cell with the bucket, then say whether the handle it
     ;; consumed still names anything: a live one would answer, and a
@@ -693,10 +697,14 @@ pub mod fixtures {
       local.get 0
       call $drop_reserve)
 
+    ;; The first grant is left on the table rather than dropped: letting
+    ;; go of value is its own refusal, and what this asks is whether one
+    ;; hold answers twice. The trap on the second take is what ends the
+    ;; call, so nothing is owed a disposal.
     (func (export "take-reserve-twice") (param i32) (result i32)
       local.get 0
       call $reserve_take
-      call $drop_bucket
+      drop
       local.get 0
       call $reserve_take
       local.get 0
@@ -740,7 +748,7 @@ pub mod fixtures {
     (result (tuple (own $bucket) (own $bucket)))
     (canon lift (core func $i "take-two") (memory $a "mem")))
   (func (export "weigh")
-    (param "b" (own $bucket)) (result u64)
+    (param "b" (own $bucket)) (param "c" (borrow $dcell)) (result u64)
     (canon lift (core func $i "weigh")))
   (func (export "put-write")
     (param "c" (borrow $wcell)) (param "funds" (own $bucket)) (result u64)

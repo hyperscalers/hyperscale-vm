@@ -137,6 +137,10 @@ pub enum AbortReason {
     ReservationAlreadyTaken,
     /// An issue by an invocation whose declaration granted it none.
     IssuanceUngranted,
+    /// A body let go of value. The canonical ABI delivers the discard and
+    /// the kernel refuses it: a bucket is put somewhere or handed back,
+    /// and forgetting one is the loss the linear model exists to exclude.
+    ValueDropped,
     /// An emission outside any invocation, so the kernel has no address
     /// to stamp.
     EmissionOutsideInvocation,
