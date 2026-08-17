@@ -738,32 +738,33 @@ impl KernelSession {
     /// entries than the interval's cap admits.
     pub fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, SessionTrap> {
         let interval = self.write_interval(rep)?;
+        // The decoder refuses a repeated id, so the set below loses
+        // nothing to dedup and a count is an instance count.
         let ids = cell_ids(ids).ok_or(SessionTrap::BadIdCell)?;
-        self.scan(rep)?;
+        // Every entry is charged and removed, or none is: the budget is
+        // what the declaration bought, and a take that overran it must
+        // leave the collection alone.
         let mut taken = BTreeSet::new();
         for id in ids {
             let order = u128::from(id);
             if !interval.holds(order) {
                 return Err(SessionTrap::OrderOutsideInterval);
             }
-            // Held is what the declared interval currently shows: an
-            // instance a body names and does not hold is the one thing a
-            // take can be wrong about, and it is where it says so.
-            let held = self
-                .scans
-                .get(&rep)
-                .into_iter()
-                .flatten()
-                .any(|(at, _)| *at == order);
-            if !held || !taken.insert(order) {
+            // Asked at the instance's own key rather than of the
+            // interval's page. The cap bounds how many entries execution
+            // may touch, and a take names at most an edge's worth — so
+            // answering from a page would make reachability a function of
+            // how many lower-ordered instances sit in front of this one,
+            // and a holder past the cap could never move its later ids.
+            let held = !self
+                .store
+                .entries_in_range(interval.owner, interval.collection, order, order, 1)?
+                .is_empty();
+            if !held {
                 return Err(SessionTrap::InstanceNotHeld(order));
             }
-        }
-        // Every entry is charged and removed, or none is: the budget is
-        // what the declaration bought, and a take that overran it must
-        // leave the collection alone.
-        for order in &taken {
-            self.charge_write(rep, *order, interval.cap)?;
+            self.charge_write(rep, order, interval.cap)?;
+            taken.insert(order);
         }
         for order in &taken {
             self.store
@@ -1885,12 +1886,12 @@ mod tests {
 
     use hyperscale_vm_effects::{
         AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32,
-        Mode, RoleId, SubstateKey, TestHasher, child_key,
+        Mode, RoleId, SubstateKey, TestHasher, child_key, ids_cell,
     };
 
     use super::{
-        Capability, EnvInputs, Event, KernelSession, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
-        MAX_EVENTS_PER_TX, MaterializeError, Outcome, SessionTrap,
+        Capability, EnvInputs, Event, Held, KernelSession, MAX_EVENT_PAYLOAD_BYTES,
+        MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, Outcome, SessionTrap,
     };
     use crate::modes::{TxHash, decode_amount, encode_amount};
     use crate::overlay::OverlayStore;
@@ -2248,6 +2249,48 @@ mod tests {
         }
         // And removing what it just rewrote reaches no new entry.
         assert_eq!(session.range_remove(0, 0), Ok(()));
+    }
+
+    #[test]
+    fn a_take_reaches_every_instance_the_interval_declares() {
+        // A holder past the cap keeps its later ids: the cap bounds the
+        // entries a take may touch, never which of them it can name.
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let mut store = MemoryStore::new();
+        for order in 0..100u128 {
+            store
+                .entry_write(owner, collection, order, vec![1])
+                .unwrap();
+        }
+        store.clear_log();
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 4,
+            },
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(store, &set);
+
+        // An id well past the first page of four.
+        assert_eq!(session.range_take(0, &ids_cell(&[90])), Ok(0));
+        assert_eq!(session.bucket(0), Ok(Held::Instances([90].into())));
+        // And one the collection does not hold still refuses.
+        assert_eq!(
+            session.range_take(0, &ids_cell(&[500])),
+            Err(SessionTrap::InstanceNotHeld(500))
+        );
+        // The cap is the budget it always was: three more distinct
+        // entries fit, a fourth does not.
+        assert!(session.range_take(0, &ids_cell(&[91, 92, 93])).is_ok());
+        assert_eq!(
+            session.range_take(0, &ids_cell(&[94])),
+            Err(SessionTrap::WriteCapExceeded { cap: 4, order: 94 })
+        );
     }
 
     #[test]
