@@ -116,12 +116,6 @@ interface state {
     /// receipt — and reading it is the one thing that cannot create any.
     bucket-amount: func(b: borrow<bucket>) -> amount;
 
-    /// Credit the amount cell.
-    delta-cell-add: func(c: borrow<delta-cell>, value: amount);
-
-    /// Debit the amount cell unconditionally.
-    delta-cell-sub: func(c: borrow<delta-cell>, value: amount);
-
     /// Credit the amount cell with what the bucket carries.
     ///
     /// The bucket is consumed, so the credit and the value that crossed
@@ -135,9 +129,6 @@ interface state {
     /// rather than here. What the pairing fixes is that the amount
     /// debited and the amount now in flight are one number.
     delta-cell-take: func(c: borrow<delta-cell>, amount: amount) -> own<bucket>;
-
-    /// The reserved amount this transaction holds.
-    reserve-cell-amount: func(c: borrow<reserve-cell>) -> amount;
 
     /// Create `amount` of the resource this invocation issues.
     ///

@@ -17,17 +17,12 @@ use crate::manifest::{AuthorityGate, Bounds};
 use crate::metadata::PackageHash;
 use crate::types::{Address, EdgeContent, MAX_IDS_PER_EDGE};
 
-/// The width of a fungible edge's cell: an amount is a little-endian
-/// `u128`, and a fungible bucket crossing the guest boundary is exactly
-/// that.
-pub const EDGE_CELL_BYTES: usize = 16;
-
-/// The shape of one value edge's boundary cell.
+/// What kind of value an edge carries.
 ///
-/// The kind is declared — evaluated from the producing method's output
-/// projection — and the cell is framed by it, never sniffed from the
-/// bytes: a fungible cell is exactly [`EDGE_CELL_BYTES`], a non-fungible
-/// cell is [`ids_cell`]'s count-prefixed id list.
+/// Declared — evaluated from the producing method's output projection —
+/// and never sniffed from what crosses: the kind is what admission binds
+/// a consumer's parameter against, and what a signed bound is judged in
+/// the terms of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EdgeKind {
     /// The edge carries a dynamic amount.
@@ -69,15 +64,9 @@ pub fn ids_cell(ids: &[u64]) -> Vec<u8> {
     cell
 }
 
-/// The frame width of the non-fungible cell at the head of `bytes`, or
-/// `None` for a missing or over-cap count byte.
-///
-/// The width covers the count byte and the ids it announces; the caller
-/// owns checking that many bytes exist. This is how a stream of
-/// concatenated cells is split without decoding: the count byte alone
-/// fixes where the next cell begins.
-#[must_use]
-pub fn nf_cell_len(bytes: &[u8]) -> Option<usize> {
+/// The frame width of the id cell at the head of `bytes`, or `None` for
+/// a missing or over-cap count byte.
+fn nf_cell_len(bytes: &[u8]) -> Option<usize> {
     let count = usize::from(*bytes.first()?);
     (count <= MAX_IDS_PER_EDGE).then_some(1 + count * 8)
 }

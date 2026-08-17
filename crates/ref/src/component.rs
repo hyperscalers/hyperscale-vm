@@ -46,8 +46,6 @@ pub trait RefKernelHost {
     fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
     fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
-    fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
-    fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
     fn issuer_mint(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
     fn issuer_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
     fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
@@ -60,7 +58,6 @@ pub trait RefKernelHost {
     fn issuer_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
-    fn reserve_amount(&mut self, rep: u32) -> Result<u128, AbortReason>;
     fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason>;
     fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason>;
     fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, AbortReason>;
@@ -166,11 +163,8 @@ enum HostFn {
     BucketPut,
     BucketAmount,
     IssuerTake,
-    DeltaAdd,
-    DeltaSub,
     DeltaTake,
     DeltaPut,
-    ReserveAmount,
     ReserveTake,
     RangeReadCount,
     RangeReadOrder,
@@ -597,11 +591,8 @@ impl RefComponent {
             ("state", "bucket-put") => Ok(HostFn::BucketPut),
             ("state", "bucket-amount") => Ok(HostFn::BucketAmount),
             ("state", "issuer-take") => Ok(HostFn::IssuerTake),
-            ("state", "delta-cell-add") => Ok(HostFn::DeltaAdd),
-            ("state", "delta-cell-sub") => Ok(HostFn::DeltaSub),
             ("state", "delta-cell-take") => Ok(HostFn::DeltaTake),
             ("state", "delta-cell-put") => Ok(HostFn::DeltaPut),
-            ("state", "reserve-cell-amount") => Ok(HostFn::ReserveAmount),
             ("state", "reserve-cell-take") => Ok(HostFn::ReserveTake),
             ("state", "range-read-count") => Ok(HostFn::RangeReadCount),
             ("state", "range-read-order") => Ok(HostFn::RangeReadOrder),
@@ -1523,7 +1514,6 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::ReadCellGet
                     | HostFn::LockedCellGet
                     | HostFn::WriteCellGet
-                    | HostFn::ReserveAmount
                     | HostFn::RangeWriteRemove
                     | HostFn::WritePut
                     | HostFn::DeltaPut
@@ -1536,8 +1526,6 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::WriteTake
                     | HostFn::IssuerTake
                     | HostFn::BucketTake
-                    | HostFn::DeltaAdd
-                    | HostFn::DeltaSub
                     | HostFn::DeltaTake
                     | HostFn::RangeReadOrder
                     | HostFn::RangeReadEntry
@@ -1620,17 +1608,6 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         self.charge_boundary(store, bytes.len())?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[1])?;
-                        Ok(Vec::new())
-                    }
-                    HostFn::ReserveAmount => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::ReserveCell)?;
-                        let amount = self
-                            .host
-                            .reserve_amount(rep)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
-                        let mem = self.mem_opt(id)?;
-                        Self::write_amount(store, mem, args[1], amount)?;
                         Ok(Vec::new())
                     }
                     HostFn::WriteCellSet => {
@@ -1768,18 +1745,6 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                             .reserve_take(rep)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
-                    }
-                    HostFn::DeltaAdd | HostFn::DeltaSub => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::DeltaCell)?;
-                        let amount = flat_amount(args[1], args[2]);
-                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
-                        let result = if host_fn == HostFn::DeltaAdd {
-                            self.host.delta_add(rep, amount)
-                        } else {
-                            self.host.delta_sub(rep, amount)
-                        };
-                        result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        Ok(Vec::new())
                     }
                     HostFn::RangeReadCount | HostFn::RangeWriteCount => {
                         let expected = if host_fn == HostFn::RangeReadCount {

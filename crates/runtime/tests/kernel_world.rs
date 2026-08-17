@@ -166,14 +166,6 @@ impl KernelHost for TestHost {
         Ok(())
     }
 
-    fn delta_add(&mut self, _rep: u32, _amount: u128) -> std::result::Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-
-    fn delta_sub(&mut self, _rep: u32, _amount: u128) -> std::result::Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-
     fn issuer_put(&mut self, _r: u32, _funds: u32) -> std::result::Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
@@ -225,10 +217,6 @@ impl KernelHost for TestHost {
 
     fn write_take(&mut self, _rep: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
-    }
-
-    fn reserve_amount(&mut self, _rep: u32) -> std::result::Result<u128, AbortReason> {
-        Ok(0)
     }
 
     fn reserve_take(&mut self, _rep: u32) -> std::result::Result<u32, AbortReason> {

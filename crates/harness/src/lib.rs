@@ -79,7 +79,8 @@ pub mod fixtures {
     }
     /// The kernel-world component guest, exercising the per-mode surface.
     ///
-    /// `transfer` moves a reserved amount into a delta cell; `peek` reads a
+    /// `transfer` takes a reservation and moves the value it grants into
+    /// a delta cell; `peek` reads a
     /// locked cell; `rmw` bumps a write cell's first byte; `scan-sum`
     /// folds a read interval's entry and order bytes; `fill` rewrites entry
     /// zero and removes the last entry of a write interval; `place` inserts
@@ -103,8 +104,10 @@ pub mod fixtures {
     (export "locked-cell-get" (func (param "c" (borrow $sc)) (result (list u8))))
     (export "write-cell-get" (func (param "c" (borrow $wc)) (result (list u8))))
     (export "write-cell-set" (func (param "c" (borrow $wc)) (param "value" (list u8))))
-    (export "delta-cell-add" (func (param "c" (borrow $dc)) (param "value" $amt)))
-    (export "reserve-cell-amount" (func (param "c" (borrow $vc)) (result $amt)))
+    (export "bucket" (type $bk (sub resource)))
+    (export "delta-cell-put" (func (param "c" (borrow $dc)) (param "funds" (own $bk))))
+    (export "reserve-cell-take" (func (param "c" (borrow $vc)) (result (own $bk))))
+    (export "bucket-amount" (func (param "b" (borrow $bk)) (result $amt)))
     (export "range-read-count" (func (param "r" (borrow $rr)) (result u32)))
     (export "range-read-order" (func (param "r" (borrow $rr)) (param "index" u32) (result $amt)))
     (export "range-read-entry" (func (param "r" (borrow $rr)) (param "index" u32) (result (list u8))))
@@ -126,8 +129,9 @@ pub mod fixtures {
   (alias export $state "locked-cell-get" (func $locked_get))
   (alias export $state "write-cell-get" (func $write_get))
   (alias export $state "write-cell-set" (func $write_set))
-  (alias export $state "delta-cell-add" (func $delta_add))
-  (alias export $state "reserve-cell-amount" (func $reserve_amount))
+  (alias export $state "delta-cell-put" (func $delta_put))
+  (alias export $state "reserve-cell-take" (func $reserve_take))
+  (alias export $state "bucket-amount" (func $bucket_amount))
   (alias export $state "range-read-count" (func $rr_count))
   (alias export $state "range-read-order" (func $rr_order))
   (alias export $state "range-read-entry" (func $rr_entry))
@@ -159,10 +163,10 @@ pub mod fixtures {
     (memory $a "mem") (realloc (func $a "realloc"))))
   (core func $write_set_l (canon lower (func $write_set)
     (memory $a "mem")))
-  (core func $delta_add_l (canon lower (func $delta_add)
+  (core func $delta_put_l (canon lower (func $delta_put)))
+  (core func $reserve_take_l (canon lower (func $reserve_take)))
+  (core func $bucket_amount_l (canon lower (func $bucket_amount)
     (memory $a "mem")))
-  (core func $reserve_amount_l (canon lower (func $reserve_amount)
-    (memory $a "mem") (realloc (func $a "realloc"))))
   (core func $rr_count_l (canon lower (func $rr_count)))
   (core func $rr_order_l (canon lower (func $rr_order)
     (memory $a "mem") (realloc (func $a "realloc"))))
@@ -189,8 +193,9 @@ pub mod fixtures {
     (import "k" "locked-get" (func $locked_get (param i32 i32)))
     (import "k" "write-get" (func $write_get (param i32 i32)))
     (import "k" "write-set" (func $write_set (param i32 i32 i32)))
-    (import "k" "delta-add" (func $delta_add (param i32 i64 i64)))
-    (import "k" "reserve-amount" (func $reserve_amount (param i32 i32)))
+    (import "k" "delta-put" (func $delta_put (param i32 i32)))
+    (import "k" "reserve-take" (func $reserve_take (param i32) (result i32)))
+    (import "k" "bucket-amount" (func $bucket_amount (param i32 i32)))
     (import "k" "rr-count" (func $rr_count (param i32) (result i32)))
     (import "k" "rr-order" (func $rr_order (param i32 i32 i32)))
     (import "k" "rr-entry" (func $rr_entry (param i32 i32 i32)))
@@ -208,17 +213,18 @@ pub mod fixtures {
     (import "k" "drop-rw" (func $drop_rw (param i32)))
 
     (func (export "transfer") (param i32 i32) (result i64)
+      (local $funds i32)
       local.get 0
+      call $reserve_take
+      local.set $funds
+      local.get $funds
       i32.const 8
-      call $reserve_amount
+      call $bucket_amount
+      i32.const 8
+      i64.load
       local.get 1
-      i32.const 8
-      i64.load
-      i32.const 16
-      i64.load
-      call $delta_add
-      i32.const 8
-      i64.load
+      local.get $funds
+      call $delta_put
       local.get 0
       call $drop_v
       local.get 1
@@ -404,8 +410,9 @@ pub mod fixtures {
       (export "locked-get" (func $locked_get_l))
       (export "write-get" (func $write_get_l))
       (export "write-set" (func $write_set_l))
-      (export "delta-add" (func $delta_add_l))
-      (export "reserve-amount" (func $reserve_amount_l))
+      (export "delta-put" (func $delta_put_l))
+      (export "reserve-take" (func $reserve_take_l))
+      (export "bucket-amount" (func $bucket_amount_l))
       (export "rr-count" (func $rr_count_l))
       (export "rr-order" (func $rr_order_l))
       (export "rr-entry" (func $rr_entry_l))
@@ -1045,12 +1052,6 @@ pub mod session_host {
                 fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason> {
                     self.0.write_cell_set(rep, value).map_err(AbortReason::from)
                 }
-                fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason> {
-                    self.0.delta_add(rep, amount).map_err(AbortReason::from)
-                }
-                fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason> {
-                    self.0.delta_sub(rep, amount).map_err(AbortReason::from)
-                }
                 fn issuer_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
                     self.0.issuer_put(rep, funds).map_err(AbortReason::from)
                 }
@@ -1093,9 +1094,6 @@ pub mod session_host {
                 }
                 fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
                     self.0.write_take(rep, amount).map_err(AbortReason::from)
-                }
-                fn reserve_amount(&mut self, rep: u32) -> Result<u128, AbortReason> {
-                    self.0.reserve_amount(rep).map_err(AbortReason::from)
                 }
                 fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason> {
                     self.0.reserve_take(rep).map_err(AbortReason::from)

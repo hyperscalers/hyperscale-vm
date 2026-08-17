@@ -68,9 +68,7 @@ pub use hyperscale_vm_types::{
     MAX_EVENTS_PER_TX, Outcome, SettledWrites, StateWrites, TX_UNITS, TxHash, VERIFY_WEIGHT,
     declared_work, entry_leaf_key, signature_work, work_units,
 };
-pub use invoke::{
-    CallArg, EDGE_CELL_BYTES, EdgeBound, EdgeKind, NodeCall, cell_ids, ids_cell, nf_cell_len,
-};
+pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, cell_ids, ids_cell};
 pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     AbiError, AbiParam, Accessibility, CallSite, DeclarationError, InstanceMeta, InstanceRegistry,

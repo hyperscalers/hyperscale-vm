@@ -123,20 +123,6 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
 
-    /// Credit the amount cell.
-    ///
-    /// # Errors
-    ///
-    /// A deterministic refusal.
-    fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
-
-    /// Debit the amount cell unconditionally.
-    ///
-    /// # Errors
-    ///
-    /// A deterministic refusal.
-    fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
-
     /// Create value under this invocation's issuance grant, returning
     /// the bucket's rep.
     ///
@@ -228,13 +214,6 @@ pub trait KernelHost: Send {
     ///
     /// A deterministic refusal.
     fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
-
-    /// The reserved amount this transaction holds.
-    ///
-    /// # Errors
-    ///
-    /// A deterministic refusal.
-    fn reserve_amount(&mut self, rep: u32) -> Result<u128, AbortReason>;
 
     /// Take the reservation as a bucket, whose rep this returns.
     ///
@@ -409,26 +388,6 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
                 .map_err(host_trap)
         },
     )?;
-    state.func_wrap(
-        "delta-cell-add",
-        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<DeltaCell>, Amount)| {
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
-            store
-                .data_mut()
-                .delta_add(r.rep(), amount.into())
-                .map_err(host_trap)
-        },
-    )?;
-    state.func_wrap(
-        "delta-cell-sub",
-        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<DeltaCell>, Amount)| {
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
-            store
-                .data_mut()
-                .delta_sub(r.rep(), amount.into())
-                .map_err(host_trap)
-        },
-    )?;
     // A take charges its amount argument and nothing for the handle it
     // yields: a bucket crosses as a table index, where the amount it
     // carries never crosses at all.
@@ -561,17 +520,6 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<ReserveCell>,)| {
             let rep = store.data_mut().reserve_take(r.rep()).map_err(host_trap)?;
             Ok((Resource::<Bucket>::new_own(rep),))
-        },
-    )?;
-    state.func_wrap(
-        "reserve-cell-amount",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<ReserveCell>,)| {
-            let amount = store
-                .data_mut()
-                .reserve_amount(r.rep())
-                .map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
-            Ok((Amount::from(amount),))
         },
     )?;
 

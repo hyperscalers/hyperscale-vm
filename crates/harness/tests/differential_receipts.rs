@@ -75,12 +75,6 @@ impl RefKernelHost for NoHost {
     fn write_cell_set(&mut self, _rep: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
-    fn delta_add(&mut self, _rep: u32, _amount: u128) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn delta_sub(&mut self, _rep: u32, _amount: u128) -> Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
     fn issuer_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
@@ -115,9 +109,6 @@ impl RefKernelHost for NoHost {
         Err(AbortReason::HandleUnknown)
     }
     fn write_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-    fn reserve_amount(&mut self, _rep: u32) -> Result<u128, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
     fn reserve_take(&mut self, _rep: u32) -> Result<u32, AbortReason> {

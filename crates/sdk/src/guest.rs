@@ -250,20 +250,6 @@ pub fn cell_take(handle: Handle, value: u128) -> kernel::state::Bucket {
     }
 }
 
-/// The amount this reservation holds.
-///
-/// # Panics
-///
-/// On any mode but [`Handle::Reserve`].
-#[must_use]
-#[inline(always)]
-pub fn reserved(handle: Handle) -> u128 {
-    match handle {
-        Handle::Reserve(rep) => whole(kernel::state::reserve_cell_amount(&reserve_cell(rep))),
-        other => unreachable!("{other:?} holds no reservation"),
-    }
-}
-
 /// The amount a declared reservation moved, checked against the amount
 /// the declaration named.
 ///
