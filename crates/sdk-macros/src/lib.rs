@@ -103,6 +103,10 @@ mod wit;
 
 use std::collections::BTreeMap;
 
+use hyperscale_vm_effects::vocabulary::{
+    AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT,
+};
+use hyperscale_vm_effects::{PACKAGE_ROLE_BASE, RoleId};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -180,14 +184,16 @@ fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
             denomination = Some(attr.parse_args::<syn::Expr>()?);
         }
     }
-    // Roles are explicit rather than positional: they are part of every key
-    // the field ever names, so a field reorder must not silently move an
-    // instance's whole state.
+    // Roles are explicit rather than positional. A package's own leaves sit
+    // under the same owner as the protocol's, so a number carries which of
+    // the two a field means — and a system package, whose objects outlive
+    // the version that wrote them, needs the number to hold across one.
     let role = role.ok_or_else(|| {
         syn::Error::new(
             field.span(),
             "a state field needs an explicit `#[role(n)]` — the role is hashed into every \
-             key under this field, so it cannot be positional",
+             key under this field, and it says whether the field is the package's own or \
+             one of the protocol's cells under the same owner",
         )
     })?;
 
@@ -245,6 +251,9 @@ fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
         }
         _ => {}
     }
+    if let Err(refusal) = protocol_band(role, kind, vault) {
+        return Err(syn::Error::new(field.span(), refusal));
+    }
     Ok((
         name,
         Field {
@@ -254,6 +263,52 @@ fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
             denomination,
         },
     ))
+}
+
+/// Whether a role below [`PACKAGE_ROLE_BASE`] admits this field.
+///
+/// The protocol's cells are shaped as well as numbered: an engine derives
+/// keys for them without consulting any metadata, so a field that lands on
+/// one and is not it puts a package's private value where a protocol read
+/// will look for something else. Above the band nothing is claimed and
+/// nothing is checked — a package's roles are scoped by the owner they
+/// hash with.
+fn protocol_band(role: u16, kind: FieldKind, vault: bool) -> Result<(), String> {
+    if role >= PACKAGE_ROLE_BASE {
+        return Ok(());
+    }
+    let (cell, admits) = match RoleId(role) {
+        VAULT => ("a fungible balance cell", vault),
+        CLAIMS => ("the delivery fallback beside a vault", vault),
+        CONFIG => (
+            "the creation-fixed configuration leaf",
+            kind == FieldKind::Locked,
+        ),
+        AUTH => ("the stored authority cell", kind == FieldKind::Cell),
+        RESOURCE => (
+            "a resource's record under its issuer",
+            kind == FieldKind::Keyed,
+        ),
+        NF_VAULT => (
+            "a holder's non-fungible instances",
+            kind == FieldKind::Ordered,
+        ),
+        INSTANCE => ("a non-fungible instance's data", kind == FieldKind::Keyed),
+        _ => {
+            return Err(format!(
+                "role {role} is inside the protocol's own band and names nothing in it — a \
+                 package's own roles start at {PACKAGE_ROLE_BASE}"
+            ));
+        }
+    };
+    if admits {
+        Ok(())
+    } else {
+        Err(format!(
+            "role {role} is {cell}, which this field is not — a package's own roles start at \
+             {PACKAGE_ROLE_BASE}"
+        ))
+    }
 }
 
 /// Whether a type's last path segment is `name`.
@@ -502,6 +557,10 @@ fn parse_state(
     let mut fields = BTreeMap::new();
     let mut state_name = None;
     let mut config_name = None;
+    // What a field would name a leaf by: its role, and the material the
+    // field itself fixes. Two fields agreeing on both are one leaf under
+    // two names, which no accessor can tell apart afterwards.
+    let mut named: BTreeMap<(u16, String), String> = BTreeMap::new();
     for item in items {
         let syn::Item::Struct(item) = item else {
             continue;
@@ -512,6 +571,20 @@ fn parse_state(
         state_name = Some(item.ident.clone());
         for field in &item.fields {
             let (name, parsed) = parse_field(field)?;
+            let material = parsed
+                .denomination
+                .as_ref()
+                .map_or_else(String::new, |expr| quote!(#expr).to_string());
+            if let Some(held) = named.insert((parsed.role, material), name.clone()) {
+                return Err(syn::Error::new(
+                    field.span(),
+                    format!(
+                        "`{held}` already holds role {} under the same material, so both fields \
+                         name one leaf",
+                        parsed.role
+                    ),
+                ));
+            }
             if parsed.kind == FieldKind::Locked
                 && let syn::Type::Path(path) = &field.ty
                 && let Some(syn::PathArguments::AngleBracketed(args)) =

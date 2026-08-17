@@ -782,6 +782,7 @@ dependencies = [
 name = "hyperscale-vm-sdk-macros"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-vm-effects",
  "proc-macro2",
  "quote",
  "syn 3.0.3",

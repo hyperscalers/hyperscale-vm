@@ -1,0 +1,5 @@
+error: role 2 is the delivery fallback beside a vault, which this field is not — a package's own roles start at 16
+ --> tests/refusals/squatted_role.rs:9:9
+  |
+9 |         #[role(2)]
+  |         ^

@@ -77,7 +77,7 @@
 //!     #[state]
 //!     struct Bad {
 //!         #[role(1)] vaults: Keyed<Vault>,
-//!         #[role(2)] pointer: Cell<Address>,
+//!         #[role(16)] pointer: Cell<Address>,
 //!     }
 //!
 //!     impl Bad {
@@ -102,7 +102,7 @@
 //!
 //!     #[state]
 //!     struct Bad {
-//!         #[role(4)] asks: Ordered<u128>,
+//!         #[role(16)] asks: Ordered<u128>,
 //!     }
 //!
 //!     impl Bad {

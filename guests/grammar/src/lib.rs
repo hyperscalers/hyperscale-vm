@@ -31,7 +31,7 @@ pub mod grammar {
     struct Grammar {
         #[role(1)]
         vaults: Keyed<Vault>,
-        #[role(5)]
+        #[role(16)]
         holdings: Ordered<Quantity>,
     }
 

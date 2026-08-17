@@ -9,6 +9,10 @@ description = "The `#[blueprint]` macro: contract bodies lowered to effect decla
 proc-macro = true
 
 [dependencies]
+# The role vocabulary and the band a package's own roles clear, read
+# rather than restated: the macro validates against the same constants an
+# engine derives keys from.
+hyperscale-vm-effects.workspace = true
 proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true

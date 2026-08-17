@@ -66,10 +66,10 @@ pub const PACKAGE_ROLE_BASE: u16 = 16;
 
 /// A package's `n`th own role.
 ///
-/// Packages number from zero independently — a value is scoped by the
-/// owner it is hashed with — and this is what keeps that numbering off
-/// the protocol's own band without each package restating where the band
-/// ends.
+/// Packages number from zero independently, a value being scoped by the
+/// owner it is hashed with. A package authored through `#[blueprint]`
+/// writes the absolute role and the macro holds it to the band; this is
+/// the same arithmetic for a declaration written by hand.
 #[must_use]
 pub const fn package_role(n: u16) -> RoleId {
     RoleId(PACKAGE_ROLE_BASE + n)

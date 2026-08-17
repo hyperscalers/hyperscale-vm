@@ -118,7 +118,7 @@ mod registry {
 
     #[state]
     struct Registry {
-        #[role(2)]
+        #[role(16)]
         names: Unordered<u128>,
     }
 
@@ -149,11 +149,11 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
     let metadata = registry::blueprint().metadata();
     let hashed_entry = || TargetExpr::Entry {
         owner: Expr::SelfAddr,
-        collection: RoleId(2),
+        collection: RoleId(16),
         material: vec![],
         order: Expr::OrderKey {
             owner: Box::new(Expr::SelfAddr),
-            role: RoleId(2),
+            role: RoleId(16),
             material: vec![Expr::Arg(0)],
         },
     };
@@ -178,7 +178,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
         vec![Clause::Effect {
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
-                collection: RoleId(2),
+                collection: RoleId(16),
                 material: vec![],
                 lo: Expr::Arg(0),
                 hi: Expr::Literal(Value::U128(u128::MAX)),
@@ -207,7 +207,7 @@ mod environment {
     struct Environment {
         #[role(1)]
         vaults: Keyed<Vault>,
-        #[role(2)]
+        #[role(16)]
         seen: Cell<u64>,
     }
 
@@ -254,13 +254,13 @@ mod issuer {
 
     #[state]
     struct Issuer {
-        #[role(1)]
+        #[role(16)]
         staked: Cell<Quantity>,
         /// A stored rate, to pin the mode a value-shaped cell that is not
         /// value folds to.
-        #[role(3)]
+        #[role(17)]
         index: Cell<Fixed<(), ()>>,
-        #[role(2)]
+        #[role(1)]
         vaults: Keyed<Vault>,
     }
 

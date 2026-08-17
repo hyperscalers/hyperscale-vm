@@ -6,10 +6,11 @@
 //! Those are exactly the parts of the design carrying risk, so they are
 //! checked here against the real evaluator rather than against a fixture.
 
+use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, EvalInputs, Hash32,
-    MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature, Mode, ModeKind, ParamType, RoleId,
-    SubstateKey, TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
+    MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature, Mode, ModeKind, ParamType, SubstateKey,
+    TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
 };
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym};
 use hyperscale_vm_sdk::{Blueprint, TargetShape, Trace};
@@ -18,8 +19,6 @@ const BASKET: Address = Address::new([0x50; 31], AddressClass::Component);
 const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);
 const RES_Y: Address = Address::new([0xE2; 31], AddressClass::Component);
 const RES_Z: Address = Address::new([0xE3; 31], AddressClass::Component);
-const VAULT: RoleId = RoleId(1);
-const CONFIG: RoleId = RoleId(3);
 
 const fn identity() -> ManifestHash {
     ManifestHash(Hash32([0x1D; 32]))
