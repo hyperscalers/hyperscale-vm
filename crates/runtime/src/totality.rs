@@ -92,8 +92,25 @@ use std::ops::Range;
 
 use wasmparser::{
     BinaryReaderError, CanonicalFunction, CanonicalOption, ComponentAlias, ComponentExternalKind,
-    ComponentTypeRef, ExternalKind, FunctionBody, Instance, Operator, Parser, Payload, TypeRef,
+    ComponentTypeRef, ExternalKind, FunctionBody, Instance, InstantiationArgKind, Operator, Parser,
+    Payload, TypeRef,
 };
+
+/// The `math` functions whose only failure is a deterministic abort.
+///
+/// A total method may not call one. The blanket admission of host calls
+/// below rests on a total leg running with every handle already
+/// materialized from its declared effect set, so the gate that would
+/// refuse has been discharged before the body starts — and nothing
+/// discharges these, because what they refuse is a divisor or a width,
+/// both of them runtime values no declaration speaks about.
+///
+/// `geometric-mean` is deliberately absent: it is total on every input,
+/// so a body that calls it is no less total for having done so.
+const FAULTING_MATH: &[&str] = &["mul-div", "fraction-compose", "fraction-cmp", "fixed-pow"];
+
+/// The interface those functions belong to, as an import name's suffix.
+const MATH_INTERFACE: &str = "math";
 
 /// Why a body cannot carry the total mark.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -125,6 +142,10 @@ pub enum TotalityError {
     /// core body.
     #[error("no exported method {0:?} the wiring resolves to a body")]
     NoSuchExport(String),
+    /// A call to a host function that can fault for a reason no
+    /// declaration discharges.
+    #[error("a call to `{0}`, whose refusal no declared effect set discharges")]
+    FaultingHostCall(String),
     /// The body could not be decoded.
     #[error("undecodable body: {0}")]
     Undecodable(String),
@@ -182,14 +203,24 @@ pub fn check_body(body: &FunctionBody<'_>) -> Result<(), TotalityError> {
 /// can still panic. So the check follows every direct call from the entry
 /// and refuses if any body it reaches does.
 ///
-/// **A call to an import is admitted, and that is the kernel's promise
-/// rather than the scan's finding.** Host calls are how a body reaches
-/// the kernel at all, and they can refuse — but a total leg runs with
-/// every handle already materialized from its declared effect set, so the
-/// gate that would refuse has been discharged before the body starts.
-/// The scan cannot see that and does not try to; it records here that the
-/// guarantee comes from the boundary, so a change to how handles are
-/// materialized is a change to what this check means.
+/// **A call to a state import is admitted, and that is the kernel's
+/// promise rather than the scan's finding.** Host calls are how a body
+/// reaches the kernel at all, and they can refuse — but a total leg runs
+/// with every handle already materialized from its declared effect set,
+/// so the gate that would refuse has been discharged before the body
+/// starts. The scan cannot see that and does not try to; it records here
+/// that the guarantee comes from the boundary, so a change to how handles
+/// are materialized is a change to what this check means.
+///
+/// That promise reaches exactly as far as the declaration does, which is
+/// why it does not cover all of `math`. What `mul-div` refuses is a zero
+/// divisor or a width, both runtime values no effect set speaks about, so
+/// no gate discharges them and the call can fault inside a body that is
+/// otherwise total. Those functions are named in [`FAULTING_MATH`] and
+/// refused here; `geometric-mean` is total on every input and stays
+/// admitted. Resolving which import a call reaches is the component's
+/// wiring to answer, never a name the guest picked — see
+/// [`Wiring::faulting_imports`].
 ///
 /// `entry` indexes the module's whole function space — imports first,
 /// then defined functions — the same space [`Operator::Call`] uses.
@@ -205,7 +236,7 @@ pub fn check_body(body: &FunctionBody<'_>) -> Result<(), TotalityError> {
 /// [`TotalityError::Undecodable`] if the module does not parse.
 pub fn check_reachable(module: &[u8], entry: u32) -> Result<(), TotalityError> {
     let parsed = Module::parse(module)?;
-    parsed.walk(entry, &BTreeSet::new())
+    parsed.walk(entry, &BTreeSet::new(), &BTreeSet::new())
 }
 
 /// Whether the method a package exports as `method` can carry the mark.
@@ -229,14 +260,15 @@ pub fn check_reachable(module: &[u8], entry: u32) -> Result<(), TotalityError> {
 pub fn check_method(artifact: &[u8], method: &str) -> Result<(), TotalityError> {
     let wiring = Wiring::read(artifact)?;
     let missing = || TotalityError::NoSuchExport(method.to_string());
-    let (module, export) = wiring.entry(method).ok_or_else(missing)?;
+    let (instance, module, export) = wiring.entry(method).ok_or_else(missing)?;
     let bytes = artifact
         .get(wiring.modules.get(module).cloned().ok_or_else(missing)?)
         .ok_or_else(|| TotalityError::Undecodable("module range out of bounds".into()))?;
     let parsed = Module::parse(bytes)?;
     let entry = parsed.export_named(export).ok_or_else(missing)?;
     let shim = parsed.shim_closure(&wiring.abi_support(module))?;
-    parsed.walk(entry, &shim)
+    let faulting = wiring.faulting_imports(instance, &parsed.imports);
+    parsed.walk(entry, &shim, &faulting)
 }
 
 /// One core function, as the component's index space names it.
@@ -246,6 +278,50 @@ struct CoreFuncRef {
     instance: u32,
     /// The name that instance exports it under.
     name: String,
+}
+
+/// A core function, by what defines it.
+#[derive(Clone)]
+enum CoreFunc {
+    /// Aliased out of a core instance's export, so it has a body.
+    Alias(CoreFuncRef),
+    /// Defined by a `canon lower` over the component function at this
+    /// index, so calling it leaves the guest for the host.
+    Lowered(u32),
+    /// A canon builtin with neither a body nor a component function
+    /// behind it.
+    Opaque,
+}
+
+/// A component function, by what defines it.
+#[derive(Clone)]
+enum ComponentFunc {
+    /// Defined by a `canon lift` over the core function at this index.
+    Lifted(u32),
+    /// Aliased out of an imported instance's export: the host function
+    /// itself, under the interface that declares it.
+    Imported {
+        /// The component instance index the alias reads from.
+        instance: u32,
+        /// The name that instance exports it under.
+        name: String,
+    },
+    /// Anything else the index space counts.
+    Opaque,
+}
+
+/// A core instance, by what defines it.
+enum CoreInstance {
+    /// Instantiated from a module, with the arguments each of its import
+    /// groups was satisfied by.
+    Module {
+        /// The module index.
+        module: u32,
+        /// Import-group name to the core instance satisfying it.
+        args: Vec<(String, u32)>,
+    },
+    /// A synthetic bag of exports, naming core functions directly.
+    Exports(Vec<(String, u32)>),
 }
 
 /// A component's wiring, as one walk over its payloads.
@@ -258,14 +334,20 @@ struct CoreFuncRef {
 struct Wiring {
     /// Each core module's byte range, in definition order.
     modules: Vec<Range<usize>>,
-    /// Each core instance's module, `None` for a synthetic export bag.
-    instances: Vec<Option<u32>>,
-    /// The core function index space: an alias resolves, every other
-    /// producer is a canon builtin with no body of its own.
-    core_funcs: Vec<Option<CoreFuncRef>>,
-    /// The component function index space, by the core function each
-    /// entry lifts; `None` for anything that lifts nothing.
-    component_funcs: Vec<Option<u32>>,
+    /// Each core instance, by what defines it.
+    instances: Vec<CoreInstance>,
+    /// The core function index space.
+    core_funcs: Vec<CoreFunc>,
+    /// The component function index space.
+    component_funcs: Vec<ComponentFunc>,
+    /// Imported instances' names, in the component instance index space.
+    ///
+    /// Which interface a host function belongs to is read from here
+    /// rather than from any name the guest chose: a core module names
+    /// its import groups whatever it likes, and a scan that trusted
+    /// those names would let a package call the arithmetic under the
+    /// spelling of a state accessor.
+    import_instances: Vec<String>,
     /// Exported function names, by component function index.
     exports: Vec<(String, u32)>,
     /// Core function indices a lift designates as realloc or post-return.
@@ -280,6 +362,7 @@ impl Wiring {
             instances: Vec::new(),
             core_funcs: Vec::new(),
             component_funcs: Vec::new(),
+            import_instances: Vec::new(),
             exports: Vec::new(),
             designated: BTreeSet::new(),
         };
@@ -293,15 +376,40 @@ impl Wiring {
                 Payload::InstanceSection(reader) => {
                     for instance in reader {
                         wiring.instances.push(match instance.map_err(fail)? {
-                            Instance::Instantiate { module_index, .. } => Some(module_index),
-                            Instance::FromExports(_) => None,
+                            Instance::Instantiate { module_index, args } => CoreInstance::Module {
+                                module: module_index,
+                                args: args
+                                    .iter()
+                                    .filter(|arg| arg.kind == InstantiationArgKind::Instance)
+                                    .map(|arg| (arg.name.to_owned(), arg.index))
+                                    .collect(),
+                            },
+                            Instance::FromExports(exports) => CoreInstance::Exports(
+                                exports
+                                    .iter()
+                                    .filter(|export| export.kind == ExternalKind::Func)
+                                    .map(|export| (export.name.to_owned(), export.index))
+                                    .collect(),
+                            ),
                         });
                     }
                 }
                 Payload::ComponentImportSection(reader) => {
                     for import in reader {
-                        if matches!(import.map_err(fail)?.ty, ComponentTypeRef::Func(_)) {
-                            wiring.component_funcs.push(None);
+                        // Each kind appends to its own index space, so
+                        // both are tracked: a function import counts
+                        // against the component function space, and an
+                        // instance import is what an alias later names
+                        // its interface through.
+                        let import = import.map_err(fail)?;
+                        match import.ty {
+                            ComponentTypeRef::Func(_) => {
+                                wiring.component_funcs.push(ComponentFunc::Opaque);
+                            }
+                            ComponentTypeRef::Instance(_) => {
+                                wiring.import_instances.push(import.name.name.to_owned());
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -312,14 +420,18 @@ impl Wiring {
                                 kind: ExternalKind::Func,
                                 instance_index,
                                 name,
-                            } => wiring.core_funcs.push(Some(CoreFuncRef {
+                            } => wiring.core_funcs.push(CoreFunc::Alias(CoreFuncRef {
                                 instance: instance_index,
                                 name: name.to_owned(),
                             })),
                             ComponentAlias::InstanceExport {
                                 kind: ComponentExternalKind::Func,
-                                ..
-                            } => wiring.component_funcs.push(None),
+                                instance_index,
+                                name,
+                            } => wiring.component_funcs.push(ComponentFunc::Imported {
+                                instance: instance_index,
+                                name: name.to_owned(),
+                            }),
                             _ => {}
                         }
                     }
@@ -336,7 +448,9 @@ impl Wiring {
                                 options,
                                 ..
                             } => {
-                                wiring.component_funcs.push(Some(core_func_index));
+                                wiring
+                                    .component_funcs
+                                    .push(ComponentFunc::Lifted(core_func_index));
                                 for option in &options {
                                     if let CanonicalOption::Realloc(index)
                                     | CanonicalOption::PostReturn(index) = option
@@ -345,7 +459,10 @@ impl Wiring {
                                     }
                                 }
                             }
-                            _ => wiring.core_funcs.push(None),
+                            CanonicalFunction::Lower { func_index, .. } => {
+                                wiring.core_funcs.push(CoreFunc::Lowered(func_index));
+                            }
+                            _ => wiring.core_funcs.push(CoreFunc::Opaque),
                         }
                     }
                 }
@@ -361,11 +478,11 @@ impl Wiring {
                         // An export defines an index of its own, aliasing
                         // what it exports; carrying the lift through keeps
                         // a later reference to it resolvable.
-                        let lifted = usize::try_from(export.index)
+                        let aliased = usize::try_from(export.index)
                             .ok()
-                            .and_then(|index| wiring.component_funcs.get(index).copied())
-                            .flatten();
-                        wiring.component_funcs.push(lifted);
+                            .and_then(|index| wiring.component_funcs.get(index).cloned())
+                            .unwrap_or(ComponentFunc::Opaque);
+                        wiring.component_funcs.push(aliased);
                     }
                 }
                 _ => {}
@@ -374,22 +491,92 @@ impl Wiring {
         Ok(wiring)
     }
 
-    /// The core function `index` names, and the module it lives in.
-    fn core_func(&self, index: u32) -> Option<(usize, &str)> {
+    /// The core function `index` names: the instance it is aliased out
+    /// of, the module that instance runs, and the export name.
+    fn core_func(&self, index: u32) -> Option<(u32, usize, &str)> {
         let slot = usize::try_from(index).ok()?;
-        let reference = self.core_funcs.get(slot)?.as_ref()?;
+        let CoreFunc::Alias(reference) = self.core_funcs.get(slot)? else {
+            return None;
+        };
         let instance = usize::try_from(reference.instance).ok()?;
-        let module = (*self.instances.get(instance)?)?;
-        Some((usize::try_from(module).ok()?, &reference.name))
+        let CoreInstance::Module { module, .. } = self.instances.get(instance)? else {
+            return None;
+        };
+        Some((
+            reference.instance,
+            usize::try_from(*module).ok()?,
+            &reference.name,
+        ))
     }
 
-    /// The body an exported method runs: its module, and the name that
-    /// module exports it under.
-    fn entry(&self, method: &str) -> Option<(usize, &str)> {
+    /// The body an exported method runs: the instance it runs in, its
+    /// module, and the name that module exports it under.
+    fn entry(&self, method: &str) -> Option<(u32, usize, &str)> {
         let (_, index) = self.exports.iter().find(|(name, _)| name == method)?;
         let slot = usize::try_from(*index).ok()?;
-        let lifted = (*self.component_funcs.get(slot)?)?;
-        self.core_func(lifted)
+        let ComponentFunc::Lifted(lifted) = self.component_funcs.get(slot)? else {
+            return None;
+        };
+        self.core_func(*lifted)
+    }
+
+    /// The interface and function name a core function index reaches, for
+    /// a core function that lowers an imported host function.
+    fn host_function(&self, core: u32) -> Option<(&str, &str)> {
+        let slot = usize::try_from(core).ok()?;
+        let CoreFunc::Lowered(component) = self.core_funcs.get(slot)? else {
+            return None;
+        };
+        let slot = usize::try_from(*component).ok()?;
+        let ComponentFunc::Imported { instance, name } = self.component_funcs.get(slot)? else {
+            return None;
+        };
+        let interface = self
+            .import_instances
+            .get(usize::try_from(*instance).ok()?)?
+            .as_str();
+        Some((
+            interface
+                .rsplit_once('/')
+                .map_or(interface, |(_, tail)| tail),
+            name,
+        ))
+    }
+
+    /// The import indices of `imports` that reach a host function which
+    /// can fault, as the core module's own function space numbers them.
+    ///
+    /// The chain is the component's, not the guest's: a module's import
+    /// group name resolves through the instantiation argument to a core
+    /// instance, that instance's export to a lowered core function, and
+    /// the lowering to the imported interface function it stands for. A
+    /// package can name its import group anything at all and reach the
+    /// same verdict.
+    fn faulting_imports(&self, instance: u32, imports: &[(String, String)]) -> BTreeSet<u32> {
+        let Some(CoreInstance::Module { args, .. }) = usize::try_from(instance)
+            .ok()
+            .and_then(|i| self.instances.get(i))
+        else {
+            return BTreeSet::new();
+        };
+        imports
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (group, field))| {
+                let supplied = args.iter().find(|(name, _)| name == group)?.1;
+                let CoreInstance::Exports(exports) = usize::try_from(supplied)
+                    .ok()
+                    .and_then(|i| self.instances.get(i))?
+                else {
+                    return None;
+                };
+                let core = exports.iter().find(|(name, _)| name == field)?.1;
+                let (interface, function) = self.host_function(core)?;
+                (interface == MATH_INTERFACE && FAULTING_MATH.contains(&function))
+                    .then(|| u32::try_from(index).ok())
+                    .flatten()
+            })
+            .collect()
     }
 
     /// The names `module` exports that a lift designates as canonical-ABI
@@ -413,16 +600,18 @@ impl Wiring {
         self.designated
             .iter()
             .filter_map(|index| self.core_func(*index))
-            .filter(|(designated, _)| *designated == module)
-            .map(|(_, name)| name.to_owned())
+            .filter(|(_, designated, _)| *designated == module)
+            .map(|(_, _, name)| name.to_owned())
             .collect()
     }
 }
 
 /// A core module's function space, indexed the way calls index it.
 struct Module<'a> {
-    /// Imports occupy the low indices and have no body here.
-    imported_functions: u32,
+    /// Imported functions, as `(group, field)`, in index order: function
+    /// `i` of this list is core function index `i`, and imports occupy
+    /// the low indices with no body here.
+    imports: Vec<(String, String)>,
     bodies: Vec<FunctionBody<'a>>,
     /// Exported function indices by name, for finding the shim's roots.
     exports: Vec<(&'a str, u32)>,
@@ -431,7 +620,7 @@ struct Module<'a> {
 impl<'a> Module<'a> {
     fn parse(module: &'a [u8]) -> Result<Self, TotalityError> {
         let mut parsed = Self {
-            imported_functions: 0,
+            imports: Vec::new(),
             bodies: Vec::new(),
             exports: Vec::new(),
         };
@@ -445,7 +634,9 @@ impl<'a> Module<'a> {
                         let import =
                             import.map_err(|e| TotalityError::Undecodable(e.to_string()))?;
                         if matches!(import.ty, TypeRef::Func(_)) {
-                            parsed.imported_functions += 1;
+                            parsed
+                                .imports
+                                .push((import.module.to_owned(), import.name.to_owned()));
                         }
                     }
                 }
@@ -469,7 +660,7 @@ impl<'a> Module<'a> {
     /// an import, which has no body here to walk into.
     fn body_of(&self, index: u32) -> Option<&FunctionBody<'a>> {
         index
-            .checked_sub(self.imported_functions)
+            .checked_sub(u32::try_from(self.imports.len()).ok()?)
             .and_then(|defined| self.bodies.get(defined as usize))
     }
 
@@ -524,9 +715,26 @@ impl<'a> Module<'a> {
         Ok(seen)
     }
 
-    /// Check every body reachable from `entry` that is not shim.
-    fn walk(&self, entry: u32, shim: &BTreeSet<u32>) -> Result<(), TotalityError> {
-        for index in self.reachable(vec![entry], shim)? {
+    /// Check every body reachable from `entry` that is not shim, and
+    /// refuse where the reachable set calls a host function that faults.
+    fn walk(
+        &self,
+        entry: u32,
+        shim: &BTreeSet<u32>,
+        faulting: &BTreeSet<u32>,
+    ) -> Result<(), TotalityError> {
+        let reached = self.reachable(vec![entry], shim)?;
+        if let Some(called) = reached.iter().find(|index| faulting.contains(index)) {
+            let named = usize::try_from(*called)
+                .ok()
+                .and_then(|index| self.imports.get(index))
+                .map_or_else(
+                    || called.to_string(),
+                    |(group, field)| format!("{group}/{field}"),
+                );
+            return Err(TotalityError::FaultingHostCall(named));
+        }
+        for index in reached {
             if let Some(body) = self.body_of(index) {
                 check_body(body)?;
             }
@@ -771,5 +979,90 @@ mod tests {
         // The import occupies index 0, so the defined entry is index 1 —
         // the shift the walk has to get right to find any body at all.
         assert_eq!(check_reachable(&module, 1), Ok(()));
+    }
+
+    /// A component importing `math`, lowering `mul-div` and
+    /// `geometric-mean`, with one method per import and the group named
+    /// by the caller.
+    fn math_caller(group: &str, call: &str) -> Vec<u8> {
+        parse_str(format!(
+            r#"(component
+                 (import "hyperscale:kernel/math" (instance $math
+                   (type (record (field "limb0" u64) (field "limb1" u64)
+                                 (field "limb2" u64) (field "limb3" u64)))
+                   (export "wide" (type (eq 0)))
+                   (type (enum "down" "up"))
+                   (export "rounding" (type (eq 2)))
+                   (export "mul-div" (func (param "a" 1) (param "b" 1) (param "c" 1)
+                                           (param "r" 3) (result 1)))
+                   (export "geometric-mean" (func (param "a" 1) (param "b" 1) (result 1)))))
+                 (alias export $math "mul-div" (func $md))
+                 (alias export $math "geometric-mean" (func $gm))
+                 (core module $alloc (memory (export "mem") 1 1))
+                 (core instance $a (instantiate $alloc))
+                 (core func $md_l (canon lower (func $md) (memory $a "mem")))
+                 (core func $gm_l (canon lower (func $gm) (memory $a "mem")))
+                 (core module $m
+                   (import "env" "mem" (memory 1 1))
+                   (import "{group}" "md" (func $md
+                     (param i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i32 i32)))
+                   (import "{group}" "gm" (func $gm
+                     (param i64 i64 i64 i64 i64 i64 i64 i64 i32)))
+                   (func (export "run") {call}))
+                 (core instance $i (instantiate $m
+                   (with "env" (instance $a))
+                   (with "{group}" (instance
+                     (export "md" (func $md_l))
+                     (export "gm" (func $gm_l))))))
+                 (func (export "deposit") (canon lift (core func $i "run"))))"#
+        ))
+        .expect("valid wat")
+    }
+
+    const MUL_DIV_CALL: &str = "(call $md (i64.const 1) (i64.const 0) (i64.const 0) (i64.const 0) \
+        (i64.const 1) (i64.const 0) (i64.const 0) (i64.const 0) \
+        (i64.const 1) (i64.const 0) (i64.const 0) (i64.const 0) (i32.const 0) (i32.const 0))";
+
+    const GEOMETRIC_MEAN_CALL: &str = "(call $gm (i64.const 4) (i64.const 0) (i64.const 0) \
+        (i64.const 0) (i64.const 1) (i64.const 0) (i64.const 0) (i64.const 0) (i32.const 0))";
+
+    /// The blanket admission of host calls rests on a total leg running
+    /// with its handles already materialized, so the gate that would
+    /// refuse is discharged before the body starts. Nothing discharges a
+    /// zero divisor, so the arithmetic that can meet one is refused.
+    #[test]
+    fn a_faulting_host_call_denies_the_mark() {
+        assert_eq!(
+            check_method(&math_caller("k", MUL_DIV_CALL), "deposit"),
+            Err(TotalityError::FaultingHostCall("k/md".to_string())),
+        );
+    }
+
+    /// And the one that cannot fault is admitted, which is the whole
+    /// reason the rule names functions rather than the interface: a
+    /// square root has no refusal to discharge.
+    #[test]
+    fn a_total_host_call_keeps_the_mark() {
+        assert_eq!(
+            check_method(&math_caller("k", GEOMETRIC_MEAN_CALL), "deposit"),
+            Ok(()),
+        );
+    }
+
+    /// The verdict is read off the component's wiring, never off a name
+    /// the guest chose: a package that calls the arithmetic through an
+    /// import group spelled like a state accessor reaches the same
+    /// refusal, because what resolves it is the lowering.
+    #[test]
+    fn an_import_group_named_to_deceive_is_refused_all_the_same() {
+        assert_eq!(
+            check_method(
+                &math_caller("hyperscale:kernel/state", MUL_DIV_CALL),
+                "deposit"
+            ),
+            Err(TotalityError::FaultingHostCall(
+                "hyperscale:kernel/state/md".to_string()
+            )),
+        );
     }
 }
