@@ -72,16 +72,27 @@
 //! to serve as the allocator, which leaves it holding the gap the honest
 //! allocator already has instead of opening a new one.
 //!
+//! The same holds for the body the scan starts from, and for the same
+//! reason. A method's name is the component's, and which core function
+//! runs under it is what the wiring says: the export names a component
+//! function, a lift defines it over a core function, and that core
+//! function is an alias of a core instance's export. Reading a core
+//! export that merely shares the method's name would let a package put a
+//! harmless body under it and be judged on that instead of on the one
+//! that runs. So [`Wiring`] resolves both questions, and neither is
+//! answered by comparing a name to a name.
+//!
 //! What the exclusion costs is still real: a body that panics *through*
 //! the glue is not caught, and a helper the allocator and an authored
 //! method both call is set aside on the allocator's account. Closing that
 //! means a panic-free allocator rather than a cleverer scan.
 
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 use wasmparser::{
-    CanonicalFunction, CanonicalOption, ComponentAlias, ExternalKind, FunctionBody, Operator,
-    Parser, Payload, TypeRef,
+    BinaryReaderError, CanonicalFunction, CanonicalOption, ComponentAlias, ComponentExternalKind,
+    ComponentTypeRef, ExternalKind, FunctionBody, Instance, Operator, Parser, Payload, TypeRef,
 };
 
 /// Why a body cannot carry the total mark.
@@ -182,127 +193,229 @@ pub fn check_body(body: &FunctionBody<'_>) -> Result<(), TotalityError> {
 /// `entry` indexes the module's whole function space — imports first,
 /// then defined functions — the same space [`Operator::Call`] uses.
 ///
+/// Nothing is set aside. A bare core module has no canonical section, so
+/// there is no lift to designate a realloc and no name alone can stand in
+/// for one; the glue exclusion belongs to [`check_method`], which has a
+/// component's wiring to read it from.
+///
 /// # Errors
 ///
 /// The first [`TotalityError`] any reachable body yields, or
 /// [`TotalityError::Undecodable`] if the module does not parse.
 pub fn check_reachable(module: &[u8], entry: u32) -> Result<(), TotalityError> {
-    let designated = abi_support_exports(module)?;
     let parsed = Module::parse(module)?;
-    let shim = parsed.shim_closure(&designated)?;
-    parsed.walk(entry, &shim)
+    parsed.walk(entry, &BTreeSet::new())
 }
 
 /// Whether the method a package exports as `method` can carry the mark.
 ///
-/// Takes the artifact as deployed. A component under this profile wraps
-/// exactly one core module, and wit-bindgen names that module's exports
-/// after the WIT functions they implement, so the method's name is the
-/// core export's name and no canonical-ABI indirection has to be
-/// unwound to find it.
+/// Takes the artifact as deployed, and finds the body through the
+/// component's own wiring: the export names a component function, a
+/// `canon lift` defines it over a core function, and that core function
+/// is an alias of some core instance's export. **Nothing here matches a
+/// core export against the method's name.** A core module may export
+/// whatever names it likes, so a package that exports a harmless
+/// function under the name of the method it lifts elsewhere would have
+/// the scan read the decoy and grant the mark to the body beside it —
+/// the same hole the ABI support set refuses to open, and it has to be
+/// shut on the same terms.
 ///
 /// # Errors
 ///
-/// [`TotalityError::NoSuchExport`] if no core module exports `method`,
-/// or whatever the walk from it yields.
+/// [`TotalityError::NoSuchExport`] if the component exports no such
+/// method, or if its wiring does not lead to a core body, or whatever
+/// the walk from that body yields.
 pub fn check_method(artifact: &[u8], method: &str) -> Result<(), TotalityError> {
-    let designated = abi_support_exports(artifact)?;
-    for module in core_modules(artifact)? {
-        let parsed = Module::parse(module)?;
-        let Some(entry) = parsed.export_named(method) else {
-            continue;
+    let wiring = Wiring::read(artifact)?;
+    let missing = || TotalityError::NoSuchExport(method.to_string());
+    let (module, export) = wiring.entry(method).ok_or_else(missing)?;
+    let bytes = artifact
+        .get(wiring.modules.get(module).cloned().ok_or_else(missing)?)
+        .ok_or_else(|| TotalityError::Undecodable("module range out of bounds".into()))?;
+    let parsed = Module::parse(bytes)?;
+    let entry = parsed.export_named(export).ok_or_else(missing)?;
+    let shim = parsed.shim_closure(&wiring.abi_support(module))?;
+    parsed.walk(entry, &shim)
+}
+
+/// One core function, as the component's index space names it.
+#[derive(Clone)]
+struct CoreFuncRef {
+    /// The core instance it is aliased out of.
+    instance: u32,
+    /// The name that instance exports it under.
+    name: String,
+}
+
+/// A component's wiring, as one walk over its payloads.
+///
+/// Four index spaces, each read in the order the payloads define it,
+/// because every lookup below is an index into one of them and a
+/// miscount would silently resolve to the wrong function. Built once and
+/// asked twice: which body an exported method runs, and which bodies the
+/// canonical ABI designates as its own support.
+struct Wiring {
+    /// Each core module's byte range, in definition order.
+    modules: Vec<Range<usize>>,
+    /// Each core instance's module, `None` for a synthetic export bag.
+    instances: Vec<Option<u32>>,
+    /// The core function index space: an alias resolves, every other
+    /// producer is a canon builtin with no body of its own.
+    core_funcs: Vec<Option<CoreFuncRef>>,
+    /// The component function index space, by the core function each
+    /// entry lifts; `None` for anything that lifts nothing.
+    component_funcs: Vec<Option<u32>>,
+    /// Exported function names, by component function index.
+    exports: Vec<(String, u32)>,
+    /// Core function indices a lift designates as realloc or post-return.
+    designated: BTreeSet<u32>,
+}
+
+impl Wiring {
+    #[allow(clippy::too_many_lines)] // one walk over the payloads that define the index spaces
+    fn read(artifact: &[u8]) -> Result<Self, TotalityError> {
+        let mut wiring = Self {
+            modules: Vec::new(),
+            instances: Vec::new(),
+            core_funcs: Vec::new(),
+            component_funcs: Vec::new(),
+            exports: Vec::new(),
+            designated: BTreeSet::new(),
         };
-        let shim = parsed.shim_closure(&designated)?;
-        return parsed.walk(entry, &shim);
-    }
-    Err(TotalityError::NoSuchExport(method.to_string()))
-}
+        let fail = |e: BinaryReaderError| TotalityError::Undecodable(e.to_string());
 
-/// The core modules an artifact carries: the ones nested inside a
-/// component, or the artifact itself when it is already a core module.
-fn core_modules(artifact: &[u8]) -> Result<Vec<&[u8]>, TotalityError> {
-    let mut nested = Vec::new();
-    for payload in Parser::new(0).parse_all(artifact) {
-        if let Payload::ModuleSection {
-            unchecked_range, ..
-        } = payload.map_err(|e| TotalityError::Undecodable(e.to_string()))?
-        {
-            let bytes = artifact
-                .get(unchecked_range)
-                .ok_or_else(|| TotalityError::Undecodable("module range out of bounds".into()))?;
-            nested.push(bytes);
-        }
-    }
-    if nested.is_empty() {
-        nested.push(artifact);
-    }
-    Ok(nested)
-}
-
-/// The core exports the component itself designates as canonical-ABI
-/// support: whatever its `canon lift`s name as their realloc and their
-/// post-return.
-///
-/// Read from the component's own wiring rather than from a naming
-/// convention, and that is the whole point. A prefix is something an
-/// author picks, so excluding everything called `cabi_*` lets a package
-/// export its panicking helper under that name and have the scan look
-/// away. What a lift designates is not a name but a role: the runtime
-/// calls this function to allocate, on every value that crosses the
-/// boundary. A package can still point that role at a body of its own —
-/// but then that body must actually serve as the allocator, which leaves
-/// it with the same gap the honest allocator already has rather than a
-/// new one.
-///
-/// Empty for a bare core module, which has no canonical section and
-/// therefore no glue to set aside.
-fn abi_support_exports(artifact: &[u8]) -> Result<BTreeSet<String>, TotalityError> {
-    // The component's core function index space, in payload order: an
-    // alias of a core export contributes its name, and every canonical
-    // function except a lift contributes an entry that is not an alias.
-    // A lift produces a component function and so contributes nothing.
-    let mut core_functions: Vec<Option<String>> = Vec::new();
-    let mut designated: BTreeSet<u32> = BTreeSet::new();
-
-    for payload in Parser::new(0).parse_all(artifact) {
-        match payload.map_err(|e| TotalityError::Undecodable(e.to_string()))? {
-            Payload::ComponentAliasSection(reader) => {
-                for alias in reader {
-                    let alias = alias.map_err(|e| TotalityError::Undecodable(e.to_string()))?;
-                    if let ComponentAlias::CoreInstanceExport { kind, name, .. } = alias
-                        && kind == ExternalKind::Func
-                    {
-                        core_functions.push(Some(name.to_owned()));
+        for payload in Parser::new(0).parse_all(artifact) {
+            match payload.map_err(fail)? {
+                Payload::ModuleSection {
+                    unchecked_range, ..
+                } => wiring.modules.push(unchecked_range),
+                Payload::InstanceSection(reader) => {
+                    for instance in reader {
+                        wiring.instances.push(match instance.map_err(fail)? {
+                            Instance::Instantiate { module_index, .. } => Some(module_index),
+                            Instance::FromExports(_) => None,
+                        });
                     }
                 }
-            }
-            Payload::ComponentCanonicalSection(reader) => {
-                for function in reader {
-                    let function =
-                        function.map_err(|e| TotalityError::Undecodable(e.to_string()))?;
-                    let CanonicalFunction::Lift { options, .. } = function else {
-                        core_functions.push(None);
-                        continue;
-                    };
-                    for option in &options {
-                        match option {
-                            CanonicalOption::Realloc(index)
-                            | CanonicalOption::PostReturn(index) => {
-                                designated.insert(*index);
-                            }
+                Payload::ComponentImportSection(reader) => {
+                    for import in reader {
+                        if matches!(import.map_err(fail)?.ty, ComponentTypeRef::Func(_)) {
+                            wiring.component_funcs.push(None);
+                        }
+                    }
+                }
+                Payload::ComponentAliasSection(reader) => {
+                    for alias in reader {
+                        match alias.map_err(fail)? {
+                            ComponentAlias::CoreInstanceExport {
+                                kind: ExternalKind::Func,
+                                instance_index,
+                                name,
+                            } => wiring.core_funcs.push(Some(CoreFuncRef {
+                                instance: instance_index,
+                                name: name.to_owned(),
+                            })),
+                            ComponentAlias::InstanceExport {
+                                kind: ComponentExternalKind::Func,
+                                ..
+                            } => wiring.component_funcs.push(None),
                             _ => {}
                         }
                     }
                 }
+                Payload::ComponentCanonicalSection(reader) => {
+                    for function in reader {
+                        // Every canon form but `lift` defines a core
+                        // function, and `lift` defines a component one.
+                        // Matching the exclusion keeps both spaces aligned
+                        // even for a form this profile does not admit.
+                        match function.map_err(fail)? {
+                            CanonicalFunction::Lift {
+                                core_func_index,
+                                options,
+                                ..
+                            } => {
+                                wiring.component_funcs.push(Some(core_func_index));
+                                for option in &options {
+                                    if let CanonicalOption::Realloc(index)
+                                    | CanonicalOption::PostReturn(index) = option
+                                    {
+                                        wiring.designated.insert(*index);
+                                    }
+                                }
+                            }
+                            _ => wiring.core_funcs.push(None),
+                        }
+                    }
+                }
+                Payload::ComponentExportSection(reader) => {
+                    for export in reader {
+                        let export = export.map_err(fail)?;
+                        if export.kind != ComponentExternalKind::Func {
+                            continue;
+                        }
+                        wiring
+                            .exports
+                            .push((export.name.name.to_owned(), export.index));
+                        // An export defines an index of its own, aliasing
+                        // what it exports; carrying the lift through keeps
+                        // a later reference to it resolvable.
+                        let lifted = usize::try_from(export.index)
+                            .ok()
+                            .and_then(|index| wiring.component_funcs.get(index).copied())
+                            .flatten();
+                        wiring.component_funcs.push(lifted);
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
+        Ok(wiring)
     }
 
-    Ok(designated
-        .into_iter()
-        .filter_map(|index| core_functions.get(index as usize).cloned().flatten())
-        .collect())
+    /// The core function `index` names, and the module it lives in.
+    fn core_func(&self, index: u32) -> Option<(usize, &str)> {
+        let slot = usize::try_from(index).ok()?;
+        let reference = self.core_funcs.get(slot)?.as_ref()?;
+        let instance = usize::try_from(reference.instance).ok()?;
+        let module = (*self.instances.get(instance)?)?;
+        Some((usize::try_from(module).ok()?, &reference.name))
+    }
+
+    /// The body an exported method runs: its module, and the name that
+    /// module exports it under.
+    fn entry(&self, method: &str) -> Option<(usize, &str)> {
+        let (_, index) = self.exports.iter().find(|(name, _)| name == method)?;
+        let slot = usize::try_from(*index).ok()?;
+        let lifted = (*self.component_funcs.get(slot)?)?;
+        self.core_func(lifted)
+    }
+
+    /// The names `module` exports that a lift designates as canonical-ABI
+    /// support: its realloc and its post-return.
+    ///
+    /// Read from the component's own wiring rather than from a naming
+    /// convention, and that is the whole point. A prefix is something an
+    /// author picks, so excluding everything called `cabi_*` lets a
+    /// package export its panicking helper under that name and have the
+    /// scan look away. What a lift designates is not a name but a role:
+    /// the runtime calls this function to allocate, on every value that
+    /// crosses the boundary. A package can still point that role at a
+    /// body of its own — but then that body must actually serve as the
+    /// allocator, which leaves it with the same gap the honest allocator
+    /// already has rather than a new one.
+    ///
+    /// Scoped to one module, because that is where the walk will look the
+    /// names up: a realloc designated out of some other instance is not
+    /// this module's function however it is named.
+    fn abi_support(&self, module: usize) -> BTreeSet<String> {
+        self.designated
+            .iter()
+            .filter_map(|index| self.core_func(*index))
+            .filter(|(designated, _)| *designated == module)
+            .map(|(_, name)| name.to_owned())
+            .collect()
+    }
 }
 
 /// A core module's function space, indexed the way calls index it.
@@ -553,6 +666,98 @@ mod tests {
                 "exporting the faulting body as {export:?} must not excuse it",
             );
         }
+    }
+
+    /// The method's body is the one its export lifts, not the one that
+    /// happens to share its name.
+    ///
+    /// A core module names its exports whatever it likes, and only the
+    /// component's wiring says which of them an exported method runs. A
+    /// scan that matched on the name would read the decoy here and grant
+    /// the mark to the body beside it — which is the hole the ABI support
+    /// set refuses to open, shut on the same terms.
+    #[test]
+    fn a_core_export_that_merely_shares_the_methods_name_is_not_its_body() {
+        let component = parse_str(
+            r#"(component
+                 (core module $m
+                   (func $lifted unreachable)
+                   (func $decoy nop)
+                   (export "lifted" (func $lifted))
+                   (export "deposit" (func $decoy)))
+                 (core instance $i (instantiate $m))
+                 (func (export "deposit") (canon lift (core func $i "lifted"))))"#,
+        )
+        .expect("valid wat");
+        assert_eq!(
+            check_method(&component, "deposit"),
+            Err(TotalityError::Unreachable),
+            "the mark is judged against the body the export lifts",
+        );
+
+        // The same wiring over a body that cannot fault admits, so the
+        // refusal above is the code and not the shape.
+        let sound = parse_str(
+            r#"(component
+                 (core module $m
+                   (func $lifted nop)
+                   (export "lifted" (func $lifted)))
+                 (core instance $i (instantiate $m))
+                 (func (export "deposit") (canon lift (core func $i "lifted"))))"#,
+        )
+        .expect("valid wat");
+        assert_eq!(check_method(&sound, "deposit"), Ok(()));
+    }
+
+    /// A method the component does not export has no body to judge, and
+    /// a core module exporting the name is not the component doing so.
+    #[test]
+    fn a_method_the_component_does_not_export_is_refused() {
+        let component = parse_str(
+            r#"(component
+                 (core module $m
+                   (func $f nop)
+                   (export "deposit" (func $f)))
+                 (core instance $i (instantiate $m)))"#,
+        )
+        .expect("valid wat");
+        assert_eq!(
+            check_method(&component, "deposit"),
+            Err(TotalityError::NoSuchExport("deposit".to_string())),
+        );
+    }
+
+    /// The realloc a lift designates is set aside in the module it lives
+    /// in, and a body of the same name elsewhere is not it.
+    ///
+    /// Two modules, each exporting a panicking `alloc`; only one is wired
+    /// to the lift as its realloc. The method sits in the other, so its
+    /// own `alloc` is an ordinary callee and denies the mark.
+    #[test]
+    fn the_designation_is_scoped_to_the_module_that_holds_it() {
+        let component = parse_str(
+            r#"(component
+                 (core module $glue
+                   (func $alloc (param i32 i32 i32 i32) (result i32) unreachable)
+                   (memory (export "mem") 1 1)
+                   (export "alloc" (func $alloc)))
+                 (core module $main
+                   (func $body call $alloc)
+                   (func $alloc unreachable)
+                   (export "body" (func $body))
+                   (export "alloc" (func $alloc)))
+                 (core instance $g (instantiate $glue))
+                 (core instance $m (instantiate $main))
+                 (func (export "deposit") (param "v" (list u8))
+                   (canon lift (core func $m "body")
+                     (memory $g "mem") (realloc (func $g "alloc")))))"#,
+        )
+        .expect("valid wat");
+        assert_eq!(
+            check_method(&component, "deposit"),
+            Err(TotalityError::Unreachable),
+            "the designated realloc is the glue module's, not the main module's",
+        );
     }
 
     /// An imported function has no body to walk into, and a call to one
