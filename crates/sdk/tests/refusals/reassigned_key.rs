@@ -17,7 +17,7 @@ mod contract {
             if flag == 0 {
                 key = b;
             }
-            self.vaults.at(key).add(0);
+            self.vaults.at(key).declared();
         }
     }
 }

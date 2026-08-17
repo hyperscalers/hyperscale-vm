@@ -13,7 +13,7 @@ mod contract {
 
     impl Contract {
         pub fn hidden(&mut self, a: Address) {
-            let credit = || self.vaults.at(a).add(0);
+            let credit = || self.vaults.at(a).declared();
             credit();
         }
     }

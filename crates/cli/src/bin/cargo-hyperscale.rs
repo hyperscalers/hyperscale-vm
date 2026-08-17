@@ -6,7 +6,7 @@
 //! call is the point of the command: a package that checks clean here has
 //! passed exactly what admission runs.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use hyperscale_vm_cli::{BuildError, Provenance, artifact, artifact_path, build, scaffold};
@@ -42,46 +42,6 @@ fn main() -> ExitCode {
     }
 }
 
-/// Where a scaffolded package finds the SDK.
-///
-/// A path while the SDK is unpublished, resolved against the new crate's
-/// own location so the scaffold works from anywhere in the repository.
-fn sdk_dependency(dir: &Path) -> String {
-    let sdk = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(|crates| crates.join("sdk"));
-    sdk.map_or_else(
-        || "\"0.1\"".to_owned(),
-        |sdk| format!("{{ path = \"{}\" }}", relative(dir, &sdk).display()),
-    )
-}
-
-/// `sdk` as reached from `dir`, falling back to the absolute path where
-/// the two share no root worth walking.
-///
-/// Sharing only `/` is not sharing anything: the relative form would be a
-/// run of `..` as long as the path it replaces, and an absolute one at
-/// least reads.
-fn relative(dir: &Path, sdk: &Path) -> PathBuf {
-    let Ok(from) = dir.canonicalize() else {
-        return sdk.to_path_buf();
-    };
-    let shared = from
-        .components()
-        .zip(sdk.components())
-        .take_while(|(a, b)| a == b)
-        .count();
-    if shared <= 1 {
-        return sdk.to_path_buf();
-    }
-    let mut path = PathBuf::new();
-    for _ in shared..from.components().count() {
-        path.push("..");
-    }
-    path.extend(sdk.components().skip(shared));
-    path
-}
-
 fn run(args: &[String]) -> Result<String, BuildError> {
     let command = args.first().map(String::as_str);
     let protocol = args.iter().any(|arg| arg == "--protocol");
@@ -106,7 +66,7 @@ fn run(args: &[String]) -> Result<String, BuildError> {
             // form can be taken against somewhere that exists.
             std::fs::create_dir_all(&dir)
                 .map_err(|error| BuildError(format!("create {}: {error}", dir.display())))?;
-            scaffold::package(&dir, &sdk_dependency(&dir))?;
+            scaffold::package(&dir, &scaffold::sdk_dependency(&dir))?;
             Ok(format!(
                 "scaffolded {}\n    cargo hyperscale check {}",
                 dir.display(),

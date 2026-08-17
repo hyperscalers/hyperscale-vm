@@ -12,7 +12,7 @@ mod contract {
     }
 
     fn helper(contract: &mut Contract, a: Address) {
-        contract.vaults.at(a).add(0);
+        contract.vaults.at(a).declared();
     }
 
     impl Contract {

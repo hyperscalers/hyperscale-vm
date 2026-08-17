@@ -17,15 +17,16 @@
 //!
 //!     impl Account {
 //!         pub fn deposit(&mut self, funds: Bucket) {
-//!             self.vaults.at(funds.resource()).add(funds.amount());
-//!             self.claims.at(funds.resource()).add(0);
+//!             self.vaults.at(funds.resource()).put(funds);
+//!             self.claims.at(funds.resource()).declared();
 //!         }
 //!     }
 //! }
 //! ```
 //!
-//! The two deltas above are declared because `add` is a commutative
-//! movement and the key is `ResourceOf(Arg(0))` — both read off the body.
+//! The two deltas above are declared because `put` is a commutative
+//! movement and `declared` is one stated without making it, and because
+//! the key of each is `ResourceOf(Arg(0))` — all of it read off the body.
 //! Nothing was written twice.
 //!
 //! # The two halves

@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use hyperscale_vm_cli::{Provenance, artifact, declaration};
+use hyperscale_vm_cli::{Provenance, artifact, declaration, scaffold};
 use hyperscale_vm_gate::extract_metadata;
 
 /// The packages authored as one module apiece: the corpus's own, and one
@@ -50,6 +50,34 @@ fn a_derived_package_admits_against_its_own_declaration() {
         let dir = guests().join(package);
         artifact(&dir, *provenance).unwrap_or_else(|error| panic!("{package}: {error}"));
     }
+}
+
+/// What `new` writes builds and admits as it stands.
+///
+/// The scaffold is a package crate like any other, and the only one
+/// nobody maintains: the corpus is edited when the vocabulary moves and
+/// the template is not, so a rename reaches it last and an author meets
+/// the result on their first command. Judged through the same call the
+/// command makes — the dependency line included, which is why that line
+/// is the library's and not the binary's.
+#[test]
+fn the_scaffold_builds_and_admits_as_it_stands() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("scaffold");
+    // The template's own files, and nothing else: a `target` left from a
+    // previous run is what keeps this from rebuilding the SDK each time.
+    for stale in ["Cargo.toml", "src", ".cargo", "rust-toolchain.toml"] {
+        let path = dir.join(stale);
+        let _ = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+    }
+    std::fs::create_dir_all(&dir).expect("the scaffold directory");
+
+    scaffold::package(&dir, &scaffold::sdk_dependency(&dir)).expect("the scaffold writes");
+    artifact(&dir, Provenance::Published)
+        .unwrap_or_else(|error| panic!("the scaffolded package must admit: {error}"));
 }
 
 /// The declaration a package publishes is the one its module traced.

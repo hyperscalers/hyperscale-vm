@@ -14,9 +14,9 @@ mod contract {
     impl Contract {
         pub fn either(&mut self, flag: u64, a: Address, b: Address) -> Bucket {
             if flag == 0 {
-                return Bucket::of(a, 1);
+                return self.vaults.at(a).take(1);
             }
-            Bucket::of(b, 1)
+            self.vaults.at(b).take(1)
         }
     }
 }

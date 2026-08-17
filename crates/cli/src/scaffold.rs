@@ -68,7 +68,7 @@ fn library(module: &str) -> String {
          \x20   impl State {{\n\
          \x20       /// Credit the vault the arriving edge belongs in.\n\
          \x20       pub fn deposit(&mut self, funds: Bucket) {{\n\
-         \x20           self.vaults.at(funds.resource()).add(funds.amount());\n\
+         \x20           self.vaults.at(funds.resource()).put(funds);\n\
          \x20       }}\n\
          \n\
          \x20       /// Reserve `amount` of `resource` from this instance.\n\
@@ -151,10 +151,56 @@ components = [\"rust-src\"]
 targets = [\"wasm32-unknown-unknown\"]
 ";
 
+/// Where a scaffolded package finds the SDK.
+///
+/// A path while the SDK is unpublished, resolved against the new crate's
+/// own location so the scaffold works from anywhere in the repository.
+///
+/// Here rather than in the command, because it is part of what `new`
+/// writes: a manifest pointing somewhere the crate cannot build from is
+/// a broken scaffold however well the rest of it reads, and a test can
+/// only judge that if it can reach the same line the command emits.
+#[must_use]
+pub fn sdk_dependency(dir: &Path) -> String {
+    let sdk = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|crates| crates.join("sdk"));
+    sdk.map_or_else(
+        || "\"0.1\"".to_owned(),
+        |sdk| format!("{{ path = \"{}\" }}", relative(dir, &sdk).display()),
+    )
+}
+
+/// `sdk` as reached from `dir`, falling back to the absolute path where
+/// the two share no root worth walking.
+///
+/// Sharing only `/` is not sharing anything: the relative form would be a
+/// run of `..` as long as the path it replaces, and an absolute one at
+/// least reads.
+fn relative(dir: &Path, sdk: &Path) -> PathBuf {
+    let Ok(from) = dir.canonicalize() else {
+        return sdk.to_path_buf();
+    };
+    let shared = from
+        .components()
+        .zip(sdk.components())
+        .take_while(|(a, b)| a == b)
+        .count();
+    if shared <= 1 {
+        return sdk.to_path_buf();
+    }
+    let mut path = PathBuf::new();
+    for _ in shared..from.components().count() {
+        path.push("..");
+    }
+    path.extend(sdk.components().skip(shared));
+    path
+}
+
 /// Write a package crate at `dir`, named for its own directory.
 ///
-/// `sdk` is the dependency line the generated manifest points at — a path
-/// inside this repository, a version once the SDK is published.
+/// `sdk` is the dependency line the generated manifest points at —
+/// [`sdk_dependency`] while the SDK is unpublished, a version once it is.
 ///
 /// # Errors
 ///

@@ -72,7 +72,7 @@
 //! #[blueprint]
 //! mod bad {
 //!     use hyperscale_vm_sdk::Address;
-//!     use hyperscale_vm_sdk::state::{Amount, Cell, Keyed};
+//!     use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed};
 //!
 //!     #[state]
 //!     struct Bad {
@@ -81,11 +81,11 @@
 //!     }
 //!
 //!     impl Bad {
-//!         pub fn drain(&mut self) {
+//!         pub fn credit(&mut self, funds: Bucket) {
 //!             // The key is a substate value, so no shard can name it
 //!             // before executing — which is exactly when it is needed.
 //!             let target = self.pointer.get();
-//!             self.vaults.at(target).add(1);
+//!             self.vaults.at(target).put(funds);
 //!         }
 //!     }
 //! }

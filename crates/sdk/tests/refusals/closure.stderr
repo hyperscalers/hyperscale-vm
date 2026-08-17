@@ -1,5 +1,5 @@
 error: `#[blueprint]` does not model closures — an access inside one cannot be attributed to a declaration
   --> tests/refusals/closure.rs:16:26
    |
-16 |             let credit = || self.vaults.at(a).add(0);
+16 |             let credit = || self.vaults.at(a).declared();
    |                          ^
