@@ -88,13 +88,11 @@ impl Outcome {
     /// # Panics
     ///
     /// If the transaction did anything but complete.
-    #[must_use]
-    pub fn expect_completed(&self) -> &Self {
+    pub fn expect_completed(&self) {
         assert!(
             self.completed(),
             "the transaction did not complete: {:?}",
             self.receipt.outcome
         );
-        self
     }
 }

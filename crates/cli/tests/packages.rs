@@ -98,11 +98,17 @@ fn the_scaffold_builds_and_admits_as_it_stands() {
         .env_remove("RUSTUP_HOME")
         .output()
         .expect("cargo runs in the scaffold");
+    let stdout = String::from_utf8_lossy(&ran.stdout);
+    let stderr = String::from_utf8_lossy(&ran.stderr);
     assert!(
         ran.status.success(),
-        "the scaffolded package's own test must pass:\n{}\n{}",
-        String::from_utf8_lossy(&ran.stdout),
-        String::from_utf8_lossy(&ran.stderr),
+        "the scaffolded package's own test must pass:\n{stdout}\n{stderr}",
+    );
+    // Silently, too. A warning here is one the template wrote, on a line
+    // its author did not — and the exit status says nothing about it.
+    assert!(
+        !stderr.contains("warning:"),
+        "the scaffolded package must compile clean:\n{stderr}",
     );
 }
 
