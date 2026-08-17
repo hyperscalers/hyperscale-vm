@@ -32,6 +32,7 @@ Rust implementation of the Hyperscale VM: an execution engine built for a sharde
 | [`sdk`](crates/sdk) | The guest-side authoring surface |
 | [`sdk-macros`](crates/sdk-macros) | Proc macros behind the SDK's blueprint and state declarations |
 | [`stdlib`](crates/stdlib) | The system-tier components: resources, principals, badges, the restructuring idioms |
+| [`testing`](crates/testing) | The package author's chain: publish, seed, call, assert — a `cargo test` in a package crate, against the real kernel |
 | [`types`](crates/types) | The transaction envelope, addresses, and the wire vocabulary shared with the host |
 
 `guests/` holds the pinned-toolchain guest fixtures: the transfer fixture plus the minimal stdlib — account, constant-product pool, and order book — that the pattern corpus executes on both runtimes. The committed stdlib blobs are canonically Linux-built: roll them with `scripts/regenerate-stdlib.sh` (Docker, the same x86-64 Linux CI verifies on) and commit the result, not a local build from another OS.

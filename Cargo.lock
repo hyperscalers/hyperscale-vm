@@ -793,6 +793,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperscale-vm-testing"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-vm-cli",
+ "hyperscale-vm-effects",
+ "hyperscale-vm-fixtures",
+ "hyperscale-vm-kernel",
+ "hyperscale-vm-manifest-builder",
+ "hyperscale-vm-runtime",
+ "hyperscale-vm-stdlib",
+ "wasmtime",
+]
+
+[[package]]
 name = "hyperscale-vm-types"
 version = "0.1.0"
 dependencies = [

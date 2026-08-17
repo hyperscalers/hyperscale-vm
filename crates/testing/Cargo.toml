@@ -1,0 +1,27 @@
+[package]
+name = "hyperscale-vm-testing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The package author's test harness: a chain a contract runs on"
+
+[dependencies]
+hyperscale-vm-effects.workspace = true
+hyperscale-vm-kernel.workspace = true
+hyperscale-vm-manifest-builder.workspace = true
+# The account: value has to come from somewhere, and every principal is
+# answered by one. A test that seeds a balance is seeding an account's
+# vault, so the package is part of the world rather than part of a test.
+hyperscale-vm-stdlib.workspace = true
+
+# The blessed engine, and the guest build that feeds it: a package crate
+# under test is compiled to the artifact a network would run, and run.
+hyperscale-vm-cli.workspace = true
+hyperscale-vm-runtime.workspace = true
+wasmtime.workspace = true
+
+[dev-dependencies]
+hyperscale-vm-fixtures.workspace = true
+
+[lints]
+workspace = true

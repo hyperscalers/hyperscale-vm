@@ -59,3 +59,7 @@ jobs:
       # documented, so they run here.
       - name: Doc Tests
         run: cargo test --release --doc
+      # A package crate's own tests, run the way its author runs them.
+      # Outside the workspace by design, so nothing above reaches them.
+      - name: Package Tests
+        run: cargo test --manifest-path guests/amm/Cargo.toml

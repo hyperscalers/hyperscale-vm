@@ -17,6 +17,7 @@ members = [
     "crates/sdk",
     "crates/sdk-macros",
     "crates/stdlib",
+    "crates/testing",
 ]
 
 [workspace.package]
@@ -40,6 +41,7 @@ hyperscale-vm-runtime = { path = "crates/runtime" }
 hyperscale-vm-sdk = { path = "crates/sdk" }
 hyperscale-vm-sdk-macros = { path = "crates/sdk-macros" }
 hyperscale-vm-stdlib = { path = "crates/stdlib" }
+hyperscale-vm-testing = { path = "crates/testing" }
 
 arbitrary = "1.4.2"
 proc-macro2 = "1.0.107"
