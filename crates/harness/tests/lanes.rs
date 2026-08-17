@@ -13,7 +13,7 @@
 
 use hyperscale_vm_fixtures::amm;
 use hyperscale_vm_harness::fixtures::repo_root;
-use hyperscale_vm_kernel::{Outcome, Receipt, StateDelta};
+use hyperscale_vm_kernel::Receipt;
 use hyperscale_vm_testing::{
     Chain, ComponentAddr, Package, PrincipalAddr, ResourceAddr, account, principal, resource,
 };
@@ -63,10 +63,17 @@ fn swap(chain: Chain, floor: u128) -> (Receipt, [u128; 4]) {
     (receipt, balances)
 }
 
-/// What the lanes are held to: everything but the figure only an engine
-/// can produce.
-const fn comparable(receipt: &Receipt) -> (&Outcome, &StateDelta, usize) {
-    (&receipt.outcome, &receipt.delta, receipt.events.len())
+/// What the lanes are held to: the receipt, less the one figure only an
+/// engine can produce.
+///
+/// Named as the exclusion rather than as a list of what to compare, so a
+/// field a receipt gains is held to both lanes without anyone having to
+/// remember it here.
+fn comparable(receipt: &Receipt) -> Receipt {
+    Receipt {
+        fuel: 0,
+        ..receipt.clone()
+    }
 }
 
 #[test]

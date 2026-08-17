@@ -26,8 +26,8 @@ use hyperscale_vm_effects::{
     child_key, holdings_collection, resource_address, resource_record_key, route_tree,
 };
 use hyperscale_vm_kernel::{
-    AbortReason, BatchOutcome, BatchTx, EnvInputs, Event, ExecutionMode, GuestBackend, GuestCall,
-    InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, StateDelta,
+    AbortReason, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall,
+    InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, Receipt,
     TxHash, WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -421,11 +421,14 @@ fn metered_out(outcome: &BatchOutcome) -> bool {
 
 /// What a lane is held to when it cannot report the one figure an engine
 /// produces: everything a contract is about.
-fn comparable(outcome: &BatchOutcome) -> Vec<(&Outcome, &StateDelta, &[Event])> {
+fn comparable(outcome: &BatchOutcome) -> Vec<Receipt> {
     outcome
         .receipts
         .values()
-        .map(|receipt| (&receipt.outcome, &receipt.delta, receipt.events.as_slice()))
+        .map(|receipt| Receipt {
+            fuel: 0,
+            ..receipt.clone()
+        })
         .collect()
 }
 
