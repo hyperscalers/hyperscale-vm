@@ -298,7 +298,11 @@ impl Chain {
         let entry =
             BatchTx::new(tx, declaration, self.clock_ms, RANDOMNESS).with_calls(routing.calls);
 
-        let before = self.store.clone();
+        // Execution replaces the chain's store, so it moves out rather
+        // than being copied and dropped. Two owned copies are still
+        // needed — the base the engine reads, and what the overlay
+        // collapses back onto — but the third was the chain's own.
+        let before = std::mem::take(&mut self.store);
         let batch = std::slice::from_ref(&entry);
         let base = Arc::new(before.clone());
         let outcome = match &self.engine {
