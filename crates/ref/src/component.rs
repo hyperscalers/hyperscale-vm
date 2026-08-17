@@ -59,6 +59,7 @@ pub trait RefKernelHost {
     fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
     fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason>;
+    fn take_scan_debt(&mut self) -> usize;
     fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason>;
     fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, AbortReason>;
     fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
@@ -1357,6 +1358,15 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
         }
     }
 
+    /// Charges what the host call just made lifted out of the store by
+    /// scanning, mirroring the runtime's `charge_scan` — asked before the
+    /// call's own refusal propagates, on the same terms and in the same
+    /// order, so the two engines meter one figure.
+    fn charge_scan(&mut self, store: &Store) -> Result<(), ExecError> {
+        let lifted = self.host.take_scan_debt();
+        self.charge_boundary(store, lifted)
+    }
+
     /// Seats a handle, reusing the most recently freed slot.
     ///
     /// The numbering is guest-observable — a handle value is a core `i32`
@@ -1693,10 +1703,9 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_bytes(store, mem, args[1], args[2])?;
                         self.charge_boundary(store, ids.len())?;
-                        let taken = self
-                            .host
-                            .range_take(rep, &ids)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let taken = self.host.range_take(rep, &ids);
+                        self.charge_scan(store)?;
+                        let taken = taken.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(taken).cast_signed())])
                     }
                     HostFn::RangeWritePut => {
@@ -1780,10 +1789,9 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                             ResourceKind::RangeWrite
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
-                        let count = self
-                            .host
-                            .range_count(rep)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let count = self.host.range_count(rep);
+                        self.charge_scan(store)?;
+                        let count = count.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(count.cast_signed())])
                     }
                     HostFn::RangeReadOrder | HostFn::RangeWriteOrder => {
@@ -1794,10 +1802,9 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let index = args[1].as_i32().cast_unsigned();
-                        let order = self
-                            .host
-                            .range_order(rep, index)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let order = self.host.range_order(rep, index);
+                        self.charge_scan(store)?;
+                        let order = order.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_amount(store, mem, args[2], order)?;
@@ -1811,10 +1818,9 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let index = args[1].as_i32().cast_unsigned();
-                        let bytes = self
-                            .host
-                            .range_entry(rep, index)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let bytes = self.host.range_entry(rep, index);
+                        self.charge_scan(store)?;
+                        let bytes = bytes.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         self.charge_boundary(store, bytes.len())?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[2])?;
@@ -1826,9 +1832,9 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let mem = self.mem_opt(id)?;
                         let value = Self::read_guest_bytes(store, mem, args[2], args[3])?;
                         self.charge_boundary(store, value.len())?;
-                        self.host
-                            .range_set(rep, index, value)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let set = self.host.range_set(rep, index, value);
+                        self.charge_scan(store)?;
+                        set.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(Vec::new())
                     }
                     HostFn::RangeWriteInsert => {
@@ -1837,17 +1843,17 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let order = flat_amount(args[1], args[2]);
                         let value = Self::read_guest_bytes(store, mem, args[3], args[4])?;
                         self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES + value.len())?;
-                        self.host
-                            .range_insert(rep, order, value)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let inserted = self.host.range_insert(rep, order, value);
+                        self.charge_scan(store)?;
+                        inserted.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(Vec::new())
                     }
                     HostFn::RangeWriteRemove => {
                         let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
                         let index = args[1].as_i32().cast_unsigned();
-                        self.host
-                            .range_remove(rep, index)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let removed = self.host.range_remove(rep, index);
+                        self.charge_scan(store)?;
+                        removed.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(Vec::new())
                     }
                     HostFn::Randomness => {

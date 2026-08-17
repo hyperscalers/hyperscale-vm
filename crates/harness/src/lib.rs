@@ -1133,6 +1133,9 @@ pub mod session_host {
                 fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason> {
                     self.0.reserve_take(rep).map_err(AbortReason::from)
                 }
+                fn take_scan_debt(&mut self) -> usize {
+                    self.0.take_scan_debt()
+                }
                 fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason> {
                     self.0.range_count(rep).map_err(AbortReason::from)
                 }

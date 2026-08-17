@@ -46,8 +46,8 @@ pub use auth::{
 };
 pub use dsl::{
     Clause, Declaration, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, evaluate_declaration,
-    evaluate_effects, evaluate_expr, fresh_id, fresh_local, self_child,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RANGE_CAP, ModeExpr, TargetExpr,
+    evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local, self_child,
 };
 pub use envelope::{
     AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_ROLE, Subintent,

@@ -223,6 +223,10 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
+    fn take_scan_debt(&mut self) -> usize {
+        0
+    }
+
     fn range_count(&mut self, _rep: u32) -> std::result::Result<u32, AbortReason> {
         Ok(0)
     }

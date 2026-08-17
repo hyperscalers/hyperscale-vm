@@ -114,6 +114,9 @@ impl RefKernelHost for NoHost {
     fn reserve_take(&mut self, _rep: u32) -> Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
+    fn take_scan_debt(&mut self) -> usize {
+        0
+    }
     fn range_count(&mut self, _rep: u32) -> Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }

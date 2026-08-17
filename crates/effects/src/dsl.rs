@@ -41,6 +41,16 @@ pub const MAX_CLAUSE_DEPTH: usize = 4;
 /// of empty loops unbounded.
 pub const MAX_EFFECTS_PER_SIGNATURE: usize = 4096;
 
+/// The bound on a range clause's entry cap.
+///
+/// The cap is the only part of a declaration that buys execution work
+/// rather than key space: an interval's magnitude is what `footprint`
+/// charges and what conflict reads, and both are indifferent to how many
+/// entries sit inside it. So a cap is what a scan of the interval costs,
+/// and an unbounded one would let a signature claim a page no fee prices
+/// and no conflict verdict notices.
+pub const MAX_RANGE_CAP: u32 = 1024;
+
 /// A child key under the instance the method is running on.
 ///
 /// The shape every package's own storage takes: a package declares

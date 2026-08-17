@@ -255,6 +255,11 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 }
             }
         }
+        // What an engine does after every call that can reach a scan.
+        // Nothing here meters fuel, so the debt is settled rather than
+        // charged — but it is settled, because the session refuses to
+        // finish owing for a page somebody read.
+        let _ = session.take_scan_debt();
         let outcome = if aborting.contains(&id) {
             Outcome::UserError {
                 reason: AbortReason::Unreachable,

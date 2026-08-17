@@ -14,6 +14,11 @@
 //! operation, result bytes after it succeeds. A host operation's refusal
 //! (a bad amount cell, an out-of-bounds entry index) is a deterministic
 //! trap carrying the host's own abort class.
+//!
+//! The range functions charge a second supplement, for what materializing
+//! an interval lifted out of the store — bytes that never cross the ABI
+//! and so are invisible to the first. Charged whether the call then
+//! succeeds or refuses, because the page was read either way.
 
 use hyperscale_vm_types::AbortReason;
 use wasmtime::component::{ComponentType, Lift, Linker, Lower, Resource, ResourceType};
@@ -222,6 +227,15 @@ pub trait KernelHost: Send {
     /// A deterministic refusal, including a second take of one grant.
     fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason>;
 
+    /// What interval scans lifted out of the store since this was last
+    /// asked, in the boundary-byte terms the fuel schedule prices.
+    ///
+    /// Materializing an interval crosses no ABI boundary — the page stays
+    /// host-side until an accessor asks it for one entry — so the copy
+    /// metering that prices every other host call is blind to it. Asked
+    /// after every function below, each of which can reach a scan.
+    fn take_scan_debt(&mut self) -> usize;
+
     /// Entries currently in the interval, bounded by the declared cap.
     ///
     /// # Errors
@@ -307,6 +321,20 @@ fn host_trap(reason: AbortReason) -> Error {
 #[derive(Debug, thiserror::Error)]
 #[error("kernel refusal: {0:?}")]
 pub struct HostRefusal(pub AbortReason);
+
+/// Charges what the call just made lifted out of the store by scanning.
+///
+/// Every range function asks, because every one of them can reach a
+/// scan — and the session refuses to finish still owing, so one that
+/// stopped asking fails rather than executing for free.
+///
+/// Asked before the call's own refusal propagates, because the page was
+/// read either way: an index the scan does not contain is a refusal the
+/// scan had to happen to reach.
+fn charge_scan<T: KernelHost>(store: &mut StoreContextMut<'_, T>) -> Result<()> {
+    let lifted = store.data_mut().take_scan_debt();
+    charge_boundary_bytes(store, lifted)
+}
 
 /// Adds the `hyperscale:kernel` interfaces to a component linker.
 ///
@@ -440,11 +468,9 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         "range-write-take",
         |mut store: StoreContextMut<'_, T>, (r, ids): (Resource<RangeWrite>, Vec<u8>)| {
             charge_boundary_bytes(&mut store, ids.len())?;
-            let rep = store
-                .data_mut()
-                .range_take(r.rep(), &ids)
-                .map_err(host_trap)?;
-            Ok((Resource::<Bucket>::new_own(rep),))
+            let taken = store.data_mut().range_take(r.rep(), &ids);
+            charge_scan(&mut store)?;
+            Ok((Resource::<Bucket>::new_own(taken.map_err(host_trap)?),))
         },
     )?;
     state.func_wrap(
@@ -526,16 +552,17 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "range-read-count",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeRead>,)| {
-            Ok((store.data_mut().range_count(r.rep()).map_err(host_trap)?,))
+            let count = store.data_mut().range_count(r.rep());
+            charge_scan(&mut store)?;
+            Ok((count.map_err(host_trap)?,))
         },
     )?;
     state.func_wrap(
         "range-read-order",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeRead>, u32)| {
-            let order = store
-                .data_mut()
-                .range_order(r.rep(), index)
-                .map_err(host_trap)?;
+            let order = store.data_mut().range_order(r.rep(), index);
+            charge_scan(&mut store)?;
+            let order = order.map_err(host_trap)?;
             charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
             Ok((Amount::from(order),))
         },
@@ -543,10 +570,9 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "range-read-entry",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeRead>, u32)| {
-            let value = store
-                .data_mut()
-                .range_entry(r.rep(), index)
-                .map_err(host_trap)?;
+            let value = store.data_mut().range_entry(r.rep(), index);
+            charge_scan(&mut store)?;
+            let value = value.map_err(host_trap)?;
             charge_boundary_bytes(&mut store, value.len())?;
             Ok((value,))
         },
@@ -554,16 +580,17 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "range-write-count",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeWrite>,)| {
-            Ok((store.data_mut().range_count(r.rep()).map_err(host_trap)?,))
+            let count = store.data_mut().range_count(r.rep());
+            charge_scan(&mut store)?;
+            Ok((count.map_err(host_trap)?,))
         },
     )?;
     state.func_wrap(
         "range-write-order",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWrite>, u32)| {
-            let order = store
-                .data_mut()
-                .range_order(r.rep(), index)
-                .map_err(host_trap)?;
+            let order = store.data_mut().range_order(r.rep(), index);
+            charge_scan(&mut store)?;
+            let order = order.map_err(host_trap)?;
             charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
             Ok((Amount::from(order),))
         },
@@ -571,10 +598,9 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "range-write-entry",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWrite>, u32)| {
-            let value = store
-                .data_mut()
-                .range_entry(r.rep(), index)
-                .map_err(host_trap)?;
+            let value = store.data_mut().range_entry(r.rep(), index);
+            charge_scan(&mut store)?;
+            let value = value.map_err(host_trap)?;
             charge_boundary_bytes(&mut store, value.len())?;
             Ok((value,))
         },
@@ -584,10 +610,9 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         |mut store: StoreContextMut<'_, T>,
          (r, index, value): (Resource<RangeWrite>, u32, Vec<u8>)| {
             charge_boundary_bytes(&mut store, value.len())?;
-            store
-                .data_mut()
-                .range_set(r.rep(), index, value)
-                .map_err(host_trap)
+            let set = store.data_mut().range_set(r.rep(), index, value);
+            charge_scan(&mut store)?;
+            set.map_err(host_trap)
         },
     )?;
     state.func_wrap(
@@ -595,19 +620,17 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         |mut store: StoreContextMut<'_, T>,
          (r, order, value): (Resource<RangeWrite>, Amount, Vec<u8>)| {
             charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES + value.len())?;
-            store
-                .data_mut()
-                .range_insert(r.rep(), order.into(), value)
-                .map_err(host_trap)
+            let inserted = store.data_mut().range_insert(r.rep(), order.into(), value);
+            charge_scan(&mut store)?;
+            inserted.map_err(host_trap)
         },
     )?;
     state.func_wrap(
         "range-write-remove",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWrite>, u32)| {
-            store
-                .data_mut()
-                .range_remove(r.rep(), index)
-                .map_err(host_trap)
+            let removed = store.data_mut().range_remove(r.rep(), index);
+            charge_scan(&mut store)?;
+            removed.map_err(host_trap)
         },
     )?;
 

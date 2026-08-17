@@ -10,7 +10,8 @@ use thiserror::Error;
 use crate::PACKAGE_ROLE_BASE;
 use crate::auth::{AuthRole, RoleSet};
 use crate::dsl::{
-    Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, ModeExpr, TargetExpr,
+    Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_RANGE_CAP,
+    ModeExpr, TargetExpr,
 };
 use crate::hash::{Hash32, Hasher};
 use crate::invoke::EdgeKind;
@@ -859,8 +860,14 @@ fn check_target_bounds(target: &TargetExpr) -> Result<(), MetadataBoundsError> {
             material,
             lo,
             hi,
+            cap,
             ..
         } => {
+            if *cap > MAX_RANGE_CAP {
+                return Err(MetadataBoundsError(format!(
+                    "range clause caps {cap} entries, past the {MAX_RANGE_CAP} a scan may lift"
+                )));
+            }
             check_expr_bounds(owner, 0)?;
             for part in material {
                 check_expr_bounds(part, 0)?;
@@ -1282,6 +1289,32 @@ mod tests {
                 ..MethodSignature::default()
             }),
         );
+    }
+
+    #[test]
+    fn a_range_cap_is_bounded_where_a_scan_pays_for_it() {
+        // Nothing else in a declaration prices the cap: `footprint`
+        // charges the interval's magnitude and conflict reads its bounds,
+        // and both are the same for a page of one entry and a page of
+        // four billion.
+        let capped = |cap: u32| {
+            one_method(MethodSignature {
+                totality: Totality::Fallible,
+                effects: vec![Clause::Effect {
+                    target: TargetExpr::Range {
+                        owner: Expr::SelfAddr,
+                        collection: RoleId(PACKAGE_ROLE_BASE),
+                        material: vec![],
+                        lo: Expr::Literal(Value::U128(0)),
+                        hi: Expr::Literal(Value::U128(u128::MAX)),
+                        cap,
+                    },
+                    mode: ModeExpr::Read,
+                }],
+                ..MethodSignature::default()
+            })
+        };
+        assert_bounded(&capped(MAX_RANGE_CAP), &capped(MAX_RANGE_CAP + 1));
     }
 
     #[test]

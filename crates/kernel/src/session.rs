@@ -22,7 +22,7 @@ use hyperscale_vm_effects::{
 };
 
 use crate::locality::Locality;
-use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
+use crate::modes::{AMOUNT_CELL_BYTES, DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
 use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
 use crate::store::{Access, StoreError, WorkingStore};
@@ -322,6 +322,15 @@ pub use hyperscale_vm_effects::{
     Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
 };
 
+/// What one interval scan costs before any entry is counted, in the
+/// boundary-byte terms the fuel schedule prices.
+///
+/// A placeholder like the footprint weights, and structural for the same
+/// reason: the seek walks both overlay layers and the base whether or not
+/// the interval holds anything, so a page's cost is not proportional to
+/// what it returns and an empty one is not free.
+pub const SCAN_SEEK_BYTES: usize = 64;
+
 /// The deterministic environment a transaction executes under.
 #[derive(Clone, Copy, Debug)]
 pub struct EnvInputs {
@@ -505,6 +514,16 @@ pub struct KernelSession {
     /// that walk quadratic in the interval and floods the access log with
     /// one record per step.
     scans: BTreeMap<u32, Vec<(u128, Vec<u8>)>>,
+    /// What the scans above lifted out of the store, in boundary-byte
+    /// terms, since whoever holds the fuel budget last drained it.
+    ///
+    /// A scan crosses no ABI boundary — a page stays host-side until an
+    /// accessor asks it for one entry — so the copy metering that prices
+    /// every other host call is blind to it. Left unpriced, the page a
+    /// write invalidates would be free to re-materialize, and a body
+    /// alternating a write with a count would buy an unbounded number of
+    /// them at the cost of the loop alone.
+    scanned: usize,
     /// The distinct entries each write interval has changed, against the
     /// cap that interval declared.
     ///
@@ -642,6 +661,7 @@ impl KernelSession {
             hash_fn,
             locality: Locality::All,
             scans: BTreeMap::new(),
+            scanned: 0,
             written: BTreeMap::new(),
             invocation: None,
             events: Vec::new(),
@@ -756,10 +776,7 @@ impl KernelSession {
             // answering from a page would make reachability a function of
             // how many lower-ordered instances sit in front of this one,
             // and a holder past the cap could never move its later ids.
-            let held = !self
-                .store
-                .entries_in_range(interval.owner, interval.collection, order, order, 1)?
-                .is_empty();
+            let held = self.probe(interval.owner, interval.collection, order)?;
             if !held {
                 return Err(SessionTrap::InstanceNotHeld(order));
             }
@@ -1262,13 +1279,48 @@ impl KernelSession {
         }
     }
 
+    /// Read a run of entries, charging what it lifted to
+    /// [`Self::take_scan_debt`].
+    ///
+    /// The seek is charged whatever the run holds, because walking the
+    /// layers and the base is what an empty one costs too.
+    fn lift(
+        &mut self,
+        owner: Address,
+        collection: CollectionId,
+        lo: u128,
+        hi: u128,
+        cap: u32,
+    ) -> Result<Vec<(u128, Vec<u8>)>, SessionTrap> {
+        let entries = self
+            .store
+            .entries_in_range(owner, collection, lo, hi, cap)?;
+        let lifted = entries.iter().fold(SCAN_SEEK_BYTES, |total, (_, value)| {
+            total
+                .saturating_add(AMOUNT_CELL_BYTES)
+                .saturating_add(value.len())
+        });
+        self.scanned = self.scanned.saturating_add(lifted);
+        Ok(entries)
+    }
+
+    /// Whether one entry is there, on the same terms a page is read.
+    fn probe(
+        &mut self,
+        owner: Address,
+        collection: CollectionId,
+        order: u128,
+    ) -> Result<bool, SessionTrap> {
+        Ok(!self.lift(owner, collection, order, order, 1)?.is_empty())
+    }
+
     /// Materialize the interval behind `rep` if it is not already.
     fn scan(&mut self, rep: u32) -> Result<(), SessionTrap> {
         if self.scans.contains_key(&rep) {
             return Ok(());
         }
         let interval = self.interval(rep)?;
-        let entries = self.store.entries_in_range(
+        let entries = self.lift(
             interval.owner,
             interval.collection,
             interval.lo,
@@ -1277,6 +1329,17 @@ impl KernelSession {
         )?;
         self.scans.insert(rep, entries);
         Ok(())
+    }
+
+    /// What interval scans have lifted out of the store since this was
+    /// last asked, in the boundary-byte terms the fuel schedule prices.
+    ///
+    /// Called by whoever holds the fuel budget, after every host call
+    /// that can reach a scan. [`Self::finish`] refuses a session that
+    /// still owes, so an accessor added later cannot quietly scan for
+    /// free — it fails every test that runs it.
+    pub const fn take_scan_debt(&mut self) -> usize {
+        std::mem::replace(&mut self.scanned, 0)
     }
 
     /// Charge one entry against `rep`'s declared write cap.
@@ -1535,11 +1598,20 @@ impl KernelSession {
     ///
     /// [`FinishError::Undeclared`] if any recorded access escaped the
     /// declared set; a store failure otherwise. All are kernel defects.
+    ///
+    /// # Panics
+    ///
+    /// On an undrained scan debt, which is a host adapter that reached a
+    /// scan without charging for it.
     pub fn finish(
         mut self,
         outcome: Outcome,
         fuel: u64,
     ) -> Result<(Receipt, OverlayStore), FinishError> {
+        assert_eq!(
+            self.scanned, 0,
+            "a host call reached a scan without charging what it lifted"
+        );
         // Value first, because a transaction that lost some has nothing
         // else worth judging. A bucket still carrying anything here was
         // debited from a cell and never put into one, and the drop the
@@ -1891,9 +1963,10 @@ mod tests {
 
     use super::{
         Capability, EnvInputs, Event, Held, KernelSession, MAX_EVENT_PAYLOAD_BYTES,
-        MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, Outcome, SessionTrap,
+        MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, Outcome, SCAN_SEEK_BYTES,
+        SessionTrap,
     };
-    use crate::modes::{TxHash, decode_amount, encode_amount};
+    use crate::modes::{AMOUNT_CELL_BYTES, TxHash, decode_amount, encode_amount};
     use crate::overlay::OverlayStore;
     use crate::store::{MemoryStore, StoreError, WorkingStore};
 
@@ -2249,6 +2322,63 @@ mod tests {
         }
         // And removing what it just rewrote reaches no new entry.
         assert_eq!(session.range_remove(0, 0), Ok(()));
+    }
+
+    #[test]
+    fn a_re_materialized_page_is_charged_again() {
+        // The write budget survives an invalidation, so the loop that
+        // re-scans between writes is reachable; what stops it being free
+        // is that each page costs what it lifts.
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let mut store = MemoryStore::new();
+        for order in 0..4u128 {
+            store
+                .entry_write(owner, collection, order, vec![7; 10])
+                .unwrap();
+        }
+        store.clear_log();
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 4,
+            },
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(store, &set);
+
+        assert_eq!(session.range_count(0), Ok(4));
+        let page = SCAN_SEEK_BYTES + 4 * (AMOUNT_CELL_BYTES + 10);
+        assert_eq!(session.take_scan_debt(), page);
+        // Drained, and a memoized page is not scanned twice.
+        assert_eq!(session.range_count(0), Ok(4));
+        assert_eq!(session.take_scan_debt(), 0);
+        // A write drops the page, and asking for it again buys another.
+        assert_eq!(session.range_set(0, 0, vec![8; 10]), Ok(()));
+        assert_eq!(session.range_count(0), Ok(4));
+        assert_eq!(session.take_scan_debt(), page);
+    }
+
+    #[test]
+    #[should_panic(expected = "without charging what it lifted")]
+    fn finishing_still_owing_for_a_scan_is_a_defect() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection: CollectionId([4; 16]),
+                lo: 0,
+                hi: u128::MAX,
+                cap: 4,
+            },
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        session.range_count(0).unwrap();
+        let _ = session.finish(Outcome::Completed { value: None }, 0);
     }
 
     #[test]
