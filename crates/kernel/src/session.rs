@@ -27,6 +27,33 @@ use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
 use crate::store::{Access, StoreError, WorkingStore};
 
+/// The ordered-collection interval a range handle names.
+///
+/// The two range capabilities carry identical fields and differ only in
+/// what they permit, so what an operation needs from either is this —
+/// which leaves the mode where it belongs, in whether the handle
+/// resolves at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Interval {
+    /// The collection's owner.
+    owner: Address,
+    /// The collection's identity under the owner.
+    collection: CollectionId,
+    /// Inclusive lower order-key bound.
+    lo: u128,
+    /// Inclusive upper order-key bound.
+    hi: u128,
+    /// The declared entry cap.
+    cap: u32,
+}
+
+impl Interval {
+    /// Whether `order` falls inside the declared bounds.
+    const fn holds(&self, order: u128) -> bool {
+        self.lo <= order && order <= self.hi
+    }
+}
+
 /// One materialized capability: what a handle rep grants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Capability {
@@ -710,16 +737,13 @@ impl KernelSession {
     /// declared interval, one the collection does not hold, or more
     /// entries than the interval's cap admits.
     pub fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, SessionTrap> {
-        let (owner, collection, low, high, cap, writable) = self.range_of(rep)?;
-        if !writable {
-            return Err(SessionTrap::WrongMode(rep));
-        }
+        let interval = self.write_interval(rep)?;
         let ids = cell_ids(ids).ok_or(SessionTrap::BadIdCell)?;
         self.scan(rep)?;
         let mut taken = BTreeSet::new();
         for id in ids {
             let order = u128::from(id);
-            if !(low..=high).contains(&order) {
+            if !interval.holds(order) {
                 return Err(SessionTrap::OrderOutsideInterval);
             }
             // Held is what the declared interval currently shows: an
@@ -739,12 +763,13 @@ impl KernelSession {
         // what the declaration bought, and a take that overran it must
         // leave the collection alone.
         for order in &taken {
-            self.charge_write(rep, *order, cap)?;
+            self.charge_write(rep, *order, interval.cap)?;
         }
         for order in &taken {
-            self.store.entry_remove(owner, collection, *order)?;
+            self.store
+                .entry_remove(interval.owner, interval.collection, *order)?;
         }
-        self.invalidate(owner, collection);
+        self.invalidate(interval.owner, interval.collection);
         Ok(self.open_bucket(Held::Instances(taken)))
     }
 
@@ -756,26 +781,23 @@ impl KernelSession {
     /// Any [`SessionTrap`]: an instance outside the declared interval, a
     /// bucket carrying an amount, or a cap the filing would overrun.
     pub fn range_put(&mut self, rep: u32, funds: u32, value: &[u8]) -> Result<(), SessionTrap> {
-        let (owner, collection, low, high, cap, writable) = self.range_of(rep)?;
-        if !writable {
-            return Err(SessionTrap::WrongMode(rep));
-        }
+        let interval = self.write_interval(rep)?;
         let Held::Instances(ids) = self.bucket(funds)? else {
             return Err(SessionTrap::WrongEdgeKind);
         };
         for order in &ids {
-            if !(low..=high).contains(order) {
+            if !interval.holds(*order) {
                 return Err(SessionTrap::OrderOutsideInterval);
             }
         }
         for order in &ids {
-            self.charge_write(rep, *order, cap)?;
+            self.charge_write(rep, *order, interval.cap)?;
         }
         for order in &ids {
             self.store
-                .entry_write(owner, collection, *order, value.to_vec())?;
+                .entry_write(interval.owner, interval.collection, *order, value.to_vec())?;
         }
-        self.invalidate(owner, collection);
+        self.invalidate(interval.owner, interval.collection);
         self.take_bucket(funds).map(|_| ())
     }
 
@@ -1184,10 +1206,11 @@ impl KernelSession {
         Ok(self.open_bucket(Held::Amount(amount)))
     }
 
-    fn range_of(
-        &self,
-        rep: u32,
-    ) -> Result<(Address, CollectionId, u128, u128, u32, bool), SessionTrap> {
+    /// The interval a range handle names, whichever mode it carries.
+    ///
+    /// For the questions both modes answer — how many entries, what is at
+    /// an index, which collection a scan belongs to.
+    fn interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
         match self.capability(rep)? {
             Capability::RangeRead {
                 owner,
@@ -1195,14 +1218,45 @@ impl KernelSession {
                 lo,
                 hi,
                 cap,
-            } => Ok((owner, collection, lo, hi, cap, false)),
+            }
+            | Capability::RangeWrite {
+                owner,
+                collection,
+                lo,
+                hi,
+                cap,
+            } => Ok(Interval {
+                owner,
+                collection,
+                lo,
+                hi,
+                cap,
+            }),
+            _ => Err(SessionTrap::WrongMode(rep)),
+        }
+    }
+
+    /// The interval a *write* handle names.
+    ///
+    /// Every mutation asks through here, so the refusal a read interval
+    /// meets is stated once rather than repeated at each of them — and a
+    /// mutation added later cannot forget to ask, because there is no
+    /// other way to reach the interval it would change.
+    fn write_interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
+        match self.capability(rep)? {
             Capability::RangeWrite {
                 owner,
                 collection,
                 lo,
                 hi,
                 cap,
-            } => Ok((owner, collection, lo, hi, cap, true)),
+            } => Ok(Interval {
+                owner,
+                collection,
+                lo,
+                hi,
+                cap,
+            }),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
     }
@@ -1212,10 +1266,14 @@ impl KernelSession {
         if self.scans.contains_key(&rep) {
             return Ok(());
         }
-        let (owner, collection, lo, hi, cap, _) = self.range_of(rep)?;
-        let entries = self
-            .store
-            .entries_in_range(owner, collection, lo, hi, cap)?;
+        let interval = self.interval(rep)?;
+        let entries = self.store.entries_in_range(
+            interval.owner,
+            interval.collection,
+            interval.lo,
+            interval.hi,
+            interval.cap,
+        )?;
         self.scans.insert(rep, entries);
         Ok(())
     }
@@ -1246,10 +1304,8 @@ impl KernelSession {
             .keys()
             .copied()
             .filter(|rep| {
-                self.range_of(*rep)
-                    .is_ok_and(|(scanned_owner, scanned_collection, ..)| {
-                        scanned_owner == owner && scanned_collection == collection
-                    })
+                self.interval(*rep)
+                    .is_ok_and(|scanned| scanned.owner == owner && scanned.collection == collection)
             })
             .collect();
         for rep in stale {
@@ -1293,15 +1349,13 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), SessionTrap> {
-        let (owner, collection, _, _, cap, writable) = self.range_of(rep)?;
-        if !writable {
-            return Err(SessionTrap::WrongMode(rep));
-        }
+        let interval = self.write_interval(rep)?;
         self.scan(rep)?;
         let order = *indexed(&self.scans[&rep], index).map(|(order, _)| order)?;
-        self.charge_write(rep, order, cap)?;
-        self.store.entry_write(owner, collection, order, value)?;
-        self.invalidate(owner, collection);
+        self.charge_write(rep, order, interval.cap)?;
+        self.store
+            .entry_write(interval.owner, interval.collection, order, value)?;
+        self.invalidate(interval.owner, interval.collection);
         Ok(())
     }
 
@@ -1317,16 +1371,14 @@ impl KernelSession {
         order: u128,
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
-        let (owner, collection, lo, hi, cap, writable) = self.range_of(rep)?;
-        if !writable {
-            return Err(SessionTrap::WrongMode(rep));
-        }
-        if !(lo..=hi).contains(&order) {
+        let interval = self.write_interval(rep)?;
+        if !interval.holds(order) {
             return Err(SessionTrap::OrderOutsideInterval);
         }
-        self.charge_write(rep, order, cap)?;
-        self.store.entry_write(owner, collection, order, value)?;
-        self.invalidate(owner, collection);
+        self.charge_write(rep, order, interval.cap)?;
+        self.store
+            .entry_write(interval.owner, interval.collection, order, value)?;
+        self.invalidate(interval.owner, interval.collection);
         Ok(())
     }
 
@@ -1336,15 +1388,13 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), SessionTrap> {
-        let (owner, collection, _, _, cap, writable) = self.range_of(rep)?;
-        if !writable {
-            return Err(SessionTrap::WrongMode(rep));
-        }
+        let interval = self.write_interval(rep)?;
         self.scan(rep)?;
         let order = *indexed(&self.scans[&rep], index).map(|(order, _)| order)?;
-        self.charge_write(rep, order, cap)?;
-        self.store.entry_remove(owner, collection, order)?;
-        self.invalidate(owner, collection);
+        self.charge_write(rep, order, interval.cap)?;
+        self.store
+            .entry_remove(interval.owner, interval.collection, order)?;
+        self.invalidate(interval.owner, interval.collection);
         Ok(())
     }
 
