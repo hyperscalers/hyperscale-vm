@@ -121,8 +121,9 @@ pub enum TotalityError {
     /// fuel the transaction pre-charged, which needs a static ceiling.
     #[error("a loop, whose fuel cost has no static bound")]
     UnboundedLoop,
-    /// No core module in the artifact exports the named method.
-    #[error("no core module exports {0:?}")]
+    /// The component exports no such method, or its wiring leads to no
+    /// core body.
+    #[error("no exported method {0:?} the wiring resolves to a body")]
     NoSuchExport(String),
     /// The body could not be decoded.
     #[error("undecodable body: {0}")]

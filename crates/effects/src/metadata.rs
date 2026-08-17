@@ -668,6 +668,10 @@ pub enum DeclarationError {
     /// A method claiming totality behind a gate that can turn it away.
     #[error("a total method admits every caller, and this one is gated")]
     GatedTotality,
+    /// A method claiming totality over a body that calls out of the
+    /// package.
+    #[error("a total method answers for its whole body, and this one calls out of it")]
+    CallingTotality,
 }
 
 /// Whether a target names the declaring instance's own prefix.
@@ -728,6 +732,17 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // refusal a total leg promises cannot happen.
     if signature.totality.is_total() && signature.accessibility != Accessibility::Public {
         return Err(DeclarationError::GatedTotality);
+    }
+    // A declared call is a second method, on a second package, reached
+    // through the kernel rather than through the caller's own code — so
+    // the artifact scan never sees it, and the gate that judges the mark
+    // holds one package's bytes and cannot resolve the callee's at all.
+    // What the callee's own mark says is therefore unavailable exactly
+    // where it would have to be folded in, and a mark standing for a body
+    // half of which was never judged stands for nothing. The rule is
+    // consequently that a total method answers for itself: no calls out.
+    if signature.totality.is_total() && !signature.calls.is_empty() {
+        return Err(DeclarationError::CallingTotality);
     }
     walk(&signature.effects, &mut 0)
 }
@@ -1710,6 +1725,64 @@ mod tests {
             )),
             Ok(())
         );
+    }
+
+    /// The two things a total mark cannot survive, both read off the
+    /// declaration rather than off the code.
+    ///
+    /// A leg reads the mark and commits without waiting, so what it has
+    /// to exclude is every way the method could still come back with a
+    /// refusal. The artifact scan covers the one way that leaves the type
+    /// system — a trap — and these are the two it cannot see: a gate that
+    /// turns the caller away before the body runs, and a call to a method
+    /// on another package, whose bytes the gate does not hold and whose
+    /// own mark is therefore unreadable where it would have to be folded
+    /// in.
+    #[test]
+    fn a_total_mark_needs_a_body_the_declaration_answers_for() {
+        let total = |signature: MethodSignature| MethodSignature {
+            totality: Totality::Total,
+            ..signature
+        };
+
+        // The shape that admits: public, and answering for itself.
+        assert_eq!(
+            check_declarations(&total(MethodSignature::default())),
+            Ok(())
+        );
+
+        // Every gate is a caller this method can turn away.
+        for accessibility in [
+            Accessibility::Guarded(Expr::SelfAddr),
+            Accessibility::Authorizing,
+            Accessibility::Custodial,
+            Accessibility::RoleGated(AuthRole::Primary),
+        ] {
+            assert_eq!(
+                check_declarations(&total(MethodSignature {
+                    accessibility,
+                    ..MethodSignature::default()
+                })),
+                Err(DeclarationError::GatedTotality),
+            );
+        }
+
+        // A call out of the package, whose callee nothing here can judge.
+        let calling = MethodSignature {
+            calls: vec![CallSite {
+                target: Expr::Arg(0),
+                method: "settle".to_owned(),
+                args: vec![],
+            }],
+            ..MethodSignature::default()
+        };
+        assert_eq!(
+            check_declarations(&total(calling.clone())),
+            Err(DeclarationError::CallingTotality),
+        );
+        // And the same call sites are unremarkable without the mark: what
+        // is refused is the claim, never the calling.
+        assert_eq!(check_declarations(&calling), Ok(()));
     }
 
     /// Every way a signature can write somebody else's prefix, refused
