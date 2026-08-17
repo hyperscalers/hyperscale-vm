@@ -12,11 +12,16 @@
 use hyperscale_hbor::{from_slice_with_depth, to_vec_with_depth};
 
 use crate::dsl::{MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH};
-use crate::metadata::{PackageMetadata, check_metadata};
+use crate::hash::Hasher;
+use crate::metadata::{PackageHash, PackageMetadata, check_metadata};
 use crate::types::MAX_VALUE_DEPTH;
 
 /// The custom section effect metadata rides in.
 pub const METADATA_SECTION: &str = "hyperscale:effect-metadata";
+
+/// The domain a declaration addresses under, distinct from the one an
+/// artifact does.
+const DOMAIN_DECLARATION: &[u8] = b"hyperscale-vm/declaration";
 
 /// The section id wasm reserves for custom sections.
 const CUSTOM_SECTION_ID: u8 = 0;
@@ -81,6 +86,30 @@ pub fn encode_metadata(metadata: &PackageMetadata) -> Result<Vec<u8>, ArtifactEr
     check_metadata(metadata).map_err(|error| ArtifactError::Bounds(error.0))?;
     to_vec_with_depth(metadata, METADATA_WIRE_DEPTH)
         .map_err(|error| ArtifactError::Payload(error.to_string()))
+}
+
+/// The content address of a declaration on its own, for a world that has
+/// one and no artifact to put it in.
+///
+/// Takes the declaration rather than bytes, and hashes under a domain of
+/// its own, because this and [`package_hash`](crate::package_hash) answer
+/// different questions: a package's identity covers the code as well as
+/// what the code says about itself, and this covers only the second half.
+/// Two packages that declare alike and run differently are one address
+/// here and two on a chain, which is why nothing a network publishes is
+/// addressed this way.
+///
+/// # Errors
+///
+/// [`ArtifactError`] if the metadata is past a bound decode enforces.
+pub fn declaration_hash(
+    hasher: &dyn Hasher,
+    metadata: &PackageMetadata,
+) -> Result<PackageHash, ArtifactError> {
+    let declaration = encode_metadata(metadata)?;
+    Ok(PackageHash(
+        hasher.hash(DOMAIN_DECLARATION, &[&declaration]),
+    ))
 }
 
 /// Decode a metadata section's canonical bytes.
@@ -230,15 +259,47 @@ mod tests {
 
     use super::{
         ArtifactError, CUSTOM_SECTION_ID, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata,
-        extract_metadata, write_uleb128,
+        declaration_hash, encode_metadata, extract_metadata, write_uleb128,
     };
     use crate::dsl::{Clause, Expr, MAX_EXPR_DEPTH, ModeExpr, TargetExpr};
-    use crate::metadata::{MethodSignature, PackageMetadata, Totality};
+    use crate::hash::TestHasher;
+    use crate::metadata::{MethodSignature, PackageMetadata, Totality, package_hash};
 
     fn empty_component() -> Vec<u8> {
         let mut artifact = b"\0asm".to_vec();
         artifact.extend_from_slice(&[0x0D, 0x00, 0x01, 0x00]);
         artifact
+    }
+
+    /// A declaration and an artifact are addressed under domains of their
+    /// own, so the same bytes read as one are never the other.
+    ///
+    /// The separation is the whole of what distinguishes the two: without
+    /// it, a world holding only a declaration would be handing out
+    /// addresses in the space a published package's identity occupies.
+    #[test]
+    fn a_declaration_addresses_apart_from_an_artifact() {
+        let mut metadata = PackageMetadata::default();
+        metadata.methods.insert(
+            "swap".to_owned(),
+            MethodSignature {
+                totality: Totality::Fallible,
+                ..MethodSignature::default()
+            },
+        );
+        let declaration = encode_metadata(&metadata).expect("the declaration encodes");
+
+        let declared = declaration_hash(&TestHasher, &metadata).expect("the declaration addresses");
+        assert_ne!(
+            declared,
+            package_hash(&TestHasher, &declaration),
+            "a declaration must not address as the artifact carrying it"
+        );
+        assert_eq!(
+            declared,
+            declaration_hash(&TestHasher, &metadata).expect("the declaration addresses"),
+            "and it addresses by content"
+        );
     }
 
     #[test]

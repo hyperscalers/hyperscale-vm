@@ -36,8 +36,8 @@ pub mod vocabulary;
 
 pub use admission::{AdmissionError, Admitted, MAX_YIELD_PARAMS, admit};
 pub use artifact::{
-    ArtifactError, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata, decode_metadata,
-    encode_metadata, extract_metadata, metadata_section,
+    ArtifactError, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata, declaration_hash,
+    decode_metadata, encode_metadata, extract_metadata, metadata_section,
 };
 pub use auth::{
     AuthBase, AuthCell, AuthCellError, AuthRole, MAX_ROLESET_WIRE_DEPTH, Proposal, RoleSet,

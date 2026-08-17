@@ -44,8 +44,7 @@ use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 pub use hyperscale_vm_effects::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
-    PrefixShardResolver, SubstateKey, TestHasher, Value, admit, child_key, encode_metadata,
-    package_hash, route,
+    PrefixShardResolver, SubstateKey, TestHasher, Value, admit, child_key, declaration_hash, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, ExecutionMode, Locality, ManifestWalk, MemoryStore, Outcome as KernelOutcome, TxHash,
@@ -54,7 +53,6 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 #[cfg(feature = "wasm")]
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
-use hyperscale_vm_stdlib::account_package_hash;
 
 mod config;
 mod native;
@@ -117,7 +115,7 @@ impl Chain {
     #[must_use]
     pub fn native() -> Self {
         let mut native = Native::default();
-        native.seed(account_package_hash(&TestHasher), account::invoke);
+        native.seed(account_package(), account::invoke);
         Self::new(Engine::Native(native))
     }
 
@@ -132,7 +130,7 @@ impl Chain {
     #[must_use]
     pub fn wasm() -> Self {
         let mut blessed = wasm::Blessed::new();
-        blessed.seed(account_package_hash(&TestHasher), ACCOUNT_COMPONENT);
+        blessed.seed(account_package(), ACCOUNT_COMPONENT);
         Self::new(Engine::Blessed(blessed))
     }
 
@@ -150,12 +148,9 @@ impl Chain {
             sequence: 0,
             created: 0,
         };
-        chain
-            .cache
-            .publish(account_package_hash(&TestHasher), account::metadata());
-        chain
-            .instances
-            .serve_principals(account_package_hash(&TestHasher));
+        let account = account_package();
+        chain.cache.publish(account, account::metadata());
+        chain.instances.serve_principals(account);
         chain
     }
 
@@ -172,8 +167,15 @@ impl Chain {
     /// be the same in both lanes: an instance's address folds the
     /// package's in, so a chain that keyed one lane on an artifact and
     /// the other on a module would put the same pool at two addresses
-    /// and make the receipts incomparable. Content-addressed either way
-    /// — two packages that declare differently publish differently.
+    /// and make the receipts incomparable. The native lane has no
+    /// artifact to address at all, so the declaration is not the cheaper
+    /// of two identities — it is the only one both lanes hold.
+    ///
+    /// Content-addressed either way: two packages that declare
+    /// differently publish differently. What it is not is a network's
+    /// address, which covers the code as well, and neither is any
+    /// instance address that folds one in. A test reads balances and
+    /// receipts, never an address it expects to see on a chain.
     ///
     /// # Panics
     ///
@@ -181,8 +183,8 @@ impl Chain {
     /// clear the deploy-time profile — both of which are the author's
     /// answer rather than a test's.
     pub fn publish(&mut self, package: Package) -> PackageHash {
-        let declaration = encode_metadata(&package.metadata).expect("a traced declaration encodes");
-        let hash = package_hash(&TestHasher, &declaration);
+        let hash =
+            declaration_hash(&TestHasher, &package.metadata).expect("a traced declaration encodes");
         match &mut self.engine {
             #[cfg(feature = "wasm")]
             Engine::Blessed(blessed) => blessed.build(hash, &package),
@@ -360,6 +362,16 @@ pub const fn principal(tag: u8) -> PrincipalAddr {
 #[must_use]
 pub const fn resource(tag: u8) -> ResourceAddr {
     ResourceAddr::new([tag; 31])
+}
+
+/// The account's address in a chain.
+///
+/// Its declaration, on the same terms every other package's address is
+/// derived — not [`account_package_hash`](hyperscale_vm_stdlib::account_package_hash),
+/// which is the committed blob's and so is a rule this chain would apply
+/// to exactly one package.
+fn account_package() -> PackageHash {
+    declaration_hash(&TestHasher, &account::metadata()).expect("the account's declaration encodes")
 }
 
 /// A counter as the 32 bytes a salt is.
