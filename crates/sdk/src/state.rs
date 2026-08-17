@@ -672,7 +672,7 @@ impl<T: Cellular> Interval<T> {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::entry_remove(self.handle, index);
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return host::entry_remove(self.handle, index);
     }
 
     /// File the instances a bucket carries, each at the order it was

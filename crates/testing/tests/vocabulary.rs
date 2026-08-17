@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    RoleId, SubstateKey, TestHasher, child_key, collection_id,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Hash32, Hasher,
+    Mode, RoleId, SubstateKey, TestHasher, child_key, collection_id,
 };
 use hyperscale_vm_kernel::{
     EnvInputs, KernelSession, MemoryStore, Outcome, OverlayStore, TxHash, WorkingStore,
@@ -62,6 +62,33 @@ const fn point(key: SubstateKey, mode: Mode) -> Effect {
         target: EffectTarget::Point(key),
         mode,
     }
+}
+
+/// The whole of the collection's order-key space, at a cap no test
+/// reaches.
+fn range(mode: Mode) -> Effect {
+    Effect {
+        target: EffectTarget::Range {
+            owner: OWNER,
+            collection: collection(),
+            lo: 0,
+            hi: 100,
+            cap: 8,
+        },
+        mode,
+    }
+}
+
+/// A collection holding three entries, one order key apart.
+fn seeded() -> MemoryStore {
+    let mut store = MemoryStore::new();
+    for (order, value) in [(1u128, 10u64), (2, 20), (3, 30)] {
+        store
+            .entry_write(OWNER, collection(), order, value.to_le_bytes().to_vec())
+            .expect("the store takes an entry");
+    }
+    store.clear_log();
+    store
 }
 
 #[test]
@@ -132,26 +159,7 @@ fn a_bucket_divides_into_what_comes_off_and_what_is_left() {
 /// An interval walks its entries in order, and writes land in the store.
 #[test]
 fn an_interval_reads_and_writes_the_entries_it_covers() {
-    let mut store = MemoryStore::new();
-    for (order, value) in [(1u128, 10u64), (2, 20), (3, 30)] {
-        store
-            .entry_write(OWNER, collection(), order, value.to_le_bytes().to_vec())
-            .expect("the store takes an entry");
-    }
-    store.clear_log();
-    let session = session(
-        store,
-        vec![Effect {
-            target: EffectTarget::Range {
-                owner: OWNER,
-                collection: collection(),
-                lo: 0,
-                hi: 100,
-                cap: 8,
-            },
-            mode: Mode::Write,
-        }],
-    );
+    let session = session(seeded(), vec![range(Mode::Write)]);
 
     let (session, (count, orders, second)) = with_kernel(session, || {
         let mut interval = Interval::<u64>::at(Handle::RangeWrite(0));
@@ -171,24 +179,43 @@ fn an_interval_reads_and_writes_the_entries_it_covers() {
     assert_eq!(receipt.delta.entries.len(), 1, "one entry was rewritten");
 }
 
+/// A removal takes the entry out of the collection rather than blanking
+/// it: the interval closes over the gap, and the delta carries the
+/// removal itself.
+#[test]
+fn an_interval_removes_the_entry_it_names() {
+    let session = session(seeded(), vec![range(Mode::Write)]);
+
+    let (session, (left, orders)) = with_kernel(session, || {
+        let mut interval = Interval::<u64>::at(Handle::RangeWrite(0));
+        interval.remove(1);
+        let left = interval.count();
+        let orders: Vec<Amount> = (0..left).map(|index| interval.order(index)).collect();
+        (left, orders)
+    });
+
+    assert_eq!(left, 2);
+    assert_eq!(orders, vec![1, 3]);
+    let (receipt, _) = session
+        .finish(Outcome::Completed { value: None }, 0)
+        .expect("nothing outside the declared set was touched");
+    assert_eq!(receipt.delta.entries.len(), 1);
+    assert_eq!(
+        receipt.delta.entries.get(&EntryKey {
+            owner: OWNER,
+            collection: collection(),
+            order: 2,
+        }),
+        Some(&None),
+        "the delta carries a removal, not a blanked value"
+    );
+}
+
 /// An entry names its own order key within the interval the kernel
 /// materialized, and writing one that is not there creates it.
 #[test]
 fn an_entry_writes_at_the_order_it_names() {
-    let store = MemoryStore::new();
-    let session = session(
-        store,
-        vec![Effect {
-            target: EffectTarget::Range {
-                owner: OWNER,
-                collection: collection(),
-                lo: 0,
-                hi: 100,
-                cap: 8,
-            },
-            mode: Mode::Write,
-        }],
-    );
+    let session = session(MemoryStore::new(), vec![range(Mode::Write)]);
 
     let (session, read) = with_kernel(session, || {
         let mut entry = Entry::<u64>::at(Handle::RangeWrite(0), 7);
