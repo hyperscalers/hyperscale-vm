@@ -1,11 +1,11 @@
 //! The shapes a contract body may take, as a package that has to execute
 //! them.
 //!
-//! `macro_parity` pins what these bodies *declare*, on a host build where
-//! nothing runs. What it cannot pin is that the emission has a rewriting
-//! for each of them, because that only shows up when the guest half is
-//! compiled — and a shape the declaration admits but the emission cannot
-//! write is a package that traces cleanly and will not build.
+//! What a body *declares* is settled on a host build, where nothing runs.
+//! That says nothing about whether the emission has a rewriting for it,
+//! because that only shows up when the guest half is compiled — and a
+//! shape the declaration admits but the emission cannot write is a
+//! package that traces cleanly and will not build.
 //!
 //! So this crate is the emission's side of the same question: every shape
 //! below is here because it is one the grammar admits, and the check is

@@ -1,0 +1,460 @@
+PackageMetadata {
+    methods: {
+        "authorize": MethodSignature {
+            accessibility: Authorizing,
+            totality: Infallible,
+            mints: None,
+            issues: None,
+            params: [],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                4,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Read,
+                },
+            ],
+            abi: [],
+            calls: [],
+        },
+        "cancel": MethodSignature {
+            accessibility: RoleGated(
+                Primary,
+            ),
+            totality: Infallible,
+            mints: None,
+            issues: None,
+            params: [],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                4,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+            ],
+            calls: [],
+        },
+        "confirm": MethodSignature {
+            accessibility: RoleGated(
+                Confirmation,
+            ),
+            totality: Infallible,
+            mints: None,
+            issues: None,
+            params: [],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                4,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+            ],
+            calls: [],
+        },
+        "deposit": MethodSignature {
+            accessibility: Public,
+            totality: Total,
+            mints: None,
+            issues: None,
+            params: [
+                Bucket,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                1,
+                            ),
+                            material: [
+                                ResourceOf(
+                                    Arg(
+                                        0,
+                                    ),
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Delta,
+                },
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                2,
+                            ),
+                            material: [
+                                ResourceOf(
+                                    Arg(
+                                        0,
+                                    ),
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Delta,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Bucket(
+                    0,
+                ),
+            ],
+            calls: [],
+        },
+        "deposit-nf": MethodSignature {
+            accessibility: Public,
+            totality: Infallible,
+            mints: None,
+            issues: None,
+            params: [
+                NfBucket,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Range {
+                        owner: SelfAddr,
+                        collection: RoleId(
+                            6,
+                        ),
+                        material: [
+                            ResourceOf(
+                                Arg(
+                                    0,
+                                ),
+                            ),
+                        ],
+                        lo: Literal(
+                            U128(
+                                0,
+                            ),
+                        ),
+                        hi: Literal(
+                            U128(
+                                340282366920938463463374607431768211455,
+                            ),
+                        ),
+                        cap: 64,
+                    },
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Bucket(
+                    0,
+                ),
+            ],
+            calls: [],
+        },
+        "present-badge": MethodSignature {
+            accessibility: Custodial,
+            totality: Infallible,
+            mints: Some(
+                Arg(
+                    0,
+                ),
+            ),
+            issues: None,
+            params: [
+                Address,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                4,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Read,
+                },
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                1,
+                            ),
+                            material: [
+                                Arg(
+                                    0,
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Read,
+                },
+                Effect {
+                    target: Range {
+                        owner: SelfAddr,
+                        collection: RoleId(
+                            6,
+                        ),
+                        material: [
+                            Arg(
+                                0,
+                            ),
+                        ],
+                        lo: Literal(
+                            U128(
+                                0,
+                            ),
+                        ),
+                        hi: Literal(
+                            U128(
+                                340282366920938463463374607431768211455,
+                            ),
+                        ),
+                        cap: 1,
+                    },
+                    mode: Read,
+                },
+            ],
+            abi: [],
+            calls: [],
+        },
+        "propose": MethodSignature {
+            accessibility: RoleGated(
+                Recovery,
+            ),
+            totality: Infallible,
+            mints: None,
+            issues: None,
+            params: [
+                RoleSet,
+                U64,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                4,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Derived(
+                    Arg(
+                        0,
+                    ),
+                ),
+                Derived(
+                    Arg(
+                        1,
+                    ),
+                ),
+            ],
+            calls: [],
+        },
+        "securify": MethodSignature {
+            accessibility: Guarded(
+                SelfAddr,
+            ),
+            totality: Infallible,
+            mints: None,
+            issues: None,
+            params: [
+                RoleSet,
+                U64,
+            ],
+            outputs: [],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                4,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Derived(
+                    Arg(
+                        0,
+                    ),
+                ),
+                Derived(
+                    Arg(
+                        1,
+                    ),
+                ),
+            ],
+            calls: [],
+        },
+        "withdraw": MethodSignature {
+            accessibility: Guarded(
+                SelfAddr,
+            ),
+            totality: Infallible,
+            mints: None,
+            issues: None,
+            params: [
+                Address,
+                U128,
+            ],
+            outputs: [
+                Arg(
+                    0,
+                ),
+            ],
+            effects: [
+                Effect {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                1,
+                            ),
+                            material: [
+                                Arg(
+                                    0,
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Reserve(
+                        Arg(
+                            1,
+                        ),
+                    ),
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+            ],
+            calls: [],
+        },
+        "withdraw-nf": MethodSignature {
+            accessibility: Guarded(
+                SelfAddr,
+            ),
+            totality: Infallible,
+            mints: None,
+            issues: None,
+            params: [
+                Address,
+                Ids,
+            ],
+            outputs: [
+                NfBucket {
+                    resource: Arg(
+                        0,
+                    ),
+                    ids: Arg(
+                        1,
+                    ),
+                },
+            ],
+            effects: [
+                Effect {
+                    target: Range {
+                        owner: SelfAddr,
+                        collection: RoleId(
+                            6,
+                        ),
+                        material: [
+                            Arg(
+                                0,
+                            ),
+                        ],
+                        lo: Literal(
+                            U128(
+                                0,
+                            ),
+                        ),
+                        hi: Literal(
+                            U128(
+                                340282366920938463463374607431768211455,
+                            ),
+                        ),
+                        cap: 64,
+                    },
+                    mode: Write,
+                },
+            ],
+            abi: [
+                Handle(
+                    0,
+                ),
+                Derived(
+                    Arg(
+                        1,
+                    ),
+                ),
+            ],
+            calls: [],
+        },
+    },
+    events: [
+        "withdrawn",
+        "deposited",
+    ],
+    errors: [],
+}

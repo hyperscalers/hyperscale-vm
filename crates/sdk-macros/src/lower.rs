@@ -38,7 +38,7 @@
 //! a function of the declaration: an argument consumed as key material
 //! never reaches the guest, and a fresh id the guest never draws does.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
@@ -88,6 +88,9 @@ pub enum Target {
     Entry {
         /// The collection's role.
         role: u16,
+        /// The sub-collection under that role, empty where the role holds
+        /// one collection outright.
+        material: Vec<Term>,
         /// The entry's order key.
         order: Term,
     },
@@ -95,6 +98,9 @@ pub enum Target {
     Range {
         /// The collection's role.
         role: u16,
+        /// The sub-collection under that role, empty where the role holds
+        /// one collection outright.
+        material: Vec<Term>,
         /// Inclusive lower bound.
         lo: Term,
         /// Inclusive upper bound.
@@ -198,11 +204,39 @@ pub enum Need {
     Amount(u32),
 }
 
+/// The shape of accessor a site's handle is reached through.
+#[derive(Clone, Debug)]
+pub enum Form {
+    /// One substate leaf.
+    Slot,
+    /// One entry of a collection, picked out by its order key.
+    ///
+    /// The order is resolved where the entry is opened rather than where
+    /// the handle is: it is a value the guest is handed, and a body that
+    /// names an entry has needed it from that point on however it goes on
+    /// to use the handle.
+    Entry(TokenStream),
+    /// A whole declared interval.
+    Interval,
+}
+
 /// What a subexpression evaluated to, on the guest's side.
 #[derive(Clone, Debug)]
 pub enum Code {
     /// Code the guest runs as it stands.
     Rust(TokenStream),
+    /// An open handle on a declared site. Deferred like a term: a clause
+    /// a body states without operating through it — a movement it may
+    /// make on one path and not another — has nothing for the guest to
+    /// call, so it costs no export parameter.
+    Handle {
+        /// The site the handle is opened on.
+        site: usize,
+        /// How the accessor reaches it.
+        form: Form,
+        /// Where the body opened it, for the `for-each` refusal.
+        span: Span,
+    },
     /// A declared term. The guest reaches it only through an export
     /// parameter, so one is bound where a value is actually wanted and
     /// nowhere else — which is what keeps key material out of the ABI.
@@ -226,8 +260,13 @@ pub struct Lowered {
     pub nodes: Vec<Node>,
     /// The resources of the value edges the method produces.
     pub outputs: Vec<Term>,
-    /// The sites whose handles the export takes, in binding order.
-    pub handles: Vec<usize>,
+    /// The sites whose handles the export takes.
+    ///
+    /// Ordered by site, which is declaration order: the ABI binding rides
+    /// beside the clause it names, so the export's parameter order has to
+    /// be the clauses' rather than the order the body first reached for
+    /// one — a nested access would otherwise number them apart.
+    pub handles: BTreeSet<usize>,
     /// The values the export takes, in the order the body needs them.
     pub values: Vec<Need>,
     /// How many fresh ids the body draws.
@@ -254,8 +293,14 @@ pub struct Lowered {
 enum Val {
     /// A DSL-expressible value.
     Term(Term),
-    /// `self.<field>` — not yet an access.
-    Field(String),
+    /// `self.<field>`, and the material naming the sub-collection under
+    /// it — empty until a body says otherwise. Not yet an access.
+    Field {
+        /// The state field's name.
+        name: String,
+        /// The sub-collection under the field's role.
+        material: Vec<Term>,
+    },
     /// The value a locked configuration read returns; its fields are
     /// config slots.
     Config,
@@ -354,9 +399,9 @@ pub fn value_ident(index: usize) -> syn::Ident {
     syn::Ident::new(&format!("__value_{index}"), Span::call_site())
 }
 
-/// The generated name of the `index`-th bound handle.
-pub fn handle_ident(index: usize) -> syn::Ident {
-    syn::Ident::new(&format!("__capability_{index}"), Span::call_site())
+/// The generated name of the handle materialized for `site`.
+pub fn handle_ident(site: usize) -> syn::Ident {
+    syn::Ident::new(&format!("__capability_{site}"), Span::call_site())
 }
 
 /// The `Handle` variant a borrowed resource arrives as.
@@ -611,6 +656,21 @@ impl<'a> Lowerer<'a> {
     fn value(&mut self, code: Code) -> TokenStream {
         match code {
             Code::Rust(tokens) => tokens,
+            Code::Handle { site, form, span } => {
+                let handle = self.handle(site, span);
+                let element = self.element(site);
+                match form {
+                    Form::Slot => {
+                        quote!(::hyperscale_vm_sdk::state::Slot::<#element>::at(#handle))
+                    }
+                    Form::Interval => {
+                        quote!(::hyperscale_vm_sdk::state::Interval::<#element>::at(#handle))
+                    }
+                    Form::Entry(order) => {
+                        quote!(::hyperscale_vm_sdk::state::Entry::<#element>::at(#handle, #order))
+                    }
+                }
+            }
             Code::Term(term) => self.term_value(&term),
             Code::Bucket(param) => self.need(&Need::Amount(param)),
             Code::Absent(why) => {
@@ -627,6 +687,7 @@ impl<'a> Lowerer<'a> {
     fn term_value(&mut self, term: &Term) -> TokenStream {
         match term {
             Term::LitU64(value) => quote!(#value),
+            Term::LitU128(value) => quote!(#value),
             Term::Pack { hi, lo } => {
                 // `pack` is ordinary arithmetic, so the guest folds the
                 // two halves itself rather than taking the packed key —
@@ -647,7 +708,7 @@ impl<'a> Lowerer<'a> {
             | Term::ResourceOf(_)
             | Term::OrderKey { .. }
             | Term::SelfResource(_) => self.need(&Need::Derived(term.clone())),
-            Term::Lookup { .. } | Term::Field(..) | Term::Binding(_) => {
+            Term::Lookup { .. } | Term::Field(..) | Term::Binding(_) | Term::NfBucket { .. } => {
                 self.refuse(
                     "this term is evaluated where the declaration is, and the guest \
                      has no way to ask for it",
@@ -711,16 +772,8 @@ impl<'a> Lowerer<'a> {
                  count, so it cannot occupy a fixed export parameter",
             );
         }
-        let index = self
-            .out
-            .handles
-            .iter()
-            .position(|held| *held == site)
-            .unwrap_or_else(|| {
-                self.out.handles.push(site);
-                self.out.handles.len() - 1
-            });
-        let ident = handle_ident(index);
+        self.out.handles.insert(site);
+        let ident = handle_ident(site);
         quote!(#ident)
     }
 
@@ -755,7 +808,7 @@ impl<'a> Lowerer<'a> {
                     // A locked config read binds a name whose *fields* are
                     // config slots; the binding itself is not a value.
                     Val::Config => Slot::Config,
-                    Val::Field(_) | Val::Opaque => Slot::Opaque,
+                    Val::Field { .. } | Val::Opaque => Slot::Opaque,
                 };
                 // A plain name takes the slot; any other pattern binds its
                 // names opaquely, so a destructured piece used as a key is
@@ -1245,7 +1298,10 @@ impl<'a> Lowerer<'a> {
             && let syn::Member::Named(name) = &field.member
         {
             return Eval {
-                val: Val::Field(name.to_string()),
+                val: Val::Field {
+                    name: name.to_string(),
+                    material: Vec::new(),
+                },
                 code: Code::Absent("a state field in value position"),
             };
         }
@@ -1260,11 +1316,15 @@ impl<'a> Lowerer<'a> {
             // the leaf as a locked read is a separate, deliberate act
             // (`self.config.locked()`) that a method only performs when it
             // wants the whole record pinned.
-            (Val::Field(field_name), syn::Member::Named(name))
-                if self
-                    .fields
-                    .get(field_name)
-                    .is_some_and(|f| f.kind == FieldKind::Locked) =>
+            (
+                Val::Field {
+                    name: field_name, ..
+                },
+                syn::Member::Named(name),
+            ) if self
+                .fields
+                .get(field_name)
+                .is_some_and(|f| f.kind == FieldKind::Locked) =>
             {
                 self.config_slot(&name.to_string(), field)
             }
@@ -1429,7 +1489,7 @@ impl<'a> Lowerer<'a> {
 
         match receiver.val.clone() {
             // ---- opening a handle on a state field ----------------------
-            Val::Field(name) => {
+            Val::Field { name, material } => {
                 let Some(field) = self.fields.get(&name).cloned() else {
                     self.error(
                         call.receiver.span(),
@@ -1437,7 +1497,29 @@ impl<'a> Lowerer<'a> {
                     );
                     return Eval::absent("an undeclared state field");
                 };
-                self.on_field(&field, &method, &evals, call)
+                // Narrowing to a sub-collection is not an access: it names
+                // which collection under the role, and every accessor
+                // below reads the same with the material as without it.
+                if method == "of" && field.kind == FieldKind::Ordered {
+                    let Some(Val::Term(key)) = args.first() else {
+                        self.error(
+                            call.args.span(),
+                            "this collection key is not derivable from the method's \
+                             arguments or the component's configuration. Routing \
+                             evaluates a declaration before execution and never reads \
+                             state, so a key computed from a substate value cannot be \
+                             declared — pass it as a parameter instead",
+                        );
+                        return Eval::absent("an underivable collection key");
+                    };
+                    let mut material = material;
+                    material.push(key.clone());
+                    return Eval {
+                        val: Val::Field { name, material },
+                        code: Code::Absent("a collection in value position"),
+                    };
+                }
+                self.on_field(&field, &material, &method, &evals, call)
             }
 
             // ---- operating through an open handle -----------------------
@@ -1471,9 +1553,15 @@ impl<'a> Lowerer<'a> {
                     return Eval::plain(quote!(()));
                 }
                 let resource = match self.out.sites.get(site).map(|s| &s.target) {
-                    Some(Target::Point { material, .. }) => material.first().cloned(),
+                    Some(Target::Point { material, .. } | Target::Range { material, .. }) => {
+                        material.first().cloned()
+                    }
                     _ => None,
                 };
+                let instances = matches!(
+                    self.out.sites.get(site).map(|s| &s.target),
+                    Some(Target::Range { .. })
+                );
                 // The grant needs no amount at the boundary: the kernel
                 // judged and held it against this method's own
                 // declaration before the body ran, so the amount is the
@@ -1498,13 +1586,32 @@ impl<'a> Lowerer<'a> {
                 // A debit yields the value it moved, carrying the vault's
                 // own resource — which the site's key material already
                 // names, so the produced edge needs no separate
-                // declaration.
+                // declaration. Out of a collection it yields the
+                // instances that actually left, which the ids it named
+                // are: the removal and the edge are one operation, so the
+                // set cannot be one the body chose.
                 if op == Op::Move
                     && call.method == "take"
                     && let Some(resource) = resource
                 {
+                    let produced = if instances {
+                        let Some(Val::Term(ids)) = args.first() else {
+                            self.error(
+                                call.args.span(),
+                                "the instances a take names are the edge it produces, so \
+                                 they must be derivable from the method's arguments",
+                            );
+                            return Eval::absent("an underivable instance set");
+                        };
+                        Term::NfBucket {
+                            resource: Box::new(resource),
+                            ids: Box::new(ids.clone()),
+                        }
+                    } else {
+                        resource
+                    };
                     return Eval {
-                        val: Val::Produced(resource),
+                        val: Val::Produced(produced),
                         code: Code::Rust(quote!(#receiver_code.take(#(#rewritten),*))),
                     };
                 }
@@ -1592,6 +1699,7 @@ impl<'a> Lowerer<'a> {
     fn on_field(
         &mut self,
         field: &Field,
+        material: &[Term],
         method: &str,
         args: &[Eval],
         call: &syn::ExprMethodCall,
@@ -1629,7 +1737,7 @@ impl<'a> Lowerer<'a> {
                         },
                         field.element.clone(),
                     );
-                    self.slot(site, call.span())
+                    Self::slot(site, call.span())
                 } else {
                     self.error(
                         call.args.span(),
@@ -1649,6 +1757,7 @@ impl<'a> Lowerer<'a> {
                     let site = self.open(
                         Target::Entry {
                             role,
+                            material: material.to_vec(),
                             order: order.clone(),
                         },
                         field.element.clone(),
@@ -1707,7 +1816,7 @@ impl<'a> Lowerer<'a> {
                         },
                         field.element.clone(),
                     );
-                    self.interval(site, call.span())
+                    Self::interval(site, call.span())
                 } else {
                     self.error(
                         call.args.span(),
@@ -1730,13 +1839,14 @@ impl<'a> Lowerer<'a> {
                     let site = self.open(
                         Target::Range {
                             role,
+                            material: material.to_vec(),
                             lo: lo.clone(),
                             hi: hi.clone(),
                             cap: u32::try_from(*cap).unwrap_or(u32::MAX),
                         },
                         field.element.clone(),
                     );
-                    self.interval(site, call.span())
+                    Self::interval(site, call.span())
                 } else {
                     self.error(
                         call.args.span(),
@@ -1745,6 +1855,30 @@ impl<'a> Lowerer<'a> {
                      it is declaration, not data",
                     );
                     Eval::absent("an underivable range")
+                }
+            }
+
+            // The whole of a collection's order-key space.
+            (FieldKind::Ordered, "all") => {
+                if let Some(Val::Term(Term::LitU64(cap))) = vals.first() {
+                    let site = self.open(
+                        Target::Range {
+                            role,
+                            material: material.to_vec(),
+                            lo: Term::LitU128(0),
+                            hi: Term::LitU128(u128::MAX),
+                            cap: u32::try_from(*cap).unwrap_or(u32::MAX),
+                        },
+                        field.element.clone(),
+                    );
+                    Self::interval(site, call.span())
+                } else {
+                    self.error(
+                        call.args.span(),
+                        "an interval's entry cap must be a literal — the cap bounds the \
+                     work execution may do, so it is declaration, not data",
+                    );
+                    Eval::absent("an underivable interval")
                 }
             }
 
@@ -1763,7 +1897,7 @@ impl<'a> Lowerer<'a> {
                         _ => None,
                     };
                     self.record(site, op, param, call.span());
-                    let slot = self.slot(site, call.span());
+                    let slot = Self::slot(site, call.span());
                     let receiver = self.value(slot.code);
                     let rewritten: Vec<_> = args
                         .iter()
@@ -1780,47 +1914,40 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The guest-side value a point handle resolves to.
-    fn slot(&mut self, site: usize, span: Span) -> Eval {
-        let handle = self.materialized(site, span);
-        let element = self.element(site);
+    const fn slot(site: usize, span: Span) -> Eval {
         Eval {
             val: Val::Handle(site),
-            code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Slot::<#element>::at(#handle))),
+            code: Code::Handle {
+                site,
+                form: Form::Slot,
+                span,
+            },
         }
     }
 
     /// The guest-side value one ordered-collection entry resolves to.
     fn entry(&mut self, site: usize, order: &Term, span: Span) -> Eval {
-        let handle = self.materialized(site, span);
-        let element = self.element(site);
         let order = self.term_value(order);
         Eval {
             val: Val::Handle(site),
-            code: Code::Rust(
-                quote!(::hyperscale_vm_sdk::state::Entry::<#element>::at(#handle, #order)),
-            ),
+            code: Code::Handle {
+                site,
+                form: Form::Entry(order),
+                span,
+            },
         }
     }
 
     /// The guest-side value a declared interval resolves to.
-    fn interval(&mut self, site: usize, span: Span) -> Eval {
-        let handle = self.materialized(site, span);
-        let element = self.element(site);
+    const fn interval(site: usize, span: Span) -> Eval {
         Eval {
             val: Val::Handle(site),
-            code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Interval::<#element>::at(#handle))),
+            code: Code::Handle {
+                site,
+                form: Form::Interval,
+                span,
+            },
         }
-    }
-
-    /// The `Handle` a site's export parameter carries.
-    ///
-    /// Named rather than built here: which of the kernel's resource types
-    /// a handle arrives as is its mode, and the mode is not settled until
-    /// the body has finished operating through it. The prologue builds it
-    /// once the fold is known.
-    fn materialized(&mut self, site: usize, span: Span) -> TokenStream {
-        let param = self.handle(site, span);
-        quote!(#param)
     }
 
     /// The value the leaves under a site hold.
@@ -1907,7 +2034,7 @@ fn byte_literal(expr: &syn::Expr) -> Option<Vec<u8>> {
 /// the guest holds as a type of its own rather than as a plain value.
 fn is_bucket(ty: &syn::Type) -> bool {
     matches!(ty, syn::Type::Path(path)
-        if path.path.segments.last().is_some_and(|s| s.ident == "Bucket"))
+        if path.path.segments.last().is_some_and(|s| s.ident == "Bucket" || s.ident == "NfBucket"))
 }
 
 /// The last segment of a free call's path, when it has one.

@@ -25,7 +25,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use hyperscale_vm_effects::PackageMetadata;
-use hyperscale_vm_gate::{admit_package, attach_metadata, decode_metadata};
+pub use hyperscale_vm_gate::Provenance;
+use hyperscale_vm_gate::{admit_package, admit_protocol_package, attach_metadata, decode_metadata};
 use hyperscale_vm_runtime::validate_component;
 use wit_component::ComponentEncoder;
 
@@ -168,7 +169,7 @@ pub fn declaration(dir: &Path) -> Result<PackageMetadata, BuildError> {
 ///
 /// [`BuildError`] from either build, or carrying the gate's own sentence
 /// when the artifact is one the chain would refuse.
-pub fn artifact(dir: &Path) -> Result<Vec<u8>, BuildError> {
+pub fn artifact(dir: &Path, provenance: Provenance) -> Result<Vec<u8>, BuildError> {
     let component = compile(dir)?;
     let metadata = declaration(dir)?;
     let artifact = attach_metadata(&component, &metadata)
@@ -176,7 +177,17 @@ pub fn artifact(dir: &Path) -> Result<Vec<u8>, BuildError> {
     // The whole verdict, off the bytes the publish would carry. A
     // disagreement between the declaration and the code it describes is
     // this package's defect and it is cheaper to hear here.
-    admit_package(&artifact).map_err(|error| BuildError::new(error.0))?;
+    //
+    // Which gate is which provenance's: a publisher may not claim the
+    // total mark at all, and the protocol's own claim is read against the
+    // code. Building a protocol package under the publisher's gate would
+    // refuse an artifact genesis seeds, so the command has to know which
+    // it is making.
+    match provenance {
+        Provenance::Published => admit_package(&artifact),
+        Provenance::Protocol => admit_protocol_package(&artifact),
+    }
+    .map_err(|error| BuildError::new(error.0))?;
     Ok(artifact)
 }
 
@@ -191,8 +202,8 @@ pub fn artifact_path(dir: &Path) -> PathBuf {
 /// # Errors
 ///
 /// [`BuildError`] from the build, the gate, or the write.
-pub fn build(dir: &Path) -> Result<PathBuf, BuildError> {
-    let bytes = artifact(dir)?;
+pub fn build(dir: &Path, provenance: Provenance) -> Result<PathBuf, BuildError> {
+    let bytes = artifact(dir, provenance)?;
     let path = artifact_path(dir);
     std::fs::write(&path, &bytes)
         .map_err(|error| BuildError::new(format!("write {}: {error}", path.display())))?;

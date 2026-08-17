@@ -128,8 +128,8 @@ pub fn admit_protocol_package(artifact: &[u8]) -> Result<PackageMetadata, GateEr
 
 /// Who supplied an artifact, which is what decides whether its claim to
 /// totality is its own to make.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Provenance {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Provenance {
     /// A publisher's, arriving through a transaction.
     Published,
     /// The protocol's own, seeded at genesis.

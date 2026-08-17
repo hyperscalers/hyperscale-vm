@@ -122,17 +122,17 @@ pub fn method(
     let mut signature = Vec::new();
     let mut prologue = Vec::new();
 
-    for (position, site) in lowered.handles.iter().enumerate() {
+    for (position, site) in lowered.handles.iter().copied().enumerate() {
         let resource = lowered
             .sites
-            .get(*site)
+            .get(site)
             .and_then(crate::lower::Site::resource)
             .unwrap_or("read-cell");
         export.params.push(Param {
             name: format!("handle-{position}"),
             shape: Shape::Handle(resource),
         });
-        let ident = handle_ident(position);
+        let ident = handle_ident(site);
         let ty = resource_type(resource);
         let variant = handle_variant(resource);
         signature.push(quote!(#ident: &#ty));

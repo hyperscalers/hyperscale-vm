@@ -217,6 +217,20 @@ pub fn pack(hi: &Sym<Num>, lo: &Sym<Num>) -> Sym<Amount> {
     })
 }
 
+/// A non-fungible edge's projection: the resource, and the instances it
+/// carries.
+///
+/// The one constructor of non-fungible edge content, so a produced edge
+/// names the instances that actually left the collection rather than a
+/// set the body chose.
+#[must_use]
+pub fn nf_bucket(resource: &Sym<Addr>, ids: &Sym<Opaque>) -> Sym<Opaque> {
+    Sym::new(Expr::NfBucket {
+        resource: Box::new(resource.expr.clone()),
+        ids: Box::new(ids.expr.clone()),
+    })
+}
+
 /// A `u64` literal.
 #[must_use]
 pub const fn lit_u64(value: u64) -> Sym<Num> {

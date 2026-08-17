@@ -377,6 +377,36 @@ pub fn entry_insert(handle: Handle, order: u128, value: &[u8]) {
     }
 }
 
+/// File the instances a bucket carries into this interval, each at the
+/// order it was taken under, holding `value`.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::RangeWrite`].
+#[inline(always)]
+pub fn entry_put(handle: Handle, funds: kernel::state::Bucket, value: &[u8]) {
+    match handle {
+        Handle::RangeWrite(rep) => {
+            kernel::state::range_write_put(&range_write(rep), funds, value);
+        }
+        other => unreachable!("{other:?} carries no movement"),
+    }
+}
+
+/// Take the instances `ids` names out of this interval.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::RangeWrite`].
+#[must_use]
+#[inline(always)]
+pub fn entry_take(handle: Handle, ids: &[u8]) -> kernel::state::Bucket {
+    match handle {
+        Handle::RangeWrite(rep) => kernel::state::range_write_take(&range_write(rep), ids),
+        other => unreachable!("{other:?} carries no movement"),
+    }
+}
+
 /// Remove this interval's entry at `index`.
 ///
 /// # Panics

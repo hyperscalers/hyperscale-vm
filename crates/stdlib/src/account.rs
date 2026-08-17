@@ -1,17 +1,19 @@
 //! The fungible account: the package every principal answers.
 //!
-//! The package in one place: the effect signatures its guest executes,
-//! the roles it stores under where it has any of its own, and the
-//! wrappers a client calls it through. A signature and the wrapper
-//! mirroring it drift the moment they live apart.
+//! The declaration is the package's own: `metadata()` traces the module
+//! the component is built from, so the signatures a caller routes on and
+//! the code that executes them are read off one text. What stays here is
+//! the wrappers a client calls it through, which a signature cannot
+//! supply.
 
-use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
-use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, NF_MOVE_CAP, VAULT};
-use hyperscale_vm_effects::{
-    AbiParam, Accessibility, AuthRole, Expr, MethodSignature, PackageMetadata, ParamType,
-    PrincipalAddr, ResourceRef, RoleSet, Rule, Totality, Value, holdings_range, self_child,
-};
+use hyperscale_vm_effects::{PackageMetadata, PrincipalAddr, ResourceRef, RoleSet, Rule, Value};
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
+
+// The package, read from the crate the artifact is built from rather
+// than copied into this one: a second copy is the drift the derivation
+// exists to remove.
+#[path = "../../../guests/account/src/lib.rs"]
+mod package;
 
 /// The fungible account.
 ///
@@ -23,11 +25,18 @@ use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, Typ
 /// is how an account acts through calls its own signature proof would
 /// not open. `securify(roles, delay)`: create the stored-authority cell
 /// `authorize` reads, refusing one that already exists — the transition
-/// off the address-derived rule, one-way. `propose(roles, delay)`, `cancel()`, `confirm()`: the timed
-/// recovery surface, each judged against the stored role its
-/// accessibility names — recovery proposes a full replacement that
-/// matures after the stored delay, primary cancels one that has not,
-/// confirmation enacts one early.
+/// off the address-derived rule, one-way. `propose(roles, delay)`,
+/// `cancel()`, `confirm()`: the timed recovery surface, each judged
+/// against the stored role its accessibility names — recovery proposes a
+/// full replacement that matures after the stored delay, primary cancels
+/// one that has not, confirmation enacts one early.
+///
+/// `deposit-nf` and `withdraw-nf` are the same pair over instances: the
+/// entries of the holder's per-resource holdings interval, created at
+/// deposit and removed at withdrawal, gated exactly as the fungible pair
+/// is. `present-badge` is the custody gate — the holder's own rule, since
+/// nobody else presents its badges, plus possession of the named badge,
+/// minting the badge's address as evidence.
 ///
 /// Spending and writing require the account's own authority; being paid
 /// does not. Anyone may credit you, and a transfer therefore still
@@ -37,267 +46,11 @@ use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, Typ
 /// same reason a withdrawal is, though it moves nothing.
 ///
 /// No method reads another account's balance. A precondition on mutable
-/// state is a fresh [`ModeExpr::Read`], which makes the read's owner a
-/// participant — the account surface has no shape that wants one yet.
+/// state is a fresh read, which makes the read's owner a participant —
+/// the account surface has no shape that wants one yet.
 #[must_use]
 pub fn metadata() -> PackageMetadata {
-    let mut methods = PackageMetadata::default();
-    funds_methods(&mut methods);
-    holdings_methods(&mut methods);
-    authority_methods(&mut methods);
-    // Index order is the contract: the guest emits 0 and 1, and these are
-    // what those indexes mean.
-    methods.events = vec!["withdrawn".into(), "deposited".into()];
-    methods
-}
-
-/// `withdraw` and `deposit`: the account moving funds, the spending side
-/// gated by the identity its sign-in mints.
-fn funds_methods(methods: &mut PackageMetadata) {
-    methods.methods.insert(
-        "withdraw".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Guarded(Expr::SelfAddr),
-            mints: None,
-            issues: None,
-            params: vec![ParamType::Address, ParamType::U128],
-            // The grant is the bucket, so the amount the manifest asked
-            // for reaches the declaration and not the body: what the
-            // kernel judged is what it hands over.
-            abi: vec![AbiParam::Handle(0)],
-            outputs: vec![Expr::Arg(0)],
-            effects: vec![Clause::Effect {
-                target: TargetExpr::Point(self_child(VAULT, vec![Expr::Arg(0)])),
-                mode: ModeExpr::Reserve(Expr::Arg(1)),
-            }],
-            calls: vec![],
-        },
-    );
-    methods.methods.insert(
-        "deposit".into(),
-        MethodSignature {
-            // What the composite below earns: a deposit that cannot reach
-            // the vault lands in the claims cell instead, so the two
-            // refusals it would otherwise carry — no such target, a rule
-            // that declines — become a different destination rather than
-            // an error. Both effects are commutative, nothing gates the
-            // call, and no call leaves the body, so there is neither
-            // anything to refuse nor a callee's totality to fold in.
-            //
-            // Claimed here rather than checked: the publish-time checker
-            // that grants this does not exist yet, and when it does the
-            // stdlib's own marks are things it validates, not things it
-            // takes on trust.
-            totality: Totality::Total,
-            accessibility: Accessibility::Public,
-            mints: None,
-            issues: None,
-            params: vec![ParamType::Bucket],
-            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
-            outputs: vec![],
-            effects: vec![
-                Clause::Effect {
-                    target: TargetExpr::Point(self_child(
-                        VAULT,
-                        vec![Expr::ResourceOf(Box::new(Expr::Arg(0)))],
-                    )),
-                    mode: ModeExpr::Delta,
-                },
-                Clause::Effect {
-                    target: TargetExpr::Point(self_child(
-                        CLAIMS,
-                        vec![Expr::ResourceOf(Box::new(Expr::Arg(0)))],
-                    )),
-                    mode: ModeExpr::Delta,
-                },
-            ],
-            calls: vec![],
-        },
-    );
-}
-
-/// `deposit-nf` and `withdraw-nf`: the account holding instances — the
-/// entries of its per-resource holdings interval, created at deposit and
-/// removed at withdrawal, gated exactly as the fungible pair is.
-fn holdings_methods(methods: &mut PackageMetadata) {
-    methods.methods.insert(
-        "deposit-nf".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Public,
-            mints: None,
-            issues: None,
-            params: vec![ParamType::NfBucket],
-            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
-            outputs: vec![],
-            effects: vec![Clause::Effect {
-                target: holdings_range(Expr::ResourceOf(Box::new(Expr::Arg(0))), NF_MOVE_CAP),
-                mode: ModeExpr::Write,
-            }],
-            calls: vec![],
-        },
-    );
-    methods.methods.insert(
-        "withdraw-nf".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Guarded(Expr::SelfAddr),
-            mints: None,
-            issues: None,
-            params: vec![ParamType::Address, ParamType::Ids],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
-            outputs: vec![Expr::NfBucket {
-                resource: Box::new(Expr::Arg(0)),
-                ids: Box::new(Expr::Arg(1)),
-            }],
-            effects: vec![Clause::Effect {
-                target: holdings_range(Expr::Arg(0), NF_MOVE_CAP),
-                mode: ModeExpr::Write,
-            }],
-            calls: vec![],
-        },
-    );
-    // The custody gate: the holder's own rule — the holder acts, nobody
-    // else presents its badges — plus possession of the named badge,
-    // fungible or not, minting the badge's address as evidence.
-    methods.methods.insert(
-        "present-badge".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Custodial,
-            mints: Some(Expr::Arg(0)),
-            issues: None,
-            params: vec![ParamType::Address],
-            abi: vec![],
-            outputs: vec![],
-            effects: vec![
-                Clause::Effect {
-                    target: TargetExpr::Point(self_child(AUTH, vec![])),
-                    mode: ModeExpr::Read,
-                },
-                Clause::Effect {
-                    target: TargetExpr::Point(self_child(VAULT, vec![Expr::Arg(0)])),
-                    mode: ModeExpr::Read,
-                },
-                Clause::Effect {
-                    target: holdings_range(Expr::Arg(0), 1),
-                    mode: ModeExpr::Read,
-                },
-            ],
-            calls: vec![],
-        },
-    );
-}
-
-/// The authority surface: the sign-in, the one-way door, and timed
-/// recovery — every method whose gate reads the stored rule cell.
-fn authority_methods(methods: &mut PackageMetadata) {
-    methods.methods.insert(
-        "authorize".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Authorizing,
-            mints: None,
-            issues: None,
-            params: vec![],
-            abi: vec![],
-            outputs: vec![],
-            // The one clause an authorizing method declares: the cell its
-            // stored rule lives in. The read is what provisions the cell
-            // — or its absence — to every participant, and reads share,
-            // so concurrent sign-ins as one account never conflict.
-            effects: vec![Clause::Effect {
-                target: TargetExpr::Point(self_child(AUTH, vec![])),
-                mode: ModeExpr::Read,
-            }],
-            calls: vec![],
-        },
-    );
-    methods.methods.insert(
-        "securify".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Guarded(Expr::SelfAddr),
-            mints: None,
-            issues: None,
-            params: vec![ParamType::RoleSet, ParamType::U64],
-            abi: vec![
-                AbiParam::Handle(0),
-                AbiParam::Derived(Expr::Arg(0)),
-                AbiParam::Derived(Expr::Arg(1)),
-            ],
-            outputs: vec![],
-            // An exclusive read-modify-write: the body refuses a cell
-            // that already exists, and the write conflicts with every
-            // concurrent sign-in's read — retiring a rule and acting
-            // under it never share a wave.
-            effects: vec![Clause::Effect {
-                target: TargetExpr::Point(self_child(AUTH, vec![])),
-                mode: ModeExpr::Write,
-            }],
-            calls: vec![],
-        },
-    );
-    // The recovery surface: each method's whole declaration is the same
-    // exclusive write on the rule cell, which is where its gate's cell
-    // comes from and what keeps a role rewrite out of any wave that
-    // signs in under the roles it replaces.
-    methods.methods.insert(
-        "propose".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::RoleGated(AuthRole::Recovery),
-            mints: None,
-            issues: None,
-            params: vec![ParamType::RoleSet, ParamType::U64],
-            abi: vec![
-                AbiParam::Handle(0),
-                AbiParam::Derived(Expr::Arg(0)),
-                AbiParam::Derived(Expr::Arg(1)),
-            ],
-            outputs: vec![],
-            effects: vec![Clause::Effect {
-                target: TargetExpr::Point(self_child(AUTH, vec![])),
-                mode: ModeExpr::Write,
-            }],
-            calls: vec![],
-        },
-    );
-    methods.methods.insert(
-        "cancel".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::RoleGated(AuthRole::Primary),
-            mints: None,
-            issues: None,
-            params: vec![],
-            abi: vec![AbiParam::Handle(0)],
-            outputs: vec![],
-            effects: vec![Clause::Effect {
-                target: TargetExpr::Point(self_child(AUTH, vec![])),
-                mode: ModeExpr::Write,
-            }],
-            calls: vec![],
-        },
-    );
-    methods.methods.insert(
-        "confirm".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::RoleGated(AuthRole::Confirmation),
-            mints: None,
-            issues: None,
-            params: vec![],
-            abi: vec![AbiParam::Handle(0)],
-            outputs: vec![],
-            effects: vec![Clause::Effect {
-                target: TargetExpr::Point(self_child(AUTH, vec![])),
-                mode: ModeExpr::Write,
-            }],
-            calls: vec![],
-        },
-    );
+    package::account::blueprint().metadata()
 }
 
 // ─── calls ─────────────────────────────────────────────────────────────

@@ -115,6 +115,14 @@ impl Trace {
         lowered
     }
 
+    /// Lower a run of key material, in the order it is folded.
+    fn lower_all(&self, material: &[Sym<Opaque>]) -> Vec<Expr> {
+        material
+            .iter()
+            .map(|m| self.lower(m.expr().clone()))
+            .collect()
+    }
+
     /// Emit one clause into the current scope.
     fn emit(&mut self, clause: Clause) {
         if matches!(clause, Clause::Effect { .. }) {
@@ -230,17 +238,22 @@ impl Trace {
     }
 
     /// Declare accesses to one ordered-collection entry.
+    ///
+    /// `material` names the sub-collection under the role, empty where
+    /// the role holds one collection outright: a collection is its owner,
+    /// its role and what is folded into it, exactly as a keyed leaf is.
     #[must_use]
     pub fn entry(
         &mut self,
         owner: &Sym<Addr>,
         collection: RoleId,
+        material: &[Sym<Opaque>],
         order: &Sym<Amount>,
     ) -> Access<'_> {
         let target = TargetExpr::Entry {
             owner: self.lower(owner.expr().clone()),
             collection,
-            material: vec![],
+            material: self.lower_all(material),
             order: self.lower(order.expr().clone()),
         };
         Access {
@@ -329,6 +342,7 @@ impl Trace {
         &mut self,
         owner: &Sym<Addr>,
         collection: RoleId,
+        material: &[Sym<Opaque>],
         lo: &Sym<Amount>,
         hi: &Sym<Amount>,
         cap: u32,
@@ -336,7 +350,7 @@ impl Trace {
         let target = TargetExpr::Range {
             owner: self.lower(owner.expr().clone()),
             collection,
-            material: vec![],
+            material: self.lower_all(material),
             lo: self.lower(lo.expr().clone()),
             hi: self.lower(hi.expr().clone()),
             cap,
@@ -408,21 +422,24 @@ impl Trace {
         self.handles.push(AbiParam::Handle(clause));
     }
 
-    /// Bind the runtime amount of the `index`-th declared parameter, which
-    /// must be a bucket.
+    /// Bind the `index`-th declared parameter's edge, which must be one.
+    ///
+    /// Either edge kind binds the same way — what separates them is the
+    /// cell they cross as, and that is the callee's declaration rather
+    /// than anything the binding sees.
     ///
     /// # Panics
     ///
-    /// If `index` is past the declared parameters or names a kind other
-    /// than a bucket — the one value a signature cannot derive.
+    /// If `index` is past the declared parameters or names a kind that is
+    /// not an edge — the one value a signature cannot derive.
     pub fn bind_bucket(&mut self, index: u32) {
         let declared = *self
             .params
             .get(index as usize)
             .unwrap_or_else(|| panic!("argument {index} is past the declared parameter list"));
         assert!(
-            declared == ParamType::Bucket,
-            "argument {index} is declared {} and carries no runtime amount",
+            declared.is_edge(),
+            "argument {index} is declared {} and carries no value",
             declared.name()
         );
         self.values.push(AbiParam::Bucket(index));
@@ -449,6 +466,19 @@ impl Trace {
     /// decline.
     pub const fn fallible(&mut self) {
         self.totality = Totality::Fallible;
+    }
+
+    /// Record the total mark: no refusal, and no partial operation
+    /// anywhere the body reaches.
+    ///
+    /// Claimed here and granted elsewhere. The publish gate runs the
+    /// artifact scan against the code the claim is attached to and
+    /// refuses one it cannot support, and refuses the claim outright from
+    /// a published package — so what this records is which methods the
+    /// protocol asks to have checked, never a property a package awards
+    /// itself.
+    pub const fn total(&mut self) {
+        self.totality = Totality::Total;
     }
 
     /// Record that naming this method requires presenting the identity
@@ -757,7 +787,7 @@ mod tests {
         let owner = trace.self_addr();
         let lo: Sym<Amount> = trace.arg(0);
         let hi: Sym<Amount> = trace.config(0);
-        trace.range(&owner, RoleId(4), &lo, &hi, 32).write();
+        trace.range(&owner, RoleId(4), &[], &lo, &hi, 32).write();
         let recorded = trace.finish();
         assert!(matches!(
             &recorded.clauses[0],

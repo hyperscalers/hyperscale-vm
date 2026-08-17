@@ -1,18 +1,13 @@
-//! The question this spike was opened to answer: can a body written as
-//! ordinary Rust yield the declaration, with no separate declaration
-//! written by hand?
+//! What a body derives, pinned where a snapshot cannot reach.
 //!
-//! Same bar as `stdlib_parity`, one level higher up. There the declarations
-//! were written against the builder API and compared to the authored
-//! fixtures. Here nobody writes a declaration at all — the contract below
-//! is a contract, and `#[blueprint]` derives the metadata from its body.
-//! The comparison is still whole-structure equality against the authored
-//! form.
-//!
-//! Only the account is left to compare. Every other package is traced by
-//! the crate that ships it, so a comparison against one would be a thing
-//! compared to itself; what guards those is a committed snapshot of what
-//! the derivation produces, in `crates/effects`.
+//! The declaration a `#[blueprint]` module produces is committed per
+//! package in `crates/effects/snapshots`, which is the whole-corpus
+//! answer: a diff there is the derivation moving, and it is a thing to
+//! read. What that cannot say is *why* a shape lowers the way it does, so
+//! the contracts below are written to make one question each — a
+//! conditional's arms, an unordered collection's hashed order, the
+//! deterministic environment, an instance's own resources — and the
+//! assertions name the property rather than the value.
 
 // The contracts below are read by `#[blueprint]`, never called: what these
 // tests exercise is the metadata derived from the bodies, and the derivation
@@ -21,93 +16,7 @@
 // the appearance is an artifact of a contract living inside a test binary.
 #![allow(dead_code)]
 
-use hyperscale_vm_effects::{PackageMetadata, Totality};
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_stdlib::account as account_package;
-
-// The account is the one package still authored twice: its own guest is
-// hand-written, so a derived module beside it is what says the two agree.
-// Read rather than copied, so what this compares is the artifact's own
-// module and not a second one that resembles it.
-#[path = "../../../guests/derived-account/src/lib.rs"]
-mod derived_account;
-
-use derived_account::account;
-
-/// Compare everything a body determines — the ABI binding included.
-///
-/// The binding used to be excluded, on the ground that a macro never sees
-/// the component's exported parameter list. It sees it now: the list *is*
-/// the binding, decided by which values the emitted body could not
-/// compute, so comparing it is the strongest statement this test can make
-/// about the derivation.
-///
-/// `skip` names the methods whose authored artifact is a hand-written
-/// guest making a choice a body-derived one does not. There is exactly
-/// one: the account's `deposit` declares a claims-cell movement its own
-/// guest never performs, so its binding carries no handle for a clause a
-/// derived guest opens. The two converge where the account's artifact
-/// itself becomes derived.
-fn assert_derived(
-    traced: &PackageMetadata,
-    authored: &PackageMetadata,
-    package: &str,
-    skip: &[&str],
-) {
-    assert_eq!(
-        traced.methods.keys().collect::<Vec<_>>(),
-        authored.methods.keys().collect::<Vec<_>>(),
-        "{package}: the method sets differ"
-    );
-    for (name, signature) in &authored.methods {
-        let got = &traced.methods[name];
-        assert_eq!(got.params, signature.params, "{package}::{name} params");
-        assert_eq!(got.outputs, signature.outputs, "{package}::{name} outputs");
-        assert_eq!(got.effects, signature.effects, "{package}::{name} effects");
-        assert_eq!(got.calls, signature.calls, "{package}::{name} calls");
-        assert_eq!(
-            got.accessibility, signature.accessibility,
-            "{package}::{name} accessibility"
-        );
-        assert_eq!(got.mints, signature.mints, "{package}::{name} mints");
-        assert_eq!(
-            got.totality, signature.totality,
-            "{package}::{name} totality"
-        );
-        if !skip.contains(&name.as_str()) {
-            assert_eq!(got.abi, signature.abi, "{package}::{name} abi");
-        }
-    }
-    assert_eq!(traced.errors, authored.errors, "{package}: error table");
-}
-
-#[test]
-fn the_account_body_derives_its_authored_signature() {
-    // The account's traceable surface: the holdings pair and the custody
-    // gate stay authored-only, because the blueprint vocabulary has no
-    // material-keyed range, no id-set output, and no gate-owned read —
-    // the inference backend is a later phase, and these are its first
-    // customers.
-    let mut authored = account_package::metadata();
-    for gap in ["deposit-nf", "withdraw-nf", "present-badge"] {
-        authored.methods.remove(gap);
-    }
-    // The account's totality marks are the artifact's, and `deposit`'s
-    // `Total` is one the publish-time checker grants rather than a body
-    // yields; the derivation claims the weakest mark the export type
-    // supports and leaves the grant where it is made.
-    authored
-        .methods
-        .get_mut("deposit")
-        .expect("declared")
-        .totality = Totality::Infallible;
-    assert_derived(
-        &account::blueprint().metadata(),
-        &authored,
-        "account",
-        &["deposit"],
-    );
-}
 
 /// Control-flow spellings of one access set, each beside its straight-line
 /// equivalent. A conditional access is declared on every arm, so whichever

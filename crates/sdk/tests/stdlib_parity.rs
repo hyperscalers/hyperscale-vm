@@ -1,12 +1,14 @@
 //! The spike's headline claim: an author writing ordinary Rust reaches the
 //! authored signature form exactly.
 //!
-//! `vm-effects::stdlib` carries the packages the corpus guests execute
-//! under, hand-written as [`MethodSignature`] literals — and says of itself
-//! that they are "authored, not compiler-inferred — the inference backend
-//! is a later phase". This file is that phase's evidence. Each package is
-//! re-declared through the SDK and compared to the authored fixture with
-//! `assert_eq!` on the whole [`PackageMetadata`].
+//! Each package below is re-declared through the tracer by hand and
+//! compared to what its own crate publishes, with `assert_eq!` on the
+//! whole [`MethodSignature`]. For `splitter`, which is metadata-only, the
+//! other side is a hand-written literal. For the rest it is what
+//! `#[blueprint]` derived — so what these compare is a human calling the
+//! tracer against the macro calling it, which is exactly the reduction
+//! the macro's correctness rests on and the one thing a committed
+//! snapshot of the macro's own output cannot make.
 //!
 //! Equality is the right bar rather than an over-strict one. A signature
 //! that merely *routes the same* on the cases someone thought to test is
@@ -133,7 +135,7 @@ fn book() -> Blueprint {
                 // the order key unique without reading the book.
                 let seq = t.fresh_id();
                 let order = pack(&price, &seq);
-                t.entry(&venue, book_package::ASKS, &order).write();
+                t.entry(&venue, book_package::ASKS, &[], &order).write();
 
                 let escrow = venue.child(VAULT, &[funds.resource().cast()]);
                 t.point(&escrow).delta();
@@ -153,8 +155,15 @@ fn book() -> Blueprint {
                 // covers every sequence at the boundary prices.
                 let lo = pack(&from, &lit_u64(0));
                 let hi = pack(&to, &lit_u64(u64::MAX));
-                t.range(&venue, book_package::ASKS, &lo, &hi, book_package::FILL_CAP)
-                    .write();
+                t.range(
+                    &venue,
+                    book_package::ASKS,
+                    &[],
+                    &lo,
+                    &hi,
+                    book_package::FILL_CAP,
+                )
+                .write();
 
                 let quote = payment.resource();
                 t.point(&venue.child(VAULT, &[base.clone().cast()])).delta();
@@ -183,14 +192,16 @@ fn splitter() -> Blueprint {
         .build()
 }
 
-/// The account's traceable surface: the holdings pair and the custody
-/// gate stay authored-only, because the trace vocabulary has no
-/// material-keyed range, no id-set output, and no gate-owned read — the
-/// inference backend is a later phase, and these are its first customers.
+/// The account's fungible surface, which is what the declaration above
+/// covers.
 fn fungible_account() -> PackageMetadata {
     let mut authored = account_package::metadata();
-    for gap in ["deposit-nf", "withdraw-nf", "present-badge"] {
-        authored.methods.remove(gap);
+    // The instance surface and the custody gate are declared above by
+    // neither name: what they would add here is a third spelling of the
+    // holdings interval, where the two that matter — the module's and the
+    // gate's pinned shape — already agree.
+    for aside in ["deposit-nf", "withdraw-nf", "present-badge"] {
+        authored.methods.remove(aside);
     }
     authored
 }

@@ -32,6 +32,26 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     let param = |op: Op| has(op).and_then(|(_, p)| p.clone());
     let nothing = quote!();
 
+    // An interval has no commutative mode: the kernel materializes one
+    // capability over the whole span, so a body that moves value through
+    // one holds it exclusively rather than queuing against it.
+    if matches!(
+        site.target,
+        Target::Entry { .. }
+            | Target::Range { .. }
+            | Target::KeyedEntry { .. }
+            | Target::Sweep { .. }
+    ) {
+        return match (
+            has(Op::Set).is_some() || has(Op::Move).is_some(),
+            has(Op::Get).is_some(),
+        ) {
+            (true, _) => Some((nothing, quote!(.write()))),
+            (false, true) => Some((nothing, quote!(.read()))),
+            (false, false) => None,
+        };
+    }
+
     // The same order the resource derivation reads: an assignment or a
     // read makes the mode exclusive, and a movement without either
     // commutes.
@@ -69,14 +89,21 @@ fn target(target: &Target) -> TokenStream {
                 let __access = __t.point(&__key);
             )
         }
-        Target::Entry { role, order } => {
+        Target::Entry {
+            role,
+            material,
+            order,
+        } => {
+            let material = material.iter().map(Term::emit);
             let order = order.emit();
             quote!(
                 let __owner = __t.self_addr();
+                let __material = [#(#material),*];
                 let __order = #order.cast::<::hyperscale_vm_sdk::Amount>();
                 let __access = __t.entry(
                     &__owner,
                     ::hyperscale_vm_sdk::RoleId(#role),
+                    &__material,
                     &__order,
                 );
             )
@@ -106,16 +133,25 @@ fn target(target: &Target) -> TokenStream {
                 );
             )
         }
-        Target::Range { role, lo, hi, cap } => {
+        Target::Range {
+            role,
+            material,
+            lo,
+            hi,
+            cap,
+        } => {
+            let material = material.iter().map(Term::emit);
             let lo = lo.emit();
             let hi = hi.emit();
             quote!(
                 let __owner = __t.self_addr();
+                let __material = [#(#material),*];
                 let __lo = #lo.cast::<::hyperscale_vm_sdk::Amount>();
                 let __hi = #hi.cast::<::hyperscale_vm_sdk::Amount>();
                 let __access = __t.range(
                     &__owner,
                     ::hyperscale_vm_sdk::RoleId(#role),
+                    &__material,
                     &__lo,
                     &__hi,
                     #cap,
@@ -164,7 +200,12 @@ fn node(node: &Node, lowered: &Lowered) -> TokenStream {
 /// may declare a clause of its own: an authorizing gate's rule read
 /// happens before the export runs, so it is the gate's to declare and
 /// no handle is bound for it.
-pub fn declaration(lowered: &Lowered, gate: &TokenStream, declines: bool) -> TokenStream {
+pub fn declaration(
+    lowered: &Lowered,
+    gate: &TokenStream,
+    declines: bool,
+    total: bool,
+) -> TokenStream {
     // One draw per call site: the entry key derived from a fresh id and
     // the parameter carrying that id have to name the same slot.
     let fresh = (0..lowered.fresh).map(|site| {
@@ -194,11 +235,13 @@ pub fn declaration(lowered: &Lowered, gate: &TokenStream, declines: bool) -> Tok
         quote!(__t.bind_issuer(#bytes);)
     });
     let fallible = declines.then(|| quote!(__t.fallible();));
+    let total = total.then(|| quote!(__t.total();));
     quote!(
         |__t: &mut ::hyperscale_vm_sdk::Trace| {
             #(#fresh)*
             #gate
             #fallible
+            #total
             #(#nodes)*
             #(#outputs)*
             #(#values)*

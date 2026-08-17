@@ -1,29 +1,33 @@
 //! The command against real packages: a `#[blueprint]` module, built to
 //! an artifact, judged by the gate the chain runs.
 //!
-//! What this closes is the one thing the derivation could not check about
-//! itself. `macro_parity` compares derived metadata against a hand-written
-//! fixture, which says the two agree; it cannot say the metadata agrees
-//! with the *component* — that is the publish gate's question, and the
-//! generator now answers to it. `check_abi_against_export` and the
+//! What this closes is the one thing a snapshot of the derivation cannot:
+//! a committed declaration says what the module traced, and says nothing
+//! about whether the *component* beside it will take those arguments.
+//! That is the publish gate's question, and the generator answers to it
+//! here. `check_abi_against_export` and the
 //! totality biconditional stop judging hand-authoring here and start
 //! judging our own emission, so a disagreement is the generator's bug.
 
 use std::path::PathBuf;
 
-use hyperscale_vm_cli::{artifact, declaration};
+use hyperscale_vm_cli::{Provenance, artifact, declaration};
 use hyperscale_vm_gate::extract_metadata;
 
-/// The packages authored as one module apiece: the corpus's own, the
-/// account's derived twin while its own guest is still hand-written, and
-/// one whose whole content is the shapes the grammar admits.
-const PACKAGES: &[&str] = &[
-    "amm",
-    "book",
-    "lottery",
-    "staking",
-    "derived-account",
-    "grammar",
+/// The packages authored as one module apiece: the corpus's own, and one
+/// whose whole content is the shapes the grammar admits.
+///
+/// Each carries the provenance it is really built under. The two the
+/// protocol seeds go through the gate that reads a totality claim against
+/// the code; everything else through the one that refuses the claim
+/// outright, which is what a publisher would meet.
+const PACKAGES: &[(&str, Provenance)] = &[
+    ("account", Provenance::Protocol),
+    ("staking", Provenance::Protocol),
+    ("amm", Provenance::Published),
+    ("book", Provenance::Published),
+    ("lottery", Provenance::Published),
+    ("grammar", Provenance::Published),
 ];
 
 fn guests() -> PathBuf {
@@ -37,14 +41,14 @@ fn guests() -> PathBuf {
 /// Every derived package builds to a component the gate admits against
 /// the declaration the same module produced.
 ///
-/// No hand-written WIT and no hand-written `AbiParam` anywhere in the
-/// three: the world is synthesised from the bodies, the binding is the
-/// export's own parameter list, and the gate compares them.
+/// No hand-written WIT and no hand-written `AbiParam` anywhere in them:
+/// the world is synthesised from the bodies, the binding is the export's
+/// own parameter list, and the gate compares them.
 #[test]
 fn a_derived_package_admits_against_its_own_declaration() {
-    for package in PACKAGES {
+    for (package, provenance) in PACKAGES {
         let dir = guests().join(package);
-        artifact(&dir).unwrap_or_else(|error| panic!("{package}: {error}"));
+        artifact(&dir, *provenance).unwrap_or_else(|error| panic!("{package}: {error}"));
     }
 }
 
@@ -56,10 +60,11 @@ fn a_derived_package_admits_against_its_own_declaration() {
 /// notice.
 #[test]
 fn a_built_artifact_carries_the_declaration_its_module_derived() {
-    for package in PACKAGES {
+    for (package, provenance) in PACKAGES {
         let dir = guests().join(package);
         let traced = declaration(&dir).unwrap_or_else(|error| panic!("{package}: {error}"));
-        let built = artifact(&dir).unwrap_or_else(|error| panic!("{package}: {error}"));
+        let built =
+            artifact(&dir, *provenance).unwrap_or_else(|error| panic!("{package}: {error}"));
         let carried = extract_metadata(&built)
             .unwrap_or_else(|error| panic!("{package}: {error}"))
             .unwrap_or_else(|| panic!("{package}: the artifact declares nothing"));

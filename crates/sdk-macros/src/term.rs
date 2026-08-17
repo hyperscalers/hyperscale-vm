@@ -63,8 +63,18 @@ pub enum Term {
     },
     /// A resource the instance issues, marked apart from its others.
     SelfResource(Vec<u8>),
+    /// A non-fungible edge: the resource, and the instances it carries.
+    NfBucket {
+        /// The resource the edge is denominated in.
+        resource: Box<Self>,
+        /// The instance ids.
+        ids: Box<Self>,
+    },
     /// A `u64` literal.
     LitU64(u64),
+    /// A `u128` literal — the order-key width, which is where the whole
+    /// of an interval's span is spelled.
+    LitU128(u128),
     /// The element of an enclosing `for`, by absolute nesting depth.
     Binding(usize),
 }
@@ -124,8 +134,22 @@ impl Term {
                 let mark = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
                 quote!(__t.self_resource(#mark).cast::<::hyperscale_vm_sdk::Opaque>())
             }
+            Self::NfBucket { resource, ids } => {
+                let resource = resource.emit();
+                let ids = ids.emit();
+                quote!(
+                    ::hyperscale_vm_sdk::sym::nf_bucket(
+                        &#resource.cast::<::hyperscale_vm_sdk::Addr>(),
+                        &#ids,
+                    )
+                )
+            }
             Self::LitU64(value) => quote!(
                 ::hyperscale_vm_sdk::sym::lit_u64(#value)
+                    .cast::<::hyperscale_vm_sdk::Opaque>()
+            ),
+            Self::LitU128(value) => quote!(
+                ::hyperscale_vm_sdk::sym::lit_u128(#value)
                     .cast::<::hyperscale_vm_sdk::Opaque>()
             ),
             Self::Binding(depth) => {

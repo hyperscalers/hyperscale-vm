@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use hyperscale_vm_effects::PackageMetadata;
 use hyperscale_vm_fixtures::{amm, book, lottery};
-use hyperscale_vm_stdlib::staking;
+use hyperscale_vm_stdlib::{account, staking};
 
 fn snapshot(name: &str, metadata: &PackageMetadata) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -48,6 +48,11 @@ fn snapshot(name: &str, metadata: &PackageMetadata) {
         "{name}: the derivation moved. Read the diff, then regenerate with \
          SNAPSHOT=overwrite if it is the change you meant"
     );
+}
+
+#[test]
+fn the_account_declares_what_its_snapshot_records() {
+    snapshot("account", &account::metadata());
 }
 
 #[test]

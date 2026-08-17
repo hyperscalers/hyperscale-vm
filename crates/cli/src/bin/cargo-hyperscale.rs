@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use hyperscale_vm_cli::{BuildError, artifact, artifact_path, build, scaffold};
+use hyperscale_vm_cli::{BuildError, Provenance, artifact, artifact_path, build, scaffold};
 
 const USAGE: &str = "\
 cargo hyperscale — build a package crate into an artifact the chain admits
@@ -18,7 +18,9 @@ cargo hyperscale — build a package crate into an artifact the chain admits
     cargo hyperscale build [dir]  build, attach, and admit; writes the artifact
     cargo hyperscale check [dir]  the same verdict, without the write
 
-`dir` defaults to the current directory.
+`dir` defaults to the current directory. Pass `--protocol` to build under
+the gate genesis seeds a package through, which is the only one that
+admits a claim to totality.
 ";
 
 fn main() -> ExitCode {
@@ -82,8 +84,16 @@ fn relative(dir: &Path, sdk: &Path) -> PathBuf {
 
 fn run(args: &[String]) -> Result<String, BuildError> {
     let command = args.first().map(String::as_str);
+    let protocol = args.iter().any(|arg| arg == "--protocol");
+    let provenance = if protocol {
+        Provenance::Protocol
+    } else {
+        Provenance::Published
+    };
     let target = || -> PathBuf {
-        args.get(1)
+        args.iter()
+            .skip(1)
+            .find(|arg| !arg.starts_with("--"))
             .map_or_else(|| PathBuf::from("."), PathBuf::from)
     };
     match command {
@@ -104,12 +114,12 @@ fn run(args: &[String]) -> Result<String, BuildError> {
             ))
         }
         Some("build") => {
-            let path = build(&target())?;
+            let path = build(&target(), provenance)?;
             let bytes = std::fs::metadata(&path).map_or(0, |file| file.len());
             Ok(format!("wrote {} ({bytes} bytes)", path.display()))
         }
         Some("check") => {
-            let bytes = artifact(&target())?;
+            let bytes = artifact(&target(), provenance)?;
             Ok(format!(
                 "admitted ({} bytes, unwritten — `build` writes {})",
                 bytes.len(),

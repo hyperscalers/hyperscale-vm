@@ -211,6 +211,15 @@ impl Bucket {
     }
 }
 
+/// A non-fungible value edge: the instances it moves rather than an
+/// amount.
+///
+/// The same object, because a bucket is one thing — what separates the
+/// two kinds is the cell they cross as, which is the declaration's
+/// answer. Naming this in a signature is how a method says which kind it
+/// consumes.
+pub type NfBucket = Bucket;
+
 /// Issue `amount` of the resource this instance derives from `mark`.
 ///
 /// The one place value appears with no cell debited behind it, and it is
@@ -420,10 +429,34 @@ impl Slot<Amount> {
 pub struct Ordered<T>(core::marker::PhantomData<fn() -> T>);
 
 impl<T> Ordered<T> {
+    /// The sub-collection this role holds at `key`.
+    ///
+    /// A collection is named by its owner, its role and the material
+    /// folded into it, exactly as a keyed leaf is — so a family of
+    /// collections is one collection per key rather than a shape of its
+    /// own, and everything below reads the same under a key as without
+    /// one. A holder's instances per resource are the canonical case.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
+    pub fn of<K>(&self, key: K) -> Self {
+        let _ = key;
+        unimplemented!("{OFF_HOST}")
+    }
+
     /// The entry at one order key.
     #[must_use]
     pub fn at(&self, order: Amount) -> Entry<T> {
         let _ = order;
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// The whole order-key space, at most `cap` entries of it.
+    ///
+    /// `cap` bounds the entries execution may touch and must be a literal,
+    /// on the same terms [`Self::range`] states.
+    #[must_use]
+    pub fn all(&self, cap: u32) -> Interval<T> {
+        let _ = cap;
         unimplemented!("{OFF_HOST}")
     }
 
@@ -618,6 +651,42 @@ impl<T: Cellular> Interval<T> {
         #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
+
+    /// File the instances a bucket carries, each at the order it was
+    /// taken under, holding `value`.
+    ///
+    /// The filing is the kernel's, so a body hands the bucket over rather
+    /// than walking it: an instance's id is its order key, and no
+    /// accessor hands one back.
+    ///
+    /// One value for the whole set, so it crosses as the bytes the kernel
+    /// stores rather than as a leaf encoded per instance — which is also
+    /// what keeps a body filing a marker away from the allocator, and so
+    /// eligible for the total mark.
+    #[inline(always)]
+    pub fn put(&mut self, funds: Bucket, value: &[u8]) {
+        let _ = (&funds, value);
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::entry_put(self.handle, funds.into_handle(), value);
+        #[cfg(not(target_arch = "wasm32"))]
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// Take the named instances out, as the bucket they become.
+    ///
+    /// The removal and the edge are one operation, exactly as a debit and
+    /// its bucket are, so a body cannot hand on instances it left where
+    /// they were. An id the collection does not hold refuses here.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)] // the take consumes the ids it names
+    #[inline(always)]
+    pub fn take(&mut self, ids: Ids) -> Bucket {
+        let _ = &ids;
+        #[cfg(target_arch = "wasm32")]
+        return Bucket::held(crate::guest::entry_take(self.handle, ids.bytes()));
+        #[cfg(not(target_arch = "wasm32"))]
+        unimplemented!("{OFF_HOST}")
+    }
 }
 
 /// A 128-bit order key packed from a primary dimension over a tiebreaker.
@@ -696,6 +765,14 @@ pub struct Rule(pub Vec<u8>);
 #[derive(Clone, Debug, Default)]
 pub struct RoleSet(pub Vec<u8>);
 
+/// A set of non-fungible instance ids, as a contract signature names it.
+///
+/// Signed manifest content, carried in the framing a declared id list
+/// crosses in — so a method moving the ids it was given passes them
+/// straight through and reads none of them.
+#[derive(Clone, Debug, Default)]
+pub struct Ids(pub Vec<u8>);
+
 macro_rules! opaque_bytes {
     ($($ty:ident),*) => {
         $(
@@ -721,4 +798,4 @@ macro_rules! opaque_bytes {
     };
 }
 
-opaque_bytes!(Rule, RoleSet);
+opaque_bytes!(Rule, RoleSet, Ids);

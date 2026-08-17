@@ -231,6 +231,8 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         .unwrap_or_default();
     let variant = match name.as_str() {
         "Bucket" => quote!(Bucket),
+        "NfBucket" => quote!(NfBucket),
+        "Ids" => quote!(Ids),
         "u128" => quote!(U128),
         "u64" => quote!(U64),
         "Address" => quote!(Address),
@@ -240,8 +242,8 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         _ => {
             return Err(syn::Error::new(
                 ty.span(),
-                "a contract parameter must be one of `Bucket`, `u128`, `u64`, `Address`, or \
-                 bytes — these are the kinds a manifest can bind",
+                "a contract parameter must be one of `Bucket`, `NfBucket`, `Ids`, `u128`, \
+                 `u64`, `Address`, or bytes — these are the kinds a manifest can bind",
             ));
         }
     };
@@ -273,6 +275,7 @@ const OWN: &[&str] = &[
     "authorizing",
     "role_gated",
     "custodial",
+    "total",
 ];
 
 fn strip(attrs: &mut Vec<syn::Attribute>) {
@@ -290,8 +293,13 @@ enum Gate {
     /// One of the target's stored roles.
     RoleGated(TokenStream2),
     /// The target's rule and its possession of the badge a parameter
-    /// names.
-    Custodial(u32),
+    /// names: the field the rule is stored at, and the parameter's index.
+    Custodial {
+        /// The role of the state field holding the target's stored rule.
+        rule: u16,
+        /// The parameter naming the badge.
+        badge: u32,
+    },
 }
 
 /// The identity a `#[guarded]` method requires, as a tracer call.
@@ -405,12 +413,33 @@ fn parse_gate(
             ));
         }
         if attr.path().is_ident("custodial") {
-            let badge: syn::Ident = attr.parse_args()?;
+            let named = attr.parse_args_with(
+                syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
+            )?;
+            let [field, badge] = named.iter().collect::<Vec<_>>()[..] else {
+                return Err(syn::Error::new(
+                    attr.span(),
+                    "a custodial gate names the field its holder's stored rule lives in \
+                     and the parameter naming the badge: `#[custodial(auth, badge)]`",
+                ));
+            };
+            let rule = fields
+                .get(&field.to_string())
+                .map(|f| f.role)
+                .ok_or_else(|| {
+                    syn::Error::new(
+                        field.span(),
+                        "not a declared field of the component's state",
+                    )
+                })?;
             let index = params
                 .iter()
                 .position(|(p, _)| badge == p.as_str())
                 .ok_or_else(|| syn::Error::new(badge.span(), "not a parameter of this method"))?;
-            return Ok(Gate::Custodial(u32::try_from(index).unwrap_or(0)));
+            return Ok(Gate::Custodial {
+                rule,
+                badge: u32::try_from(index).unwrap_or(0),
+            });
         }
     }
     Ok(Gate::Public)
@@ -509,6 +538,15 @@ fn error_names(items: &[syn::Item]) -> Vec<String> {
         .collect()
 }
 
+/// Whether a method claims the total mark, which the publish gate then
+/// checks against the artifact the claim rides on.
+fn claims_total(method: &syn::ImplItemFn) -> bool {
+    method
+        .attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("total"))
+}
+
 /// Whether a method's return type carries an error arm, which is the whole
 /// of what its totality mark is.
 fn declines(method: &syn::ImplItemFn) -> bool {
@@ -568,7 +606,15 @@ fn lower_method(
     check_gate_shape(&gate, &lowered, method)?;
 
     let declining = declines(method);
-    let closure = emit::declaration(&lowered, &gate_calls(&gate), declining);
+    let total = claims_total(method);
+    if declining && total {
+        return Err(syn::Error::new(
+            method.sig.ident.span(),
+            "a method carrying an error arm can refuse, and a total method cannot: the \
+             two marks describe the same signature and only one of them is true",
+        ));
+    }
+    let closure = emit::declaration(&lowered, &gate_calls(&gate), declining, total);
     let declaration = quote!(
         .method(#published, &[#(#kinds),*], #closure)
     );
@@ -607,8 +653,34 @@ fn gate_calls(gate: &Gate) -> TokenStream2 {
             __t.authorizing();
         }),
         Gate::RoleGated(role) => quote!(__t.role_gated(#role);),
-        Gate::Custodial(index) => quote!({
-            let __badge = __t.arg::<::hyperscale_vm_sdk::Addr>(#index);
+        // A custody gate is three reads and none of them is the body's:
+        // the kernel judges the holder's stored rule and their possession
+        // of the badge before the export runs, so what the clauses do is
+        // provision the cells it reads. The last two are pinned to the
+        // protocol's own roles, keyed by exactly the expression the mint
+        // names — which is what ties the identity minted to the thing
+        // held.
+        Gate::Custodial { rule, badge } => quote!({
+            let __owner = __t.self_addr();
+            let __badge = __t.arg::<::hyperscale_vm_sdk::Addr>(#badge);
+            let __material = [__badge.clone().cast::<::hyperscale_vm_sdk::Opaque>()];
+            let __rule = __owner.child(::hyperscale_vm_sdk::RoleId(#rule), &[]);
+            __t.point(&__rule).read();
+            let __vault = __owner.child(::hyperscale_vm_sdk::VAULT, &__material);
+            __t.point(&__vault).read();
+            // One entry answers the whole question: possession is holding
+            // any instance at all.
+            let __lo = ::hyperscale_vm_sdk::sym::lit_u128(0);
+            let __hi = ::hyperscale_vm_sdk::sym::lit_u128(u128::MAX);
+            __t.range(
+                &__owner,
+                ::hyperscale_vm_sdk::NF_VAULT,
+                &__material,
+                &__lo,
+                &__hi,
+                1,
+            )
+            .read();
             __t.custodial(&__badge);
         }),
     }
@@ -652,19 +724,18 @@ fn check_gate_shape(
                  and it serializes role rewrites against concurrent sign-ins",
             ),
         },
-        Gate::Custodial(_) => match lowered.sites.as_slice() {
-            [rule, vault, holdings]
-                if rule.resource() == Some("read-cell")
-                    && vault.resource() == Some("read-cell")
-                    && holdings.resource() == Some("range-read") =>
-            {
+        Gate::Custodial { .. } => {
+            if lowered.sites.is_empty() {
                 Ok(())
+            } else {
+                refuse(
+                    "a custodial method declares three reads — its rule cell, the \
+                     badge-keyed vault and the badge-keyed holdings interval — and the \
+                     kernel makes all three before the export runs. The body has \
+                     nothing left to say, so it must be empty",
+                )
             }
-            _ => refuse(
-                "a custodial method declares three reads: its rule cell, the \
-                 badge-keyed vault, and the badge-keyed holdings interval",
-            ),
-        },
+        }
     }
 }
 
