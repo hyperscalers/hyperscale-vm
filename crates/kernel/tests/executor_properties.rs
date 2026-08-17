@@ -239,15 +239,15 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 Capability::Reserve { .. } => {
                     let _ = session.reserve_amount(rep);
                 }
-                Capability::RangeWrite { lo, hi, .. } => {
-                    let order = lo + (seed % (hi - lo + 1));
+                Capability::RangeWrite(interval) => {
+                    let order = interval.lo + (seed % (interval.hi - interval.lo + 1));
                     let _ = session.range_insert(rep, order, vec![id.0.0[0]]);
                     let count = session.range_count(rep).unwrap_or(0);
                     if count > 2 {
                         let _ = session.range_remove(rep, count - 1);
                     }
                 }
-                Capability::RangeRead { .. } => {
+                Capability::RangeRead(..) => {
                     let count = session.range_count(rep).unwrap_or(0);
                     for index in 0..count {
                         let _ = session.range_entry(rep, index);

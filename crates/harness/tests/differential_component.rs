@@ -193,8 +193,8 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Resour
         let rep = rep_where(caps, |c| {
             matches!(
                 (kind, c),
-                (ResourceKind::RangeRead, Capability::RangeRead { .. })
-                    | (ResourceKind::RangeWrite, Capability::RangeWrite { .. })
+                (ResourceKind::RangeRead, Capability::RangeRead(..))
+                    | (ResourceKind::RangeWrite, Capability::RangeWrite(..))
             )
         });
         (rep, kind)

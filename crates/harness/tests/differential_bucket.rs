@@ -921,7 +921,7 @@ fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
     let mut linker = Linker::<SessionHost>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let host = SessionHost(materialize(fx));
-    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite { .. }));
+    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite(..)));
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
@@ -936,7 +936,7 @@ fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
     // the collection as it was.
     let comp = RefComponent::decode(&bytes)?;
     let host = SessionHost(materialize(fx));
-    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite { .. }));
+    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite(..)));
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
     let args = [
@@ -953,7 +953,7 @@ fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
     assert_eq!(blessed, reference, "the lift diverged");
 
     let host = SessionHost(materialize(fx));
-    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite { .. }));
+    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite(..)));
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
     let args = [

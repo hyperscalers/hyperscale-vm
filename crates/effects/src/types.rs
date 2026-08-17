@@ -568,6 +568,28 @@ impl EffectSet {
             .get(&effect.target)
             .is_some_and(|modes| modes.contains(&effect.mode))
     }
+
+    /// The first point target this set claims both exclusively and
+    /// commutatively, if any.
+    ///
+    /// The two record differently — a receipt carries absolutes for the
+    /// one and movements for the other — so a set holding both on one
+    /// cell has no receipt to produce. Asked of the set rather than of a
+    /// clause list, because the set is where a target's modes are already
+    /// gathered.
+    #[must_use]
+    pub fn self_conflicting(&self) -> Option<SubstateKey> {
+        self.by_target.iter().find_map(|(target, modes)| {
+            let EffectTarget::Point(key) = target else {
+                return None;
+            };
+            let exclusive = modes.iter().any(|mode| mode.kind() == ModeKind::Write);
+            let commutative = modes
+                .iter()
+                .any(|mode| matches!(mode.kind(), ModeKind::Delta | ModeKind::Reserve));
+            (exclusive && commutative).then_some(*key)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -577,10 +599,10 @@ mod tests {
     use hyperscale_hbor::{assert_canonical, from_slice_with_depth};
 
     use super::{
-        Address, AddressClass, EdgeContent, Effect, EffectSet, EffectTarget, LocalKey,
-        MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH, Mode, ModeKind, NativeRole, RoleId, SchemeId,
-        SubstateKey, Value, child_key, compatible, component_address, config_hash, native_address,
-        package_address, principal_address, resource_address, to_vec,
+        Address, AddressClass, CollectionId, EdgeContent, Effect, EffectSet, EffectTarget,
+        LocalKey, MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH, Mode, ModeKind, NativeRole, RoleId,
+        SchemeId, SubstateKey, Value, child_key, compatible, component_address, config_hash,
+        native_address, package_address, principal_address, resource_address, to_vec,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::metadata::PackageHash;
@@ -737,6 +759,64 @@ mod tests {
             &[vec![9]],
         );
         assert_ne!(a.local, b.local);
+    }
+
+    #[test]
+    fn a_self_conflict_is_an_exclusive_beside_a_commutative() {
+        let cell = SubstateKey {
+            owner: Address::new([1; 31], AddressClass::Component),
+            local: LocalKey([2; 16]),
+        };
+        let set_of = |modes: &[Mode]| {
+            let mut set = EffectSet::new();
+            for mode in modes {
+                set.insert(Effect {
+                    target: EffectTarget::Point(cell),
+                    mode: *mode,
+                })
+                .unwrap();
+            }
+            set
+        };
+
+        for pair in [
+            [Mode::Write, Mode::Delta],
+            [Mode::Write, Mode::Reserve { amount: 1 }],
+        ] {
+            assert_eq!(set_of(&pair).self_conflicting(), Some(cell), "{pair:?}");
+        }
+
+        // Everything else composes: the commutative modes with each
+        // other, and reads with anything — a read is not an absolute, so
+        // there is nothing for a movement to disagree with.
+        for modes in [
+            &[Mode::Delta, Mode::Reserve { amount: 1 }][..],
+            &[Mode::Read, Mode::Delta],
+            &[Mode::Locked, Mode::Reserve { amount: 1 }],
+            &[Mode::Read, Mode::Write],
+            &[Mode::Write],
+        ] {
+            assert_eq!(set_of(modes).self_conflicting(), None, "{modes:?}");
+        }
+
+        // A collection target is never one: it holds no amount, so the
+        // pairing the check is about cannot arise.
+        let mut ranges = EffectSet::new();
+        for mode in [Mode::Write, Mode::Delta] {
+            ranges
+                .insert(Effect {
+                    target: EffectTarget::Range {
+                        owner: Address::new([1; 31], AddressClass::Component),
+                        collection: CollectionId([3; 16]),
+                        lo: 0,
+                        hi: 9,
+                        cap: 4,
+                    },
+                    mode,
+                })
+                .unwrap();
+        }
+        assert_eq!(ranges.self_conflicting(), None);
     }
 
     #[test]

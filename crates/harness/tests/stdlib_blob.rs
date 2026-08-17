@@ -23,7 +23,7 @@ use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, Event, Held, KernelSession, MemoryStore, Movement, Outcome,
+    Capability, EnvInputs, Event, Held, Interval, KernelSession, MemoryStore, Movement, Outcome,
     OverlayStore, Receipt, TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
@@ -455,13 +455,13 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     let host = entering(SessionHost(lottery_session()), LOTTERY);
     let entry_rep = rep_of(
         &host.0,
-        &Capability::RangeWrite {
+        &Capability::RangeWrite(Interval {
             owner: LOTTERY,
             collection: ticket_collection(),
             lo: ticket_order(),
             hi: ticket_order(),
             cap: 1,
-        },
+        }),
     );
     let pot_rep = rep_of(
         &host.0,
@@ -499,13 +499,13 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     let outcome_rep = rep_of(&host.0, &Capability::Write(draw_key()));
     let round_rep = rep_of(
         &host.0,
-        &Capability::RangeRead {
+        &Capability::RangeRead(Interval {
             owner: LOTTERY,
             collection: ticket_collection(),
             lo: 0,
             hi: u128::MAX,
             cap: lottery::ROUND_CAP,
-        },
+        }),
     );
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
@@ -529,13 +529,13 @@ fn reference_round() -> Result<(Receipt, u64)> {
     let host = entering(SessionHost(lottery_session()), LOTTERY);
     let entry_rep = rep_of(
         &host.0,
-        &Capability::RangeWrite {
+        &Capability::RangeWrite(Interval {
             owner: LOTTERY,
             collection: ticket_collection(),
             lo: ticket_order(),
             hi: ticket_order(),
             cap: 1,
-        },
+        }),
     );
     let pot_rep = rep_of(
         &host.0,
@@ -562,13 +562,13 @@ fn reference_round() -> Result<(Receipt, u64)> {
     let outcome_rep = rep_of(&host.0, &Capability::Write(draw_key()));
     let round_rep = rep_of(
         &host.0,
-        &Capability::RangeRead {
+        &Capability::RangeRead(Interval {
             owner: LOTTERY,
             collection: ticket_collection(),
             lo: 0,
             hi: u128::MAX,
             cap: lottery::ROUND_CAP,
-        },
+        }),
     );
     let mut instance =
         RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;

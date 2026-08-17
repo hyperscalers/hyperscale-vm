@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
     AbortReason, Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, ISSUER_REP,
-    Mode, ModeKind, SubstateKey, cell_ids,
+    Mode, SubstateKey, cell_ids,
 };
 
 use crate::ledger::AmountLedger;
@@ -30,27 +30,30 @@ use crate::store::{Access, StoreError, WorkingStore};
 
 /// The ordered-collection interval a range handle names.
 ///
-/// The two range capabilities carry identical fields and differ only in
-/// what they permit, so what an operation needs from either is this —
-/// which leaves the mode where it belongs, in whether the handle
-/// resolves at all.
+/// The two range capabilities carry this and differ only in what they
+/// permit, which leaves the mode where it belongs — in whether the
+/// handle resolves at all, rather than in a second copy of the bounds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Interval {
+pub struct Interval {
     /// The collection's owner.
-    owner: Address,
+    pub owner: Address,
     /// The collection's identity under the owner.
-    collection: CollectionId,
+    pub collection: CollectionId,
     /// Inclusive lower order-key bound.
-    lo: u128,
+    pub lo: u128,
     /// Inclusive upper order-key bound.
-    hi: u128,
-    /// The declared entry cap.
-    cap: u32,
+    pub hi: u128,
+    /// The declared entry cap: a scan truncates at it, and it bounds the
+    /// distinct entries a write interval may change — separately, since a
+    /// read-modify-write reaches its whole page and an insert adds
+    /// entries no scan returned.
+    pub cap: u32,
 }
 
 impl Interval {
     /// Whether `order` falls inside the declared bounds.
-    const fn holds(&self, order: u128) -> bool {
+    #[must_use]
+    pub const fn holds(&self, order: u128) -> bool {
         self.lo <= order && order <= self.hi
     }
 }
@@ -77,34 +80,9 @@ pub enum Capability {
         amount: u128,
     },
     /// A read interval of an ordered collection.
-    RangeRead {
-        /// The collection's owner.
-        owner: Address,
-        /// The collection's identity under the owner.
-        collection: CollectionId,
-        /// Inclusive lower order-key bound.
-        lo: u128,
-        /// Inclusive upper order-key bound.
-        hi: u128,
-        /// The declared entry cap.
-        cap: u32,
-    },
+    RangeRead(Interval),
     /// A read-modify-write interval of an ordered collection.
-    RangeWrite {
-        /// The collection's owner.
-        owner: Address,
-        /// The collection's identity under the owner.
-        collection: CollectionId,
-        /// Inclusive lower order-key bound.
-        lo: u128,
-        /// Inclusive upper order-key bound.
-        hi: u128,
-        /// The declared entry cap: a scan truncates at it, and it bounds
-        /// the distinct entries this interval may change — separately,
-        /// since a read-modify-write reaches its whole page and an insert
-        /// adds entries no scan returned.
-        cap: u32,
-    },
+    RangeWrite(Interval),
 }
 
 /// What a bucket carries.
@@ -638,7 +616,13 @@ impl KernelSession {
         for effect in ordered {
             table.push(capability_for(&store, *effect)?);
         }
-        reject_self_conflicts(declared)?;
+        // One transaction may not declare both an exclusive write and a
+        // commutative mode on the same cell: the receipt records
+        // absolutes for the one and movements for the other, and they
+        // cannot compose.
+        if let Some(key) = declared.self_conflicting() {
+            return Err(MaterializeError::SelfConflicting(key));
+        }
 
         let verdicts = store.judge_and_hold(&reservations)?;
         for ((verdict_tx, key), feasibility) in verdicts {
@@ -1231,26 +1215,7 @@ impl KernelSession {
     /// an index, which collection a scan belongs to.
     fn interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
         match self.capability(rep)? {
-            Capability::RangeRead {
-                owner,
-                collection,
-                lo,
-                hi,
-                cap,
-            }
-            | Capability::RangeWrite {
-                owner,
-                collection,
-                lo,
-                hi,
-                cap,
-            } => Ok(Interval {
-                owner,
-                collection,
-                lo,
-                hi,
-                cap,
-            }),
+            Capability::RangeRead(interval) | Capability::RangeWrite(interval) => Ok(interval),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
     }
@@ -1263,19 +1228,7 @@ impl KernelSession {
     /// other way to reach the interval it would change.
     fn write_interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
         match self.capability(rep)? {
-            Capability::RangeWrite {
-                owner,
-                collection,
-                lo,
-                hi,
-                cap,
-            } => Ok(Interval {
-                owner,
-                collection,
-                lo,
-                hi,
-                cap,
-            }),
+            Capability::RangeWrite(interval) => Ok(interval),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
     }
@@ -1541,22 +1494,22 @@ impl KernelSession {
         &mut self,
     ) -> Result<Result<BTreeMap<SubstateKey, u128>, Outcome>, FinishError> {
         let mut settles = BTreeMap::new();
-        for capability in &self.table.clone() {
-            if let Capability::Reserve { key, .. } = capability {
-                if settles.contains_key(key) {
+        for index in 0..self.table.len() {
+            if let Capability::Reserve { key, .. } = self.table[index] {
+                if settles.contains_key(&key) {
                     continue;
                 }
                 // A remote reservation settles at its owning shard; here
                 // the hold releases and the receipt keeps the amount as
                 // the outbound record.
                 let settled = if self.locality.is_local(key.owner) {
-                    self.store.settle(*key, self.tx)
+                    self.store.settle(key, self.tx)
                 } else {
-                    self.store.release(*key, self.tx)
+                    self.store.release(key, self.tx)
                 };
                 match settled {
                     Ok(amount) => {
-                        settles.insert(*key, amount);
+                        settles.insert(key, amount);
                     }
                     // An exclusive write earlier in this group drained the
                     // cell below the reservation it still covers. The
@@ -1565,9 +1518,9 @@ impl KernelSession {
                     Err(StoreError::HeldExceedsCommitted(_)) => {
                         let amount = self
                             .store
-                            .held_reservation(*key, self.tx)
+                            .held_reservation(key, self.tx)
                             .unwrap_or_default();
-                        return Ok(Err(Outcome::Infeasible { key: *key, amount }));
+                        return Ok(Err(Outcome::Infeasible { key, amount }));
                     }
                     Err(defect) => match declaration_defect(&defect) {
                         Some(outcome) => return Ok(Err(outcome)),
@@ -1799,29 +1752,39 @@ fn declaration_defect(defect: &StoreError) -> Option<Outcome> {
     }
 }
 
-/// One transaction may not declare both an exclusive write and a
-/// commutative mode on the same cell: the receipt records absolutes for
-/// the one and movements for the other, and they cannot compose.
-fn reject_self_conflicts(declared: &EffectSet) -> Result<(), MaterializeError> {
-    let effects: Vec<Effect> = declared.iter().collect();
-    for (index, a) in effects.iter().enumerate() {
-        for b in &effects[index + 1..] {
-            if let (EffectTarget::Point(key), EffectTarget::Point(other)) = (a.target, b.target)
-                && key == other
-            {
-                let kinds = (a.mode.kind(), b.mode.kind());
-                let exclusive_and_commutative = matches!(
-                    kinds,
-                    (ModeKind::Write, ModeKind::Delta | ModeKind::Reserve)
-                        | (ModeKind::Delta | ModeKind::Reserve, ModeKind::Write)
-                );
-                if exclusive_and_commutative {
-                    return Err(MaterializeError::SelfConflicting(key));
-                }
-            }
-        }
+/// The interval a collection target names; `None` for a point key.
+///
+/// An entry is the width-one interval at its order — the same
+/// normalization the oracle's coverage walk applies — so a declared entry
+/// and a declared range reach the store through one shape.
+const fn interval_of(target: EffectTarget) -> Option<Interval> {
+    match target {
+        EffectTarget::Point(_) => None,
+        EffectTarget::Entry {
+            owner,
+            collection,
+            order,
+        } => Some(Interval {
+            owner,
+            collection,
+            lo: order,
+            hi: order,
+            cap: 1,
+        }),
+        EffectTarget::Range {
+            owner,
+            collection,
+            lo,
+            hi,
+            cap,
+        } => Some(Interval {
+            owner,
+            collection,
+            lo,
+            hi,
+            cap,
+        }),
     }
-    Ok(())
 }
 
 /// The capability form of one declared effect: the world-design mapping.
@@ -1857,66 +1820,15 @@ fn capability_for(store: &OverlayStore, effect: Effect) -> Result<Capability, Ma
             key: locked_checked(key)?,
             amount,
         }),
-        (
-            EffectTarget::Entry {
-                owner,
-                collection,
-                order,
-            },
-            Mode::Read,
-        ) => Ok(Capability::RangeRead {
-            owner,
-            collection,
-            lo: order,
-            hi: order,
-            cap: 1,
-        }),
-        (
-            EffectTarget::Entry {
-                owner,
-                collection,
-                order,
-            },
-            Mode::Write,
-        ) => Ok(Capability::RangeWrite {
-            owner,
-            collection,
-            lo: order,
-            hi: order,
-            cap: 1,
-        }),
-        (
-            EffectTarget::Range {
-                owner,
-                collection,
-                lo,
-                hi,
-                cap,
-            },
-            Mode::Read,
-        ) => Ok(Capability::RangeRead {
-            owner,
-            collection,
-            lo,
-            hi,
-            cap,
-        }),
-        (
-            EffectTarget::Range {
-                owner,
-                collection,
-                lo,
-                hi,
-                cap,
-            },
-            Mode::Write,
-        ) => Ok(Capability::RangeWrite {
-            owner,
-            collection,
-            lo,
-            hi,
-            cap,
-        }),
+        // Point targets are spoken for above, so what is left is a
+        // collection one — and the two spell the same interval, the mode
+        // choosing only which capability carries it.
+        (target, mode @ (Mode::Read | Mode::Write)) => interval_of(target)
+            .map(|interval| match mode {
+                Mode::Write => Capability::RangeWrite(interval),
+                _ => Capability::RangeRead(interval),
+            })
+            .ok_or_else(|| MaterializeError::Unsupported(Box::new(effect))),
         _ => Err(MaterializeError::Unsupported(Box::new(effect))),
     }
 }
