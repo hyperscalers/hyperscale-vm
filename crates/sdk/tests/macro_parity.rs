@@ -134,27 +134,27 @@ mod shapes {
             let mut vault = self.vaults.at(a);
             // `ids` itself is a term, and ranging over it would be a
             // `for-each`; the length is not, so this is a plain loop.
-            for id in ids.len()..1 {
-                vault.add(u128::from(id as u64));
+            for _id in ids.len()..1 {
+                vault.declared();
             }
         }
 
         #[allow(clippy::needless_pass_by_value)] // a contract consumes its arguments
         pub fn once(&mut self, a: Address, _ids: Vec<u8>) {
             let mut vault = self.vaults.at(a);
-            vault.add(0);
+            vault.declared();
         }
 
         pub fn branched(&mut self, flag: u64, a: Address, b: Address) {
             match flag {
-                0 => self.vaults.at(a).add(0),
-                _ => self.vaults.at(b).add(0),
+                0 => self.vaults.at(a).declared(),
+                _ => self.vaults.at(b).declared(),
             }
         }
 
         pub fn straight(&mut self, _flag: u64, a: Address, b: Address) {
-            self.vaults.at(a).add(0);
-            self.vaults.at(b).add(0);
+            self.vaults.at(a).declared();
+            self.vaults.at(b).declared();
         }
 
         pub fn asserted(&mut self, a: Address) {
@@ -172,13 +172,13 @@ mod shapes {
 
         pub fn guarded(&mut self, flag: u64, a: Address) {
             let 0 = flag else {
-                self.vaults.at(a).add(0);
+                self.vaults.at(a).declared();
                 return;
             };
         }
 
         pub fn plain(&mut self, _flag: u64, a: Address) {
-            self.vaults.at(a).add(0);
+            self.vaults.at(a).declared();
         }
     }
 }
@@ -302,12 +302,13 @@ mod environment {
         pub fn stamp(&mut self, holder: Address) {
             let digest = hash(&randomness());
             let drawn = u128::from(digest[0]);
-            self.vaults.at(holder).add(drawn);
+            let _ = drawn;
+            self.vaults.at(holder).declared();
             self.seen.set(clock_ms());
         }
 
         pub fn plain(&mut self, holder: Address) {
-            self.vaults.at(holder).add(0);
+            self.vaults.at(holder).declared();
             self.seen.set(0);
         }
     }
@@ -336,7 +337,7 @@ fn reading_the_environment_declares_nothing() {
 /// the other.
 #[blueprint]
 mod issuer {
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, issued};
+    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, issue};
 
     #[state]
     struct Issuer {
@@ -347,8 +348,10 @@ mod issuer {
     impl Issuer {
         /// Take a delegation and hand back units at par.
         pub fn stake(&mut self, funds: Bucket) -> Bucket {
-            self.staked.set(funds.amount());
-            Bucket::of(issued(b""), funds.amount())
+            let staked = funds.amount();
+            self.staked.set(staked);
+            let _ = funds;
+            issue(b"", staked)
         }
 
         /// The operator surface, gated on the badge the pool issues.

@@ -137,48 +137,68 @@ pub use crate::guest::Handle;
 /// evaluates, and `#[blueprint]` binds one — but only where a body
 /// genuinely reads it, so an edge that is merely moved or returned costs
 /// nothing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Clone, Copy, Debug, PartialEq, Eq))]
 pub struct Bucket {
     #[cfg(not(target_arch = "wasm32"))]
     resource: Address,
-    amount: Amount,
+    #[cfg(target_arch = "wasm32")]
+    handle: crate::guest::kernel::state::Bucket,
 }
 
 impl Bucket {
-    /// Mint a value edge carrying `resource`.
+    /// The edge an export was handed, under the name its author gave it.
     ///
-    /// The explicit spelling for an edge a method produces rather than
-    /// moves; `#[blueprint]` reads the resource out of the first argument
-    /// and records it as a declared output.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[must_use]
-    pub const fn of(resource: Address, amount: Amount) -> Self {
-        Self { resource, amount }
-    }
-
-    /// The edge an export hands back, carrying `amount`.
-    ///
-    /// Called by generated code, never by an author: which resource an
-    /// edge carries is what the signature's outputs say, and the
-    /// declaration is where the author already said it.
+    /// Called by generated code, never by an author: the only ways to
+    /// hold value are to be handed some, to take some from a cell the
+    /// method declared, and to issue some, and none of them is a
+    /// constructor a body can reach.
     #[cfg(target_arch = "wasm32")]
     #[must_use]
-    pub const fn carrying(amount: Amount) -> Self {
-        Self { amount }
+    pub const fn held(handle: crate::guest::kernel::state::Bucket) -> Self {
+        Self { handle }
     }
 
-    /// The resource this edge carries.
+    /// The handle the kernel holds this value behind.
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub fn into_handle(self) -> crate::guest::kernel::state::Bucket {
+        self.handle
+    }
+
+    /// The resource this edge carries, as the declaration names it.
     #[cfg(not(target_arch = "wasm32"))]
     #[must_use]
     pub const fn resource(&self) -> Address {
         self.resource
     }
 
-    /// The amount in flight.
+    /// How much is in hand.
+    ///
+    /// A borrow of the handle, so asking moves nothing. A body needs it
+    /// wherever its own arithmetic turns on what it was paid — a curve, a
+    /// budget, a receipt — and it is the one question about value that
+    /// cannot produce any.
     #[must_use]
-    pub const fn amount(&self) -> Amount {
-        self.amount
+    pub fn amount(&self) -> Amount {
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::bucket_amount(&self.handle);
+        #[cfg(not(target_arch = "wasm32"))]
+        unimplemented!("{OFF_HOST}")
     }
+}
+
+/// Issue `amount` of the resource this instance derives from `mark`.
+///
+/// The one place value appears with no cell debited behind it, and it is
+/// the instance's own resource by construction — `mark` separates one of
+/// its resources from another exactly as [`issued`] derives an address
+/// from one. The authority is a handle the kernel grants against this
+/// method's declared outputs, so a body that never said it produces what
+/// it issues has none.
+#[must_use]
+pub fn issue(mark: &[u8], amount: Amount) -> Bucket {
+    let _ = (mark, amount);
+    unimplemented!("{OFF_HOST}")
 }
 
 /// A permanently locked configuration leaf.
@@ -316,43 +336,57 @@ impl<T: Cellular> Slot<T> {
 
 #[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
 impl Slot<Amount> {
-    /// A commutative credit; no declared amount, so it commutes with every
-    /// other movement on the same cell.
+    /// Move value into the cell, consuming the bucket.
+    ///
+    /// What lands is exactly what crossed: the body names no amount, so
+    /// there is no second number for the credit to disagree with.
     #[inline(always)]
-    pub fn add(&mut self, amount: Amount) {
-        let _ = amount;
+    pub fn put(&mut self, funds: Bucket) {
+        let _ = &funds;
         #[cfg(target_arch = "wasm32")]
-        return crate::guest::delta_add(self.handle, amount);
+        return crate::guest::cell_put(self.handle, funds.into_handle());
         #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 
-    /// A commutative debit.
-    #[inline(always)]
-    pub fn sub(&mut self, amount: Amount) {
-        let _ = amount;
-        #[cfg(target_arch = "wasm32")]
-        return crate::guest::delta_sub(self.handle, amount);
-        #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
-    }
-
-    /// A conditional decrement, judged feasible against the declared
-    /// amount, yielding the value edge it moved.
+    /// Move value out of the cell, as the bucket it becomes.
     ///
-    /// The declared amount is what admission judged and the kernel
-    /// granted before this body ran, so the guest reads the reservation
-    /// rather than performing one — a reserve handle is already the
-    /// answer.
-    ///
-    /// No guest body, and not for the reason the collection accessors
-    /// have none: what this yields is a value edge, which is an
-    /// authoring type. `#[blueprint]` rewrites the call to
-    /// [`crate::guest::granted`], whose answer is the amount the edge
-    /// carries and the whole of what crosses the boundary.
+    /// The debit and the value now in hand are one operation, so a body
+    /// cannot debit one number and hand back another.
     #[must_use]
+    #[inline(always)]
+    pub fn take(&mut self, amount: Amount) -> Bucket {
+        let _ = amount;
+        #[cfg(target_arch = "wasm32")]
+        return Bucket::held(crate::guest::cell_take(self.handle, amount));
+        #[cfg(not(target_arch = "wasm32"))]
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// Declare a movement on this cell without making one.
+    ///
+    /// A method whose declaration has to cover a cell it does not always
+    /// reach — a deposit that lands in the claims cell when the vault
+    /// refuses it — has no value to move on the path that does not. The
+    /// clause is what the kernel provisions and what a caller routes on,
+    /// so it is stated here and exercised elsewhere; the handle is never
+    /// opened, because there is nothing to do with it.
+    #[inline(always)]
+    pub const fn declared(&mut self) {}
+
+    /// Take the reservation this method declared, as the value it grants.
+    ///
+    /// Feasibility was judged and the hold taken before this body ran, so
+    /// the grant is the bucket and there is no amount to name. Once per
+    /// reservation: the kernel refuses a second take of one grant, where
+    /// the read this replaces answered every time it was asked.
+    #[must_use]
+    #[inline(always)]
     pub fn reserve(&mut self, amount: Amount) -> Bucket {
         let _ = amount;
+        #[cfg(target_arch = "wasm32")]
+        return Bucket::held(crate::guest::reserve_take(self.handle));
+        #[cfg(not(target_arch = "wasm32"))]
         unimplemented!("{OFF_HOST}")
     }
 }

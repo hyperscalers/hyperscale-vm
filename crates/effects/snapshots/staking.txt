@@ -286,6 +286,7 @@ PackageMetadata {
                 Bucket(
                     0,
                 ),
+                Issuer,
             ],
             calls: [],
         },

@@ -70,14 +70,13 @@ fn value_shape(
         }
     };
     match need {
-        // A bucket crosses as its amount alone, at the kernel's cell
-        // width.
-        // Both cross at the kernel's own 128-bit cell width: an edge's
-        // amount because that is what an amount is, an order key whatever
-        // the logical key it was derived from.
-        Need::Amount(_) | Need::Derived(Term::OrderKey { .. }) => Shape::Cell(Box::new(
-            syn::parse_quote!(::hyperscale_vm_sdk::state::Amount),
-        )),
+        // A value edge crosses as the handle the kernel holds it behind.
+        Need::Amount(_) => Shape::Bucket,
+        // An order key crosses at the kernel's own 128-bit cell width,
+        // whatever the logical key it was derived from.
+        Need::Derived(Term::OrderKey { .. }) => Shape::Cell(Box::new(syn::parse_quote!(
+            ::hyperscale_vm_sdk::state::Amount
+        ))),
         // A resource is an address however it was derived.
         Need::Derived(Term::SelfResource(_) | Term::ResourceOf(_)) => Shape::Address,
         Need::Derived(Term::Arg(index)) => params
@@ -106,6 +105,7 @@ fn param_ident(index: u32, params: &[(String, syn::Type)]) -> syn::Ident {
 /// is judged against at publish; a body that returns `Err` on it aborts
 /// its transaction as a declared refusal rather than as a defect, so the
 /// arm is threaded out through the code the package's error table names.
+#[allow(clippy::too_many_lines)] // one pass: parameters, prologue, body, result
 pub fn method(
     published: &str,
     lowered: &Lowered,
@@ -116,7 +116,7 @@ pub fn method(
     let mut export = Export {
         name: published.to_owned(),
         params: Vec::new(),
-        returns: lowered.returns,
+        outputs: lowered.outputs.len(),
         declines,
     };
     let mut signature = Vec::new();
@@ -152,16 +152,14 @@ pub fn method(
         });
         let ident = value_ident(position);
         // A value edge is rebuilt under the name the author gave it, so
-        // the body reads it as written. Its amount is what crossed; its
-        // resource is the declaration's, and a body that reads one binds
-        // it separately.
+        // the body reads it as written. What crosses is the handle the
+        // kernel holds the value behind; its resource is the
+        // declaration's, and a body that reads one binds it separately.
         if let Need::Amount(param) = need {
             let name = param_ident(*param, params);
-            signature.push(quote!(#ident: ::std::vec::Vec<u8>));
+            signature.push(quote!(#ident: KernelBucket));
             prologue.push(quote!(
-                let #name = ::hyperscale_vm_sdk::state::Bucket::carrying(
-                    ::hyperscale_vm_sdk::state::Cellular::from_cell(&#ident),
-                );
+                let #name = ::hyperscale_vm_sdk::state::Bucket::held(#ident);
             ));
             continue;
         }
@@ -186,19 +184,41 @@ pub fn method(
                         ::hyperscale_vm_sdk::state::Cellular::from_cell(&#ident);
                 ));
             }
-            Shape::Handle(_) => unreachable!("a value binding is never a capability"),
+            Shape::Handle(_) | Shape::Bucket | Shape::Issuer => {
+                unreachable!("a value binding is never a handle")
+            }
         }
+    }
+
+    // The grant is a borrow for the call, exactly as a capability is, and
+    // it sits after the handles so the binding's order is the export's.
+    if lowered.issues {
+        export.params.push(Param {
+            name: "issuer".to_owned(),
+            shape: Shape::Issuer,
+        });
+        signature.push(quote!(__issuer_handle: &Issuer));
+        prologue.push(quote!(let __issuer = __issuer_handle.handle();));
     }
 
     let name = rust_name(published);
     let body = &lowered.body;
     let tail = &lowered.result;
-    let (result, outcome) = match (lowered.returns, declines) {
+    let edges = lowered.outputs.len();
+    let edge_type = match edges {
+        0 => quote!(()),
+        1 => quote!(KernelBucket),
+        n => {
+            let each = std::iter::repeat_n(quote!(KernelBucket), n);
+            quote!((#(#each),*))
+        }
+    };
+    let (result, outcome) = match (edges > 0, declines) {
         (true, true) => (
-            quote!(::core::result::Result<::std::vec::Vec<u8>, u32>),
+            quote!(::core::result::Result<#edge_type, u32>),
             quote!(::core::result::Result::Ok(#tail)),
         ),
-        (true, false) => (quote!(::std::vec::Vec<u8>), quote!(#tail)),
+        (true, false) => (edge_type, quote!(#tail)),
         (false, true) => (
             quote!(::core::result::Result<(), u32>),
             quote!(::core::result::Result::Ok(())),

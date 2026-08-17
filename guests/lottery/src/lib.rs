@@ -58,7 +58,7 @@ pub mod lottery {
             // hash and a hash names no winner: the draw has to be able to
             // say who it picked, not merely which slot.
             self.tickets.at(who).set(who.to_bytes().to_vec());
-            self.vaults.at(funds.resource()).add(funds.amount());
+            self.vaults.at(funds.resource()).put(funds);
             Entered::emit(&who.to_bytes());
         }
 

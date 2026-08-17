@@ -32,7 +32,10 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     let param = |op: Op| has(op).and_then(|(_, p)| p.clone());
     let nothing = quote!();
 
-    if has(Op::Set).is_some() {
+    // The same order the resource derivation reads: an assignment or a
+    // read makes the mode exclusive, and a movement without either
+    // commutes.
+    if has(Op::Set).is_some() || (has(Op::Move).is_some() && has(Op::Get).is_some()) {
         Some((nothing, quote!(.write())))
     } else if has(Op::Get).is_some() {
         Some((nothing, quote!(.read())))
@@ -42,7 +45,7 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
             quote!(let __param = #amount.cast::<::hyperscale_vm_sdk::Amount>();),
             quote!(.reserve(&__param)),
         ))
-    } else if has(Op::Delta).is_some() {
+    } else if has(Op::Move).is_some() {
         Some((nothing, quote!(.delta())))
     } else if has(Op::Locked).is_some() {
         Some((nothing, quote!(.locked())))
@@ -184,6 +187,9 @@ pub fn declaration(lowered: &Lowered, gate: &TokenStream, declines: bool) -> Tok
             quote!(__t.bind_derived(&#term);)
         }
     });
+    // The grant binds after the values, which is where the export takes
+    // it: the binding's order is the export's parameter order.
+    let issuer = lowered.issues.then(|| quote!(__t.bind_issuer();));
     let fallible = declines.then(|| quote!(__t.fallible();));
     quote!(
         |__t: &mut ::hyperscale_vm_sdk::Trace| {
@@ -193,6 +199,7 @@ pub fn declaration(lowered: &Lowered, gate: &TokenStream, declines: bool) -> Tok
             #(#nodes)*
             #(#outputs)*
             #(#values)*
+            #issuer
         }
     )
 }

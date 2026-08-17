@@ -228,6 +228,19 @@ fn lifted(values: &[CVal]) -> Invoked {
     match values {
         [] => Invoked::Returned(None),
         [CVal::Bytes(bytes)] => Invoked::Returned(Some(bytes.clone())),
+        // Every value is an edge, or the shape is one the convention
+        // does not fix.
+        edges if !edges.is_empty() && edges.iter().all(|v| matches!(v, CVal::Own(_))) => {
+            Invoked::Produced(
+                edges
+                    .iter()
+                    .map(|v| match v {
+                        CVal::Own(rep) => *rep,
+                        _ => unreachable!("every value is an owned edge"),
+                    })
+                    .collect(),
+            )
+        }
         [CVal::Declined(code)] => Invoked::Declined(*code),
         _ => Invoked::Aborted(AbortReason::BadReturnShape),
     }

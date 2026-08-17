@@ -146,16 +146,20 @@ impl Site {
                 | Target::KeyedEntry { .. }
                 | Target::Sweep { .. }
         );
-        Some(match (interval, has(Op::Set), has(Op::Get)) {
+        let (moves, writes, reads) = (has(Op::Move), has(Op::Set), has(Op::Get));
+        Some(match (interval, writes || moves, reads) {
             (true, true, _) => "range-write",
             (true, false, true) => "range-read",
+            // A body that only moves value declares a commutative
+            // movement; one that also reads the balance, or assigns it,
+            // needs the exclusivity a read-modify-write has. The mode is
+            // what the body needs rather than which word it typed.
+            (false, true, _) if moves && !writes && !reads => "delta-cell",
             (false, true, _) => "write-cell",
             (false, false, true) => "read-cell",
             (_, false, false) => {
                 if has(Op::Reserve) {
                     "reserve-cell"
-                } else if has(Op::Delta) {
-                    "delta-cell"
                 } else if has(Op::Locked) {
                     "locked-cell"
                 } else {
@@ -228,6 +232,10 @@ pub struct Lowered {
     pub values: Vec<Need>,
     /// How many fresh ids the body draws.
     pub fresh: usize,
+    /// Whether the body issues, and so whether the export takes the
+    /// grant. Set by the one call that can produce value with no cell
+    /// behind it.
+    pub issues: bool,
     /// The rewritten statements, executing against materialized handles.
     pub body: TokenStream,
     /// The tail that turns what the body computed into the byte list the
@@ -453,7 +461,7 @@ impl<'a> Lowerer<'a> {
                     if let Val::Produced(term) = &eval.val {
                         outputs.push(term.clone());
                         let code = self.value(eval.code);
-                        codes.push(quote!(#code.amount()));
+                        codes.push(code);
                     }
                 }
                 (outputs, codes)
@@ -466,6 +474,12 @@ impl<'a> Lowerer<'a> {
                 .args
                 .first()
                 .map_or_else(|| (vec![], vec![]), |inner| self.returned(inner)),
+            // The refusal itself, which produces nothing. Reached from an
+            // early `return Err(..)` as well as from a tail, and neither
+            // carries an edge.
+            syn::Expr::Call(call) if free_call_name(call).as_deref() == Some("Err") => {
+                (vec![], vec![])
+            }
             other => {
                 let eval = self.expr(other);
                 #[allow(clippy::single_match_else)] // the arms are two different returns
@@ -473,14 +487,18 @@ impl<'a> Lowerer<'a> {
                     Val::Produced(term) => {
                         let term = term.clone();
                         let code = self.value(eval.code);
-                        (vec![term], vec![quote!(#code.amount())])
+                        (vec![term], vec![code])
                     }
                     _ => {
-                        // A method returning something that is not an edge
-                        // still returns it: the convention is one byte
-                        // list, so the value crosses as its cell.
+                        // A method's results are its edges: what an export
+                        // hands back is value the kernel takes ownership
+                        // of, and an ordinary value has no shape there.
+                        // The declaration still stands — it produces no
+                        // edge, which is the truth — so this refuses the
+                        // guest half and not the package.
                         let code = self.value(eval.code);
-                        (vec![], vec![quote!(#code)])
+                        self.refuse("a method returning a value that is not a value edge");
+                        (vec![], vec![code])
                     }
                 }
             }
@@ -555,14 +573,12 @@ impl<'a> Lowerer<'a> {
             return;
         };
         let compatible = match op {
-            Op::Get | Op::Set => entry
+            // A movement sits beside a read: together they are the
+            // exclusive mode, which is what the site resolves to.
+            Op::Get | Op::Set | Op::Move => entry
                 .ops
                 .iter()
-                .all(|(prior, _)| matches!(prior, Op::Get | Op::Set)),
-            Op::Delta => entry
-                .ops
-                .iter()
-                .all(|(prior, _)| matches!(prior, Op::Delta)),
+                .all(|(prior, _)| matches!(prior, Op::Get | Op::Set | Op::Move)),
             Op::Reserve | Op::Locked => entry
                 .ops
                 .iter()
@@ -573,9 +589,9 @@ impl<'a> Lowerer<'a> {
         } else {
             self.error(
                 span,
-                "one handle declares one access mode — a read beside a movement, or a \
-                 second reservation, folds to no single mode. Open a separate access \
-                 for each mode instead",
+                "one handle declares one access mode — a reservation beside anything \
+                 else, or a second reservation, folds to no single mode. Open a \
+                 separate access for each mode instead",
             );
         }
     }
@@ -668,6 +684,13 @@ impl<'a> Lowerer<'a> {
             || value_ident(index as usize),
             |(name, _)| syn::Ident::new(name, Span::call_site()),
         )
+    }
+
+    /// Bind this method's issuance grant as an export parameter, and
+    /// answer the rep the issue call takes.
+    fn issuer(&mut self) -> TokenStream {
+        self.out.issues = true;
+        quote!(__issuer)
     }
 
     /// Bind the handle for `site` as an export parameter, and answer the
@@ -1301,6 +1324,35 @@ impl<'a> Lowerer<'a> {
                 code: Code::Term(term),
             };
         }
+        // `issue(mark, amount)` — the one edge with no cell behind it.
+        // The mark names the resource exactly as `issued` derives an
+        // address from one, so the output projection and the issuance
+        // grant come out of the same call.
+        if name == "issue" {
+            let Some(mark) = call.args.first().and_then(byte_literal) else {
+                self.error(
+                    call.args.span(),
+                    "the mark separating an instance's resources is part of every key \
+                     derived from one, so it must be a byte-string literal",
+                );
+                return Eval::absent("a computed resource mark");
+            };
+            let amount = call
+                .args
+                .iter()
+                .nth(1)
+                .map_or(Code::Absent("an issue with no amount"), |a| {
+                    self.expr(a).code
+                });
+            let amount = self.value(amount);
+            let grant = self.issuer();
+            return Eval {
+                val: Val::Produced(Term::SelfResource(mark)),
+                code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Bucket::held(
+                    ::hyperscale_vm_sdk::guest::issue(#grant, #amount),
+                ))),
+            };
+        }
         if name == "issued" {
             let mark = call.args.first().and_then(byte_literal);
             let Some(mark) = mark else {
@@ -1319,44 +1371,22 @@ impl<'a> Lowerer<'a> {
         }
         let evals: Vec<Eval> = call.args.iter().map(|a| self.expr(a)).collect();
         let vals: Vec<Val> = evals.iter().map(|e| e.val.clone()).collect();
-        match (name.as_str(), vals.as_slice()) {
-            ("pack", [Val::Term(hi), Val::Term(lo)]) => {
-                let term = Term::Pack {
-                    hi: Box::new(hi.clone()),
-                    lo: Box::new(lo.clone()),
-                };
-                Eval {
-                    val: Val::Term(term.clone()),
-                    code: Code::Term(term),
-                }
-            }
-            // `Bucket::of(resource, amount)` — the explicit spelling for a
-            // value edge a method mints rather than moves. The resource is
-            // the declaration; the amount is dynamic and never declared,
-            // so the amount is the whole of what crosses the boundary.
-            ("of", [Val::Term(resource), _]) => {
-                let resource = resource.clone();
-                let amount = evals
-                    .into_iter()
-                    .nth(1)
-                    .map_or(Code::Absent("a minted edge with no amount"), |e| e.code);
-                // Which resource the edge carries is the declaration's
-                // answer, so the guest builds one from the amount alone.
-                let amount = self.value(amount);
-                Eval {
-                    val: Val::Produced(resource),
-                    code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Bucket::carrying(#amount))),
-                }
-            }
-            _ => {
-                let func = self.code(&call.func);
-                let args: Vec<_> = evals
-                    .into_iter()
-                    .map(|eval| self.value(eval.code))
-                    .collect();
-                Eval::plain(quote!(#func(#(#args),*)))
-            }
+        if let ("pack", [Val::Term(hi), Val::Term(lo)]) = (name.as_str(), vals.as_slice()) {
+            let term = Term::Pack {
+                hi: Box::new(hi.clone()),
+                lo: Box::new(lo.clone()),
+            };
+            return Eval {
+                val: Val::Term(term.clone()),
+                code: Code::Term(term),
+            };
         }
+        let func = self.code(&call.func);
+        let args: Vec<_> = evals
+            .into_iter()
+            .map(|eval| self.value(eval.code))
+            .collect();
+        Eval::plain(quote!(#func(#(#args),*)))
     }
 
     #[allow(clippy::too_many_lines)] // one arm per receiver the vocabulary admits
@@ -1422,29 +1452,52 @@ impl<'a> Lowerer<'a> {
                 }
                 self.record(site, op, param, call.span());
 
+                // A declared movement the body does not make binds no
+                // handle: the clause is what the kernel provisions and
+                // what a caller routes on, and there is nothing for the
+                // guest to call.
+                if call.method == "declared" {
+                    // The unit it evaluates to, not nothing: a declared
+                    // movement can stand in expression position, and a
+                    // match arm needs something there.
+                    return Eval::plain(quote!(()));
+                }
+                let resource = match self.out.sites.get(site).map(|s| &s.target) {
+                    Some(Target::Point { material, .. }) => material.first().cloned(),
+                    _ => None,
+                };
+                // The grant needs no amount at the boundary: the kernel
+                // judged and held it against this method's own
+                // declaration before the body ran, so the amount is the
+                // declaration's and reaches the guest through nothing.
+                if op == Op::Reserve
+                    && let Some(resource) = resource.clone()
+                {
+                    let capability = self.handle(site, call.span());
+                    return Eval {
+                        val: Val::Produced(resource),
+                        code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Bucket::held(
+                            ::hyperscale_vm_sdk::guest::reserve_take(#capability),
+                        ))),
+                    };
+                }
                 let receiver_code = self.value(receiver.code);
                 let rewritten: Vec<_> = evals
                     .into_iter()
                     .map(|eval| self.value(eval.code))
                     .collect();
 
-                // A reservation yields a value edge carrying the vault's
+                // A debit yields the value it moved, carrying the vault's
                 // own resource — which the site's key material already
-                // names, so the output needs no separate declaration.
-                // What the guest gets is the grant the kernel already
-                // made, checked against the amount the declaration named.
-                if op == Op::Reserve
-                    && let Some(Target::Point { material, .. }) =
-                        self.out.sites.get(site).map(|s| &s.target)
-                    && let Some(resource) = material.first().cloned()
+                // names, so the produced edge needs no separate
+                // declaration.
+                if op == Op::Move
+                    && call.method == "take"
+                    && let Some(resource) = resource
                 {
-                    let capability = self.handle(site, call.span());
-                    let declared = rewritten.first();
                     return Eval {
                         val: Val::Produced(resource),
-                        code: Code::Rust(quote!(::hyperscale_vm_sdk::state::Bucket::carrying(
-                            ::hyperscale_vm_sdk::guest::granted(#capability, #declared),
-                        ))),
+                        code: Code::Rust(quote!(#receiver_code.take(#(#rewritten),*))),
                     };
                 }
                 let name = &call.method;
@@ -1852,11 +1905,10 @@ fn free_call_name(call: &syn::ExprCall) -> Option<String> {
 fn result_code(returned: &[TokenStream]) -> TokenStream {
     match returned {
         [] => quote!(),
-        [one] => quote!(::hyperscale_vm_sdk::state::Cellular::to_cell(&(#one))),
-        many => quote!({
-            let mut __out = ::std::vec::Vec::new();
-            #(__out.extend(::hyperscale_vm_sdk::state::Cellular::to_cell(&(#many)));)*
-            __out
-        }),
+        // One edge is the handle itself; more than one is the tuple the
+        // profile admits for exactly this, so which slot an edge lands in
+        // is the order the body produced them.
+        [one] => quote!((#one).into_handle()),
+        many => quote!((#((#many).into_handle()),*)),
     }
 }

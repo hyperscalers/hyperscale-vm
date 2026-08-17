@@ -35,8 +35,9 @@ pub mod account {
 
         /// Credit the vault and the guaranteed-delivery cell beside it.
         pub fn deposit(&mut self, funds: Bucket) {
-            self.vaults.at(funds.resource()).add(funds.amount());
-            self.claims.at(funds.resource()).add(0);
+            let resource = funds.resource();
+            self.vaults.at(resource).put(funds);
+            self.claims.at(resource).declared();
         }
 
         /// Nothing but its own gate: the kernel judges the stored rule

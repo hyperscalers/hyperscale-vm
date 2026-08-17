@@ -61,7 +61,10 @@ fn funds_methods(methods: &mut PackageMetadata) {
             accessibility: Accessibility::Guarded(Expr::SelfAddr),
             mints: None,
             params: vec![ParamType::Address, ParamType::U128],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
+            // The grant is the bucket, so the amount the manifest asked
+            // for reaches the declaration and not the body: what the
+            // kernel judged is what it hands over.
+            abi: vec![AbiParam::Handle(0)],
             outputs: vec![Expr::Arg(0)],
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(self_child(VAULT, vec![Expr::Arg(0)])),

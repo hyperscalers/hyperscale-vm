@@ -28,8 +28,8 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
-    DeltaCell, RangeRead, RangeWrite, ReserveCell, WriteCell, add_kernel_to_linker, blessed_engine,
-    validate_component,
+    Bucket, DeltaCell, RangeRead, RangeWrite, ReserveCell, WriteCell, add_kernel_to_linker,
+    blessed_engine, validate_component,
 };
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
 #[cfg(target_os = "linux")]
@@ -139,16 +139,12 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &compiled)?;
+    // The grant is the bucket, so the withdrawal names no amount and
+    // what comes back is the value itself rather than a reading of it.
     let withdraw = instance
-        .get_typed_func::<(Resource<ReserveCell>, &[u8]), (Vec<u8>,)>(&mut store, "withdraw")?;
-    let (bucket,) = withdraw.call(
-        &mut store,
-        (
-            Resource::new_borrow(sender_rep),
-            encode_amount(AMOUNT).as_slice(),
-        ),
-    )?;
-    assert_eq!(bucket, encode_amount(AMOUNT).to_vec());
+        .get_typed_func::<(Resource<ReserveCell>,), (Resource<Bucket>,)>(&mut store, "withdraw")?;
+    let (funds,) = withdraw.call(&mut store, (Resource::new_borrow(sender_rep),))?;
+    let funds = funds.rep();
     let withdraw_fuel = FUEL - store.get_fuel()?;
     let host = entering(store.into_data(), RECIPIENT);
 
@@ -156,9 +152,15 @@ fn blessed_transfer() -> Result<(Receipt, u64)> {
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &compiled)?;
-    let deposit =
-        instance.get_typed_func::<(Resource<DeltaCell>, &[u8]), ()>(&mut store, "deposit")?;
-    deposit.call(&mut store, (Resource::new_borrow(recipient_rep), &bucket))?;
+    let deposit = instance
+        .get_typed_func::<(Resource<DeltaCell>, Resource<Bucket>), ()>(&mut store, "deposit")?;
+    deposit.call(
+        &mut store,
+        (
+            Resource::new_borrow(recipient_rep),
+            Resource::new_own(funds),
+        ),
+    )?;
     let deposit_fuel = FUEL - store.get_fuel()?;
     let fuel = withdraw_fuel + deposit_fuel;
 
@@ -183,18 +185,14 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
         RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(
         "withdraw",
-        &[
-            CVal::Borrow(sender_rep, ResourceKind::ReserveCell),
-            CVal::Bytes(encode_amount(AMOUNT).to_vec()),
-        ],
+        &[CVal::Borrow(sender_rep, ResourceKind::ReserveCell)],
     )?;
     let values =
         outcome.map_err(|trap| wasmtime::error::format_err!("withdraw trapped: {trap:?}"))?;
-    let [CVal::Bytes(bucket)] = values.as_slice() else {
+    let [CVal::Own(funds)] = values.as_slice() else {
         wasmtime::error::bail!("unexpected withdraw result shape");
     };
-    assert_eq!(*bucket, encode_amount(AMOUNT).to_vec());
-    let bucket = bucket.clone();
+    let funds = *funds;
     let withdraw_fuel = instance.fuel_consumed();
     let host = entering(instance.into_host(), RECIPIENT);
 
@@ -205,7 +203,7 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
         "deposit",
         &[
             CVal::Borrow(recipient_rep, ResourceKind::DeltaCell),
-            CVal::Bytes(bucket),
+            CVal::Own(funds),
         ],
     )?;
     outcome.map_err(|trap| wasmtime::error::format_err!("deposit trapped: {trap:?}"))?;
@@ -477,12 +475,13 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     // byte list. The kernel never sees this shape — metadata and world
     // are derived together — which is why a direct drive is the one
     // reader that has to follow.
+    let funds = store.data_mut().0.open_bucket(AMOUNT);
     let enter = instance.get_typed_func::<(
         Resource<RangeWrite>,
         Resource<DeltaCell>,
         &[u8],
         Words,
-        &[u8],
+        Resource<Bucket>,
     ), ()>(&mut store, "enter")?;
     enter.call(
         &mut store,
@@ -491,7 +490,7 @@ fn blessed_round() -> Result<(Receipt, u64)> {
             Resource::new_borrow(pot_rep),
             &ticket_order().to_le_bytes()[..],
             words(ENTRANT),
-            &encode_amount(AMOUNT)[..],
+            Resource::new_own(funds),
         ),
     )?;
     let enter_fuel = FUEL - store.get_fuel()?;
@@ -542,6 +541,8 @@ fn reference_round() -> Result<(Receipt, u64)> {
         &host.0,
         &Capability::Delta(child_key(&TestHasher, LOTTERY, VAULT, &[])),
     );
+    let mut host = host;
+    let funds = host.0.open_bucket(AMOUNT);
     let mut instance =
         RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(
@@ -551,7 +552,7 @@ fn reference_round() -> Result<(Receipt, u64)> {
             CVal::Borrow(pot_rep, ResourceKind::DeltaCell),
             CVal::Bytes(ticket_order().to_le_bytes().to_vec()),
             CVal::Address(ENTRANT.to_bytes()),
-            CVal::Bytes(encode_amount(AMOUNT).to_vec()),
+            CVal::Own(funds),
         ],
     )?;
     outcome.map_err(|trap| wasmtime::error::format_err!("enter trapped: {trap:?}"))?;

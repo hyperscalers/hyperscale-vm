@@ -51,19 +51,21 @@ pub mod amm {
 
             let x = sold.get();
             let y = bought.get();
-            let dx = input
-                .amount()
+            let paid = input.amount();
+            let dx = paid
                 .checked_mul(u128::from(10_000 - settings.fee_bps))
                 .unwrap()
                 / 10_000;
             let out = y.checked_mul(dx).unwrap() / x.checked_add(dx).unwrap();
+            // Nothing below reads the pool again: the credit and the
+            // debit are the kernel's own arithmetic over the cells it
+            // just answered from.
             if out < min_out {
                 return Err(Error::SlippageExceeded);
             }
 
-            sold.set(x.checked_add(input.amount()).unwrap());
-            bought.set(y - out);
-            Ok(Bucket::of(settings.y, out))
+            sold.put(input);
+            Ok(bought.take(out))
         }
     }
 }

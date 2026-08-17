@@ -6,14 +6,19 @@ world account {
     import hyperscale:kernel/env;
     import hyperscale:kernel/events;
 
-    use hyperscale:kernel/state.{reserve-cell, delta-cell, write-cell, range-write};
+    use hyperscale:kernel/state.{
+        bucket, reserve-cell, delta-cell, write-cell, range-write
+    };
 
-    /// Take the reserved amount as a bucket; the requested amount must
-    /// equal the reservation.
-    export withdraw: func(vault: borrow<reserve-cell>, amount: list<u8>) -> list<u8>;
+    /// Take the reservation as the value it grants.
+    ///
+    /// No requested amount: the kernel judged and held the reservation
+    /// against this method's own declaration before the body ran, so the
+    /// grant is the bucket and there is nothing left to check it against.
+    export withdraw: func(vault: borrow<reserve-cell>) -> own<bucket>;
 
-    /// Credit a bucket's amount into the vault.
-    export deposit: func(vault: borrow<delta-cell>, amount: list<u8>);
+    /// Move a bucket into the vault.
+    export deposit: func(vault: borrow<delta-cell>, funds: own<bucket>);
 
     /// Nothing but its own gate: naming this method mints the account's
     /// identity as evidence for later nodes of the same intent. The gate

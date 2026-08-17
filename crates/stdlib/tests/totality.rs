@@ -110,6 +110,10 @@ fn the_candidates_for_the_mark_are_what_they_were() {
         candidates,
         vec![
             "account::deposit".to_string(),
+            // The pool's own delegation earns the mark once its body is
+            // a transfer: what it hands back is a handle, so nothing on
+            // its path reaches the allocator.
+            "staking::stake".to_string(),
             "staking::unstake".to_string(),
         ],
         "the methods eligible for the mark moved; decide whether the marks should follow",

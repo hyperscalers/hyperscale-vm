@@ -425,6 +425,16 @@ impl Trace {
         self.values.push(AbiParam::Bucket(index));
     }
 
+    /// Bind this method's issuance grant.
+    ///
+    /// Called by generated code where a body issues. The grant is what
+    /// the walk hands over against this method's own declared outputs, so
+    /// a binding naming one is a method that already said it produces
+    /// what it issues.
+    pub fn bind_issuer(&mut self) {
+        self.values.push(AbiParam::Issuer);
+    }
+
     /// Bind a value evaluated over this method's bound inputs.
     pub fn bind_derived<K: Kind>(&mut self, value: &Sym<K>) {
         let expr = self.lower(value.expr().clone());

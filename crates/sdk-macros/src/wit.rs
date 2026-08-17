@@ -13,6 +13,14 @@
 
 use std::fmt::Write as _;
 
+/// What a world names the bucket resource, and why not `bucket`.
+///
+/// An author's module already imports the vocabulary's own `Bucket`, and
+/// the generated type would collide with it — the same collision the
+/// address record is aliased around, and the same answer. The resource is
+/// one type either way; only the name a body would see changes.
+const BUCKET: &str = "kernel-bucket";
+
 /// The vendored kernel interface, carried into every synthesised world.
 ///
 /// Read from the SDK's single copy rather than a second one beside the
@@ -34,6 +42,10 @@ pub enum Shape {
     Address,
     /// A byte list the guest decodes into the named Rust type.
     Cell(Box<syn::Type>),
+    /// `own<bucket>`: a value edge the call transfers to the guest.
+    Bucket,
+    /// `borrow<issuer>`: this invocation's authority to create value.
+    Issuer,
 }
 
 /// One parameter of a generated export.
@@ -52,8 +64,8 @@ pub struct Export {
     pub name: String,
     /// The parameters, in the order the binding builds them.
     pub params: Vec<Param>,
-    /// Whether the method returns a value at all.
-    pub returns: bool,
+    /// How many value edges the method hands back, in output order.
+    pub outputs: usize,
     /// Whether the method carries an error arm.
     pub declines: bool,
 }
@@ -66,6 +78,8 @@ impl Shape {
             Self::Scalar => "u64".to_owned(),
             Self::Address => "kernel-address".to_owned(),
             Self::Cell(_) => "list<u8>".to_owned(),
+            Self::Bucket => format!("own<{BUCKET}>"),
+            Self::Issuer => "borrow<issuer>".to_owned(),
         }
     }
 }
@@ -85,11 +99,20 @@ fn takes_values(exports: &[Export]) -> bool {
 /// here rather than imported, for the reason [`document`] gives.
 fn imported(exports: &[Export]) -> Vec<&'static str> {
     let mut named: Vec<&'static str> = Vec::new();
+    // A produced edge names the resource too, even where no parameter
+    // does: what an export hands back is an owned handle of it.
+    if exports.iter().any(|export| export.outputs > 0) {
+        named.push("bucket");
+    }
     for export in exports {
         for param in &export.params {
-            if let Shape::Handle(resource) = param.shape
-                && !named.contains(&resource)
-            {
+            let resource = match param.shape {
+                Shape::Handle(resource) => resource,
+                Shape::Bucket => "bucket",
+                Shape::Issuer => "issuer",
+                _ => continue,
+            };
+            if !named.contains(&resource) {
                 named.push(resource);
             }
         }
@@ -115,10 +138,20 @@ pub fn document(world: &str, exports: &[Export]) -> String {
     );
     let imported = imported(exports);
     if !imported.is_empty() {
+        let named: Vec<String> = imported
+            .iter()
+            .map(|resource| {
+                if *resource == "bucket" {
+                    format!("bucket as {BUCKET}")
+                } else {
+                    (*resource).to_owned()
+                }
+            })
+            .collect();
         let _ = writeln!(
             out,
             "    use hyperscale:kernel/state.{{{}}};",
-            imported.join(", ")
+            named.join(", ")
         );
     }
     if takes_values(exports) {
@@ -145,11 +178,19 @@ pub fn document(world: &str, exports: &[Export]) -> String {
             .map(|p| format!("{}: {}", p.name, p.shape.wit()))
             .collect::<Vec<_>>()
             .join(", ");
-        let result = match (export.returns, export.declines) {
-            (true, true) => " -> result<list<u8>, u32>",
-            (true, false) => " -> list<u8>",
-            (false, true) => " -> result<_, u32>",
-            (false, false) => "",
+        // A method's edges are its results: one own, the tuple the
+        // profile admits for more than one, and nothing where a method
+        // produces none.
+        let edges = match export.outputs {
+            0 => String::new(),
+            1 => format!("own<{BUCKET}>"),
+            n => format!("tuple<{}>", vec![format!("own<{BUCKET}>"); n].join(", ")),
+        };
+        let result = match (export.outputs, export.declines) {
+            (0, false) => String::new(),
+            (0, true) => " -> result<_, u32>".to_owned(),
+            (_, false) => format!(" -> {edges}"),
+            (_, true) => format!(" -> result<{edges}, u32>"),
         };
         let _ = writeln!(out, "    export {}: func({params}){result};", export.name);
     }

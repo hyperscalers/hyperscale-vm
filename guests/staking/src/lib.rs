@@ -33,7 +33,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod staking {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed, Locked, issued};
+    use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed, Locked, issue};
 
     /// The pool's creation-fixed configuration: what a delegation is
     /// denominated in.
@@ -95,22 +95,20 @@ pub mod staking {
     impl Staking {
         /// Delegate `funds`, taking stake units at par.
         pub fn stake(&mut self, funds: Bucket) -> Bucket {
-            self.vaults
-                .at(self.config.staked_resource)
-                .add(funds.amount());
             // The amount is the kernel's own cell width, which is what
             // the handle carries, so neither end reformats a number it
             // was handed.
-            Staked::emit(&funds.amount().to_le_bytes());
-            Bucket::of(issued(b""), funds.amount())
+            let staked = funds.amount();
+            self.vaults.at(self.config.staked_resource).put(funds);
+            Staked::emit(&staked.to_le_bytes());
+            issue(b"", staked)
         }
 
         /// Return stake units, beginning the unbonding period.
         pub fn unstake(&mut self, units: Bucket) {
-            self.unbonding
-                .at(self.config.staked_resource)
-                .add(units.amount());
-            Unstaked::emit(&units.amount().to_le_bytes());
+            let returned = units.amount();
+            self.unbonding.at(self.config.staked_resource).put(units);
+            Unstaked::emit(&returned.to_le_bytes());
         }
 
         /// Take on a validator, recording the key the pool registered.

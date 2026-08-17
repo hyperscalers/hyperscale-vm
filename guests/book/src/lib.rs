@@ -35,7 +35,7 @@ pub mod book {
             // Price over a fresh sequence id: unique without reading the
             // book, which is what lets the entry key be declared.
             self.asks.at(pack(price, fresh_id())).set(funds.amount());
-            self.vaults.at(funds.resource()).add(funds.amount());
+            self.vaults.at(funds.resource()).put(funds);
         }
 
         /// Buy base within the declared price interval, best price first.
@@ -72,14 +72,15 @@ pub mod book {
 
             // Note the config fields are read without pinning the leaf:
             // configuration is locked state, consultable without a claim.
-            let spent = opening - budget;
-            self.vaults.at(self.config.base).sub(bought);
-            self.vaults.at(payment.resource()).add(spent);
-
-            (
-                Bucket::of(self.config.base, bought),
-                Bucket::of(payment.resource(), budget),
-            )
+            // The base the taker bought leaves the pool's own vault; the
+            // whole payment goes into the other and the change comes back
+            // out, so what the vault keeps is what was spent and the
+            // taker's change is the value it arrived with — never a
+            // number this body wrote down.
+            let sold = self.vaults.at(self.config.base).take(bought);
+            let mut proceeds = self.vaults.at(payment.resource());
+            proceeds.put(payment);
+            (sold, proceeds.take(budget))
         }
     }
 }

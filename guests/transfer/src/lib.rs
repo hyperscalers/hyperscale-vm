@@ -26,7 +26,7 @@ wit_bindgen::generate!({
     },
 });
 
-use hyperscale_vm_sdk::guest::{Handle, clock_ms, hash, randomness, reserved};
+use hyperscale_vm_sdk::guest::{Handle, clock_ms, hash, randomness};
 use hyperscale_vm_sdk::state::{Amount, Slot};
 
 struct Transfer;
@@ -36,11 +36,16 @@ impl Guest for Transfer {
         // The handles the kernel materialized, named by the mode each
         // was declared under. Generated code writes this; here it is
         // written out, which is the point of the fixture.
-        let reserved = reserved(Handle::Reserve(sender.handle()));
+        // The grant is the bucket, so the floor is checked against the
+        // value in hand rather than against a reading of it, and the same
+        // value is what moves.
+        let mut sender = Slot::<Amount>::at(Handle::Reserve(sender.handle()));
+        let funds = sender.reserve(0);
+        let reserved = funds.amount();
         assert!(reserved >= u128::from(min), "reserved amount below floor");
 
         let mut recipient = Slot::<Amount>::at(Handle::Delta(recipient.handle()));
-        recipient.add(reserved);
+        recipient.put(funds);
 
         let digest = hash(&randomness());
         clock_ms()

@@ -380,6 +380,19 @@ fn lifted(values: &[CVal]) -> Invoked {
     match values {
         [] => Invoked::Returned(None),
         [CVal::Bytes(bytes)] => Invoked::Returned(Some(bytes.clone())),
+        // Every value is an edge, or the shape is one the convention
+        // does not fix.
+        edges if !edges.is_empty() && edges.iter().all(|v| matches!(v, CVal::Own(_))) => {
+            Invoked::Produced(
+                edges
+                    .iter()
+                    .map(|v| match v {
+                        CVal::Own(rep) => *rep,
+                        _ => unreachable!("every value is an owned edge"),
+                    })
+                    .collect(),
+            )
+        }
         [CVal::Declined(code)] => Invoked::Declined(*code),
         _ => Invoked::Aborted(AbortReason::BadReturnShape),
     }
@@ -2004,6 +2017,12 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
 
     // The fill: budget 100 at price 3 buys 33 (cost 99), leaving change 1;
     // the price-5 ask is untouched. Partial fill rewrote the entry.
+    //
+    // The quote vault's movement is the gross flow rather than the net:
+    // the whole payment goes in and the change comes back out, because a
+    // body composes edges through the kernel and never by arithmetic on
+    // their amounts. What it keeps is the difference, and that is what
+    // the two halves say.
     assert_eq!(
         fill_receipt.delta.entries.get(&placed_ask),
         Some(&Some(encode_amount(17).to_vec()))
@@ -2024,7 +2043,16 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
             .get(&vault(book(), QUOTE))
             .unwrap()
             .credit,
-        99
+        100
+    );
+    assert_eq!(
+        fill_receipt
+            .delta
+            .movements
+            .get(&vault(book(), QUOTE))
+            .unwrap()
+            .debit,
+        1
     );
 
     assert_eq!(amount_of(&mut final_store, vault(TAKER, BASE)), 33);
@@ -2077,11 +2105,11 @@ fn the_stdlib_deposit_earns_the_mark_it_claims() -> Result<()> {
     );
 
     assert_eq!(
-        account::metadata().methods["withdraw"].totality,
+        account::metadata().methods["withdraw-nf"].totality,
         Totality::Infallible,
     );
     assert!(
-        check_method(&artifact, "withdraw").is_err(),
+        check_method(&artifact, "withdraw-nf").is_err(),
         "one module, two verdicts — the check is per method",
     );
     Ok(())

@@ -256,11 +256,18 @@ fn record_component_type(
                     "a result's error arm must be u32, the package's error-table index".to_string(),
                 ));
             }
+            // The ok arm is whatever a method that cannot decline would
+            // have returned: its edges, or nothing. An error arm says how
+            // a method ends, and says nothing about what it produces.
             match ok.map(|vt| resolve(defined, vt)) {
-                None | Some(Some(ValueSlot::Bytes)) => Some(ValueSlot::Declinable),
+                None | Some(Some(ValueSlot::Bytes | ValueSlot::Owned | ValueSlot::OwnedTuple)) => {
+                    Some(ValueSlot::Declinable)
+                }
                 _ => {
                     return Err(ProfileError::Structural(
-                        "a result's ok arm must be list<u8> or absent".to_string(),
+                        "a result's ok arm carries what the method produces: its edges, \
+                         a byte list, or nothing"
+                            .to_string(),
                     ));
                 }
             }

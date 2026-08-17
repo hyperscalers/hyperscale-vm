@@ -174,16 +174,23 @@ pub enum Slot {
 /// Which access mode one handle operation implies.
 ///
 /// The vocabulary is closed, which is what makes mode derivation sound
-/// rather than a guess: there is no way to touch a substate except through
-/// one of these, and each names exactly one point of the lattice.
+/// rather than a guess: there is no way to touch a substate except
+/// through one of these. A movement is the one that does not name its
+/// own point on the lattice — it commutes where a body only moves value
+/// and needs exclusivity where a body also reads the balance, and the
+/// body is what says which.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Op {
     /// `locked()` — a read of a permanently locked substate.
     Locked,
     /// `get()` — a fresh coherent read.
     Get,
-    /// `add()` / `sub()` — a commutative movement.
-    Delta,
+    /// `put()` / `take()` — value moving into or out of an amount cell.
+    ///
+    /// One operation for both modes, because both move value and neither
+    /// spelling says which: what decides is whether the body also reads
+    /// the balance.
+    Move,
     /// `reserve(amount)` — a conditional decrement.
     Reserve,
     /// `set()` / `insert()` / `remove()` — an exclusive read-modify-write.
@@ -196,7 +203,7 @@ impl Op {
         match name {
             "locked" => Some(Self::Locked),
             "get" | "peek" | "count" | "entry" | "order" => Some(Self::Get),
-            "add" | "sub" => Some(Self::Delta),
+            "put" | "take" | "declared" => Some(Self::Move),
             "reserve" => Some(Self::Reserve),
             "set" | "insert" | "remove" => Some(Self::Set),
             _ => None,

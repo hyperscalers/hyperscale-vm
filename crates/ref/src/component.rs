@@ -270,6 +270,11 @@ enum CTy {
     /// `result<_, u32>`: the refusal channel over a method that produces
     /// nothing.
     DeclinableUnit,
+    /// The refusal channel over a method that produces edges, carrying
+    /// how many. An error arm says how a method ends and nothing about
+    /// what it produces, so the ok arm is the same shape it would have
+    /// been without one.
+    DeclinableOwn(u32),
 }
 
 /// A decoded component.
@@ -477,6 +482,10 @@ impl RefComponent {
                     match ok.map(|vt| self.value_type(vt)).transpose()? {
                         None => CTypeEntry::Defined(CTy::DeclinableUnit),
                         Some(CTy::List8) => CTypeEntry::Defined(CTy::DeclinableList8),
+                        Some(CTy::Own) => CTypeEntry::Defined(CTy::DeclinableOwn(1)),
+                        Some(CTy::OwnTuple(arity)) => {
+                            CTypeEntry::Defined(CTy::DeclinableOwn(arity))
+                        }
                         Some(_) => {
                             return Err(DecodeError::Unsupported("result ok arm".to_string()));
                         }
@@ -1198,6 +1207,20 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                         self.lift_u32(mem_idx, area() + RESULT_PAYLOAD)?,
                     )])
                 }
+            }
+            [CTy::DeclinableOwn(arity)] => {
+                if self.discriminant(mem_idx, area())? != 0 {
+                    return Ok(vec![CVal::Declined(
+                        self.lift_u32(mem_idx, area() + RESULT_PAYLOAD)?,
+                    )]);
+                }
+                let mut owned = Vec::with_capacity(*arity as usize);
+                for index in 0..*arity {
+                    let at = area() + RESULT_PAYLOAD + (index as usize) * HANDLE_BYTES;
+                    let handle = self.lift_u32(mem_idx, at)? as usize;
+                    owned.push(CVal::Own(self.lift_own(handle)?));
+                }
+                Ok(owned)
             }
             _ => Err(ExecError::Canon(CanonError::Internal("result shape"))),
         }

@@ -1,5 +1,11 @@
-error: a produced value edge must leave through the method's tail expression — the declared outputs are exact, so an early return's edges cannot be reconciled with the tail's
-  --> tests/refusals/early_return_output.rs:17:17
+error[E0599]: no associated function or constant named `of` found for struct `hyperscale_vm_sdk::state::Bucket` in the current scope
+  --> tests/refusals/early_return_output.rs:17:32
    |
 17 |                 return Bucket::of(a, 1);
-   |                 ^^^^^^
+   |                                ^^ associated function or constant not found in `hyperscale_vm_sdk::state::Bucket`
+
+error[E0599]: no associated function or constant named `of` found for struct `hyperscale_vm_sdk::state::Bucket` in the current scope
+  --> tests/refusals/early_return_output.rs:19:21
+   |
+19 |             Bucket::of(b, 1)
+   |                     ^^ associated function or constant not found in `hyperscale_vm_sdk::state::Bucket`

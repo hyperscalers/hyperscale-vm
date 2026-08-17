@@ -19,7 +19,7 @@
 
 pub use hyperscale_vm_effects::METADATA_SECTION;
 use hyperscale_vm_effects::{
-    AbiParam, Clause, MethodSignature, ModeExpr, PackageMetadata, TargetExpr, Totality,
+    AbiParam, Clause, MethodSignature, ModeExpr, PackageMetadata, ParamType, TargetExpr, Totality,
     attach_metadata as attach_canonical, check_abi, check_declarations, fungible, metadata_section,
 };
 use hyperscale_vm_runtime::{
@@ -176,11 +176,8 @@ fn check_outputs_against_export(
     signature: &MethodSignature,
     export: &ExportShape,
 ) -> Result<(), GateError> {
-    // Both conventions are admitted while the corpus crosses over: a
-    // ported export hands back one own per fungible output, and one that
-    // has not been ported hands back none and returns the cells.
     let declared = signature.outputs.iter().filter(|o| fungible(o)).count();
-    if declared == export.edges || export.edges == 0 {
+    if declared == export.edges {
         return Ok(());
     }
     Err(GateError(format!(
@@ -294,14 +291,24 @@ fn check_abi_against_export(
                     )));
                 }
             }
-            AbiParam::Bucket(_) => {
-                // Both conventions while the corpus crosses over: a
-                // ported export takes the edge as the bucket it is, and
-                // one still on the byte convention takes its amount.
-                if !matches!(param, ExportParam::Bucket | ExportParam::Bytes) {
+            AbiParam::Bucket(declared) => {
+                // A fungible edge crosses as the bucket it is; a
+                // non-fungible one still crosses as the cell its ids
+                // frame, and the declared kind is what says which.
+                let fungible_edge = usize::try_from(*declared)
+                    .ok()
+                    .and_then(|index| signature.params.get(index))
+                    .is_some_and(|kind| *kind == ParamType::Bucket);
+                let wanted = if fungible_edge {
+                    ExportParam::Bucket
+                } else {
+                    ExportParam::Bytes
+                };
+                if *param != wanted {
                     return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} is a value \
-                         edge, but the export takes {param:?}"
+                        "method {method:?}: ABI parameter {position} is a value edge \
+                         the signature declares as {wanted:?}, but the export takes \
+                         {param:?}"
                     )));
                 }
             }

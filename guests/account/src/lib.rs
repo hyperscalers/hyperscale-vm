@@ -20,8 +20,8 @@ wit_bindgen::generate!({
 use hyperscale::kernel::env::clock;
 use hyperscale::kernel::events::emit;
 use hyperscale::kernel::state::{
-    Amount, delta_cell_add, range_write_count, range_write_insert, range_write_order,
-    range_write_remove, reserve_cell_amount, write_cell_get, write_cell_set,
+    Amount, bucket_amount, delta_cell_put, range_write_count, range_write_insert,
+    range_write_order, range_write_remove, reserve_cell_take, write_cell_get, write_cell_set,
 };
 
 /// A `u128` as the kernel's world names it.
@@ -36,13 +36,6 @@ const fn amount(value: u128) -> Amount {
 /// The `u128` an `amount` carries.
 const fn whole(value: Amount) -> u128 {
     (value.low as u128) | ((value.high as u128) << 64)
-}
-
-/// An amount cell's value; an off-width cell reads as zero, on the same
-/// terms an absent substate does. The ABI binding hands this method the
-/// kernel's own cell, so no other width arrives.
-fn cell_amount(cell: &[u8]) -> Amount {
-    amount(cell.try_into().map_or(0, u128::from_le_bytes))
 }
 
 /// The ids a count-prefixed edge cell carries; traps on any other shape.
@@ -115,19 +108,20 @@ fn governing(cell: &[u8]) -> &[u8] {
 }
 
 impl Guest for Account {
-    fn withdraw(vault: &ReserveCell, requested: Vec<u8>) -> Vec<u8> {
-        let reserved = whole(reserve_cell_amount(vault));
-        assert!(
-            requested == reserved.to_le_bytes(),
-            "reservation does not match the request"
-        );
-        emit(WITHDRAWN, &requested);
-        requested
+    fn withdraw(vault: &ReserveCell) -> Bucket {
+        // The grant is the bucket, so there is no requested amount to
+        // check it against and no way for the two to differ.
+        let funds = reserve_cell_take(vault);
+        emit(WITHDRAWN, &whole(bucket_amount(&funds)).to_le_bytes());
+        funds
     }
 
-    fn deposit(vault: &DeltaCell, amount: Vec<u8>) {
-        delta_cell_add(vault, cell_amount(&amount));
-        emit(DEPOSITED, &amount);
+    fn deposit(vault: &DeltaCell, funds: Bucket) {
+        // What the event says is what crossed, read before the put
+        // consumes the handle it was read through.
+        let credited = whole(bucket_amount(&funds));
+        delta_cell_put(vault, funds);
+        emit(DEPOSITED, &credited.to_le_bytes());
     }
 
     fn authorize() {

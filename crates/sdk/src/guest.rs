@@ -49,7 +49,7 @@ use core::mem::ManuallyDrop;
 
 pub use bindings::hyperscale::kernel;
 use kernel::state::{
-    DeltaCell, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
+    DeltaCell, Issuer, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
 };
 
 use crate::Address;
@@ -97,27 +97,10 @@ const fn whole(value: kernel::state::Amount) -> u128 {
     (value.low as u128) | ((value.high as u128) << 64)
 }
 
-/// The amount a value edge carries, as it arrives at an export.
-///
-/// A bucket crosses the boundary as its amount and nothing else. The
-/// resource is declared — the signature's outputs say what a produced
-/// edge carries and the manifest's own edge says what a consumed one
-/// does — so transmitting it would be a second, forgeable copy of a fact
-/// the declaration already fixes.
+/// What a bucket carries, read through a borrow of the handle.
 #[must_use]
-pub fn bucket_amount(cell: &[u8]) -> u128 {
-    amount_of(cell)
-}
-
-/// The value edge an export returns, carrying `amount`.
-///
-/// The one place the amount path reaches the allocator, and it does so
-/// because the export's own result is a `list<u8>`. So a method that
-/// returns a value carries the boundary's allocation however its body is
-/// written, and one that only moves amounts carries none.
-#[must_use]
-pub fn bucket_cell(amount: u128) -> Vec<u8> {
-    amount_cell(amount).to_vec()
+pub fn bucket_amount(funds: &kernel::state::Bucket) -> u128 {
+    whole(kernel::state::bucket_amount(funds))
 }
 
 /// Decode an amount cell. An absent cell reads as empty, which is zero.
@@ -157,6 +140,7 @@ macro_rules! borrows {
 }
 
 borrows! {
+    issuer -> Issuer,
     read_cell -> ReadCell,
     locked_cell -> LockedCell,
     write_cell -> WriteCell,
@@ -226,32 +210,31 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
     }
 }
 
-/// A commutative credit on this handle's amount cell.
+/// Move value into this handle's amount cell, consuming the bucket.
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::Delta`].
+/// On a handle whose mode moves no value.
 #[inline(always)]
-pub fn delta_add(handle: Handle, value: u128) {
+pub fn cell_put(handle: Handle, funds: kernel::state::Bucket) {
     match handle {
-        Handle::Delta(rep) => {
-            kernel::state::delta_cell_add(&delta_cell(rep), amount(value));
-        }
+        Handle::Delta(rep) => kernel::state::delta_cell_put(&delta_cell(rep), funds),
+        Handle::Write(rep) => kernel::state::write_cell_put(&write_cell(rep), funds),
         other => unreachable!("{other:?} carries no movement"),
     }
 }
 
-/// A commutative debit on this handle's amount cell.
+/// Move value out of this handle's amount cell.
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::Delta`].
+/// On a handle whose mode moves no value.
+#[must_use]
 #[inline(always)]
-pub fn delta_sub(handle: Handle, value: u128) {
+pub fn cell_take(handle: Handle, value: u128) -> kernel::state::Bucket {
     match handle {
-        Handle::Delta(rep) => {
-            kernel::state::delta_cell_sub(&delta_cell(rep), amount(value));
-        }
+        Handle::Delta(rep) => kernel::state::delta_cell_take(&delta_cell(rep), amount(value)),
+        Handle::Write(rep) => kernel::state::write_cell_take(&write_cell(rep), amount(value)),
         other => unreachable!("{other:?} carries no movement"),
     }
 }
@@ -281,16 +264,27 @@ pub fn reserved(handle: Handle) -> u128 {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::Reserve`], and on a grant that is not
-/// `declared`.
+/// On any mode but [`Handle::Reserve`].
 #[must_use]
-pub fn granted(handle: Handle, declared: u128) -> u128 {
-    let held = reserved(handle);
-    assert!(
-        held == declared,
-        "the reservation is not the amount declared"
-    );
-    held
+#[inline(always)]
+pub fn reserve_take(handle: Handle) -> kernel::state::Bucket {
+    match handle {
+        Handle::Reserve(rep) => kernel::state::reserve_cell_take(&reserve_cell(rep)),
+        other => unreachable!("{other:?} holds no reservation"),
+    }
+}
+
+/// Issue `value` of the resource this invocation was granted.
+///
+/// # Panics
+///
+/// Never from the guest's side: the grant is a handle the kernel lowered
+/// against this method's own declared outputs, so a body holding one was
+/// given one.
+#[must_use]
+#[inline(always)]
+pub fn issue(rep: u32, value: u128) -> kernel::state::Bucket {
+    kernel::state::issuer_take(&issuer(rep), amount(value))
 }
 
 /// Entries currently visible in this interval, bounded by its cap.

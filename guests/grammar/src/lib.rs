@@ -51,15 +51,15 @@ pub mod grammar {
         /// tail position — the other two ways a unit body ends.
         pub fn sweep(&mut self, holder: Address) {
             let mut held = self.holdings.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
-            let mut vault = self.vaults.at(holder);
+            let vault = self.vaults.at(holder);
             let mut index = 0;
-            let mut total = 0;
+            let mut total = vault.get();
             while index < held.count() {
                 total += held.entry(index);
                 index += 1;
             }
             if total > 0 {
-                vault.add(total);
+                held.set(0, total);
             }
         }
 

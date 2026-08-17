@@ -11,8 +11,8 @@
 //! embedding wrong; it cannot get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
-    AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, EDGE_CELL_BYTES, EdgeKind,
-    MAX_ERROR_CODES, NodeCall, PackageHash, cell_ids, nf_cell_len,
+    AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, EdgeKind, MAX_ERROR_CODES,
+    NodeCall, PackageHash, cell_ids, nf_cell_len,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult};
@@ -522,7 +522,10 @@ fn split_outputs(returned: Option<&[u8]>, outputs: &[EdgeKind]) -> Option<Vec<Ve
     let mut rest = bytes;
     for kind in outputs {
         let width = match kind {
-            EdgeKind::Fungible => EDGE_CELL_BYTES,
+            // A fungible edge has no blob to split: it is a bucket the
+            // kernel took ownership of, so a blob offered for one is a
+            // package whose code and signature disagree.
+            EdgeKind::Fungible => return None,
             EdgeKind::NonFungible => nf_cell_len(rest)?,
         };
         if rest.len() < width {
@@ -585,13 +588,23 @@ mod tests {
     fn an_export_returns_one_cell_per_output_edge() {
         assert_eq!(split_outputs(None, &[]), Some(Vec::new()));
         assert_eq!(
-            split_outputs(Some(&[7; 16]), &[FUNGIBLE]),
-            Some(vec![vec![7; 16]])
+            split_outputs(Some(&ids_cell(&[3])), &[NON_FUNGIBLE]),
+            Some(vec![ids_cell(&[3])])
         );
+        let two: Vec<u8> = ids_cell(&[3]).into_iter().chain(ids_cell(&[9])).collect();
         assert_eq!(
-            split_outputs(Some(&[9; 32]), &[FUNGIBLE, FUNGIBLE]),
-            Some(vec![vec![9; 16], vec![9; 16]])
+            split_outputs(Some(&two), &[NON_FUNGIBLE, NON_FUNGIBLE]),
+            Some(vec![ids_cell(&[3]), ids_cell(&[9])])
         );
+    }
+
+    #[test]
+    fn a_fungible_output_has_no_blob_to_split() {
+        // It is a bucket the kernel took ownership of, so a package
+        // offering bytes for one is a package whose code and signature
+        // disagree.
+        assert_eq!(split_outputs(Some(&[7; 16]), &[FUNGIBLE]), None);
+        assert_eq!(split_outputs(Some(&[9; 32]), &[FUNGIBLE, FUNGIBLE]), None);
     }
 
     #[test]
@@ -602,22 +615,22 @@ mod tests {
             Some(vec![cell.clone()])
         );
 
-        // An id cell beside an amount cell, in declared order.
-        let blob: Vec<u8> = cell.iter().copied().chain([7; 16]).collect();
+        // Two id cells, in declared order.
+        let blob: Vec<u8> = cell.iter().copied().chain(ids_cell(&[7])).collect();
         assert_eq!(
-            split_outputs(Some(&blob), &[NON_FUNGIBLE, FUNGIBLE]),
-            Some(vec![cell, vec![7; 16]])
+            split_outputs(Some(&blob), &[NON_FUNGIBLE, NON_FUNGIBLE]),
+            Some(vec![cell, ids_cell(&[7])])
         );
     }
 
     #[test]
     fn any_other_return_shape_is_refused() {
         // A blob for a method that declared no edges, none for a method
-        // that declared one, and a length between two whole cells.
+        // that declared one, and a cell cut short.
         assert_eq!(split_outputs(Some(&[0; 16]), &[]), None);
-        assert_eq!(split_outputs(None, &[FUNGIBLE]), None);
-        assert_eq!(split_outputs(Some(&[0; 24]), &[FUNGIBLE]), None);
-        assert_eq!(split_outputs(Some(&[0; 16]), &[FUNGIBLE, FUNGIBLE]), None);
+        assert_eq!(split_outputs(None, &[NON_FUNGIBLE]), None);
+        let short = &ids_cell(&[3, 9])[..12];
+        assert_eq!(split_outputs(Some(short), &[NON_FUNGIBLE]), None);
     }
 
     #[test]
