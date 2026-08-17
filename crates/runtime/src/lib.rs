@@ -34,10 +34,10 @@ pub use validator::{ProfileError, validate_component, validate_core_module};
 #[cfg(feature = "engine")]
 pub use {
     abort::{CallError, classify, exhausted, trap_reason},
-    call::{CellKind, HostArg, Returned, call_export},
+    call::{Returned, call_export},
     engine::{blessed_config, blessed_engine},
     world::{
-        Bucket, DeltaCell, HostRefusal, Issuer, KernelHost, LockedCell, RangeRead, RangeWrite,
-        ReadCell, ReserveCell, WriteCell, add_kernel_to_linker,
+        Bucket, DeltaCell, HostRefusal, Issuer, LockedCell, RangeRead, RangeWrite, ReadCell,
+        ReserveCell, WriteCell, add_kernel_to_linker,
     },
 };

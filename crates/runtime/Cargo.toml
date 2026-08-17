@@ -14,6 +14,7 @@ default = ["engine"]
 engine = ["dep:wasmtime"]
 
 [dependencies]
+hyperscale-vm-embed.workspace = true
 hyperscale-vm-types.workspace = true
 thiserror.workspace = true
 wasmparser.workspace = true

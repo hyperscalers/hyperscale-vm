@@ -5,7 +5,7 @@
 //! modules linked through core instances, imports drawn from the
 //! `hyperscale:kernel` interfaces, canon lower/lift with memory+realloc
 //! options, and resource handles with call-scoped borrows. The kernel
-//! interfaces' semantics are wired directly against [`RefKernelHost`] — the
+//! interfaces' semantics are wired directly against [`KernelHost`] — the
 //! world is fixed, so its ABI is implemented explicitly rather than derived
 //! from types.
 //!
@@ -18,7 +18,8 @@
 
 use std::collections::HashMap;
 
-use hyperscale_vm_types::AbortReason;
+use hyperscale_vm_embed::{CellKind, GuestArg, KernelHost};
+use hyperscale_vm_types::ISSUER_REP;
 use wasmparser::{
     CanonicalFunction, CanonicalOption, ComponentAlias, ComponentDefinedType,
     ComponentExternalKind, ComponentType, ComponentTypeRef, ComponentValType, ExternalKind,
@@ -32,49 +33,6 @@ use crate::interp::{
 };
 use crate::module::{CoreImportKind, RefModule};
 use crate::ops::Value;
-
-/// The host surface behind the kernel world.
-///
-/// Mirrors the runtime's trait — same operations, same deterministic
-/// refusals — so one host drives both implementations. Every `Err` is a
-/// kernel refusal that traps with the class the host assigned it; the
-/// boundary transports that class and never words one of its own.
-#[allow(missing_docs)] // mirrors the documented runtime trait method for method
-#[allow(clippy::missing_errors_doc)] // every Err is a deterministic kernel refusal
-pub trait RefKernelHost {
-    fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
-    fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
-    fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
-    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
-    fn issuer_mint(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
-    fn issuer_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
-    fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
-    fn range_put(&mut self, rep: u32, funds: u32, value: Vec<u8>) -> Result<(), AbortReason>;
-    fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
-    fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), AbortReason>;
-    fn bucket_amount(&mut self, rep: u32) -> Result<u128, AbortReason>;
-    fn delta_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
-    fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
-    fn issuer_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
-    fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
-    fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
-    fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason>;
-    fn take_scan_debt(&mut self) -> usize;
-    fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason>;
-    fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, AbortReason>;
-    fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
-    fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), AbortReason>;
-    fn range_insert(&mut self, rep: u32, order: u128, value: Vec<u8>) -> Result<(), AbortReason>;
-    fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), AbortReason>;
-    fn bucket_drop(&mut self, rep: u32) -> Result<(), AbortReason>;
-    /// The transaction clock in milliseconds.
-    fn clock_ms(&self) -> u64;
-    /// The transaction's randomness draw.
-    fn randomness(&self) -> [u8; 32];
-    /// The protocol hash function.
-    fn hash(&self, data: &[u8]) -> [u8; 32];
-    fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), AbortReason>;
-}
 
 /// The state interface's resource types: one per access mode, plus the
 /// one that carries value.
@@ -106,6 +64,19 @@ pub enum ResourceKind {
 }
 
 impl ResourceKind {
+    /// The resource type a materialized handle is passed as.
+    const fn of(kind: CellKind) -> Self {
+        match kind {
+            CellKind::Read => Self::ReadCell,
+            CellKind::Locked => Self::LockedCell,
+            CellKind::Write => Self::WriteCell,
+            CellKind::Delta => Self::DeltaCell,
+            CellKind::Reserve => Self::ReserveCell,
+            CellKind::RangeRead => Self::RangeRead,
+            CellKind::RangeWrite => Self::RangeWrite,
+        }
+    }
+
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "bucket" => Some(Self::Bucket),
@@ -145,6 +116,25 @@ pub enum CVal {
     /// A declined result: the code the guest returned on the error arm,
     /// an index into its package's error table.
     Declined(u32),
+}
+
+impl From<&GuestArg<'_>> for CVal {
+    /// The assembled argument as this interpreter's boundary value.
+    ///
+    /// A capability arrives as a borrow of its mode's resource type, and
+    /// the issuance grant as a borrow at the rep the kernel fixes for it —
+    /// the one argument whose rep is a constant rather than a table
+    /// position, because an invocation is granted at most one.
+    fn from(arg: &GuestArg<'_>) -> Self {
+        match arg {
+            GuestArg::Handle { rep, kind } => Self::Borrow(*rep, ResourceKind::of(*kind)),
+            GuestArg::U64(scalar) => Self::U64(*scalar),
+            GuestArg::Address(address) => Self::Address(address.to_bytes()),
+            GuestArg::Bytes(bytes) => Self::Bytes(bytes.to_vec()),
+            GuestArg::Bucket(rep) => Self::Own(*rep),
+            GuestArg::Issuer => Self::Borrow(ISSUER_REP, ResourceKind::Issuer),
+        }
+    }
 }
 
 /// A kernel-world import.
@@ -824,7 +814,7 @@ pub struct RefComponentInstance<'c, H> {
     canon: KernelCanon<'c, H>,
 }
 
-impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
+impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
     /// Instantiates the component against a host.
     ///
     /// # Errors
@@ -1319,7 +1309,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
     }
 }
 
-impl<H: RefKernelHost> KernelCanon<'_, H> {
+impl<H: KernelHost> KernelCanon<'_, H> {
     fn canon_opts(&self, id: u32) -> Result<CanonOpts, ExecError> {
         match &self.comp.core_funcs[id as usize] {
             CoreFuncDef::Lower { opts, .. } => Ok(*opts),
@@ -1529,7 +1519,7 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
     }
 }
 
-impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
+impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
     fn param_count(&self, id: u32) -> usize {
         match &self.comp.core_funcs[id as usize] {
             CoreFuncDef::ResourceDrop { .. } => 1,

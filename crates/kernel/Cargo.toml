@@ -7,6 +7,7 @@ description = "The object model and mode semantics: substate store, ownership, c
 
 [dependencies]
 hyperscale-vm-effects.workspace = true
+hyperscale-vm-embed.workspace = true
 hyperscale-vm-types.workspace = true
 thiserror.workspace = true
 

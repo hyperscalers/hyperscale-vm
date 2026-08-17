@@ -15,17 +15,15 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    AbortReason, BatchOutcome, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend,
-    GuestCall, ISSUER_REP, InvokeResult, Invoked, KernelSession, Locality, ManifestWalk,
-    MemoryStore, Outcome, TxHash, WorkingStore, decode_amount, encode_amount, execute_batch,
+    AbortReason, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall,
+    InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, TxHash,
+    WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
-use hyperscale_vm_ref::{
-    CVal, ExecError, RefComponent, RefComponentInstance, ResourceKind, Trap as RefTrap,
-};
+use hyperscale_vm_ref::{CVal, ExecError, RefComponent, RefComponentInstance, Trap as RefTrap};
 use hyperscale_vm_runtime::{
-    CellKind as HostCellKind, HostArg, Returned, add_kernel_to_linker, blessed_engine, call_export,
-    classify, exhausted, validate_component,
+    Returned, add_kernel_to_linker, blessed_engine, call_export, classify, exhausted,
+    validate_component,
 };
 use hyperscale_vm_stdlib::account;
 use wasmtime::component::{Component, Linker};
@@ -171,8 +169,7 @@ impl GuestBackend for BlessedComposed {
         let instance = linker
             .instantiate(&mut store, &self.component)
             .expect("instantiate");
-        let args: Vec<HostArg<'_>> = call.args.iter().map(host_arg).collect();
-        let outcome = call_export(&mut store, &instance, call.export, &args);
+        let outcome = call_export(&mut store, &instance, call.export, call.args);
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);
         let result = invoked(outcome);
         let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
@@ -192,7 +189,7 @@ struct RefComposed {
 
 impl GuestBackend for RefComposed {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
-        let args: Vec<CVal> = call.args.iter().map(ref_arg).collect();
+        let args: Vec<CVal> = call.args.iter().map(CVal::from).collect();
         let mut instance = RefComponentInstance::instantiate(&self.component, SessionHost(session))
             .map_err(|(_, error)| error)
             .expect("instantiate");
@@ -241,55 +238,6 @@ fn lifted(values: &[CVal]) -> Invoked {
         }
         [CVal::Declined(code)] => Invoked::Declined(*code),
         _ => Invoked::Aborted(AbortReason::BadReturnShape),
-    }
-}
-
-const fn host_kind(kind: CellKind) -> HostCellKind {
-    match kind {
-        CellKind::Read => HostCellKind::Read,
-        CellKind::Locked => HostCellKind::Locked,
-        CellKind::Write => HostCellKind::Write,
-        CellKind::Delta => HostCellKind::Delta,
-        CellKind::Reserve => HostCellKind::Reserve,
-        CellKind::RangeRead => HostCellKind::RangeRead,
-        CellKind::RangeWrite => HostCellKind::RangeWrite,
-    }
-}
-
-const fn ref_kind(kind: CellKind) -> ResourceKind {
-    match kind {
-        CellKind::Read => ResourceKind::ReadCell,
-        CellKind::Locked => ResourceKind::LockedCell,
-        CellKind::Write => ResourceKind::WriteCell,
-        CellKind::Delta => ResourceKind::DeltaCell,
-        CellKind::Reserve => ResourceKind::ReserveCell,
-        CellKind::RangeRead => ResourceKind::RangeRead,
-        CellKind::RangeWrite => ResourceKind::RangeWrite,
-    }
-}
-
-const fn host_arg<'a>(arg: &GuestArg<'a>) -> HostArg<'a> {
-    match arg {
-        GuestArg::Handle { rep, kind } => HostArg::Handle {
-            rep: *rep,
-            kind: host_kind(*kind),
-        },
-        GuestArg::U64(scalar) => HostArg::U64(*scalar),
-        GuestArg::Address(address) => HostArg::Address(*address),
-        GuestArg::Bytes(bytes) => HostArg::Bytes(bytes),
-        GuestArg::Bucket(rep) => HostArg::Bucket(*rep),
-        GuestArg::Issuer => HostArg::Issuer,
-    }
-}
-
-fn ref_arg(arg: &GuestArg<'_>) -> CVal {
-    match arg {
-        GuestArg::Handle { rep, kind } => CVal::Borrow(*rep, ref_kind(*kind)),
-        GuestArg::U64(scalar) => CVal::U64(*scalar),
-        GuestArg::Address(address) => CVal::Address(address.to_bytes()),
-        GuestArg::Bytes(bytes) => CVal::Bytes(bytes.to_vec()),
-        GuestArg::Bucket(rep) => CVal::Own(*rep),
-        GuestArg::Issuer => CVal::Borrow(ISSUER_REP, ResourceKind::Issuer),
     }
 }
 

@@ -37,6 +37,7 @@ pub use executor::{
     BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, execute_batch,
 };
 pub use hyperscale_vm_effects::{AbortReason, ISSUER_REP, StateWrites};
+pub use hyperscale_vm_embed::{CellKind, GuestArg, Invoked, KernelHost};
 pub use ledger::AmountLedger;
 pub use locality::{Locality, OwnedDelta};
 pub use modes::{
@@ -53,5 +54,5 @@ pub use session::{
 };
 pub use store::{Access, AppliedDelta, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
 pub use supply::SupplyLedger;
-pub use walk::{CellKind, GuestArg, GuestBackend, GuestCall, InvokeResult, Invoked, ManifestWalk};
+pub use walk::{GuestBackend, GuestCall, InvokeResult, ManifestWalk};
 pub use work::Work;

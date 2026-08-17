@@ -11,6 +11,7 @@
 //! constructs are that world's, and because the mapping from a mode to
 //! its handle type is the same one the linker registers.
 
+use hyperscale_vm_embed::{CellKind, GuestArg};
 use hyperscale_vm_types::{Address, ISSUER_REP};
 use wasmtime::component::{Instance, Resource, ResourceAny, Val};
 use wasmtime::{AsContextMut, Error, Result};
@@ -19,51 +20,6 @@ use crate::abort::CallError;
 use crate::world::{
     Bucket, DeltaCell, Issuer, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
 };
-
-/// Which of the state interface's resources a handle is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CellKind {
-    /// `read-cell`.
-    Read,
-    /// `locked-cell`.
-    Locked,
-    /// `write-cell`.
-    Write,
-    /// `delta-cell`.
-    Delta,
-    /// `reserve-cell`.
-    Reserve,
-    /// `range-read`.
-    RangeRead,
-    /// `range-write`.
-    RangeWrite,
-}
-
-/// One argument of a dynamic invocation.
-#[derive(Clone, Copy, Debug)]
-pub enum HostArg<'a> {
-    /// A capability handle at `rep`, of the mode's own resource type.
-    Handle {
-        /// The host-assigned rep the kernel materialized.
-        rep: u32,
-        /// Which resource type to construct it as.
-        kind: CellKind,
-    },
-    /// A `u64` scalar.
-    U64(u64),
-    /// An address, as the world's own record.
-    Address(Address),
-    /// A `list<u8>`.
-    Bytes(&'a [u8]),
-    /// A bucket the kernel holds, handed to the guest.
-    ///
-    /// Ownership, not a loan: the canonical ABI seats it in the guest's
-    /// table and the kernel's rep is not reachable from here again unless
-    /// the guest hands it back.
-    Bucket(u32),
-    /// This invocation's authority to issue.
-    Issuer,
-}
 
 /// An address as the world's `record address`: four little-endian words.
 ///
@@ -150,7 +106,7 @@ pub fn call_export<T: 'static>(
     mut store: impl AsContextMut<Data = T>,
     instance: &Instance,
     export: &str,
-    args: &[HostArg<'_>],
+    args: &[GuestArg<'_>],
 ) -> Result<Returned> {
     let Some(func) = instance.get_func(store.as_context_mut(), export) else {
         return Err(CallError::ExportMissing(export.to_owned()).into());
@@ -158,17 +114,17 @@ pub fn call_export<T: 'static>(
     let mut lowered = Vec::with_capacity(args.len());
     for arg in args {
         lowered.push(match arg {
-            HostArg::Handle { rep, kind } => {
+            GuestArg::Handle { rep, kind } => {
                 Val::Resource(handle(*kind, *rep, store.as_context_mut())?)
             }
-            HostArg::U64(scalar) => Val::U64(*scalar),
-            HostArg::Address(address) => address_val(*address),
-            HostArg::Bytes(bytes) => Val::List(bytes.iter().copied().map(Val::U8).collect()),
-            HostArg::Bucket(rep) => Val::Resource(ResourceAny::try_from_resource(
+            GuestArg::U64(scalar) => Val::U64(*scalar),
+            GuestArg::Address(address) => address_val(*address),
+            GuestArg::Bytes(bytes) => Val::List(bytes.iter().copied().map(Val::U8).collect()),
+            GuestArg::Bucket(rep) => Val::Resource(ResourceAny::try_from_resource(
                 Resource::<Bucket>::new_own(*rep),
                 store.as_context_mut(),
             )?),
-            HostArg::Issuer => Val::Resource(ResourceAny::try_from_resource(
+            GuestArg::Issuer => Val::Resource(ResourceAny::try_from_resource(
                 Resource::<Issuer>::new_own(ISSUER_REP),
                 store.as_context_mut(),
             )?),

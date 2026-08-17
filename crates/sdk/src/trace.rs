@@ -50,7 +50,6 @@ pub struct Trace {
     next_slot: u32,
     /// Resource expressions for the value edges this method produces.
     outputs: Vec<Expr>,
-    /// The method's static call sites.
     /// The worst-case effect count, folding `for-each` width per nesting
     /// level.
     worst_case: usize,

@@ -20,14 +20,14 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::session_host::SessionHost;
 use hyperscale_vm_kernel::{
-    Baseline, BatchTx, CellKind, EnvInputs, ExecutionMode, GuestArg, GuestBackend, GuestCall,
-    GuestRunner, InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore,
-    Outcome, OverlayStore, TxHash, WorkingStore, encode_amount, execute_batch,
+    Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, GuestRunner,
+    InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome,
+    OverlayStore, TxHash, WorkingStore, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_runtime::{
-    CellKind as HostCellKind, HostArg, Returned, add_kernel_to_linker, blessed_engine, call_export,
-    classify, exhausted, validate_component,
+    Returned, add_kernel_to_linker, blessed_engine, call_export, classify, exhausted,
+    validate_component,
 };
 use hyperscale_vm_stdlib::account;
 use wasmtime::component::{Component, InstancePre, Linker};
@@ -169,22 +169,7 @@ impl GuestBackend for Bench {
         let mut store = Store::new(&self.engine, SessionHost(session));
         store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
         let instance = self.pre.instantiate(&mut store).expect("instantiate");
-        let args: Vec<HostArg<'_>> = call
-            .args
-            .iter()
-            .map(|arg| match arg {
-                GuestArg::Handle { rep, kind } => HostArg::Handle {
-                    rep: *rep,
-                    kind: host_kind(*kind),
-                },
-                GuestArg::U64(scalar) => HostArg::U64(*scalar),
-                GuestArg::Address(address) => HostArg::Address(*address),
-                GuestArg::Bytes(bytes) => HostArg::Bytes(bytes),
-                GuestArg::Bucket(rep) => HostArg::Bucket(*rep),
-                GuestArg::Issuer => HostArg::Issuer,
-            })
-            .collect();
-        let outcome = call_export(&mut store, &instance, call.export, &args);
+        let outcome = call_export(&mut store, &instance, call.export, call.args);
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);
         let result = match outcome {
             Ok(Returned::Edges(reps)) => Invoked::Produced(reps),
@@ -198,18 +183,6 @@ impl GuestBackend for Bench {
             result,
             exhausted,
         }
-    }
-}
-
-const fn host_kind(kind: CellKind) -> HostCellKind {
-    match kind {
-        CellKind::Read => HostCellKind::Read,
-        CellKind::Locked => HostCellKind::Locked,
-        CellKind::Write => HostCellKind::Write,
-        CellKind::Delta => HostCellKind::Delta,
-        CellKind::Reserve => HostCellKind::Reserve,
-        CellKind::RangeRead => HostCellKind::RangeRead,
-        CellKind::RangeWrite => HostCellKind::RangeWrite,
     }
 }
 

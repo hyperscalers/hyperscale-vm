@@ -21,6 +21,7 @@ Rust implementation of the Hyperscale VM: an execution engine built for a sharde
 | Crate | Purpose |
 |-------|---------|
 | [`effects`](crates/effects) | Effect signatures and the manifest: the access DSL and its evaluator, the content-addressed metadata cache, the typed dataflow graph with admission, and `route()` |
+| [`embed`](crates/embed) | The engine embedding seam: the kernel's host surface every runtime implements, and one assembled call |
 | [`harness`](crates/harness) | Differential lanes, corpora, and guest fixtures — dev-only, never a dependency of a shipped crate |
 | [`hbor`](crates/hbor) | The canonical encoding: schema-external, canonical at decode, natively merkleized |
 | [`hbor-macros`](crates/hbor-macros) | Derive macros for HBOR encode, decode, and schema |

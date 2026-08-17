@@ -14,74 +14,23 @@ use hyperscale_vm_effects::{
     AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, MAX_ERROR_CODES, NodeCall,
     PackageHash,
 };
+use hyperscale_vm_embed::{CellKind, GuestArg, Invoked};
 
 use crate::executor::{BatchTx, GuestRunner, RunResult};
 use crate::modes::decode_amount;
 use crate::session::{Capability, KernelSession, Outcome, SessionTrap};
 
-/// Which handle type a rep names — the kernel's mode lattice as the
-/// runtimes' resource types.
-///
-/// Derived from the capability itself rather than declared beside it, so
-/// a backend is told what to construct instead of inferring it from the
-/// export it happens to be calling.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CellKind {
-    /// `read-cell`.
-    Read,
-    /// `locked-cell`.
-    Locked,
-    /// `write-cell`.
-    Write,
-    /// `delta-cell`.
-    Delta,
-    /// `reserve-cell`.
-    Reserve,
-    /// `range-read`.
-    RangeRead,
-    /// `range-write`.
-    RangeWrite,
-}
-
-impl CellKind {
-    /// The handle type a materialized capability is passed as.
-    #[must_use]
-    pub const fn of(capability: &Capability) -> Self {
-        match capability {
-            Capability::Read(_) => Self::Read,
-            Capability::Locked(_) => Self::Locked,
-            Capability::Write(_) => Self::Write,
-            Capability::Delta(_) => Self::Delta,
-            Capability::Reserve { .. } => Self::Reserve,
-            Capability::RangeRead(..) => Self::RangeRead,
-            Capability::RangeWrite(..) => Self::RangeWrite,
-        }
+/// The handle type a materialized capability is passed as.
+const fn cell_kind(capability: &Capability) -> CellKind {
+    match capability {
+        Capability::Read(_) => CellKind::Read,
+        Capability::Locked(_) => CellKind::Locked,
+        Capability::Write(_) => CellKind::Write,
+        Capability::Delta(_) => CellKind::Delta,
+        Capability::Reserve { .. } => CellKind::Reserve,
+        Capability::RangeRead(..) => CellKind::RangeRead,
+        Capability::RangeWrite(..) => CellKind::RangeWrite,
     }
-}
-
-/// One assembled ABI argument.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GuestArg<'a> {
-    /// A borrowed capability handle: its rep in the session's table and
-    /// the resource type to construct it as.
-    Handle {
-        /// The table position the session assigned.
-        rep: u32,
-        /// The handle type.
-        kind: CellKind,
-    },
-    /// A 64-bit scalar.
-    U64(u64),
-    /// An address, as the world's own record.
-    Address(Address),
-    /// A `list<u8>` argument.
-    Bytes(&'a [u8]),
-    /// A value edge, transferred to the guest as the bucket the kernel
-    /// holds for it.
-    Bucket(u32),
-    /// This invocation's authority to issue, granted from the method's
-    /// own declared outputs.
-    Issuer,
 }
 
 /// One export invocation, fully assembled.
@@ -100,25 +49,6 @@ pub struct GuestCall<'a> {
     /// meters this invocation against it, so a manifest's nodes share one
     /// budget rather than each getting the whole of it.
     pub fuel_budget: u64,
-}
-
-/// How one invocation ended.
-///
-/// Three ways rather than two, because returning on an error arm is
-/// neither of the other two: the guest ran to completion and said no.
-/// That distinction is what separates a declared refusal from a defect
-/// everywhere downstream — the outcome it records, and the fee it pays.
-pub enum Invoked {
-    /// The export returned the value edges it produced, as the buckets
-    /// the kernel holds again — none, where its signature declares none.
-    Produced(Vec<u32>),
-    /// The export declined, with an index into its package's error table.
-    Declined(u32),
-    /// The invocation failed, in the class the backend classified it as.
-    ///
-    /// A class rather than a message, so a backend has no formatting
-    /// decision to make and two backends cannot word one failure two ways.
-    Aborted(AbortReason),
 }
 
 /// What one invocation produced: the session back from the engine, the
@@ -222,7 +152,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                     };
                     args.push(GuestArg::Handle {
                         rep: *rep,
-                        kind: CellKind::of(capability),
+                        kind: cell_kind(capability),
                     });
                 }
                 CallArg::Bucket { source, output } => {

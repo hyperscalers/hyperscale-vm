@@ -665,6 +665,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperscale-vm-embed"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-vm-types",
+]
+
+[[package]]
 name = "hyperscale-vm-fixtures"
 version = "0.1.0"
 dependencies = [
@@ -712,6 +719,7 @@ name = "hyperscale-vm-kernel"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-effects",
+ "hyperscale-vm-embed",
  "hyperscale-vm-types",
  "proptest",
  "thiserror 2.0.19",
@@ -735,6 +743,7 @@ dependencies = [
 name = "hyperscale-vm-ref"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-vm-embed",
  "hyperscale-vm-types",
  "thiserror 2.0.19",
  "wasmparser 0.255.0",
@@ -744,6 +753,7 @@ dependencies = [
 name = "hyperscale-vm-runtime"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-vm-embed",
  "hyperscale-vm-types",
  "thiserror 2.0.19",
  "wasmparser 0.255.0",

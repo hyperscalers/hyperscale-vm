@@ -9,8 +9,8 @@
 //! is, because the class decides the outcome variant and the outcome
 //! variant decides the fee.
 
-use hyperscale_vm_kernel::AbortReason;
-use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, RefKernelHost};
+use hyperscale_vm_kernel::{AbortReason, KernelHost};
+use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{Returned, blessed_engine, call_export, classify, validate_component};
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::Context;
@@ -62,7 +62,7 @@ const TRAPPING_GUEST: &str = r#"
 struct NoHost;
 
 #[allow(clippy::missing_errors_doc)] // unreachable: the guest imports nothing
-impl RefKernelHost for NoHost {
+impl KernelHost for NoHost {
     fn read_cell(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
