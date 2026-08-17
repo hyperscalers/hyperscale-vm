@@ -61,6 +61,7 @@ mod wasm;
 
 pub use config::{Config, Slot};
 pub use hyperscale_vm_stdlib::account;
+pub use native::{Dispatch, Native};
 pub use outcome::Outcome;
 pub use package::Package;
 
@@ -100,7 +101,7 @@ enum Engine {
     #[cfg(feature = "wasm")]
     Blessed(wasm::Blessed),
     /// The bodies themselves, called directly.
-    Native(native::Native),
+    Native(Native),
 }
 
 impl Chain {
@@ -111,7 +112,7 @@ impl Chain {
     /// backtrace, and nothing is compiled to wasm to get there.
     #[must_use]
     pub fn native() -> Self {
-        let mut native = native::Native::default();
+        let mut native = Native::default();
         native.seed(account_package_hash(&TestHasher), account::invoke);
         Self::new(Engine::Native(native))
     }

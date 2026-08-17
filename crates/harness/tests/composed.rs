@@ -14,9 +14,9 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
-    AbortReason, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall,
-    InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, TxHash,
-    WorkingStore, decode_amount, encode_amount, execute_batch,
+    AbortReason, BatchOutcome, BatchTx, EnvInputs, Event, ExecutionMode, GuestBackend, GuestCall,
+    InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, StateDelta,
+    TxHash, WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
 use hyperscale_vm_ref::{CVal, ExecError, RefComponent, RefComponentInstance, Trap as RefTrap};
@@ -25,6 +25,7 @@ use hyperscale_vm_runtime::{
     validate_component,
 };
 use hyperscale_vm_stdlib::account;
+use hyperscale_vm_testing::Native;
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};
@@ -267,8 +268,41 @@ fn amount_of(end: &MemoryStore, key: SubstateKey) -> u128 {
         .map_or(0, |cell| decode_amount(cell).unwrap())
 }
 
-/// Execute the batch on both runtimes and assert byte-identical receipts
-/// and end state; returns the blessed outcome and its collapsed end state.
+/// Whether the engines ended on the one verdict the native lane cannot
+/// reach: a transaction that spent its signed ceiling.
+///
+/// Nothing meters that lane, so a body the engines cut off runs to
+/// completion there. It is the lane's stated boundary rather than a
+/// divergence — a test about the ceiling is a test about the engines —
+/// and reading it off the outcome is what keeps the exception from being
+/// a flag a caller could forget to pass.
+fn metered_out(outcome: &BatchOutcome) -> bool {
+    outcome.receipts.values().any(|receipt| {
+        matches!(
+            receipt.outcome,
+            Outcome::UserError {
+                reason: AbortReason::OutOfGas
+            }
+        )
+    })
+}
+
+/// What a lane is held to when it cannot report the one figure an engine
+/// produces: everything a contract is about.
+fn comparable(outcome: &BatchOutcome) -> Vec<(&Outcome, &StateDelta, &[Event])> {
+    outcome
+        .receipts
+        .values()
+        .map(|receipt| (&receipt.outcome, &receipt.delta, receipt.events.as_slice()))
+        .collect()
+}
+
+/// Execute the batch three ways and assert they agree; returns the
+/// blessed outcome and its collapsed end state.
+///
+/// The two engines are held to byte-identical receipts, fuel included.
+/// The native lane runs the package's own module with nothing metering
+/// it, so it is held to everything but that figure.
 fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<(BatchOutcome, MemoryStore)> {
     let bytes = build_guest("account")?;
     validate_component(&bytes).context("profile validation")?;
@@ -280,6 +314,8 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<(BatchOutcome, Mem
     let reference = RefComposed {
         component: RefComponent::decode(&bytes)?,
     };
+    let mut native = Native::default();
+    native.seed(pkg(), account::invoke);
     let blessed_outcome = execute_batch(
         Arc::new(store.clone()),
         batch,
@@ -300,10 +336,26 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<(BatchOutcome, Mem
         &Locality::All,
     )
     .unwrap();
+    let native_outcome = execute_batch(
+        Arc::new(store.clone()),
+        batch,
+        &ManifestWalk { backend: &native },
+        test_hash,
+        ExecutionMode::Serial,
+        &Locality::All,
+    )
+    .unwrap();
     assert_eq!(
         blessed_outcome.receipts, ref_outcome.receipts,
         "lanes diverged"
     );
+    if !metered_out(&blessed_outcome) {
+        assert_eq!(
+            comparable(&blessed_outcome),
+            comparable(&native_outcome),
+            "the package's own module diverged from its component"
+        );
+    }
     let end = blessed_outcome.store.collapse_onto(store.clone());
     assert_eq!(
         cells(&end),
