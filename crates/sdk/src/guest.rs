@@ -150,6 +150,17 @@ pub fn fraction_compose(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> (Wide, Wide) 
     (lowered(num), lowered(den))
 }
 
+/// `base` raised to `exp` at the protocol's fixed scale, by squaring.
+#[must_use]
+#[inline(always)]
+pub fn fixed_pow(base: Wide, exp: u32, rounding: Rounding) -> Wide {
+    lowered(kernel::math::fixed_pow(
+        raised(base),
+        exp,
+        direction(rounding),
+    ))
+}
+
 /// `an/ad` against `bn/bd`, compared at a width their cross-products fit.
 #[must_use]
 #[inline(always)]
