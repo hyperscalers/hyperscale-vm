@@ -796,6 +796,19 @@ struct KernelCanon<'c, H> {
     /// through the boundary — realloc calling an import whose lowering
     /// calls realloc — with every edge sound and the recursion unbounded.
     may_leave: bool,
+    /// Handle slots the call being lowered has borrowed.
+    ///
+    /// An `own` argument comes out of the guest's table, and one lifted
+    /// out of a slot the same call is borrowing would leave that borrow
+    /// naming an empty slot — so the ABI refuses it. The set is the
+    /// call's, cleared as each lowered import begins, because a lend
+    /// lasts exactly as long as the call that took it.
+    ///
+    /// Modelled as the set of slots rather than as a count per handle:
+    /// the world has no import taking two borrows of one resource, so
+    /// what a count would distinguish has no witness, and what matters is
+    /// the question `own` asks — is this slot lent right now.
+    lent: Vec<usize>,
     host: H,
 }
 
@@ -840,6 +853,7 @@ impl<'c, H: RefKernelHost> RefComponentInstance<'c, H> {
                 free: Vec::new(),
                 boundary_bytes: 0,
                 may_leave: true,
+                lent: Vec::new(),
                 host,
             },
         })
@@ -1381,6 +1395,9 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
     /// by a body — what it hands over stops being nameable.
     fn consume_bucket(&mut self, index: Value) -> Result<u32, ExecError> {
         let idx = index.as_i32().cast_unsigned() as usize;
+        if self.lent.contains(&idx) {
+            return Err(ExecError::Canon(CanonError::TransferOfLentHandle));
+        }
         match self.handles.get(idx) {
             Some(Some(h)) if h.live && h.own => {
                 let rep = h.rep;
@@ -1402,10 +1419,17 @@ impl<H: RefKernelHost> KernelCanon<'_, H> {
         self.free.push(u32::try_from(idx).expect("bounded"));
     }
 
-    fn resolve_handle(&self, index: Value, expected: ResourceKind) -> Result<u32, ExecError> {
+    /// Lends a handle to the call being lowered, yielding the rep behind
+    /// it. The lend stands until the call ends, which is what stops an
+    /// `own` argument beside it from taking the slot away.
+    fn resolve_handle(&mut self, index: Value, expected: ResourceKind) -> Result<u32, ExecError> {
         let idx = index.as_i32().cast_unsigned() as usize;
         match self.handles.get(idx) {
-            Some(Some(h)) if h.live && h.kind == expected => Ok(h.rep),
+            Some(Some(h)) if h.live && h.kind == expected => {
+                let rep = h.rep;
+                self.lent.push(idx);
+                Ok(rep)
+            }
             Some(Some(h)) if h.live => Err(ExecError::Canon(CanonError::WrongHandleType)),
             _ => Err(ExecError::Canon(CanonError::UnknownHandle)),
         }
@@ -1590,6 +1614,9 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         "lower of non-import",
                     )));
                 };
+                // A lend lasts as long as the call that took it, and this
+                // is where one begins.
+                self.lent.clear();
                 match host_fn {
                     HostFn::Clock => Ok(vec![Value::I64(self.host.clock_ms().cast_signed())]),
                     HostFn::ReadCellGet | HostFn::LockedCellGet | HostFn::WriteCellGet => {

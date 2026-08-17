@@ -50,6 +50,12 @@ pub enum CanonError {
     WrongHandleType,
     /// Borrow handles still live when the export returned.
     BorrowsRemain,
+    /// An owned argument lifted out of a handle the same call is already
+    /// borrowing. Transferring a handle takes it out of the guest's
+    /// table, and taking it out from under a borrow the same call holds
+    /// would leave that borrow naming nothing — so the ABI refuses the
+    /// lift rather than resolving the order.
+    TransferOfLentHandle,
     /// A lowered import called from a canonical-ABI callback — guest code
     /// the ABI runs while it is mid-lowering, where the component instance
     /// is not free to be left.

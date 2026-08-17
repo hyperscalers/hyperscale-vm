@@ -512,7 +512,9 @@ pub mod fixtures {
     /// `weigh` reads what a bucket carries and hands it back, which is
     /// the one question about value that moves none. `halve` splits a
     /// bucket and merges the halves straight back, and `split` keeps only
-    /// what came off.
+    /// what came off. `self-merge` names one bucket as both sides of a
+    /// merge, which the canonical ABI refuses: an owned argument cannot
+    /// come out of a slot the same call is borrowing.
     ///
     /// The three handle-returning exports return the handle index they
     /// were given, because that index is a core `i32` a body can read and
@@ -709,6 +711,15 @@ pub mod fixtures {
       call $bucket_put
       local.get 0)
 
+    ;; Name one bucket as both sides of a merge. The lend the borrow
+    ;; takes is still standing when the owned argument is lifted, so
+    ;; the boundary refuses before the kernel is reached at all.
+    (func (export "self-merge") (param i32) (result i64)
+      local.get 0
+      local.get 0
+      call $bucket_put
+      i64.const 0)
+
     ;; Split and hand back only the part that came off, putting the rest
     ;; into a cell: two edges out of one, which is what a split is for.
     (func (export "split") (param i32 i64 i32) (result i32)
@@ -885,6 +896,9 @@ pub mod fixtures {
   (func (export "halve")
     (param "b" (own $bucket)) (param "amount" u64) (result (own $bucket))
     (canon lift (core func $i "halve")))
+  (func (export "self-merge")
+    (param "b" (own $bucket)) (result u64)
+    (canon lift (core func $i "self-merge")))
   (func (export "split")
     (param "b" (own $bucket)) (param "amount" u64) (param "c" (borrow $dcell))
     (result (own $bucket))

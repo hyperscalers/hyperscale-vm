@@ -26,7 +26,7 @@ use hyperscale_vm_ref::{
 };
 use hyperscale_vm_runtime::{
     Bucket, DeltaCell, HostRefusal, Issuer, RangeWrite, ReadCell, ReserveCell, WriteCell,
-    add_kernel_to_linker, blessed_engine, validate_component,
+    add_kernel_to_linker, blessed_engine, classify, validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::error::format_err;
@@ -1035,6 +1035,60 @@ fn a_bucket_survives_a_split_and_a_merge_whole() -> Result<()> {
         .call(&mut store, (Resource::new_own(funds), 30))?;
     let mut host = store.into_data();
     assert_eq!(host.0.take_bucket(whole.rep())?.quantity(), 100);
+    Ok(())
+}
+
+/// A merge of a bucket into itself is refused, identically, by both.
+///
+/// The lane the divergence would have hidden in. A merge reads its
+/// target through a borrow and consumes its source as an own, so naming
+/// one bucket twice asks the boundary to take a slot out from under a
+/// lend it is holding. The blessed engine refuses that; an interpreter
+/// that did not model the lend would hand the kernel one rep twice and
+/// have it add a quantity to itself — a doubling on one runtime and a
+/// refusal on the other, which is a fork rather than a bug.
+///
+/// What the kernel does if it is ever reached anyway is its own test.
+#[test]
+fn a_merge_of_a_bucket_into_itself_is_refused_by_both_engines() -> Result<()> {
+    let fx = fixture();
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    validate_component(&bytes)?;
+
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<SessionHost>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let mut host = SessionHost(materialize(&fx));
+    let funds = host.0.open_bucket(Held::Amount(100));
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+    let blessed = instance
+        .get_typed_func::<(Resource<Bucket>,), (u64,)>(&mut store, "self-merge")?
+        .call(&mut store, (Resource::new_own(funds),))
+        .map_err(|error| classify(&error))
+        .expect_err("the blessed engine refuses the lift");
+    let blessed_host = store.into_data();
+
+    let comp = RefComponent::decode(&bytes)?;
+    let mut host = SessionHost(materialize(&fx));
+    let funds = host.0.open_bucket(Held::Amount(100));
+    let mut instance = RefComponentInstance::instantiate(&comp, host).map_err(|(_, e)| e)?;
+    let reference = instance
+        .invoke("self-merge", &[CVal::Own(funds)])?
+        .expect_err("the interpreter refuses the same lift");
+    let reference_host = instance.into_host();
+
+    assert_eq!(
+        blessed,
+        reference.abort_reason(),
+        "the engines classified the refusal differently",
+    );
+    assert_eq!(blessed, AbortReason::AbiViolation);
+    // And neither runtime moved value: the bucket carries what it did.
+    assert_eq!(blessed_host.0.bucket(funds)?, Held::Amount(100));
+    assert_eq!(reference_host.0.bucket(funds)?, Held::Amount(100));
     Ok(())
 }
 
