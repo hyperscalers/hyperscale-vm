@@ -6,7 +6,7 @@ Language-tied VMs (Move, Scrypto) exist because safety lives in the language. He
 
 - **WIT is the signature substrate.** Effect metadata maps over exactly WIT's shape — component, function, typed args. WIT has no annotation mechanism, so metadata rides a **custom section** in the component binary, content-addressed with the package: one artifact, one hash, one cache entry. The section also carries deploy-verified function attributes — static gas bounds and totality marks — never self-asserted ones.
 - **Capability imports are the enforcement gate.** A component touches only what its world imports; the kernel instantiates it with handles for the declared effect set and nothing else. "No handle exists" (INV-VM-1) is the Component Model's native discipline.
-- **`own`/`borrow` handle semantics carry the boundary half of linearity.** A vault handle passed `borrow` is read/reserve capability; passed `own`, it is a move. Guest-internal value linearity remains the kernel's job ([03-objects-and-state.md](03-objects-and-state.md) §6).
+- **`own`/`borrow` handle semantics carry the boundary half of linearity.** A cell handle is lent for one call: it arrives `borrow`, and the capability it grants is whatever mode materialized it. Value in flight is the world's one owned resource — passed `own`, so crossing it is a transfer the canonical ABI performs, and the drop of one is delivered to the kernel rather than being a guest-side no-op. What the boundary cannot see, the kernel holds on its own account: neither engine's ABI is trusted for value conservation, because an ABI that let a body name one edge twice would otherwise be a mint ([03-objects-and-state.md](03-objects-and-state.md) §6).
 
 ## 2. The deterministic profile
 

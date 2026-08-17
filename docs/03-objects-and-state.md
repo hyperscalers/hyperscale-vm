@@ -60,7 +60,9 @@ Any protocol- or ecosystem-wide cell — a total supply counter, a global regist
 
 ## 6. Linearity and per-shard supply
 
-Fungible value in the kernel is **linear**: amounts are split, merged, and moved, never duplicated or dropped. Each shard maintains, per resource, an accumulator of total supply held under its prefix, updated by mint, burn, and cross-shard movement. Accumulators are the reshape-clean kind: children's parts compose to the parent's exactly.
+Value in the kernel is **linear**: it is split, merged, and moved, never duplicated or dropped. That holds inside a transaction as well as across the ledger, and it is enforced rather than assumed. Value in flight is a handle the kernel hands a body, whose quantity lives on the kernel's side and which the guest can pass on but not open. Every producer is the kernel's own — an edge routed to the call, a debit against a cell the method declared, an issue by a method whose declaration grants it — so there is no constructor a body can reach to fabricate one, and both ways of losing value are refusals: a body that lets go of a handle still carrying something is stopped at the boundary, and a transaction that ends still holding value does not commit (INV-VM-17). A non-fungible edge is the same object carrying named instances instead of an amount, so the same rules cover both.
+
+Each shard maintains, per resource, an accumulator of total supply held under its prefix, updated by mint, burn, and cross-shard movement. Accumulators are the reshape-clean kind: children's parts compose to the parent's exactly.
 
 Conservation is then a global statement with local enforcement: for every resource, the per-shard accumulators sum to minted-minus-burned supply, and no execution path changes a shard's accumulator except mint, burn, or an attested cross-shard movement (INV-VM-6). A fabricated deposit would need an attested movement its source's own accumulator history cannot support — detectable at admission against state the receiving shard already tracks, with no separate conservation-audit protocol. The attestation is cheap because the kernel maintains the quantity natively.
 

@@ -31,6 +31,7 @@ This register owns the `INV-VM-*` family. The host protocol's families — `INV-
 | **INV-VM-5** | Determinism | **Reshape-clean accumulators.** Every stdlib accumulator's value under split/merge composition equals its value had the reshape not occurred; reshape neither creates, loses, nor double-counts any accumulated quantity. |
 | **INV-VM-6** | Safety | **Conservation.** For every resource, the sum of per-shard supply accumulators plus in-flight attested cross-shard movements equals minted-minus-burned supply at all times; no execution path changes a shard's accumulator except mint, burn, or an attested cross-shard movement. |
 | **INV-VM-7** | Safety | **Bond conservation.** Every substate carries either a paid bond or a recorded debt at the rate in force at its creation; bond and debt totals change only by creation, debt settlement, deletion refund, and reshape composition — which conserves them — and an indebted account never exceeds its substate cap. |
+| **INV-VM-17** | Safety | **Value linearity.** Value in flight exists only as a handle the kernel produced, and every producer is the kernel's own — an edge routed to a call, a debit against a declared cell, an issue a declaration granted — so a guest has no way to bring one into being. Between production and settlement it is neither duplicated nor lost: a committing transaction leaves no value held, and a body that lets go of value is refused at the boundary. The property is the kernel's alone, held without trusting either engine's canonical ABI to be right about which handle is which. Where INV-VM-6 conserves supply across shards, this conserves it inside one transaction. |
 
 ## Execution — [04](04-execution-semantics.md)
 
@@ -58,6 +59,6 @@ This register owns the `INV-VM-*` family. The host protocol's families — `INV-
 
 ## Notes for the verification effort
 
-- **The core** ([00-overview.md](00-overview.md)): access truth (INV-VM-1/2), conservation (INV-VM-5/6/7), fee assurance (INV-VM-9/10/11), schedule invariance (INV-VM-14). Everything else supports these or bounds resources.
+- **The core** ([00-overview.md](00-overview.md)): access truth (INV-VM-1/2), conservation (INV-VM-5/6/7/17), fee assurance (INV-VM-9/10/11), schedule invariance (INV-VM-14). Everything else supports these or bounds resources.
 - **Reduction structure.** The host's atomic-commitment argument consumes this register wholesale: deterministic execution (INV-VM-1/13/14) is what lets certificates attest rather than choose outcomes, and the host's own registers state that dependency from their side.
 - **Existing mechanized anchors.** The trace-subset oracle (asserts INV-VM-1 continuously, on every scenario, differential, and fuzz workload), the metamorphic schedule-permutation tests (INV-VM-14), the canonical-decode mutation proptests (INV-VM-13), and the differential lanes between the blessed engine and `crates/ref` are the executable counterparts to cross-validate models against. The fee-assurance model in the host repository's `specs/vm_fee_assurance.qnt` covers INV-VM-9/10/11 and records where it is stricter than the code.

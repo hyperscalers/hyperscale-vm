@@ -32,6 +32,8 @@ Aborts are load-bearing in a deterministic cross-shard protocol — deadline all
 
 Griefing accounting: a transaction engineered to abort still held locks and burned remote work; user-error pricing makes that a paid attack with linear cost.
 
+**A decline is not an abort.** A method may carry a refusal channel and return through it — the guest ran to completion and said no on its own terms, which is a different event from any row above and is priced as one: the transaction does not commit, but the invocation is charged the fuel it actually spent rather than the ceiling a trap is charged, because an export that returned reaches an ordinary completed figure both engines derive by construction. What comes back is an index into the package's own table of refusals, so a receipt records which refusal rather than a string an author chose. Whether a method has the channel at all is a fact about its compiled type that the publish gate holds it to ([01-effects-and-routing.md](01-effects-and-routing.md) §9) — the converse mark, that a method cannot decline *or* trap, is what lets a caller commit against it without waiting.
+
 ## 5. The fee quantities
 
 Five priced quantities, all deterministic:

@@ -33,7 +33,7 @@ The rule generalizes: anything that "helps" an object on its hot path lives unde
 
 ## 4. Inventory
 
-Each entry ships with verified effect signatures, reshape-clean split/merge semantics where stateful, and a formal-verification obligation — verify the component once, every user inherits it:
+Each entry ships with effect signatures derived from its own bodies ([01-effects-and-routing.md](01-effects-and-routing.md) §9), reshape-clean split/merge semantics where stateful, and a formal-verification obligation — verify the component once, every user inherits it:
 
 | Component | Notes |
 |---|---|
