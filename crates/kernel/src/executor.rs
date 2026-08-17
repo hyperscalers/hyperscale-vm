@@ -34,6 +34,7 @@ use hyperscale_vm_effects::{
     ModeKind, NodeCall, SubstateKey, compatible,
 };
 
+use crate::ledger::AmountLedger;
 use crate::locality::Locality;
 use crate::modes::{ModeError, TxHash};
 use crate::overlay::OverlayStore;

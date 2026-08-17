@@ -198,6 +198,7 @@ mod tests {
     };
 
     use super::Locality;
+    use crate::ledger::AmountLedger;
     use crate::modes::{decode_amount, encode_amount};
     use crate::overlay::OverlayStore;
     use crate::session::{Movement, StateDelta};

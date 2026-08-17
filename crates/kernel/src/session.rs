@@ -21,6 +21,7 @@ use hyperscale_vm_effects::{
     Mode, ModeKind, SubstateKey, cell_ids,
 };
 
+use crate::ledger::AmountLedger;
 use crate::locality::Locality;
 use crate::modes::{AMOUNT_CELL_BYTES, DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
 use crate::oracle::undeclared_accesses;
@@ -1966,6 +1967,7 @@ mod tests {
         MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, Outcome, SCAN_SEEK_BYTES,
         SessionTrap,
     };
+    use crate::ledger::AmountLedger;
     use crate::modes::{AMOUNT_CELL_BYTES, TxHash, decode_amount, encode_amount};
     use crate::overlay::OverlayStore;
     use crate::store::{MemoryStore, StoreError, WorkingStore};

@@ -1,12 +1,18 @@
 //! The kernel's object model and mode semantics, in isolation.
 //!
 //! Four pieces, each deterministic by construction: the substate store
-//! trait and its in-memory access-recording implementation; structural
+//! traits and their in-memory access-recording implementation; structural
 //! ownership (creation under the owning context, explicit move, never a
 //! re-parent); the mode lattice's execution semantics (amount cells, the
 //! order-invariant delta fold, reservation feasibility in canonical
 //! transaction-hash order, locked substates, capped interval scans); and
 //! the per-shard supply accumulators that substrate conservation.
+//!
+//! The mode semantics stand on a store's view rather than on a store:
+//! [`AmountLedger`] derives every reservation and movement verdict from
+//! the committed content and outstanding holds [`Baseline`] already
+//! answers, so the plain store and the layered one share one
+//! implementation of what a floor is and differ only in what they show.
 //!
 //! The trace-subset oracle lives here too: the recording store's access
 //! log checked against a declared effect set, the standing assertion that
@@ -14,6 +20,7 @@
 
 pub mod conflict;
 pub mod executor;
+pub mod ledger;
 pub mod locality;
 pub mod modes;
 pub mod oracle;
@@ -30,6 +37,7 @@ pub use executor::{
     BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, execute_batch,
 };
 pub use hyperscale_vm_effects::{AbortReason, ISSUER_REP, StateWrites};
+pub use ledger::AmountLedger;
 pub use locality::{Locality, OwnedDelta};
 pub use modes::{
     AMOUNT_CELL_BYTES, DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount,

@@ -2,6 +2,12 @@
 //! base is observationally identical to a plain [`MemoryStore`] holding
 //! the same state — op by op, access log included, and after collapse.
 //!
+//! What is under test is the layering: three-level reads, tombstones, the
+//! merged scan's bounded base fetch, and the effective view of holds. The
+//! amount semantics standing on that view are one implementation
+//! ([`AmountLedger`]) both stores share, so a disagreement here is always
+//! a disagreement about what the layers show.
+//!
 //! Every generated sequence runs against both stores; a merge point
 //! between the two phases pushes the first phase's effects into the
 //! committed layer, so scans and reads exercise all three layers with
@@ -15,7 +21,7 @@ use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Hash32, RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    DeltaOp, MemoryStore, OverlayStore, TxHash, WorkingStore, encode_amount,
+    AmountLedger, DeltaOp, MemoryStore, OverlayStore, TxHash, WorkingStore, encode_amount,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
@@ -94,16 +100,16 @@ fn arb_op() -> impl Strategy<Value = Op> {
 }
 
 /// Apply one operation, folding the outcome to a comparable string.
-fn apply<S: Store>(store: &mut S, op: &Op) -> String {
+fn apply<S: AmountLedger + WorkingStore>(store: &mut S, op: &Op) -> String {
     match op {
-        Op::Read(k) => format!("{:?}", store.sub().read(cell(*k))),
-        Op::Write(k, v) => format!("{:?}", store.sub().write(cell(*k), v.clone())),
-        Op::Remove(k) => format!("{:?}", store.sub().remove(cell(*k))),
-        Op::QueueDelta(k, op) => format!("{:?}", store.sub().queue_delta(cell(*k), *op)),
+        Op::Read(k) => format!("{:?}", store.read(cell(*k))),
+        Op::Write(k, v) => format!("{:?}", store.write(cell(*k), v.clone())),
+        Op::Remove(k) => format!("{:?}", store.remove(cell(*k))),
+        Op::QueueDelta(k, op) => format!("{:?}", store.queue_delta(cell(*k), *op)),
         Op::CommitDeltas => format!("{:?}", store.commit_deltas()),
         Op::EntryWrite(o, c, ord, v) => format!(
             "{:?}",
-            store.sub().entry_write(
+            store.entry_write(
                 OWNERS[*o as usize],
                 COLLECTIONS[*c as usize],
                 *ord,
@@ -112,13 +118,11 @@ fn apply<S: Store>(store: &mut S, op: &Op) -> String {
         ),
         Op::EntryRemove(o, c, ord) => format!(
             "{:?}",
-            store
-                .sub()
-                .entry_remove(OWNERS[*o as usize], COLLECTIONS[*c as usize], *ord)
+            store.entry_remove(OWNERS[*o as usize], COLLECTIONS[*c as usize], *ord)
         ),
         Op::Scan(o, c, lo, hi, cap) => format!(
             "{:?}",
-            store.sub().entries_in_range(
+            store.entries_in_range(
                 OWNERS[*o as usize],
                 COLLECTIONS[*c as usize],
                 *lo,
@@ -126,54 +130,9 @@ fn apply<S: Store>(store: &mut S, op: &Op) -> String {
                 *cap
             )
         ),
-        Op::Judge(t, k, a) => format!("{:?}", store.judge(&[(tx(*t), cell(*k), *a)])),
+        Op::Judge(t, k, a) => format!("{:?}", store.judge_and_hold(&[(tx(*t), cell(*k), *a)])),
         Op::Settle(t, k) => format!("{:?}", store.settle(cell(*k), tx(*t))),
         Op::Release(t, k) => format!("{:?}", store.release(cell(*k), tx(*t))),
-    }
-}
-
-/// The shared surface of the two stores, for the differential driver.
-trait Store {
-    fn sub(&mut self) -> &mut dyn WorkingStore;
-    fn commit_deltas(&mut self) -> String;
-    fn judge(&mut self, requests: &[(TxHash, SubstateKey, u128)]) -> String;
-    fn settle(&mut self, key: SubstateKey, tx: TxHash) -> String;
-    fn release(&mut self, key: SubstateKey, tx: TxHash) -> String;
-}
-
-impl Store for MemoryStore {
-    fn sub(&mut self) -> &mut dyn WorkingStore {
-        self
-    }
-    fn commit_deltas(&mut self) -> String {
-        format!("{:?}", Self::commit_deltas(self))
-    }
-    fn judge(&mut self, requests: &[(TxHash, SubstateKey, u128)]) -> String {
-        format!("{:?}", self.judge_and_hold(requests))
-    }
-    fn settle(&mut self, key: SubstateKey, tx: TxHash) -> String {
-        format!("{:?}", Self::settle(self, key, tx))
-    }
-    fn release(&mut self, key: SubstateKey, tx: TxHash) -> String {
-        format!("{:?}", Self::release(self, key, tx))
-    }
-}
-
-impl Store for OverlayStore {
-    fn sub(&mut self) -> &mut dyn WorkingStore {
-        self
-    }
-    fn commit_deltas(&mut self) -> String {
-        format!("{:?}", Self::commit_deltas(self))
-    }
-    fn judge(&mut self, requests: &[(TxHash, SubstateKey, u128)]) -> String {
-        format!("{:?}", self.judge_and_hold(requests))
-    }
-    fn settle(&mut self, key: SubstateKey, tx: TxHash) -> String {
-        format!("{:?}", Self::settle(self, key, tx))
-    }
-    fn release(&mut self, key: SubstateKey, tx: TxHash) -> String {
-        format!("{:?}", Self::release(self, key, tx))
     }
 }
 

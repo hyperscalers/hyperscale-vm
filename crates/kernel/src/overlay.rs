@@ -15,17 +15,14 @@
 //! base alone, which is the batch baseline — the attested version pinned
 //! reads see regardless of what the group has threaded on top.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{Address, CollectionId, EffectTarget, EntryKey, ModeKind, SubstateKey};
 
-use crate::modes::{
-    DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount, fold_deltas, judge,
-};
-use crate::store::{
-    Access, AppliedDelta, Baseline, MemoryStore, StoreError, Substates, WorkingStore,
-};
+use crate::ledger::{AmountLedger, amount_bytes};
+use crate::modes::{DeltaOp, TxHash};
+use crate::store::{Access, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
 
 /// A collection's layered entry changes: `None` values are tombstones.
 type EntryChanges = BTreeMap<u128, Option<Vec<u8>>>;
@@ -109,13 +106,6 @@ impl OverlayStore {
     #[must_use]
     pub fn is_locked(&self, key: SubstateKey) -> bool {
         self.base.is_locked(key)
-    }
-
-    fn reject_locked(&self, key: SubstateKey) -> Result<(), StoreError> {
-        if self.is_locked(key) {
-            return Err(StoreError::Locked(key));
-        }
-        Ok(())
     }
 
     /// The effective value of a point cell: active over committed over
@@ -207,13 +197,6 @@ impl OverlayStore {
         self.pre_active_entry(owner, collection, order)
     }
 
-    fn committed_amount(&self, key: SubstateKey) -> Result<u128, StoreError> {
-        match self.cell_value(key) {
-            Some(cell) => Ok(decode_amount(&cell)?),
-            None => Ok(0),
-        }
-    }
-
     /// The effective holds on a cell: base holds with both layers' changes
     /// applied.
     fn effective_holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128> {
@@ -263,88 +246,6 @@ impl OverlayStore {
         self.pending_map().into_iter()
     }
 
-    /// Judge a batch of reservation requests against effective state,
-    /// holding the feasible ones in the active layer. Semantics mirror
-    /// [`MemoryStore::judge_and_hold`] exactly.
-    ///
-    /// # Errors
-    ///
-    /// Exactly [`MemoryStore::judge_and_hold`]'s.
-    pub fn judge_and_hold(
-        &mut self,
-        requests: &[(TxHash, SubstateKey, u128)],
-    ) -> Result<BTreeMap<(TxHash, SubstateKey), Feasibility>, StoreError> {
-        let mut by_key: BTreeMap<SubstateKey, Vec<(TxHash, u128)>> = BTreeMap::new();
-        let mut seen = BTreeSet::new();
-        for (tx, key, amount) in requests {
-            if !seen.insert((*tx, *key)) {
-                return Err(StoreError::DuplicateRequest { tx: *tx, key: *key });
-            }
-            self.reject_locked(*key)?;
-            self.record(EffectTarget::Point(*key), ModeKind::Reserve);
-            by_key.entry(*key).or_default().push((*tx, *amount));
-        }
-        let mut verdicts = BTreeMap::new();
-        for (key, batch) in by_key {
-            let committed = self.committed_amount(key)?;
-            let held_total = self
-                .effective_holds(key)
-                .values()
-                .try_fold(0u128, |acc, amount| acc.checked_add(*amount))
-                .ok_or(StoreError::HeldExceedsCommitted(key))?;
-            let available = committed
-                .checked_sub(held_total)
-                .ok_or(StoreError::HeldExceedsCommitted(key))?;
-            for (tx, verdict) in judge(available, &batch) {
-                if verdict.is_feasible() {
-                    let amount = batch
-                        .iter()
-                        .find(|(candidate, _)| *candidate == tx)
-                        .map_or(0, |(_, amount)| *amount);
-                    self.active
-                        .held
-                        .entry(key)
-                        .or_default()
-                        .insert(tx, Some(amount));
-                }
-                verdicts.insert((tx, key), verdict);
-            }
-        }
-        Ok(verdicts)
-    }
-
-    /// Judge one transaction's net movement on an amount cell against
-    /// effective state. Semantics mirror [`MemoryStore::judge_movement`]
-    /// exactly: the floor is committed plus the credit minus every
-    /// outstanding reservation.
-    ///
-    /// # Errors
-    ///
-    /// Exactly [`MemoryStore::judge_movement`]'s.
-    pub fn judge_movement(
-        &self,
-        key: SubstateKey,
-        credit: u128,
-        debit: u128,
-    ) -> Result<u128, StoreError> {
-        let held_total = self
-            .effective_holds(key)
-            .values()
-            .try_fold(0u128, |acc, amount| acc.checked_add(*amount))
-            .ok_or(StoreError::HeldExceedsCommitted(key))?;
-        let credited = self
-            .committed_amount(key)?
-            .checked_add(credit)
-            .ok_or(ModeError::CellOverflow)?;
-        let available = credited
-            .checked_sub(held_total)
-            .ok_or(StoreError::HeldExceedsCommitted(key))?;
-        available
-            .checked_sub(debit)
-            .ok_or(ModeError::CellUnderflow)?;
-        Ok(credited - debit)
-    }
-
     /// Record a hold without judging feasibility. The cross-shard form:
     /// a reservation on a key another shard owns is judged there, and
     /// held here only so capability adoption and settlement accounting
@@ -356,44 +257,6 @@ impl OverlayStore {
             .entry(key)
             .or_default()
             .insert(tx, Some(amount));
-    }
-
-    /// Settle a held reservation: decrement the cell and drop the hold.
-    /// Returns the settled amount.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::MissingReservation`] if `tx` holds nothing on `key`;
-    /// a cell decode or underflow failure otherwise.
-    pub fn settle(&mut self, key: SubstateKey, tx: TxHash) -> Result<u128, StoreError> {
-        // Fallible first, mutable after — the same discipline as
-        // MemoryStore::settle, which this mirrors op for op.
-        let amount = self
-            .held_reservation(key, tx)
-            .ok_or(StoreError::MissingReservation { tx, key })?;
-        let after = self
-            .committed_amount(key)?
-            .checked_sub(amount)
-            .ok_or(StoreError::HeldExceedsCommitted(key))?;
-        self.active.held.entry(key).or_default().insert(tx, None);
-        self.active
-            .cells
-            .insert(key, amount_cell(after).map(|cell| cell.to_vec()));
-        Ok(amount)
-    }
-
-    /// Release a held reservation without touching the cell. Returns the
-    /// released amount.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::MissingReservation`] if `tx` holds nothing on `key`.
-    pub fn release(&mut self, key: SubstateKey, tx: TxHash) -> Result<u128, StoreError> {
-        let amount = self
-            .held_reservation(key, tx)
-            .ok_or(StoreError::MissingReservation { tx, key })?;
-        self.active.held.entry(key).or_default().insert(tx, None);
-        Ok(amount)
     }
 
     /// Drop every queued delta whose cell `keep` refuses, in both layers.
@@ -409,40 +272,6 @@ impl OverlayStore {
                 .pending_deltas
                 .retain(|key, _| keep(*key));
         }
-    }
-
-    /// Fold every queued delta into its cell, atomically: all folds are
-    /// computed before any cell changes, so an error leaves both state and
-    /// the queue untouched.
-    ///
-    /// # Errors
-    ///
-    /// Any fold or decode failure, verbatim from the offending cell.
-    pub fn commit_deltas(&mut self) -> Result<Vec<AppliedDelta>, StoreError> {
-        let pending = self.pending_map();
-        let mut applied = Vec::with_capacity(pending.len());
-        for (key, ops) in &pending {
-            let before = match self.cell_value(*key) {
-                Some(cell) => decode_amount(&cell)?,
-                None => 0,
-            };
-            let after = fold_deltas(before, ops)?;
-            applied.push(AppliedDelta {
-                key: *key,
-                before,
-                after,
-            });
-        }
-        for outcome in &applied {
-            self.active
-                .cells
-                .insert(outcome.key, amount_cell(outcome.after).map(|c| c.to_vec()));
-        }
-        self.active.pending_deltas.clear();
-        if !self.committed.pending_deltas.is_empty() {
-            Arc::make_mut(&mut self.committed).pending_deltas.clear();
-        }
-        Ok(applied)
     }
 
     /// The merged view of an ordered collection over `[lo, hi]`: at each
@@ -506,39 +335,6 @@ impl OverlayStore {
             }
         }
         hits
-    }
-
-    /// Whether `key` can carry a reservation at all. Semantics mirror
-    /// [`MemoryStore::check_reserve_target`] exactly.
-    ///
-    /// # Errors
-    ///
-    /// Exactly [`MemoryStore::check_reserve_target`]'s.
-    pub fn check_reserve_target(&self, key: SubstateKey) -> Result<(), StoreError> {
-        self.reject_locked(key)?;
-        self.committed_amount(key)?;
-        Ok(())
-    }
-
-    /// Apply one transaction's net movement to an amount cell under
-    /// [`Self::judge_movement`]'s floor. Semantics mirror
-    /// [`MemoryStore::apply_movement`] exactly.
-    ///
-    /// # Errors
-    ///
-    /// Exactly [`Self::judge_movement`]'s; a refusal leaves the cell
-    /// untouched.
-    pub fn apply_movement(
-        &mut self,
-        key: SubstateKey,
-        credit: u128,
-        debit: u128,
-    ) -> Result<u128, StoreError> {
-        let after = self.judge_movement(key, credit, debit)?;
-        self.active
-            .cells
-            .insert(key, amount_cell(after).map(|cell| cell.to_vec()));
-        Ok(after)
     }
 
     /// Fold the active layer into the committed layer: the transaction's
@@ -752,6 +548,33 @@ impl WorkingStore for OverlayStore {
     }
 }
 
+impl AmountLedger for OverlayStore {
+    fn set_amount(&mut self, key: SubstateKey, amount: u128) {
+        self.active.cells.insert(key, amount_bytes(amount));
+    }
+
+    fn set_hold(&mut self, key: SubstateKey, tx: TxHash, amount: Option<u128>) {
+        // A dropped hold tombstones rather than erases: the base may
+        // carry one this layer has to shadow.
+        self.active.held.entry(key).or_default().insert(tx, amount);
+    }
+
+    fn note(&mut self, target: EffectTarget, kind: ModeKind) {
+        self.record(target, kind);
+    }
+
+    fn queued(&self) -> BTreeMap<SubstateKey, Vec<DeltaOp>> {
+        self.pending_map()
+    }
+
+    fn clear_queued(&mut self) {
+        self.active.pending_deltas.clear();
+        if !self.committed.pending_deltas.is_empty() {
+            Arc::make_mut(&mut self.committed).pending_deltas.clear();
+        }
+    }
+}
+
 impl Substates for OverlayStore {
     fn cell(&self, key: SubstateKey) -> Option<Vec<u8>> {
         self.cell_value(key)
@@ -792,6 +615,7 @@ mod tests {
     };
 
     use super::OverlayStore;
+    use crate::ledger::AmountLedger;
     use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
     use crate::store::{MemoryStore, StoreError, WorkingStore};
 
@@ -965,37 +789,33 @@ mod tests {
     }
 
     #[test]
-    fn movement_judging_mirrors_the_plain_store() {
+    fn a_layered_settle_lifts_the_hold_off_the_floor() {
+        // The floor a movement is judged against is the effective one, so
+        // a hold the layers have settled stops constraining even though
+        // the base still carries it.
         let mut base = MemoryStore::new();
         let vault = key(4);
         base.write(vault, encode_amount(60).to_vec()).unwrap();
         base.judge_and_hold(&[(tx(1), vault, 50)]).unwrap();
         base.clear_log();
+
         let overlay = OverlayStore::new(Arc::new(base.clone()));
+        assert_eq!(overlay.judge_movement(vault, 0, 10), Ok(50));
+        assert_eq!(
+            overlay.judge_movement(vault, 0, 11),
+            Err(StoreError::Mode(ModeError::CellUnderflow)),
+            "the base's hold still floors the cell"
+        );
 
-        for (credit, debit) in [(0, 10), (0, 11), (5, 15), (0, 0), (u128::MAX, 0)] {
-            assert_eq!(
-                overlay.judge_movement(vault, credit, debit),
-                base.judge_movement(vault, credit, debit),
-                "credit {credit}, debit {debit}"
-            );
-        }
-
-        // A layered settle moves the hold out of the floor on the overlay
-        // side only.
-        let mut settled = OverlayStore::new(Arc::new(base.clone()));
+        let mut settled = OverlayStore::new(Arc::new(base));
         settled.settle(vault, tx(1)).unwrap();
         assert_eq!(settled.judge_movement(vault, 0, 10), Ok(0));
-        assert_eq!(
-            base.judge_movement(vault, 0, 11),
-            Err(StoreError::Mode(ModeError::CellUnderflow))
-        );
     }
 
     #[test]
     fn a_refused_settle_leaves_the_hold_standing() {
-        // The overlay mirrors MemoryStore op for op, refusal ordering
-        // included.
+        // Everything fallible runs before anything mutable, so the hold
+        // the settle could not honour is still there to release.
         let mut base = MemoryStore::new();
         let vault = key(7);
         base.write(vault, encode_amount(100).to_vec()).unwrap();

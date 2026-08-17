@@ -9,11 +9,11 @@
 //! mutable surface capability handles drive: mode-specific operations
 //! over cells and entries.
 //!
-//! The [`MemoryStore`] implements all three, records every access as an
-//! [`Access`] — the substrate the trace-subset oracle asserts against —
-//! and owns the commutative modes' lifecycle: deltas queue during
-//! execution and fold at commit; reservations are judged and held before
-//! execution and settle or release afterward.
+//! The [`MemoryStore`] implements all three and records every access as
+//! an [`Access`] — the substrate the trace-subset oracle asserts against.
+//! What the commutative modes *mean* over any of these surfaces is
+//! [`AmountLedger`](crate::AmountLedger)'s, written once and implemented
+//! here in terms of this store's own view.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,9 +21,8 @@ use hyperscale_vm_effects::{
     AbortReason, Address, CollectionId, EffectTarget, EntryKey, ModeKind, SubstateKey,
 };
 
-use crate::modes::{
-    DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount, fold_deltas, judge,
-};
+use crate::ledger::{AmountLedger, amount_bytes};
+use crate::modes::{DeltaOp, ModeError, TxHash};
 
 /// Why a store operation rejected. Deterministic: identical on every
 /// replica.
@@ -389,19 +388,13 @@ impl MemoryStore {
     fn record(&mut self, target: EffectTarget, kind: ModeKind) {
         self.log.push(Access { target, kind });
     }
+}
 
-    fn reject_locked(&self, key: SubstateKey) -> Result<(), StoreError> {
-        if self.locked.contains(&key) {
-            return Err(StoreError::Locked(key));
-        }
-        Ok(())
-    }
-
-    /// Store an amount, dropping the leaf when it reaches zero.
-    fn write_amount(&mut self, key: SubstateKey, amount: u128) {
-        match amount_cell(amount) {
+impl AmountLedger for MemoryStore {
+    fn set_amount(&mut self, key: SubstateKey, amount: u128) {
+        match amount_bytes(amount) {
             Some(cell) => {
-                self.cells.insert(key, cell.to_vec());
+                self.cells.insert(key, cell);
             }
             None => {
                 self.cells.remove(&key);
@@ -409,200 +402,29 @@ impl MemoryStore {
         }
     }
 
-    fn committed_amount(&self, key: SubstateKey) -> Result<u128, StoreError> {
-        match self.cells.get(&key) {
-            Some(cell) => Ok(decode_amount(cell)?),
-            None => Ok(0),
-        }
-    }
-
-    fn held_total(&self, key: SubstateKey) -> Result<u128, StoreError> {
-        self.held
-            .get(&key)
-            .map_or(Some(0), |holds| {
-                holds
-                    .values()
-                    .try_fold(0u128, |acc, amount| acc.checked_add(*amount))
-            })
-            .ok_or(StoreError::HeldExceedsCommitted(key))
-    }
-
-    /// Whether `key` can carry a reservation at all: unlocked and either
-    /// absent or a well-formed amount cell. A refusal here is a
-    /// declaration defect — the sender's fault, judged before the
-    /// feasibility race.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::Locked`] or an amount-cell decode failure.
-    pub fn check_reserve_target(&self, key: SubstateKey) -> Result<(), StoreError> {
-        self.reject_locked(key)?;
-        self.committed_amount(key)?;
-        Ok(())
-    }
-
-    /// Judge one transaction's net movement on an amount cell, returning
-    /// the value the cell would take. The floor is committed plus the
-    /// credit minus every outstanding reservation: an unconditional debit
-    /// can never consume value a held reservation still covers.
-    ///
-    /// # Errors
-    ///
-    /// [`ModeError::CellUnderflow`] for a debit past the floor,
-    /// [`ModeError::CellOverflow`] on credit overflow — both the judged
-    /// transaction's deterministic loss — or a decode/ledger failure.
-    pub fn judge_movement(
-        &self,
-        key: SubstateKey,
-        credit: u128,
-        debit: u128,
-    ) -> Result<u128, StoreError> {
-        let credited = self
-            .committed_amount(key)?
-            .checked_add(credit)
-            .ok_or(ModeError::CellOverflow)?;
-        let available = credited
-            .checked_sub(self.held_total(key)?)
-            .ok_or(StoreError::HeldExceedsCommitted(key))?;
-        available
-            .checked_sub(debit)
-            .ok_or(ModeError::CellUnderflow)?;
-        Ok(credited - debit)
-    }
-
-    /// Apply one transaction's net movement to an amount cell, under
-    /// [`Self::judge_movement`]'s floor.
-    ///
-    /// # Errors
-    ///
-    /// Exactly [`Self::judge_movement`]'s; a refusal leaves the cell
-    /// untouched.
-    pub fn apply_movement(
-        &mut self,
-        key: SubstateKey,
-        credit: u128,
-        debit: u128,
-    ) -> Result<u128, StoreError> {
-        let after = self.judge_movement(key, credit, debit)?;
-        self.write_amount(key, after);
-        Ok(after)
-    }
-
-    /// Judge a batch of reservation requests, holding the feasible ones.
-    ///
-    /// Per cell: available is committed minus reservations already held,
-    /// and the batch is judged in canonical transaction-hash order.
-    /// Verdicts are invariant under any permutation of the batch. Each
-    /// request records a reserve access.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::DuplicateRequest`] for a repeated `(tx, key)` pair,
-    /// [`StoreError::Locked`] for a reservation on a locked substate,
-    /// [`StoreError::HeldExceedsCommitted`] on a violated ledger
-    /// invariant, or an amount-cell decode failure.
-    pub fn judge_and_hold(
-        &mut self,
-        requests: &[(TxHash, SubstateKey, u128)],
-    ) -> Result<BTreeMap<(TxHash, SubstateKey), Feasibility>, StoreError> {
-        let mut by_key: BTreeMap<SubstateKey, Vec<(TxHash, u128)>> = BTreeMap::new();
-        let mut seen = BTreeSet::new();
-        for (tx, key, amount) in requests {
-            if !seen.insert((*tx, *key)) {
-                return Err(StoreError::DuplicateRequest { tx: *tx, key: *key });
+    fn set_hold(&mut self, key: SubstateKey, tx: TxHash, amount: Option<u128>) {
+        match amount {
+            Some(amount) => {
+                self.held.entry(key).or_default().insert(tx, amount);
             }
-            self.reject_locked(*key)?;
-            self.record(EffectTarget::Point(*key), ModeKind::Reserve);
-            by_key.entry(*key).or_default().push((*tx, *amount));
-        }
-        let mut verdicts = BTreeMap::new();
-        for (key, batch) in by_key {
-            let available = self
-                .committed_amount(key)?
-                .checked_sub(self.held_total(key)?)
-                .ok_or(StoreError::HeldExceedsCommitted(key))?;
-            for (tx, verdict) in judge(available, &batch) {
-                if verdict.is_feasible() {
-                    let amount = batch
-                        .iter()
-                        .find(|(candidate, _)| *candidate == tx)
-                        .map_or(0, |(_, amount)| *amount);
-                    self.held.entry(key).or_default().insert(tx, amount);
+            None => {
+                if let Some(holds) = self.held.get_mut(&key) {
+                    holds.remove(&tx);
                 }
-                verdicts.insert((tx, key), verdict);
             }
         }
-        Ok(verdicts)
     }
 
-    /// Settle a held reservation: decrement the cell and drop the hold.
-    /// Returns the settled amount.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::MissingReservation`] if `tx` holds nothing on `key`;
-    /// a cell decode or underflow failure otherwise.
-    pub fn settle(&mut self, key: SubstateKey, tx: TxHash) -> Result<u128, StoreError> {
-        // Everything fallible happens before anything mutable: a refusal
-        // here leaves the hold standing, so the caller can still release
-        // it and the ledger stays accountable.
-        let amount = self
-            .held_reservation(key, tx)
-            .ok_or(StoreError::MissingReservation { tx, key })?;
-        let after = self
-            .committed_amount(key)?
-            .checked_sub(amount)
-            .ok_or(StoreError::HeldExceedsCommitted(key))?;
-        if let Some(holds) = self.held.get_mut(&key) {
-            holds.remove(&tx);
-        }
-        self.write_amount(key, after);
-        Ok(amount)
+    fn note(&mut self, target: EffectTarget, kind: ModeKind) {
+        self.record(target, kind);
     }
 
-    /// Release a held reservation without touching the cell. Returns the
-    /// released amount.
-    ///
-    /// Releasing records no access, and neither does [`Self::settle`],
-    /// while [`Self::judge_and_hold`] does. The trace exists to catch a
-    /// guest touching state its transaction never declared, and taking the
-    /// hold is the declaration being exercised; disposing of it afterwards
-    /// is the batch's own bookkeeping, running when no guest is left to
-    /// attribute it to.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::MissingReservation`] if `tx` holds nothing on `key`.
-    pub fn release(&mut self, key: SubstateKey, tx: TxHash) -> Result<u128, StoreError> {
-        self.held
-            .get_mut(&key)
-            .and_then(|holds| holds.remove(&tx))
-            .ok_or(StoreError::MissingReservation { tx, key })
+    fn queued(&self) -> BTreeMap<SubstateKey, Vec<DeltaOp>> {
+        self.pending_deltas.clone()
     }
 
-    /// Fold every queued delta into its cell, atomically: all folds are
-    /// computed before any cell changes, so an error leaves both state and
-    /// the queue untouched.
-    ///
-    /// # Errors
-    ///
-    /// Any fold or decode failure, verbatim from the offending cell.
-    pub fn commit_deltas(&mut self) -> Result<Vec<AppliedDelta>, StoreError> {
-        let mut applied = Vec::with_capacity(self.pending_deltas.len());
-        for (key, ops) in &self.pending_deltas {
-            let before = self.committed_amount(*key)?;
-            let after = fold_deltas(before, ops)?;
-            applied.push(AppliedDelta {
-                key: *key,
-                before,
-                after,
-            });
-        }
-        for outcome in &applied {
-            self.write_amount(outcome.key, outcome.after);
-        }
+    fn clear_queued(&mut self) {
         self.pending_deltas.clear();
-        Ok(applied)
     }
 }
 
@@ -723,6 +545,7 @@ mod tests {
     };
 
     use super::{Access, MemoryStore, StoreError, WorkingStore};
+    use crate::ledger::AmountLedger;
     use crate::modes::{DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount};
 
     fn key(byte: u8) -> SubstateKey {
