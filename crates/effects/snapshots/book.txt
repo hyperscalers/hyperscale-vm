@@ -20,7 +20,15 @@ PackageMetadata {
                     ),
                 ),
             ],
-            denominations: [],
+            denominations: [
+                None,
+                None,
+                Some(
+                    Config(
+                        1,
+                    ),
+                ),
+            ],
             effects: [
                 Effect {
                     target: Range {
@@ -77,10 +85,8 @@ PackageMetadata {
                                 1,
                             ),
                             material: [
-                                ResourceOf(
-                                    Arg(
-                                        2,
-                                    ),
+                                Config(
+                                    1,
                                 ),
                             ],
                         },
@@ -113,7 +119,14 @@ PackageMetadata {
                 Bucket,
             ],
             outputs: [],
-            denominations: [],
+            denominations: [
+                None,
+                Some(
+                    Config(
+                        0,
+                    ),
+                ),
+            ],
             effects: [
                 Effect {
                     target: Entry {
@@ -141,10 +154,8 @@ PackageMetadata {
                                 1,
                             ),
                             material: [
-                                ResourceOf(
-                                    Arg(
-                                        1,
-                                    ),
+                                Config(
+                                    0,
                                 ),
                             ],
                         },

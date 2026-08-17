@@ -44,7 +44,7 @@ use hyperscale_vm_sdk::blueprint;
 pub mod shares {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Keyed, Locked, Quantity, Rounding, issue, issued,
+        Bucket, Cell, Locked, Quantity, Rounding, Vault, issue,
     };
 
     /// What the vault is denominated in.
@@ -67,10 +67,12 @@ pub mod shares {
         config: Locked<Settings>,
         /// The assets under management.
         #[role(1)]
-        vaults: Keyed<Quantity>,
+        #[denomination(config.asset)]
+        assets: Cell<Vault>,
         /// Shares handed back, out of circulation.
         #[role(16)]
-        retired: Keyed<Quantity>,
+        #[denomination(issued(b""))]
+        retired: Cell<Vault>,
         /// Shares in circulation. Kept here because the resource's own
         /// supply counts the retired ones too.
         #[role(17)]
@@ -84,7 +86,7 @@ pub mod shares {
         /// fall.
         pub fn deposit(&mut self, funds: Bucket) -> Result<Bucket, Error> {
             let settings = self.config.locked();
-            let mut vault = self.vaults.at(settings.asset);
+            let mut vault = self.assets.vault();
             let assets = vault.get();
             let supply = self.supply.get();
             let paid = funds.quantity();
@@ -109,7 +111,7 @@ pub mod shares {
         /// again assets per share does not fall. The change comes back.
         pub fn mint(&mut self, want: Quantity, mut funds: Bucket) -> Result<(Bucket, Bucket), Error> {
             let settings = self.config.locked();
-            let mut vault = self.vaults.at(settings.asset);
+            let mut vault = self.assets.vault();
             let assets = vault.get();
             let supply = self.supply.get();
 
@@ -142,7 +144,7 @@ pub mod shares {
             mut units: Bucket,
         ) -> Result<(Bucket, Bucket), Error> {
             let settings = self.config.locked();
-            let mut vault = self.vaults.at(settings.asset);
+            let mut vault = self.assets.vault();
             let assets = vault.get();
             let supply = self.supply.get();
 
@@ -155,7 +157,7 @@ pub mod shares {
                 return Err(Error::Insufficient);
             };
             let back = units.take(spare);
-            self.retired.at(issued(b"")).put(units);
+            self.retired.vault().put(units);
             self.supply.set(supply - needed);
             Ok((vault.take(want), back))
         }
@@ -165,7 +167,7 @@ pub mod shares {
         /// Down: the pool keeps the subunit.
         pub fn redeem(&mut self, units: Bucket) -> Result<Bucket, Error> {
             let settings = self.config.locked();
-            let mut vault = self.vaults.at(settings.asset);
+            let mut vault = self.assets.vault();
             let assets = vault.get();
             let supply = self.supply.get();
             let returned = units.quantity();
@@ -175,7 +177,7 @@ pub mod shares {
             };
             let out = returned.scale(per_share, Rounding::Down);
 
-            self.retired.at(issued(b"")).put(units);
+            self.retired.vault().put(units);
             self.supply.set(supply - returned);
             Ok(vault.take(out))
         }

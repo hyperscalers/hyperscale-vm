@@ -72,6 +72,12 @@ pub struct Field {
     /// The value each leaf holds, which is what a guest accessor decodes
     /// into.
     pub element: Option<syn::Type>,
+    /// The resource this field's leaves hold, where the field states one.
+    ///
+    /// A `Keyed<Vault>` is denominated by whatever key a body names, so
+    /// it carries none; a `Cell<Vault>` has no key to be denominated by
+    /// and states it here.
+    pub denomination: Option<syn::Expr>,
 }
 
 /// One target a body opened a handle on.
@@ -135,6 +141,13 @@ pub struct Site {
     pub ops: Vec<(Op, Option<Term>)>,
     /// The value each leaf under this handle holds.
     pub element: Option<syn::Type>,
+    /// The resource the leaves under this handle hold, where they hold
+    /// value at all.
+    ///
+    /// What a credit through this handle has to carry and what a debit
+    /// through it produces — one fact, read from the declaration rather
+    /// than guessed from the shape of a key.
+    pub denomination: Option<Term>,
 }
 
 impl Site {
@@ -617,15 +630,31 @@ impl<'a> Lowerer<'a> {
     /// capability per clause. Folding here is also what holds a cell a
     /// body reads and writes to a single `Write`, rather than declaring
     /// the leaf twice under modes that exclude each other.
-    fn open(&mut self, target: Target, element: Option<syn::Type>) -> usize {
+    fn open(
+        &mut self,
+        target: Target,
+        element: Option<syn::Type>,
+        declared: Option<Term>,
+    ) -> usize {
         if let Some(index) = self.out.sites.iter().position(|s| s.target == target) {
             return index;
         }
         let index = self.out.sites.len();
+        // A field that states its resource answers for every leaf under
+        // it; one that does not is keyed by the resource, and the key is
+        // the material a body named it at.
+        let denomination = declared.or_else(|| match &target {
+            Target::Point { material, .. }
+            | Target::Range { material, .. }
+            | Target::Entry { material, .. } => material.first().cloned(),
+            // A hashed key and a cursor name an entry, never a resource.
+            Target::KeyedEntry { .. } | Target::Sweep { .. } => None,
+        });
         self.out.sites.push(Site {
             target,
             ops: Vec::new(),
             element,
+            denomination,
         });
         self.push_node(Node::Site(index));
         index
@@ -663,6 +692,66 @@ impl<'a> Lowerer<'a> {
                  else, or a second reservation, folds to no single mode. Open a \
                  separate access for each mode instead",
             );
+        }
+    }
+
+    /// Resolve a field's `#[denomination(..)]` to the term the router
+    /// evaluates.
+    ///
+    /// Two forms, because two things can name a resource before any
+    /// transaction exists: a slot of the instance's creation-fixed
+    /// configuration, and a resource the instance derives from its own
+    /// address. Anything else would be a resource nobody could resolve
+    /// without reading state, which is the wall every declared key meets.
+    fn field_denomination(&mut self, field: &Field) -> Option<Term> {
+        let expr = field.denomination.as_ref()?;
+        let refuse = |lowerer: &mut Self| {
+            lowerer.error(
+                expr.span(),
+                "a denomination is `config.<field>` for a configured resource, or \
+                 `issued(b\"..\")` for one the instance derives from its own address",
+            );
+            None
+        };
+        match expr {
+            // `config.x` — the locked record's slot, by name.
+            syn::Expr::Field(access) => {
+                let syn::Expr::Path(base) = &*access.base else {
+                    return refuse(self);
+                };
+                let locked = base.path.get_ident().is_some_and(|ident| {
+                    self.fields
+                        .get(&ident.to_string())
+                        .is_some_and(|f| f.kind == FieldKind::Locked)
+                });
+                let syn::Member::Named(name) = &access.member else {
+                    return refuse(self);
+                };
+                if !locked {
+                    return refuse(self);
+                }
+                let name = name.to_string();
+                let Some(index) = self.config_fields.iter().position(|(f, _)| *f == name) else {
+                    self.error(
+                        expr.span(),
+                        "not a field of the component's configuration struct",
+                    );
+                    return None;
+                };
+                Some(Term::Config(u32::try_from(index).unwrap_or(0)))
+            }
+            // `issued(b"..")` — the instance's own resource, by the mark
+            // separating it from the instance's others.
+            syn::Expr::Call(call) => {
+                if free_call_name(call).as_deref() != Some("issued") {
+                    return refuse(self);
+                }
+                call.args
+                    .first()
+                    .and_then(byte_literal)
+                    .map_or_else(|| refuse(self), |mark| Some(Term::SelfResource(mark)))
+            }
+            _ => refuse(self),
         }
     }
 
@@ -1642,12 +1731,11 @@ impl<'a> Lowerer<'a> {
                     // match arm needs something there.
                     return Eval::plain(quote!(()));
                 }
-                let resource = match self.out.sites.get(site).map(|s| &s.target) {
-                    Some(Target::Point { material, .. } | Target::Range { material, .. }) => {
-                        material.first().cloned()
-                    }
-                    _ => None,
-                };
+                let resource = self
+                    .out
+                    .sites
+                    .get(site)
+                    .and_then(|s| s.denomination.clone());
                 let instances = matches!(
                     self.out.sites.get(site).map(|s| &s.target),
                     Some(Target::Range { .. })
@@ -1845,6 +1933,7 @@ impl<'a> Lowerer<'a> {
         call: &syn::ExprMethodCall,
     ) -> Eval {
         let role = field.role;
+        let declared = self.field_denomination(field);
         let vals: Vec<Val> = args.iter().map(|e| e.val.clone()).collect();
         match (field.kind, method) {
             // The locked configuration: a read that excludes nothing,
@@ -1856,6 +1945,7 @@ impl<'a> Lowerer<'a> {
                         material: vec![],
                     },
                     field.element.clone(),
+                    declared,
                 );
                 self.record(site, Op::Locked, None, call.span());
                 Eval {
@@ -1876,6 +1966,7 @@ impl<'a> Lowerer<'a> {
                             material: vec![key.clone()],
                         },
                         field.element.clone(),
+                        declared,
                     );
                     Self::slot(site, call.span())
                 } else {
@@ -1901,6 +1992,7 @@ impl<'a> Lowerer<'a> {
                             order: order.clone(),
                         },
                         field.element.clone(),
+                        declared,
                     );
                     self.entry(site, &order, call.span())
                 } else {
@@ -1922,6 +2014,7 @@ impl<'a> Lowerer<'a> {
                             key: key.clone(),
                         },
                         field.element.clone(),
+                        declared,
                     );
                     // The order is the kernel's hash over owner, role and
                     // key. A guest cannot rebuild it, so it is handed one:
@@ -1955,6 +2048,7 @@ impl<'a> Lowerer<'a> {
                             cap: u32::try_from(*cap).unwrap_or(u32::MAX),
                         },
                         field.element.clone(),
+                        declared,
                     );
                     Self::interval(site, call.span())
                 } else {
@@ -1985,6 +2079,7 @@ impl<'a> Lowerer<'a> {
                             cap: u32::try_from(*cap).unwrap_or(u32::MAX),
                         },
                         field.element.clone(),
+                        declared,
                     );
                     Self::interval(site, call.span())
                 } else {
@@ -2010,6 +2105,7 @@ impl<'a> Lowerer<'a> {
                             cap: u32::try_from(*cap).unwrap_or(u32::MAX),
                         },
                         field.element.clone(),
+                        declared,
                     );
                     Self::interval(site, call.span())
                 } else {
@@ -2023,6 +2119,27 @@ impl<'a> Lowerer<'a> {
             }
 
             // A single leaf: the operation lands directly on it.
+            // A vault is opened, not accessed in place: what a body does
+            // through the handle is what fixes the mode, and the resource
+            // rides the site rather than any argument.
+            //
+            // The declared resource is the leaf's key material, which is
+            // what makes the two vault forms one addressing scheme: a
+            // keyed family's leaf is at the resource a body named it at,
+            // and a single vault's is at the resource its field declared.
+            // A leaf's key names what the leaf holds, either way.
+            (FieldKind::Cell, "vault") => {
+                let site = self.open(
+                    Target::Point {
+                        role,
+                        material: declared.clone().into_iter().collect(),
+                    },
+                    field.element.clone(),
+                    declared,
+                );
+                Self::slot(site, call.span())
+            }
+
             (FieldKind::Cell, _) => {
                 if let Some(op) = Op::from_method(method) {
                     let site = self.open(
@@ -2031,6 +2148,7 @@ impl<'a> Lowerer<'a> {
                             material: vec![],
                         },
                         field.element.clone(),
+                        declared,
                     );
                     let param = match vals.first() {
                         Some(Val::Term(term)) => Some(term.clone()),

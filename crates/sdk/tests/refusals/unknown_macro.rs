@@ -9,12 +9,12 @@ macro_rules! credit {
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Keyed, Quantity};
+    use hyperscale_vm_sdk::state::{Keyed, Quantity, Vault};
 
     #[state]
     struct Contract {
         #[role(1)]
-        vaults: Keyed<Quantity>,
+        vaults: Keyed<Vault>,
     }
 
     impl Contract {

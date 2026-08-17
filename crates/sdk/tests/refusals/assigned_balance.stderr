@@ -1,0 +1,13 @@
+error[E0599]: the method `set` exists for struct `Slot<Vault>`, but its trait bounds were not satisfied
+  --> tests/refusals/assigned_balance.rs:16:36
+   |
+16 |             self.vaults.at(holder).set(Quantity::from_subunits(1_000));
+   |                                    ^^^ method cannot be called on `Slot<Vault>` due to unsatisfied trait bounds
+   |
+  ::: src/state.rs
+   |
+   | pub struct Vault;
+   | ---------------- doesn't satisfy `Vault: Cellular`
+   |
+   = note: the following trait bounds were not satisfied:
+           `Vault: Cellular`

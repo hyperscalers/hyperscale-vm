@@ -18,7 +18,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_sdk::handle::Handle;
 use hyperscale_vm_sdk::host::{Refusal, with_kernel};
-use hyperscale_vm_sdk::state::{self, Bucket, Entry, Interval, OrderKey, Quantity, Slot};
+use hyperscale_vm_sdk::state::{self, Bucket, Entry, Interval, OrderKey, Quantity, Slot, Vault};
 
 const OWNER: Address = Address::new([0x11; 31], AddressClass::Component);
 const CLOCK_MS: u64 = 4_000;
@@ -129,7 +129,7 @@ fn value_taken_from_a_cell_is_the_value_in_hand() {
     let session = session(store, vec![point(vault, Mode::Write)]);
 
     let (_, held) = with_kernel(session, || {
-        let mut slot = Slot::<Quantity>::at(Handle::Write(0));
+        let mut slot = Slot::<Vault>::at(Handle::Write(0));
         let funds = slot.take(Quantity::from_subunits(30));
         let held = funds.quantity();
         slot.put(funds);
@@ -151,7 +151,7 @@ fn a_bucket_divides_into_what_comes_off_and_what_is_left() {
     let session = session(store, vec![point(vault, Mode::Write)]);
 
     let (_, (split, rest)) = with_kernel(session, || {
-        let mut slot = Slot::<Quantity>::at(Handle::Write(0));
+        let mut slot = Slot::<Vault>::at(Handle::Write(0));
         let mut funds = slot.take(Quantity::from_subunits(50));
         let part = funds.take(Quantity::from_subunits(20));
         (part.quantity(), funds.quantity())
@@ -262,7 +262,7 @@ fn a_refused_operation_carries_its_class_out() {
     let refusal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_kernel(session, || {
             // Nothing is in the cell, so there is nothing to take.
-            let mut slot = Slot::<Quantity>::at(Handle::Write(0));
+            let mut slot = Slot::<Vault>::at(Handle::Write(0));
             let _: Bucket = slot.take(Quantity::from_subunits(1));
         });
     }))
@@ -287,7 +287,7 @@ fn a_thread_a_refusal_unwound_through_runs_the_next_invocation() {
     let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let session = session(MemoryStore::new(), vec![point(vault, Mode::Write)]);
         with_kernel(session, || {
-            let mut slot = Slot::<Quantity>::at(Handle::Write(0));
+            let mut slot = Slot::<Vault>::at(Handle::Write(0));
             let _: Bucket = slot.take(Quantity::from_subunits(1));
         });
     }));

@@ -11,8 +11,8 @@
 //! mod account {
 //!     #[state]
 //!     struct Account {
-//!         #[role(1)] vaults: Keyed<Quantity>,
-//!         #[role(2)] claims: Keyed<Quantity>,
+//!         #[role(1)] vaults: Keyed<Vault>,
+//!         #[role(2)] claims: Keyed<Vault>,
 //!     }
 //!
 //!     impl Account {
@@ -170,10 +170,14 @@ fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
         .to_string();
 
     let mut role = None;
+    let mut denomination = None;
     for attr in &field.attrs {
         if attr.path().is_ident("role") {
             let literal: syn::LitInt = attr.parse_args()?;
             role = Some(literal.base10_parse::<u16>()?);
+        }
+        if attr.path().is_ident("denomination") {
+            denomination = Some(attr.parse_args::<syn::Expr>()?);
         }
     }
     // Roles are explicit rather than positional: they are part of every key
@@ -211,14 +215,51 @@ fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
             ));
         }
     };
+    // A vault holds one resource and has to say which. A keyed family is
+    // denominated by whatever key a body names it at, so an attribute
+    // there would be a second answer to a question the key already
+    // settles; a single leaf has no key, so the attribute is the only
+    // place it can be said.
+    let vault = matches!(&element_of(&field.ty), Some(ty) if is_named(ty, "Vault"));
+    match (kind, vault, denomination.is_some()) {
+        (FieldKind::Cell, true, false) => {
+            return Err(syn::Error::new(
+                field.span(),
+                "a single vault holds one resource and nothing names which: add \
+                 `#[denomination(config.<field>)]`, or `#[denomination(issued(b\"..\"))]` for \
+                 a resource the instance issues",
+            ));
+        }
+        (FieldKind::Keyed, true, true) => {
+            return Err(syn::Error::new(
+                field.span(),
+                "a keyed vault family is denominated by the key a body names it at, so it \
+                 cannot also declare one",
+            ));
+        }
+        (_, false, true) => {
+            return Err(syn::Error::new(
+                field.span(),
+                "only a vault is denominated — this field holds no value",
+            ));
+        }
+        _ => {}
+    }
     Ok((
         name,
         Field {
             role,
             kind,
             element: element_of(&field.ty),
+            denomination,
         },
     ))
+}
+
+/// Whether a type's last path segment is `name`.
+fn is_named(ty: &syn::Type, name: &str) -> bool {
+    matches!(ty, syn::Type::Path(path)
+        if path.path.segments.last().is_some_and(|s| s.ident == name))
 }
 
 /// The parameter kind a Rust type binds as in a manifest.
@@ -272,6 +313,7 @@ fn method_name(method: &syn::ImplItemFn) -> syn::Result<String> {
 /// emits is ordinary Rust.
 const OWN: &[&str] = &[
     "role",
+    "denomination",
     "state",
     "config",
     "name",

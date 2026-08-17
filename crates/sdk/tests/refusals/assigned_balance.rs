@@ -12,12 +12,8 @@ mod contract {
     }
 
     impl Contract {
-        pub fn rebound(&mut self, flag: u64, a: Address, b: Address) {
-            let mut key = a;
-            if flag == 0 {
-                key = b;
-            }
-            self.vaults.at(key).declared();
+        pub fn conjure(&mut self, holder: Address) {
+            self.vaults.at(holder).set(Quantity::from_subunits(1_000));
         }
     }
 }

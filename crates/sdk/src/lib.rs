@@ -72,11 +72,11 @@
 //! #[blueprint]
 //! mod bad {
 //!     use hyperscale_vm_sdk::Address;
-//!     use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity};
+//!     use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, Vault};
 //!
 //!     #[state]
 //!     struct Bad {
-//!         #[role(1)] vaults: Keyed<Quantity>,
+//!         #[role(1)] vaults: Keyed<Vault>,
 //!         #[role(2)] pointer: Cell<Address>,
 //!     }
 //!
@@ -121,11 +121,11 @@
 //! # use hyperscale_vm_sdk::blueprint;
 //! #[blueprint]
 //! mod bad {
-//!     use hyperscale_vm_sdk::state::{Keyed, Quantity};
+//!     use hyperscale_vm_sdk::state::{Keyed, Quantity, Vault};
 //!
 //!     #[state]
 //!     struct Bad {
-//!         vaults: Keyed<Quantity>,
+//!         vaults: Keyed<Vault>,
 //!     }
 //!
 //!     impl Bad {}

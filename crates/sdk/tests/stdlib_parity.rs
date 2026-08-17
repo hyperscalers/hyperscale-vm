@@ -114,9 +114,12 @@ fn amm() -> Blueprint {
 
                 let config = pool.child(CONFIG, &[]);
                 t.point(&config).locked();
-                t.point(&pool.child(VAULT, &[x.cast()])).write();
+                t.point(&pool.child(VAULT, &[x.clone().cast()])).write();
                 t.point(&pool.child(VAULT, &[y.clone().cast()])).write();
 
+                // The payment is credited to the side the pool buys, so
+                // that side is what a caller has to pay in.
+                t.denomination(0, &x);
                 t.output(&y);
             },
         )
@@ -131,7 +134,7 @@ fn book() -> Blueprint {
             &[ParamType::U64, ParamType::Bucket],
             |t: &mut Trace| {
                 let price: Sym<Num> = t.arg(0);
-                let funds: Sym<Bucket> = t.arg(1);
+                let _funds: Sym<Bucket> = t.arg(1);
                 let venue = t.self_addr();
 
                 // Price over a fresh sequence id: the tiebreaker that makes
@@ -140,8 +143,13 @@ fn book() -> Blueprint {
                 let order = pack(&price, &seq);
                 t.entry(&venue, book_package::ASKS, &[], &order).write();
 
-                let escrow = venue.child(VAULT, &[funds.resource().cast()]);
+                // The escrow is the book's own base vault, named by its
+                // configured pair rather than by whatever arrived — which
+                // is what fixes the parameter to that side.
+                let base: Sym<Addr> = t.config(0);
+                let escrow = venue.child(VAULT, &[base.clone().cast()]);
                 t.point(&escrow).delta();
+                t.denomination(1, &base);
             },
         )
         .method(
@@ -168,13 +176,17 @@ fn book() -> Blueprint {
                 )
                 .write();
 
-                let quote = payment.resource();
+                let quote: Sym<Addr> = t.config(1);
                 t.point(&venue.child(VAULT, &[base.clone().cast()])).delta();
                 t.point(&venue.child(VAULT, &[quote.clone().cast()]))
                     .delta();
+                t.denomination(2, &quote);
 
+                // The change is what came off the payment, so it carries
+                // the payment's own resource however the vault it did not
+                // reach is keyed.
                 t.output(&base);
-                t.output(&quote);
+                t.output(&payment.resource());
             },
         )
         .build()
@@ -225,6 +237,10 @@ fn assert_parity(traced: &Blueprint, authored: &PackageMetadata, package: &str) 
         // type in the artifact itself.
         assert_eq!(got.params, signature.params, "{package}::{name} params");
         assert_eq!(got.outputs, signature.outputs, "{package}::{name} outputs");
+        assert_eq!(
+            got.denominations, signature.denominations,
+            "{package}::{name} denominations"
+        );
         assert_eq!(got.effects, signature.effects, "{package}::{name} effects");
     }
     assert_eq!(

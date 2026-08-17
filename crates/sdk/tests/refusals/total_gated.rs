@@ -2,12 +2,12 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 mod contract {
-    use hyperscale_vm_sdk::state::{Bucket, Keyed, Quantity};
+    use hyperscale_vm_sdk::state::{Bucket, Keyed, Quantity, Vault};
 
     #[state]
     struct Contract {
         #[role(1)]
-        vaults: Keyed<Quantity>,
+        vaults: Keyed<Vault>,
     }
 
     impl Contract {

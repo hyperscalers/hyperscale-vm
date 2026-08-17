@@ -468,6 +468,20 @@ impl<T: Cellular> Cell<T> {
     }
 }
 
+impl Cell<Vault> {
+    /// The handle on this vault.
+    ///
+    /// A vault is reached through a handle rather than accessed in place,
+    /// because what a body does to one is move value — and a movement is
+    /// an operation on an open access, the same as every other. The
+    /// resource is the field's own declaration and no argument names it.
+    #[must_use]
+    #[allow(clippy::unused_self)] // the authoring stub reaches nothing
+    pub fn vault(&self) -> Slot<Vault> {
+        unimplemented!("{OFF_HOST}")
+    }
+}
+
 /// A family of leaves under one role, keyed by an address.
 ///
 /// The canonical case is a vault family keyed by resource: `self.vaults.at(
@@ -544,8 +558,37 @@ impl<T: Cellular> Slot<T> {
     }
 }
 
+/// A cell that holds value.
+///
+/// Deliberately not [`Cellular`]: the generic accessors read and *assign*
+/// a leaf, and a balance a body can assign is value from nowhere. What a
+/// vault offers instead is movement — a credit consuming an edge, a debit
+/// producing one — so every change to a balance is value that came from
+/// or went to somewhere the same transaction accounts for.
+///
+/// Which resource it holds is its declaration's answer, and the
+/// declaration states it one of two ways: a `Keyed<Vault>` is denominated
+/// by its own key, and a `Cell<Vault>` by the `#[denomination(..)]` its
+/// field carries. There is no third way and no undenominated vault.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Vault;
+
 #[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
-impl Slot<Quantity> {
+impl Slot<Vault> {
+    /// What the vault holds.
+    ///
+    /// A read, not a handle on the balance: what a body does with the
+    /// figure is arithmetic, and the only way to change it is to move
+    /// value.
+    #[must_use]
+    #[inline(always)]
+    pub fn balance(&self) -> Quantity {
+        #[cfg(target_arch = "wasm32")]
+        return Quantity::from_cell(&crate::guest::cell_get(self.handle));
+        #[cfg(not(target_arch = "wasm32"))]
+        return Quantity::from_cell(&host::cell_get(self.handle));
+    }
+
     /// Move value into the cell, consuming the bucket.
     ///
     /// What lands is exactly what crossed: the body names no amount, so

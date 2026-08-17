@@ -20,7 +20,7 @@ use hyperscale_vm_sdk::blueprint;
 pub mod account {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Ids, Keyed, NfBucket, Ordered, Quantity, RoleSet, clock_ms,
+        Bucket, Cell, Ids, Keyed, NfBucket, Ordered, Quantity, RoleSet, Vault, clock_ms,
     };
 
     /// Funds left the account.
@@ -38,9 +38,9 @@ pub mod account {
     #[state]
     struct Account {
         #[role(1)]
-        vaults: Keyed<Quantity>,
+        vaults: Keyed<Vault>,
         #[role(2)]
-        claims: Keyed<Quantity>,
+        claims: Keyed<Vault>,
         /// The stored authority: the cell `authorize` reads and
         /// `securify` creates. Absent for a virtual account.
         #[role(4)]

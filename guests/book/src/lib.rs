@@ -19,7 +19,7 @@ use hyperscale_vm_sdk::blueprint;
 pub mod book {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{
-        Bucket, Keyed, Locked, Ordered, Quantity, Ratio, Rounding, fresh_id, pack,
+        Bucket, Cell, Locked, Ordered, Quantity, Ratio, Rounding, Vault, fresh_id, pack,
     };
 
     /// The book's creation-fixed pair.
@@ -36,10 +36,18 @@ pub mod book {
 
     #[state]
     struct Book {
+        /// The standing ladder: a quantity of base per entry, which is a
+        /// number the book records rather than value it holds.
         #[role(16)]
         asks: Ordered<Quantity>,
+        /// What makers escrow and takers buy.
         #[role(1)]
-        vaults: Keyed<Quantity>,
+        #[denomination(config.base)]
+        base: Cell<Vault>,
+        /// What takers pay and makers are owed.
+        #[role(1)]
+        #[denomination(config.quote)]
+        quote: Cell<Vault>,
         #[role(3)]
         config: Locked<Pair>,
     }
@@ -54,7 +62,7 @@ pub mod book {
             // Price over a fresh sequence id: unique without reading the
             // book, which is what lets the entry key be declared.
             self.asks.at(pack(price, fresh_id())).set(funds.quantity());
-            self.vaults.at(funds.resource()).put(funds);
+            self.base.vault().put(funds);
             Ok(())
         }
 
@@ -103,15 +111,13 @@ pub mod book {
                 }
             }
 
-            // Note the config fields are read without pinning the leaf:
-            // configuration is locked state, consultable without a claim.
-            // The base the taker bought leaves the pool's own vault, and
+            // The base the taker bought leaves the book's own vault, and
             // the change comes off the payment before the rest of it goes
             // in — so what the vault keeps is what was spent, and neither
             // half is a number this body wrote down.
-            let sold = self.vaults.at(self.config.base).take(bought);
+            let sold = self.base.vault().take(bought);
             let change = payment.take(budget);
-            self.vaults.at(payment.resource()).put(payment);
+            self.quote.vault().put(payment);
             (sold, change)
         }
     }

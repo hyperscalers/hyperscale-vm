@@ -25,6 +25,9 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/reassigned_key.rs");
     refuse.compile_fail("tests/refusals/early_return_output.rs");
     refuse.compile_fail("tests/refusals/two_denominations.rs");
+    refuse.compile_fail("tests/refusals/assigned_balance.rs");
+    refuse.compile_fail("tests/refusals/undenominated_vault.rs");
+    refuse.compile_fail("tests/refusals/keyed_denomination.rs");
 }
 
 /// A mark the macro can already tell is unsupportable, refused where the

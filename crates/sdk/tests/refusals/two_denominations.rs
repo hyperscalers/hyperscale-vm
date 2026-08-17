@@ -3,7 +3,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Keyed, Locked, Quantity};
+    use hyperscale_vm_sdk::state::{Bucket, Keyed, Locked, Quantity, Vault};
 
     struct Settings {
         base: Address,
@@ -15,7 +15,7 @@ mod contract {
         #[role(3)]
         config: Locked<Settings>,
         #[role(1)]
-        vaults: Keyed<Quantity>,
+        vaults: Keyed<Vault>,
     }
 
     impl Contract {

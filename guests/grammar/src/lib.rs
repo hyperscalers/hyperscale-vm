@@ -16,7 +16,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod grammar {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Keyed, Ordered, Quantity, pack};
+    use hyperscale_vm_sdk::state::{Bucket, Keyed, Ordered, Quantity, Vault, pack};
 
     /// The ids a count-prefixed edge cell carries.
     fn cell_ids(cell: &[u8]) -> Vec<u64> {
@@ -30,7 +30,7 @@ pub mod grammar {
     #[state]
     struct Grammar {
         #[role(1)]
-        vaults: Keyed<Quantity>,
+        vaults: Keyed<Vault>,
         #[role(5)]
         holdings: Ordered<Quantity>,
     }
@@ -53,7 +53,7 @@ pub mod grammar {
             let mut held = self.holdings.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
             let vault = self.vaults.at(holder);
             let mut index = 0;
-            let mut total = vault.get();
+            let mut total = vault.balance();
             while index < held.count() {
                 total += held.entry(index);
                 index += 1;

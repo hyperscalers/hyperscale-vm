@@ -25,12 +25,12 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod shapes {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Keyed, Quantity};
+    use hyperscale_vm_sdk::state::{Keyed, Quantity, Vault};
 
     #[state]
     struct Shapes {
         #[role(1)]
-        vaults: Keyed<Quantity>,
+        vaults: Keyed<Vault>,
     }
 
     impl Shapes {
@@ -68,16 +68,16 @@ mod shapes {
         }
 
         pub fn asserted(&mut self, a: Address) {
-            assert_eq!(self.vaults.at(a).get(), Quantity::ZERO);
+            assert_eq!(self.vaults.at(a).balance(), Quantity::ZERO);
         }
 
         #[allow(clippy::equatable_if_let)] // the spelling under test is the if-let itself
         pub fn scrutinised(&mut self, a: Address) {
-            if let Quantity::ZERO = self.vaults.at(a).get() {}
+            if let Quantity::ZERO = self.vaults.at(a).balance() {}
         }
 
         pub fn read(&mut self, a: Address) {
-            let _ = self.vaults.at(a).get();
+            let _ = self.vaults.at(a).balance();
         }
 
         pub fn guarded(&mut self, flag: u64, a: Address) {
@@ -198,12 +198,12 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
 #[blueprint]
 mod environment {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Cell, Keyed, Quantity, clock_ms, hash, randomness};
+    use hyperscale_vm_sdk::state::{Cell, Keyed, Vault, clock_ms, hash, randomness};
 
     #[state]
     struct Environment {
         #[role(1)]
-        vaults: Keyed<Quantity>,
+        vaults: Keyed<Vault>,
         #[role(2)]
         seen: Cell<u64>,
     }
@@ -247,7 +247,7 @@ fn reading_the_environment_declares_nothing() {
 /// the other.
 #[blueprint]
 mod issuer {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Keyed, Quantity, Rounding, issue};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Keyed, Quantity, Rounding, Vault, issue};
 
     #[state]
     struct Issuer {
@@ -258,7 +258,7 @@ mod issuer {
         #[role(3)]
         index: Cell<Fixed<(), ()>>,
         #[role(2)]
-        vaults: Keyed<Quantity>,
+        vaults: Keyed<Vault>,
     }
 
     impl Issuer {

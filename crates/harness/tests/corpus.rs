@@ -1792,6 +1792,58 @@ fn fill_graph() -> ManifestGraph {
     })
 }
 
+/// A book means its configured pair, so each side takes the resource its
+/// own vault holds and refuses the other before the transaction exists.
+///
+/// Both directions matter and they fail differently in the world without
+/// the check: an ask escrowed in something the book does not sell stands
+/// on the ladder at any price a maker likes, and a fill paid in something
+/// the book does not price buys real base with it.
+#[test]
+fn each_side_of_the_book_takes_only_its_own_resource() {
+    let (cache, instances) = world();
+    let refused = |graph: &ManifestGraph, signer| {
+        admit(graph, signer, &cache, &instances, &TestHasher)
+            .expect_err("the book declares which side this is")
+    };
+
+    // A maker escrowing quote where the book escrows base.
+    let wrong_ask = graph(|b| {
+        let maker = account::authorize(b, MAKER)?;
+        let funds = account::withdraw(b, maker, QUOTE, 50)?;
+        book::place_ask(b, book(), 3, funds)
+    });
+    assert!(
+        matches!(
+            refused(&wrong_ask, MAKER),
+            AdmissionError::Denomination { param: 1, expected, found, .. }
+                if expected == BASE.address() && found == QUOTE.address()
+        ),
+        "an ask escrows the base side"
+    );
+
+    // A taker paying base where the book is paid in quote.
+    let wrong_fill = graph(|b| {
+        let taker = account::authorize(b, TAKER)?;
+        let payment = account::withdraw(b, taker, BASE, 100)?;
+        let [bought, refund] = book::fill_asks(b, book(), 3, 5, payment)?;
+        account::deposit(b, TAKER, bought)?;
+        account::deposit(b, TAKER, refund)
+    });
+    assert!(
+        matches!(
+            refused(&wrong_fill, TAKER),
+            AdmissionError::Denomination { param: 2, expected, found, .. }
+                if expected == QUOTE.address() && found == BASE.address()
+        ),
+        "a fill pays the quote side"
+    );
+
+    // The controls: each side in the resource it is declared in.
+    admit(&place_graph(), MAKER, &cache, &instances, &TestHasher).expect("an ask in base admits");
+    admit(&fill_graph(), TAKER, &cache, &instances, &TestHasher).expect("a fill in quote admits");
+}
+
 #[test]
 fn fill_provisions_only_the_interval() {
     let world = world();

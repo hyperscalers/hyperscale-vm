@@ -226,7 +226,7 @@ impl Op {
     pub fn from_method(name: &str) -> Option<Self> {
         match name {
             "locked" => Some(Self::Locked),
-            "get" | "peek" | "count" | "entry" | "order" => Some(Self::Get),
+            "get" | "peek" | "count" | "entry" | "order" | "balance" => Some(Self::Get),
             "put" | "take" | "declared" => Some(Self::Move),
             "reserve" => Some(Self::Reserve),
             "set" | "insert" | "remove" => Some(Self::Set),
