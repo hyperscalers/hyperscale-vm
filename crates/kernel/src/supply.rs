@@ -20,25 +20,122 @@
 //! the total is a fold that reshape preserves rather than a number
 //! nobody can check.
 //!
-//! Nothing on the execution path moves the ledger, and nothing on it can:
-//! every operation here takes a *resource address*, and the session's
-//! floor has none to give. A queued delta lands on a cell whose key is a
-//! hash — which resource it moved lives in the key material the manifest
-//! layer chose and in the walk's typed edges, both above this crate — so
-//! wiring conservation into `finish` is not a missing call, it is
-//! inexpressible below the layer that knows resource identity. The ledger
-//! moves with the operations that carry an address by construction: mint
-//! and burn under resource authority, and cross-shard settlement, whose
-//! attestation carries each leg's supply delta. Until those operations
-//! exist, conservation is unenforced — a guest returning a bucket it
-//! never debited mints from nothing — and what this module holds correct,
-//! under the conservation suite, is the substrate they will land on.
+//! Two operations move it, and both carry a resource address because a
+//! grant does: minting brings value into existence under the authority
+//! over one resource, and burning takes it out under the same. A receipt
+//! records what its transaction did as a [`SupplyDelta`], and a
+//! committing transaction's delta is what a shard applies. An aborting
+//! one has none.
+//!
+//! Nothing else moves it, and nothing else needs to. A transfer is a
+//! debit and a credit on two cells holding the same resource, which sums
+//! to zero however many cells it crosses — so same-shard movement
+//! conserves the accumulator by construction rather than by counting.
+//! What a cross-shard leg does to it is the settlement attestation's
+//! answer, carried with the leg rather than derived here.
 
 use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::Address;
 
 use crate::modes::ModeError;
+
+/// What one transaction brought into and out of existence, per resource.
+///
+/// The receipt's own record of the two operations that move supply, kept
+/// apart from the state delta because supply is not a cell: no key holds
+/// it, and what changed it is the authority a grant conferred rather than
+/// any write. A committing transaction's delta is applied to the shard's
+/// ledger; an aborting one has none, on the same terms its events do not
+/// survive.
+///
+/// Both halves rather than a net, because they are different facts: a
+/// resource minted and burned in one transaction moved supply twice and
+/// says so, where a net of zero would read as a transaction that touched
+/// nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SupplyDelta {
+    minted: BTreeMap<Address, u128>,
+    burned: BTreeMap<Address, u128>,
+}
+
+impl SupplyDelta {
+    /// Whether the transaction moved any supply at all.
+    ///
+    /// True of almost every transaction: a transfer conserves supply by
+    /// construction, so only an authority-bearing one moves it.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.minted.is_empty() && self.burned.is_empty()
+    }
+
+    /// What this transaction minted of a resource.
+    #[must_use]
+    pub fn minted(&self, resource: Address) -> u128 {
+        self.minted.get(&resource).copied().unwrap_or(0)
+    }
+
+    /// What this transaction burned of a resource.
+    #[must_use]
+    pub fn burned(&self, resource: Address) -> u128 {
+        self.burned.get(&resource).copied().unwrap_or(0)
+    }
+
+    /// Every resource this transaction moved, ascending.
+    pub fn resources(&self) -> impl Iterator<Item = Address> + '_ {
+        self.minted.keys().chain(self.burned.keys()).copied()
+    }
+
+    /// Record a mint.
+    ///
+    /// # Errors
+    ///
+    /// [`ModeError::SupplyOutOfBounds`] on overflow.
+    pub fn mint(&mut self, resource: Address, amount: u128) -> Result<(), ModeError> {
+        Self::add(&mut self.minted, resource, amount)
+    }
+
+    /// Record a burn.
+    ///
+    /// # Errors
+    ///
+    /// [`ModeError::SupplyOutOfBounds`] on overflow.
+    pub fn burn(&mut self, resource: Address, amount: u128) -> Result<(), ModeError> {
+        Self::add(&mut self.burned, resource, amount)
+    }
+
+    fn add(
+        into: &mut BTreeMap<Address, u128>,
+        resource: Address,
+        amount: u128,
+    ) -> Result<(), ModeError> {
+        if amount == 0 {
+            return Ok(());
+        }
+        let slot = into.entry(resource).or_insert(0);
+        *slot = slot
+            .checked_add(amount)
+            .ok_or(ModeError::SupplyOutOfBounds)?;
+        Ok(())
+    }
+
+    /// Move a shard's accumulator by what this transaction did.
+    ///
+    /// # Errors
+    ///
+    /// [`ModeError::SupplyOutOfBounds`] on overflow, or on a burn past
+    /// what the shard accumulated — which is a shard destroying value it
+    /// never held, and so a defect rather than a business condition.
+    pub fn apply(&self, ledger: &mut SupplyLedger) -> Result<(), ModeError> {
+        for (resource, amount) in &self.minted {
+            ledger.credit(*resource, *amount)?;
+        }
+        for (resource, amount) in &self.burned {
+            ledger.debit(*resource, *amount)?;
+        }
+        Ok(())
+    }
+}
 
 /// A shard's per-resource supply accumulator.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -54,6 +54,6 @@ pub use session::{
     Outcome, Receipt, SessionTrap, StateDelta,
 };
 pub use store::{Access, AppliedDelta, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
-pub use supply::SupplyLedger;
+pub use supply::{SupplyDelta, SupplyLedger};
 pub use walk::{GuestBackend, GuestCall, InvokeResult, ManifestWalk};
 pub use work::Work;

@@ -42,6 +42,7 @@ use crate::session::{
     EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt, StateDelta,
 };
 use crate::store::{Baseline, StoreError, Substates, WorkingStore};
+use crate::supply::SupplyDelta;
 use crate::work::Work;
 
 /// One transaction of a batch: its identity and its routed effect set.
@@ -651,6 +652,7 @@ fn abort_receipt(outcome: Outcome, fuel: u64) -> Receipt {
         outcome,
         delta: StateDelta::default(),
         events: Vec::new(),
+        supply: SupplyDelta::default(),
         fuel,
     }
 }

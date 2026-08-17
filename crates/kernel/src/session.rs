@@ -28,6 +28,7 @@ use crate::modes::{AMOUNT_CELL_BYTES, DeltaOp, ModeError, TxHash, decode_amount,
 use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
 use crate::store::{Access, StoreError, WorkingStore};
+use crate::supply::SupplyDelta;
 
 /// The ordered-collection interval a range handle names.
 ///
@@ -281,6 +282,9 @@ pub enum SessionTrap {
     /// A store refusal.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A supply movement past what an accumulator can hold.
+    #[error(transparent)]
+    Supply(#[from] ModeError),
 }
 
 impl From<SessionTrap> for AbortReason {
@@ -311,6 +315,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::ShareAboveOne => Self::ShareAboveOne,
             SessionTrap::WrongResource { .. } => Self::WrongResource,
             SessionTrap::Math(error) => error.into(),
+            SessionTrap::Supply(error) => error.into(),
             SessionTrap::Store(store) => store.into(),
         }
     }
@@ -475,6 +480,14 @@ pub struct Receipt {
     /// stores an event is the consumer's rule, read off each event's
     /// emitter.
     pub events: Vec<Event>,
+    /// What this transaction brought into and out of existence.
+    ///
+    /// Empty for almost every transaction: a transfer is a debit and a
+    /// credit that sum to zero, so only one carrying resource authority
+    /// moves supply at all. What a shard does with this is add it to its
+    /// own accumulator, which is the whole of how the accumulator moves
+    /// on this path.
+    pub supply: SupplyDelta,
     /// Total fuel consumed: engine schedule plus boundary supplement.
     ///
     /// Exact on a completed execution and engine-defined at a core trap,
@@ -578,6 +591,13 @@ pub struct KernelSession {
     /// and the kernel cannot invert a cell key to recover one, so a field
     /// for it would be right in one case and a guess in the rest.
     buckets: Vec<Option<Held>>,
+    /// What this transaction brought into and out of existence, by
+    /// resource.
+    ///
+    /// Accumulated as the operations happen rather than derived at the
+    /// end, because the grant that authorised each one is gone by then:
+    /// entering the next node takes it away, and the resource with it.
+    supply: SupplyDelta,
     /// Whether the executing invocation may create value.
     ///
     /// One bit rather than a table of resources. What a grant fixes is
@@ -691,6 +711,7 @@ impl KernelSession {
             written: BTreeMap::new(),
             invocation: None,
             events: Vec::new(),
+            supply: SupplyDelta::default(),
             cell_resources: denominations.to_vec(),
             bucket_resources: Vec::new(),
             buckets: Vec::new(),
@@ -1279,6 +1300,7 @@ impl KernelSession {
         let Some(resource) = self.issuance else {
             return Err(SessionTrap::IssuanceUngranted);
         };
+        self.supply.mint(resource, amount)?;
         Ok(self.open_bucket(Held::Amount(amount), Some(resource)))
     }
 
@@ -1302,6 +1324,12 @@ impl KernelSession {
                 return Err(SessionTrap::InstanceHeldTwice(u128::from(id)));
             }
         }
+        // An instance's supply is its existence: what a non-fungible
+        // mints is a count, which is what its holdings are measured in.
+        self.supply.mint(
+            resource,
+            u128::try_from(instances.len()).unwrap_or(u128::MAX),
+        )?;
         Ok(self.open_bucket(Held::Instances(instances), Some(resource)))
     }
 
@@ -1329,7 +1357,8 @@ impl KernelSession {
                 carried,
             });
         }
-        self.bucket(funds)?;
+        let destroyed = self.bucket(funds)?.quantity();
+        self.supply.burn(resource, destroyed)?;
         self.take_bucket(funds).map(|_| ())
     }
 
@@ -1819,11 +1848,22 @@ impl KernelSession {
         delta.movements = movements.into();
         delta.settles = settles.into();
         self.store.merge_active();
+        // Value exists because a transaction that committed created it.
+        // Every other outcome leaves the shard as it found it, so what an
+        // uncommitted one said it minted or burned is a claim about a
+        // world that never happened — the same rule its events are under,
+        // applied here rather than left to whoever picked the outcome.
+        let supply = if matches!(outcome, Outcome::Completed { .. }) {
+            self.supply
+        } else {
+            SupplyDelta::default()
+        };
         Ok((
             Receipt {
                 outcome,
                 delta,
                 events: self.events,
+                supply,
                 fuel,
             },
             self.store,
@@ -1881,8 +1921,10 @@ fn abort_with(mut store: OverlayStore, outcome: Outcome, fuel: u64) -> (Receipt,
             outcome,
             delta: StateDelta::default(),
             // An abort discards its effects, and what it claimed happened
-            // is one of them.
+            // is one of them — including value it said it brought into or
+            // out of existence, which never happened either.
             events: Vec::new(),
+            supply: SupplyDelta::default(),
             fuel,
         },
         store,
