@@ -18,7 +18,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_sdk::handle::Handle;
 use hyperscale_vm_sdk::host::{Refusal, with_kernel};
-use hyperscale_vm_sdk::state::{self, Amount, Bucket, Entry, Interval, Quantity, Slot};
+use hyperscale_vm_sdk::state::{self, Bucket, Entry, Interval, OrderKey, Quantity, Slot};
 
 const OWNER: Address = Address::new([0x11; 31], AddressClass::Component);
 const CLOCK_MS: u64 = 4_000;
@@ -171,7 +171,7 @@ fn an_interval_reads_and_writes_the_entries_it_covers() {
     let (session, (count, orders, second)) = with_kernel(session, || {
         let mut interval = Interval::<u64>::at(Handle::RangeWrite(0));
         let count = interval.count();
-        let orders: Vec<Amount> = (0..count).map(|index| interval.order(index)).collect();
+        let orders: Vec<OrderKey> = (0..count).map(|index| interval.order(index)).collect();
         let second = interval.entry(1);
         interval.set(1, 99);
         (count, orders, second)
@@ -197,7 +197,7 @@ fn an_interval_removes_the_entry_it_names() {
         let mut interval = Interval::<u64>::at(Handle::RangeWrite(0));
         interval.remove(1);
         let left = interval.count();
-        let orders: Vec<Amount> = (0..left).map(|index| interval.order(index)).collect();
+        let orders: Vec<OrderKey> = (0..left).map(|index| interval.order(index)).collect();
         (left, orders)
     });
 

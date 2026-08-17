@@ -72,7 +72,7 @@
 //! #[blueprint]
 //! mod bad {
 //!     use hyperscale_vm_sdk::Address;
-//!     use hyperscale_vm_sdk::state::{Amount, Bucket, Cell, Keyed};
+//!     use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity};
 //!
 //!     #[state]
 //!     struct Bad {
@@ -121,7 +121,7 @@
 //! # use hyperscale_vm_sdk::blueprint;
 //! #[blueprint]
 //! mod bad {
-//!     use hyperscale_vm_sdk::state::{Amount, Keyed};
+//!     use hyperscale_vm_sdk::state::{Keyed, Quantity};
 //!
 //!     #[state]
 //!     struct Bad {

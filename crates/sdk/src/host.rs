@@ -39,7 +39,7 @@ use hyperscale_vm_embed::{KernelHost, math};
 
 use crate::handle::Handle;
 use crate::num::{Rounding, Wide};
-use crate::state::{Amount, Bucket};
+use crate::state::{Bucket, OrderKey};
 
 /// A kernel refusal, in flight through the unwind that carries it.
 ///
@@ -216,7 +216,7 @@ pub fn cell_put(handle: Handle, funds: u32) {
 ///
 /// On a handle whose mode moves no value.
 #[must_use]
-pub fn cell_take(handle: Handle, value: Amount) -> u32 {
+pub fn cell_take(handle: Handle, value: u128) -> u32 {
     settled(kernel(|k| match handle {
         Handle::Delta(rep) => k.delta_take(rep, value),
         Handle::Write(rep) => k.write_take(rep, value),
@@ -239,7 +239,7 @@ pub fn reserve_take(handle: Handle) -> u32 {
 
 /// Issue `value` of the resource this invocation was granted.
 #[must_use]
-pub fn issue(rep: u32, value: Amount) -> u32 {
+pub fn issue(rep: u32, value: u128) -> u32 {
     settled(kernel(|k| k.issuer_take(rep, value)))
 }
 
@@ -328,7 +328,7 @@ pub fn fixed_pow(base: Wide, exp: u32, rounding: Rounding) -> Wide {
 
 /// Split `value` off a bucket, as a bucket.
 #[must_use]
-pub fn bucket_take(rep: u32, value: Amount) -> u32 {
+pub fn bucket_take(rep: u32, value: u128) -> u32 {
     settled(kernel(|k| k.bucket_take(rep, value)))
 }
 
@@ -339,7 +339,7 @@ pub fn bucket_put(rep: u32, other: u32) {
 
 /// What a bucket carries.
 #[must_use]
-pub fn bucket_amount(rep: u32) -> Amount {
+pub fn bucket_amount(rep: u32) -> u128 {
     settled(kernel(|k| k.bucket_amount(rep)))
 }
 
@@ -362,7 +362,7 @@ pub fn entry_count(handle: Handle) -> u32 {
 ///
 /// On a handle that is not an interval.
 #[must_use]
-pub fn entry_order(handle: Handle, index: u32) -> Amount {
+pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
     scanned(kernel(|k| match handle {
         Handle::RangeRead(rep) | Handle::RangeWrite(rep) => k.range_order(rep, index),
         other => unreachable!("{other:?} yields no order keys"),
@@ -384,7 +384,7 @@ pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
 
 /// The value of the entry at `order`, or empty where there is none.
 #[must_use]
-pub fn entry_at(handle: Handle, order: Amount) -> Vec<u8> {
+pub fn entry_at(handle: Handle, order: OrderKey) -> Vec<u8> {
     (0..entry_count(handle))
         .find(|&index| entry_order(handle, index) == order)
         .map_or_else(Vec::new, |index| entry_get(handle, index))
@@ -407,7 +407,7 @@ pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
 /// # Panics
 ///
 /// On any mode but [`Handle::RangeWrite`].
-pub fn entry_insert(handle: Handle, order: Amount, value: &[u8]) {
+pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
     scanned(kernel(|k| match handle {
         Handle::RangeWrite(rep) => k.range_insert(rep, order, value.to_vec()),
         other => unreachable!("{other:?} does not write entries"),

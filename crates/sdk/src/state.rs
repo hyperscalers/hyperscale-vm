@@ -53,8 +53,14 @@ use hyperscale_vm_effects::Address;
 use crate::host;
 pub use crate::num::{MathError, Quantity, Rate, Ratio, Rounding, UnitFixed};
 
-/// An unsigned amount, in the kernel's cell width.
-pub type Amount = u128;
+/// Where an entry sits in a collection's ordering.
+///
+/// The kernel's cell width, in the one job it still has here: a
+/// collection is ordered by this and a range is bounded by two of them.
+/// Not a quantity and never conserved — what a leaf *holds* is a
+/// [`Quantity`], and the two stopped being one type when the vocabulary
+/// they were sharing was split.
+pub type OrderKey = u128;
 
 const OFF_HOST: &str = "the lowering answers this from the declaration — reaching it means a \
                         body was called directly rather than through the walk that materializes \
@@ -75,7 +81,7 @@ pub trait Cellular: Sized {
     fn to_cell(&self) -> Vec<u8>;
 }
 
-impl Cellular for Amount {
+impl Cellular for u128 {
     fn from_cell(cell: &[u8]) -> Self {
         cell.try_into().map_or(0, Self::from_le_bytes)
     }
@@ -509,7 +515,7 @@ impl<T> Ordered<T> {
 
     /// The entry at one order key.
     #[must_use]
-    pub fn at(&self, order: Amount) -> Entry<T> {
+    pub fn at(&self, order: OrderKey) -> Entry<T> {
         let _ = order;
         unimplemented!("{OFF_HOST}")
     }
@@ -530,7 +536,7 @@ impl<T> Ordered<T> {
     /// it is the work bound, so it is declaration rather than data. The
     /// interval's own magnitude is what `footprint` charges.
     #[must_use]
-    pub fn range(&self, lo: Amount, hi: Amount, cap: u32) -> Interval<T> {
+    pub fn range(&self, lo: OrderKey, hi: OrderKey, cap: u32) -> Interval<T> {
         let _ = (lo, hi, cap);
         unimplemented!("{OFF_HOST}")
     }
@@ -567,7 +573,7 @@ impl<T> Unordered<T> {
     /// call's cursor; `0` starts the walk. `cap` must be a literal — it is
     /// the work bound, so it is declaration rather than data.
     #[must_use]
-    pub fn sweep(&self, cursor: Amount, cap: u32) -> Interval<T> {
+    pub fn sweep(&self, cursor: OrderKey, cap: u32) -> Interval<T> {
         let _ = (cursor, cap);
         unimplemented!("{OFF_HOST}")
     }
@@ -583,7 +589,7 @@ impl<T> Unordered<T> {
 #[derive(Clone, Copy, Debug)]
 pub struct Entry<T> {
     handle: Handle,
-    order: Amount,
+    order: OrderKey,
     _value: core::marker::PhantomData<fn() -> T>,
 }
 
@@ -591,7 +597,7 @@ impl<T> Entry<T> {
     /// The entry at `order` of the interval this handle names, on the
     /// terms [`Slot::at`] describes.
     #[must_use]
-    pub const fn at(handle: Handle, order: Amount) -> Self {
+    pub const fn at(handle: Handle, order: OrderKey) -> Self {
         Self {
             handle,
             order,
@@ -657,7 +663,7 @@ impl<T> Interval<T> {
     /// The order key of the entry at `index`, ascending.
     #[must_use]
     #[inline(always)]
-    pub fn order(&self, index: u32) -> Amount {
+    pub fn order(&self, index: u32) -> OrderKey {
         let _ = index;
         #[cfg(target_arch = "wasm32")]
         return crate::guest::entry_order(self.handle, index);
@@ -693,7 +699,7 @@ impl<T: Cellular> Interval<T> {
     /// Insert at `order`, which must lie inside the declared interval.
     #[allow(clippy::needless_pass_by_value)] // a stored value is consumed
     #[inline(always)]
-    pub fn insert(&mut self, order: Amount, value: T) {
+    pub fn insert(&mut self, order: OrderKey, value: T) {
         let _ = (order, &value);
         #[cfg(target_arch = "wasm32")]
         return crate::guest::entry_insert(self.handle, order, &value.to_cell());
@@ -783,8 +789,8 @@ pub fn issue_granted(grant: u32, quantity: Quantity) -> Bucket {
 
 /// A 128-bit order key packed from a primary dimension over a tiebreaker.
 #[must_use]
-pub const fn pack(hi: u64, lo: u64) -> Amount {
-    ((hi as Amount) << 64) | (lo as Amount)
+pub const fn pack(hi: u64, lo: u64) -> OrderKey {
+    ((hi as OrderKey) << 64) | (lo as OrderKey)
 }
 
 /// A resource this instance issues, separated from its others by `mark`.

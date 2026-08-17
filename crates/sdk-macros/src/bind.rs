@@ -67,7 +67,7 @@ fn value_shape(
         // An order key crosses at the kernel's own 128-bit cell width,
         // whatever the logical key it was derived from.
         Need::Derived(Term::OrderKey { .. }) => Shape::Cell(Box::new(syn::parse_quote!(
-            ::hyperscale_vm_sdk::state::Amount
+            ::hyperscale_vm_sdk::state::OrderKey
         ))),
         // A resource is an address however it was derived.
         Need::Derived(Term::SelfResource(_) | Term::ResourceOf(_)) => Shape::Address,
