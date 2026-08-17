@@ -174,6 +174,14 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
+    fn bucket_take(&mut self, _rep: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+
+    fn bucket_put(&mut self, _rep: u32, _other: u32) -> std::result::Result<(), AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+
     fn bucket_amount(&mut self, _rep: u32) -> std::result::Result<u128, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }

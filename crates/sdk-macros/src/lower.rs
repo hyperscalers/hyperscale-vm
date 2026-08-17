@@ -489,6 +489,15 @@ impl<'a> Lowerer<'a> {
                         let code = self.value(eval.code);
                         (vec![term], vec![code])
                     }
+                    // An edge the method was handed and hands on: it
+                    // carries the resource the manifest routed it as, and
+                    // forwarding one is the case `check_abi` already
+                    // admits.
+                    Val::Term(term) if matches!(eval.code, Code::Bucket(_)) => {
+                        let term = Term::ResourceOf(Box::new(term.clone()));
+                        let code = self.value(eval.code);
+                        (vec![term], vec![code])
+                    }
                     _ => {
                         // A method's results are its edges: what an export
                         // hands back is value the kernel takes ownership
@@ -1520,6 +1529,16 @@ impl<'a> Lowerer<'a> {
                 }
             }
 
+            // A split of a value edge is a value edge, carrying the same
+            // resource: the receiver is a bucket the body holds, and what
+            // comes off it is the kernel's own subtraction.
+            Val::Term(term) if method == "take" && matches!(receiver.code, Code::Bucket(_)) => {
+                let code = self.pass_through(&receiver, &method, evals, call);
+                Eval {
+                    val: Val::Produced(Term::ResourceOf(Box::new(term))),
+                    code: Code::Rust(code),
+                }
+            }
             Val::Term(term) => match method.as_str() {
                 "resource" => Eval {
                     val: Val::Term(Term::ResourceOf(Box::new(term.clone()))),

@@ -48,6 +48,8 @@ pub trait RefKernelHost {
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
     fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
     fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), AbortReason>;
+    fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
+    fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), AbortReason>;
     fn bucket_amount(&mut self, rep: u32) -> Result<u128, AbortReason>;
     fn delta_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
     fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
@@ -152,6 +154,8 @@ enum HostFn {
     WriteCellSet,
     WriteTake,
     WritePut,
+    BucketTake,
+    BucketPut,
     BucketAmount,
     IssuerTake,
     DeltaAdd,
@@ -581,6 +585,8 @@ impl RefComponent {
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
             ("state", "write-cell-take") => Ok(HostFn::WriteTake),
             ("state", "write-cell-put") => Ok(HostFn::WritePut),
+            ("state", "bucket-take") => Ok(HostFn::BucketTake),
+            ("state", "bucket-put") => Ok(HostFn::BucketPut),
             ("state", "bucket-amount") => Ok(HostFn::BucketAmount),
             ("state", "issuer-take") => Ok(HostFn::IssuerTake),
             ("state", "delta-cell-add") => Ok(HostFn::DeltaAdd),
@@ -1524,12 +1530,14 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::RangeWriteRemove
                     | HostFn::WritePut
                     | HostFn::DeltaPut
-                    | HostFn::BucketAmount,
+                    | HostFn::BucketAmount
+                    | HostFn::BucketPut,
                 ) => 2,
                 CompFunc::Host(
                     HostFn::WriteCellSet
                     | HostFn::WriteTake
                     | HostFn::IssuerTake
+                    | HostFn::BucketTake
                     | HostFn::DeltaAdd
                     | HostFn::DeltaSub
                     | HostFn::DeltaTake
@@ -1655,6 +1663,24 @@ impl<H: RefKernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let bucket = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
+                    }
+                    HostFn::BucketTake => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
+                        let amount = flat_amount(args[1], args[2]);
+                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        let split = self
+                            .host
+                            .bucket_take(rep, amount)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(vec![Value::I32(self.seat_bucket(split).cast_signed())])
+                    }
+                    HostFn::BucketPut => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
+                        let other = self.consume_bucket(args[1])?;
+                        self.host
+                            .bucket_put(rep, other)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        Ok(Vec::new())
                     }
                     HostFn::BucketAmount => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;

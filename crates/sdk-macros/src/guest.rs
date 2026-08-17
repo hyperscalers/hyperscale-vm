@@ -158,8 +158,11 @@ pub fn method(
         if let Need::Amount(param) = need {
             let name = param_ident(*param, params);
             signature.push(quote!(#ident: KernelBucket));
+            // Mutable because a body may split it, and whether one does
+            // is not worth a second pass over the text to find out.
             prologue.push(quote!(
-                let #name = ::hyperscale_vm_sdk::state::Bucket::held(#ident);
+                #[allow(unused_mut)]
+                let mut #name = ::hyperscale_vm_sdk::state::Bucket::held(#ident);
             ));
             continue;
         }

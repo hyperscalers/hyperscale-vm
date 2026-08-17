@@ -97,6 +97,17 @@ const fn whole(value: kernel::state::Amount) -> u128 {
     (value.low as u128) | ((value.high as u128) << 64)
 }
 
+/// Split `value` off a bucket, as a bucket.
+#[must_use]
+pub fn bucket_take(funds: &kernel::state::Bucket, value: u128) -> kernel::state::Bucket {
+    kernel::state::bucket_take(funds, amount(value))
+}
+
+/// Merge `other` into a bucket, consuming it.
+pub fn bucket_put(funds: &kernel::state::Bucket, other: kernel::state::Bucket) {
+    kernel::state::bucket_put(funds, other);
+}
+
 /// What a bucket carries, read through a borrow of the handle.
 #[must_use]
 pub fn bucket_amount(funds: &kernel::state::Bucket) -> u128 {

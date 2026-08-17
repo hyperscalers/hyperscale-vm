@@ -153,6 +153,20 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
 
+    /// Split `amount` off the bucket at `rep`; the new bucket's rep.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
+
+    /// Merge the bucket at `other` into the one at `rep`, consuming it.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), AbortReason>;
+
     /// What the bucket at `rep` carries.
     ///
     /// # Errors
@@ -412,6 +426,26 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     // A put consumes the handle the guest passed: the canonical ABI
     // lifts an owned argument out of the caller's table, so the rep
     // arrives here and the guest no longer has it.
+    state.func_wrap(
+        "bucket-take",
+        |mut store: StoreContextMut<'_, T>, (b, amount): (Resource<Bucket>, Amount)| {
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            let rep = store
+                .data_mut()
+                .bucket_take(b.rep(), amount.into())
+                .map_err(host_trap)?;
+            Ok((Resource::<Bucket>::new_own(rep),))
+        },
+    )?;
+    state.func_wrap(
+        "bucket-put",
+        |mut store: StoreContextMut<'_, T>, (b, other): (Resource<Bucket>, Resource<Bucket>)| {
+            store
+                .data_mut()
+                .bucket_put(b.rep(), other.rep())
+                .map_err(host_trap)
+        },
+    )?;
     state.func_wrap(
         "bucket-amount",
         |mut store: StoreContextMut<'_, T>, (b,): (Resource<Bucket>,)| {

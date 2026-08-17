@@ -162,6 +162,17 @@ pub enum SessionTrap {
     /// through a lowered handle, kept as an honest error.
     #[error("this invocation issues nothing")]
     IssuanceUngranted,
+    /// A split past what a bucket holds.
+    #[error("a split of {amount} exceeds the {held} the bucket holds")]
+    BucketUnderflow {
+        /// What was asked for.
+        amount: u128,
+        /// What the bucket carries.
+        held: u128,
+    },
+    /// A merge whose total is past the width an amount has.
+    #[error("merging two buckets overflows an amount")]
+    BucketOverflow,
     /// A discarded bucket that still carried value.
     #[error("a bucket carrying {0} was let go of")]
     ValueDropped(u128),
@@ -205,6 +216,8 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::ReservationMissing => Self::ReservationMissing,
             SessionTrap::ReservationTaken => Self::ReservationAlreadyTaken,
             SessionTrap::IssuanceUngranted => Self::IssuanceUngranted,
+            SessionTrap::BucketUnderflow { .. } => Self::BucketUnderflow,
+            SessionTrap::BucketOverflow => Self::BucketOverflow,
             SessionTrap::ValueDropped(_) => Self::ValueDropped,
             SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
             SessionTrap::CellUnderflow => Self::CellUnderflow,
@@ -610,6 +623,49 @@ impl KernelSession {
             .and_then(|index| self.buckets.get_mut(index))
             .and_then(Option::take)
             .ok_or(SessionTrap::UnknownHandle(rep))
+    }
+
+    /// Split `amount` off the bucket at `rep`, as a new bucket.
+    ///
+    /// The kernel performs the subtraction, so the half that comes off
+    /// and the half left behind are one operation and a body writes down
+    /// neither.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`], including a split past what the bucket holds.
+    pub fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
+        let held = self.bucket(rep)?;
+        let left = held
+            .checked_sub(amount)
+            .ok_or(SessionTrap::BucketUnderflow { amount, held })?;
+        self.set_bucket(rep, left);
+        Ok(self.open_bucket(amount))
+    }
+
+    /// Merge the bucket at `other` into the one at `rep`, consuming it.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`], including a total past an amount's width.
+    pub fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), SessionTrap> {
+        let held = self.bucket(rep)?;
+        let added = self.bucket(other)?;
+        let total = held.checked_add(added).ok_or(SessionTrap::BucketOverflow)?;
+        self.take_bucket(other)?;
+        self.set_bucket(rep, total);
+        Ok(())
+    }
+
+    /// Replace what a live bucket carries. The rep is one `bucket` has
+    /// already resolved, so there is no slot to miss.
+    fn set_bucket(&mut self, rep: u32, amount: u128) {
+        if let Some(slot) = usize::try_from(rep)
+            .ok()
+            .and_then(|index| self.buckets.get_mut(index))
+        {
+            *slot = Some(amount);
+        }
     }
 
     /// A bucket handle the guest let go of.

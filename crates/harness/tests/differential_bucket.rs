@@ -829,6 +829,97 @@ fn weighed(fx: &Fixture, held: u128) -> Result<(u64, u64)> {
     Ok((blessed, reference))
 }
 
+/// One split, driven on both engines: what came off, and what was left.
+fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    validate_component(&bytes)?;
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<SessionHost>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let mut host = SessionHost(materialize(fx));
+    let funds = host.0.open_bucket(held);
+    let ledger = rep_of(&host, fx.ledger, Mode::Delta);
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+    let (came_off,) = instance
+        .get_typed_func::<(Resource<Bucket>, u64, Resource<DeltaCell>), (Resource<Bucket>,)>(
+            &mut store, "split",
+        )?
+        .call(
+            &mut store,
+            (Resource::new_own(funds), off, Resource::new_borrow(ledger)),
+        )?;
+    let mut host = store.into_data();
+    let blessed = host.0.take_bucket(came_off.rep())?;
+    let (receipt, _) = host
+        .0
+        .finish(Outcome::Completed { value: None }, 0)
+        .expect("the oracle is clean");
+    let left = receipt
+        .delta
+        .movements
+        .get(&fx.ledger)
+        .map_or(0, |m| m.credit);
+
+    let comp = RefComponent::decode(&bytes)?;
+    let mut host = SessionHost(materialize(fx));
+    let funds = host.0.open_bucket(held);
+    let ledger = rep_of(&host, fx.ledger, Mode::Delta);
+    let mut instance =
+        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+    let args = [
+        CVal::Own(funds),
+        CVal::U64(off),
+        CVal::Borrow(ledger, ResourceKind::DeltaCell),
+    ];
+    let mut host = match invoke(&mut instance, "split", &args)?.as_slice() {
+        [CVal::Own(rep)] => {
+            let rep = *rep;
+            let mut host = instance.into_host();
+            assert_eq!(host.0.take_bucket(rep)?, blessed, "the split diverged");
+            host
+        }
+        other => return Err(format_err!("split returned {other:?}")),
+    };
+    let _ = &mut host;
+    Ok((blessed, left))
+}
+
+#[test]
+fn a_split_divides_a_bucket_and_loses_nothing() -> Result<()> {
+    let fx = fixture();
+    let (came_off, left) = split_on_both(&fx, 100, 30)?;
+    // Neither half is a number the body wrote down, and together they are
+    // what the bucket carried.
+    assert_eq!(came_off, 30);
+    assert_eq!(left, 70);
+    Ok(())
+}
+
+#[test]
+fn a_bucket_survives_a_split_and_a_merge_whole() -> Result<()> {
+    let fx = &fixture();
+    let bytes = parse_str(BUCKET_GUEST_WAT)?;
+    validate_component(&bytes)?;
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<SessionHost>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let mut host = SessionHost(materialize(fx));
+    let funds = host.0.open_bucket(100);
+    let mut store = Store::new(&engine, host);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+    let (whole,) = instance
+        .get_typed_func::<(Resource<Bucket>, u64), (Resource<Bucket>,)>(&mut store, "halve")?
+        .call(&mut store, (Resource::new_own(funds), 30))?;
+    let mut host = store.into_data();
+    assert_eq!(host.0.take_bucket(whole.rep())?, 100);
+    Ok(())
+}
+
 #[test]
 fn a_body_can_read_what_it_was_paid_without_moving_it() -> Result<()> {
     let fx = fixture();

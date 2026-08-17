@@ -172,6 +172,30 @@ impl Bucket {
         self.resource
     }
 
+    /// Split `amount` off, as a bucket.
+    ///
+    /// The one way a body composes value without a cell in it: what comes
+    /// off and what is left are one subtraction the kernel performs, so
+    /// a body dividing an edge writes down neither half.
+    #[must_use]
+    pub fn take(&mut self, amount: Amount) -> Self {
+        let _ = amount;
+        #[cfg(target_arch = "wasm32")]
+        return Self::held(crate::guest::bucket_take(&self.handle, amount));
+        #[cfg(not(target_arch = "wasm32"))]
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// Merge `other` in, consuming it.
+    #[allow(clippy::needless_pass_by_value)] // a merge consumes what it takes
+    pub fn put(&mut self, other: Self) {
+        let _ = &other;
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::bucket_put(&self.handle, other.into_handle());
+        #[cfg(not(target_arch = "wasm32"))]
+        unimplemented!("{OFF_HOST}")
+    }
+
     /// How much is in hand.
     ///
     /// A borrow of the handle, so asking moves nothing. A body needs it

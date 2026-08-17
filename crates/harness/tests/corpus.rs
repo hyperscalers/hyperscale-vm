@@ -2017,12 +2017,9 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
 
     // The fill: budget 100 at price 3 buys 33 (cost 99), leaving change 1;
     // the price-5 ask is untouched. Partial fill rewrote the entry.
-    //
-    // The quote vault's movement is the gross flow rather than the net:
-    // the whole payment goes in and the change comes back out, because a
-    // body composes edges through the kernel and never by arithmetic on
-    // their amounts. What it keeps is the difference, and that is what
-    // the two halves say.
+    // The quote vault is credited with what was spent: the change comes
+    // off the payment before the rest of it goes in, so the movement is
+    // the net and neither half is a number the body wrote down.
     assert_eq!(
         fill_receipt.delta.entries.get(&placed_ask),
         Some(&Some(encode_amount(17).to_vec()))
@@ -2043,7 +2040,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
             .get(&vault(book(), QUOTE))
             .unwrap()
             .credit,
-        100
+        99
     );
     assert_eq!(
         fill_receipt
@@ -2052,7 +2049,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
             .get(&vault(book(), QUOTE))
             .unwrap()
             .debit,
-        1
+        0
     );
 
     assert_eq!(amount_of(&mut final_store, vault(TAKER, BASE)), 33);

@@ -45,7 +45,7 @@ pub mod book {
         /// makes price-time priority a walk from the front rather than a
         /// search.
         #[name("fill-asks")]
-        pub fn fill_asks(&mut self, from: u64, to: u64, payment: Bucket) -> (Bucket, Bucket) {
+        pub fn fill_asks(&mut self, from: u64, to: u64, mut payment: Bucket) -> (Bucket, Bucket) {
             // The whole tiebreaker span at each end, so the interval covers
             // every sequence at the boundary prices.
             let mut asks = self.asks.range(pack(from, 0), pack(to, u64::MAX), 64);
@@ -72,15 +72,14 @@ pub mod book {
 
             // Note the config fields are read without pinning the leaf:
             // configuration is locked state, consultable without a claim.
-            // The base the taker bought leaves the pool's own vault; the
-            // whole payment goes into the other and the change comes back
-            // out, so what the vault keeps is what was spent and the
-            // taker's change is the value it arrived with — never a
-            // number this body wrote down.
+            // The base the taker bought leaves the pool's own vault, and
+            // the change comes off the payment before the rest of it goes
+            // in — so what the vault keeps is what was spent, and neither
+            // half is a number this body wrote down.
             let sold = self.vaults.at(self.config.base).take(bought);
-            let mut proceeds = self.vaults.at(payment.resource());
-            proceeds.put(payment);
-            (sold, proceeds.take(budget))
+            let change = payment.take(budget);
+            self.vaults.at(payment.resource()).put(payment);
+            (sold, change)
         }
     }
 }
