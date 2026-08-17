@@ -22,6 +22,8 @@ wasmtime.workspace = true
 
 [dev-dependencies]
 hyperscale-vm-fixtures.workspace = true
+# The vocabulary under test: a contract body is written in it.
+hyperscale-vm-sdk.workspace = true
 
 [lints]
 workspace = true

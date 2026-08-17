@@ -16,11 +16,17 @@ macros = ["dep:hyperscale-vm-sdk-macros"]
 hyperscale-vm-effects.workspace = true
 hyperscale-vm-sdk-macros = { workspace = true, optional = true }
 
-# The kernel bindings a contract body executes against. Guest-only: a host
-# build reads bodies rather than running them, so it needs no imports to
-# call and no `wit-bindgen` to generate them.
+# The kernel bindings a contract body executes against, on the target
+# that has a kernel to call: the imports, and the generator for them.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wit-bindgen.workspace = true
+
+# The same surface from the other side. A host build is the kernel's
+# caller rather than its guest, so what it needs is the trait an engine
+# implements — never the artifact a package publishes, which is why this
+# mirrors `wit-bindgen` being the wasm32-only one.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+hyperscale-vm-embed.workspace = true
 
 [dev-dependencies]
 hyperscale-vm-fixtures.workspace = true

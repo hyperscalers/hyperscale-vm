@@ -53,6 +53,7 @@ use kernel::state::{
 };
 
 use crate::Address;
+pub use crate::handle::Handle;
 
 /// The kernel's amount-cell width: a little-endian `u128`.
 ///
@@ -159,34 +160,6 @@ borrows! {
     reserve_cell -> ReserveCell,
     range_read -> RangeRead,
     range_write -> RangeWrite,
-}
-
-/// A materialized handle: the table index, and which of the kernel's
-/// resource types it names.
-///
-/// The mode is not inferable from the accessor a body reaches for. A
-/// leaf a method only reads arrives as a `read-cell`; the same leaf in a
-/// method that also writes arrives as a `write-cell`, and `get` means
-/// both. So the handle carries its own type, exactly as the kernel's
-/// capability table does — passing a rep to the wrong resource is the
-/// canonical ABI's mode-escape trap, which is the check working rather
-/// than a check to avoid.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Handle {
-    /// A declared fresh read.
-    Read(u32),
-    /// A read of a permanently locked substate.
-    Locked(u32),
-    /// A declared exclusive read-modify-write.
-    Write(u32),
-    /// A declared commutative movement on an amount cell.
-    Delta(u32),
-    /// A declared reservation, already judged and held.
-    Reserve(u32),
-    /// A declared read interval of an ordered collection.
-    RangeRead(u32),
-    /// A declared read-modify-write interval.
-    RangeWrite(u32),
 }
 
 /// The substate this handle reads.

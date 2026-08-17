@@ -1,0 +1,346 @@
+//! The kernel a contract body executes against on the host.
+//!
+//! The counterpart of `crate::guest`: the same operations, resolved to
+//! a [`KernelHost`] the caller installed instead of to the imports a
+//! component links. What a body is written in does not change, which is
+//! the whole point — the accessors in [`crate::state`] pick one of these
+//! two, and the text between them is the author's.
+//!
+//! # The kernel arrives ambiently
+//!
+//! An accessor is `&self` with no kernel parameter, because threading one
+//! through would put it into the author's text: `self.vaults.at(k)` would
+//! have to become `self.vaults.at(kernel, k)` in every contract ever
+//! written. So [`with_kernel`] installs one for the duration of an
+//! invocation and takes it back afterwards.
+//!
+//! That is sound because an invocation cannot nest. The kernel's world
+//! has no call import — a manifest's nodes are walked one at a time by
+//! the kernel itself, and a body reaches another package by returning,
+//! never by calling — so there is never a second kernel wanting the slot
+//! a first one holds. [`with_kernel`] refuses rather than assumes it: a
+//! scope opened inside a scope is a defect in whoever opened it, and a
+//! silent overwrite would be the kind that is found much later.
+//!
+//! # A refusal is a trap
+//!
+//! Every kernel operation can refuse deterministically, and in a guest
+//! that refusal is a trap: the engine unwinds the invocation and the
+//! class rides out to the receipt. There is no engine here, so the panic
+//! *is* the unwind, and [`Refusal`] is what it carries — a class rather
+//! than a message, on the same terms both engines report one.
+
+use core::any::Any;
+use core::cell::RefCell;
+
+use hyperscale_vm_effects::AbortReason;
+use hyperscale_vm_embed::KernelHost;
+
+use crate::handle::Handle;
+use crate::state::Amount;
+
+/// A kernel refusal, in flight through the unwind that carries it.
+///
+/// Panicked rather than returned, because an accessor's signature is the
+/// guest's — a body that had to handle a refusal here would be a body
+/// that could not be compiled to wasm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Refusal(pub AbortReason);
+
+/// The installed kernel, for the duration of one invocation.
+///
+/// `Any` beside the surface so the scope can hand back what it was
+/// given: an engine embedding needs its own host type returned, not a
+/// trait object it would have to guess the shape of.
+trait Installed: KernelHost + Any {}
+impl<T: KernelHost + Any> Installed for T {}
+
+thread_local! {
+    static KERNEL: RefCell<Option<Box<dyn Installed>>> = const { RefCell::new(None) };
+}
+
+/// Run `body` with `kernel` reachable from every accessor it calls, and
+/// give the kernel back.
+///
+/// # Panics
+///
+/// If a scope is already open on this thread, which an invocation cannot
+/// do to itself and a caller should not do at all.
+pub fn with_kernel<H: KernelHost + Any, R>(kernel: H, body: impl FnOnce() -> R) -> (H, R) {
+    KERNEL.with_borrow_mut(|slot| {
+        assert!(
+            slot.replace(Box::new(kernel)).is_none(),
+            "an invocation is already running on this thread"
+        );
+    });
+    let value = body();
+    let installed = KERNEL
+        .with_borrow_mut(Option::take)
+        .expect("the scope holds the kernel it installed");
+    let kernel = (installed as Box<dyn Any>)
+        .downcast::<H>()
+        .expect("the kernel that comes back is the one that went in");
+    (*kernel, value)
+}
+
+/// The installed kernel, for one operation.
+///
+/// # Panics
+///
+/// Outside an invocation, where there is no kernel to answer — a body
+/// called directly rather than through the walk that materializes its
+/// capabilities.
+fn kernel<R>(operation: impl FnOnce(&mut dyn KernelHost) -> R) -> R {
+    KERNEL.with_borrow_mut(|slot| {
+        let installed = slot
+            .as_deref_mut()
+            .expect("a contract body reached the kernel outside an invocation");
+        operation(installed)
+    })
+}
+
+/// A deterministic refusal, as the unwind that carries it.
+fn refuse<T>(reason: AbortReason) -> T {
+    std::panic::panic_any(Refusal(reason))
+}
+
+/// The value a kernel operation answered with, or the trap it refused
+/// with.
+fn settled<T>(answer: Result<T, AbortReason>) -> T {
+    answer.unwrap_or_else(refuse)
+}
+
+/// Take what materializing an interval lifted out of the store.
+///
+/// Every range operation asks, because every one of them can reach a
+/// scan and the session refuses to finish still owing. The figure is
+/// dropped rather than charged: an engine prices those bytes as fuel,
+/// and this path has none. Asked before a refusal propagates, because
+/// the page was read either way.
+fn scanned<T>(answer: Result<T, AbortReason>) -> T {
+    kernel(|k| k.take_scan_debt());
+    settled(answer)
+}
+
+/// The substate this handle reads.
+///
+/// # Panics
+///
+/// On a handle whose mode reads nothing point-shaped — an interval or a
+/// reservation. Generated code never builds that call; a hand-written
+/// body that does has declared one thing and reached for another.
+#[must_use]
+pub fn cell_get(handle: Handle) -> Vec<u8> {
+    settled(kernel(|k| match handle {
+        Handle::Read(rep) => k.read_cell(rep),
+        Handle::Locked(rep) => k.locked_cell(rep),
+        Handle::Write(rep) => k.write_cell_get(rep),
+        other => unreachable!("{other:?} reads no point substate"),
+    }))
+}
+
+/// Replace the substate this handle holds exclusively.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::Write`].
+pub fn cell_set(handle: Handle, value: &[u8]) {
+    settled(kernel(|k| match handle {
+        Handle::Write(rep) => k.write_cell_set(rep, value.to_vec()),
+        other => unreachable!("{other:?} does not write absolutes"),
+    }));
+}
+
+/// Move value into this handle's amount cell, consuming the bucket.
+///
+/// # Panics
+///
+/// On a handle whose mode moves no value.
+pub fn cell_put(handle: Handle, funds: u32) {
+    settled(kernel(|k| match handle {
+        Handle::Delta(rep) => k.delta_put(rep, funds),
+        Handle::Write(rep) => k.write_put(rep, funds),
+        other => unreachable!("{other:?} carries no movement"),
+    }));
+}
+
+/// Move value out of this handle's amount cell.
+///
+/// # Panics
+///
+/// On a handle whose mode moves no value.
+#[must_use]
+pub fn cell_take(handle: Handle, value: Amount) -> u32 {
+    settled(kernel(|k| match handle {
+        Handle::Delta(rep) => k.delta_take(rep, value),
+        Handle::Write(rep) => k.write_take(rep, value),
+        other => unreachable!("{other:?} carries no movement"),
+    }))
+}
+
+/// Take the reservation this method declared.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::Reserve`].
+#[must_use]
+pub fn reserve_take(handle: Handle) -> u32 {
+    settled(kernel(|k| match handle {
+        Handle::Reserve(rep) => k.reserve_take(rep),
+        other => unreachable!("{other:?} holds no reservation"),
+    }))
+}
+
+/// Issue `value` of the resource this invocation was granted.
+#[must_use]
+pub fn issue(rep: u32, value: Amount) -> u32 {
+    settled(kernel(|k| k.issuer_take(rep, value)))
+}
+
+/// Split `value` off a bucket, as a bucket.
+#[must_use]
+pub fn bucket_take(rep: u32, value: Amount) -> u32 {
+    settled(kernel(|k| k.bucket_take(rep, value)))
+}
+
+/// Merge one bucket into another, consuming it.
+pub fn bucket_put(rep: u32, other: u32) {
+    settled(kernel(|k| k.bucket_put(rep, other)));
+}
+
+/// What a bucket carries.
+#[must_use]
+pub fn bucket_amount(rep: u32) -> Amount {
+    settled(kernel(|k| k.bucket_amount(rep)))
+}
+
+/// Entries currently visible in this interval, bounded by its cap.
+///
+/// # Panics
+///
+/// On a handle that is not an interval.
+#[must_use]
+pub fn entry_count(handle: Handle) -> u32 {
+    scanned(kernel(|k| match handle {
+        Handle::RangeRead(rep) | Handle::RangeWrite(rep) => k.range_count(rep),
+        other => unreachable!("{other:?} is not an interval"),
+    }))
+}
+
+/// The order key of this interval's entry at `index`.
+///
+/// # Panics
+///
+/// On a handle that is not an interval.
+#[must_use]
+pub fn entry_order(handle: Handle, index: u32) -> Amount {
+    scanned(kernel(|k| match handle {
+        Handle::RangeRead(rep) | Handle::RangeWrite(rep) => k.range_order(rep, index),
+        other => unreachable!("{other:?} yields no order keys"),
+    }))
+}
+
+/// The value of this interval's entry at `index`.
+///
+/// # Panics
+///
+/// On a handle that is not an interval.
+#[must_use]
+pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
+    scanned(kernel(|k| match handle {
+        Handle::RangeRead(rep) | Handle::RangeWrite(rep) => k.range_entry(rep, index),
+        other => unreachable!("{other:?} yields no entries"),
+    }))
+}
+
+/// The value of the entry at `order`, or empty where there is none.
+#[must_use]
+pub fn entry_at(handle: Handle, order: Amount) -> Vec<u8> {
+    (0..entry_count(handle))
+        .find(|&index| entry_order(handle, index) == order)
+        .map_or_else(Vec::new, |index| entry_get(handle, index))
+}
+
+/// Replace this interval's entry at `index`.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::RangeWrite`].
+pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
+    scanned(kernel(|k| match handle {
+        Handle::RangeWrite(rep) => k.range_set(rep, index, value.to_vec()),
+        other => unreachable!("{other:?} does not write entries"),
+    }));
+}
+
+/// Insert into this interval at `order`.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::RangeWrite`].
+pub fn entry_insert(handle: Handle, order: Amount, value: &[u8]) {
+    scanned(kernel(|k| match handle {
+        Handle::RangeWrite(rep) => k.range_insert(rep, order, value.to_vec()),
+        other => unreachable!("{other:?} does not write entries"),
+    }));
+}
+
+/// File the instances a bucket carries into this interval.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::RangeWrite`].
+pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
+    settled(kernel(|k| match handle {
+        Handle::RangeWrite(rep) => k.range_put(rep, funds, value.to_vec()),
+        other => unreachable!("{other:?} carries no movement"),
+    }));
+}
+
+/// Take the instances `ids` names out of this interval.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::RangeWrite`].
+#[must_use]
+pub fn entry_take(handle: Handle, ids: &[u8]) -> u32 {
+    scanned(kernel(|k| match handle {
+        Handle::RangeWrite(rep) => k.range_take(rep, ids),
+        other => unreachable!("{other:?} carries no movement"),
+    }))
+}
+
+/// Remove this interval's entry at `index`.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::RangeWrite`].
+pub fn entry_remove(handle: Handle, index: u32) {
+    scanned(kernel(|k| match handle {
+        Handle::RangeWrite(rep) => k.range_remove(rep, index),
+        other => unreachable!("{other:?} does not write entries"),
+    }));
+}
+
+/// The transaction clock, in milliseconds.
+#[must_use]
+pub fn clock_ms() -> u64 {
+    kernel(|k| k.clock_ms())
+}
+
+/// The transaction's randomness draw.
+#[must_use]
+pub fn randomness() -> Vec<u8> {
+    kernel(|k| k.randomness()).to_vec()
+}
+
+/// The protocol hash function.
+#[must_use]
+pub fn hash(data: &[u8]) -> Vec<u8> {
+    kernel(|k| k.hash(data)).to_vec()
+}
+
+/// Emit one event of the package's own type index.
+pub fn emit(event_type: u32, payload: &[u8]) {
+    settled(kernel(|k| k.emit(event_type, payload.to_vec())));
+}

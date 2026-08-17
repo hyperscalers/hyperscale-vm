@@ -16,18 +16,21 @@
 //!
 //! # Two builds, one vocabulary
 //!
-//! Host builds carry no kernel, so the bodies are never executed there —
-//! `#[blueprint]` reads them, it does not run them, and every accessor
-//! panics if reached. Guest builds carry the imports, and the same
-//! accessors are the calls: each handle holds the index the kernel
-//! materialized it at, and [`crate::guest`] turns that index back into a
-//! borrow for the duration of one call.
+//! Each handle holds the index the kernel materialized it at, and what
+//! turns that index into a call is the target: `crate::guest` borrows
+//! the kernel resource an import takes, and [`crate::host`] reaches the
+//! session an engine installed. One body, two resolutions, and nothing
+//! between them that an author writes.
 //!
-//! The index is not something an author writes. A handle reaches a body
-//! as an export parameter, in the order the declaration fixed, and what
-//! resolves a collection to one of those parameters is the lowering —
-//! which is why [`Keyed`], [`Ordered`] and [`Unordered`] have no guest
-//! body: a call to `at` is rewritten to the handle it named, never made.
+//! The index is not something an author writes either. A handle reaches
+//! a body as an export parameter, in the order the declaration fixed, and
+//! what resolves a collection to one of those parameters is the lowering
+//! — which is why [`Keyed`], [`Ordered`] and [`Unordered`] have no body
+//! on either target: a call to `at` is rewritten to the handle it named,
+//! never made. The same holds for [`issue`], [`issued`] and
+//! [`fresh_id`], each of which the lowering answers from the declaration.
+//! Reaching one at run time is reaching a stub, which is what makes an
+//! authoring half that was called directly fail rather than execute.
 //!
 //! The accessors that do have a guest body are always inlined, because
 //! each is one import behind a match on a mode its call site already
@@ -46,11 +49,15 @@
 
 use hyperscale_vm_effects::Address;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::host;
+
 /// An unsigned amount, in the kernel's cell width.
 pub type Amount = u128;
 
-const OFF_HOST: &str = "contract bodies execute in the guest, never on the host — \
-                        `#[blueprint]` reads this body, it does not run it";
+const OFF_HOST: &str = "the lowering answers this from the declaration — reaching it means a \
+                        body was called directly rather than through the walk that materializes \
+                        its capabilities";
 
 /// A value a declared cell or entry can hold.
 ///
@@ -113,13 +120,7 @@ impl Cellular for Vec<u8> {
     }
 }
 
-/// The materialized handle a guest-side accessor calls through.
-///
-/// Carried only where there is a kernel to call. On the host the field
-/// would name a table that does not exist, and a type that had one would
-/// invite an author to write it down.
-#[cfg(target_arch = "wasm32")]
-pub use crate::guest::Handle;
+pub use crate::handle::Handle;
 
 /// A value edge: a resource and an amount in flight between components.
 ///
@@ -146,7 +147,7 @@ pub use crate::guest::Handle;
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq, Eq))]
 pub struct Bucket {
     #[cfg(not(target_arch = "wasm32"))]
-    resource: Address,
+    rep: u32,
     #[cfg(target_arch = "wasm32")]
     handle: crate::guest::kernel::state::Bucket,
 }
@@ -171,11 +172,33 @@ impl Bucket {
         self.handle
     }
 
-    /// The resource this edge carries, as the declaration names it.
+    /// The edge the kernel holds at `rep`.
+    ///
+    /// Called by generated code, never by an author, on the same terms
+    /// the guest's own constructor is: the ways to hold value are to be
+    /// handed some, to take some from a declared cell, and to issue
+    /// some, and none of them is a constructor a body can reach.
     #[cfg(not(target_arch = "wasm32"))]
     #[must_use]
-    pub const fn resource(&self) -> Address {
-        self.resource
+    pub const fn at(rep: u32) -> Self {
+        Self { rep }
+    }
+
+    /// The table position the kernel holds this value at.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[must_use]
+    pub const fn rep(&self) -> u32 {
+        self.rep
+    }
+
+    /// The resource this edge carries, as the declaration names it.
+    ///
+    /// Read by the authoring half and never by the executing one: the
+    /// lowering resolves it to a value the export is handed, so a body
+    /// that asks reads an argument rather than an edge.
+    #[must_use]
+    pub fn resource(&self) -> Address {
+        unimplemented!("{OFF_HOST}")
     }
 
     /// Split `amount` off, as a bucket.
@@ -189,7 +212,7 @@ impl Bucket {
         #[cfg(target_arch = "wasm32")]
         return Self::held(crate::guest::bucket_take(&self.handle, amount));
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return Self::at(host::bucket_take(self.rep, amount));
     }
 
     /// Merge `other` in, consuming it.
@@ -199,7 +222,7 @@ impl Bucket {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::bucket_put(&self.handle, other.into_handle());
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return host::bucket_put(self.rep, other.rep());
     }
 
     /// How much is in hand.
@@ -213,7 +236,7 @@ impl Bucket {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::bucket_amount(&self.handle);
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return host::bucket_amount(self.rep);
     }
 }
 
@@ -328,7 +351,6 @@ impl<T> Keyed<T> {
 /// body calls.
 #[derive(Clone, Copy, Debug)]
 pub struct Slot<T> {
-    #[cfg(target_arch = "wasm32")]
     handle: Handle,
     _value: core::marker::PhantomData<fn() -> T>,
 }
@@ -339,7 +361,6 @@ impl<T> Slot<T> {
     /// Called by generated code, never by an author: which handle a
     /// collection resolves to is the declaration's order, and which mode
     /// it carries is what the body's own accessors decided.
-    #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub const fn at(handle: Handle) -> Self {
         Self {
@@ -358,7 +379,7 @@ impl<T: Cellular> Slot<T> {
         #[cfg(target_arch = "wasm32")]
         return T::from_cell(&crate::guest::cell_get(self.handle));
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return T::from_cell(&host::cell_get(self.handle));
     }
 
     /// An exclusive read-modify-write.
@@ -369,7 +390,7 @@ impl<T: Cellular> Slot<T> {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::cell_set(self.handle, &value.to_cell());
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return host::cell_set(self.handle, &value.to_cell());
     }
 }
 
@@ -386,7 +407,7 @@ impl Slot<Amount> {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::cell_put(self.handle, funds.into_handle());
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return host::cell_put(self.handle, funds.rep());
     }
 
     /// Move value out of the cell, as the bucket it becomes.
@@ -400,7 +421,7 @@ impl Slot<Amount> {
         #[cfg(target_arch = "wasm32")]
         return Bucket::held(crate::guest::cell_take(self.handle, amount));
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return Bucket::at(host::cell_take(self.handle, amount));
     }
 
     /// Declare a movement on this cell without making one.
@@ -427,7 +448,7 @@ impl Slot<Amount> {
         #[cfg(target_arch = "wasm32")]
         return Bucket::held(crate::guest::reserve_take(self.handle));
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return Bucket::at(host::reserve_take(self.handle));
     }
 }
 
@@ -525,9 +546,7 @@ impl<T> Unordered<T> {
 /// handle.
 #[derive(Clone, Copy, Debug)]
 pub struct Entry<T> {
-    #[cfg(target_arch = "wasm32")]
     handle: Handle,
-    #[cfg(target_arch = "wasm32")]
     order: Amount,
     _value: core::marker::PhantomData<fn() -> T>,
 }
@@ -535,7 +554,6 @@ pub struct Entry<T> {
 impl<T> Entry<T> {
     /// The entry at `order` of the interval this handle names, on the
     /// terms [`Slot::at`] describes.
-    #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub const fn at(handle: Handle, order: Amount) -> Self {
         Self {
@@ -555,7 +573,7 @@ impl<T: Cellular> Entry<T> {
         #[cfg(target_arch = "wasm32")]
         return T::from_cell(&crate::guest::entry_at(self.handle, self.order));
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return T::from_cell(&host::entry_at(self.handle, self.order));
     }
 
     /// An exclusive read-modify-write. Writing an entry that is not there
@@ -567,14 +585,13 @@ impl<T: Cellular> Entry<T> {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::entry_insert(self.handle, self.order, &value.to_cell());
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return host::entry_insert(self.handle, self.order, &value.to_cell());
     }
 }
 
 /// An open handle on a declared interval.
 #[derive(Clone, Copy, Debug)]
 pub struct Interval<T> {
-    #[cfg(target_arch = "wasm32")]
     handle: Handle,
     _value: core::marker::PhantomData<fn() -> T>,
 }
@@ -583,7 +600,6 @@ pub struct Interval<T> {
 impl<T> Interval<T> {
     /// The interval this materialized handle names, on the terms
     /// [`Slot::at`] describes.
-    #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub const fn at(handle: Handle) -> Self {
         Self {
@@ -599,7 +615,7 @@ impl<T> Interval<T> {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::entry_count(self.handle);
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return host::entry_count(self.handle);
     }
 
     /// The order key of the entry at `index`, ascending.
@@ -610,7 +626,7 @@ impl<T> Interval<T> {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::entry_order(self.handle, index);
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return host::entry_order(self.handle, index);
     }
 }
 
@@ -624,7 +640,7 @@ impl<T: Cellular> Interval<T> {
         #[cfg(target_arch = "wasm32")]
         return T::from_cell(&crate::guest::entry_get(self.handle, index));
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return T::from_cell(&host::entry_get(self.handle, index));
     }
 
     /// Replace the value at `index`.
@@ -635,7 +651,7 @@ impl<T: Cellular> Interval<T> {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::entry_set(self.handle, index, &value.to_cell());
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return host::entry_set(self.handle, index, &value.to_cell());
     }
 
     /// Insert at `order`, which must lie inside the declared interval.
@@ -646,7 +662,7 @@ impl<T: Cellular> Interval<T> {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::entry_insert(self.handle, order, &value.to_cell());
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return host::entry_insert(self.handle, order, &value.to_cell());
     }
 
     /// Remove the entry at `index`.
@@ -677,7 +693,7 @@ impl<T: Cellular> Interval<T> {
         #[cfg(target_arch = "wasm32")]
         return crate::guest::entry_put(self.handle, funds.into_handle(), value);
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return host::entry_put(self.handle, funds.rep(), value);
     }
 
     /// Take the named instances out, as the bucket they become.
@@ -693,7 +709,7 @@ impl<T: Cellular> Interval<T> {
         #[cfg(target_arch = "wasm32")]
         return Bucket::held(crate::guest::entry_take(self.handle, ids.bytes()));
         #[cfg(not(target_arch = "wasm32"))]
-        unimplemented!("{OFF_HOST}")
+        return Bucket::at(host::entry_take(self.handle, ids.bytes()));
     }
 }
 
@@ -733,7 +749,7 @@ pub fn clock_ms() -> u64 {
     #[cfg(target_arch = "wasm32")]
     return crate::guest::clock_ms();
     #[cfg(not(target_arch = "wasm32"))]
-    unimplemented!("{OFF_HOST}")
+    return host::clock_ms();
 }
 
 /// The transaction's randomness draw: 32 bytes, domain-separated per
@@ -743,7 +759,7 @@ pub fn randomness() -> Vec<u8> {
     #[cfg(target_arch = "wasm32")]
     return crate::guest::randomness();
     #[cfg(not(target_arch = "wasm32"))]
-    unimplemented!("{OFF_HOST}")
+    return host::randomness();
 }
 
 /// The protocol hash function: a 32-byte digest.
@@ -757,7 +773,7 @@ pub fn hash(data: &[u8]) -> Vec<u8> {
     #[cfg(target_arch = "wasm32")]
     return crate::guest::hash(data);
     #[cfg(not(target_arch = "wasm32"))]
-    unimplemented!("{OFF_HOST}")
+    return host::hash(data);
 }
 
 /// An authority rule parameter, as a contract signature names it.

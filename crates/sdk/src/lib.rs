@@ -145,6 +145,9 @@
 pub mod blueprint;
 #[cfg(target_arch = "wasm32")]
 pub mod guest;
+pub mod handle;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod host;
 pub mod state;
 pub mod sym;
 pub mod trace;

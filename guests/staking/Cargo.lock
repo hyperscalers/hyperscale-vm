@@ -68,10 +68,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperscale-vm-embed"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-vm-types",
+]
+
+[[package]]
 name = "hyperscale-vm-sdk"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-effects",
+ "hyperscale-vm-embed",
  "hyperscale-vm-sdk-macros",
  "wit-bindgen",
 ]

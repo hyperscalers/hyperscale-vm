@@ -766,6 +766,7 @@ name = "hyperscale-vm-sdk"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-effects",
+ "hyperscale-vm-embed",
  "hyperscale-vm-fixtures",
  "hyperscale-vm-sdk-macros",
  "hyperscale-vm-stdlib",
@@ -802,6 +803,7 @@ dependencies = [
  "hyperscale-vm-kernel",
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-runtime",
+ "hyperscale-vm-sdk",
  "hyperscale-vm-stdlib",
  "wasmtime",
 ]
