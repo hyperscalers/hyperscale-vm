@@ -76,7 +76,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: nightly-2026-06-08
         run: |
-          cargo test --manifest-path guests/amm/Cargo.toml
-          cargo test --release --manifest-path guests/amm/Cargo.toml
-          cargo test --manifest-path guests/shares/Cargo.toml
-          cargo test --release --manifest-path guests/shares/Cargo.toml
+          for manifest in guests/*/Cargo.toml; do
+            cargo test --manifest-path "$manifest"
+            cargo test --release --manifest-path "$manifest"
+          done
