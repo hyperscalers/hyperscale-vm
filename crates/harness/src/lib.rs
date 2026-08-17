@@ -69,18 +69,16 @@ pub mod fixtures {
             .map_err(|error| format_err!("{name}: {error}"))
     }
 
-    /// The transfer fixture's artifact.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the guest build or componentization fails.
-    pub fn build_transfer_component() -> Result<Vec<u8>> {
-        build_guest("transfer")
-    }
     /// The kernel-world component guest, exercising the per-mode surface.
     ///
+    /// Written as WAT so its memory representation is readable in this
+    /// source, and so it can reach shapes no compiled guest expresses: a
+    /// forged handle, a mode escape, a borrow it never drops.
+    ///
     /// `transfer` takes a reservation and moves the value it grants into
-    /// a delta cell; `peek` reads a
+    /// a delta cell; `hash-tag` folds
+    /// the host hash of four scratch bytes, which is the one kernel
+    /// interface a guest cannot check for itself; `peek` reads a
     /// locked cell; `rmw` bumps a write cell's first byte; `scan-sum`
     /// folds a read interval's entry and order bytes; `fill` rewrites entry
     /// zero and removes the last entry of a write interval; `place` inserts
@@ -117,6 +115,8 @@ pub mod fixtures {
     (export "range-write-remove" (func (param "r" (borrow $rw)) (param "index" u32)))))
   (import "hyperscale:kernel/env" (instance $env
     (export "clock" (func (result u64)))))
+  (import "hyperscale:kernel/crypto" (instance $crypto
+    (export "hash" (func (param "data" (list u8)) (result (list u8))))))
 
   (alias export $state "read-cell" (type $rcell))
   (alias export $state "locked-cell" (type $scell))
@@ -140,6 +140,7 @@ pub mod fixtures {
   (alias export $state "range-write-insert" (func $rw_insert))
   (alias export $state "range-write-remove" (func $rw_remove))
   (alias export $env "clock" (func $clock))
+  (alias export $crypto "hash" (func $hash))
 
   (core module $alloc
     (memory (export "mem") 4 4)
@@ -179,6 +180,8 @@ pub mod fixtures {
     (memory $a "mem")))
   (core func $rw_remove_l (canon lower (func $rw_remove)))
   (core func $clock_l (canon lower (func $clock)))
+  (core func $hash_l (canon lower (func $hash)
+    (memory $a "mem") (realloc (func $a "realloc"))))
   (core func $drop_r (canon resource.drop $rcell))
   (core func $drop_s (canon resource.drop $scell))
   (core func $drop_w (canon resource.drop $wcell))
@@ -204,6 +207,7 @@ pub mod fixtures {
     (import "k" "rw-insert" (func $rw_insert (param i32 i64 i64 i32 i32)))
     (import "k" "rw-remove" (func $rw_remove (param i32 i32)))
     (import "k" "clock" (func $clock (result i64)))
+    (import "k" "hash" (func $hash (param i32 i32 i32)))
     (import "k" "drop-r" (func $drop_r (param i32)))
     (import "k" "drop-s" (func $drop_s (param i32)))
     (import "k" "drop-w" (func $drop_w (param i32)))
@@ -229,6 +233,20 @@ pub mod fixtures {
       call $drop_v
       local.get 1
       call $drop_d)
+
+    ;; The digest of four zero bytes of scratch, folded to its first
+    ;; byte: the host's hash function is the one kernel interface a guest
+    ;; cannot check for itself, so what this compares is that both
+    ;; runtimes call the same one and lift its result the same way.
+    (func (export "hash-tag") (result i64)
+      i32.const 0
+      i32.const 4
+      i32.const 8
+      call $hash
+      i32.const 8
+      i32.load
+      i32.load8_u
+      i64.extend_i32_u)
 
     (func (export "peek") (param i32) (result i64)
       local.get 0
@@ -421,6 +439,7 @@ pub mod fixtures {
       (export "rw-insert" (func $rw_insert_l))
       (export "rw-remove" (func $rw_remove_l))
       (export "clock" (func $clock_l))
+      (export "hash" (func $hash_l))
       (export "drop-r" (func $drop_r))
       (export "drop-s" (func $drop_s))
       (export "drop-w" (func $drop_w))
@@ -432,6 +451,8 @@ pub mod fixtures {
   (func (export "transfer")
     (param "a" (borrow $vcell)) (param "b" (borrow $dcell)) (result u64)
     (canon lift (core func $i "transfer")))
+  (func (export "hash-tag") (result u64)
+    (canon lift (core func $i "hash-tag")))
   (func (export "peek")
     (param "c" (borrow $scell)) (result u64)
     (canon lift (core func $i "peek")))

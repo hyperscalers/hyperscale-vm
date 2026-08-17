@@ -210,7 +210,7 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Resour
         "fill" | "place" | "no-such-entry" => vec![range(ResourceKind::RangeWrite)],
         "escape" => vec![point(fx.recipient, ResourceKind::DeltaCell)],
         "leak" | "handle-value" => vec![point(fx.readable, ResourceKind::ReadCell)],
-        "forge" | "forge-zero" => vec![],
+        "forge" | "forge-zero" | "hash-tag" => vec![],
         other => unreachable!("unknown export {other}"),
     }
 }
@@ -285,7 +285,7 @@ fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, SessionHost, 
             )
             .map(|(v,)| v)
         }
-        ("forge" | "forge-zero", []) => {
+        ("forge" | "forge-zero" | "hash-tag", []) => {
             let f = instance.get_typed_func::<(), (u64,)>(&mut store, export)?;
             f.call(&mut store, ()).map(|(v,)| v)
         }
@@ -400,6 +400,24 @@ fn transfer_agrees_and_the_receipt_settles_the_reservation() -> Result<()> {
     );
     assert!(receipt.delta.cells.is_empty());
     assert!(receipt.delta.entries.is_empty());
+    Ok(())
+}
+
+/// The host's hash function, reached from inside a guest.
+///
+/// The one kernel interface a guest cannot check for itself: it has no
+/// second implementation to compare against, so what has to agree is that
+/// both runtimes call the host's and lift its 32 bytes the same way. The
+/// expected digest is computed here, independently of either.
+#[test]
+fn the_host_hash_agrees_and_lifts_identically() -> Result<()> {
+    let fx = fixture();
+    let (tag, ..) = both(&fx, "hash-tag")?;
+    assert_eq!(
+        tag,
+        LaneOutcome::Value(u64::from(test_hash(&[0u8; 4])[0])),
+        "the digest's first byte, folded by the guest"
+    );
     Ok(())
 }
 
