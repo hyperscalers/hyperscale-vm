@@ -802,11 +802,20 @@ impl KernelSession {
 
     /// Merge the bucket at `other` into the one at `rep`, consuming it.
     ///
+    /// The consumed bucket leaves the table before the merge, which is
+    /// what an owned argument means and what makes a merge of a bucket
+    /// into itself say so: the one bucket is gone by the time the other
+    /// is looked up, so the second lookup is the unknown handle the
+    /// guest's own table already agrees it is. Reading both first would
+    /// instead add a quantity to itself and put the total back in the
+    /// slot the take had just emptied, which is value from nowhere.
+    ///
     /// # Errors
     ///
     /// Any [`SessionTrap`], including a total past an amount's width.
     pub fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), SessionTrap> {
-        let merged = match (self.bucket(rep)?, self.bucket(other)?) {
+        let added = self.take_bucket(other)?;
+        let merged = match (self.bucket(rep)?, added) {
             (Held::Amount(held), Held::Amount(added)) => {
                 Held::Amount(held.checked_add(added).ok_or(SessionTrap::BucketOverflow)?)
             }
@@ -822,7 +831,6 @@ impl KernelSession {
             }
             _ => return Err(SessionTrap::WrongEdgeKind),
         };
-        self.take_bucket(other)?;
         self.set_bucket(rep, merged);
         Ok(())
     }
@@ -1481,7 +1489,23 @@ impl KernelSession {
         outcome: Outcome,
         fuel: u64,
     ) -> Result<(Receipt, OverlayStore), FinishError> {
-        // Movements first: the pending deltas, as checked totals.
+        // Value first, because a transaction that lost some has nothing
+        // else worth judging. A bucket still carrying anything here was
+        // debited from a cell and never put into one, and the drop the
+        // canonical ABI delivers is only reached by a body that lets a
+        // handle go — a body that simply keeps one reaches nothing at
+        // all. So the table is the account, and it has to balance for the
+        // transaction to commit.
+        if self.buckets.iter().flatten().any(|held| !held.is_empty()) {
+            return Ok(abort_with(
+                self.store,
+                Outcome::UserError {
+                    reason: AbortReason::ValueDropped,
+                },
+                fuel,
+            ));
+        }
+        // Movements next: the pending deltas, as checked totals.
         let mut movements: BTreeMap<SubstateKey, Movement> = BTreeMap::new();
         let queued: Vec<(SubstateKey, Vec<DeltaOp>)> = self.store.pending_deltas().collect();
         for (key, ops) in queued {
@@ -1810,15 +1834,15 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId,
-        SubstateKey, TestHasher, child_key,
+        AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32,
+        Mode, RoleId, SubstateKey, TestHasher, child_key,
     };
 
     use super::{
         Capability, EnvInputs, Event, KernelSession, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
         MAX_EVENTS_PER_TX, MaterializeError, Outcome, SessionTrap,
     };
-    use crate::modes::{TxHash, encode_amount};
+    use crate::modes::{TxHash, decode_amount, encode_amount};
     use crate::overlay::OverlayStore;
     use crate::store::{MemoryStore, StoreError, WorkingStore};
 
@@ -2377,6 +2401,102 @@ mod tests {
             "a debit past the floor is the transaction's own loss",
         );
         assert!(receipt.events.is_empty());
+    }
+
+    /// A merge of a bucket into itself is one bucket, and the kernel says
+    /// so rather than adding a quantity to itself.
+    ///
+    /// Both engines' canonical ABIs refuse the call before it reaches
+    /// here — an owned argument cannot be lifted out of a handle the same
+    /// call is borrowing — so this is the kernel holding the invariant on
+    /// its own account, where it does not depend on either of them.
+    #[test]
+    fn a_merge_of_a_bucket_into_itself_is_not_two_buckets() {
+        let vault = key(0xB1);
+        let mut store = MemoryStore::new();
+        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.clear_log();
+        let set = declared(&[Effect {
+            target: EffectTarget::Point(vault),
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(store, &set);
+
+        let funds = session.write_take(0, 40).expect("the cell covers it");
+        assert_eq!(
+            session.bucket_put(funds, funds),
+            Err(SessionTrap::UnknownHandle(funds)),
+        );
+        // And the take consumed it exactly once: the bucket is gone, not
+        // doubled and not left standing.
+        assert_eq!(
+            session.bucket(funds),
+            Err(SessionTrap::UnknownHandle(funds))
+        );
+    }
+
+    /// Value a body neither credits nor hands back does not commit.
+    ///
+    /// The drop refusal only reaches a body that lets a handle go. One
+    /// that keeps it says nothing to the ABI at all, so the debit would
+    /// otherwise land and the value it produced reach nowhere.
+    #[test]
+    fn a_transaction_still_holding_value_does_not_commit() {
+        let vault = key(0xB2);
+        let mut store = MemoryStore::new();
+        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.clear_log();
+        let set = declared(&[Effect {
+            target: EffectTarget::Point(vault),
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(store, &set);
+
+        let funds = session.write_take(0, 40).expect("the cell covers it");
+        let (receipt, mut threaded) = session
+            .finish(Outcome::Completed { value: None }, 7)
+            .expect("finishes");
+        assert_eq!(
+            receipt.outcome,
+            Outcome::UserError {
+                reason: AbortReason::ValueDropped,
+            },
+        );
+        // The debit is discarded with everything else the transaction
+        // claimed, so the cell stands where it was.
+        assert_eq!(
+            decode_amount(&threaded.read(vault).unwrap().unwrap()),
+            Ok(100)
+        );
+        assert!(receipt.delta.cells.is_empty());
+        let _ = funds;
+    }
+
+    /// An emptied bucket is not value, so keeping one commits.
+    ///
+    /// What a split leaves behind is a live handle carrying nothing, and
+    /// a body has no reason to put it anywhere. Refusing on liveness
+    /// rather than on quantity would make every split need a drop.
+    #[test]
+    fn an_empty_bucket_left_standing_is_not_a_loss() {
+        let vault = key(0xB3);
+        let mut store = MemoryStore::new();
+        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.clear_log();
+        let set = declared(&[Effect {
+            target: EffectTarget::Point(vault),
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(store, &set);
+
+        let funds = session.write_take(0, 40).expect("the cell covers it");
+        let split = session.bucket_take(funds, 40).expect("the whole of it");
+        session.write_put(0, split).expect("the credit lands");
+
+        let (receipt, _) = session
+            .finish(Outcome::Completed { value: None }, 7)
+            .expect("finishes");
+        assert_eq!(receipt.outcome, Outcome::Completed { value: None });
     }
 
     #[test]

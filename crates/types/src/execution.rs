@@ -148,9 +148,15 @@ pub enum AbortReason {
     InstanceHeldTwice,
     /// An instance a body named and the collection does not hold.
     InstanceNotHeld,
-    /// A body let go of value. The canonical ABI delivers the discard and
-    /// the kernel refuses it: a bucket is put somewhere or handed back,
-    /// and forgetting one is the loss the linear model exists to exclude.
+    /// Value the transaction did not put down. A bucket is credited to a
+    /// cell or handed back, and one still carrying anything when the
+    /// transaction ends is the loss the linear model exists to exclude.
+    ///
+    /// Both ways of losing it, because they are one loss. A body that
+    /// lets a handle go delivers the discard through the canonical ABI
+    /// and the kernel refuses it there; a body that simply keeps one
+    /// delivers nothing, and the kernel finds it holding value when the
+    /// transaction closes.
     ValueDropped,
     /// An emission outside any invocation, so the kernel has no address
     /// to stamp.
