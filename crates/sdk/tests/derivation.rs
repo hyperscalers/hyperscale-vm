@@ -115,7 +115,6 @@ mod registry {
 
     #[state]
     struct Registry {
-        #[slot(16)]
         names: Unordered<u128>,
     }
 
@@ -207,7 +206,6 @@ mod environment {
 
     #[state]
     struct Environment {
-        #[slot(16)]
         seen: Cell<u64>,
     }
 
@@ -254,11 +252,9 @@ mod issuer {
 
     #[state]
     struct Issuer {
-        #[slot(16)]
         staked: Cell<Quantity>,
         /// A stored rate, to pin the mode a value-shaped cell that is not
         /// value folds to.
-        #[slot(17)]
         index: Cell<Fixed<(), ()>>,
     }
 
@@ -700,7 +696,6 @@ mod selection {
 
     #[state]
     struct Selection {
-        #[slot(16)]
         seen: Unordered<u128>,
     }
 

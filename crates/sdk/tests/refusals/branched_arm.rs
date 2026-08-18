@@ -7,7 +7,7 @@ mod contract {
 
     #[state]
     struct Contract {
-        #[slot(16)] pointer: Cell<Address>,
+        pointer: Cell<Address>,
     }
 
     impl Contract {

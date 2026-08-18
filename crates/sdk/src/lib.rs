@@ -72,12 +72,11 @@
 //! #[blueprint]
 //! mod bad {
 //!     use hyperscale_vm_sdk::Address;
-//!     use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, Vault};
+//!     use hyperscale_vm_sdk::state::{Bucket, Cell};
 //!
 //!     #[state]
 //!     struct Bad {
-//!         #[slot(1)] vaults: Keyed<Vault>,
-//!         #[slot(16)] pointer: Cell<Address>,
+//!         pointer: Cell<Address>,
 //!     }
 //!
 //!     impl Bad {
@@ -85,7 +84,7 @@
 //!             // The key is a substate value, so no shard can name it
 //!             // before executing — which is exactly when it is needed.
 //!             let target = self.pointer.get();
-//!             self.vaults.at(target).put(funds);
+//!             self.vault(target).put(funds);
 //!         }
 //!     }
 //! }
@@ -102,7 +101,7 @@
 //!
 //!     #[state]
 //!     struct Bad {
-//!         #[slot(16)] asks: Ordered<u128>,
+//!         asks: Ordered<u128>,
 //!     }
 //!
 //!     impl Bad {

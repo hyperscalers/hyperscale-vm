@@ -10,15 +10,12 @@
 //! #[blueprint]
 //! mod account {
 //!     #[state]
-//!     struct Account {
-//!         #[slot(1)] vaults: Keyed<Vault>,
-//!         #[slot(2)] claims: Keyed<Vault>,
-//!     }
+//!     struct Account {}
 //!
 //!     impl Account {
 //!         pub fn deposit(&mut self, funds: Bucket) {
-//!             self.vaults.at(funds.resource()).put(funds);
-//!             self.claims.at(funds.resource()).declared();
+//!             self.vault(funds.resource()).put(funds);
+//!             self.claims(funds.resource()).declared();
 //!         }
 //!     }
 //! }

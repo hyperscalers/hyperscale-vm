@@ -6,7 +6,7 @@ mod contract {
 
     #[state]
     struct Contract {
-        #[slot(16)] held: Cell<Option<AuthCell>>,
+        held: Cell<Option<AuthCell>>,
     }
 
     impl Contract {
