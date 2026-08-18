@@ -10,14 +10,15 @@ The recurring design move: wherever a property the host protocol already enforce
 - **Undeclared access is unreachable, not filtered.** The kernel materializes state handles only for the declared effect set; an access outside it has no handle to call and traps deterministically (INV-VM-1). Nothing about safety depends on declarations being right — the compiler owes tightness, the gate owes soundness.
 - **Concurrency is judged per substate, per mode.** Five access modes with a compatibility relation replace exclusive whole-object locks: reads share with reads, increments and reservations commute, reads of immutable state conflict with nothing at all ([01-effects-and-routing.md](01-effects-and-routing.md)).
 - **Ownership is structural.** The owner is part of every substate's key, child addresses are computed rather than allocated, and placement is a property of the name (INV-VM-4) — no ownership walk, no contested claims, no re-parenting except by explicit move ([03-objects-and-state.md](03-objects-and-state.md)).
-- **Cross-shard cost shrinks with the modes.** A provision carries only what a counterpart must read; commutative legs provision nothing and dispatch immediately ([07-host-integration.md](07-host-integration.md)).
+- **Cross-shard cost shrinks with the modes.** A provision carries only what a counterpart must read; commutative legs provision nothing and dispatch immediately ([08-host-integration.md](08-host-integration.md)).
+- **Authority is presented, never ambient.** A gate mints a claim only after reading state that verifies it, and a node names exactly what it hands its callee — so there is no auth zone to leak through, no `msg.sender` to spoof, and no proof a caller can conjure ([06-authority.md](06-authority.md)).
 - **Execution parallelizes without speculation.** Conflict groups derive from the declared effects, application order is canonical, and receipts are byte-identical across serial, parallel, and adversarially permuted schedules (INV-VM-14, [04-execution-semantics.md](04-execution-semantics.md)).
 
 ## Non-goals
 
 - **Optimistic concurrency / speculative execution** — determinism-by-declaration is the foundation; commit-time reconciliation reintroduces the agreement problem declaration exists to avoid.
 - **Compensation/sagas** — observable protocol-level intermediate states break atomicity; reservations are the accepted alternative. (Application-designed commit/claim protocols are not this.)
-- **Kernel-level fund recovery or admin bailouts** — reintroduces the admin-key exploit class immutability exists to remove ([06-stdlib-and-upgrades.md](06-stdlib-and-upgrades.md)).
+- **Kernel-level fund recovery or admin bailouts** — reintroduces the admin-key exploit class immutability exists to remove ([07-stdlib-and-upgrades.md](07-stdlib-and-upgrades.md)).
 - **Native oracle machinery** — feeds are ordinary contracts; the mode lattice makes their readers share, and nothing more is owed.
 - **Scrypto or EVM compatibility** — the effect-typed ABI is not expressible under either; no shim layer.
 - **Multi-engine consensus** — one blessed engine version per protocol version; bit-identical agreement across independent engines is a non-goal ([05-runtime.md](05-runtime.md)).
@@ -25,7 +26,7 @@ The recurring design move: wherever a property the host protocol already enforce
 
 ## What to formally verify first
 
-The register ([08-invariants.md](08-invariants.md)) enumerates the full property set; the critical core is small:
+The register ([09-invariants.md](09-invariants.md)) enumerates the full property set; the critical core is small:
 
 1. **Access truth** (INV-VM-1/2): execution cannot leave the declared set, and every honest node derives the same set.
 2. **Value conservation** (INV-VM-6/7/17): per-resource supply and storage-bond accounting balance in every reachable state, including across shard splits and merges (with INV-VM-5), and no transaction duplicates or loses value in flight between them.

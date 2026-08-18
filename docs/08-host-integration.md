@@ -24,11 +24,15 @@ Griefing residual, on record: the payer's shard can commit and reserve while a c
 
 **Rejected: exchange-rate-pegged pricing.** A ledger-state exchange rate is an exogenous oracle input into consensus pricing; every other quantity in this economics is endogenous and fold-derived. Token-denominated prices are governance-adjustable if they drift.
 
-## 3. Authority: presence at admission, satisfaction at execution
+## 3. Authority: what the host may rely on
 
-A manifest node calling a guarded method presents evidence, and every badge it presents is produced inside its own intent: the composer's signature for a root-intent node, the declared signer's for a subintent node (INV-VM-12). A method's accessibility is package metadata, content-addressed with the code it describes and judged at publish, so no transaction can weaken it and no shard reads it differently. Presence is a pure function of signed content, with no state read, and is reached at admission ahead of ordering and fee exposure: an envelope that presents nothing where something is required never enters a block and nobody pays for it.
+The authority model is [06-authority.md](06-authority.md); what a host needs from it is that its two verdicts land in two different places, and that the earlier one is free.
 
-Whether what a call presents *satisfies* its target is a separate question with a separate answer (INV-VM-15). A method requires an identity its own target names — its own address, or a slot of its creation-fixed configuration — so the verdict is reached at execution, against the target, and never by reading state under a prefix the manifest did not name. An account with no auth module of its own is governed by the identity its address derives, so today the two halves coincide for a virtual account and the composer's own badge satisfies its own account directly. A call presenting anything else aborts and its sender pays the ceiling they signed: both what the call presents and what the target requires are content the signer put their name to.
+**Presence is reachable at admission, with no state read** (INV-VM-12). Whether a call presents evidence where its target requires some is a pure function of signed content and content-addressed package metadata, so a scheduler can reach the verdict ahead of ordering and fee exposure: an envelope that presents nothing where something is required never enters a block and nobody pays for it. Every claim a node presents is produced inside its own intent — the composer's signature for a root-intent node, the declared signer's for a subintent node — so no cross-intent resolution is needed and no shard reads the question differently.
+
+**Satisfaction needs the target's own state, so it lands at execution** (INV-VM-15). Every claim a method can require is one the target itself names, and every cell a gate reads is one the method's own declaration carries — so the verdict is provisioned by the ordinary read-set machinery of §1 and never reaches state under a prefix the manifest did not name. A call presenting too little aborts identically on every replica and its sender pays the ceiling they signed.
+
+One consequence the host relies on elsewhere: the payer shard's fee-binding check is the same stored-rule verdict, asked with the envelope signer and the account's primary role, so who may spend from an account and who may act as it are one question with one answer.
 
 ## 4. What the host provides the environment
 

@@ -239,26 +239,26 @@ pub enum Accessibility {
     /// recovery methods and nothing else.
     RoleGated(AuthRole),
     /// Naming this method requires satisfying the target's own rule
-    /// *and* the target holding the badge this expression evaluates to —
-    /// and doing so mints that badge's address as evidence.
+    /// *and* the target holding what this claim names — and doing so
+    /// mints that badge as evidence.
     ///
     /// Holding as the third way to mint a proof. Judged like an
     /// authorizing gate over the same stored rule — the holder acts,
-    /// nobody else presents its badges — with possession beside it: the
-    /// badge-keyed vault non-empty, or any held instance in the
-    /// badge-keyed holdings interval. The whole declaration is the shape
-    /// [`gate`] pins: the rule cell's read and the two possession reads,
-    /// both keyed by exactly this expression, so the identity minted and
-    /// the thing held cannot name different resources.
+    /// nobody else presents its badges — with the claim's own possession
+    /// read beside it: the badge-keyed vault non-empty, or the holdings
+    /// entry at the named id. The whole declaration is the shape
+    /// [`gate`] pins: the rule cell's read and that one possession read,
+    /// keyed by exactly the expressions the mint names, so the claim
+    /// minted and the thing held cannot name different resources.
     ///
-    /// A possession gate mints the badge resource's address rather than
-    /// the holder's own, so what a guarded consumer matches is the thing
-    /// held, never who holds it. Exactly this accessibility names what
-    /// it mints: an authorizing method always mints the target itself —
+    /// A possession gate mints the badge rather than the holder's own
+    /// identity, so what a guarded consumer matches is the thing held,
+    /// never who holds it. Exactly this accessibility names what it
+    /// mints: an authorizing method always mints the target itself —
     /// letting it name anything else would be forgeable identity, since
     /// satisfying one's own stored rule is no feat — while a custodial
-    /// mint is honest by construction, the same expression keying the
-    /// possession reads its gate judges.
+    /// mint is honest by construction, the same expressions keying the
+    /// possession read its gate judges.
     ///
     /// [`gate`]: MethodSignature::gate
     Custodial(CustodyClaim),
@@ -476,9 +476,9 @@ impl MethodSignature {
     /// the cell to every participant, and exclusively written for a
     /// recovery op, which keeps a role rewrite out of any wave that
     /// signs in under the roles it replaces. A custodial gate declares
-    /// that read and the two possession reads beside it, keyed by
-    /// *exactly* the badge it mints, which is what makes the identity
-    /// minted and the thing held one resource.
+    /// that read and the one possession read its claim's shape names,
+    /// keyed by *exactly* the badge it mints, which is what makes the
+    /// claim minted and the thing held one resource.
     ///
     /// Every judge of the shape asks here, so none can drift: the
     /// publish check refuses a signature this refuses, and admission

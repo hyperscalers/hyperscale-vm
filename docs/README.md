@@ -16,15 +16,16 @@ Start with the overview; it tells the whole story in three pages and links down.
 | [02-manifests-and-intents.md](02-manifests-and-intents.md) | The typed dataflow manifest: nodes, edges, linearity, constraints — and subintents as separately-signed sub-graphs |
 | [03-objects-and-state.md](03-objects-and-state.md) | Structural ownership, canonical addresses, substate layout, the storage bond, onboarding, the no-singleton rule, and value linearity and conservation |
 | [04-execution-semantics.md](04-execution-semantics.md) | Deterministic parallel execution: conflict groups, canonical order, the transaction clock and randomness, the abort taxonomy, and the fee quantities |
-| [05-runtime.md](05-runtime.md) | The Component Model host: the frozen deterministic profile, the blessed engine and the reference interpreter, the host surface, authorization, and the encodings |
-| [06-stdlib-and-upgrades.md](06-stdlib-and-upgrades.md) | The two-tier package rule, the migration pattern, co-location, and the stdlib inventory |
-| [07-host-integration.md](07-host-integration.md) | The contract between engine and host: read-set provisions, engagement evidence, cross-shard fee assurance, target authority, and work attestation |
-| [08-invariants.md](08-invariants.md) | The consolidated register of the VM's properties with stable IDs (INV-VM-*) |
+| [05-runtime.md](05-runtime.md) | The Component Model host: the frozen deterministic profile, the blessed engine and the reference interpreter, the host surface, authentication, and the encodings |
+| [06-authority.md](06-authority.md) | What a proof carries, thresholds over claims, the five method gates, presence at admission versus satisfaction at execution, and choosing between a badge and a stored rule |
+| [07-stdlib-and-upgrades.md](07-stdlib-and-upgrades.md) | The two-tier package rule, the migration pattern, co-location, and the stdlib inventory |
+| [08-host-integration.md](08-host-integration.md) | The contract between engine and host: read-set provisions, engagement evidence, cross-shard fee assurance, target authority, and work attestation |
+| [09-invariants.md](09-invariants.md) | The consolidated register of the VM's properties with stable IDs (INV-VM-*) |
 
 ## Conventions
 
-- **Invariant IDs** (`INV-VM-<n>`) are stable references. They appear inline in each doc where the property arises; the precise statements live once, in [08-invariants.md](08-invariants.md). Cite them rather than restating properties.
-- **The suite boundary.** This suite owns the `INV-VM-*` family and everything about execution semantics, the runtime, and the object model. The host protocol — consensus, atomic cross-shard commitment, sharding, sync, economics — is documented in the hyperscale-rs repository's `docs/`, which owns every other invariant family (`INV-SHARD-*`, `INV-EXEC-*`, `INV-BEACON-*`, …). Where a property spans the boundary — fee assurance, target authority — it lives here, in [07-host-integration.md](07-host-integration.md), because it is a requirement the engine's design places on any host.
+- **Invariant IDs** (`INV-VM-<n>`) are stable references. They appear inline in each doc where the property arises; the precise statements live once, in [09-invariants.md](09-invariants.md). Cite them rather than restating properties.
+- **The suite boundary.** This suite owns the `INV-VM-*` family and everything about execution semantics, the runtime, and the object model. The host protocol — consensus, atomic cross-shard commitment, sharding, sync, economics — is documented in the hyperscale-rs repository's `docs/`, which owns every other invariant family (`INV-SHARD-*`, `INV-EXEC-*`, `INV-BEACON-*`, …). Where a property spans the boundary — fee assurance, target authority — it lives here, in [08-host-integration.md](08-host-integration.md), because it is a requirement the engine's design places on any host.
 - **Code anchors** name crates and load-bearing types (for example `route()` in `crates/effects`, the trace-subset oracle in `crates/kernel`). They are entry points for a code dive, not line-precise references.
 - The docs describe the engine as designed and built; deferred mechanisms are flagged explicitly where a design records them (for example the staleness-windowed read in [01-effects-and-routing.md](01-effects-and-routing.md) §4).
 - The upgrade process — how the engine pin, the profile, and admitted toolchains move, and the determinism audit that gates each event — lives beside the code in [../upgrades.md](../upgrades.md).
