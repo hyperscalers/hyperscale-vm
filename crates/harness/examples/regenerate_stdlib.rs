@@ -13,21 +13,42 @@
 //! function order per host OS — so roll them through
 //! `scripts/regenerate-stdlib.sh`, which runs this example in the
 //! canonical container, and commit the result, not a local build from
-//! another OS.
+//! another OS. Running it anywhere else refuses rather than writing
+//! bytes nobody can reproduce.
 
+#[cfg(target_os = "linux")]
 use std::path::Path;
 
+#[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
+#[cfg(not(target_os = "linux"))]
+use wasmtime::Error;
 use wasmtime::Result;
+#[cfg(target_os = "linux")]
 use wasmtime::error::Context;
 
 /// Each guest and the crate whose `blobs` directory holds it.
+#[cfg(target_os = "linux")]
 const BLOBS: &[(&str, &str)] = &[
     ("account", "crates/stdlib/blobs"),
     ("staking", "crates/stdlib/blobs"),
     ("lottery", "crates/fixtures/blobs"),
 ];
 
+/// Off the canonical host there is nothing to write that anyone could
+/// reproduce, so the only honest outcome is a refusal naming the script
+/// that does it properly.
+#[cfg(not(target_os = "linux"))]
+fn main() -> Result<()> {
+    Err(Error::msg(
+        "the committed blobs are canonically Linux-built: toolchains emit the same code in \
+         different function order per host OS, so a local build here would differ from the \
+         bytes consumers hold without differing in behaviour. Run \
+         `scripts/regenerate-stdlib.sh`, which builds them in that environment.",
+    ))
+}
+
+#[cfg(target_os = "linux")]
 fn main() -> Result<()> {
     for (guest, blobs) in BLOBS {
         let artifact = build_guest(guest)?;
