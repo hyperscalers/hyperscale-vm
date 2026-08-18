@@ -381,6 +381,7 @@ const OWN: &[&str] = &[
     "name",
     "event",
     "error",
+    "record",
     "guarded",
     "authorizing",
     "role_gated",
@@ -1234,6 +1235,43 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
         .collect()
 }
 
+/// The codec every declared record carries.
+///
+/// Pushed onto the author's own struct rather than asked for, on the same
+/// terms as every other fact this macro derives: the encoding is the
+/// protocol's, so naming it is the protocol's job. The path routes
+/// through the SDK, which is the one crate a contract depends on.
+fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
+    let mut records = Vec::new();
+    for item in items {
+        let syn::Item::Struct(item) = item else {
+            continue;
+        };
+        if !item.attrs.iter().any(|a| a.path().is_ident("record")) {
+            continue;
+        }
+        item.attrs.push(syn::parse_quote!(
+            #[derive(::core::fmt::Debug, ::core::cmp::PartialEq, ::core::cmp::Eq)]
+        ));
+        item.attrs
+            .push(syn::parse_quote!(#[derive(::hyperscale_vm_sdk::hbor::Hbor)]));
+        item.attrs
+            .push(syn::parse_quote!(#[hbor(crate = ::hyperscale_vm_sdk::hbor)]));
+        {
+            item.vis = syn::parse_quote!(pub);
+            item.attrs.push(syn::parse_quote!(#[allow(missing_docs)]));
+            for field in &mut item.fields {
+                field.vis = syn::parse_quote!(pub);
+            }
+            let name = &item.ident;
+            records.push(syn::parse_quote!(
+                impl ::hyperscale_vm_sdk::state::Record for #name {}
+            ));
+        }
+    }
+    records
+}
+
 fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<TokenStream2> {
     let span = module.span();
     let world = kebab(&module.ident.to_string());
@@ -1301,7 +1339,11 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
         (quote!(#(#refusals)*), quote!())
     };
 
+    // Before the markers are stripped: `encode_declared` reads them, and
+    // what it pushes has to survive the strip that follows.
+    let records = encode_declared(items);
     strip_macro_attrs(items, &state_name);
+    items.extend(records);
     // A configuration is by definition what a creator supplies, so a
     // private one is unfillable rather than deliberately closed. The
     // macro opens the struct it found rather than asking every author to

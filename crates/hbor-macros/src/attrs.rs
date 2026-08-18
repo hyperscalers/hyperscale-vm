@@ -7,7 +7,6 @@ use syn::{
 };
 
 /// What `#[hbor(...)]` says about a type.
-#[derive(Default)]
 pub struct TypeAttrs {
     /// Encode as the single field, charging no nesting level for the
     /// wrapper.
@@ -23,6 +22,26 @@ pub struct TypeAttrs {
     /// What this type's merkle roots are for. Required by `HborMerkle`;
     /// inert under `Hbor` alone, which cannot know its sibling derive.
     pub merkle_domain: Option<LitStr>,
+    /// Where the emitted impls find the codec.
+    ///
+    /// Defaults to `::hyperscale_hbor`, which is right for every crate
+    /// that depends on it directly. A crate reaching the codec through a
+    /// re-export names that path instead — which is how a contract guest,
+    /// whose only dependency is the SDK, hosts a derive at all.
+    pub crate_path: Path,
+}
+
+impl Default for TypeAttrs {
+    fn default() -> Self {
+        Self {
+            transparent: false,
+            validate: None,
+            signing_domain: None,
+            signing_context: None,
+            merkle_domain: None,
+            crate_path: syn::parse_quote!(::hyperscale_hbor),
+        }
+    }
 }
 
 /// What `#[hbor(...)]` says about a variant.
@@ -104,10 +123,14 @@ impl TypeAttrs {
                     out.merkle_domain = Some(meta.value()?.parse()?);
                     return Ok(());
                 }
+                if meta.path.is_ident("crate") {
+                    out.crate_path = meta.value()?.parse()?;
+                    return Ok(());
+                }
                 Err(meta.error(
                     "unknown hbor attribute; a type takes `transparent`, `validate = path`, \
-                     `signing_domain = \"...\"`, `signing_context = Ty`, or \
-                     `merkle_domain = \"...\"`",
+                     `signing_domain = \"...\"`, `signing_context = Ty`, \
+                     `merkle_domain = \"...\"`, or `crate = path`",
                 ))
             })?;
         }

@@ -24,9 +24,9 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
 
-    let width_bounds = bounds(input, &quote!(::hyperscale_hbor::HborWidth));
-    let encode_bounds = bounds(input, &quote!(::hyperscale_hbor::HborEncode));
-    let decode_bounds = bounds(input, &quote!(::hyperscale_hbor::HborDecode));
+    let width_bounds = bounds(input, &quote!(__hbor::HborWidth));
+    let encode_bounds = bounds(input, &quote!(__hbor::HborEncode));
+    let decode_bounds = bounds(input, &quote!(__hbor::HborDecode));
 
     let (encode_body, decode_body, min_len) = match &input.data {
         Data::Struct(data) => {
@@ -58,36 +58,44 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
 
     let validate = attrs.validate.as_ref().map(|path| {
         quote! {
-            #path(&value).map_err(::hyperscale_hbor::DecodeError::FailedValidation)?;
+            #path(&value).map_err(__hbor::DecodeError::FailedValidation)?;
         }
     });
     let signed = signing::derive(input, &attrs)?;
 
+    // Every path the impls name is bound once, here, so a crate that
+    // re-exports the codec can host a derive without the deriving crate
+    // depending on it directly. A guest crate is exactly that: it names
+    // the SDK and nothing else, and the SDK is where it finds HBOR.
+    let krate = &attrs.crate_path;
     Ok(quote! {
+        const _: () = {
+        use #krate as __hbor;
+
         #[automatically_derived]
-        impl #impl_generics ::hyperscale_hbor::HborWidth for #name #type_generics
+        impl #impl_generics __hbor::HborWidth for #name #type_generics
         #where_clause #width_bounds {
             const MIN_ENCODED_LEN: usize = #min_len;
         }
 
         #[automatically_derived]
-        impl #impl_generics ::hyperscale_hbor::HborEncode for #name #type_generics
+        impl #impl_generics __hbor::HborEncode for #name #type_generics
         #where_clause #encode_bounds {
             fn encode(
                 &self,
-                encoder: &mut ::hyperscale_hbor::Encoder<'_>,
-            ) -> ::core::result::Result<(), ::hyperscale_hbor::EncodeError> {
+                encoder: &mut __hbor::Encoder<'_>,
+            ) -> ::core::result::Result<(), __hbor::EncodeError> {
                 #encode_body
                 ::core::result::Result::Ok(())
             }
         }
 
         #[automatically_derived]
-        impl #impl_generics ::hyperscale_hbor::HborDecode for #name #type_generics
+        impl #impl_generics __hbor::HborDecode for #name #type_generics
         #where_clause #decode_bounds {
             fn decode(
-                decoder: &mut ::hyperscale_hbor::Decoder<'_>,
-            ) -> ::core::result::Result<Self, ::hyperscale_hbor::DecodeError> {
+                decoder: &mut __hbor::Decoder<'_>,
+            ) -> ::core::result::Result<Self, __hbor::DecodeError> {
                 let value = #decode_body;
                 #validate
                 ::core::result::Result::Ok(value)
@@ -95,6 +103,7 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
         }
 
         #signed
+        };
     })
 }
 
@@ -172,7 +181,7 @@ pub fn encode_fields(
                 // check and the write both reach through unchanged.
                 CapSite::Direct(inner) | CapSite::Shared(inner) | CapSite::Boxed(inner) => {
                     out.extend(quote! {
-                        ::hyperscale_hbor::bounded::check_encoded_len(
+                        __hbor::bounded::check_encoded_len(
                             #label, (#value).len(), #max,
                         )?;
                     });
@@ -184,7 +193,7 @@ pub fn encode_fields(
                 CapSite::Optional(_) => {
                     out.extend(quote! {
                         if let ::core::option::Option::Some(inner) = #value {
-                            ::hyperscale_hbor::bounded::check_encoded_len(
+                            __hbor::bounded::check_encoded_len(
                                 #label, inner.len(), #max,
                             )?;
                         }
@@ -238,7 +247,7 @@ fn write_expression(shape: Shape, value: &TokenStream) -> TokenStream {
     if shape == Shape::Bytes {
         quote! {
             encoder.descend(|encoder| {
-                ::hyperscale_hbor::bounded::encode_bytes(encoder, #value)
+                __hbor::bounded::encode_bytes(encoder, #value)
             })?;
         }
     } else {
@@ -249,7 +258,7 @@ fn write_expression(shape: Shape, value: &TokenStream) -> TokenStream {
 fn read_expression(ty: &Type, max: Option<&Expr>) -> Result<TokenStream> {
     let Some(max) = max else {
         return Ok(if shape(ty) == Shape::Bytes {
-            quote!(decoder.descend(::hyperscale_hbor::bounded::decode_bytes)?)
+            quote!(decoder.descend(__hbor::bounded::decode_bytes)?)
         } else {
             quote!(decoder.nested()?)
         });
@@ -266,7 +275,7 @@ fn read_expression(ty: &Type, max: Option<&Expr>) -> Result<TokenStream> {
         CapSite::Direct(inner) => {
             let reader = bounded_reader(inner);
             quote! {
-                decoder.descend(|decoder| ::hyperscale_hbor::bounded::#reader(decoder, #max))?
+                decoder.descend(|decoder| __hbor::bounded::#reader(decoder, #max))?
             }
         }
         CapSite::Shared(inner) => {
@@ -274,7 +283,7 @@ fn read_expression(ty: &Type, max: Option<&Expr>) -> Result<TokenStream> {
             quote! {
                 decoder.descend(|decoder| {
                     ::core::result::Result::Ok(::std::sync::Arc::new(
-                        ::hyperscale_hbor::bounded::#reader(decoder, #max)?,
+                        __hbor::bounded::#reader(decoder, #max)?,
                     ))
                 })?
             }
@@ -284,7 +293,7 @@ fn read_expression(ty: &Type, max: Option<&Expr>) -> Result<TokenStream> {
             quote! {
                 decoder.descend(|decoder| {
                     ::core::result::Result::Ok(::std::boxed::Box::new(
-                        ::hyperscale_hbor::bounded::#reader(decoder, #max)?,
+                        __hbor::bounded::#reader(decoder, #max)?,
                     ))
                 })?
             }
@@ -295,10 +304,10 @@ fn read_expression(ty: &Type, max: Option<&Expr>) -> Result<TokenStream> {
                 decoder.descend(|decoder| match decoder.read_u8()? {
                     0 => ::core::result::Result::Ok(::core::option::Option::None),
                     1 => decoder
-                        .descend(|decoder| ::hyperscale_hbor::bounded::#reader(decoder, #max))
+                        .descend(|decoder| __hbor::bounded::#reader(decoder, #max))
                         .map(::core::option::Option::Some),
                     other => ::core::result::Result::Err(
-                        ::hyperscale_hbor::DecodeError::InvalidDiscriminant(other),
+                        __hbor::DecodeError::InvalidDiscriminant(other),
                     ),
                 })?
             }
@@ -364,7 +373,7 @@ fn min_encoded_len(fields: &Fields) -> TokenStream {
             return None;
         }
         let ty = &field.ty;
-        Some(quote!(<#ty as ::hyperscale_hbor::HborWidth>::MIN_ENCODED_LEN))
+        Some(quote!(<#ty as __hbor::HborWidth>::MIN_ENCODED_LEN))
     });
     quote!(0 #(+ #terms)*)
 }
@@ -406,11 +415,11 @@ fn transparent(fields: &Fields) -> Result<(TokenStream, TokenStream, TokenStream
             let reader = bounded_reader(inner_shape);
             let write = if inner_shape == Shape::Bytes {
                 quote! {
-                    ::hyperscale_hbor::bounded::encode_bytes(encoder, #access)?;
+                    __hbor::bounded::encode_bytes(encoder, #access)?;
                 }
             } else {
                 quote! {
-                    ::hyperscale_hbor::HborEncode::encode(#access, encoder)?;
+                    __hbor::HborEncode::encode(#access, encoder)?;
                 }
             };
             let label = field
@@ -418,22 +427,22 @@ fn transparent(fields: &Fields) -> Result<(TokenStream, TokenStream, TokenStream
                 .as_ref()
                 .map_or_else(|| "0".to_string(), ToString::to_string);
             let encode = quote! {
-                ::hyperscale_hbor::bounded::check_encoded_len(#label, (#access).len(), #max)?;
+                __hbor::bounded::check_encoded_len(#label, (#access).len(), #max)?;
                 #write
             };
-            let inner = quote!(::hyperscale_hbor::bounded::#reader(decoder, #max)?);
+            let inner = quote!(__hbor::bounded::#reader(decoder, #max)?);
             (encode, inner)
         }
         None => (
-            quote! { ::hyperscale_hbor::HborEncode::encode(#access, encoder)?; },
-            quote!(<#ty as ::hyperscale_hbor::HborDecode>::decode(decoder)?),
+            quote! { __hbor::HborEncode::encode(#access, encoder)?; },
+            quote!(<#ty as __hbor::HborDecode>::decode(decoder)?),
         ),
     };
     let decode = field.ident.as_ref().map_or_else(
         || quote!(Self(#inner)),
         |name| quote!(Self { #name: #inner }),
     );
-    let min = quote!(<#ty as ::hyperscale_hbor::HborWidth>::MIN_ENCODED_LEN);
+    let min = quote!(<#ty as __hbor::HborWidth>::MIN_ENCODED_LEN);
     Ok((encode, decode, min))
 }
 
@@ -524,7 +533,7 @@ fn enumeration(name: &Ident, data: &DataEnum) -> Result<(TokenStream, TokenStrea
             #branches
             other => {
                 return ::core::result::Result::Err(
-                    ::hyperscale_hbor::DecodeError::InvalidDiscriminant(other),
+                    __hbor::DecodeError::InvalidDiscriminant(other),
                 );
             }
         }

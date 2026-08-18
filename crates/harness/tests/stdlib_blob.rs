@@ -30,6 +30,7 @@ use hyperscale_vm_runtime::{
     Bucket, DeltaCell, RangeRead, RangeWrite, ReserveCell, WriteCell, add_kernel_to_linker,
     blessed_engine, validate_component,
 };
+use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use wasmtime::component::{Component, ComponentType, Lift, Linker, Lower, Resource};
 use wasmtime::error::Context;
@@ -497,10 +498,14 @@ fn lottery_session() -> KernelSession {
 
 /// What the round settles to: the draw the environment fixed, then the
 /// one entrant it can select.
+/// The settled round as the package encodes it, built through that
+/// package's own type rather than spliced here.
 fn settled() -> Vec<u8> {
-    let mut out = RANDOMNESS.to_vec();
-    out.extend_from_slice(&ENTRANT.to_bytes());
-    out
+    to_vec(&lottery::Outcome {
+        draw: RANDOMNESS.to_vec(),
+        winner: Some(ENTRANT),
+    })
+    .expect("an outcome encodes")
 }
 
 fn blessed_round() -> Result<(Receipt, u64)> {

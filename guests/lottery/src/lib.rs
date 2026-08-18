@@ -36,13 +36,24 @@ pub mod lottery {
     #[event]
     struct Drawn;
 
+    /// A settled round: the draw, and the entrant it selected.
+    ///
+    /// A round nobody entered still drew, so the winner is optional and
+    /// the draw is not.
+    #[record]
+    #[derive(Clone)]
+    struct Outcome {
+        draw: Vec<u8>,
+        winner: Option<Address>,
+    }
+
     #[state]
     struct Lottery {
         /// One entry per entrant, at the entrant's hashed order, so a
         /// second entry from one address lands on its own ticket.
         tickets: Unordered<Vec<u8>>,
-        /// The settled round: the draw, and the entrant it selected.
-        outcome: Cell<Vec<u8>>,
+        /// The settled round.
+        outcome: Cell<Option<Outcome>>,
     }
 
     impl Lottery {
@@ -59,10 +70,12 @@ pub mod lottery {
         /// Settle the round on the transaction's own randomness.
         pub fn draw(&mut self) {
             let draw = randomness();
-            let mut settled = draw.clone();
             let tickets = self.tickets.sweep(0, 64);
             let entrants = tickets.count();
-            if entrants > 0 {
+            // A round nobody entered still drew: the draw is recorded, no
+            // winner follows it, and the pot stands for the next round.
+            // Refusing here would let an empty round wedge the lottery.
+            let winner = if entrants > 0 {
                 // The draw is 32 bytes and an index needs far fewer; the
                 // modulo's bias is over the top 128 bits of a space the
                 // entrant count never approaches.
@@ -70,14 +83,14 @@ pub mod lottery {
                 // The remainder is below the entrant count, which is a
                 // `u32` to begin with.
                 #[allow(clippy::cast_possible_truncation)]
-                let winner = (seed % u128::from(entrants)) as u32;
-                settled.extend_from_slice(&tickets.entry(winner));
-            }
-            // A round nobody entered still drew: the draw is recorded, no
-            // winner follows it, and the pot stands for the next round.
-            // Refusing here would let an empty round wedge the lottery.
-            self.outcome.set(settled.clone());
-            Drawn::emit(&settled);
+                let picked = (seed % u128::from(entrants)) as u32;
+                Address::from_bytes(tickets.entry(picked).try_into().unwrap()).ok()
+            } else {
+                None
+            };
+            let settled = Outcome { draw, winner };
+            self.outcome.set(Some(settled.clone()));
+            Drawn::emit(&settled.draw);
         }
     }
 }

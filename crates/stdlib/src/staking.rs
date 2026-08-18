@@ -22,6 +22,7 @@ pub use package::staking::client::*;
 /// this is running the code the artifact was built from rather than a
 /// stand-in for it.
 pub use package::staking::invoke;
+pub use package::staking::{ParamVote, Validator};
 
 /// The material separating a pool's owner badge from the unit it issues.
 pub const OWNER_BADGE: &[u8] = b"owner-badge";

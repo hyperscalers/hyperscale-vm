@@ -71,13 +71,13 @@ pub fn derive(input: &DeriveInput, attrs: &TypeAttrs) -> Result<TokenStream> {
 
     let name = &input.ident;
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
-    let encode_bounds = bounds(input, &quote!(::hyperscale_hbor::HborEncode));
+    let encode_bounds = bounds(input, &quote!(__hbor::HborEncode));
     let body = encode_fields(fields, &SelfAccess, Include::Signed)?;
 
     if let Some(context) = attrs.signing_context.as_ref() {
         return Ok(quote! {
             #[automatically_derived]
-            impl #impl_generics ::hyperscale_hbor::HborSignedWith for #name #type_generics
+            impl #impl_generics __hbor::HborSignedWith for #name #type_generics
             #where_clause #encode_bounds {
                 type Context = #context;
 
@@ -86,22 +86,22 @@ pub fn derive(input: &DeriveInput, attrs: &TypeAttrs) -> Result<TokenStream> {
                 fn signing_bytes(
                     &self,
                     context: &Self::Context,
-                ) -> ::core::result::Result<::std::vec::Vec<u8>, ::hyperscale_hbor::EncodeError>
+                ) -> ::core::result::Result<::std::vec::Vec<u8>, __hbor::EncodeError>
                 {
                     let mut buffer = ::std::vec::Vec::new();
                     // The default cap, whatever the consumer's decoder uses:
                     // depth charges write no bytes, so the cap decides only
                     // whether a too-deep value has a preimage at all — never
                     // which bytes it has.
-                    let mut encoder = ::hyperscale_hbor::Encoder::new(
+                    let mut encoder = __hbor::Encoder::new(
                         &mut buffer,
-                        ::hyperscale_hbor::DEFAULT_MAX_DEPTH,
+                        __hbor::DEFAULT_MAX_DEPTH,
                     );
                     // Framed, not concatenated: an unframed domain that is a
                     // prefix of another collides with it once the content
                     // begins with the remaining bytes.
                     encoder.write_sized(
-                        <Self as ::hyperscale_hbor::HborSignedWith>::SIGNING_DOMAIN,
+                        <Self as __hbor::HborSignedWith>::SIGNING_DOMAIN,
                     )?;
                     // The context is a leading field in all but storage: a
                     // fixed type, encoded ahead of the signed fields,
@@ -116,26 +116,26 @@ pub fn derive(input: &DeriveInput, attrs: &TypeAttrs) -> Result<TokenStream> {
 
     Ok(quote! {
         #[automatically_derived]
-        impl #impl_generics ::hyperscale_hbor::HborSigned for #name #type_generics
+        impl #impl_generics __hbor::HborSigned for #name #type_generics
         #where_clause #encode_bounds {
             const SIGNING_DOMAIN: &'static [u8] = #domain.as_bytes();
 
             fn signing_bytes(
                 &self,
-            ) -> ::core::result::Result<::std::vec::Vec<u8>, ::hyperscale_hbor::EncodeError> {
+            ) -> ::core::result::Result<::std::vec::Vec<u8>, __hbor::EncodeError> {
                 let mut buffer = ::std::vec::Vec::new();
                 // The default cap, whatever the consumer's decoder uses:
                 // depth charges write no bytes, so the cap decides only
                 // whether a too-deep value has a preimage at all — never
                 // which bytes it has.
-                let mut encoder = ::hyperscale_hbor::Encoder::new(
+                let mut encoder = __hbor::Encoder::new(
                     &mut buffer,
-                    ::hyperscale_hbor::DEFAULT_MAX_DEPTH,
+                    __hbor::DEFAULT_MAX_DEPTH,
                 );
                 // Framed, not concatenated: an unframed domain that is a
                 // prefix of another collides with it once the content
                 // begins with the remaining bytes.
-                encoder.write_sized(<Self as ::hyperscale_hbor::HborSigned>::SIGNING_DOMAIN)?;
+                encoder.write_sized(<Self as __hbor::HborSigned>::SIGNING_DOMAIN)?;
                 #body
                 ::core::result::Result::Ok(buffer)
             }

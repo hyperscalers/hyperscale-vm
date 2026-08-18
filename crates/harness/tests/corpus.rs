@@ -35,6 +35,7 @@ use hyperscale_vm_runtime::{
     Returned, add_kernel_to_linker, blessed_engine, call_export, check_method, classify, exhausted,
     validate_component,
 };
+use hyperscale_vm_sdk::hbor::from_slice;
 use hyperscale_vm_stdlib::account;
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
@@ -2854,6 +2855,14 @@ fn ticket_order(who: PrincipalAddr) -> u128 {
 }
 
 /// The lottery's settled-round cell.
+/// The settled round, decoded through the package's own type — so what
+/// this reads back is what that package says it wrote, rather than a
+/// layout restated here.
+fn settled_round(store: &mut MemoryStore) -> Option<lottery::Outcome> {
+    draw_cell(store)
+        .map(|bytes| from_slice(&bytes).expect("the lottery writes its own outcome type"))
+}
+
 fn draw_cell(store: &mut MemoryStore) -> Option<Vec<u8>> {
     store
         .read(child_key(
@@ -2910,8 +2919,11 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
     assert!(matches!(results[0], TxResult::Completed(_)));
     let mut empty_store = store.clone();
     assert_eq!(
-        draw_cell(&mut empty_store),
-        Some(env().randomness.to_vec()),
+        settled_round(&mut empty_store),
+        Some(lottery::Outcome {
+            draw: env().randomness.to_vec(),
+            winner: None,
+        }),
         "an unentered round records its draw and no winner"
     );
 
@@ -2955,11 +2967,12 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
     let seed = u128::from_le_bytes(env().randomness[..16].try_into().unwrap());
     let expected = ascending[(seed % 2) as usize];
 
-    let mut settled = env().randomness.to_vec();
-    settled.extend_from_slice(&expected.address().to_bytes());
     assert_eq!(
-        draw_cell(&mut store),
-        Some(settled),
+        settled_round(&mut store),
+        Some(lottery::Outcome {
+            draw: env().randomness.to_vec(),
+            winner: Some(expected.address()),
+        }),
         "the round settles on the draw and the entrant it selects"
     );
     Ok(())

@@ -45,5 +45,5 @@ note: method defined here
 help: provide the argument
    |
 30 -     pool.withdraw(builder, resource, 100_u128)
-30 +     pool.withdraw(builder, /* Proof */, 100_u128, /* u128 */)
+30 +     pool.withdraw(builder, /* hyperscale_vm_sdk::client::Proof */, 100_u128, /* u128 */)
    |

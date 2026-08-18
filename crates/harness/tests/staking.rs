@@ -36,6 +36,7 @@ use hyperscale_vm_runtime::{
     Returned, add_kernel_to_linker, blessed_engine, call_export, classify, exhausted,
     validate_component,
 };
+use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, staking};
 use hyperscale_vm_testing::Native;
 use wasmtime::component::{Component, Linker};
@@ -650,6 +651,25 @@ fn pool_event(outcome: &BatchOutcome, entry: &BatchTx) -> (u32, Vec<u8>) {
     (from_pool[0].event_type, from_pool[0].payload.clone())
 }
 
+/// What the pool holds for `validator`, decoded through the type the
+/// package declared.
+fn registered(end: &MemoryStore, validator: u64) -> Option<staking::Validator> {
+    cells(end)
+        .get(&validator_leaf(pool(), validator))
+        .map(|bytes| from_slice(bytes).expect("the pool writes its own validator type"))
+}
+
+/// The same record as stored bytes, for a store seeded by hand.
+///
+/// The record's own encoding and not an `Option`'s: a record cell holds
+/// the value, and absence is no bytes at all.
+fn registered_bytes() -> Vec<u8> {
+    to_vec(&staking::Validator {
+        pubkey: PUBKEY.to_vec(),
+    })
+    .expect("a validator record encodes")
+}
+
 #[test]
 fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
     let world = world();
@@ -662,9 +682,13 @@ fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
 
     // The pool keeps the key it registered — the whole of its claim on
     // this validator, and what makes a second registration refusable.
+    // Read back through the package's own type, so what this asserts is
+    // what that package says it wrote.
     assert_eq!(
-        cells(&end).get(&validator_leaf(pool(), VALIDATOR)),
-        Some(&PUBKEY.to_vec()),
+        registered(&end, VALIDATOR),
+        Some(staking::Validator {
+            pubkey: PUBKEY.to_vec(),
+        }),
     );
     assert_eq!(
         pool_event(&outcome, &entry),
@@ -681,7 +705,7 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
     // The leaf already holds a key, which is the state a first
     // registration leaves behind.
     let mut store = operator_store();
-    store.write(validator_leaf(pool(), VALIDATOR), PUBKEY.to_vec())?;
+    store.write(validator_leaf(pool(), VALIDATOR), registered_bytes())?;
     store.clear_log();
 
     let (outcome, _) = run_both(&store, std::slice::from_ref(&entry))?;
@@ -720,7 +744,7 @@ fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
 fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
     let world = world();
     let mut store = operator_store();
-    store.write(validator_leaf(pool(), VALIDATOR), PUBKEY.to_vec())?;
+    store.write(validator_leaf(pool(), VALIDATOR), registered_bytes())?;
     store.clear_log();
 
     for (method, event_type) in [("deactivate-validator", 3), ("unjail", 4)] {
@@ -740,8 +764,10 @@ fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
         // took on is spent for the life of the chain, which is the
         // beacon's own rule held locally.
         assert_eq!(
-            cells(&end).get(&validator_leaf(pool(), VALIDATOR)),
-            Some(&PUBKEY.to_vec()),
+            registered(&end, VALIDATOR),
+            Some(staking::Validator {
+                pubkey: PUBKEY.to_vec(),
+            }),
             "{method}",
         );
     }
@@ -767,15 +793,11 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
             Outcome::Completed { .. }
         ));
     }
-    let cells = cells(&end);
-    assert_eq!(
-        cells.get(&validator_leaf(pool(), VALIDATOR)),
-        Some(&PUBKEY.to_vec()),
-    );
-    assert_eq!(
-        cells.get(&validator_leaf(pool(), VALIDATOR + 1)),
-        Some(&PUBKEY.to_vec()),
-    );
+    let held = staking::Validator {
+        pubkey: PUBKEY.to_vec(),
+    };
+    assert_eq!(registered(&end, VALIDATOR), Some(held.clone()));
+    assert_eq!(registered(&end, VALIDATOR + 1), Some(held));
     Ok(())
 }
 

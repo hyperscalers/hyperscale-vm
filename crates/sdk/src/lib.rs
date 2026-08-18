@@ -124,6 +124,14 @@
 //! holds, which is what makes generated metadata acceptable inside a
 //! content-addressed package at all.
 
+/// The canonical encoding, re-exported so a contract crate reaches it
+/// through the SDK alone.
+///
+/// A guest names one dependency, which is the whole point: an author
+/// writes `#[record]` and the macro finds the codec, rather than the
+/// protocol's crate graph appearing in the author's manifest.
+pub use hyperscale_hbor as hbor;
+
 pub mod blueprint;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod client;

@@ -176,7 +176,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write {
-                        requires: Either,
+                        requires: Present,
                     },
                     denomination: None,
                 },
@@ -243,7 +243,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write {
-                        requires: Either,
+                        requires: Absent,
                     },
                     denomination: None,
                 },
@@ -254,17 +254,17 @@ PackageMetadata {
                 ),
                 Derived(
                     Arg(
-                        0,
-                    ),
-                ),
-                Derived(
-                    Arg(
                         1,
                     ),
                 ),
                 Derived(
                     Arg(
                         2,
+                    ),
+                ),
+                Derived(
+                    Arg(
+                        0,
                     ),
                 ),
             ],
@@ -372,7 +372,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write {
-                        requires: Either,
+                        requires: Present,
                     },
                     denomination: None,
                 },

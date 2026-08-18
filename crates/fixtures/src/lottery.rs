@@ -26,6 +26,7 @@ use hyperscale_vm_effects::PackageMetadata;
 #[path = "../../../guests/lottery/src/lib.rs"]
 mod package;
 
+pub use package::lottery::Outcome;
 pub use package::lottery::client::*;
 
 /// The entrant cap a draw declares: the round a single draw settles.

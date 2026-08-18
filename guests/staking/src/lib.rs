@@ -74,16 +74,32 @@ pub mod staking {
     const PUBKEY_BYTES: usize = 48;
     const POSSESSION_PROOF_BYTES: usize = 96;
 
+    /// A validator the pool operates: the consensus key it registered,
+    /// which is the whole of its claim on that validator.
+    #[record]
+    #[derive(Clone)]
+    struct Validator {
+        pubkey: Vec<u8>,
+    }
+
+    /// The pool's position on the network's parameters.
+    #[record]
+    struct ParamVote {
+        split_bytes: u64,
+        impound_epochs: u64,
+        activate_at: u64,
+    }
+
     #[state]
     struct Staking {
         /// One leaf per validator the pool operates, so two operator
         /// actions on two validators commute.
         #[slot(17)]
-        validators: Keyed<Vec<u8>>,
+        validators: Keyed<Option<Validator>>,
         /// The pool's one governance vote: a pool holds one, the network
         /// counts it once, so one leaf is what its position *is*.
         #[slot(18)]
-        vote: Cell<Vec<u8>>,
+        vote: Cell<Option<ParamVote>>,
     }
 
     impl Staking {
@@ -125,7 +141,6 @@ pub mod staking {
         ) {
             // The payload opens with the validator it concerns, which is
             // also the first thing this method is about.
-            let mut payload = validator_id.to_le_bytes().to_vec();
             assert!(
                 pubkey.len() == PUBKEY_BYTES,
                 "pubkey is not a consensus key"
@@ -134,14 +149,12 @@ pub mod staking {
                 possession_proof.len() == POSSESSION_PROOF_BYTES,
                 "possession proof is not a consensus signature"
             );
-            let mut leaf = self.validators.at(validator_id);
-            assert!(
-                leaf.get().is_empty(),
-                "this pool already registered this validator"
-            );
-            // What the pool keeps is the key it registered, which is the
-            // whole of its claim on this validator.
-            leaf.set(pubkey.clone());
+            // Registering twice is refused by the shard holding the leaf,
+            // against committed state, before this runs.
+            self.validators.at(validator_id).create(Validator {
+                pubkey: pubkey.clone(),
+            });
+            let mut payload = validator_id.to_le_bytes().to_vec();
             payload.extend_from_slice(&pubkey);
             payload.extend_from_slice(&possession_proof);
             ValidatorRegistered::emit(&payload);
@@ -151,30 +164,17 @@ pub mod staking {
         #[name("deactivate-validator")]
         #[guarded(issued(b"owner-badge"))]
         pub fn deactivate_validator(&mut self, validator_id: u64) {
-            let mut leaf = self.validators.at(validator_id);
-            let held = leaf.get();
-            assert!(
-                !held.is_empty(),
-                "this pool does not operate this validator"
-            );
-            // The leaf is held exclusively either way, and writing back
-            // what it holds is what makes the declaration say so.
-            leaf.set(held);
+            // Holding the leaf is the whole of the access: the
+            // declaration says the pool operates this validator, and the
+            // shard judges that before the body runs.
+            let _ = self.validators.at(validator_id).existing();
             ValidatorDeactivated::emit(&validator_id.to_le_bytes());
         }
 
         /// Ask for a validator to be unjailed.
         #[guarded(issued(b"owner-badge"))]
         pub fn unjail(&mut self, validator_id: u64) {
-            let mut leaf = self.validators.at(validator_id);
-            let held = leaf.get();
-            assert!(
-                !held.is_empty(),
-                "this pool does not operate this validator"
-            );
-            // The leaf is held exclusively either way, and writing back
-            // what it holds is what makes the declaration say so.
-            leaf.set(held);
+            let _ = self.validators.at(validator_id).existing();
             ValidatorUnjailed::emit(&validator_id.to_le_bytes());
         }
 
@@ -185,10 +185,15 @@ pub mod staking {
             // The pool holds one vote, so a cast replaces rather than
             // adds. What it keeps is what it voted for, which is the only
             // copy the pool itself can read back.
+            let vote = ParamVote {
+                split_bytes,
+                impound_epochs,
+                activate_at,
+            };
+            self.vote.set(Some(vote));
             let mut payload = split_bytes.to_le_bytes().to_vec();
             payload.extend_from_slice(&impound_epochs.to_le_bytes());
             payload.extend_from_slice(&activate_at.to_le_bytes());
-            self.vote.set(payload.clone());
             ParamVoteCast::emit(&payload);
         }
 
@@ -196,7 +201,7 @@ pub mod staking {
         #[name("clear-param-vote")]
         #[guarded(issued(b"owner-badge"))]
         pub fn clear_param_vote(&mut self) {
-            self.vote.set(Vec::new());
+            self.vote.set(None);
             ParamVoteCleared::emit(&[]);
         }
     }

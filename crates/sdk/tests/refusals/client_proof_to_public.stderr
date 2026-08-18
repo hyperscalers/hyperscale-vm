@@ -1,8 +1,8 @@
-error[E0277]: the trait bound `Proof: BucketArg` is not satisfied
+error[E0277]: the trait bound `hyperscale_vm_sdk::client::Proof: BucketArg` is not satisfied
   --> tests/refusals/client_proof_to_public.rs:31:27
    |
 31 |     pool.deposit(builder, proof, funds)
-   |          -------          ^^^^^ the trait `BucketArg` is not implemented for `Proof`
+   |          -------          ^^^^^ the trait `BucketArg` is not implemented for `hyperscale_vm_sdk::client::Proof`
    |          |
    |          required by a bound introduced by this call
    |
