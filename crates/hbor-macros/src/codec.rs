@@ -62,6 +62,20 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
         }
     });
     let signed = signing::derive(input, &attrs)?;
+    // Claimed rather than inferred: the impl bounds every field, so a
+    // field that carries a length refuses here by name rather than
+    // through a walk that cannot see past an alias.
+    let infallible = attrs.infallible.then(|| {
+        let bounds = bounds(input, &quote!(__hbor::HborInfallible));
+        let max_len = max_encoded_len(&input.data);
+        quote! {
+            #[automatically_derived]
+            impl #impl_generics __hbor::HborInfallible for #name #type_generics
+            #where_clause #bounds {
+                const MAX_ENCODED_LEN: usize = #max_len;
+            }
+        }
+    });
 
     // Every path the impls name is bound once, here, so a crate that
     // re-exports the codec can host a derive without the deriving crate
@@ -81,9 +95,9 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
         #[automatically_derived]
         impl #impl_generics __hbor::HborEncode for #name #type_generics
         #where_clause #encode_bounds {
-            fn encode(
+            fn encode<__S: __hbor::Sink>(
                 &self,
-                encoder: &mut __hbor::Encoder<'_>,
+                encoder: &mut __hbor::Encoder<__S>,
             ) -> ::core::result::Result<(), __hbor::EncodeError> {
                 #encode_body
                 ::core::result::Result::Ok(())
@@ -103,6 +117,7 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
         }
 
         #signed
+        #infallible
         };
     })
 }
@@ -363,6 +378,39 @@ fn width_reaches(ty: &Type, this: &Ident) -> bool {
         }
         Type::Tuple(tuple) => tuple.elems.iter().any(|elem| width_reaches(elem, this)),
         _ => false,
+    }
+}
+
+/// The most bytes this type's encoding can occupy, as a const
+/// expression over its fields' own bounds.
+///
+/// A struct is the sum of its fields. An enum is its discriminant plus
+/// the widest variant, which needs a comparison a const context can run —
+/// hence the fold rather than an iterator's `max`.
+fn max_encoded_len(data: &Data) -> TokenStream {
+    let sum = |fields: &Fields| {
+        let terms = fields.iter().map(|field| {
+            let ty = &field.ty;
+            quote!(+ <#ty as __hbor::HborInfallible>::MAX_ENCODED_LEN)
+        });
+        quote!(0 #(#terms)*)
+    };
+    match data {
+        Data::Struct(data) => sum(&data.fields),
+        Data::Enum(data) => {
+            let widest = data
+                .variants
+                .iter()
+                .fold(quote!(0usize), |so_far, variant| {
+                    let variant = sum(&variant.fields);
+                    quote!({
+                        let (a, b) = (#so_far, #variant);
+                        if a > b { a } else { b }
+                    })
+                });
+            quote!(1 + #widest)
+        }
+        Data::Union(_) => quote!(0),
     }
 }
 

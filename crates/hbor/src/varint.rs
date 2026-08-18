@@ -16,22 +16,45 @@ pub const MAX_LENGTH: usize = 0x0FFF_FFFF;
 ///
 /// [`EncodeError::LengthTooLarge`] when `value` exceeds [`MAX_LENGTH`].
 pub fn write(buf: &mut Vec<u8>, value: usize) -> Result<(), EncodeError> {
+    let (bytes, len) = encode(value)?;
+    if let Some(field) = bytes.get(..len) {
+        buf.extend_from_slice(field);
+    }
+    Ok(())
+}
+
+/// The bytes of `value` as a minimal LEB128 length, and how many there
+/// are.
+///
+/// Returned in a fixed array rather than pushed into a buffer, because
+/// the caller may be writing into one it cannot grow.
+///
+/// # Errors
+///
+/// [`EncodeError::LengthTooLarge`] when `value` exceeds [`MAX_LENGTH`].
+pub fn encode(value: usize) -> Result<([u8; 4], usize), EncodeError> {
     if value > MAX_LENGTH {
         return Err(EncodeError::LengthTooLarge {
             actual: value,
             max: MAX_LENGTH,
         });
     }
+    let mut out = [0u8; 4];
     let mut rest = value;
+    let mut len = 0;
     loop {
         #[allow(clippy::cast_possible_truncation)] // masked to seven bits
         let seven = (rest & 0x7F) as u8;
         rest >>= 7;
-        if rest == 0 {
-            buf.push(seven);
-            return Ok(());
+        // Four bytes carry every admissible length, and the check above
+        // is what makes this loop terminate inside them.
+        if let Some(slot) = out.get_mut(len) {
+            *slot = if rest == 0 { seven } else { seven | 0x80 };
         }
-        buf.push(seven | 0x80);
+        len += 1;
+        if rest == 0 {
+            return Ok((out, len));
+        }
     }
 }
 
@@ -72,13 +95,12 @@ pub fn read(bytes: &[u8]) -> Result<(usize, usize), DecodeError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_LENGTH, read, write};
+    use super::{MAX_LENGTH, encode, read};
     use crate::error::{DecodeError, EncodeError};
 
     fn encoded(value: usize) -> Vec<u8> {
-        let mut buf = Vec::new();
-        write(&mut buf, value).unwrap();
-        buf
+        let (bytes, len) = encode(value).unwrap();
+        bytes[..len].to_vec()
     }
 
     #[test]
@@ -133,9 +155,8 @@ mod tests {
 
     #[test]
     fn refuses_to_write_past_the_maximum() {
-        let mut buf = Vec::new();
         assert_eq!(
-            write(&mut buf, MAX_LENGTH + 1),
+            encode(MAX_LENGTH + 1).map(|_| ()),
             Err(EncodeError::LengthTooLarge {
                 actual: MAX_LENGTH + 1,
                 max: MAX_LENGTH,

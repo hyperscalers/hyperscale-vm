@@ -27,7 +27,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::decode::Decoder;
-use crate::encode::Encoder;
+use crate::encode::{Encoder, Sink};
 use crate::error::{DecodeError, EncodeError};
 use crate::{HborDecode, HborEncode, HborWidth};
 
@@ -51,7 +51,7 @@ impl<T> HborWidth for Vec<T> {
 }
 
 impl<T: HborEncode> HborEncode for Vec<T> {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         refuse_zero_width_elements!(T::MIN_ENCODED_LEN);
         encoder.write_len(self.len())?;
         // One level for the elements, charged whether or not any exist, so
@@ -86,7 +86,7 @@ impl HborWidth for String {
 }
 
 impl HborEncode for String {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         encoder.write_sized(self.as_bytes())
     }
 }
@@ -109,7 +109,7 @@ impl<T> HborWidth for BTreeSet<T> {
 }
 
 impl<T: HborEncode> HborEncode for BTreeSet<T> {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         refuse_zero_width_elements!(T::MIN_ENCODED_LEN);
         encoder.write_len(self.len())?;
         encoder.descend(|encoder| {
@@ -148,7 +148,7 @@ impl<K, V> HborWidth for BTreeMap<K, V> {
 }
 
 impl<K: HborEncode, V: HborEncode> HborEncode for BTreeMap<K, V> {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         refuse_zero_width_elements!(K::MIN_ENCODED_LEN + V::MIN_ENCODED_LEN);
         encoder.write_len(self.len())?;
         encoder.descend(|encoder| {
@@ -255,7 +255,8 @@ mod tests {
     fn a_reservation_never_exceeds_the_input() {
         let count = 500_000;
         let mut input = Vec::with_capacity(count + 4);
-        varint::write(&mut input, count).unwrap();
+        let (field, len) = varint::encode(count).unwrap();
+        input.extend_from_slice(&field[..len]);
         input.extend(std::iter::repeat_n(0u8, count));
 
         let hint = Decoder::new(&input, DEFAULT_MAX_DEPTH).reserve_hint::<Vec<u8>>(count);

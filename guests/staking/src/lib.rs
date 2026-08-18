@@ -33,7 +33,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod staking {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, burn, mint};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, burn, mint};
 
     /// The pool's creation-fixed configuration: what a delegation is
     /// denominated in.
@@ -44,22 +44,38 @@ pub mod staking {
 
     /// A delegation arrived.
     #[event]
-    struct Staked;
+    struct Staked {
+        amount: Quantity,
+    }
     /// A delegation began unbonding.
     #[event]
-    struct Unstaked;
+    struct Unstaked {
+        amount: Quantity,
+    }
     /// The pool took on a validator.
+    ///
+    /// What the beacon's control plane reads. The key and the proof are
+    /// stated at the widths the scheme fixes, which is the same check
+    /// the body would otherwise write as an assert.
     #[event]
-    struct ValidatorRegistered;
+    struct ValidatorRegistered {
+        validator_id: u64,
+        pubkey: [u8; PUBKEY_BYTES],
+        possession_proof: [u8; POSSESSION_PROOF_BYTES],
+    }
     /// The pool stood a validator down.
     #[event]
-    struct ValidatorDeactivated;
+    struct ValidatorDeactivated {
+        validator_id: u64,
+    }
     /// The pool asked for a validator to be unjailed.
     #[event]
-    struct ValidatorUnjailed;
+    struct ValidatorUnjailed {
+        validator_id: u64,
+    }
     /// The pool cast its governance vote.
     #[event]
-    struct ParamVoteCast;
+    struct ParamVoteCast(ParamVote);
     /// The pool withdrew its governance vote.
     #[event]
     struct ParamVoteCleared;
@@ -79,11 +95,12 @@ pub mod staking {
     #[record]
     #[derive(Clone)]
     struct Validator {
-        pubkey: Vec<u8>,
+        pubkey: [u8; PUBKEY_BYTES],
     }
 
     /// The pool's position on the network's parameters.
     #[record]
+    #[derive(Clone)]
     struct ParamVote {
         split_bytes: u64,
         impound_epochs: u64,
@@ -110,7 +127,7 @@ pub mod staking {
             // was handed.
             let staked = funds.quantity();
             self.vault(self.config().staked_resource).put(funds);
-            Staked::emit(&staked.subunits().to_le_bytes());
+            Staked { amount: staked }.emit();
             mint(b"", staked)
         }
 
@@ -126,7 +143,7 @@ pub mod staking {
         pub fn unstake(&mut self, units: Bucket) {
             let returned = units.quantity();
             burn(b"", units);
-            Unstaked::emit(&returned.subunits().to_le_bytes());
+            Unstaked { amount: returned }.emit();
         }
 
         /// Take on a validator, recording the key the pool registered.
@@ -140,24 +157,25 @@ pub mod staking {
             possession_proof: Vec<u8>,
         ) {
             // The payload opens with the validator it concerns, which is
-            // also the first thing this method is about.
-            assert!(
-                pubkey.len() == PUBKEY_BYTES,
-                "pubkey is not a consensus key"
-            );
-            assert!(
-                possession_proof.len() == POSSESSION_PROOF_BYTES,
-                "possession proof is not a consensus signature"
-            );
+            // also the first thing this method is about. The widths are
+            // the event's own, so what checks them is the conversion into
+            // it rather than an assert beside it.
+            let pubkey: [u8; PUBKEY_BYTES] =
+                pubkey.try_into().expect("pubkey is not a consensus key");
+            let possession_proof: [u8; POSSESSION_PROOF_BYTES] = possession_proof
+                .try_into()
+                .expect("possession proof is not a consensus signature");
             // Registering twice is refused by the shard holding the leaf,
             // against committed state, before this runs.
-            self.validators.at(validator_id).create(Validator {
-                pubkey: pubkey.clone(),
-            });
-            let mut payload = validator_id.to_le_bytes().to_vec();
-            payload.extend_from_slice(&pubkey);
-            payload.extend_from_slice(&possession_proof);
-            ValidatorRegistered::emit(&payload);
+            self.validators
+                .at(validator_id)
+                .create(Validator { pubkey });
+            ValidatorRegistered {
+                validator_id,
+                pubkey,
+                possession_proof,
+            }
+            .emit();
         }
 
         /// Stand a validator down.
@@ -168,14 +186,14 @@ pub mod staking {
             // declaration says the pool operates this validator, and the
             // shard judges that before the body runs.
             let _ = self.validators.at(validator_id).existing();
-            ValidatorDeactivated::emit(&validator_id.to_le_bytes());
+            ValidatorDeactivated { validator_id }.emit();
         }
 
         /// Ask for a validator to be unjailed.
         #[guarded(issued(b"owner-badge"))]
         pub fn unjail(&mut self, validator_id: u64) {
             let _ = self.validators.at(validator_id).existing();
-            ValidatorUnjailed::emit(&validator_id.to_le_bytes());
+            ValidatorUnjailed { validator_id }.emit();
         }
 
         /// Cast the pool's governance vote, replacing any it held.
@@ -190,11 +208,8 @@ pub mod staking {
                 impound_epochs,
                 activate_at,
             };
-            self.vote.set(Some(vote));
-            let mut payload = split_bytes.to_le_bytes().to_vec();
-            payload.extend_from_slice(&impound_epochs.to_le_bytes());
-            payload.extend_from_slice(&activate_at.to_le_bytes());
-            ParamVoteCast::emit(&payload);
+            self.vote.set(Some(vote.clone()));
+            ParamVoteCast(vote).emit();
         }
 
         /// Withdraw the pool's governance vote.
@@ -202,7 +217,7 @@ pub mod staking {
         #[guarded(issued(b"owner-badge"))]
         pub fn clear_param_vote(&mut self) {
             self.vote.set(None);
-            ParamVoteCleared::emit(&[]);
+            ParamVoteCleared.emit();
         }
     }
 }

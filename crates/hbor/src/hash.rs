@@ -11,7 +11,7 @@
 use core::fmt;
 
 use crate::decode::Decoder;
-use crate::encode::Encoder;
+use crate::encode::{Encoder, Sink};
 use crate::error::{DecodeError, EncodeError};
 use crate::{HborDecode, HborEncode, HborWidth};
 
@@ -24,7 +24,7 @@ impl HborWidth for Hash32 {
 }
 
 impl HborEncode for Hash32 {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         encoder.write_fixed(&self.0);
         Ok(())
     }

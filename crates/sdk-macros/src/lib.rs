@@ -1210,7 +1210,8 @@ fn publish_config(items: &mut [syn::Item], config: &syn::Ident) {
 ///
 /// The index is the macro's, never the author's: a constant beside a name
 /// table is the one thing in the old four-document shape that nothing
-/// checked.
+/// checked. What crosses is the event's own encoding, so the payload's
+/// shape and the type declaring it cannot drift.
 fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
     events
         .iter()
@@ -1219,11 +1220,27 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
             let index = u32::try_from(index).unwrap_or(u32::MAX);
             syn::parse_quote!(
                 impl #ident {
-                    /// Record that this happened, with an opaque payload.
+                    /// Record that this happened.
                     ///
                     /// The type index is this package's own, fixed by the
-                    /// declaration order of its event structs.
-                    pub fn emit(payload: &[u8]) {
+                    /// declaration order of its event structs, and the
+                    /// payload is the event's own encoding — so a
+                    /// consumer decodes the type this package declared
+                    /// rather than a layout it was told about.
+                    ///
+                    /// The payload is built on the stack, in a buffer
+                    /// the event's own bound sizes. Nothing here
+                    /// allocates, because a method marked total may not:
+                    /// growing a heap buffer can fail, and the failure
+                    /// is the `unreachable` that costs the mark. So an
+                    /// event carrying a length does not compile, and the
+                    /// widths are the event's to state.
+                    pub fn emit(&self) {
+                        use ::hyperscale_vm_sdk::hbor::HborInfallible as _;
+                        let mut buf = [0u8; <Self as ::hyperscale_vm_sdk::hbor::HborInfallible>
+                            ::MAX_ENCODED_LEN];
+                        let payload =
+                            ::hyperscale_vm_sdk::hbor::to_slice_infallible(self, &mut buf);
                         #[cfg(target_arch = "wasm32")]
                         ::hyperscale_vm_sdk::guest::emit(#index, payload);
                         #[cfg(not(target_arch = "wasm32"))]
@@ -1235,7 +1252,7 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
         .collect()
 }
 
-/// The codec every declared record carries.
+/// The codec every declared record and event carries.
 ///
 /// Pushed onto the author's own struct rather than asked for, on the same
 /// terms as every other fact this macro derives: the encoding is the
@@ -1247,7 +1264,9 @@ fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
         let syn::Item::Struct(item) = item else {
             continue;
         };
-        if !item.attrs.iter().any(|a| a.path().is_ident("record")) {
+        let marked = |name: &str| item.attrs.iter().any(|a| a.path().is_ident(name));
+        let (record, event) = (marked("record"), marked("event"));
+        if !record && !event {
             continue;
         }
         item.attrs.push(syn::parse_quote!(
@@ -1255,14 +1274,24 @@ fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
         ));
         item.attrs
             .push(syn::parse_quote!(#[derive(::hyperscale_vm_sdk::hbor::Hbor)]));
-        item.attrs
-            .push(syn::parse_quote!(#[hbor(crate = ::hyperscale_vm_sdk::hbor)]));
-        {
-            item.vis = syn::parse_quote!(pub);
-            item.attrs.push(syn::parse_quote!(#[allow(missing_docs)]));
-            for field in &mut item.fields {
-                field.vis = syn::parse_quote!(pub);
-            }
+        // Fixed width, claimed: a record is stored and an event is
+        // emitted, and both want an encoding with no error to handle —
+        // an emit especially, since a method marked total may not
+        // allocate and so writes its payload into a buffer sized from
+        // this bound. A field carrying a length refuses by name.
+        item.attrs.push(syn::parse_quote!(
+            #[hbor(crate = ::hyperscale_vm_sdk::hbor, infallible)]
+        ));
+        // Named by whoever reads it: a record by the reader of its cell,
+        // an event by the decoder of its payload. Both are the package's
+        // own surface, so both are open the way the configuration struct
+        // is.
+        item.vis = syn::parse_quote!(pub);
+        item.attrs.push(syn::parse_quote!(#[allow(missing_docs)]));
+        for field in &mut item.fields {
+            field.vis = syn::parse_quote!(pub);
+        }
+        if record {
             let name = &item.ident;
             records.push(syn::parse_quote!(
                 impl ::hyperscale_vm_sdk::state::Record for #name {}

@@ -69,7 +69,7 @@ mod primitive;
 
 pub use canonical::{assert_canonical, assert_canonical_at_depth};
 pub use decode::Decoder;
-pub use encode::Encoder;
+pub use encode::{Encoder, Fixed, Sink};
 pub use error::{DecodeError, EncodeError};
 pub use hash::{Hash32, Hasher};
 pub use hyperscale_hbor_macros::{Hbor, HborMerkle};
@@ -125,7 +125,7 @@ pub trait HborEncode: HborWidth {
     ///
     /// [`EncodeError`] when a length is inexpressible, a declared bound is
     /// exceeded, or nesting reaches the encoder's cap.
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError>;
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError>;
 }
 
 /// A type reconstructible from its canonical byte form.
@@ -137,6 +137,67 @@ pub trait HborDecode: HborWidth + Sized {
     ///
     /// [`DecodeError`] for a malformed, non-canonical, or truncated payload.
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError>;
+}
+
+/// A type whose encoding cannot fail.
+///
+/// Encoding fails three ways — a length past what the length field can
+/// express, a declared [`max`](hyperscale_hbor_macros::Hbor) bound, and
+/// nesting past the encoder's cap — and all three come from a length. A
+/// type that carries none is fixed width end to end, so writing it down
+/// is arithmetic on a buffer and there is nothing to refuse.
+///
+/// The point of saying so in the type system is that a caller can then
+/// encode *without an error arm*. Where that matters is a contract method
+/// marked total: a body that can fault cannot carry the mark, and a mark
+/// that a panicking encoder took away would be a protocol property lost
+/// to an implementation detail.
+///
+/// Granted by `#[derive(Hbor)]` to a struct or enum whose every field is
+/// itself infallible, and by hand below to the fixed-width primitives.
+/// A `Vec`, a `String`, a map or a set is not, and neither is anything
+/// holding one — which is a bound the compiler reports rather than a
+/// property anyone has to remember.
+pub trait HborInfallible: HborEncode {
+    /// The most bytes this type's encoding can occupy.
+    ///
+    /// A bound rather than a width, because `Option<T>` is one byte or
+    /// one more than `T` — so a type holding one has no single length,
+    /// and what a caller can size a buffer from is the larger.
+    const MAX_ENCODED_LEN: usize;
+}
+
+/// Encode `value` into `out`, returning the bytes written.
+///
+/// Allocates nothing, so nothing here can fault: this is the path a
+/// contract method marked total encodes on, where growing a heap buffer
+/// would be a failure the totality scan reads as a trap.
+///
+/// The empty slice is unreachable for a buffer of at least
+/// [`HborInfallible::MAX_ENCODED_LEN`] bytes — the bound is the statement
+/// that the value fits and the encode has nothing to report. Written as a
+/// fallback rather than an unwrap because an unwrap is a panic, and a
+/// panic is what the whole path exists to avoid.
+#[must_use]
+pub fn to_slice_infallible<'b, T: HborInfallible + ?Sized>(
+    value: &T,
+    out: &'b mut [u8],
+) -> &'b [u8] {
+    let mut encoder = Encoder::new(Fixed::new(out), DEFAULT_MAX_DEPTH);
+    let written = value
+        .encode(&mut encoder)
+        .ok()
+        .and_then(|()| encoder.finish().written());
+    written.and_then(|len| out.get(..len)).unwrap_or_default()
+}
+
+/// Encode `value`, which cannot fail.
+///
+/// The heap twin of [`to_slice_infallible`], for a caller with an
+/// allocator it may use.
+#[must_use]
+pub fn to_vec_infallible<T: HborInfallible + ?Sized>(value: &T) -> Vec<u8> {
+    to_vec(value).unwrap_or_default()
 }
 
 /// Encode `value` at [`DEFAULT_MAX_DEPTH`].

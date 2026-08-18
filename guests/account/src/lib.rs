@@ -25,11 +25,15 @@ pub mod account {
 
     /// Funds left the account.
     #[event]
-    struct Withdrawn;
+    struct Withdrawn {
+        amount: Quantity,
+    }
 
     /// Funds arrived.
     #[event]
-    struct Deposited;
+    struct Deposited {
+        amount: Quantity,
+    }
 
     /// What a holdings entry holds: presence, and nothing else. Which
     /// instance it is, is the entry's own order key.
@@ -51,7 +55,10 @@ pub mod account {
         #[guarded(self)]
         pub fn withdraw(&mut self, resource: Address, amount: Quantity) -> Bucket {
             let funds = self.vault(resource).reserve(amount);
-            Withdrawn::emit(&funds.quantity().subunits().to_le_bytes());
+            Withdrawn {
+                amount: funds.quantity(),
+            }
+            .emit();
             funds
         }
 
@@ -73,7 +80,7 @@ pub mod account {
             let credited = funds.quantity();
             self.claims(funds.resource()).declared();
             self.vault(funds.resource()).put(funds);
-            Deposited::emit(&credited.subunits().to_le_bytes());
+            Deposited { amount: credited }.emit();
         }
 
         /// Nothing but its own gate: the kernel judges the stored rule

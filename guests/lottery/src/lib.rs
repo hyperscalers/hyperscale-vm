@@ -30,11 +30,13 @@ pub mod lottery {
 
     /// Somebody took a ticket.
     #[event]
-    struct Entered;
+    struct Entered {
+        who: Address,
+    }
 
     /// The round settled on a draw.
     #[event]
-    struct Drawn;
+    struct Drawn(Outcome);
 
     /// A settled round: the draw, and the entrant it selected.
     ///
@@ -43,9 +45,12 @@ pub mod lottery {
     #[record]
     #[derive(Clone)]
     struct Outcome {
-        draw: Vec<u8>,
+        draw: [u8; DRAW_BYTES],
         winner: Option<Address>,
     }
+
+    /// The width the deterministic environment draws in.
+    const DRAW_BYTES: usize = 32;
 
     #[state]
     struct Lottery {
@@ -64,7 +69,7 @@ pub mod lottery {
             // say who it picked, not merely which slot.
             self.tickets.at(who).set(who.to_bytes().to_vec());
             self.vault(funds.resource()).put(funds);
-            Entered::emit(&who.to_bytes());
+            Entered { who }.emit();
         }
 
         /// Settle the round on the transaction's own randomness.
@@ -88,9 +93,15 @@ pub mod lottery {
             } else {
                 None
             };
-            let settled = Outcome { draw, winner };
+            // The width is the environment's, and the record states it:
+            // a draw that is not thirty-two bytes is a defect in the
+            // kernel rather than in this round.
+            let settled = Outcome {
+                draw: draw.try_into().expect("the draw is a thirty-two byte word"),
+                winner,
+            };
             self.outcome.set(Some(settled.clone()));
-            Drawn::emit(&settled.draw);
+            Drawn(settled).emit();
         }
     }
 }

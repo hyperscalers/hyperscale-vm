@@ -2921,7 +2921,7 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
     assert_eq!(
         settled_round(&mut empty_store),
         Some(lottery::Outcome {
-            draw: env().randomness.to_vec(),
+            draw: env().randomness,
             winner: None,
         }),
         "an unentered round records its draw and no winner"
@@ -2970,7 +2970,7 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
     assert_eq!(
         settled_round(&mut store),
         Some(lottery::Outcome {
-            draw: env().randomness.to_vec(),
+            draw: env().randomness,
             winner: Some(expected.address()),
         }),
         "the round settles on the draw and the entrant it selects"

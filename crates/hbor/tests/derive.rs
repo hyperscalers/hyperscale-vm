@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use hyperscale_hbor::{
     DEFAULT_MAX_DEPTH, DecodeError, Decoder, EncodeError, Encoder, Hbor, HborDecode, HborEncode,
-    HborWidth, assert_canonical, bounded, from_slice, from_slice_with_depth, to_vec,
+    HborWidth, Sink, assert_canonical, bounded, from_slice, from_slice_with_depth, to_vec,
     to_vec_with_depth,
 };
 
@@ -38,7 +38,7 @@ struct Header {
 struct HeaderByHand(Header);
 
 impl HborEncode for HeaderByHand {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         encoder.nested(&self.0.height)?;
         encoder.nested(&self.0.round)?;
         encoder.nested(&self.0.proposer)?;
@@ -105,7 +105,7 @@ enum Body {
 struct BodyByHand(Body);
 
 impl HborEncode for BodyByHand {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         match &self.0 {
             Body::Empty => encoder.write_u8(0),
             Body::Call(tree) => {

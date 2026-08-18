@@ -502,7 +502,7 @@ fn lottery_session() -> KernelSession {
 /// package's own type rather than spliced here.
 fn settled() -> Vec<u8> {
     to_vec(&lottery::Outcome {
-        draw: RANDOMNESS.to_vec(),
+        draw: RANDOMNESS,
         winner: Some(ENTRANT),
     })
     .expect("an outcome encodes")

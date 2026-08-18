@@ -5,7 +5,8 @@ pub mod text;
 use core::fmt;
 
 use hyperscale_hbor::{
-    DecodeError, Decoder, EncodeError, Encoder, Hbor, HborDecode, HborEncode, HborWidth,
+    DecodeError, Decoder, EncodeError, Encoder, Hbor, HborDecode, HborEncode, HborInfallible,
+    HborWidth, Sink,
 };
 use thiserror::Error;
 
@@ -309,9 +310,15 @@ impl HborWidth for Address {
     const MIN_ENCODED_LEN: usize = 32;
 }
 
+/// Thirty-two bytes, always: no length field, so writing one down cannot
+/// fail and a body that may not allocate can still name one.
+impl HborInfallible for Address {
+    const MAX_ENCODED_LEN: usize = 32;
+}
+
 impl HborEncode for Address {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
-        encoder.write_fixed(&self.0);
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
+        encoder.write_array(&self.0);
         Ok(())
     }
 }
@@ -386,7 +393,7 @@ macro_rules! class_addr {
         }
 
         impl HborEncode for $name {
-            fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+            fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
                 self.0.encode(encoder)
             }
         }
@@ -539,7 +546,7 @@ macro_rules! position_addr {
         }
 
         impl HborEncode for $name {
-            fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+            fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
                 self.address().encode(encoder)
             }
         }

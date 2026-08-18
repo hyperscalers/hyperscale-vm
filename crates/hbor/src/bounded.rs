@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::HborDecode;
 use crate::collection::refuse_zero_width_elements;
 use crate::decode::Decoder;
-use crate::encode::Encoder;
+use crate::encode::{Encoder, Sink};
 use crate::error::{DecodeError, EncodeError};
 
 /// Write a byte sequence as a length then the bytes themselves.
@@ -34,7 +34,7 @@ use crate::error::{DecodeError, EncodeError};
 ///
 /// [`EncodeError::LengthTooLarge`] for an inexpressible length, or
 /// [`EncodeError::DepthExceeded`] at the cap.
-pub fn encode_bytes(encoder: &mut Encoder<'_>, bytes: &[u8]) -> Result<(), EncodeError> {
+pub fn encode_bytes<S: Sink>(encoder: &mut Encoder<S>, bytes: &[u8]) -> Result<(), EncodeError> {
     encoder.write_len(bytes.len())?;
     // The element level, charged around one copy instead of per byte: the
     // fast path is a speed choice, and both spellings of the same bytes

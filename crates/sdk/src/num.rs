@@ -212,7 +212,7 @@ const fn limb_sub(a: [u64; 4], b: [u64; 4]) -> ([u64; 4], bool) {
 /// Encoded as the width it is: a `u128` of subunits, with the tag erased,
 /// which is the same form its cell holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default, Hash, Hbor)]
-#[hbor(transparent)]
+#[hbor(transparent, infallible)]
 pub struct Quantity(u128);
 
 impl Quantity {

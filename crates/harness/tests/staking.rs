@@ -664,10 +664,7 @@ fn registered(end: &MemoryStore, validator: u64) -> Option<staking::Validator> {
 /// The record's own encoding and not an `Option`'s: a record cell holds
 /// the value, and absence is no bytes at all.
 fn registered_bytes() -> Vec<u8> {
-    to_vec(&staking::Validator {
-        pubkey: PUBKEY.to_vec(),
-    })
-    .expect("a validator record encodes")
+    to_vec(&staking::Validator { pubkey: PUBKEY }).expect("a validator record encodes")
 }
 
 #[test]
@@ -686,9 +683,7 @@ fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
     // what that package says it wrote.
     assert_eq!(
         registered(&end, VALIDATOR),
-        Some(staking::Validator {
-            pubkey: PUBKEY.to_vec(),
-        }),
+        Some(staking::Validator { pubkey: PUBKEY }),
     );
     assert_eq!(
         pool_event(&outcome, &entry),
@@ -765,9 +760,7 @@ fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
         // beacon's own rule held locally.
         assert_eq!(
             registered(&end, VALIDATOR),
-            Some(staking::Validator {
-                pubkey: PUBKEY.to_vec(),
-            }),
+            Some(staking::Validator { pubkey: PUBKEY }),
             "{method}",
         );
     }
@@ -793,9 +786,7 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
             Outcome::Completed { .. }
         ));
     }
-    let held = staking::Validator {
-        pubkey: PUBKEY.to_vec(),
-    };
+    let held = staking::Validator { pubkey: PUBKEY };
     assert_eq!(registered(&end, VALIDATOR), Some(held.clone()));
     assert_eq!(registered(&end, VALIDATOR + 1), Some(held));
     Ok(())

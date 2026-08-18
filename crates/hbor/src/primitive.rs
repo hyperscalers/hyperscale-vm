@@ -12,9 +12,9 @@
 use core::mem::size_of;
 
 use crate::decode::Decoder;
-use crate::encode::Encoder;
+use crate::encode::{Encoder, Sink};
 use crate::error::{DecodeError, EncodeError};
-use crate::{HborDecode, HborEncode, HborWidth};
+use crate::{HborDecode, HborEncode, HborInfallible, HborWidth};
 
 macro_rules! fixed_width_integer {
     ($($ty:ty),* $(,)?) => { $(
@@ -23,8 +23,8 @@ macro_rules! fixed_width_integer {
         }
 
         impl HborEncode for $ty {
-            fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
-                encoder.write_fixed(&self.to_le_bytes());
+            fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
+                encoder.write_array(&self.to_le_bytes());
                 Ok(())
             }
         }
@@ -33,6 +33,10 @@ macro_rules! fixed_width_integer {
             fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
                 Ok(Self::from_le_bytes(decoder.read_array()?))
             }
+        }
+
+        impl HborInfallible for $ty {
+            const MAX_ENCODED_LEN: usize = size_of::<$ty>();
         }
     )* };
 }
@@ -43,8 +47,12 @@ impl HborWidth for bool {
     const MIN_ENCODED_LEN: usize = 1;
 }
 
+impl HborInfallible for bool {
+    const MAX_ENCODED_LEN: usize = 1;
+}
+
 impl HborEncode for bool {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         encoder.write_u8(u8::from(*self));
         Ok(())
     }
@@ -68,8 +76,12 @@ impl HborWidth for () {
     const MIN_ENCODED_LEN: usize = 0;
 }
 
+impl HborInfallible for () {
+    const MAX_ENCODED_LEN: usize = 0;
+}
+
 impl HborEncode for () {
-    fn encode(&self, _encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, _encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         Ok(())
     }
 }
@@ -85,7 +97,7 @@ impl<T> HborWidth for Option<T> {
 }
 
 impl<T: HborEncode> HborEncode for Option<T> {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         match self {
             Self::None => {
                 encoder.write_u8(0);
@@ -97,6 +109,10 @@ impl<T: HborEncode> HborEncode for Option<T> {
             }
         }
     }
+}
+
+impl<T: HborInfallible> HborInfallible for Option<T> {
+    const MAX_ENCODED_LEN: usize = 1 + T::MAX_ENCODED_LEN;
 }
 
 impl<T: HborDecode> HborDecode for Option<T> {
@@ -116,8 +132,12 @@ impl<T: HborWidth + ?Sized> HborWidth for Box<T> {
     const MIN_ENCODED_LEN: usize = T::MIN_ENCODED_LEN;
 }
 
+impl<T: HborInfallible + ?Sized> HborInfallible for Box<T> {
+    const MAX_ENCODED_LEN: usize = T::MAX_ENCODED_LEN;
+}
+
 impl<T: HborEncode + ?Sized> HborEncode for Box<T> {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         (**self).encode(encoder)
     }
 }
@@ -137,7 +157,7 @@ impl<T: HborWidth + ?Sized> HborWidth for std::sync::Arc<T> {
 }
 
 impl<T: HborEncode + ?Sized> HborEncode for std::sync::Arc<T> {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         (**self).encode(encoder)
     }
 }
@@ -153,13 +173,17 @@ impl<T: HborDecode> HborDecode for std::sync::Arc<T> {
 // would have to build each value through a heap collection to stay safe —
 // paying an allocation on the hottest decode path in the system to serve a
 // case that does not occur. A generic impl is additive if one ever does.
+impl<const N: usize> HborInfallible for [u8; N] {
+    const MAX_ENCODED_LEN: usize = N;
+}
+
 impl<const N: usize> HborWidth for [u8; N] {
     const MIN_ENCODED_LEN: usize = N;
 }
 
 impl<const N: usize> HborEncode for [u8; N] {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
-        encoder.write_fixed(self);
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
+        encoder.write_array(self);
         Ok(())
     }
 }
@@ -176,8 +200,12 @@ macro_rules! tuple {
             const MIN_ENCODED_LEN: usize = 0 $(+ $name::MIN_ENCODED_LEN)+;
         }
 
+        impl<$($name: HborInfallible),+> HborInfallible for ($($name,)+) {
+            const MAX_ENCODED_LEN: usize = 0 $(+ $name::MAX_ENCODED_LEN)+;
+        }
+
         impl<$($name: HborEncode),+> HborEncode for ($($name,)+) {
-            fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+            fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
                 #[allow(non_snake_case)] // bindings mirror the type parameters
                 let ($($name,)+) = self;
                 $(encoder.nested($name)?;)+
