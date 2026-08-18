@@ -189,14 +189,14 @@ pub mod staking {
             // Holding the leaf is the whole of the access: the
             // declaration says the pool operates this validator, and the
             // shard judges that before the body runs.
-            let _ = self.validators.at(validator_id).existing();
+            self.validators.at(validator_id).exclusive();
             ValidatorDeactivated { validator_id }.emit();
         }
 
         /// Ask for a validator to be unjailed.
         #[guarded(OwnerBadge)]
         pub fn unjail(&mut self, validator_id: u64) {
-            let _ = self.validators.at(validator_id).existing();
+            self.validators.at(validator_id).exclusive();
             ValidatorUnjailed { validator_id }.emit();
         }
 

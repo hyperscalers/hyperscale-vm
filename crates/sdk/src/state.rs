@@ -639,6 +639,20 @@ impl<T: Record> Cell<Option<T>> {
     pub fn existing(&self) -> T {
         unimplemented!("{OFF_HOST}")
     }
+
+    /// Declare this leaf held exclusively and present, and read nothing
+    /// from it.
+    ///
+    /// The mirror of [`Slot::declared`]: that one declares a movement
+    /// the body does not make, and this one declares the access the body
+    /// does not use. What a method like it is about is holding the leaf
+    /// — that the pool operates this validator is the whole of what the
+    /// call asserts — so the value is beside the point and the handle
+    /// the guest would take for it is one nothing calls.
+    #[inline(always)]
+    pub fn exclusive(&self) {
+        unimplemented!("{OFF_HOST}")
+    }
 }
 
 impl Cell<Vault> {
@@ -756,6 +770,17 @@ impl<T: Record> Slot<Option<T>> {
         self.get()
             .expect("materialization required this leaf to be present")
     }
+
+    /// Declare this leaf held exclusively and present, and read nothing
+    /// from it.
+    ///
+    /// Reaches no handle: the clause is what the kernel provisions and
+    /// what a caller routes on, so a body that only needs the leaf held
+    /// is handed nothing to call. Present on the executing half for the
+    /// authoring half to type against, and run nowhere.
+    #[inline(always)]
+    #[allow(clippy::unused_self)] // the clause is the whole of it
+    pub const fn exclusive(&self) {}
 }
 
 /// A cell that holds value.

@@ -2331,10 +2331,13 @@ impl<'a> Lowerer<'a> {
                 // handle: the clause is what the kernel provisions and
                 // what a caller routes on, and there is nothing for the
                 // guest to call.
-                if call.method == "declared" {
+                if call.method == "declared" || call.method == "exclusive" {
                     // The unit it evaluates to, not nothing: a declared
-                    // movement can stand in expression position, and a
-                    // match arm needs something there.
+                    // access can stand in expression position, and a
+                    // match arm needs something there. Neither binds a
+                    // handle — the clause is what the kernel provisions
+                    // and what a caller routes on, and there is nothing
+                    // for the guest to call.
                     return Eval::plain(quote!(()));
                 }
                 let resource = self

@@ -185,9 +185,6 @@ PackageMetadata {
                 },
             ],
             abi: [
-                Handle(
-                    0,
-                ),
                 Derived(
                     Arg(
                         0,
@@ -384,9 +381,6 @@ PackageMetadata {
                 },
             ],
             abi: [
-                Handle(
-                    0,
-                ),
                 Derived(
                     Arg(
                         0,
