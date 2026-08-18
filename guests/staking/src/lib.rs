@@ -37,6 +37,12 @@ pub mod staking {
 
     /// The pool's creation-fixed configuration: what a delegation is
     /// denominated in.
+    /// The identity the pool's operator surface admits: a badge this
+    /// instance issues, so holding it is operating the pool and selling
+    /// the pool is transferring it.
+    #[resource]
+    struct OwnerBadge;
+
     #[config]
     struct Settings {
         staked_resource: Address,
@@ -147,7 +153,7 @@ pub mod staking {
 
         /// Take on a validator, recording the key the pool registered.
         #[name("register-validator")]
-        #[guarded(issued(b"owner-badge"))]
+        #[guarded(OwnerBadge)]
         pub fn register_validator(
             &mut self,
             validator_id: u64,
@@ -178,7 +184,7 @@ pub mod staking {
 
         /// Stand a validator down.
         #[name("deactivate-validator")]
-        #[guarded(issued(b"owner-badge"))]
+        #[guarded(OwnerBadge)]
         pub fn deactivate_validator(&mut self, validator_id: u64) {
             // Holding the leaf is the whole of the access: the
             // declaration says the pool operates this validator, and the
@@ -188,7 +194,7 @@ pub mod staking {
         }
 
         /// Ask for a validator to be unjailed.
-        #[guarded(issued(b"owner-badge"))]
+        #[guarded(OwnerBadge)]
         pub fn unjail(&mut self, validator_id: u64) {
             let _ = self.validators.at(validator_id).existing();
             ValidatorUnjailed { validator_id }.emit();
@@ -196,7 +202,7 @@ pub mod staking {
 
         /// Cast the pool's governance vote, replacing any it held.
         #[name("cast-param-vote")]
-        #[guarded(issued(b"owner-badge"))]
+        #[guarded(OwnerBadge)]
         pub fn cast_param_vote(&mut self, split_bytes: u64, impound_epochs: u64, activate_at: u64) {
             // The pool holds one vote, so a cast replaces rather than
             // adds. What it keeps is what it voted for, which is the only
@@ -212,7 +218,7 @@ pub mod staking {
 
         /// Withdraw the pool's governance vote.
         #[name("clear-param-vote")]
-        #[guarded(issued(b"owner-badge"))]
+        #[guarded(OwnerBadge)]
         pub fn clear_param_vote(&mut self) {
             self.vote.set(None);
             ParamVoteCleared.emit();

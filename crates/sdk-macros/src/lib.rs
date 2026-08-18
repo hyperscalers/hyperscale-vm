@@ -382,6 +382,7 @@ const OWN: &[&str] = &[
     "event",
     "error",
     "record",
+    "resource",
     "guarded",
     "authorizing",
     "role_gated",
@@ -446,10 +447,11 @@ enum Gate {
 fn guarded_rule(
     expr: &syn::Expr,
     config_fields: &[(String, syn::Type)],
+    resources: &[(String, Vec<u8>)],
     params: &[(String, syn::Type)],
 ) -> syn::Result<(TokenStream2, bool, bool)> {
     match expr {
-        syn::Expr::Paren(inner) => guarded_rule(&inner.expr, config_fields, params),
+        syn::Expr::Paren(inner) => guarded_rule(&inner.expr, config_fields, resources, params),
         syn::Expr::Binary(binary) => {
             let count = match binary.op {
                 syn::BinOp::Or(_) => None,
@@ -464,7 +466,9 @@ fn guarded_rule(
             let branches = flatten(expr, &binary.op);
             let lowered = branches
                 .iter()
-                .map(|branch| guarded_rule(branch, config_fields, params).map(|(rule, _, _)| rule))
+                .map(|branch| {
+                    guarded_rule(branch, config_fields, resources, params).map(|(rule, _, _)| rule)
+                })
                 .collect::<syn::Result<Vec<_>>>()?;
             let width = lowered.len();
             let count = if count.is_some() {
@@ -488,7 +492,9 @@ fn guarded_rule(
                 )
             })?;
             let lowered = args
-                .map(|branch| guarded_rule(branch, config_fields, params).map(|(rule, _, _)| rule))
+                .map(|branch| {
+                    guarded_rule(branch, config_fields, resources, params).map(|(rule, _, _)| rule)
+                })
                 .collect::<syn::Result<Vec<_>>>()?;
             Ok((
                 quote!(__t.n_of(#count, ::std::vec![#(#lowered),*])),
@@ -497,7 +503,7 @@ fn guarded_rule(
             ))
         }
         leaf => {
-            let (identity, on_self) = guarded_identity(leaf, config_fields, params)?;
+            let (identity, on_self) = guarded_identity(leaf, config_fields, resources, params)?;
             Ok((quote!(__t.claim(&#identity)), on_self, false))
         }
     }
@@ -552,6 +558,7 @@ fn count_literal(expr: &syn::Expr) -> Option<u8> {
 fn guarded_identity(
     identity: &syn::Expr,
     config_fields: &[(String, syn::Type)],
+    resources: &[(String, Vec<u8>)],
     params: &[(String, syn::Type)],
 ) -> syn::Result<(TokenStream2, bool)> {
     let refuse = || {
@@ -572,6 +579,14 @@ fn guarded_identity(
                      the gate would admit everyone — name `self`, a badge it issues, \
                      or a configuration field instead",
                 ));
+            }
+            // A resource the package declares is one this instance
+            // issues, so holding it is operating this instance and the
+            // mark is the item's rather than a literal repeated at every
+            // gate that names it.
+            if let Some((_, mark)) = resources.iter().find(|(r, _)| *r == name) {
+                let mark = syn::LitByteStr::new(mark, identity.span());
+                return Ok((quote!(__t.self_resource(#mark)), false));
             }
             // Creation-fixed, so the claim is the target's own: an
             // object whose address derives from no key admits somebody
@@ -628,6 +643,7 @@ fn parse_gate(
     fields: &BTreeMap<String, Field>,
     accessors: &BTreeMap<String, Field>,
     config_fields: &[(String, syn::Type)],
+    resources: &[(String, Vec<u8>)],
     params: &[(String, syn::Type)],
 ) -> syn::Result<Gate> {
     // A gate names the cell its rule lives in the way a body would, and a
@@ -648,7 +664,8 @@ fn parse_gate(
     for attr in &method.attrs {
         if attr.path().is_ident("guarded") {
             let written: syn::Expr = attr.parse_args()?;
-            let (rule, on_self, threshold) = guarded_rule(&written, config_fields, params)?;
+            let (rule, on_self, threshold) =
+                guarded_rule(&written, config_fields, resources, params)?;
             return Ok(Gate::Guarded {
                 rule,
                 on_self,
@@ -958,6 +975,7 @@ fn lower_method(
     fields: &BTreeMap<String, Field>,
     accessors: &BTreeMap<String, Field>,
     config_fields: &[(String, syn::Type)],
+    resources: &[(String, Vec<u8>)],
     serves: client::Serves,
 ) -> syn::Result<Lowered> {
     let published = method_name(method)?;
@@ -980,7 +998,7 @@ fn lower_method(
         kinds.push(param_type(&arg.ty)?);
     }
 
-    let gate = parse_gate(method, fields, accessors, config_fields, &params)?;
+    let gate = parse_gate(method, fields, accessors, config_fields, resources, &params)?;
     client::check_names(&idents, client::Shape::of(&gate), serves)?;
     let returns = !matches!(method.sig.output, syn::ReturnType::Default);
     let claims_total = total_attr(method).is_some();
@@ -1199,6 +1217,7 @@ fn lower_methods(
     fields: &BTreeMap<String, Field>,
     accessors: &BTreeMap<String, Field>,
     config_fields: &[(String, syn::Type)],
+    resources: &[(String, Vec<u8>)],
     serves: client::Serves,
 ) -> syn::Result<Vec<Lowered>> {
     let mut lowered = Vec::new();
@@ -1219,6 +1238,7 @@ fn lower_methods(
                     fields,
                     accessors,
                     config_fields,
+                    resources,
                     serves,
                 )?);
             }
@@ -1411,7 +1431,66 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
         .collect()
 }
 
-/// The codec every declared record and event carries.
+/// The resources a package issues, by the name each is declared under.
+///
+/// A resource address is its minter over the material that separates one
+/// of its resources from another, and that material is a hash preimage:
+/// a mark typed one character differently is a different, perfectly
+/// valid address that nothing holds and no gate can open. Naming it
+/// makes the mark the item's, derived once, so a typo is an unresolved
+/// path rather than a method unreachable for the life of an immutable
+/// package.
+///
+/// The mark is the name as the protocol spells names everywhere else, so
+/// what an author reads in a gate and what a consumer reads off the
+/// emitted constant are one string derived once.
+fn resources(items: &[syn::Item]) -> Vec<(String, Vec<u8>)> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Struct(item) = item else {
+                return None;
+            };
+            item.attrs
+                .iter()
+                .any(|a| a.path().is_ident("resource"))
+                .then(|| {
+                    let name = item.ident.to_string();
+                    let mark = kebab(&name).into_bytes();
+                    (name, mark)
+                })
+        })
+        .collect()
+}
+
+/// The constant naming each declared resource's mark.
+///
+/// Emitted rather than asked for, and read by everything outside the
+/// package that has to derive the same address — so the mark a gate
+/// evaluates and the mark a host names are one declaration rather than
+/// two that agree by inspection.
+fn resource_marks(declared: &[(String, Vec<u8>)]) -> Vec<syn::Item> {
+    declared
+        .iter()
+        .map(|(name, mark)| {
+            let ident = syn::Ident::new(&screaming(name), proc_macro2::Span::call_site());
+            let bytes = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
+            let doc = format!("The mark separating `{name}` from this package's other resources.");
+            syn::parse_quote!(
+                #[doc = #doc]
+                pub const #ident: &[u8] = #bytes;
+            )
+        })
+        .collect()
+}
+
+/// A Rust type name as the constant naming it: `OwnerBadge` is
+/// `OWNER_BADGE`.
+fn screaming(name: &str) -> String {
+    kebab(name).replace('-', "_").to_uppercase()
+}
+
+/// The codec every declared record and event carries./// The codec every declared record and event carries.
 ///
 /// Pushed onto the author's own struct rather than asked for, on the same
 /// terms as every other fact this macro derives: the encoding is the
@@ -1460,6 +1539,24 @@ fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
     records
 }
 
+/// The lints that describe the off-host stubs rather than the contract.
+///
+/// Every contract method takes the receiver its declaration is read from
+/// whether its body reads it; none can be `const`, because off-guest
+/// every accessor it calls is unimplemented; and a value a contract
+/// stores is consumed on the guest and dropped by the stub. Each would
+/// otherwise be typed per method, on every package, for a lint saying
+/// nothing about the code it sits on.
+fn stub_allows(attrs: &mut Vec<syn::Attribute>) {
+    attrs.push(syn::parse_quote!(
+        #[allow(
+            clippy::unused_self,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_value
+        )]
+    ));
+}
+
 fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<TokenStream2> {
     let span = module.span();
     let world = kebab(&module.ident.to_string());
@@ -1475,6 +1572,7 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     let config_fields = config_slots(items, config_name.as_ref());
     let events = event_names(items);
     let errors = error_names(items);
+    let declared_resources = resources(items);
     let accessors = accessors(config_name.as_ref());
     let methods = lower_methods(
         items,
@@ -1482,6 +1580,7 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
         &fields,
         &accessors,
         &config_fields,
+        &declared_resources,
         serves,
     )?;
     let calls: Vec<_> = methods.iter().map(|m| &m.client).collect();
@@ -1553,24 +1652,11 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     module
         .attrs
         .push(syn::parse_quote!(#[allow(clippy::needless_pass_by_ref_mut)]));
-    // Three more artifacts of the same stubs, and of a method whose gate
-    // is its whole declaration. Every contract method takes the receiver
-    // the declaration is read from whether its body reads it; none can
-    // be `const`, because off-guest every accessor it calls is
-    // unimplemented; and a value a contract stores is consumed on the
-    // guest and dropped by the stub. Each would otherwise be typed per
-    // method, on every package, for a lint describing the stub rather
-    // than the contract.
-    module.attrs.push(syn::parse_quote!(
-        #[allow(
-            clippy::unused_self,
-            clippy::missing_const_for_fn,
-            clippy::needless_pass_by_value
-        )]
-    ));
+    stub_allows(&mut module.attrs);
     module.attrs.push(syn::parse_quote!(
         #[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
     ));
+    items.extend(resource_marks(&declared_resources));
     items.extend(event_emitters(&events));
     items.push(syn::parse_quote!(
         /// This package's metadata, as routing consumes it.
