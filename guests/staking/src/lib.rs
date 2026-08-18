@@ -139,7 +139,6 @@ pub mod staking {
         /// event — the same answer this pool gives to every aggregate,
         /// and the one that keeps two delegators leaving at once from
         /// contending on a total neither of them reads.
-        #[allow(clippy::unused_self)] // a method of the pool; the emitter is the invocation's
         pub fn unstake(&mut self, units: Bucket) {
             let returned = units.quantity();
             burn(b"", units);
@@ -149,7 +148,6 @@ pub mod staking {
         /// Take on a validator, recording the key the pool registered.
         #[name("register-validator")]
         #[guarded(issued(b"owner-badge"))]
-        #[allow(clippy::needless_pass_by_value)] // the contract consumes what it stores
         pub fn register_validator(
             &mut self,
             validator_id: u64,

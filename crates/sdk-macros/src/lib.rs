@@ -389,6 +389,10 @@ const OWN: &[&str] = &[
     "total",
 ];
 
+/// The attributes that name a gate, whose method may have no body of
+/// its own.
+const GATES: &[&str] = &["guarded", "authorizing", "role_gated", "custodial"];
+
 fn strip(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| !OWN.iter().any(|own| attr.path().is_ident(own)));
 }
@@ -1255,7 +1259,23 @@ fn strip_macro_attrs(items: &mut [syn::Item], state_name: &syn::Ident) {
             syn::Item::Impl(block) => {
                 for item in &mut block.items {
                     if let syn::ImplItem::Fn(method) = item {
+                        // A method whose gate is its whole declaration
+                        // has an empty body, and the parameters its gate
+                        // names are the kernel's to read before the
+                        // export runs — so the body never sees them, and
+                        // the lint describes the gate rather than a
+                        // parameter nobody meant.
+                        let gated = method.block.stmts.is_empty()
+                            && method
+                                .attrs
+                                .iter()
+                                .any(|attr| GATES.iter().any(|g| attr.path().is_ident(g)));
                         strip(&mut method.attrs);
+                        if gated {
+                            method
+                                .attrs
+                                .push(syn::parse_quote!(#[allow(unused_variables)]));
+                        }
                     }
                 }
             }
@@ -1533,6 +1553,21 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     module
         .attrs
         .push(syn::parse_quote!(#[allow(clippy::needless_pass_by_ref_mut)]));
+    // Three more artifacts of the same stubs, and of a method whose gate
+    // is its whole declaration. Every contract method takes the receiver
+    // the declaration is read from whether its body reads it; none can
+    // be `const`, because off-guest every accessor it calls is
+    // unimplemented; and a value a contract stores is consumed on the
+    // guest and dropped by the stub. Each would otherwise be typed per
+    // method, on every package, for a lint describing the stub rather
+    // than the contract.
+    module.attrs.push(syn::parse_quote!(
+        #[allow(
+            clippy::unused_self,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_value
+        )]
+    ));
     module.attrs.push(syn::parse_quote!(
         #[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
     ));

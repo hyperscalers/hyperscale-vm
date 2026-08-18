@@ -87,7 +87,6 @@ pub mod account {
         /// before the export runs, so the body has nothing to say and
         /// the read the gate performs is the gate's to declare.
         #[authorizing(auth)]
-        #[allow(clippy::unused_self, clippy::missing_const_for_fn)] // a gate, not a body
         pub fn authorize(&mut self) {}
 
         /// File the instances the edge carries as holdings entries.
@@ -116,8 +115,6 @@ pub mod account {
         /// claim. One instance of a non-fungible one is `present-instance`.
         #[name("present-badge")]
         #[custodial(auth, badge)]
-        #[allow(clippy::unused_self, clippy::missing_const_for_fn)] // a gate, not a body
-        #[allow(unused_variables)] // the badge is the gate's; the body never sees it
         pub fn present_badge(&mut self, badge: Address) {}
 
         /// The same gate over one instance: the kernel judges the
@@ -132,8 +129,6 @@ pub mod account {
         /// rotate by issuing, revoke by burning.
         #[name("present-instance")]
         #[custodial(auth, badge, id)]
-        #[allow(clippy::unused_self, clippy::missing_const_for_fn)] // a gate, not a body
-        #[allow(unused_variables)] // the claim is the gate's; the body never sees it
         pub fn present_instance(&mut self, badge: Address, id: u64) {}
 
         /// Create the stored-authority cell: the caller's roles and
@@ -141,7 +136,6 @@ pub mod account {
         /// this body's own refusal, which is what makes the transition
         /// off the address-derived rule one-way.
         #[guarded(self)]
-        #[allow(clippy::needless_pass_by_value)] // the contract consumes the roles it stores
         pub fn securify(&mut self, roles: RoleSet, delay_ms: u64) {
             // The one-way door is the declaration's, judged against
             // committed state before this runs: the write requires the
@@ -157,7 +151,6 @@ pub mod account {
         /// after the stored recovery delay; an unmatured proposal is
         /// replaced, a matured one first promoted.
         #[role_gated(recovery)]
-        #[allow(clippy::needless_pass_by_value)] // the contract consumes the roles it stores
         pub fn propose(&mut self, roles: RoleSet, delay_ms: u64) {
             let stored = self.auth().existing();
             // The wait comes from the delay that governs now, never from
