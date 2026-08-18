@@ -45,6 +45,11 @@ impl Guest for Nf {
     fn operate() {
         // The gate is the kernel's; a body would have nothing to say.
     }
+
+    fn operate_instance() {
+        // Likewise: what differs is which claim the gate names, which is
+        // the declaration's business and never this body's.
+    }
 }
 
 export!(Nf);

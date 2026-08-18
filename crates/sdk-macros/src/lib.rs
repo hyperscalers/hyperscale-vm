@@ -402,6 +402,10 @@ enum Gate {
         rule: u16,
         /// The parameter naming the badge.
         badge: u32,
+        /// The parameter naming which instance of it, where the badge is
+        /// non-fungible. Absent for a fungible badge, whose possession
+        /// is an amount rather than a named thing.
+        id: Option<u32>,
     },
 }
 
@@ -519,12 +523,19 @@ fn parse_gate(
             let named = attr.parse_args_with(
                 syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
             )?;
-            let [field, badge] = named.iter().collect::<Vec<_>>()[..] else {
-                return Err(syn::Error::new(
-                    attr.span(),
-                    "a custodial gate names the field its holder's stored rule lives in \
-                     and the parameter naming the badge: `#[custodial(auth, badge)]`",
-                ));
+            let listed = named.iter().collect::<Vec<_>>();
+            let (field, badge, id) = match listed[..] {
+                [field, badge] => (field, badge, None),
+                [field, badge, id] => (field, badge, Some(id)),
+                _ => {
+                    return Err(syn::Error::new(
+                        attr.span(),
+                        "a custodial gate names the field its holder's stored rule lives in \
+                         and the parameter naming the badge, plus the parameter naming which \
+                         instance where the badge is non-fungible: `#[custodial(auth, badge)]` \
+                         or `#[custodial(auth, badge, id)]`",
+                    ));
+                }
             };
             let rule = fields
                 .get(&field.to_string())
@@ -535,13 +546,17 @@ fn parse_gate(
                         "not a declared field of the component's state",
                     )
                 })?;
-            let index = params
-                .iter()
-                .position(|(p, _)| badge == p.as_str())
-                .ok_or_else(|| syn::Error::new(badge.span(), "not a parameter of this method"))?;
+            let position = |named: &syn::Ident| {
+                params
+                    .iter()
+                    .position(|(p, _)| named == p.as_str())
+                    .map(|index| u32::try_from(index).unwrap_or(0))
+                    .ok_or_else(|| syn::Error::new(named.span(), "not a parameter of this method"))
+            };
             return Ok(Gate::Custodial {
                 rule,
-                badge: u32::try_from(index).unwrap_or(0),
+                badge: position(badge)?,
+                id: id.map(position).transpose()?,
             });
         }
     }
@@ -810,14 +825,18 @@ fn gate_calls(gate: &Gate) -> TokenStream2 {
             __t.authorizing();
         }),
         Gate::RoleGated(role) => quote!(__t.role_gated(#role);),
-        // A custody gate is three reads and none of them is the body's:
-        // the kernel judges the holder's stored rule and their possession
-        // of the badge before the export runs, so what the clauses do is
-        // provision the cells it reads. The last two are pinned to the
-        // protocol's own roles, keyed by exactly the expression the mint
-        // names — which is what ties the identity minted to the thing
+        // A custody gate is two reads and neither is the body's: the
+        // kernel judges the holder's stored rule and their possession of
+        // the badge before the export runs, so what the clauses do is
+        // provision the cells it reads. The possession read is pinned to
+        // the protocol's own role, keyed by exactly the expressions the
+        // mint names — which is what ties what is minted to what is
         // held.
-        Gate::Custodial { rule, badge } => quote!({
+        Gate::Custodial {
+            rule,
+            badge,
+            id: None,
+        } => quote!({
             let __owner = __t.self_addr();
             let __badge = __t.arg::<::hyperscale_vm_sdk::Addr>(#badge);
             let __material = [__badge.clone().cast::<::hyperscale_vm_sdk::Opaque>()];
@@ -825,20 +844,31 @@ fn gate_calls(gate: &Gate) -> TokenStream2 {
             __t.point(&__rule).read();
             let __vault = __owner.child(::hyperscale_vm_sdk::VAULT, &__material);
             __t.point(&__vault).read();
-            // One entry answers the whole question: possession is holding
-            // any instance at all.
-            let __lo = ::hyperscale_vm_sdk::sym::lit_u128(0);
-            let __hi = ::hyperscale_vm_sdk::sym::lit_u128(u128::MAX);
-            __t.range(
+            __t.custodial(&__badge);
+        }),
+        Gate::Custodial {
+            rule,
+            badge,
+            id: Some(id),
+        } => quote!({
+            let __owner = __t.self_addr();
+            let __badge = __t.arg::<::hyperscale_vm_sdk::Addr>(#badge);
+            let __id = __t
+                .arg::<::hyperscale_vm_sdk::Num>(#id)
+                .cast::<::hyperscale_vm_sdk::Amount>();
+            let __material = [__badge.clone().cast::<::hyperscale_vm_sdk::Opaque>()];
+            let __rule = __owner.child(::hyperscale_vm_sdk::RoleId(#rule), &[]);
+            __t.point(&__rule).read();
+            // The entry at the instance's own id: holding that one, not
+            // holding any.
+            __t.entry(
                 &__owner,
                 ::hyperscale_vm_sdk::NF_VAULT,
                 &__material,
-                &__lo,
-                &__hi,
-                1,
+                &__id,
             )
             .read();
-            __t.custodial(&__badge);
+            __t.custodial_instance(&__badge, &__id);
         }),
     }
 }
@@ -886,10 +916,10 @@ fn check_gate_shape(
                 Ok(())
             } else {
                 refuse(
-                    "a custodial method declares three reads — its rule cell, the \
-                     badge-keyed vault and the badge-keyed holdings interval — and the \
-                     kernel makes all three before the export runs. The body has \
-                     nothing left to say, so it must be empty",
+                    "a custodial method declares two reads — its rule cell, and the \
+                     badge-keyed vault or holdings entry its claim names — and the \
+                     kernel makes both before the export runs. The body has nothing \
+                     left to say, so it must be empty",
                 )
             }
         }

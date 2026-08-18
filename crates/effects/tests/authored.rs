@@ -6,7 +6,8 @@
 //! defining the rules.
 
 use hyperscale_vm_effects::{
-    Accessibility, AuthRole, Expr, PackageMetadata, Value, check_abi, check_declarations,
+    Accessibility, AuthRole, CustodyClaim, Expr, PackageMetadata, Value, check_abi,
+    check_declarations,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, splitter};
 use hyperscale_vm_stdlib::staking::OWNER_BADGE;
@@ -46,16 +47,16 @@ fn every_authored_signature_is_well_formed() {
     }
 }
 
-#[test]
-fn every_authored_method_declares_who_may_call_it() {
-    // Exhaustive on purpose. `Public` is the default, so a method
-    // added without a thought about its callers gets the permissive
-    // value silently — and the shape that is easiest to miss moves no
-    // funds at all: `securify` writes a leaf under its target's
-    // prefix and consumes nothing, which is the same class as any
-    // later per-account module. Adding a method breaks this list,
-    // which is the point.
-    let expected = [
+/// Who may call every authored method, as a table.
+///
+/// Exhaustive on purpose. `Public` is the default, so a method added
+/// without a thought about its callers gets the permissive value
+/// silently — and the shape that is easiest to miss moves no funds at
+/// all: `securify` writes a leaf under its target's prefix and consumes
+/// nothing, which is the same class as any later per-account module.
+/// Adding a method breaks this list, which is the point.
+fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> {
+    vec![
         ("account", "authorize", Accessibility::Authorizing),
         (
             "account",
@@ -72,7 +73,15 @@ fn every_authored_method_declares_who_may_call_it() {
         (
             "account",
             "present-badge",
-            Accessibility::Custodial(Expr::Arg(0)),
+            Accessibility::Custodial(CustodyClaim::Fungible(Expr::Arg(0))),
+        ),
+        (
+            "account",
+            "present-instance",
+            Accessibility::Custodial(CustodyClaim::Instance {
+                badge: Expr::Arg(0),
+                id: Expr::Arg(1),
+            }),
         ),
         (
             "account",
@@ -137,7 +146,11 @@ fn every_authored_method_declares_who_may_call_it() {
             }),
         ),
         ("staking", "unstake", Accessibility::Public),
-    ];
+    ]
+}
+
+#[test]
+fn every_authored_method_declares_who_may_call_it() {
     let packages = corpus();
     let declared: Vec<_> = packages
         .iter()
@@ -147,5 +160,5 @@ fn every_authored_method_declares_who_may_call_it() {
             })
         })
         .collect();
-    assert_eq!(declared, expected);
+    assert_eq!(declared, authored_accessibility());
 }

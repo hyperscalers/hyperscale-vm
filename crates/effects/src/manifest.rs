@@ -119,20 +119,37 @@ pub enum AuthorityGate {
     },
     /// The presented set must satisfy the target's stored primary at
     /// `cell` — the holder acts, nobody else presents its badges — and
-    /// the target must hold the badge: a non-zero amount in the
-    /// badge-keyed vault, or any entry in the badge-keyed holdings
-    /// interval. Both reads are the method's own declared clauses, keyed
-    /// by the same expression the mint names, so what this gate verifies
-    /// possession of is exactly the identity it mints.
+    /// the target must hold what `possession` names. Both reads are the
+    /// method's own declared clauses, keyed by the same expressions the
+    /// mint names, so what this gate verifies possession of is exactly
+    /// what it mints.
     Custody {
         /// The cell the holder's rules live in; judged as the primary.
         cell: SubstateKey,
-        /// The badge-keyed vault cell: held when its amount is non-zero.
-        vault: SubstateKey,
-        /// The holdings interval's owner — the holder itself.
+        /// What the holder must hold.
+        possession: Possession,
+    },
+}
+
+/// What a custody gate reads to decide the holder holds it.
+///
+/// One leaf either way: the badge is fungible and the vault carries an
+/// amount, or it is an instance and the holdings entry at its id is
+/// there. A resource is issued as one or the other, so a gate reads one
+/// or the other — never an interval standing in for both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Possession {
+    /// The badge-keyed vault cell: held when its amount is non-zero.
+    Vault(SubstateKey),
+    /// One entry of the badge-keyed holdings collection: held when the
+    /// entry at this id is there.
+    Instance {
+        /// The collection's owner — the holder itself.
         owner: Address,
-        /// The badge-keyed holdings collection: held when any entry is.
+        /// The badge-keyed holdings collection.
         holdings: CollectionId,
+        /// Which instance, as the entry's own order key.
+        id: u64,
     },
 }
 

@@ -125,6 +125,21 @@ pub fn metadata() -> PackageMetadata {
             ..MethodSignature::default()
         },
     );
+    // The same consumer at instance resolution: the configured resource
+    // and the configured id name one instance, and holding any other
+    // instance of that resource opens nothing.
+    methods.methods.insert(
+        "operate-instance".into(),
+        MethodSignature {
+            totality: Totality::Infallible,
+            accessibility: Accessibility::Guarded(Expr::Tuple(vec![
+                Expr::Config(0),
+                Expr::Config(1),
+            ])),
+            issues: None,
+            ..MethodSignature::default()
+        },
+    );
     methods
 }
 
@@ -184,8 +199,26 @@ pub fn burn(
     builder.call(issuer, "burn", (funds,))?.none()
 }
 
-/// Act on the badge-gated instance, presenting the badge identity a
-/// custody gate minted.
+/// Act on the instance-gated consumer, presenting the instance claim a
+/// custody gate minted. Holding another instance of the same resource
+/// opens nothing here.
+///
+/// # Errors
+///
+/// Any [`TypedError`] the call does not type against `operate-instance`.
+pub fn operate_instance(
+    builder: &mut TypedBuilder<'_>,
+    gated: ComponentAddr,
+    proof: Proof,
+) -> Result<(), TypedError> {
+    builder
+        .call_as(proof, gated, "operate-instance", ())?
+        .none()
+}
+
+/// Act on the badge-gated consumer, presenting the badge identity a
+/// custody gate minted — any instance of it, or any of it held in a
+/// vault.
 ///
 /// # Errors
 ///

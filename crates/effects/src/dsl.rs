@@ -89,6 +89,14 @@ pub enum Expr {
     /// for the producing side: a mint's id set is a list of fresh ids,
     /// each an expression of its own.
     List(Vec<Self>),
+    /// A fixed-arity product built field by field.
+    ///
+    /// What names a thing that takes more than one value to name: a
+    /// non-fungible badge instance is its resource and its id, and an
+    /// authority expression naming one says both. Distinct from
+    /// [`Expr::List`] for the reason the values are: a list is a
+    /// homogeneous sequence, and these fields are not each other's kind.
+    Tuple(Vec<Self>),
     /// A non-fungible bucket projection: the resource and the named
     /// instances an output edge carries.
     ///
@@ -190,7 +198,9 @@ impl Expr {
             Self::NfBucket { resource, ids } => {
                 resource.reads_call_inputs() || ids.reads_call_inputs()
             }
-            Self::List(elements) => elements.iter().any(Self::reads_call_inputs),
+            Self::List(elements) | Self::Tuple(elements) => {
+                elements.iter().any(Self::reads_call_inputs)
+            }
             Self::SelfResource { material } => material.iter().any(Self::reads_call_inputs),
             Self::ChildKey {
                 owner, material, ..
@@ -904,13 +914,12 @@ fn eval_expr(
             let lo = as_u64(eval_expr(lo, inputs, hasher, bindings, deeper)?)?;
             Ok(Value::U128((u128::from(hi) << 64) | u128::from(lo)))
         }
-        Expr::List(elements) => {
-            let mut values = Vec::with_capacity(elements.len());
-            for element in elements {
-                values.push(eval_expr(element, inputs, hasher, bindings, deeper)?);
-            }
-            Ok(Value::List(values))
-        }
+        Expr::List(elements) => Ok(Value::List(eval_all(
+            elements, inputs, hasher, bindings, deeper,
+        )?)),
+        Expr::Tuple(fields) => Ok(Value::Tuple(eval_all(
+            fields, inputs, hasher, bindings, deeper,
+        )?)),
         Expr::NfBucket { resource, ids } => {
             let resource = as_address(eval_expr(resource, inputs, hasher, bindings, deeper)?)?;
             let ids = id_set(as_list(eval_expr(ids, inputs, hasher, bindings, deeper)?)?)?;
@@ -920,6 +929,20 @@ fn eval_expr(
             })
         }
     }
+}
+
+/// Every element of a sequence expression, in order.
+fn eval_all(
+    elements: &[Expr],
+    inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    bindings: &[Value],
+    depth: usize,
+) -> Result<Vec<Value>, EvalError> {
+    elements
+        .iter()
+        .map(|element| eval_expr(element, inputs, hasher, bindings, depth))
+        .collect()
 }
 
 /// One field of a tuple, by position.

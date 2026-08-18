@@ -222,7 +222,12 @@ fn fungible_account() -> PackageMetadata {
     // neither name: what they would add here is a third spelling of the
     // holdings interval, where the two that matter — the module's and the
     // gate's pinned shape — already agree.
-    for aside in ["deposit-nf", "withdraw-nf", "present-badge"] {
+    for aside in [
+        "deposit-nf",
+        "withdraw-nf",
+        "present-badge",
+        "present-instance",
+    ] {
         authored.methods.remove(aside);
     }
     authored

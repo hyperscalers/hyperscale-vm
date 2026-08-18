@@ -329,6 +329,7 @@ fn every_stdlib_method_has_a_wrapper() {
                 "deposit",
                 "deposit-nf",
                 "present-badge",
+                "present-instance",
                 "propose",
                 "securify",
                 "withdraw",
@@ -338,7 +339,17 @@ fn every_stdlib_method_has_a_wrapper() {
         ("amm", &["swap"]),
         ("book", &["fill-asks", "place-ask"]),
         ("lottery", &["draw", "enter"]),
-        ("nf", &["burn", "deposit", "mint", "operate", "withdraw"]),
+        (
+            "nf",
+            &[
+                "burn",
+                "deposit",
+                "mint",
+                "operate",
+                "operate-instance",
+                "withdraw",
+            ],
+        ),
         ("registry", &["bind", "check", "drain"]),
         ("splitter", &["take"]),
         (

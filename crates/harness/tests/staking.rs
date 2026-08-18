@@ -62,7 +62,7 @@ fn badge() -> ResourceAddr {
     )
 }
 /// The badge instance the operator holds in these tests.
-const BADGE_ID: u128 = 1;
+const BADGE_ID: u64 = 1;
 
 /// A store where [`OPERATOR`] holds the pool's owner badge — what every
 /// operator-surface test starts from.
@@ -72,7 +72,7 @@ fn operator_store() -> MemoryStore {
         .entry_write(
             OPERATOR.address(),
             holdings_collection(&TestHasher, OPERATOR, badge()),
-            BADGE_ID,
+            u128::from(BADGE_ID),
             vec![1],
         )
         .unwrap();
@@ -234,14 +234,14 @@ fn validator_leaf(pool: impl Into<Address>, validator: u64) -> SubstateKey {
 /// them behaving alike, which is not a shape a wrapper per method has.
 fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
     graph(|b| {
-        let operator = account::present_badge(b, OPERATOR, badge())?;
+        let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
         b.call_as(operator, pool(), method, (validator,))?.none()
     })
 }
 
 fn register_graph(validator: u64) -> ManifestGraph {
     graph(|b| {
-        let operator = account::present_badge(b, OPERATOR, badge())?;
+        let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
         staking::register_validator(
             b,
             operator,
@@ -795,7 +795,7 @@ fn cast_payload() -> Vec<u8> {
 
 fn cast_graph() -> ManifestGraph {
     graph(|b| {
-        let operator = account::present_badge(b, OPERATOR, badge())?;
+        let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
         staking::cast_param_vote(
             b,
             operator,
@@ -832,7 +832,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     store.clear_log();
 
     let cleared = graph(|b| {
-        let operator = account::present_badge(b, OPERATOR, badge())?;
+        let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
         staking::clear_param_vote(b, operator, pool())
     });
     let entry = batch_entry(&world, &single_intent(cleared), OPERATOR)?;

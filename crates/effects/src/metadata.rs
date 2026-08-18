@@ -14,7 +14,7 @@ use crate::dsl::{
 };
 use crate::hash::{Hash32, Hasher};
 use crate::invoke::EdgeKind;
-use crate::resource::holdings_range;
+use crate::resource::holdings_entry;
 use crate::rule::Rule;
 use crate::types::{
     Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, RoleId, SubstateKey,
@@ -258,7 +258,40 @@ pub enum Accessibility {
     /// possession reads its gate judges.
     ///
     /// [`gate`]: MethodSignature::gate
-    Custodial(Expr),
+    Custodial(CustodyClaim),
+}
+
+/// Which shape of badge a custody gate is about, and how possession of
+/// it is read.
+///
+/// A resource is issued as one or the other, so the claim says which.
+/// Declaring both and admitting either — which is what a single
+/// disjunction over the vault and the whole holdings interval amounts to
+/// — leaves the declaration unable to say what the method is for, and
+/// makes every holder of a badge resource one authority. A resource used
+/// both ways takes a method per shape.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub enum CustodyClaim {
+    /// A fungible badge: held when the badge-keyed vault is non-zero.
+    Fungible(Expr),
+    /// One instance: held when the badge-keyed holdings entry at this id
+    /// is there.
+    Instance {
+        /// The badge resource.
+        badge: Expr,
+        /// Which instance of it, as the entry's own order key.
+        id: Expr,
+    },
+}
+
+impl CustodyClaim {
+    /// The badge expression, whichever shape the claim takes.
+    #[must_use]
+    pub const fn badge(&self) -> &Expr {
+        match self {
+            Self::Fungible(badge) | Self::Instance { badge, .. } => badge,
+        }
+    }
 }
 
 impl Accessibility {
@@ -424,8 +457,8 @@ pub enum GateShape<'a> {
     Custody {
         /// The cell expression the holder's stored rules live at.
         cell: &'a Expr,
-        /// The badge expression keying both possession reads.
-        badge: &'a Expr,
+        /// What is held, and how the declaration reads it.
+        claim: &'a CustodyClaim,
     },
 }
 
@@ -466,7 +499,7 @@ impl MethodSignature {
                 .rule_point(&ModeExpr::Write)
                 .map(|cell| GateShape::Rule { cell, role: *role })
                 .ok_or(AbiError::RoleGatedShape),
-            Accessibility::Custodial(badge) => self.custody(badge).ok_or(AbiError::CustodialShape),
+            Accessibility::Custodial(claim) => self.custody(claim).ok_or(AbiError::CustodialShape),
         }
     }
 
@@ -485,9 +518,10 @@ impl MethodSignature {
         }
     }
 
-    /// The custody shape over `badge`: the holder's rule cell, the
-    /// badge-keyed vault, and the badge's own holdings range.
-    fn custody<'a>(&'a self, badge: &'a Expr) -> Option<GateShape<'a>> {
+    /// The custody shape over `claim`: the holder's rule cell, and the
+    /// one possession read the claim's shape names — the badge-keyed
+    /// vault, or the badge's holdings entry at the id.
+    fn custody<'a>(&'a self, claim: &'a CustodyClaim) -> Option<GateShape<'a>> {
         let [
             Clause::Effect {
                 target: TargetExpr::Point(cell),
@@ -495,12 +529,7 @@ impl MethodSignature {
                 ..
             },
             Clause::Effect {
-                target: TargetExpr::Point(vault),
-                mode: ModeExpr::Read,
-                ..
-            },
-            Clause::Effect {
-                target: holdings @ TargetExpr::Range { cap, .. },
+                target: possession,
                 mode: ModeExpr::Read,
                 ..
             },
@@ -508,13 +537,15 @@ impl MethodSignature {
         else {
             return None;
         };
-        let vault_shape = Expr::ChildKey {
-            owner: Box::new(Expr::SelfAddr),
-            role: VAULT,
-            material: vec![badge.clone()],
+        let pinned = match claim {
+            CustodyClaim::Fungible(badge) => TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                role: VAULT,
+                material: vec![badge.clone()],
+            }),
+            CustodyClaim::Instance { badge, id } => holdings_entry(badge.clone(), id.clone()),
         };
-        (*vault == vault_shape && *cap >= 1 && *holdings == holdings_range(badge.clone(), *cap))
-            .then_some(GateShape::Custody { cell, badge })
+        (*possession == pinned).then_some(GateShape::Custody { cell, claim })
     }
 }
 
@@ -859,8 +890,11 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
 
 fn check_signature_bounds(signature: &MethodSignature) -> Result<(), MetadataBoundsError> {
     match &signature.accessibility {
-        Accessibility::Guarded(expr) | Accessibility::Custodial(expr) => {
-            check_expr_bounds(expr, 0)?;
+        Accessibility::Guarded(identity) => check_expr_bounds(identity, 0)?,
+        Accessibility::Custodial(CustodyClaim::Fungible(badge)) => check_expr_bounds(badge, 0)?,
+        Accessibility::Custodial(CustodyClaim::Instance { badge, id }) => {
+            check_expr_bounds(badge, 0)?;
+            check_expr_bounds(id, 0)?;
         }
         Accessibility::Public | Accessibility::Authorizing | Accessibility::RoleGated(_) => {}
     }
@@ -1002,7 +1036,7 @@ fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), MetadataBoundsErro
             check_expr_bounds(first, deeper)?;
             check_expr_bounds(second, deeper)
         }
-        Expr::List(elements) => {
+        Expr::List(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 check_expr_bounds(element, deeper)?;
             }
@@ -1572,6 +1606,7 @@ mod tests {
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::hash::Hash32;
+    use crate::resource::holdings_range;
     use crate::types::AddressClass;
 
     fn clause() -> Clause {
@@ -1724,64 +1759,110 @@ mod tests {
         );
     }
 
-    /// The custody shape: a badge-keyed pair of possession reads behind
-    /// the rule cell's own, tied to the badge the gate mints.
+    /// The custody shape: one possession read behind the rule cell's
+    /// own, keyed by exactly what the gate mints — the badge-keyed vault
+    /// for a fungible claim, the holdings entry at the id for an
+    /// instance one.
     #[test]
-    fn the_custody_shape_ties_possession_to_the_minted_badge() {
-        let shaped = |badge: Expr, effects| MethodSignature {
+    fn the_custody_shape_ties_possession_to_what_is_minted() {
+        let shaped = |claim: CustodyClaim, effects| MethodSignature {
             totality: Totality::Fallible,
-            accessibility: Accessibility::Custodial(badge),
+            accessibility: Accessibility::Custodial(claim),
             effects,
             ..MethodSignature::default()
         };
-        let badge = Expr::Arg(0);
-        let clauses = |vault_key: Expr, holdings_key: Expr| {
-            vec![
-                Clause::Effect {
-                    target: TargetExpr::Point(Expr::SelfAddr),
-                    mode: ModeExpr::Read,
-                    denomination: None,
-                },
-                Clause::Effect {
-                    target: TargetExpr::Point(Expr::ChildKey {
-                        owner: Box::new(Expr::SelfAddr),
-                        role: VAULT,
-                        material: vec![vault_key],
-                    }),
-                    mode: ModeExpr::Read,
-                    denomination: None,
-                },
-                Clause::Effect {
-                    target: holdings_range(holdings_key, 1),
-                    mode: ModeExpr::Read,
-                    denomination: None,
-                },
-            ]
+        let rule = || Clause::Effect {
+            target: TargetExpr::Point(Expr::SelfAddr),
+            mode: ModeExpr::Read,
+            denomination: None,
         };
+        let read = |target| Clause::Effect {
+            target,
+            mode: ModeExpr::Read,
+            denomination: None,
+        };
+        let vault = |key: Expr| {
+            TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                role: VAULT,
+                material: vec![key],
+            })
+        };
+        let badge = Expr::Arg(0);
+        let id = Expr::Arg(1);
 
-        let well_formed = shaped(badge.clone(), clauses(badge.clone(), badge.clone()));
+        // A fungible claim: the vault keyed by the badge it mints.
+        let fungible = CustodyClaim::Fungible(badge.clone());
+        let well_formed = shaped(fungible.clone(), vec![rule(), read(vault(badge.clone()))]);
         assert_eq!(check_abi(&well_formed), Ok(()));
         assert!(matches!(well_formed.gate(), Ok(GateShape::Custody { .. })));
 
-        // A possession read keyed by anything but the minted expression
-        // would verify holding one thing while minting another.
-        assert_eq!(
-            check_abi(&shaped(badge.clone(), clauses(Expr::Arg(1), badge.clone()))),
-            Err(AbiError::CustodialShape)
+        // An instance claim: the holdings entry at the id it mints.
+        let instance = CustodyClaim::Instance {
+            badge: badge.clone(),
+            id: id.clone(),
+        };
+        let well_formed = shaped(
+            instance.clone(),
+            vec![rule(), read(holdings_entry(badge.clone(), id.clone()))],
         );
-        assert_eq!(
-            check_abi(&shaped(badge.clone(), clauses(badge.clone(), Expr::Arg(1)))),
-            Err(AbiError::CustodialShape)
-        );
-        // The rule cell's read alone, with no possession beside it.
+        assert_eq!(check_abi(&well_formed), Ok(()));
+        assert!(matches!(well_formed.gate(), Ok(GateShape::Custody { .. })));
+
+        // A possession read keyed by anything but what is minted would
+        // verify holding one thing while minting another.
         assert_eq!(
             check_abi(&shaped(
-                badge,
-                vec![Clause::Effect {
-                    target: TargetExpr::Point(Expr::SelfAddr),
-                    mode: ModeExpr::Read,
-                    denomination: None,
-                }],
+                fungible.clone(),
+                vec![rule(), read(vault(Expr::Arg(1)))]
+            )),
+            Err(AbiError::CustodialShape)
+        );
+        assert_eq!(
+            check_abi(&shaped(
+                instance.clone(),
+                vec![rule(), read(holdings_entry(Expr::Arg(2), id.clone()))]
+            )),
+            Err(AbiError::CustodialShape)
+        );
+        assert_eq!(
+            check_abi(&shaped(
+                instance.clone(),
+                vec![rule(), read(holdings_entry(badge.clone(), Expr::Arg(2)))]
+            )),
+            Err(AbiError::CustodialShape)
+        );
+
+        // Each claim admits its own shape of read and not the other's:
+        // a resource is issued as one or the other, and the declaration
+        // says which.
+        assert_eq!(
+            check_abi(&shaped(
+                fungible.clone(),
+                vec![rule(), read(holdings_entry(badge.clone(), id))]
+            )),
+            Err(AbiError::CustodialShape)
+        );
+        assert_eq!(
+            check_abi(&shaped(instance, vec![rule(), read(vault(badge.clone()))])),
+            Err(AbiError::CustodialShape)
+        );
+
+        // The rule cell's read alone, with no possession beside it, and
+        // the old three-clause shape that declared both and meant
+        // either.
+        assert_eq!(
+            check_abi(&shaped(fungible.clone(), vec![rule()])),
+            Err(AbiError::CustodialShape)
+        );
+        assert_eq!(
+            check_abi(&shaped(
+                fungible,
+                vec![
+                    rule(),
+                    read(vault(badge.clone())),
+                    read(holdings_range(badge, 1)),
+                ]
             )),
             Err(AbiError::CustodialShape)
         );
@@ -1846,7 +1927,7 @@ mod tests {
         for accessibility in [
             Accessibility::Guarded(Expr::SelfAddr),
             Accessibility::Authorizing,
-            Accessibility::Custodial(Expr::Arg(0)),
+            Accessibility::Custodial(CustodyClaim::Fungible(Expr::Arg(0))),
             Accessibility::RoleGated(AuthRole::Primary),
         ] {
             assert_eq!(

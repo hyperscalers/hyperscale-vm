@@ -26,4 +26,8 @@ world nf {
     /// Nothing but its own gate: opens for whoever presents the identity
     /// the configured badge resource names.
     export operate: func();
+
+    /// The same, at instance resolution: opens for whoever presents the
+    /// one instance the configured resource and id name.
+    export operate-instance: func();
 }

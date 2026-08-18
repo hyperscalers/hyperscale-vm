@@ -19,10 +19,10 @@ use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
 use crate::hash::Hasher;
 use crate::invoke::EdgeKind;
-use crate::manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
+use crate::manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};
 use crate::metadata::{
-    AbiError, Accessibility, GateShape, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
-    ParamType,
+    AbiError, Accessibility, CustodyClaim, GateShape, InstanceMeta, InstanceRegistry,
+    MetadataCache, PackageHash, ParamType,
 };
 use crate::presented::Presented;
 use crate::resource::holdings_collection;
@@ -974,11 +974,11 @@ pub(crate) fn admit_intents(
             }
         }
         // A custodial gate: the holder's stored primary plus possession
-        // of the badge it mints. The pinned shape ties the possession
-        // reads to that expression, so the vault key and holdings
-        // collection are the badge's own derivations.
+        // of what it mints. The pinned shape keys the possession read by
+        // exactly the claim's own expressions, so the vault key and the
+        // holdings entry are the badge's own derivations.
         let custody = match gate {
-            GateShape::Custody { cell: rule, badge } => {
+            GateShape::Custody { cell: rule, claim } => {
                 let eval = |expr| {
                     evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
                         AdmissionError::Eval {
@@ -987,7 +987,7 @@ pub(crate) fn admit_intents(
                         }
                     })
                 };
-                let badge = match eval(badge)? {
+                let badge = match eval(claim.badge())? {
                     Value::Address(badge) if badge.class() == AddressClass::Resource => badge,
                     _ => return Err(AdmissionError::MintType { node: node_index }),
                 };
@@ -995,20 +995,40 @@ pub(crate) fn admit_intents(
                     return Err(AdmissionError::RuleCell { node: node_index });
                 };
                 let holder = node.target.address();
-                Some((
-                    badge,
-                    AuthorityGate::Custody {
-                        cell,
-                        vault: child_key(
+                // An instance holder holds the badge, so presenting one
+                // satisfies a rule naming the resource as well as a rule
+                // naming the instance. The widening happens here, where
+                // possession was verified, which is what keeps the judge
+                // an equality walk rather than a subsumption rule every
+                // reader of a stored rule would have to share.
+                let (minted, possession) = match claim {
+                    CustodyClaim::Fungible(_) => (
+                        vec![Presented::Resource(badge)],
+                        Possession::Vault(child_key(
                             hasher,
                             holder,
                             VAULT,
                             &[Value::Address(badge).canonical_bytes()],
-                        ),
-                        owner: holder,
-                        holdings: holdings_collection(hasher, holder, badge),
-                    },
-                ))
+                        )),
+                    ),
+                    CustodyClaim::Instance { id, .. } => {
+                        let id = match eval(id)? {
+                            Value::U64(id) => id,
+                            Value::U128(id) => u64::try_from(id)
+                                .map_err(|_| AdmissionError::MintType { node: node_index })?,
+                            _ => return Err(AdmissionError::MintType { node: node_index }),
+                        };
+                        (
+                            vec![Presented::Instance(badge, id), Presented::Resource(badge)],
+                            Possession::Instance {
+                                owner: holder,
+                                holdings: holdings_collection(hasher, holder, badge),
+                                id,
+                            },
+                        )
+                    }
+                };
+                Some((minted, AuthorityGate::Custody { cell, possession }))
             }
             GateShape::Open | GateShape::Identity(_) | GateShape::Rule { .. } => None,
         };
@@ -1017,7 +1037,7 @@ pub(crate) fn admit_intents(
         // never what the caller claims.
         let authority = match gate {
             GateShape::Open => None,
-            GateShape::Custody { .. } => custody.map(|(_, gate)| gate),
+            GateShape::Custody { .. } => custody.as_ref().map(|(_, gate)| *gate),
             GateShape::Identity(expr) => {
                 let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
                     AdmissionError::Eval {
@@ -1071,9 +1091,7 @@ pub(crate) fn admit_intents(
         // else.
         minted.push(match &signature.accessibility {
             Accessibility::Authorizing => vec![Presented::Identity(node.target.address())],
-            Accessibility::Custodial(_) => custody
-                .map(|(badge, _)| vec![Presented::Resource(badge)])
-                .unwrap_or_default(),
+            Accessibility::Custodial(_) => custody.map(|(claims, _)| claims).unwrap_or_default(),
             Accessibility::Public | Accessibility::Guarded(_) | Accessibility::RoleGated(_) => {
                 Vec::new()
             }

@@ -68,17 +68,17 @@ pub use hyperscale_vm_types::{
     declared_work, entry_leaf_key, signature_work, work_units,
 };
 pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, cell_ids, ids_cell};
-pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
+pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};
 pub use metadata::{
-    AbiError, AbiParam, Accessibility, DeclarationError, GateShape, InstanceMeta, InstanceRegistry,
-    MetadataBoundsError, MetadataCache, MethodSignature, PACKAGE_ROLE, PackageHash,
-    PackageMetadata, ParamType, Totality, check_abi, check_declarations, check_metadata,
-    package_hash, package_key,
+    AbiError, AbiParam, Accessibility, CustodyClaim, DeclarationError, GateShape, InstanceMeta,
+    InstanceRegistry, MetadataBoundsError, MetadataCache, MethodSignature, PACKAGE_ROLE,
+    PackageHash, PackageMetadata, ParamType, Totality, check_abi, check_declarations,
+    check_metadata, package_hash, package_key,
 };
 pub use presented::Presented;
 pub use resource::{
-    Fungibility, ResourceRecord, holdings_collection, holdings_range, instance_data_key,
-    resource_record_key,
+    Fungibility, ResourceRecord, holdings_collection, holdings_entry, holdings_range,
+    instance_data_key, resource_record_key,
 };
 pub use route::{
     FrameDeclaration, MAX_MANIFEST_NODES, MAX_STAGED_DEPTH, MethodRef, PrefixShardResolver, Role,

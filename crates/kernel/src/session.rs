@@ -1071,22 +1071,23 @@ impl KernelSession {
         Ok(self.store.read(key)?.unwrap_or_default())
     }
 
-    /// Whether a declared holdings interval holds anything, for the
-    /// kernel's custody gate — the same view the range capability
-    /// serves, over the collection the gate admission lowered names,
-    /// which is declared by construction like the gate's cells.
+    /// Whether the holder keeps the instance at `order`, for the
+    /// kernel's custody gate — the same view an entry capability serves,
+    /// over the collection the gate admission lowered names, which is
+    /// declared by construction like the gate's cells.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`] the store raises.
-    pub fn declared_holdings_non_empty(
+    pub fn declared_holds_instance(
         &mut self,
         owner: Address,
         collection: CollectionId,
+        order: u128,
     ) -> Result<bool, SessionTrap> {
         Ok(!self
             .store
-            .entries_in_range(owner, collection, 0, u128::MAX, 1)?
+            .entries_in_range(owner, collection, order, order, 1)?
             .is_empty())
     }
 

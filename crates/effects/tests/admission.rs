@@ -11,11 +11,11 @@ use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world}
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, Address, AddressClass, AdmissionError, AuthRole, AuthorityGate,
-    Clause, ComponentAddr, Constraint, EdgeKind, EdgeRef, Effect, EffectTarget, EvidenceRef, Expr,
-    GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph,
-    MetadataCache, MethodSignature, Mode, ModeExpr, PackageMetadata, ParamType, Presented,
-    ResourceAddr, TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id,
-    holdings_collection, holdings_range, route,
+    Clause, ComponentAddr, Constraint, CustodyClaim, EdgeKind, EdgeRef, Effect, EffectTarget,
+    EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
+    MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr,
+    PackageMetadata, ParamType, Possession, Presented, ResourceAddr, TargetExpr, TestHasher,
+    Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -305,24 +305,23 @@ fn custodian_world(
         mode: ModeExpr::Read,
         denomination: None,
     };
-    let effects = match accessibility {
-        Accessibility::Custodial(_) => vec![
+    let possession = |target| Clause::Effect {
+        target,
+        mode: ModeExpr::Read,
+        denomination: None,
+    };
+    let effects = match &accessibility {
+        Accessibility::Custodial(CustodyClaim::Fungible(_)) => vec![
             rule,
-            Clause::Effect {
-                target: TargetExpr::Point(Expr::ChildKey {
-                    owner: Box::new(Expr::SelfAddr),
-                    role: VAULT,
-                    material: vec![Expr::Config(0)],
-                }),
-                mode: ModeExpr::Read,
-                denomination: None,
-            },
-            Clause::Effect {
-                target: holdings_range(Expr::Config(0), 1),
-                mode: ModeExpr::Read,
-                denomination: None,
-            },
+            possession(TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                role: VAULT,
+                material: vec![Expr::Config(0)],
+            })),
         ],
+        Accessibility::Custodial(CustodyClaim::Instance { badge, id }) => {
+            vec![rule, possession(holdings_entry(badge.clone(), id.clone()))]
+        }
         _ => vec![rule],
     };
     let mut package = PackageMetadata::default();
@@ -382,7 +381,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     let badge = Address::new([0xB0; 31], AddressClass::Resource);
 
     let (cache, instances, custodian) = custodian_world(
-        Accessibility::Custodial(Expr::Config(0)),
+        Accessibility::Custodial(CustodyClaim::Fungible(Expr::Config(0))),
         vec![Value::Address(badge)],
     );
     let admitted = admit(
@@ -398,16 +397,14 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
         present.authority,
         Some(AuthorityGate::Custody {
             cell: child_key(&TestHasher, custodian, AUTH, &[]),
-            vault: child_key(
+            possession: Possession::Vault(child_key(
                 &TestHasher,
                 custodian,
                 VAULT,
                 &[Value::Address(badge).canonical_bytes()],
-            ),
-            owner: custodian.into(),
-            holdings: holdings_collection(&TestHasher, custodian, badge),
+            )),
         }),
-        "the gate is the holder's rule plus the badge-keyed possession reads"
+        "the gate is the holder's rule plus the badge-keyed vault"
     );
     let operate = &admitted.manifest().nodes[1];
     assert_eq!(
@@ -441,7 +438,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     // A badge that is not a resource address has nothing possessable
     // behind it.
     let (cache, instances, custodian) = custodian_world(
-        Accessibility::Custodial(Expr::Config(0)),
+        Accessibility::Custodial(CustodyClaim::Fungible(Expr::Config(0))),
         vec![Value::Address(Address::new(
             [0xB0; 31],
             AddressClass::Component,

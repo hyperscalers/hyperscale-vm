@@ -12,7 +12,7 @@
 
 use hyperscale_vm_effects::{
     AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, MAX_ERROR_CODES, NodeCall,
-    PackageHash,
+    PackageHash, Possession,
 };
 use hyperscale_vm_embed::{CellKind, GuestArg, Invoked};
 
@@ -335,18 +335,13 @@ fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, Sess
                 clock,
             ))
         }
-        Some(AuthorityGate::Custody {
-            cell,
-            vault,
-            owner,
-            holdings,
-        }) => {
+        Some(AuthorityGate::Custody { cell, possession }) => {
             // The holder acts — its stored primary judges the presented
-            // set exactly as a sign-in would — and the holder holds:
-            // value in the badge-keyed vault, or any instance in the
-            // badge-keyed holdings. Anything but a well-formed non-zero
-            // amount cell reads as not held; a corrupt vault grants
-            // nothing.
+            // set exactly as a sign-in would — and the holder holds what
+            // the claim names: value in the badge-keyed vault, or the
+            // instance at its own id. Anything but a well-formed
+            // non-zero amount cell reads as not held; a corrupt vault
+            // grants nothing.
             let bytes = session.declared_cell(cell)?;
             let clock = session.clock_ms();
             if !AuthCell::admits(
@@ -358,9 +353,17 @@ fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, Sess
             ) {
                 return Ok(false);
             }
-            let amount = session.declared_cell(vault)?;
-            let funded = decode_amount(&amount).is_ok_and(|held| held > 0);
-            Ok(funded || session.declared_holdings_non_empty(owner, holdings)?)
+            match possession {
+                Possession::Vault(vault) => {
+                    let amount = session.declared_cell(vault)?;
+                    Ok(decode_amount(&amount).is_ok_and(|held| held > 0))
+                }
+                Possession::Instance {
+                    owner,
+                    holdings,
+                    id,
+                } => session.declared_holds_instance(owner, holdings, u128::from(id)),
+            }
         }
     }
 }

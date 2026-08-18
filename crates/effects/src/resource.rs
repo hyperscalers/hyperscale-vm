@@ -110,12 +110,8 @@ pub fn holdings_collection(
 /// `cap` entries of it.
 ///
 /// Every holdings declaration is this one shape — deposit and withdraw
-/// range over it, and the custody gate admits a possession read only as
-/// this target keyed by exactly the badge it mints
-/// ([`MethodSignature::gate`]) — so a declaration that spells the fold
-/// any other way is refused rather than silently unmatched.
-///
-/// [`MethodSignature::gate`]: crate::metadata::MethodSignature::gate
+/// range over it — so a declaration that spells the fold any other way
+/// is refused rather than silently unmatched.
 #[must_use]
 pub fn holdings_range(resource: Expr, cap: u32) -> TargetExpr {
     TargetExpr::Range {
@@ -125,6 +121,27 @@ pub fn holdings_range(resource: Expr, cap: u32) -> TargetExpr {
         lo: Expr::Literal(Value::U128(0)),
         hi: Expr::Literal(Value::U128(u128::MAX)),
         cap,
+    }
+}
+
+/// One entry of that same interval: the instance of `resource` this
+/// holder keeps at `id`.
+///
+/// The custody gate admits a possession read only as this target, keyed
+/// by exactly the badge and id it mints ([`MethodSignature::gate`]) —
+/// which is what makes the instance verified and the instance minted one
+/// thing. An entry read where the interval used to be is also the
+/// cheaper access: one leaf rather than a scan the whole id space is
+/// declared over.
+///
+/// [`MethodSignature::gate`]: crate::metadata::MethodSignature::gate
+#[must_use]
+pub fn holdings_entry(resource: Expr, id: Expr) -> TargetExpr {
+    TargetExpr::Entry {
+        owner: Expr::SelfAddr,
+        collection: NF_VAULT,
+        material: vec![resource],
+        order: id,
     }
 }
 

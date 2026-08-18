@@ -41,9 +41,10 @@ pub use package::account::invoke;
 /// `deposit-nf` and `withdraw-nf` are the same pair over instances: the
 /// entries of the holder's per-resource holdings interval, created at
 /// deposit and removed at withdrawal, gated exactly as the fungible pair
-/// is. `present-badge` is the custody gate — the holder's own rule, since
-/// nobody else presents its badges, plus possession of the named badge,
-/// minting the badge's address as evidence.
+/// is. `present-badge` and `present-instance` are the custody gate — the
+/// holder's own rule, since nobody else presents its badges, plus
+/// possession of the badge named or of one instance of it, minting what
+/// was verified as evidence.
 ///
 /// Spending and writing require the account's own authority; being paid
 /// does not. Anyone may credit you, and a transfer therefore still
@@ -241,4 +242,22 @@ pub fn present_badge(
     badge: impl Into<ResourceRef>,
 ) -> Result<Proof, TypedError> {
     builder.call_minting_args(who, "present-badge", (badge.into(),))
+}
+
+/// Present `who`'s custody of instance `id` of `badge`.
+///
+/// The holder's own rule plus possession of that instance, minting both
+/// the instance and the badge it is an instance of as evidence for later
+/// nodes of the same intent.
+///
+/// # Errors
+///
+/// Any [`TypedError`] the call does not type against `present-instance`.
+pub fn present_instance(
+    builder: &mut TypedBuilder<'_>,
+    who: PrincipalAddr,
+    badge: impl Into<ResourceRef>,
+    id: u64,
+) -> Result<Proof, TypedError> {
+    builder.call_minting_args(who, "present-instance", (badge.into(), id))
 }

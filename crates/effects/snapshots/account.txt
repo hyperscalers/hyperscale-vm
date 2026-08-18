@@ -210,8 +210,10 @@ PackageMetadata {
         },
         "present-badge": MethodSignature {
             accessibility: Custodial(
-                Arg(
-                    0,
+                Fungible(
+                    Arg(
+                        0,
+                    ),
                 ),
             ),
             totality: Infallible,
@@ -252,8 +254,44 @@ PackageMetadata {
                     mode: Read,
                     denomination: None,
                 },
+            ],
+            abi: [],
+        },
+        "present-instance": MethodSignature {
+            accessibility: Custodial(
+                Instance {
+                    badge: Arg(
+                        0,
+                    ),
+                    id: Arg(
+                        1,
+                    ),
+                },
+            ),
+            totality: Infallible,
+            issues: None,
+            params: [
+                Address,
+                U64,
+            ],
+            outputs: [],
+            denominations: [],
+            effects: [
                 Effect {
-                    target: Range {
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            role: RoleId(
+                                4,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Read,
+                    denomination: None,
+                },
+                Effect {
+                    target: Entry {
                         owner: SelfAddr,
                         collection: RoleId(
                             6,
@@ -263,17 +301,9 @@ PackageMetadata {
                                 0,
                             ),
                         ],
-                        lo: Literal(
-                            U128(
-                                0,
-                            ),
+                        order: Arg(
+                            1,
                         ),
-                        hi: Literal(
-                            U128(
-                                340282366920938463463374607431768211455,
-                            ),
-                        ),
-                        cap: 1,
                     },
                     mode: Read,
                     denomination: None,

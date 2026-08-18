@@ -30,8 +30,8 @@
 //! published contract whose method can never be called.
 
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, AuthRole, Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
-    MAX_FOREACH_ELEMENTS, ModeExpr, ParamType, RoleId, TargetExpr, Totality, Value,
+    AbiParam, Accessibility, AuthRole, Clause, CustodyClaim, Expr, MAX_CLAUSE_DEPTH,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, ParamType, RoleId, TargetExpr, Totality, Value,
 };
 
 use crate::sym::{Addr, Amount, Key, Kind, Num, Opaque, Seq, Sym, expr_depth};
@@ -505,10 +505,20 @@ impl Trace {
     }
 
     /// Record that naming this method requires the target's own rule and
-    /// its possession of `badge`, and mints the badge's address.
+    /// its possession of some of the fungible badge `badge`, and mints
+    /// that badge's address.
     pub fn custodial(&mut self, badge: &Sym<Addr>) {
-        let expr = self.lower(badge.expr().clone());
-        self.accessibility = Accessibility::Custodial(expr);
+        let badge = self.lower(badge.expr().clone());
+        self.accessibility = Accessibility::Custodial(CustodyClaim::Fungible(badge));
+    }
+
+    /// Record that naming this method requires the target's own rule and
+    /// its possession of instance `id` of `badge`, and mints both that
+    /// instance and the badge it is an instance of.
+    pub fn custodial_instance(&mut self, badge: &Sym<Addr>, id: &Sym<Amount>) {
+        let badge = self.lower(badge.expr().clone());
+        let id = self.lower(id.expr().clone());
+        self.accessibility = Accessibility::Custodial(CustodyClaim::Instance { badge, id });
     }
 
     /// Record that this method produces a value edge carrying `resource`.
@@ -711,6 +721,12 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
             elements
                 .into_iter()
                 .map(|element| rebind(element, depth))
+                .collect(),
+        ),
+        Expr::Tuple(fields) => Expr::Tuple(
+            fields
+                .into_iter()
+                .map(|field| rebind(field, depth))
                 .collect(),
         ),
         Expr::SelfResource { material } => Expr::SelfResource {

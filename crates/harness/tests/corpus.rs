@@ -671,8 +671,17 @@ fn amount_of(store: &mut MemoryStore, key: SubstateKey) -> u128 {
 /// signature it names and every edge carries the resource that signature
 /// declares — neither of which is written out below.
 fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -> ManifestGraph {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    graph_in(&world(), write)
+}
+
+/// As [`graph`], against a world a test extended: an instance whose
+/// configuration names something only a run can produce — an instance id
+/// — is registered by the test rather than by the shared fixture.
+fn graph_in(
+    world: &(MetadataCache, InstanceRegistry),
+    write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
+) -> ManifestGraph {
+    let mut b = TypedBuilder::new(&world.0, &world.1, &TestHasher);
     write(&mut b).expect("every call types against its signature");
     b.build().expect("every output is consumed")
 }
@@ -2299,9 +2308,9 @@ fn custody_opens_for_the_holder_and_only_the_holder() -> Result<()> {
 
     let badge = nf_resource();
     let gated = gated_by(badge.address(), 9);
-    let operate_as = |who: PrincipalAddr| {
+    let operate_as = |who: PrincipalAddr, id: u64| {
         graph(|b| {
-            let held = account::present_badge(b, who, badge)?;
+            let held = account::present_instance(b, who, badge, id)?;
             nf::operate(b, gated, held)
         })
     };
@@ -2341,8 +2350,8 @@ fn custody_opens_for_the_holder_and_only_the_holder() -> Result<()> {
         &world,
         &store,
         &[
-            (&operate_as(ALICE), TxHash(Hash32([0x72; 32]))),
-            (&operate_as(BOB), TxHash(Hash32([0x73; 32]))),
+            (&operate_as(ALICE, id), TxHash(Hash32([0x72; 32]))),
+            (&operate_as(BOB, id), TxHash(Hash32([0x73; 32]))),
         ],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));
@@ -2354,7 +2363,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() -> Result<()> {
         &engines,
         &world,
         &store,
-        &[(&operate_as(ALICE), TxHash(Hash32([0x74; 32])))],
+        &[(&operate_as(ALICE, id), TxHash(Hash32([0x74; 32])))],
         Some(BOB),
     );
     assert_eq!(
@@ -2375,8 +2384,8 @@ fn custody_opens_for_the_holder_and_only_the_holder() -> Result<()> {
         &store,
         &[
             (&transfer, TxHash(Hash32([0x75; 32]))),
-            (&operate_as(BOB), TxHash(Hash32([0x76; 32]))),
-            (&operate_as(ALICE), TxHash(Hash32([0x77; 32]))),
+            (&operate_as(BOB, id), TxHash(Hash32([0x76; 32]))),
+            (&operate_as(ALICE, id), TxHash(Hash32([0x77; 32]))),
         ],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));
@@ -2386,6 +2395,112 @@ fn custody_opens_for_the_holder_and_only_the_holder() -> Result<()> {
         TxResult::Refused(Outcome::Unauthorized { node: 0 })
     );
 
+    Ok(())
+}
+
+/// One badge resource, one instance per admin: the shape every real
+/// permission system takes, and the one the whole plan exists to reach.
+///
+/// Two holders of distinct instances of one resource present distinct
+/// claims, so a gate naming one instance refuses the holder of the
+/// other. The resource-naming gate still admits both, because a holder
+/// of an instance holds the badge — which is what makes revoking an
+/// admin a burn rather than a redeploy.
+#[test]
+fn distinct_instances_of_one_badge_are_distinct_authorities() -> Result<()> {
+    let (cache, mut instances) = world();
+    let engines = Engines::build()?;
+    let store = MemoryStore::new();
+    let badge = nf_resource();
+
+    // Seat one instance on each holder.
+    let seat = graph(|b| {
+        let first = nf::mint(b, nf_issuer())?;
+        account::deposit_nf(b, ALICE, first)?;
+        let second = nf::mint(b, nf_issuer())?;
+        account::deposit_nf(b, BOB, second)
+    });
+    let (results, store) = run_both(
+        &engines,
+        &(cache.clone(), instances.clone()),
+        &store,
+        &[(&seat, TxHash(Hash32([0x81; 32])))],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    let held = |store: &MemoryStore, who: PrincipalAddr| -> Vec<u64> {
+        store
+            .collection_entries()
+            .filter(|(key, _)| {
+                (key.owner, key.collection)
+                    == (who.address(), holdings_collection(&TestHasher, who, badge))
+            })
+            .map(|(key, _)| u64::try_from(key.order).unwrap())
+            .collect()
+    };
+    let alices = held(&store, ALICE)[0];
+    let bobs = held(&store, BOB)[0];
+    assert_ne!(alices, bobs, "the two hold different instances");
+
+    // A consumer gated on Alice's instance, and one gated on the badge
+    // resource at large. Both are ordinary instances of the same
+    // package; what differs is the configuration each names.
+    let by_instance = InstanceMeta {
+        package: pkg("nf"),
+        config: vec![Value::Address(badge.address()), Value::U64(alices)],
+        salt: Hash32([12; 32]),
+    };
+    let by_instance_addr = by_instance.address(&TestHasher);
+    instances.create(&TestHasher, by_instance);
+    let world = (cache, instances);
+    let by_resource = gated_by(badge.address(), 9);
+
+    let operate_instance = |who: PrincipalAddr, id: u64| {
+        graph_in(&world, |b| {
+            let held = account::present_instance(b, who, badge, id)?;
+            nf::operate_instance(b, by_instance_addr, held)
+        })
+    };
+    let operate_resource = |who: PrincipalAddr, id: u64| {
+        graph_in(&world, |b| {
+            let held = account::present_instance(b, who, badge, id)?;
+            nf::operate(b, by_resource, held)
+        })
+    };
+
+    // The instance the gate names opens it; the sibling instance does
+    // not, though it is the same resource and its holder holds it.
+    let (results, _) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[
+            (&operate_instance(ALICE, alices), TxHash(Hash32([0x82; 32]))),
+            (&operate_instance(BOB, bobs), TxHash(Hash32([0x83; 32]))),
+        ],
+    );
+    assert!(
+        matches!(results[0], TxResult::Completed(_)),
+        "the named instance's holder acts"
+    );
+    assert_eq!(
+        results[1],
+        TxResult::Refused(Outcome::Unauthorized { node: 1 }),
+        "a sibling instance of the same resource is a different authority"
+    );
+
+    // The resource-naming gate admits either holder: the instance claim
+    // carries the badge it is an instance of.
+    let (results, _) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[
+            (&operate_resource(ALICE, alices), TxHash(Hash32([0x84; 32]))),
+            (&operate_resource(BOB, bobs), TxHash(Hash32([0x85; 32]))),
+        ],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    assert!(matches!(results[1], TxResult::Completed(_)));
     Ok(())
 }
 
