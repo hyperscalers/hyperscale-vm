@@ -82,6 +82,10 @@ pub fn method(
             // the resource type it arrived as, so the variant is a fact
             // about the parameter rather than an assumption at the
             // accessor.
+            // The declaration's own verdict, arriving as itself: the
+            // guest branches on it rather than on the condition, so the
+            // two cannot disagree.
+            Carries::Flag => signature.push(quote!(#ident: bool)),
             Carries::Handle(resource) => {
                 let ty = resource_type(resource);
                 let variant = handle_variant(resource);
@@ -107,6 +111,7 @@ pub fn method(
             }
             Carries::Value => match shape {
                 Shape::Scalar => signature.push(quote!(#ident: u64)),
+                Shape::Flag => signature.push(quote!(#ident: bool)),
                 // Named through the world's own alias, so the generated
                 // type cannot collide with the vocabulary's `Address`
                 // that the author's module already imports; the words

@@ -152,6 +152,16 @@ pub struct Site {
 }
 
 impl Site {
+    /// Whether this site declares a clause at all.
+    ///
+    /// A body that opens a handle and never uses it names no mode, so
+    /// there is nothing for the declaration to say — the same predicate
+    /// the emission uses to skip the clause, asked here so a guard's
+    /// flag is bound exactly where a clause exists to answer for it.
+    pub fn declares(&self) -> bool {
+        self.resource().is_some()
+    }
+
     /// The kernel resource this site's handle borrows, which is its mode
     /// and its target shape together.
     ///
@@ -200,6 +210,18 @@ impl Site {
 pub enum Node {
     /// One declared access, by index into [`Lowered::sites`].
     Site(usize),
+    /// One access set per branch of a condition the declaration can
+    /// read: the clauses inside carry it, and an execution that does not
+    /// meet it declares none of them.
+    Guarded {
+        /// The condition, as the declaration evaluates it.
+        cond: Term,
+        /// The clauses inside.
+        body: Vec<Self>,
+        /// Whether the export takes this arm's verdict, which is true
+        /// for exactly one arm of a branch that declares anything.
+        binds: bool,
+    },
     /// One access set per element of a configured collection.
     ForEach {
         /// The collection mapped over.
@@ -209,6 +231,27 @@ pub enum Node {
         /// The clauses inside.
         body: Vec<Self>,
     },
+}
+
+/// Which way a branch's flag reads.
+///
+/// A flag names a clause, and the clause it can name is one the arm
+/// declared — so where only the `else` arm touches state, the verdict
+/// bound is that arm's and the `if` reads its negation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Polarity {
+    /// The flag names a clause of the `if` arm.
+    Taken,
+    /// The flag names a clause of the `else` arm.
+    Untaken,
+}
+
+/// Whether any clause under these nodes declares an access.
+fn declares(nodes: &[Node], sites: &[Site]) -> bool {
+    nodes.iter().any(|node| match node {
+        Node::Site(index) => sites.get(*index).is_some_and(Site::declares),
+        Node::Guarded { body, .. } | Node::ForEach { body, .. } => declares(body, sites),
+    })
 }
 
 /// A runtime value the guest reaches through an export parameter because
@@ -294,6 +337,9 @@ pub struct Lowered {
     pub values: Vec<Need>,
     /// How many fresh ids the body draws.
     pub fresh: usize,
+    /// The branches whose verdict the export takes, in the order they
+    /// were declared, each saying which arm's clause its flag names.
+    pub flags: Vec<Polarity>,
     /// The mark of the resource the body issues, where it issues one, and
     /// so whether the export takes the grant.
     pub issues: Option<Vec<u8>>,
@@ -507,6 +553,11 @@ pub fn value_ident(index: usize) -> syn::Ident {
     syn::Ident::new(&format!("__value_{index}"), Span::call_site())
 }
 
+/// The generated name of the `index`-th branch's verdict.
+pub fn flag_ident(index: usize) -> syn::Ident {
+    syn::Ident::new(&format!("__flag_{index}"), Span::call_site())
+}
+
 /// The generated name of the handle materialized for `site`.
 pub fn handle_ident(site: usize) -> syn::Ident {
     syn::Ident::new(&format!("__capability_{site}"), Span::call_site())
@@ -528,6 +579,11 @@ pub fn handle_variant(resource: &str) -> TokenStream {
 /// The lowering pass over one method body.
 pub struct Lowerer<'a> {
     fields: &'a BTreeMap<String, Field>,
+    /// Whether the method claims totality, which is what turns a branch
+    /// back into the superset it used to declare: a total leg runs with
+    /// every declared handle materialized, and a guarded-out clause
+    /// materializes none.
+    total: bool,
     /// The protocol's own cells, which exist under every owner and are
     /// reached by accessor rather than declared as fields.
     accessors: &'a BTreeMap<String, Field>,
@@ -542,6 +598,11 @@ pub struct Lowerer<'a> {
     out: Lowered,
     /// The clause scopes being built, innermost last.
     scopes: Vec<Vec<Node>>,
+    /// How many `for-each` binders enclose the walk.
+    binders: usize,
+    /// The conditions the walk is under, innermost last, each already
+    /// conjoined with the ones enclosing it.
+    guards: Vec<Term>,
     errors: Vec<syn::Error>,
 }
 
@@ -553,9 +614,11 @@ impl<'a> Lowerer<'a> {
         config_fields: &'a [(String, syn::Type)],
         params: &'a [(String, syn::Type)],
         returns: bool,
+        total: bool,
     ) -> Self {
         Self {
             fields,
+            total,
             accessors,
             config_fields,
             params,
@@ -563,6 +626,8 @@ impl<'a> Lowerer<'a> {
             locals: vec![BTreeMap::new()],
             out: Lowered::default(),
             scopes: vec![Vec::new()],
+            binders: 0,
+            guards: Vec::new(),
             errors: Vec::new(),
         }
     }
@@ -683,8 +748,14 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// How many `for-each` binders enclose the walk.
+    ///
+    /// The binder count rather than the scope depth: a guard opens a
+    /// scope to collect its arm's clauses and introduces no binder, so a
+    /// clause inside one still names a fixed export parameter and still
+    /// reads the enclosing loop's element.
     const fn depth(&self) -> usize {
-        self.scopes.len() - 1
+        self.binders
     }
 
     fn error(&mut self, span: Span, message: &str) {
@@ -963,6 +1034,24 @@ impl<'a> Lowerer<'a> {
     /// resources at once — so the second one is refused where the body
     /// wrote it rather than left for a caller to discover.
     fn denominate(&mut self, param: u32, resource: Term, span: Span) {
+        // Under a guard the two are the arms of one selection rather
+        // than a contradiction, so they fold into one expression — still
+        // exactly one, so what a caller reads off the signature stays
+        // exact rather than widening to a set.
+        if let Some(held) = self.out.denominations.get(&param).cloned()
+            && held != resource
+            && let Some(cond) = self.guards.last().cloned()
+        {
+            self.out.denominations.insert(
+                param,
+                Term::If {
+                    cond: Box::new(cond),
+                    then: Box::new(resource),
+                    otherwise: Box::new(held),
+                },
+            );
+            return;
+        }
         if let Some(held) = self.out.denominations.get(&param).cloned()
             && held != resource
         {
@@ -1444,6 +1533,9 @@ impl<'a> Lowerer<'a> {
     /// it is. An `if let` scrutinee is walked and its pattern's names are
     /// bound opaquely for the taken branch.
     fn control_flow(&mut self, branch: &syn::ExprIf) -> Eval {
+        if let Some(guarded) = self.guard_scope(branch) {
+            return guarded;
+        }
         self.locals.push(BTreeMap::new());
         let cond = self.condition(&branch.cond);
         let then = self.block(&branch.then_branch);
@@ -1454,6 +1546,102 @@ impl<'a> Lowerer<'a> {
             .map(|(_, otherwise)| self.code(otherwise))
             .map(|code| quote!(else #code));
         Eval::plain(quote!(if #cond #then #otherwise))
+    }
+
+    /// An `if` whose condition the declaration can read: each arm's
+    /// accesses are declared under it, so a body that writes one of two
+    /// cells declares, locks and routes to exactly the one it will
+    /// write.
+    ///
+    /// `None` where the condition is not a judgment the DSL expresses,
+    /// or where the method claims totality — both fall back to declaring
+    /// the union, which is what keeps a body free to branch on things a
+    /// declaration has no business seeing.
+    fn guard_scope(&mut self, branch: &syn::ExprIf) -> Option<Eval> {
+        if self.total || matches!(&*branch.cond, syn::Expr::Let(_)) {
+            return None;
+        }
+        let cond = self.expr(&branch.cond);
+        let Val::Term(judgment) = cond.val.clone() else {
+            return None;
+        };
+        if !judgment.is_judgment() {
+            return None;
+        }
+
+        let (then_nodes, then_code) =
+            self.arm(judgment.clone(), |me| me.block(&branch.then_branch));
+        let negated = Term::Not(Box::new(judgment.clone()));
+        let otherwise = branch.else_branch.as_ref().map(|(_, otherwise)| {
+            self.arm(negated.clone(), |me| {
+                let code = me.code(otherwise);
+                quote!(#code)
+            })
+        });
+
+        // The guest branches on the declaration's own verdict, so the
+        // flag names a clause the arm declared. Where an arm declares
+        // none there is nothing to be absent, and the condition stands
+        // as the author wrote it.
+        let taken = declares(&then_nodes, &self.out.sites);
+        let untaken = otherwise
+            .as_ref()
+            .is_some_and(|(nodes, _)| declares(nodes, &self.out.sites));
+        let flag = match (taken, untaken) {
+            (true, _) => Some(Polarity::Taken),
+            (false, true) => Some(Polarity::Untaken),
+            (false, false) => None,
+        };
+        if taken {
+            self.push_node(Node::Guarded {
+                cond: judgment,
+                body: then_nodes,
+                binds: flag == Some(Polarity::Taken),
+            });
+        }
+        if let Some((else_nodes, _)) = &otherwise
+            && untaken
+        {
+            self.push_node(Node::Guarded {
+                cond: negated,
+                body: else_nodes.clone(),
+                binds: flag == Some(Polarity::Untaken),
+            });
+        }
+
+        let cond = match flag {
+            Some(polarity) => {
+                let index = self.out.flags.len();
+                self.out.flags.push(polarity);
+                let ident = flag_ident(index);
+                match polarity {
+                    Polarity::Taken => quote!(#ident),
+                    Polarity::Untaken => quote!(!#ident),
+                }
+            }
+            None => self.value(cond.code),
+        };
+        let otherwise = otherwise.map(|(_, code)| quote!(else #code));
+        Some(Eval::plain(quote!(if #cond #then_code #otherwise)))
+    }
+
+    /// One arm, walked into a scope of its own: its clauses and its code.
+    fn arm<F>(&mut self, cond: Term, walk: F) -> (Vec<Node>, TokenStream)
+    where
+        F: FnOnce(&mut Self) -> TokenStream,
+    {
+        let conjoined = match self.guards.last() {
+            Some(outer) => Term::And(Box::new(outer.clone()), Box::new(cond)),
+            None => cond,
+        };
+        self.guards.push(conjoined);
+        self.locals.push(BTreeMap::new());
+        self.scopes.push(Vec::new());
+        let code = walk(self);
+        let nodes = self.scopes.pop().unwrap_or_default();
+        self.locals.pop();
+        self.guards.pop();
+        (nodes, code)
     }
 
     /// An array or a tuple, read as a term where every element is one.
@@ -2747,6 +2935,7 @@ impl<'a> Lowerer<'a> {
         let depth = self.depth();
         self.scopes.push(Vec::new());
         self.locals.push(BTreeMap::new());
+        self.binders += 1;
         match unwrap_pat(&loop_.pat) {
             syn::Pat::Ident(ident) => {
                 self.bind(ident.ident.to_string(), Slot::Value(Term::Binding(depth)));
@@ -2754,6 +2943,7 @@ impl<'a> Lowerer<'a> {
             other => self.bind_pattern(other),
         }
         let statements: Vec<_> = loop_.body.stmts.iter().map(|s| self.stmt(s)).collect();
+        self.binders -= 1;
         self.locals.pop();
         let body = self.scopes.pop().unwrap_or_default();
 

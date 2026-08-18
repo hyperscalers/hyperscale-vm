@@ -330,6 +330,227 @@ fn an_instance_issues_resources_its_own_address_derives() {
     );
 }
 
+/// A body that branches on its own argument, three ways: a branch the
+/// declaration can read, one it cannot, and the same readable branch
+/// under a mark that trades precision for trap freedom.
+#[blueprint]
+mod switch {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity};
+
+    #[config]
+    struct Settings {
+        left: Address,
+        right: Address,
+    }
+
+    #[state]
+    struct Switch {
+        left: Cell<Quantity>,
+        right: Cell<Quantity>,
+    }
+
+    impl Switch {
+        /// One of two vaults, and the declaration says which.
+        pub fn credit(&mut self, funds: Bucket, to_left: u64) {
+            let settings = self.config().locked();
+            if to_left == 1 {
+                self.vault(settings.left).put(funds);
+            } else {
+                self.vault(settings.right).put(funds);
+            }
+        }
+
+        /// One arm keys the vault by configuration and the other by the
+        /// edge's own resource, so only one arm says anything about what
+        /// the edge carries.
+        pub fn credit_one_way(&mut self, funds: Bucket, to_left: u64) {
+            let settings = self.config().locked();
+            if to_left == 1 {
+                self.vault(settings.left).put(funds);
+            } else {
+                self.vault(funds.resource()).put(funds);
+            }
+        }
+
+        /// The same shape over a condition the DSL cannot read, which
+        /// declares the union and still runs.
+        ///
+        /// Two cells rather than two vaults: an edge credited to both
+        /// arms of an unreadable branch would have to carry both
+        /// resources, which is the contradiction the denomination check
+        /// exists for and not what this is about.
+        pub fn bump_opaque(&mut self, tag: u64) {
+            if tag.count_ones() > 1 {
+                self.left.set(self.left.get());
+            } else {
+                self.right.set(self.right.get());
+            }
+        }
+    }
+}
+
+/// The precision half: a method that writes one of two cells declares
+/// exactly the one it will write, and hands the guest the verdict rather
+/// than a second copy of the condition.
+#[test]
+fn a_branch_the_declaration_can_read_guards_its_own_clauses() {
+    use hyperscale_vm_effects::{AbiParam, Clause, Expr, ModeExpr, Value};
+
+    let metadata = switch::blueprint().metadata();
+    let credit = &metadata.methods["credit"];
+
+    // Two clauses, each under its arm's condition, and the second the
+    // syntactic negation of the first — which is what lets the presence
+    // pass tell an `if`/`else` from a contradiction.
+    let cond = Expr::Eq(
+        Box::new(Expr::Arg(1)),
+        Box::new(Expr::Literal(Value::U64(1))),
+    );
+    let guards: Vec<Option<Expr>> = credit
+        .effects
+        .iter()
+        .map(|clause| clause.guard().cloned())
+        .collect();
+    // The configuration read the body opens is nobody's branch, so it
+    // carries no guard; the two vault movements carry their arm's.
+    assert_eq!(
+        guards,
+        vec![
+            None,
+            Some(cond.clone()),
+            Some(Expr::Not(Box::new(cond.clone()))),
+        ],
+    );
+
+    // Both arms move value, so both clauses are commutative.
+    assert!(credit.effects[1..].iter().all(|clause| matches!(
+        clause,
+        Clause::Effect {
+            mode: ModeExpr::Delta,
+            ..
+        }
+    )));
+
+    // One verdict crosses, naming the arm that declared first.
+    assert_eq!(
+        credit
+            .abi
+            .iter()
+            .filter(|binding| matches!(binding, AbiParam::Guard(_)))
+            .collect::<Vec<_>>(),
+        vec![&AbiParam::Guard(1)],
+    );
+
+    // The edge is credited to one of two vaults, so its denomination is
+    // the selection rather than either side — one expression, exact, and
+    // admission holds a caller to both resources and nothing else.
+    assert_eq!(
+        credit.denominations,
+        vec![
+            Some(Expr::If {
+                cond: Box::new(Expr::Not(Box::new(cond))),
+                then: Box::new(Expr::Config(1)),
+                otherwise: Box::new(Expr::Config(0)),
+            }),
+            None,
+        ],
+    );
+}
+
+/// A parameter denominated on one arm and nowhere else records its
+/// guarded expression as though it were unconditional. The promise is
+/// what a caller's edge must satisfy, so stating it unconditionally
+/// over-constrains admission rather than under-constraining it — which
+/// is the direction a promise is allowed to be wrong in.
+#[test]
+fn a_denomination_from_one_arm_is_recorded_unconditionally() {
+    use hyperscale_vm_effects::Expr;
+
+    let metadata = switch::blueprint().metadata();
+    assert_eq!(
+        metadata.methods["credit_one_way"].denominations,
+        vec![Some(Expr::Config(0)), None],
+    );
+}
+
+/// Precision is what a total method trades for the mark. A total leg
+/// runs with every declared handle materialized, and a guarded-out
+/// clause materializes none — so the branch declares the union it used
+/// to, binds no verdict, and both handles arrive.
+#[blueprint]
+mod always {
+    use hyperscale_vm_sdk::state::{Cell, Quantity};
+
+    #[state]
+    struct Always {
+        left: Cell<Quantity>,
+        right: Cell<Quantity>,
+    }
+
+    impl Always {
+        #[total]
+        pub fn bump(&mut self, to_left: u64) {
+            if to_left == 1 {
+                self.left.set(self.left.get());
+            } else {
+                self.right.set(self.right.get());
+            }
+        }
+    }
+}
+
+#[test]
+fn a_total_method_declares_the_union_and_binds_no_verdict() {
+    use hyperscale_vm_effects::{AbiParam, Totality};
+
+    let metadata = always::blueprint().metadata();
+    let bump = &metadata.methods["bump"];
+    assert_eq!(bump.totality, Totality::Total);
+    assert_eq!(bump.effects.len(), 2, "both arms are declared");
+    assert!(
+        bump.effects.iter().all(|clause| clause.guard().is_none()),
+        "and neither under a condition, because a total leg materialises every handle"
+    );
+    assert!(
+        !bump
+            .abi
+            .iter()
+            .any(|binding| matches!(binding, AbiParam::Guard(_))),
+    );
+    assert_eq!(
+        bump.abi
+            .iter()
+            .filter(|binding| matches!(binding, AbiParam::Handle(_)))
+            .count(),
+        2,
+        "both handles arrive"
+    );
+}
+
+/// The superset stays the fallback: a condition the DSL cannot express
+/// declares both arms, which is what keeps a body free to branch on
+/// things a declaration has no business seeing.
+#[test]
+fn a_branch_the_declaration_cannot_read_declares_the_union() {
+    use hyperscale_vm_effects::AbiParam;
+
+    let metadata = switch::blueprint().metadata();
+    let opaque = &metadata.methods["bump_opaque"];
+    assert_eq!(opaque.effects.len(), 2);
+    assert!(
+        opaque.effects.iter().all(|clause| clause.guard().is_none()),
+        "an unreadable condition guards nothing"
+    );
+    assert!(
+        !opaque
+            .abi
+            .iter()
+            .any(|binding| matches!(binding, AbiParam::Guard(_))),
+        "and binds no verdict, because there is none to bind"
+    );
+}
+
 /// A component whose admin set is configuration rather than storage:
 /// the free gate, whose reads take no admission key and make its owner
 /// no participant. Both shapes an admin set takes are here — either of

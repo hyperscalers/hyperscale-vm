@@ -55,6 +55,9 @@ pub fn arm(
     ) in bindings(lowered, params, config).into_iter().enumerate()
     {
         prologue.push(match carries {
+            Carries::Flag => quote!(
+                let #ident = ::hyperscale_vm_sdk::host::flag(__args, #position);
+            ),
             Carries::Handle(resource) => {
                 let kind = cell_kind(resource);
                 quote!(
@@ -75,6 +78,9 @@ pub fn arm(
             Carries::Value => match param.shape {
                 Shape::Scalar => quote!(
                     let #ident = ::hyperscale_vm_sdk::host::scalar(__args, #position);
+                ),
+                Shape::Flag => quote!(
+                    let #ident = ::hyperscale_vm_sdk::host::flag(__args, #position);
                 ),
                 Shape::Address => quote!(
                     let #ident = ::hyperscale_vm_sdk::host::address(__args, #position);

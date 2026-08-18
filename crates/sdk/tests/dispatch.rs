@@ -8,8 +8,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, SlotId,
-    SubstateKey, TestHasher, Value, child_key,
+    ABSENT_REP, Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
+    Presence, SlotId, SubstateKey, TestHasher, Value, child_key,
 };
 use hyperscale_vm_kernel::{
     AbortReason, EnvInputs, Held, KernelSession, MemoryStore, Outcome, OverlayStore, TxHash,
@@ -105,6 +105,133 @@ fn session(mode: Mode, funded: u128) -> KernelSession {
         hash,
     )
     .expect("the declaration materializes")
+}
+
+/// A body whose branch the declaration can read, so each arm declares
+/// what it touches and the export takes the verdict beside the handles.
+#[blueprint]
+mod switch {
+    use hyperscale_vm_sdk::state::{Cell, Quantity};
+
+    #[state]
+    struct Switch {
+        left: Cell<Quantity>,
+        right: Cell<Quantity>,
+    }
+
+    impl Switch {
+        pub fn bump(&mut self, to_left: u64) {
+            if to_left == 1 {
+                self.left.set(self.left.get());
+            } else {
+                self.right.set(self.right.get());
+            }
+        }
+    }
+}
+
+/// A session over two write cells, which is what a branch over two
+/// leaves declares when both arms are materialized.
+fn two_cells() -> KernelSession {
+    let mut declared = EffectSet::new();
+    for slot in [16u16, 17] {
+        declared
+            .insert(Effect {
+                target: EffectTarget::Point(child_key(&TestHasher, OWNER, SlotId(slot), &[])),
+                mode: Mode::Write {
+                    requires: Presence::Either,
+                },
+            })
+            .expect("the effect set takes it");
+    }
+    let ordered: Vec<_> = declared.iter().collect();
+    KernelSession::materialize(
+        OverlayStore::new(Arc::new(MemoryStore::new())),
+        &declared,
+        &ordered,
+        &[],
+        TxHash(Hash32([4; 32])),
+        EnvInputs {
+            clock_ms: 1_000,
+            randomness: [5; 32],
+        },
+        hash,
+    )
+    .expect("the declaration materializes")
+}
+
+/// The guest branches on the declaration's own verdict, so what it
+/// touches and what was declared cannot disagree — and where they would,
+/// the handle it reaches for was never materialized and says so.
+#[test]
+fn a_body_branches_on_the_verdict_it_was_handed() {
+    // The verdict says the first arm, and the second arm's handle is the
+    // one no clause backed.
+    let (session, invoked) = switch::invoke(
+        "bump",
+        two_cells(),
+        &[
+            GuestArg::Handle {
+                rep: 0,
+                kind: CellKind::Write,
+            },
+            GuestArg::Handle {
+                rep: ABSENT_REP,
+                kind: CellKind::Write,
+            },
+            GuestArg::Bool(true),
+        ],
+    );
+    assert!(matches!(invoked, Invoked::Produced(ref edges) if edges.is_empty()));
+    session
+        .finish(Outcome::Completed { value: None }, 0)
+        .expect("nothing outside the declared set was touched");
+
+    // Handed the other verdict, it reaches the other handle — and the
+    // one that is absent this time is the first.
+    let (session, invoked) = switch::invoke(
+        "bump",
+        two_cells(),
+        &[
+            GuestArg::Handle {
+                rep: ABSENT_REP,
+                kind: CellKind::Write,
+            },
+            GuestArg::Handle {
+                rep: 1,
+                kind: CellKind::Write,
+            },
+            GuestArg::Bool(false),
+        ],
+    );
+    assert!(matches!(invoked, Invoked::Produced(ref edges) if edges.is_empty()));
+    session
+        .finish(Outcome::Completed { value: None }, 0)
+        .expect("nothing outside the declared set was touched");
+}
+
+/// A verdict that disagrees with what was materialized is a body whose
+/// control flow diverged from its declaration. Nothing was put at the
+/// rep on purpose, and reaching it aborts by that name rather than as a
+/// handle nobody lowered.
+#[test]
+fn a_verdict_the_declaration_did_not_reach_aborts_by_name() {
+    let (_, invoked) = switch::invoke(
+        "bump",
+        two_cells(),
+        &[
+            GuestArg::Handle {
+                rep: ABSENT_REP,
+                kind: CellKind::Write,
+            },
+            GuestArg::Handle {
+                rep: 1,
+                kind: CellKind::Write,
+            },
+            GuestArg::Bool(true),
+        ],
+    );
+    assert_eq!(invoked, Invoked::Aborted(AbortReason::UndeclaredBranch));
 }
 
 /// The one capability the declaration materialized, as the walk passes

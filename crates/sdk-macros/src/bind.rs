@@ -8,7 +8,7 @@
 //! different order would pass its own tests while the artifact it stands
 //! for did something else.
 
-use crate::lower::{Lowered, Need, handle_ident, value_ident};
+use crate::lower::{Lowered, Need, flag_ident, handle_ident, value_ident};
 use crate::term::Term;
 use crate::wit::{Param, Shape};
 
@@ -23,6 +23,8 @@ pub enum Carries {
     },
     /// A value the body reads, in the shape its parameter names.
     Value,
+    /// A branch's verdict, as the declaration reached it.
+    Flag,
     /// This invocation's authority to issue.
     Issuer,
 }
@@ -93,8 +95,9 @@ fn param_ident(index: u32, params: &[(String, syn::Type)]) -> syn::Ident {
 
 /// Everything one export takes, in the order it takes it.
 ///
-/// Handles first, in declaration order, then the values the body could
-/// not compute, then the issuance grant where the method issues. The
+/// Handles first, in declaration order, then the branch verdicts, then
+/// the values the body could not compute, then the issuance grant where
+/// the method issues. The
 /// grant sits last because it is granted per invocation rather than
 /// declared, so nothing about the clause list moves when a method gains
 /// or loses one.
@@ -118,6 +121,17 @@ pub fn bindings(
             },
             ident: handle_ident(site),
             carries: Carries::Handle(resource),
+        });
+    }
+
+    for position in 0..lowered.flags.len() {
+        bindings.push(Binding {
+            param: Param {
+                name: format!("flag-{position}"),
+                shape: Shape::Flag,
+            },
+            ident: flag_ident(position),
+            carries: Carries::Flag,
         });
     }
 

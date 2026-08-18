@@ -35,6 +35,9 @@ pub enum Shape {
     Handle(&'static str),
     /// A `u64` the guest reads as it stands.
     Scalar,
+    /// A `bool`: the verdict of the guard on a branch's clauses, which
+    /// the guest branches on rather than recomputing the condition.
+    Flag,
     /// The world's `address` record, rebuilt as an [`Address`] in the
     /// export's prologue.
     ///
@@ -76,6 +79,7 @@ impl Shape {
         match self {
             Self::Handle(resource) => format!("borrow<{resource}>"),
             Self::Scalar => "u64".to_owned(),
+            Self::Flag => "bool".to_owned(),
             Self::Address => "kernel-address".to_owned(),
             Self::Cell(_) => "list<u8>".to_owned(),
             Self::Bucket => format!("own<{BUCKET}>"),

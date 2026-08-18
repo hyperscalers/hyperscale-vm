@@ -979,17 +979,25 @@ fn lower_method(
     let gate = parse_gate(method, fields, accessors, config_fields, &params)?;
     client::check_names(&idents, client::Shape::of(&gate), serves)?;
     let returns = !matches!(method.sig.output, syn::ReturnType::Default);
-    let lowered = Lowerer::new(fields, accessors, config_fields, &params, returns)
-        .run(&method.block)
-        .map_err(|errors| {
-            errors
-                .into_iter()
-                .reduce(|mut all, error| {
-                    all.combine(error);
-                    all
-                })
-                .unwrap_or_else(|| syn::Error::new(method.span(), "lowering failed"))
-        })?;
+    let claims_total = total_attr(method).is_some();
+    let lowered = Lowerer::new(
+        fields,
+        accessors,
+        config_fields,
+        &params,
+        returns,
+        claims_total,
+    )
+    .run(&method.block)
+    .map_err(|errors| {
+        errors
+            .into_iter()
+            .reduce(|mut all, error| {
+                all.combine(error);
+                all
+            })
+            .unwrap_or_else(|| syn::Error::new(method.span(), "lowering failed"))
+    })?;
     check_gate_shape(&gate, &lowered, method)?;
 
     let declining = declines(method);

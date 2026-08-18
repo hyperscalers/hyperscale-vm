@@ -35,7 +35,7 @@ use hyperscale_vm_effects::{
     Presence, RuleExpr, SlotId, TargetExpr, Totality, Value,
 };
 
-use crate::sym::{Addr, Amount, Key, Kind, Num, Opaque, Seq, Sym, expr_depth};
+use crate::sym::{Addr, Amount, Flag, Key, Kind, Num, Opaque, Seq, Sym, expr_depth};
 
 /// One node of a gate's rule, built through the tracer.
 ///
@@ -55,6 +55,9 @@ pub struct Trace {
     params: Vec<ParamType>,
     /// Clause scopes, innermost last; `scopes[0]` is the method body.
     scopes: Vec<Vec<Clause>>,
+    /// The conditions clauses are being declared under, innermost last,
+    /// each already conjoined with the ones enclosing it.
+    guards: Vec<Expr>,
     /// The next unused fresh-derivation slot.
     next_slot: u32,
     /// Resource expressions for the value edges this method produces.
@@ -68,6 +71,9 @@ pub struct Trace {
     worst_case: usize,
     /// The handle bindings, in the order the body opened them.
     handles: Vec<AbiParam>,
+    /// The clause verdicts the export takes, after the handles and
+    /// before the values — the order [`Trace::abi`] assembles them in.
+    flags: Vec<AbiParam>,
     /// The value bindings, in the order the body needs them.
     values: Vec<AbiParam>,
     /// The top-level clause most recently declared, which is the one
@@ -89,6 +95,8 @@ impl Trace {
             scopes: vec![Vec::new()],
             next_slot: 0,
             outputs: Vec::new(),
+            guards: Vec::new(),
+            flags: Vec::new(),
             worst_case: 0,
             handles: Vec::new(),
             values: Vec::new(),
@@ -131,6 +139,28 @@ impl Trace {
             .collect()
     }
 
+    /// The clause under whatever guard is in scope.
+    fn guarded(&self, clause: Clause) -> Clause {
+        let Some(cond) = self.guards.last() else {
+            return clause;
+        };
+        let guard = Some(Box::new(cond.clone()));
+        match clause {
+            Clause::Effect {
+                target,
+                mode,
+                denomination,
+                ..
+            } => Clause::Effect {
+                guard,
+                target,
+                mode,
+                denomination,
+            },
+            Clause::ForEach { list, body, .. } => Clause::ForEach { guard, list, body },
+        }
+    }
+
     /// Emit one clause into the current scope.
     fn emit(&mut self, clause: Clause) {
         if matches!(clause, Clause::Effect { .. }) {
@@ -141,6 +171,7 @@ impl Trace {
                 .unwrap_or(usize::MAX);
             self.worst_case = self.worst_case.saturating_add(width);
         }
+        let clause = self.guarded(clause);
         let top = self.depth() == 0;
         let scope = self
             .scopes
@@ -377,6 +408,55 @@ impl Trace {
             denomination: None,
             shape: core::marker::PhantomData,
         }
+    }
+
+    /// Declare every access `body` reaches under the condition `cond`.
+    ///
+    /// Clauses land in whatever scope encloses them, so a guard written
+    /// inside a `for-each` guards clauses in the loop's body and one at
+    /// the top level guards top-level clauses. Nesting folds into the
+    /// condition rather than into the tree — `if a { if b { … } }`
+    /// guards on their conjunction — so nothing about clause depth
+    /// changes and every clause index means what it meant.
+    pub fn when<F>(&mut self, cond: &Sym<Flag>, body: F)
+    where
+        F: FnOnce(&mut Self),
+    {
+        // Evaluated in the enclosing scope, like a `for-each`'s list:
+        // the condition reads the inputs the clauses under it read.
+        let cond = self.lower(cond.expr().clone());
+        let conjoined = match self.guards.last() {
+            Some(outer) => Expr::And(Box::new(outer.clone()), Box::new(cond)),
+            None => cond,
+        };
+        self.guards.push(conjoined);
+        body(self);
+        self.guards.pop();
+    }
+
+    /// Bind the verdict of the clause just declared as a `bool` the
+    /// export takes.
+    ///
+    /// What the guest branches on: the declaration's own evaluation,
+    /// reached once by routing, rather than a second copy of the
+    /// condition for the two to agree by convention.
+    ///
+    /// # Panics
+    ///
+    /// If no clause has been declared for it to name, or if the enclosing
+    /// scope is a `for-each`, whose clause count is the instance's rather
+    /// than the signature's.
+    pub fn bind_guard(&mut self) {
+        assert_eq!(
+            self.depth(),
+            0,
+            "a branch inside a for-each declares a configuration-dependent number of \
+             clauses, so its verdict cannot occupy a fixed export parameter"
+        );
+        let clause = self
+            .last_clause
+            .expect("a guard binding names the clause just declared, and none is");
+        self.flags.push(AbiParam::Guard(clause));
     }
 
     /// Declare one access set per element of a bounded collection.
@@ -619,16 +699,37 @@ impl Trace {
             declared.name()
         );
         let expr = self.lower(resource.expr().clone());
+        let guard = self.guards.last().cloned();
         let slot = &mut self.denominations[index as usize];
-        if let Some(held) = slot {
-            assert!(
-                *held == expr,
-                "argument {index} is credited to cells keyed by {held:?} and by {expr:?}, \
-                 and no edge carries both"
-            );
-            return;
+        match (slot.take(), guard) {
+            // Two unguarded expressions on one edge is a body that means
+            // two things, whatever order they were written in.
+            (Some(held), None) => {
+                assert!(
+                    held == expr,
+                    "argument {index} is credited to cells keyed by {held:?} and by {expr:?}, \
+                     and no edge carries both"
+                );
+                *slot = Some(held);
+            }
+            // Under a guard they are the arms of one selection, so they
+            // fold into one expression rather than contradicting. Still
+            // exactly one expression, so what a caller reads off the
+            // signature stays exact rather than widening to a set.
+            (Some(held), Some(cond)) => {
+                *slot = Some(Expr::If {
+                    cond: Box::new(cond),
+                    then: Box::new(expr),
+                    otherwise: Box::new(held),
+                });
+            }
+            // A parameter credited under a guard and nowhere else records
+            // its guarded expression as though it were unconditional: the
+            // promise is what a caller's edge must satisfy, and stating it
+            // unconditionally over-constrains admission rather than
+            // under-constraining it.
+            (None, _) => *slot = Some(expr),
         }
-        *slot = Some(expr);
     }
 
     /// Consume the trace into what it recorded.
@@ -640,6 +741,7 @@ impl Trace {
         );
         let clauses = self.scopes.pop().unwrap_or_default();
         let mut abi = self.handles;
+        abi.extend(self.flags);
         abi.extend(self.values);
         // A method that fixes no position carries no list rather than a
         // list of nothing: most methods are that method, and the two say
