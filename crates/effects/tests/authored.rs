@@ -149,6 +149,39 @@ fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> 
     ]
 }
 
+/// The literal a holdings interval is declared at, held against the
+/// constant it restates.
+///
+/// A guest names no constant from this crate — the lowering takes an
+/// entry cap as a literal, so a package writes the number — which leaves
+/// the vocabulary's [`NF_MOVE_CAP`] and the account's `64` two copies of
+/// one bound with nothing between them. This is what is between them.
+#[test]
+fn the_account_files_at_the_cap_the_vocabulary_names() {
+    use hyperscale_vm_effects::vocabulary::NF_MOVE_CAP;
+    use hyperscale_vm_effects::{Clause, TargetExpr};
+    use hyperscale_vm_stdlib::account;
+
+    let metadata = account::metadata();
+    for method in ["deposit-nf", "withdraw-nf"] {
+        let declared = metadata.methods[method]
+            .effects
+            .iter()
+            .find_map(|clause| match clause {
+                Clause::Effect {
+                    target: TargetExpr::Range { cap, .. },
+                    ..
+                } => Some(*cap),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{method} declares a holdings interval"));
+        assert_eq!(
+            declared, NF_MOVE_CAP,
+            "{method} files at {declared} where the vocabulary names {NF_MOVE_CAP}"
+        );
+    }
+}
+
 #[test]
 fn every_authored_method_declares_who_may_call_it() {
     let packages = corpus();
