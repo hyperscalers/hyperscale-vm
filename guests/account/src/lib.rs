@@ -136,16 +136,14 @@ pub mod account {
         #[guarded(self)]
         #[allow(clippy::needless_pass_by_value)] // the contract consumes the roles it stores
         pub fn securify(&mut self, roles: RoleSet, delay_ms: u64) {
-            // The admission gate decoded the roles under the vocabulary
-            // caps; what is left to judge here is the one-way door.
-            assert!(
-                self.auth().get().is_none(),
-                "the account is already securified"
-            );
-            self.auth().set(Some(AuthCell::new(AuthBase {
+            // The one-way door is the declaration's, judged against
+            // committed state before this runs: the write requires the
+            // cell to be absent, so a second securify is refused by the
+            // shard holding it rather than trapped here.
+            self.auth().create(AuthCell::new(AuthBase {
                 recovery_delay_ms: delay_ms,
                 roles,
-            })));
+            }));
         }
 
         /// Append a pending replacement for the whole cell, maturing
@@ -154,7 +152,7 @@ pub mod account {
         #[role_gated(recovery)]
         #[allow(clippy::needless_pass_by_value)] // the contract consumes the roles it stores
         pub fn propose(&mut self, roles: RoleSet, delay_ms: u64) {
-            let stored = self.auth().get().expect("the account is not securified");
+            let stored = self.auth().existing();
             // The wait comes from the delay that governs now, never from
             // the proposer: the proposal's own delay only starts
             // governing when the proposal does.
@@ -177,7 +175,7 @@ pub mod account {
         /// cancel.
         #[role_gated(primary)]
         pub fn cancel(&mut self) {
-            let stored = self.auth().get().expect("the account is not securified");
+            let stored = self.auth().existing();
             let governing = stored.governing(clock_ms()).clone();
             self.auth().set(Some(AuthCell::new(governing)));
         }
@@ -186,7 +184,7 @@ pub mod account {
         /// enactment and compaction are one operation.
         #[role_gated(confirmation)]
         pub fn confirm(&mut self) {
-            let stored = self.auth().get().expect("the account is not securified");
+            let stored = self.auth().existing();
             let proposal = stored.proposal.expect("nothing is pending");
             self.auth().set(Some(AuthCell::new(proposal.base)));
         }

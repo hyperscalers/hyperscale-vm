@@ -65,16 +65,17 @@ fn account() -> Blueprint {
             t.point(&cell).read();
         })
         // Securify and the recovery surface all write the same cell,
-        // exclusively: an existing cell is securify's own refusal, and
-        // every role rewrite conflicts with every concurrent sign-in's
-        // read.
+        // exclusively — every role rewrite conflicts with every
+        // concurrent sign-in's read — and each says what it requires of
+        // the leaf: the one-way door is a write onto an absent cell, and
+        // a recovery is a write onto one that is there.
         .method(
             "securify",
             &[ParamType::RoleSet, ParamType::U64],
             |t: &mut Trace| {
                 let holder = t.self_addr();
                 let cell = holder.child(AUTH, &[]);
-                t.point(&cell).write();
+                t.point(&cell).create();
             },
         )
         .method(
@@ -83,18 +84,18 @@ fn account() -> Blueprint {
             |t: &mut Trace| {
                 let holder = t.self_addr();
                 let cell = holder.child(AUTH, &[]);
-                t.point(&cell).write();
+                t.point(&cell).existing();
             },
         )
         .method("cancel", &[], |t: &mut Trace| {
             let holder = t.self_addr();
             let cell = holder.child(AUTH, &[]);
-            t.point(&cell).write();
+            t.point(&cell).existing();
         })
         .method("confirm", &[], |t: &mut Trace| {
             let holder = t.self_addr();
             let cell = holder.child(AUTH, &[]);
-            t.point(&cell).write();
+            t.point(&cell).existing();
         })
         .build()
 }

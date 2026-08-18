@@ -325,6 +325,10 @@ pub enum Op {
     Reserve,
     /// `set()` / `insert()` / `remove()` — an exclusive read-modify-write.
     Set,
+    /// `create()` — the same write, on a leaf that must not be there.
+    Create,
+    /// `existing()` — the same write, on a leaf that must be.
+    Existing,
 }
 
 impl Op {
@@ -336,6 +340,8 @@ impl Op {
             "put" | "take" | "declared" => Some(Self::Move),
             "reserve" => Some(Self::Reserve),
             "set" | "insert" | "remove" => Some(Self::Set),
+            "create" => Some(Self::Create),
+            "existing" => Some(Self::Existing),
             _ => None,
         }
     }

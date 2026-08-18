@@ -45,7 +45,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write {
-                        requires: Either,
+                        requires: Present,
                     },
                     denomination: None,
                 },
@@ -77,7 +77,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write {
-                        requires: Either,
+                        requires: Present,
                     },
                     denomination: None,
                 },
@@ -341,7 +341,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write {
-                        requires: Either,
+                        requires: Present,
                     },
                     denomination: None,
                 },
@@ -388,7 +388,7 @@ PackageMetadata {
                         },
                     ),
                     mode: Write {
-                        requires: Either,
+                        requires: Absent,
                     },
                     denomination: None,
                 },

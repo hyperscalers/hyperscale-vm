@@ -623,6 +623,12 @@ fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
 /// A reservation the committed balance cannot cover is neither: it is the
 /// lost race the taxonomy names, and it carries the cell and the amount
 /// rather than a class.
+impl From<MaterializeError> for Outcome {
+    fn from(defect: MaterializeError) -> Self {
+        materialize_abort(defect)
+    }
+}
+
 fn materialize_abort(defect: MaterializeError) -> Outcome {
     match defect {
         MaterializeError::Infeasible { key, amount } => Outcome::Infeasible { key, amount },

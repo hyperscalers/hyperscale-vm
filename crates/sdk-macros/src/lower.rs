@@ -166,7 +166,11 @@ impl Site {
                 | Target::KeyedEntry { .. }
                 | Target::Sweep { .. }
         );
-        let (moves, writes, reads) = (has(Op::Move), has(Op::Set), has(Op::Get));
+        let (moves, writes, reads) = (
+            has(Op::Move),
+            has(Op::Set) || has(Op::Create) || has(Op::Existing),
+            has(Op::Get),
+        );
         Some(match (interval, writes || moves, reads) {
             (true, true, _) => "range-write",
             (true, false, true) => "range-read",
@@ -771,19 +775,35 @@ impl<'a> Lowerer<'a> {
         let Some(entry) = self.out.sites.get_mut(site) else {
             return;
         };
+        let exclusive =
+            |op: &Op| matches!(op, Op::Get | Op::Set | Op::Move | Op::Create | Op::Existing);
         let compatible = match op {
             // A movement sits beside a read: together they are the
-            // exclusive mode, which is what the site resolves to.
-            Op::Get | Op::Set | Op::Move => entry
-                .ops
-                .iter()
-                .all(|(prior, _)| matches!(prior, Op::Get | Op::Set | Op::Move)),
+            // exclusive mode, which is what the site resolves to. A
+            // presence requirement rides that same mode, so it sits
+            // beside any of them — the one pair that does not is a
+            // requirement against its own opposite, refused below.
+            Op::Get | Op::Set | Op::Move | Op::Create | Op::Existing => {
+                entry.ops.iter().all(|(prior, _)| exclusive(prior))
+            }
             Op::Reserve | Op::Locked => entry
                 .ops
                 .iter()
                 .all(|(prior, _)| *prior == op && op == Op::Locked),
         };
-        if compatible {
+        let opposite = match op {
+            Op::Create => Some(Op::Existing),
+            Op::Existing => Some(Op::Create),
+            _ => None,
+        };
+        if opposite.is_some_and(|other| entry.ops.iter().any(|(prior, _)| *prior == other)) {
+            self.error(
+                span,
+                "one access requires the leaf to be absent and to be there — no \
+                 committed state satisfies both, so the call could never be \
+                 feasible. Declare the one the body actually needs",
+            );
+        } else if compatible {
             entry.ops.push((op, param));
         } else {
             self.error(

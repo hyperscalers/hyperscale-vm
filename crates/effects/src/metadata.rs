@@ -493,16 +493,14 @@ impl MethodSignature {
             Accessibility::Public => Ok(GateShape::Open),
             Accessibility::Guarded(rule) => Ok(GateShape::Guarded(rule)),
             Accessibility::Authorizing => self
-                .rule_point(&ModeExpr::Read)
+                .rule_point(&|mode| matches!(mode, ModeExpr::Read))
                 .map(|cell| GateShape::Rule {
                     cell,
                     role: AuthRole::Primary,
                 })
                 .ok_or(AbiError::AuthorizingShape),
             Accessibility::RoleGated(role) => self
-                .rule_point(&ModeExpr::Write {
-                    requires: Presence::Either,
-                })
+                .rule_point(&|mode| matches!(mode, ModeExpr::Write { .. }))
                 .map(|cell| GateShape::Rule { cell, role: *role })
                 .ok_or(AbiError::RoleGatedShape),
             Accessibility::Custodial(claim) => self.custody(claim).ok_or(AbiError::CustodialShape),
@@ -510,8 +508,15 @@ impl MethodSignature {
     }
 
     /// The cell a rule-reading gate judges at, when the declaration is
-    /// that one point clause in that mode and nothing else.
-    fn rule_point(&self, mode: &ModeExpr) -> Option<&Expr> {
+    /// one point clause `admits` accepts and nothing else.
+    ///
+    /// Taken as a predicate rather than as a mode, because what a
+    /// role-gated method owes is exclusivity on its rule cell — that is
+    /// what serializes a role rewrite against a concurrent sign-in — and
+    /// a write's presence requirement is orthogonal to it. A method that
+    /// creates its own rule cell, or that requires one already there, is
+    /// gated on the same cell in the same mode.
+    fn rule_point(&self, admits: &dyn Fn(&ModeExpr) -> bool) -> Option<&Expr> {
         match self.effects.as_slice() {
             [
                 Clause::Effect {
@@ -519,7 +524,7 @@ impl MethodSignature {
                     mode: declared,
                     ..
                 },
-            ] if declared == mode => Some(cell),
+            ] if admits(declared) => Some(cell),
             _ => None,
         }
     }

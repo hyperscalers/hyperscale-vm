@@ -607,6 +607,40 @@ impl<T: Cellular> Cell<T> {
     }
 }
 
+/// What a record cell says about the leaf it is writing.
+///
+/// Only on the `Option<T>` shape, and that is the whole distinction: a
+/// record's absence is a `None` a body can tell from every value it
+/// holds, where a scalar cell's absence reads as its zero and "was it
+/// already there" is a question its own value cannot answer. A cell that
+/// cannot tell the difference gets no word for it.
+///
+/// The requirement is judged by the shard holding the cell, before the
+/// body runs, where a reservation is judged — so a one-way door refuses
+/// with the protocol's own verdict rather than with a trap the guest
+/// wrote.
+#[allow(clippy::inline_always)] // one import behind a dispatch its call site fixes
+impl<T: Record> Cell<Option<T>> {
+    /// Write `value` to a leaf that must not already hold one.
+    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
+    #[inline(always)]
+    pub fn create(&mut self, value: T) {
+        let _ = value;
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// The value in a leaf that must already hold one.
+    ///
+    /// Answers `T` where [`Cell::get`] answers `Option<T>`: the absence
+    /// the option is there to carry is what the declaration has ruled
+    /// out, so a body that asked has nothing left to unwrap.
+    #[must_use]
+    #[inline(always)]
+    pub fn existing(&self) -> T {
+        unimplemented!("{OFF_HOST}")
+    }
+}
+
 impl Cell<Vault> {
     /// The handle on this vault.
     ///
@@ -694,6 +728,33 @@ impl<T: Cellular> Slot<T> {
         return crate::guest::cell_set(self.handle, &value.to_cell());
         #[cfg(not(target_arch = "wasm32"))]
         return host::cell_set(self.handle, &value.to_cell());
+    }
+}
+
+/// The executing half of a record cell's presence-carrying calls; the
+/// authoring half is on [`Cell`], which is where the requirement is
+/// declared.
+#[allow(clippy::inline_always)] // one import behind a dispatch its call site fixes
+impl<T: Record> Slot<Option<T>> {
+    /// Write `value` to a leaf the declaration required to be absent.
+    #[allow(clippy::needless_pass_by_value)] // the value is consumed into the cell
+    #[inline(always)]
+    pub fn create(&mut self, value: T) {
+        self.set(Some(value));
+    }
+
+    /// The value in a leaf the declaration required to be there.
+    ///
+    /// # Panics
+    ///
+    /// Never reachably: a handle exists only where materialization
+    /// admitted the requirement, so an absent leaf here is a kernel that
+    /// materialized what it refused.
+    #[must_use]
+    #[inline(always)]
+    pub fn existing(&self) -> T {
+        self.get()
+            .expect("materialization required this leaf to be present")
     }
 }
 

@@ -509,7 +509,12 @@ fn execute_manifest(
     let entry = BatchTx::new(tx, declaration, clock_ms, env().randomness).with_calls(routing.calls);
 
     let before = store.clone();
-    let session = KernelSession::materialize(
+    // A presence requirement and a reservation are both judged here,
+    // before any body runs, so a refusal at this seam is an outcome the
+    // lane reports rather than a harness failure. Mapped through the
+    // executor's own conversion, so what a corpus test sees is what a
+    // block would record.
+    let session = match KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &entry.declared,
         &entry.ordered,
@@ -520,8 +525,15 @@ fn execute_manifest(
             randomness: env().randomness,
         },
         test_hash,
-    )
-    .expect("corpus manifests are feasible");
+    ) {
+        Ok(session) => session,
+        Err(defect) => {
+            return Ok(match Outcome::from(defect) {
+                Outcome::UserError { reason } => (TxResult::Trapped(reason), before),
+                refused => (TxResult::Refused(refused), before),
+            });
+        }
+    };
 
     let blessed = BlessedBackend { engines };
     let reference = ReferenceBackend { engines };
@@ -1128,8 +1140,10 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
     assert_eq!(amount_of(&mut store, vault(ALICE, RES_X)), 50);
     assert_eq!(amount_of(&mut store, vault(BOB, RES_X)), 100);
 
-    // Nothing re-securifies: the guest's one-way door traps, whoever
-    // holds the current rule.
+    // Nothing re-securifies, and the refusal is the protocol's rather
+    // than the guest's: `securify` declares a write requiring the cell
+    // to be absent, so the shard holding it judges the door against
+    // committed state and the body never runs.
     let again = securify_graph(Rule::Require(Presented::of_address(BOB.address())));
     let (results, _) = run_both_signed(
         &engines,
@@ -1140,8 +1154,8 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
     );
     assert_eq!(
         results,
-        vec![TxResult::Trapped(AbortReason::Unreachable)],
-        "securifying a securified account is the guest's own refusal"
+        vec![TxResult::Trapped(AbortReason::CreateOnOccupied)],
+        "a one-way door is a declared precondition, not a guest panic"
     );
     Ok(())
 }
@@ -1599,8 +1613,10 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() -> Result<()> {
         "one proposal, restarted from the replacing clock"
     );
 
-    // A virtual account has no cell: propose is the guest's own trap,
-    // judged after the virtual rule signed the caller in.
+    // A virtual account has no cell, so `propose` is refused where it
+    // declares one: the write requires the leaf to be there, and the
+    // shard holding it judges that against committed state after the
+    // virtual rule signed the caller in and before the body runs.
     let mut virtual_store = MemoryStore::new();
     virtual_store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
@@ -1621,7 +1637,10 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() -> Result<()> {
         &[(&own_propose, TxHash(Hash32([0x74; 32])))],
         Some(ALICE),
     );
-    assert_eq!(results, vec![TxResult::Trapped(AbortReason::Unreachable)]);
+    assert_eq!(
+        results,
+        vec![TxResult::Trapped(AbortReason::UpdateOfAbsent)]
+    );
     Ok(())
 }
 
