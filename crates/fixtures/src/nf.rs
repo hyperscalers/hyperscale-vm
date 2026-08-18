@@ -58,8 +58,13 @@ pub fn metadata() -> PackageMetadata {
                     slot: INSTANCE,
                     material: vec![minted_resource, minted_id],
                 }),
+                // A mint creates; it never lands on an instance that is
+                // already there. The fresh id makes that true in every
+                // ordinary run, and the requirement is what turns the
+                // one case where it is not — a collision — from a silent
+                // overwrite of somebody's instance into a refusal.
                 mode: ModeExpr::Write {
-                    requires: Presence::Either,
+                    requires: Presence::Absent,
                 },
                 denomination: None,
             }],

@@ -146,10 +146,19 @@ pub fn holdings_entry(resource: Expr, id: Expr) -> TargetExpr {
 }
 
 /// The data cell for one instance of `resource` under `issuer`, keyed by
-/// the resource and the instance's id: written at mint, immutable after.
+/// the resource and the instance's id.
 ///
 /// Under the issuer rather than the holder, so the cell never moves — a
 /// transfer renames a holdings entry and touches no data.
+///
+/// A mint declares this leaf absent, so creating an instance and
+/// overwriting one are different declarations and the shard holding the
+/// leaf tells them apart before any body runs. What that buys is the
+/// collision case: a fresh id is derived from the envelope and the
+/// creating node's position, so two mints agreeing on one is not
+/// something either sender can arrange, and the requirement is what
+/// makes the unlucky one a refusal rather than a silent rewrite of an
+/// instance somebody already holds.
 #[must_use]
 pub fn instance_data_key(
     hasher: &dyn Hasher,

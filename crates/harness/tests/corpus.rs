@@ -2844,7 +2844,51 @@ fn non_fungibles_mint_transfer_and_burn_end_to_end() -> Result<()> {
     let burned = instance_data_key(&TestHasher, nf_issuer(), resource, ids[1]);
     assert!(
         store.cells().any(|(key, _)| key == burned),
-        "instance data is written at mint and immutable after"
+        "burn consumes the edge and leaves the data where the mint put it"
+    );
+    Ok(())
+}
+
+/// A mint creates an instance's data cell; it never rewrites one.
+///
+/// The fresh id is derived from the manifest's identity and the minting
+/// node's position, so two mints agreeing on one is not something a
+/// sender can arrange — which leaves putting the cell where this mint's
+/// own derivation lands as the only way to witness the requirement. What
+/// answers is the declared precondition, judged by the shard holding the
+/// leaf before any body runs.
+#[test]
+fn a_mint_onto_an_instance_already_there_is_refused() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+
+    let mint = graph(|b| {
+        let minted = nf::mint(b, nf_issuer())?;
+        nf::deposit(b, nf_holder(7), minted)
+    });
+
+    let admitted = admit(&mint, ALICE, &world.0, &world.1, &TestHasher).unwrap();
+    let id = fresh_id(&TestHasher, admitted.identity(), 0, 0, 0);
+    let data = instance_data_key(&TestHasher, nf_issuer(), nf_resource(), id);
+
+    let mut store = MemoryStore::new();
+    store.write(data, id.to_le_bytes().to_vec()).unwrap();
+    store.clear_log();
+
+    let (results, _) = run_both_signed(
+        &engines,
+        &world,
+        &store,
+        &[(&mint, TxHash(Hash32([0x66; 32])))],
+        Some(ALICE),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::PresenceUnmet {
+            target: EffectTarget::Point(data),
+            required: Presence::Absent,
+        })],
+        "an instance already there is a refusal, never an overwrite"
     );
     Ok(())
 }
