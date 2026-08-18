@@ -41,7 +41,8 @@ pub use artifact::{
     decode_metadata, encode_metadata, extract_metadata, metadata_section,
 };
 pub use auth::{
-    AuthBase, AuthCell, AuthCellError, AuthRole, MAX_ROLESET_WIRE_DEPTH, Proposal, RoleSet,
+    AuthBase, AuthCell, AuthRole, MAX_AUTH_CELL_WIRE_DEPTH, MAX_ROLESET_WIRE_DEPTH, Proposal,
+    RoleSet, StoredRoles,
 };
 pub use dsl::{
     Clause, Declaration, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,

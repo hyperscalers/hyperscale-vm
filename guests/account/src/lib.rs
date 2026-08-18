@@ -19,7 +19,9 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint(principals)]
 pub mod account {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Ids, NfBucket, Quantity, RoleSet, clock_ms};
+    use hyperscale_vm_sdk::state::{
+        AuthBase, AuthCell, Bucket, Ids, NfBucket, Proposal, Quantity, RoleSet, clock_ms,
+    };
 
     /// Funds left the account.
     #[event]
@@ -136,9 +138,14 @@ pub mod account {
         pub fn securify(&mut self, roles: RoleSet, delay_ms: u64) {
             // The admission gate decoded the roles under the vocabulary
             // caps; what is left to judge here is the one-way door.
-            let stored = self.auth().get();
-            assert!(stored.is_empty(), "the account is already securified");
-            self.auth().set(frame(&base(roles.bytes(), delay_ms), None));
+            assert!(
+                self.auth().get().is_none(),
+                "the account is already securified"
+            );
+            self.auth().set(Some(AuthCell::new(AuthBase {
+                recovery_delay_ms: delay_ms,
+                roles,
+            })));
         }
 
         /// Append a pending replacement for the whole cell, maturing
@@ -147,17 +154,22 @@ pub mod account {
         #[role_gated(recovery)]
         #[allow(clippy::needless_pass_by_value)] // the contract consumes the roles it stores
         pub fn propose(&mut self, roles: RoleSet, delay_ms: u64) {
-            let stored = self.auth().get();
-            assert!(!stored.is_empty(), "the account is not securified");
+            let stored = self.auth().get().expect("the account is not securified");
             // The wait comes from the delay that governs now, never from
             // the proposer: the proposal's own delay only starts
             // governing when the proposal does.
-            let current = governing(&stored);
-            let wait = u64::from_le_bytes(current[0..8].try_into().unwrap());
-            let effective_at_ms = clock_ms().saturating_add(wait);
-            let proposed = base(roles.bytes(), delay_ms);
-            self.auth()
-                .set(frame(current, Some((effective_at_ms, &proposed))));
+            let current = stored.governing(clock_ms()).clone();
+            let effective_at_ms = clock_ms().saturating_add(current.recovery_delay_ms);
+            self.auth().set(Some(AuthCell {
+                base: current,
+                proposal: Some(Proposal {
+                    effective_at_ms,
+                    base: AuthBase {
+                        recovery_delay_ms: delay_ms,
+                        roles,
+                    },
+                }),
+            }));
         }
 
         /// Drop an unmatured proposal; a matured one is promoted instead
@@ -165,68 +177,18 @@ pub mod account {
         /// cancel.
         #[role_gated(primary)]
         pub fn cancel(&mut self) {
-            let stored = self.auth().get();
-            assert!(!stored.is_empty(), "the account is not securified");
-            self.auth().set(frame(governing(&stored), None));
+            let stored = self.auth().get().expect("the account is not securified");
+            let governing = stored.governing(clock_ms()).clone();
+            self.auth().set(Some(AuthCell::new(governing)));
         }
 
         /// Promote the pending proposal now, matured or not: early
         /// enactment and compaction are one operation.
         #[role_gated(confirmation)]
         pub fn confirm(&mut self) {
-            let stored = self.auth().get();
-            assert!(!stored.is_empty(), "the account is not securified");
-            let (_, proposal) = split(&stored);
-            let (_, proposed) = proposal.expect("nothing is pending");
-            self.auth().set(frame(proposed, None));
-        }
-    }
-
-    /// One base's frame bytes: the delay, then the opaque role set.
-    fn base(roles: &[u8], delay_ms: u64) -> Vec<u8> {
-        let mut out = Vec::with_capacity(8 + roles.len());
-        out.extend_from_slice(&delay_ms.to_le_bytes());
-        out.extend_from_slice(roles);
-        out
-    }
-
-    /// One whole cell from its parts.
-    fn frame(base: &[u8], proposal: Option<(u64, &[u8])>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(4 + base.len());
-        out.extend_from_slice(&u32::try_from(base.len()).unwrap().to_le_bytes());
-        out.extend_from_slice(base);
-        if let Some((effective_at_ms, proposed)) = proposal {
-            out.extend_from_slice(&effective_at_ms.to_le_bytes());
-            out.extend_from_slice(proposed);
-        }
-        out
-    }
-
-    /// A stored cell split into its base and, if present, its proposal.
-    /// Only this package writes the cell, so a frame that does not split
-    /// is unreachable and the indexing panic is the trap it deserves.
-    fn split(cell: &[u8]) -> (&[u8], Option<(u64, &[u8])>) {
-        let base_len = u32::from_le_bytes(cell[0..4].try_into().unwrap()) as usize;
-        let base = &cell[4..4 + base_len];
-        let tail = &cell[4 + base_len..];
-        let proposal = if tail.is_empty() {
-            None
-        } else {
-            let effective_at_ms = u64::from_le_bytes(tail[0..8].try_into().unwrap());
-            Some((effective_at_ms, &tail[8..]))
-        };
-        (base, proposal)
-    }
-
-    /// The base that governs now: the proposal's once its instant has
-    /// arrived, the stored one until then. The write-side twin of the
-    /// gate's own comparison — promoting here is compaction of what reads
-    /// already answer, never a change of verdict.
-    fn governing(cell: &[u8]) -> &[u8] {
-        let (base, proposal) = split(cell);
-        match proposal {
-            Some((effective_at_ms, proposed)) if effective_at_ms <= clock_ms() => proposed,
-            _ => base,
+            let stored = self.auth().get().expect("the account is not securified");
+            let proposal = stored.proposal.expect("nothing is pending");
+            self.auth().set(Some(AuthCell::new(proposal.base)));
         }
     }
 }

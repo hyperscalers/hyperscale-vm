@@ -47,7 +47,16 @@
 //! exclusion — which is what separates them from a state read and why no
 //! clause follows from calling one.
 
-use hyperscale_vm_effects::Address;
+use hyperscale_hbor::{
+    DEFAULT_MAX_DEPTH, HborDecode, HborEncode, from_slice_with_depth, to_vec_with_depth,
+};
+use hyperscale_vm_effects::{Address, MAX_AUTH_CELL_WIRE_DEPTH};
+/// The stored-authority vocabulary, named where a body's words live.
+///
+/// A role-set parameter is [`RoleSet`] — the canonical bytes a signature
+/// binds and a cell holds, which is the same type in both positions, so a
+/// body that stores what it was handed converts nothing.
+pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, StoredRoles as RoleSet};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host;
@@ -137,6 +146,62 @@ pub trait Cellular: Sized {
 
     /// The substate representation of this value.
     fn to_cell(&self) -> Vec<u8>;
+}
+
+/// A type held in a cell as its own HBOR encoding.
+///
+/// The counterweight to [`Cellular`]'s closed vocabulary, and it does not
+/// reopen it. What the closure argues against is an *author choosing a
+/// format*, which puts a private decision where a protocol representation
+/// belongs; a record chooses nothing — the author names fields and the
+/// encoding is the protocol's, the same one every wire form in the system
+/// already uses.
+///
+/// A record reaches a cell as `Cell<Option<T>>` and never as `Cell<T>`,
+/// through the one blanket implementation below. That is what keeps
+/// absence distinguishable: `Cellular` reads an absent substate as empty
+/// bytes and every implementation takes that as its zero, and a struct has
+/// no zero — HBOR decodes no fields from nothing. `None` is the zero the
+/// type does have, so an unwritten cell reads as the absence it is rather
+/// than as a record nobody stored.
+pub trait Record: HborEncode + HborDecode {
+    /// The decoder nesting cap this type is read under.
+    ///
+    /// The default is the encoder's own, which is the right bound for a
+    /// record only its own package writes. A type whose content a caller
+    /// supplies states a tighter one, so the admissible set is exact
+    /// rather than merely bounded.
+    const WIRE_DEPTH: usize = DEFAULT_MAX_DEPTH;
+}
+
+/// A record's cell: its encoding, or no bytes at all.
+///
+/// # Panics
+///
+/// On stored bytes that are not this record. Only the package owning the
+/// cell writes it, so bytes that do not decode are a defect in state
+/// rather than in the call that found them, and the trap is the
+/// deterministic answer to it — the same standing an address cell has.
+/// The readers that must *not* trap on one read the bytes directly and
+/// fail closed there.
+impl<T: Record> Cellular for Option<T> {
+    fn from_cell(cell: &[u8]) -> Self {
+        (!cell.is_empty())
+            .then(|| from_slice_with_depth(cell, T::WIRE_DEPTH).expect("a well-formed record cell"))
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.as_ref().map_or_else(Vec::new, |record| {
+            to_vec_with_depth(record, T::WIRE_DEPTH).expect("a record within its own cap")
+        })
+    }
+}
+
+/// The account's stored-authority cell, written on behalf of the crate
+/// that defines it: [`crate::AuthCell`] is `hyperscale-vm-effects`', and
+/// that crate does not depend on the SDK.
+impl Record for AuthCell {
+    const WIRE_DEPTH: usize = MAX_AUTH_CELL_WIRE_DEPTH;
 }
 
 impl Cellular for u128 {
@@ -1094,19 +1159,6 @@ pub fn hash(data: &[u8]) -> Vec<u8> {
     return host::hash(data);
 }
 
-/// An authority rule parameter, as a contract signature names it.
-///
-/// The rule arrives as canonical bytes the admission gate already decoded
-/// under the vocabulary caps, so a body carries them and judges nothing.
-#[derive(Clone, Debug, Default)]
-pub struct Rule(pub Vec<u8>);
-
-/// A role-set parameter, as a contract signature names it. The same
-/// shape as [`Rule`], for the three-rule form the stored-authority cell
-/// holds.
-#[derive(Clone, Debug, Default)]
-pub struct RoleSet(pub Vec<u8>);
-
 /// A set of non-fungible instance ids, as a contract signature names it.
 ///
 /// Signed manifest content, carried in the framing a declared id list
@@ -1115,29 +1167,58 @@ pub struct RoleSet(pub Vec<u8>);
 #[derive(Clone, Debug, Default)]
 pub struct Ids(pub Vec<u8>);
 
-macro_rules! opaque_bytes {
-    ($($ty:ident),*) => {
-        $(
-            impl $ty {
-                /// The canonical bytes, which is all a body may do with
-                /// one: what they mean was settled at admission.
-                #[must_use]
-                pub fn bytes(&self) -> &[u8] {
-                    &self.0
-                }
-            }
-
-            impl Cellular for $ty {
-                fn from_cell(cell: &[u8]) -> Self {
-                    Self(cell.to_vec())
-                }
-
-                fn to_cell(&self) -> Vec<u8> {
-                    self.0.clone()
-                }
-            }
-        )*
-    };
+impl Ids {
+    /// The canonical bytes, which is all a body may do with one: what
+    /// they mean was settled at admission.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
+    }
 }
 
-opaque_bytes!(Rule, RoleSet, Ids);
+impl Cellular for Ids {
+    fn from_cell(cell: &[u8]) -> Self {
+        Self(cell.to_vec())
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+}
+
+/// An authority rule parameter, as a contract signature names it.
+///
+/// The rule arrives as canonical bytes the admission gate already decoded
+/// under the vocabulary caps, so a body carries them and judges nothing.
+#[derive(Clone, Debug, Default)]
+pub struct Rule(pub Vec<u8>);
+
+impl Rule {
+    /// The canonical bytes, which is all a body may do with one: what
+    /// they mean was settled at admission.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Cellular for Rule {
+    fn from_cell(cell: &[u8]) -> Self {
+        Self(cell.to_vec())
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+}
+
+/// A role-set parameter crosses the boundary as the bytes it is.
+impl Cellular for RoleSet {
+    fn from_cell(cell: &[u8]) -> Self {
+        Self(cell.to_vec())
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.bytes().to_vec()
+    }
+}

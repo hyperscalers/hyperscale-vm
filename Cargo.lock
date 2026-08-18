@@ -769,6 +769,7 @@ dependencies = [
 name = "hyperscale-vm-sdk"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-hbor",
  "hyperscale-vm-effects",
  "hyperscale-vm-embed",
  "hyperscale-vm-fixtures",

@@ -1,18 +1,10 @@
 //! The account's stored-authority cell: three rules, a recovery delay,
 //! and at most one timed proposal.
 //!
-//! The layout is a frame rather than one encoded record, because the
-//! account guest splices it with integer reads at fixed offsets and
-//! carries no codec: a u32 length, u64 instants, and HBOR blobs the
-//! guest never reads. This module owns the read side — the kernel's
-//! gate and the payer shard's binding verdict decode through it — and
-//! the guest owns the write-side splices; the corpus pins their
-//! agreement on exact bytes.
-//!
-//! Frame: `[u32 LE base_len][base]`, optionally followed by
-//! `[u64 LE effective_at_ms][base']` running to the cell's end, where
-//! `base = [u64 LE recovery_delay_ms][RoleSet]`. The length is u32
-//! because a cap-maximal role set exceeds u16.
+//! One encoded record, read and written through this module by everyone
+//! who touches it — the account guest that stores it, the kernel's gate,
+//! and the payer shard's binding verdict. There is no second
+//! implementation to agree with.
 //!
 //! Nothing applies a matured proposal: every reader compares its
 //! instant against the transaction clock through [`AuthCell::governing`]
@@ -98,38 +90,88 @@ impl RoleSet {
     }
 }
 
+/// A role set as it is stored and carried: the canonical bytes, not the
+/// tree.
+///
+/// The one thing in the cell that stays opaque, and for a reason the
+/// runtime fixes rather than a preference. A [`Rule`] is recursive, so
+/// its decoder is; the deterministic profile requires an acyclic call
+/// graph, because a static stack bound is what makes stack exhaustion
+/// unreachable in both engines rather than reachable at different depths
+/// in each ([crates/runtime/src/frames.rs]). A guest therefore cannot
+/// carry a rule's codec, and a package that stores authority moves these
+/// bytes without reading them. Whoever judges a rule decodes them, under
+/// the vocabulary's own caps, where the judging happens.
+///
+/// [crates/runtime/src/frames.rs]: https://docs.rs/
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
+#[hbor(transparent)]
+pub struct StoredRoles(pub Vec<u8>);
+
+impl StoredRoles {
+    /// The canonical bytes, which is all a body may do with one: what
+    /// they mean was settled where they were decoded.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// The role set these bytes encode.
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError`] on bytes that are not a role set within the
+    /// vocabulary's caps.
+    pub fn decode(&self) -> Result<RoleSet, DecodeError> {
+        RoleSet::from_slice(&self.0)
+    }
+}
+
+impl TryFrom<&RoleSet> for StoredRoles {
+    type Error = EncodeError;
+
+    fn try_from(roles: &RoleSet) -> Result<Self, EncodeError> {
+        roles.to_bytes().map(Self)
+    }
+}
+
+/// The decoder nesting bound for a whole cell.
+///
+/// Five levels to the deepest field, and constant: the cell's own body,
+/// the `Option` around a proposal, the proposal's body, the base's body
+/// inside it, and the byte string holding the roles. What nests
+/// unboundedly is a rule, and no rule is in here — the roles are one
+/// opaque field, decoded at their own cap wherever one is judged. Pinned
+/// by test at both boundaries.
+pub const MAX_AUTH_CELL_WIRE_DEPTH: usize = 5;
+
 /// The cell's persistent half: the delay a proposal must wait, and the
 /// roles that govern while none has matured.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct AuthBase {
     /// How long a proposal waits before it governs, in weighted-time
-    /// milliseconds. Read by the guest as the base's first eight bytes,
-    /// which is why it sits outside the role set's encoding.
+    /// milliseconds.
     pub recovery_delay_ms: u64,
-    /// The three stored rules.
-    pub roles: RoleSet,
+    /// The three stored rules, as the bytes they were decoded from.
+    pub roles: StoredRoles,
 }
 
 impl AuthBase {
-    fn parse(bytes: &[u8]) -> Result<Self, AuthCellError> {
-        let (delay, roles) = bytes
-            .split_first_chunk::<8>()
-            .ok_or(AuthCellError::Truncated)?;
+    /// The base holding `roles`, encoded.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError`] on a rule past the vocabulary caps.
+    pub fn new(recovery_delay_ms: u64, roles: &RoleSet) -> Result<Self, EncodeError> {
         Ok(Self {
-            recovery_delay_ms: u64::from_le_bytes(*delay),
-            roles: RoleSet::from_slice(roles)?,
+            recovery_delay_ms,
+            roles: StoredRoles::try_from(roles)?,
         })
-    }
-
-    fn encode_into(&self, out: &mut Vec<u8>) -> Result<(), EncodeError> {
-        out.extend_from_slice(&self.recovery_delay_ms.to_le_bytes());
-        out.extend_from_slice(&self.roles.to_bytes()?);
-        Ok(())
     }
 }
 
 /// A pending replacement for the whole base, governing from its instant.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct Proposal {
     /// The weighted-time instant the proposal's base starts governing,
     /// computed where the proposal is written: the transaction clock
@@ -140,25 +182,12 @@ pub struct Proposal {
 }
 
 /// The decoded stored-authority cell.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct AuthCell {
     /// The persistent half.
     pub base: AuthBase,
     /// At most one pending replacement.
     pub proposal: Option<Proposal>,
-}
-
-/// Why bytes are not a stored-authority cell. Every reader fails closed
-/// on one: a cell that cannot be read admits nobody.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum AuthCellError {
-    /// The frame ends before a length or instant it promises.
-    #[error("the frame ends before a field it promises")]
-    Truncated,
-    /// A role set that does not decode as the vocabulary: past a cap,
-    /// non-canonical, or holding a degenerate threshold.
-    #[error(transparent)]
-    Roles(#[from] DecodeError),
 }
 
 impl AuthCell {
@@ -175,59 +204,20 @@ impl AuthCell {
     ///
     /// # Errors
     ///
-    /// [`AuthCellError`] on a truncated frame, trailing bytes, or a
-    /// role set that does not decode as the vocabulary.
-    pub fn from_slice(bytes: &[u8]) -> Result<Self, AuthCellError> {
-        let (len, rest) = bytes
-            .split_first_chunk::<4>()
-            .ok_or(AuthCellError::Truncated)?;
-        let base_len =
-            usize::try_from(u32::from_le_bytes(*len)).map_err(|_| AuthCellError::Truncated)?;
-        if rest.len() < base_len {
-            return Err(AuthCellError::Truncated);
-        }
-        let (base, tail) = rest.split_at(base_len);
-        let base = AuthBase::parse(base)?;
-        let proposal = if tail.is_empty() {
-            None
-        } else {
-            let (instant, proposed) = tail
-                .split_first_chunk::<8>()
-                .ok_or(AuthCellError::Truncated)?;
-            Some(Proposal {
-                effective_at_ms: u64::from_le_bytes(*instant),
-                base: AuthBase::parse(proposed)?,
-            })
-        };
-        Ok(Self { base, proposal })
+    /// [`DecodeError`] on a truncated or non-canonical encoding, trailing
+    /// bytes, or a role set past either vocabulary cap.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, DecodeError> {
+        from_slice_with_depth(bytes, MAX_AUTH_CELL_WIRE_DEPTH)
     }
 
-    /// The cell's frame bytes — what the guest's splices produce, byte
-    /// for byte, which the corpus pins.
+    /// The cell's canonical wire bytes, under the same cap the decoder
+    /// enforces.
     ///
     /// # Errors
     ///
     /// [`EncodeError`] on a rule past the vocabulary caps.
-    ///
-    /// # Panics
-    ///
-    /// On a base past `u32::MAX` bytes — unreachable for any role set
-    /// the caps admit.
     pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
-        let mut base = Vec::new();
-        self.base.encode_into(&mut base)?;
-        let mut out = Vec::with_capacity(base.len() + 4);
-        out.extend_from_slice(
-            &u32::try_from(base.len())
-                .expect("a role set within the caps encodes under u32::MAX bytes")
-                .to_le_bytes(),
-        );
-        out.append(&mut base);
-        if let Some(proposal) = &self.proposal {
-            out.extend_from_slice(&proposal.effective_at_ms.to_le_bytes());
-            proposal.base.encode_into(&mut out)?;
-        }
-        Ok(out)
+        to_vec_with_depth(self, MAX_AUTH_CELL_WIRE_DEPTH)
     }
 
     /// The base that governs at `clock_ms`: the proposal's once its
@@ -266,26 +256,25 @@ impl AuthCell {
         Self::from_slice(stored).is_ok_and(|cell| {
             cell.governing(clock_ms)
                 .roles
-                .rule(role)
-                .satisfied_by(evidence)
+                .decode()
+                .is_ok_and(|roles| roles.rule(role).satisfied_by(evidence))
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{Hbor, to_vec};
+    use hyperscale_hbor::{Hbor, from_slice_with_depth, to_vec, to_vec_with_depth};
 
-    use super::{AuthBase, AuthCell, AuthCellError, AuthRole, Proposal, RoleSet};
+    use super::{
+        AuthBase, AuthCell, AuthRole, MAX_AUTH_CELL_WIRE_DEPTH, Proposal, RoleSet, StoredRoles,
+    };
     use crate::presented::Presented;
     use crate::rule::testing::{WideRule, chain, identity, principal, wide_chain};
     use crate::rule::{MAX_RULE_DEPTH, Rule};
 
     fn base(byte: u8, delay: u64) -> AuthBase {
-        AuthBase {
-            recovery_delay_ms: delay,
-            roles: RoleSet::uniform(Rule::Require(identity(byte))),
-        }
+        AuthBase::new(delay, &RoleSet::uniform(Rule::Require(identity(byte)))).unwrap()
     }
 
     #[test]
@@ -304,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn the_frame_round_trips_with_and_without_a_proposal() {
+    fn the_cell_round_trips_with_and_without_a_proposal() {
         let bare = AuthCell::new(base(1, 86_400_000));
         let bytes = bare.to_bytes().unwrap();
         assert_eq!(AuthCell::from_slice(&bytes).unwrap(), bare);
@@ -320,42 +309,31 @@ mod tests {
         assert_eq!(AuthCell::from_slice(&bytes).unwrap(), pending);
     }
 
-    /// The guest writes the frame by concatenation — a u32 length, two
-    /// u64 instants, opaque role-set bytes — so the codec here must
-    /// agree with exactly that layout, byte for byte.
+    /// The cell is the encoding of its own fields, in declaration order
+    /// and with nothing between them — so what a reader decodes is what
+    /// the writer's type says, and there is no second layout to agree
+    /// with.
     #[test]
-    fn the_frame_is_the_guests_concatenation() {
-        let roles = RoleSet::uniform(Rule::Require(identity(7)))
-            .to_bytes()
-            .unwrap();
-        let mut spliced = Vec::new();
-        spliced.extend_from_slice(&u32::try_from(8 + roles.len()).unwrap().to_le_bytes());
-        spliced.extend_from_slice(&5000u64.to_le_bytes());
-        spliced.extend_from_slice(&roles);
-        assert_eq!(
-            AuthCell::from_slice(&spliced).unwrap(),
-            AuthCell::new(AuthBase {
-                recovery_delay_ms: 5000,
-                roles: RoleSet::uniform(Rule::Require(identity(7))),
-            })
-        );
-
-        let mut with_proposal = spliced.clone();
-        with_proposal.extend_from_slice(&99_000u64.to_le_bytes());
-        with_proposal.extend_from_slice(&7000u64.to_le_bytes());
-        with_proposal.extend_from_slice(&roles);
-        let decoded = AuthCell::from_slice(&with_proposal).unwrap();
-        assert_eq!(
-            decoded.proposal,
-            Some(Proposal {
+    fn the_cell_is_its_own_encoding() {
+        let roles = RoleSet::uniform(Rule::Require(identity(7)));
+        let pending = AuthCell {
+            base: AuthBase::new(5000, &roles).unwrap(),
+            proposal: Some(Proposal {
                 effective_at_ms: 99_000,
-                base: AuthBase {
-                    recovery_delay_ms: 7000,
-                    roles: RoleSet::uniform(Rule::Require(identity(7))),
-                },
-            })
+                base: AuthBase::new(7000, &roles).unwrap(),
+            }),
+        };
+        let bytes = pending.to_bytes().unwrap();
+        assert_eq!(
+            bytes,
+            to_vec_with_depth(&pending, MAX_AUTH_CELL_WIRE_DEPTH).unwrap()
         );
-        assert_eq!(with_proposal, decoded.to_bytes().unwrap());
+        assert_eq!(AuthCell::from_slice(&bytes).unwrap(), pending);
+
+        // The bound is exact: the deepest field sits at it, and one
+        // level short does not reach.
+        assert!(to_vec_with_depth(&pending, MAX_AUTH_CELL_WIRE_DEPTH - 1).is_err());
+        assert!(from_slice_with_depth::<AuthCell>(&bytes, MAX_AUTH_CELL_WIRE_DEPTH - 1).is_err());
     }
 
     #[test]
@@ -378,24 +356,17 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_frame_is_refused() {
+    fn a_malformed_cell_is_refused() {
         assert!(AuthCell::from_slice(&[]).is_err());
         assert!(AuthCell::from_slice(&[1, 0, 0]).is_err());
-        // A length past the bytes on hand.
-        assert!(matches!(
-            AuthCell::from_slice(&[0xFF, 0, 0, 0, 1, 2, 3]),
-            Err(AuthCellError::Truncated)
-        ));
-        // A base too short for its own delay.
-        assert!(AuthCell::from_slice(&[4, 0, 0, 0, 1, 2, 3, 4]).is_err());
-        // A well-formed base with a truncated proposal instant.
+        // Trailing bytes past a well-formed cell.
         let mut bytes = AuthCell::new(base(1, 0)).to_bytes().unwrap();
         bytes.extend_from_slice(&[0; 4]);
-        assert!(matches!(
-            AuthCell::from_slice(&bytes),
-            Err(AuthCellError::Truncated)
-        ));
-        // Bare rule bytes are not a frame.
+        assert!(AuthCell::from_slice(&bytes).is_err());
+        // A cell truncated inside its own role set.
+        let whole = AuthCell::new(base(1, 0)).to_bytes().unwrap();
+        assert!(AuthCell::from_slice(&whole[..whole.len() - 1]).is_err());
+        // Bare rule bytes are not a cell.
         let rule = Rule::Require(identity(1)).to_bytes().unwrap();
         assert!(AuthCell::from_slice(&rule).is_err());
     }
@@ -427,6 +398,72 @@ mod tests {
             confirmation: WideRule::Require(identity(1)),
         };
         assert!(RoleSet::from_slice(&to_vec(&wide).unwrap()).is_err());
+    }
+
+    /// A stored role set is judged at the rule vocabulary's own cap
+    /// wherever it sits, because it sits in the cell as bytes: what
+    /// decodes them is [`StoredRoles::decode`], at one cap, and the cell
+    /// around them nests nothing.
+    ///
+    /// So an over-deep rule is refused in either position for the same
+    /// reason rather than by an arithmetic relation between two caps —
+    /// and a cell carrying one admits nobody rather than trapping.
+    #[test]
+    fn a_stored_rule_past_the_caps_is_refused_wherever_it_sits() {
+        let deepest = RoleSet::uniform(chain(MAX_RULE_DEPTH - 1));
+        let cell = AuthCell {
+            base: AuthBase::new(1, &deepest).unwrap(),
+            proposal: Some(Proposal {
+                effective_at_ms: 7,
+                base: AuthBase::new(1, &deepest).unwrap(),
+            }),
+        };
+        let bytes = cell.to_bytes().unwrap();
+        assert_eq!(AuthCell::from_slice(&bytes).unwrap(), cell);
+        assert_eq!(cell.base.roles.decode().unwrap(), deepest);
+
+        // One level past the cap is refused at encode, and the bytes the
+        // uncapped twin produces are refused at decode.
+        assert!(AuthBase::new(1, &RoleSet::uniform(chain(MAX_RULE_DEPTH))).is_err());
+        let over = StoredRoles(
+            to_vec(&WideSet {
+                primary: wide_chain(MAX_RULE_DEPTH),
+                recovery: WideRule::Require(identity(1)),
+                confirmation: WideRule::Require(identity(1)),
+            })
+            .unwrap(),
+        );
+        assert!(over.decode().is_err());
+
+        // In either position, the cell still decodes — the bytes are a
+        // byte string here — and the verdict it answers is nobody.
+        let target = principal(1);
+        for cell in [
+            AuthCell::new(AuthBase {
+                recovery_delay_ms: 1,
+                roles: over.clone(),
+            }),
+            AuthCell {
+                base: AuthBase::new(1, &deepest).unwrap(),
+                proposal: Some(Proposal {
+                    effective_at_ms: 0,
+                    base: AuthBase {
+                        recovery_delay_ms: 1,
+                        roles: over,
+                    },
+                }),
+            },
+        ] {
+            let stored = cell.to_bytes().unwrap();
+            assert!(AuthCell::from_slice(&stored).is_ok());
+            assert!(!AuthCell::admits(
+                &stored,
+                target,
+                AuthRole::Primary,
+                &[identity(1)],
+                u64::MAX,
+            ));
+        }
     }
 
     /// The verdict both readers share, whole: absent is the virtual
@@ -467,11 +504,12 @@ mod tests {
         let cell = AuthCell {
             base: AuthBase {
                 recovery_delay_ms: 1_000,
-                roles: RoleSet {
+                roles: StoredRoles::try_from(&RoleSet {
                     primary: Rule::Require(identity(2)),
                     recovery: Rule::Require(identity(3)),
                     confirmation: Rule::Require(identity(4)),
-                },
+                })
+                .unwrap(),
             },
             proposal: Some(Proposal {
                 effective_at_ms: 500,

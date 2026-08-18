@@ -352,12 +352,12 @@ PackageMetadata {
                 ),
                 Derived(
                     Arg(
-                        0,
+                        1,
                     ),
                 ),
                 Derived(
                     Arg(
-                        1,
+                        0,
                     ),
                 ),
             ],
@@ -399,12 +399,12 @@ PackageMetadata {
                 ),
                 Derived(
                     Arg(
-                        0,
+                        1,
                     ),
                 ),
                 Derived(
                     Arg(
-                        1,
+                        0,
                     ),
                 ),
             ],

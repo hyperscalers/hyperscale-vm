@@ -101,10 +101,8 @@ fn auth(owner: impl Into<Address>) -> SubstateKey {
 
 /// One identity as all three roles, under the corpus delay.
 fn uniform_base(identity: Address) -> AuthBase {
-    AuthBase {
-        recovery_delay_ms: DAY_MS,
-        roles: RoleSet::uniform(Rule::Require(identity.into())),
-    }
+    AuthBase::new(DAY_MS, &RoleSet::uniform(Rule::Require(identity.into())))
+        .expect("a rule within the vocabulary caps")
 }
 
 fn world() -> (MetadataCache, InstanceRegistry) {
@@ -1279,11 +1277,8 @@ const fn split_roles() -> RoleSet {
     }
 }
 
-const fn split_base() -> AuthBase {
-    AuthBase {
-        recovery_delay_ms: DAY_MS,
-        roles: split_roles(),
-    }
+fn split_base() -> AuthBase {
+    AuthBase::new(DAY_MS, &split_roles()).expect("a rule within the vocabulary caps")
 }
 
 /// A store holding Alice's funds and her securified split-role cell,

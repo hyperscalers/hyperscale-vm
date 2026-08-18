@@ -615,7 +615,9 @@ fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
             Field {
                 slot: AUTH.0,
                 kind: FieldKind::Cell,
-                element: Some(syn::parse_quote!(::std::vec::Vec<u8>)),
+                element: Some(syn::parse_quote!(
+                    ::core::option::Option<::hyperscale_vm_sdk::AuthCell>
+                )),
                 denomination: None,
             },
         ),
@@ -1169,8 +1171,11 @@ fn authoring_accessors(state: &syn::Ident, config: Option<&syn::Ident>) -> Token
                 ::core::unimplemented!("a contract body runs on the guest")
             }
 
-            /// The stored authority cell.
-            fn auth(&self) -> ::hyperscale_vm_sdk::state::Cell<::std::vec::Vec<u8>> {
+            /// The stored authority cell, absent until the holder
+            /// securifies.
+            fn auth(&self) -> ::hyperscale_vm_sdk::state::Cell<
+                ::core::option::Option<::hyperscale_vm_sdk::AuthCell>,
+            > {
                 ::core::unimplemented!("a contract body runs on the guest")
             }
         }
