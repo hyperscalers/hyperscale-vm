@@ -21,6 +21,7 @@ pub use hyperscale_vm_manifest_builder::{
 };
 
 use crate::num::{Quantity, UnitFixed};
+use crate::state::Table;
 
 /// A component known to run one package.
 ///
@@ -131,6 +132,19 @@ address_slots!(
     ResourceAddr,
     ResourceRef
 );
+
+/// A table fills its slot as the list of pairs the DSL's `Lookup` and
+/// `Contains` walk — one slot, whatever the row count.
+impl<K: IntoSlot, V: IntoSlot> IntoSlot for Table<K, V> {
+    fn into_slot(self) -> Value {
+        Value::List(
+            self.into_rows()
+                .into_iter()
+                .map(|(key, value)| Value::Tuple(vec![key.into_slot(), value.into_slot()]))
+                .collect(),
+        )
+    }
+}
 
 /// A bounded fraction fills a slot as the scaled integer it carries,
 /// which is the form the leaf holds and a body reads back.

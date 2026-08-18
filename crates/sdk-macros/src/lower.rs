@@ -350,7 +350,7 @@ enum Val {
 impl From<Slot> for Val {
     fn from(slot: Slot) -> Self {
         match slot {
-            Slot::Value(term) => Self::Term(term),
+            Slot::Value(term) | Slot::Deferred(term) => Self::Term(term),
             Slot::Handle(index) => Self::Handle(index),
             Slot::Produced(term) => Self::Produced(term),
             Slot::Config => Self::Config,
@@ -418,6 +418,79 @@ const fn binary_op_assigns(op: syn::BinOp) -> bool {
             | syn::BinOp::ShlAssign(_)
             | syn::BinOp::ShrAssign(_)
     )
+}
+
+/// The judgment a comparison spells, where both operands are terms.
+///
+/// Six operators over two DSL variants: `!=`, `>`, `<=` and `>=` are the
+/// two the vocabulary has, rearranged. Deriving them rather than refusing
+/// them is what keeps an author from writing `>=` and getting the
+/// superset silently — the cost of an unread branch is contention, which
+/// is not a thing a compiler complains about.
+const fn judges(op: syn::BinOp) -> bool {
+    matches!(
+        op,
+        syn::BinOp::Eq(_)
+            | syn::BinOp::Ne(_)
+            | syn::BinOp::Lt(_)
+            | syn::BinOp::Gt(_)
+            | syn::BinOp::Le(_)
+            | syn::BinOp::Ge(_)
+            | syn::BinOp::And(_)
+            | syn::BinOp::Or(_)
+    )
+}
+
+fn judgment(op: syn::BinOp, left: &Val, right: &Val) -> Option<Term> {
+    let (Val::Term(left), Val::Term(right)) = (left, right) else {
+        return None;
+    };
+    let (left, right) = (Box::new(left.clone()), Box::new(right.clone()));
+    let ordered = |lo: Box<Term>, hi: Box<Term>| Term::Lt(lo, hi);
+    Some(match op {
+        syn::BinOp::Eq(_) => Term::Eq(left, right),
+        syn::BinOp::Ne(_) => Term::Not(Box::new(Term::Eq(left, right))),
+        syn::BinOp::Lt(_) => ordered(left, right),
+        syn::BinOp::Gt(_) => ordered(right, left),
+        syn::BinOp::Le(_) => Term::Not(Box::new(ordered(right, left))),
+        syn::BinOp::Ge(_) => Term::Not(Box::new(ordered(left, right))),
+        syn::BinOp::And(_) | syn::BinOp::Or(_) => {
+            if !left.is_judgment() || !right.is_judgment() {
+                return None;
+            }
+            if matches!(op, syn::BinOp::And(_)) {
+                Term::And(left, right)
+            } else {
+                Term::Or(left, right)
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// The two arms of an `if` that could be a selection: each a block whose
+/// only statement is its tail, and an `else` that is one of those or a
+/// further `if`. An `if let` is excluded by its condition binding names,
+/// which a value position has nowhere to put.
+fn selectable(branch: &syn::ExprIf) -> Option<(&syn::Expr, &syn::Expr)> {
+    if matches!(&*branch.cond, syn::Expr::Let(_)) {
+        return None;
+    }
+    let [syn::Stmt::Expr(then, None)] = branch.then_branch.stmts.as_slice() else {
+        return None;
+    };
+    let (_, otherwise) = branch.else_branch.as_ref()?;
+    let otherwise = match &**otherwise {
+        syn::Expr::Block(block) => match block.block.stmts.as_slice() {
+            [syn::Stmt::Expr(expr, None)] => expr,
+            _ => return None,
+        },
+        // `else if` chains, so a package's own multi-way table reads the
+        // way the same table written in Rust would.
+        chained @ syn::Expr::If(_) => chained,
+        _ => return None,
+    };
+    Some((then, otherwise))
 }
 
 /// Whether an expression is the bare `self` path.
@@ -978,13 +1051,43 @@ impl<'a> Lowerer<'a> {
             // of those, evaluated from the declaration rather than taken
             // from the guest, so a body that reads one cannot disagree
             // with what its signature says the edge carries.
+            // A selection is one of these rather than a rebuild of its
+            // arms, and deliberately: handing over the value the
+            // declaration chose is what leaves the guest nothing to
+            // disagree with, where choosing again in wasm would rest on
+            // two copies of one condition staying identical.
             Term::Arg(_)
             | Term::Config(_)
             | Term::FreshId(_)
             | Term::ResourceOf(_)
             | Term::OrderKey { .. }
-            | Term::SelfResource(_) => self.need(&Need::Derived(term.clone())),
-            Term::Lookup { .. } | Term::Field(..) | Term::Binding(_) | Term::NfBucket { .. } => {
+            | Term::SelfResource(_)
+            | Term::If { .. } => self.need(&Need::Derived(term.clone())),
+            // A judgment has no guest representation, so what crosses is
+            // its operands and the guest does the comparison — which is
+            // what a body that branches on one was doing before the
+            // declaration could read it.
+            Term::Not(inner) => {
+                let inner = self.term_value(inner);
+                quote!(!#inner)
+            }
+            Term::And(left, right) => self.judgment(left, right, &quote!(&&)),
+            Term::Or(left, right) => self.judgment(left, right, &quote!(||)),
+            Term::Eq(left, right) => self.judgment(left, right, &quote!(==)),
+            Term::Lt(left, right) => self.judgment(left, right, &quote!(<)),
+            Term::List(elements) => {
+                let elements: Vec<_> = elements.iter().map(|e| self.term_value(e)).collect();
+                quote!([#(#elements),*])
+            }
+            Term::Tuple(fields) => {
+                let fields: Vec<_> = fields.iter().map(|f| self.term_value(f)).collect();
+                quote!((#(#fields),*))
+            }
+            Term::Lookup { .. }
+            | Term::Contains { .. }
+            | Term::Field(..)
+            | Term::Binding(_)
+            | Term::NfBucket { .. } => {
                 self.refuse(
                     "this term is evaluated where the declaration is, and the guest \
                      has no way to ask for it",
@@ -992,6 +1095,13 @@ impl<'a> Lowerer<'a> {
                 quote!(::core::unimplemented!())
             }
         }
+    }
+
+    /// One binary judgment, rebuilt over its operands' guest values.
+    fn judgment(&mut self, left: &Term, right: &Term, op: &TokenStream) -> TokenStream {
+        let left = self.term_value(left);
+        let right = self.term_value(right);
+        quote!((#left #op #right))
     }
 
     /// The export parameter carrying `need`, binding one if the body has
@@ -1077,7 +1187,24 @@ impl<'a> Lowerer<'a> {
                 } else {
                     None
                 };
+                // A name for a declaration term is a name the
+                // declaration uses. The guest gets the local only where
+                // it could reassign it, because a rebound name is no
+                // longer the term and the statement rebinding it needs
+                // somewhere to write.
+                let deferred = matches!(eval.code, Code::Term(_))
+                    && diverge.is_none()
+                    && matches!(
+                        unwrap_pat(&local.pat),
+                        syn::Pat::Ident(syn::PatIdent {
+                            by_ref: None,
+                            mutability: None,
+                            subpat: None,
+                            ..
+                        })
+                    );
                 let slot = match &eval.val {
+                    Val::Term(term) if deferred => Slot::Deferred(term.clone()),
                     Val::Term(term) => Slot::Value(term.clone()),
                     Val::Handle(index) => Slot::Handle(*index),
                     Val::Produced(term) => Slot::Produced(term.clone()),
@@ -1121,6 +1248,9 @@ impl<'a> Lowerer<'a> {
                     // either evaluated elsewhere — a configuration field
                     // is a slot the kernel hands over — or refused at the
                     // line that reads it.
+                    return quote!();
+                }
+                if deferred {
                     return quote!();
                 }
                 let init = self.value(eval.code);
@@ -1252,6 +1382,100 @@ impl<'a> Lowerer<'a> {
         self.value(eval.code)
     }
 
+    /// An `if`, read as a selection where it is one and as control flow
+    /// otherwise.
+    ///
+    /// A selection is the shape whose arms are expressions: `if a == b {
+    /// x } else { y }`, where the condition is a judgment the DSL can
+    /// read and each arm is one term. That is the whole of it — an arm
+    /// with a statement in it is a body, not a value, and stays the
+    /// superset it has always been. Both readings walk the same pieces
+    /// once, so nothing is declared twice on the way to the decision.
+    fn branch(&mut self, branch: &syn::ExprIf) -> Eval {
+        let arms = selectable(branch);
+        let Some((then, otherwise)) = arms else {
+            return self.control_flow(branch);
+        };
+        let cond = self.expr(&branch.cond);
+        let then = self.expr(then);
+        let otherwise = self.expr(otherwise);
+        if let (Val::Term(judgment), Val::Term(taken), Val::Term(untaken)) =
+            (&cond.val, &then.val, &otherwise.val)
+            && judgment.is_judgment()
+        {
+            let term = Term::If {
+                cond: Box::new(judgment.clone()),
+                then: Box::new(taken.clone()),
+                otherwise: Box::new(untaken.clone()),
+            };
+            return Eval {
+                val: Val::Term(term.clone()),
+                code: Code::Term(term),
+            };
+        }
+        let cond = self.value(cond.code);
+        let then = self.value(then.code);
+        let otherwise = self.value(otherwise.code);
+        Eval::plain(quote!(if #cond { #then } else { #otherwise }))
+    }
+
+    /// An `if` whose arms are bodies: both are declared, so the result is
+    /// a superset of any one execution. Legal, and priced as the superset
+    /// it is. An `if let` scrutinee is walked and its pattern's names are
+    /// bound opaquely for the taken branch.
+    fn control_flow(&mut self, branch: &syn::ExprIf) -> Eval {
+        self.locals.push(BTreeMap::new());
+        let cond = self.condition(&branch.cond);
+        let then = self.block(&branch.then_branch);
+        self.locals.pop();
+        let otherwise = branch
+            .else_branch
+            .as_ref()
+            .map(|(_, otherwise)| self.code(otherwise))
+            .map(|code| quote!(else #code));
+        Eval::plain(quote!(if #cond #then #otherwise))
+    }
+
+    /// An array or a tuple, read as a term where every element is one.
+    ///
+    /// This is what lets a package spell its own lookup table: the rows
+    /// are its text rather than a list a caller configures, so what the
+    /// table says is held in the declaration a caller routes on.
+    fn sequence<'e>(
+        &mut self,
+        elements: impl Iterator<Item = &'e syn::Expr>,
+        listed: bool,
+    ) -> Eval {
+        let evals: Vec<Eval> = elements.map(|element| self.expr(element)).collect();
+        let terms: Option<Vec<Term>> = evals
+            .iter()
+            .map(|eval| match &eval.val {
+                Val::Term(term) => Some(term.clone()),
+                _ => None,
+            })
+            .collect();
+        if let Some(terms) = terms {
+            let term = if listed {
+                Term::List(terms)
+            } else {
+                Term::Tuple(terms)
+            };
+            return Eval {
+                val: Val::Term(term.clone()),
+                code: Code::Term(term),
+            };
+        }
+        let codes: Vec<_> = evals
+            .into_iter()
+            .map(|eval| self.value(eval.code))
+            .collect();
+        Eval::plain(if listed {
+            quote!([#(#codes),*])
+        } else {
+            quote!((#(#codes),*))
+        })
+    }
+
     #[allow(clippy::too_many_lines)] // one arm per expression form the walk models
     fn expr(&mut self, expr: &syn::Expr) -> Eval {
         match expr {
@@ -1283,18 +1507,7 @@ impl<'a> Lowerer<'a> {
             // superset of any one execution. Legal, and priced as the
             // superset it is. An `if let` scrutinee is walked and its
             // pattern's names are bound opaquely for the taken branch.
-            syn::Expr::If(branch) => {
-                self.locals.push(BTreeMap::new());
-                let cond = self.condition(&branch.cond);
-                let then = self.block(&branch.then_branch);
-                self.locals.pop();
-                let otherwise = branch
-                    .else_branch
-                    .as_ref()
-                    .map(|(_, otherwise)| self.code(otherwise))
-                    .map(|code| quote!(else #code));
-                Eval::plain(quote!(if #cond #then #otherwise))
-            }
+            syn::Expr::If(branch) => self.branch(branch),
             syn::Expr::Match(match_) => {
                 let scrutinee = self.code(&match_.expr);
                 let arms: Vec<_> = match_
@@ -1372,6 +1585,23 @@ impl<'a> Lowerer<'a> {
                 let left = self.assign_target(&assign.left);
                 Eval::plain(quote!(#left = #right))
             }
+            // A comparison is read before it is rewritten, because its two
+            // readings differ: what the declaration learns is a judgment,
+            // and what the guest runs is the comparison it was written as.
+            syn::Expr::Binary(binary) if judges(binary.op) => {
+                let left = self.expr(&binary.left);
+                let right = self.expr(&binary.right);
+                if let Some(term) = judgment(binary.op, &left.val, &right.val) {
+                    return Eval {
+                        val: Val::Term(term.clone()),
+                        code: Code::Term(term),
+                    };
+                }
+                let left = self.value(left.code);
+                let right = self.value(right.code);
+                let op = binary.op;
+                Eval::plain(quote!(#left #op #right))
+            }
             syn::Expr::Binary(binary) => {
                 let left = self.code(&binary.left);
                 let right = self.code(&binary.right);
@@ -1385,14 +1615,23 @@ impl<'a> Lowerer<'a> {
             // Forms that carry no access semantics of their own but can
             // contain accesses: walked exhaustively, evaluated to nothing.
             syn::Expr::Unary(unary) => {
-                let inner = self.code(&unary.expr);
+                let inner = self.expr(&unary.expr);
+                // `!` over a judgment is negation; over an integer it is
+                // a bitwise complement, which the DSL has no word for.
+                if let (syn::UnOp::Not(_), Val::Term(term)) = (&unary.op, &inner.val)
+                    && term.is_judgment()
+                {
+                    let term = Term::Not(Box::new(term.clone()));
+                    return Eval {
+                        val: Val::Term(term.clone()),
+                        code: Code::Term(term),
+                    };
+                }
+                let inner = self.value(inner.code);
                 let op = unary.op;
                 Eval::plain(quote!(#op #inner))
             }
-            syn::Expr::Tuple(tuple) => {
-                let elements: Vec<_> = tuple.elems.iter().map(|e| self.code(e)).collect();
-                Eval::plain(quote!((#(#elements),*)))
-            }
+            syn::Expr::Tuple(tuple) => self.sequence(tuple.elems.iter(), false),
             // A cast can truncate, so the result is not the term it was
             // cast from.
             syn::Expr::Cast(cast) => {
@@ -1409,10 +1648,7 @@ impl<'a> Lowerer<'a> {
                 let subscript = self.code(&index.index);
                 Eval::plain(quote!(#base[#subscript]))
             }
-            syn::Expr::Array(array) => {
-                let elements: Vec<_> = array.elems.iter().map(|e| self.code(e)).collect();
-                Eval::plain(quote!([#(#elements),*]))
-            }
+            syn::Expr::Array(array) => self.sequence(array.elems.iter(), true),
             syn::Expr::Repeat(repeat) => {
                 let element = self.code(&repeat.expr);
                 let len = self.code(&repeat.len);
@@ -1540,13 +1776,16 @@ impl<'a> Lowerer<'a> {
         let name = ident.to_string();
         if let Some(slot) = self.lookup(&name) {
             // A local's guest code is the local: whatever the binding was
-            // rewritten to at its `let` is what the name now holds. The
-            // configuration record is the exception — it has no guest
-            // value, only fields that are slots.
-            let code = if matches!(slot, Slot::Config) {
-                Code::Absent("the pinned configuration record")
-            } else {
-                Code::Rust(quote!(#ident))
+            // rewritten to at its `let` is what the name now holds. Two
+            // exceptions, both because the binding holds nothing the
+            // guest has: the configuration record is fields that are
+            // slots, and a declaration term is re-derived at each use, so
+            // naming one costs an export parameter only where the guest
+            // reads it and nothing where the declaration does.
+            let code = match &slot {
+                Slot::Config => Code::Absent("the pinned configuration record"),
+                Slot::Deferred(term) => Code::Term(term.clone()),
+                _ => Code::Rust(quote!(#ident)),
             };
             return Eval {
                 val: slot.into(),
@@ -2048,13 +2287,19 @@ impl<'a> Lowerer<'a> {
                     val: Val::Term(Term::ResourceOf(Box::new(term.clone()))),
                     code: Code::Term(Term::ResourceOf(Box::new(term))),
                 },
-                "lookup" | "get" if matches!(args.first(), Some(Val::Term(_))) => {
+                "lookup" | "get" | "contains" if matches!(args.first(), Some(Val::Term(_))) => {
                     let Some(Val::Term(key)) = args.first() else {
                         return Eval::absent("a lookup with no key");
                     };
-                    let term = Term::Lookup {
-                        map: Box::new(term),
-                        key: Box::new(key.clone()),
+                    let map = Box::new(term);
+                    let key = Box::new(key.clone());
+                    // The question a miss makes answerable: guarding the
+                    // lookup on this is what turns a routing refusal into
+                    // a default the package chose.
+                    let term = if method == "contains" {
+                        Term::Contains { map, key }
+                    } else {
+                        Term::Lookup { map, key }
                     };
                     Eval {
                         val: Val::Term(term.clone()),

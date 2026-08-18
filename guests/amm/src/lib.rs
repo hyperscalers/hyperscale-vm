@@ -54,8 +54,26 @@ pub mod amm {
             // Pins the whole configuration record: the fee is read from
             // it, so the swap wants it stable, not merely consulted.
             let settings = self.config().locked();
-            let mut sold = self.vault(settings.x);
-            let mut bought = self.vault(settings.y);
+            // The direction is carried by the edge that arrives: a bucket
+            // knows its own resource, so the pool sells the side it was
+            // paid in and pays out of the other. The pair is stated once,
+            // in the configuration, and the two-cycle over it is the
+            // package's own — held in the declaration a caller routes on
+            // rather than in a value a caller supplies.
+            //
+            // Both sides are read off the configuration rather than off
+            // the edge, and that is what keeps the cycle total. A pool
+            // that sold whatever arrived would take a resource in neither
+            // side, open a vault holding none of it, and quote a share
+            // against an empty reserve — so the declared denomination is
+            // the configured side, and a third resource is refused at
+            // admission rather than priced against nothing.
+            let paid = input.resource();
+            let sells_x = paid == settings.x;
+            let sold_side = if sells_x { settings.x } else { settings.y };
+            let bought_side = if sells_x { settings.y } else { settings.x };
+            let mut sold = self.vault(sold_side);
+            let mut bought = self.vault(bought_side);
 
             let x = sold.balance();
             let y = bought.balance();

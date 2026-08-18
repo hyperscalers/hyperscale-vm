@@ -9,15 +9,45 @@ PackageMetadata {
                 U128,
             ],
             outputs: [
-                Config(
-                    1,
-                ),
+                If {
+                    cond: Eq(
+                        ResourceOf(
+                            Arg(
+                                0,
+                            ),
+                        ),
+                        Config(
+                            0,
+                        ),
+                    ),
+                    then: Config(
+                        1,
+                    ),
+                    otherwise: Config(
+                        0,
+                    ),
+                },
             ],
             denominations: [
                 Some(
-                    Config(
-                        0,
-                    ),
+                    If {
+                        cond: Eq(
+                            ResourceOf(
+                                Arg(
+                                    0,
+                                ),
+                            ),
+                            Config(
+                                0,
+                            ),
+                        ),
+                        then: Config(
+                            0,
+                        ),
+                        otherwise: Config(
+                            1,
+                        ),
+                    },
                 ),
                 None,
             ],
@@ -43,9 +73,24 @@ PackageMetadata {
                                 1,
                             ),
                             material: [
-                                Config(
-                                    0,
-                                ),
+                                If {
+                                    cond: Eq(
+                                        ResourceOf(
+                                            Arg(
+                                                0,
+                                            ),
+                                        ),
+                                        Config(
+                                            0,
+                                        ),
+                                    ),
+                                    then: Config(
+                                        0,
+                                    ),
+                                    otherwise: Config(
+                                        1,
+                                    ),
+                                },
                             ],
                         },
                     ),
@@ -53,9 +98,24 @@ PackageMetadata {
                         requires: Either,
                     },
                     denomination: Some(
-                        Config(
-                            0,
-                        ),
+                        If {
+                            cond: Eq(
+                                ResourceOf(
+                                    Arg(
+                                        0,
+                                    ),
+                                ),
+                                Config(
+                                    0,
+                                ),
+                            ),
+                            then: Config(
+                                0,
+                            ),
+                            otherwise: Config(
+                                1,
+                            ),
+                        },
                     ),
                 },
                 Effect {
@@ -66,9 +126,24 @@ PackageMetadata {
                                 1,
                             ),
                             material: [
-                                Config(
-                                    1,
-                                ),
+                                If {
+                                    cond: Eq(
+                                        ResourceOf(
+                                            Arg(
+                                                0,
+                                            ),
+                                        ),
+                                        Config(
+                                            0,
+                                        ),
+                                    ),
+                                    then: Config(
+                                        1,
+                                    ),
+                                    otherwise: Config(
+                                        0,
+                                    ),
+                                },
                             ],
                         },
                     ),
@@ -76,9 +151,24 @@ PackageMetadata {
                         requires: Either,
                     },
                     denomination: Some(
-                        Config(
-                            1,
-                        ),
+                        If {
+                            cond: Eq(
+                                ResourceOf(
+                                    Arg(
+                                        0,
+                                    ),
+                                ),
+                                Config(
+                                    0,
+                                ),
+                            ),
+                            then: Config(
+                                1,
+                            ),
+                            otherwise: Config(
+                                0,
+                            ),
+                        },
                     ),
                 },
             ],

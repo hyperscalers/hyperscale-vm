@@ -66,6 +66,64 @@ const OFF_HOST: &str = "the lowering answers this from the declaration — reach
                         body was called directly rather than through the walk that materializes \
                         its capabilities";
 
+/// A lookup table a package holds in its configuration.
+///
+/// The kernel's form is a list of `(key, value)` pairs, and the DSL walks
+/// it with `Lookup` and `Contains`. This is that shape as a body names
+/// it: a configuration field typed here reads `settings.routes.get(k)`
+/// and `settings.routes.contains(k)`, and the lowering answers both from
+/// the declaration.
+///
+/// So both methods are [`OFF_HOST`] stubs, like [`Bucket::resource`]. The
+/// pairs are carried because whoever *creates* the instance writes them
+/// down — a table is one configuration slot, and the value in that slot
+/// is these rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Table<K, V>(Vec<(K, V)>);
+
+impl<K, V> Table<K, V> {
+    /// The table holding `rows`.
+    ///
+    /// First match wins, as the walk reads it, so a key written twice
+    /// takes the earlier row.
+    #[must_use]
+    pub const fn new(rows: Vec<(K, V)>) -> Self {
+        Self(rows)
+    }
+
+    /// The rows, in the order a lookup walks them.
+    #[must_use]
+    pub fn rows(&self) -> &[(K, V)] {
+        &self.0
+    }
+
+    /// The rows, owned — what the creation path encodes into the slot.
+    #[must_use]
+    pub fn into_rows(self) -> Vec<(K, V)> {
+        self.0
+    }
+
+    /// The value at `key`.
+    ///
+    /// A miss is a routing refusal, so a package that would rather answer
+    /// guards this on [`Table::contains`] — the untaken arm of a
+    /// selection is never evaluated.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
+    pub fn get(&self, key: K) -> V {
+        let _ = key;
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// Whether the table holds `key`.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
+    pub fn contains(&self, key: K) -> bool {
+        let _ = key;
+        unimplemented!("{OFF_HOST}")
+    }
+}
+
 /// A value a declared cell or entry can hold.
 ///
 /// The kernel's substates are bytes; this is the vocabulary's statement

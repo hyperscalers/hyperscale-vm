@@ -373,3 +373,216 @@ fn a_merge_denominates_both_of_the_edges_it_joins() {
         ],
     );
 }
+
+/// Selection: a key chosen between two configured sides, a table lookup a
+/// miss does not refuse, and a compound key spelled as a product.
+#[blueprint]
+mod selection {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Table, Unordered};
+
+    #[config]
+    struct Pair {
+        left: Address,
+        right: Address,
+        routes: Table<Address, Address>,
+        fallback: Address,
+    }
+
+    #[state]
+    struct Selection {
+        #[slot(16)]
+        seen: Unordered<u128>,
+    }
+
+    impl Selection {
+        /// One of two configured sides, and only one.
+        pub fn either(&mut self, pick: Address) {
+            let settings = self.config().locked();
+            let side = if pick == settings.left {
+                settings.left
+            } else {
+                settings.right
+            };
+            self.vault(side).declared();
+        }
+
+        /// The superset the same choice declares when the arms are
+        /// bodies rather than values.
+        pub fn both(&mut self, pick: Address) {
+            let settings = self.config().locked();
+            if pick == settings.left {
+                self.vault(settings.left).declared();
+            } else {
+                self.vault(settings.right).declared();
+            }
+        }
+
+        /// A lookup a miss answers rather than refuses: the table is read
+        /// only where it holds the key, because the untaken arm of a
+        /// selection never runs.
+        pub fn routed(&mut self, who: Address) {
+            let settings = self.config().locked();
+            let target = if settings.routes.contains(who) {
+                settings.routes.get(who)
+            } else {
+                settings.fallback
+            };
+            self.vault(target).declared();
+        }
+
+        /// A collection entry at a key that takes two values to name.
+        pub fn paired(&mut self, a: u64, b: u64) {
+            self.seen.at((a, b)).set(0);
+        }
+
+        /// The whole comparison surface, which is two DSL variants
+        /// rearranged: what an author writes is what the declaration
+        /// reads, so no spelling falls back to the superset silently.
+        #[allow(clippy::nonminimal_bool)] // the redundancy is the spelling under test
+        pub fn compared(&mut self, a: u64, b: u64) {
+            let settings = self.config().locked();
+            let side = if a != b && !(a >= b) || a <= b {
+                settings.left
+            } else {
+                settings.right
+            };
+            self.vault(side).declared();
+        }
+    }
+}
+
+#[test]
+fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() {
+    use hyperscale_vm_effects::{
+        Address, AddressClass, EffectTarget, EvalInputs, Expr, Hash32, ManifestHash, SlotId,
+        TargetExpr, TestHasher, Value, child_key, evaluate_effects,
+    };
+    use hyperscale_vm_sdk::VAULT;
+
+    let metadata = selection::blueprint().metadata();
+    let effects = |name: &str| metadata.methods[name].effects.clone();
+    let address = |byte: u8| Address::new([byte; 31], AddressClass::Resource);
+    let (left, right) = (address(0x11), address(0x22));
+
+    // One vault clause against two, off the same choice: the arms of a
+    // selection are values the declaration reads, and the arms of an `if`
+    // statement are bodies it can only take the union of. Both also pin
+    // the configuration they read the sides from.
+    assert_eq!(effects("either").len(), 2);
+    assert_eq!(effects("both").len(), 3);
+
+    // And the one clause resolves to whichever side the call picks —
+    // never to both, and never to a third thing.
+    let self_addr = Address::new([7; 31], AddressClass::Component);
+    let config = [
+        Value::Address(left),
+        Value::Address(right),
+        Value::List(Vec::new()),
+        Value::Address(left),
+    ];
+    for (paid, expected) in [(left, left), (right, right), (address(0x33), right)] {
+        let args = [Value::Address(paid)];
+        let inputs = EvalInputs {
+            self_addr,
+            args: &args,
+            config: &config,
+            node_index: 0,
+            frame: 0,
+            identity: ManifestHash(Hash32([9; 32])),
+        };
+        let set = evaluate_effects(&effects("either"), &inputs, &TestHasher).unwrap();
+        let vaults: Vec<_> = [left, right, address(0x33)]
+            .into_iter()
+            .filter(|side| {
+                let key = EffectTarget::Point(child_key(
+                    &TestHasher,
+                    self_addr,
+                    VAULT,
+                    &[Value::Address(*side).canonical_bytes()],
+                ));
+                set.iter().any(|effect| effect.target == key)
+            })
+            .collect();
+        assert_eq!(vaults, vec![expected], "the side the call selects, alone");
+    }
+
+    // A miss is the package's own answer rather than a routing refusal,
+    // which is what the short-circuit buys: an empty table routes every
+    // caller to the fallback instead of failing to route at all.
+    let args = [Value::Address(right)];
+    let inputs = EvalInputs {
+        self_addr,
+        args: &args,
+        config: &config,
+        node_index: 0,
+        frame: 0,
+        identity: ManifestHash(Hash32([9; 32])),
+    };
+    let set = evaluate_effects(&effects("routed"), &inputs, &TestHasher).unwrap();
+    let fallback = EffectTarget::Point(child_key(
+        &TestHasher,
+        self_addr,
+        VAULT,
+        &[Value::Address(left).canonical_bytes()],
+    ));
+    assert!(
+        set.iter().any(|effect| effect.target == fallback),
+        "the fallback, because the table holds nothing"
+    );
+
+    // A compound key is a product, and it is the material rather than a
+    // second collection.
+    let paired = effects("paired");
+    let [Clause::Effect { target, .. }] = paired.as_slice() else {
+        panic!("one entry");
+    };
+    let TargetExpr::Entry { order, .. } = target else {
+        panic!("an unordered entry");
+    };
+    assert_eq!(
+        order,
+        &Expr::OrderKey {
+            owner: Box::new(Expr::SelfAddr),
+            slot: SlotId(16),
+            material: vec![Expr::Tuple(vec![Expr::Arg(0), Expr::Arg(1)])],
+        }
+    );
+}
+
+#[test]
+fn every_comparison_reaches_the_two_the_vocabulary_has() {
+    use hyperscale_vm_effects::{Expr, TargetExpr};
+
+    let metadata = selection::blueprint().metadata();
+    let cond = metadata.methods["compared"]
+        .effects
+        .iter()
+        .find_map(|clause| match clause {
+            Clause::Effect {
+                target: TargetExpr::Point(Expr::ChildKey { material, .. }),
+                ..
+            } => match material.as_slice() {
+                [Expr::If { cond, .. }] => Some(cond),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("a vault keyed on a selection");
+    let (a, b) = (Box::new(Expr::Arg(0)), Box::new(Expr::Arg(1)));
+    // `a != b && !(a >= b) || a <= b`, with `!=` a negated equality and
+    // the three orderings one `Lt` apiece, swapped or negated.
+    assert_eq!(
+        **cond,
+        Expr::Or(
+            Box::new(Expr::And(
+                Box::new(Expr::Not(Box::new(Expr::Eq(a.clone(), b.clone())))),
+                Box::new(Expr::Not(Box::new(Expr::Not(Box::new(Expr::Lt(
+                    a.clone(),
+                    b.clone()
+                )))))),
+            )),
+            Box::new(Expr::Not(Box::new(Expr::Lt(b, a)))),
+        )
+    );
+}

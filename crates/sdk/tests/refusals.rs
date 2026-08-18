@@ -25,6 +25,8 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/claims_cell.rs");
     refuse.compile_fail("tests/refusals/mode_mix.rs");
     refuse.compile_fail("tests/refusals/reassigned_key.rs");
+    refuse.compile_fail("tests/refusals/branched_key.rs");
+    refuse.compile_fail("tests/refusals/branched_arm.rs");
     refuse.compile_fail("tests/refusals/early_return_output.rs");
     refuse.compile_fail("tests/refusals/two_denominations.rs");
     refuse.compile_fail("tests/refusals/assigned_balance.rs");

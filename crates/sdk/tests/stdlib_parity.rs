@@ -22,7 +22,7 @@ use hyperscale_vm_effects::{PackageMetadata, ParamType, SlotId};
 use hyperscale_vm_fixtures::{
     amm as amm_package, book as book_package, splitter as splitter_package,
 };
-use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Num, Sym, lit_u64, pack};
+use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Num, Sym, eq, lit_u64, pack, select};
 use hyperscale_vm_sdk::{Blueprint, Trace};
 use hyperscale_vm_stdlib::account as account_package;
 
@@ -106,25 +106,32 @@ fn amm() -> Blueprint {
             "swap",
             &[ParamType::Bucket, ParamType::U128],
             |t: &mut Trace| {
-                // The reserve pair is creation-fixed, so the vault keys come
-                // off configuration rather than off the arriving bucket.
+                // The reserve pair is creation-fixed, and which side of it
+                // a call sells is read off the arriving bucket — so both
+                // vault keys are one conditional over configuration
+                // rather than a resource the caller chose.
                 let x: Sym<Addr> = t.config(0);
                 let y: Sym<Addr> = t.config(1);
+                let input: Sym<Bucket> = t.arg(0);
                 let pool = t.self_addr();
+
+                let sells_x = eq(&input.resource(), &x);
+                let sold: Sym<Addr> = select(&sells_x, &x, &y).cast();
+                let bought: Sym<Addr> = select(&sells_x, &y, &x).cast();
 
                 let config = pool.child(CONFIG, &[]);
                 t.point(&config).locked();
-                t.point(&pool.child(VAULT, &[x.clone().cast()]))
-                    .holding(&x)
+                t.point(&pool.child(VAULT, &[sold.clone().cast()]))
+                    .holding(&sold)
                     .write();
-                t.point(&pool.child(VAULT, &[y.clone().cast()]))
-                    .holding(&y)
+                t.point(&pool.child(VAULT, &[bought.clone().cast()]))
+                    .holding(&bought)
                     .write();
 
-                // The payment is credited to the side the pool buys, so
-                // that side is what a caller has to pay in.
-                t.denomination(0, &x);
-                t.output(&y);
+                // The payment is credited to the side the pool sells, so
+                // a resource in neither side is one the pair refuses.
+                t.denomination(0, &sold);
+                t.output(&bought);
             },
         )
         .build()

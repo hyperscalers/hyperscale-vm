@@ -46,6 +46,7 @@ const MAKER: PrincipalAddr = PrincipalAddr::new([0x50; 31]);
 const TAKER: PrincipalAddr = PrincipalAddr::new([0x60; 31]);
 const RES_X: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const RES_Y: ResourceAddr = ResourceAddr::new([0xE2; 31]);
+const RES_Z: ResourceAddr = ResourceAddr::new([0xE5; 31]);
 const BASE: ResourceAddr = ResourceAddr::new([0xE3; 31]);
 const QUOTE: ResourceAddr = ResourceAddr::new([0xE4; 31]);
 
@@ -1638,30 +1639,44 @@ fn swap_graph(min_out: u128) -> ManifestGraph {
     })
 }
 
-/// The same trade, paid in the side the pool sells rather than the side
-/// it buys.
-fn wrong_side_swap_graph() -> ManifestGraph {
+/// The same trade the other way round, paid in the side the pool sold
+/// last time.
+fn reverse_swap_graph(min_out: u128) -> ManifestGraph {
     graph(|b| {
         let alice = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice, RES_Y, 500)?;
+        let out = pool().swap(b, funds, min_out)?;
+        account::deposit(b, ALICE, out)
+    })
+}
+
+/// The same trade, paid in a resource the pool does not trade at all.
+fn untraded_swap_graph() -> ManifestGraph {
+    graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, RES_Z, 500)?;
         let out = pool().swap(b, funds, 0)?;
         account::deposit(b, ALICE, out)
     })
 }
 
-/// The pool's sold side is its configuration's, not the caller's, and a
-/// manifest paying the wrong resource in never becomes a transaction.
+/// The pool's pair is its configuration's, and a manifest paying in a
+/// third resource never becomes a transaction.
 ///
-/// The two vaults are separate leaves holding separate balances, so value
-/// credited to the wrong one is value the curve then prices against a
-/// number that is not a balance. Refused at admission, where the verdict
-/// is a function of signed content and costs the sender nothing.
+/// The declared denomination is a conditional over that pair rather than
+/// the resource the edge happens to carry, which is what keeps the cycle
+/// total: a resource in neither side selects the side it is not, and the
+/// mismatch is the refusal. Were it read off the edge instead, a caller
+/// could pay in anything, land it in a vault holding none of it, and have
+/// the curve quote a share against an empty reserve. Refused at
+/// admission, where the verdict is a function of signed content and costs
+/// the sender nothing.
 #[test]
-fn a_swap_paid_in_the_wrong_resource_is_refused_at_admission() {
+fn a_swap_paid_in_a_resource_the_pool_does_not_trade_is_refused() {
     let (cache, instances) = world();
-    let graph = wrong_side_swap_graph();
+    let graph = untraded_swap_graph();
     let refused = admit(&graph, ALICE, &cache, &instances, &TestHasher)
-        .expect_err("the pool buys one resource and this manifest pays another");
+        .expect_err("the pool trades a pair and this manifest pays neither side");
 
     let AdmissionError::Denomination {
         param,
@@ -1673,17 +1688,22 @@ fn a_swap_paid_in_the_wrong_resource_is_refused_at_admission() {
         panic!("the refusal names the denomination: {refused:?}");
     };
     assert_eq!(param, 0, "the payment is the swap's first argument");
-    assert_eq!(expected, RES_X.address());
-    assert_eq!(found, RES_Y.address());
+    assert_eq!(
+        expected,
+        RES_Y.address(),
+        "a resource that is not x selects the side it is not"
+    );
+    assert_eq!(found, RES_Z.address());
 }
 
-/// The control: the same call, paid in the side the pool buys, admits.
+/// The control: both sides of the pair admit against one instance.
 #[test]
-fn a_swap_paid_in_the_pools_own_side_admits() {
+fn a_swap_paid_in_either_side_of_the_pair_admits() {
     let (cache, instances) = world();
-    let graph = swap_graph(300);
-    admit(&graph, ALICE, &cache, &instances, &TestHasher)
-        .expect("the pool's own side is what its declaration asks for");
+    for graph in [swap_graph(300), reverse_swap_graph(300)] {
+        admit(&graph, ALICE, &cache, &instances, &TestHasher)
+            .expect("either side of the configured pair is one the declaration asks for");
+    }
 }
 
 fn swap_store() -> MemoryStore {
@@ -1786,6 +1806,46 @@ fn swap_executes_with_real_pool_math_on_both_runtimes() -> Result<()> {
     );
     assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_Y)), 332);
     assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 100);
+    Ok(())
+}
+
+/// The other direction, against the same instance and the same reserves.
+///
+/// One pool, one curve, both ways round — which is the whole of what a
+/// conditional key buys here. A second instance would price the same
+/// market off half the liquidity, and the two would drift apart on every
+/// trade either one took.
+#[test]
+fn the_pool_trades_both_directions_off_one_instance() -> Result<()> {
+    let world = world();
+    let engines = Engines::build()?;
+    let mut store = swap_store();
+    store
+        .write(vault(ALICE, RES_Y), encode_amount(600).to_vec())
+        .unwrap();
+    store.clear_log();
+    let (results, mut final_store) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[(&reverse_swap_graph(300), TxHash(Hash32([0x04; 32])))],
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("swap must complete");
+    };
+
+    // The mirror of the forward trade, because the reserves are equal:
+    // 500 in less 30 bps is 498 effective, and 1000 * 498 / 1498 is 332.
+    assert_eq!(
+        receipt.delta.cells.get(&vault(pool(), RES_Y)),
+        Some(&Some(encode_amount(1_500).to_vec()))
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&vault(pool(), RES_X)),
+        Some(&Some(encode_amount(668).to_vec()))
+    );
+    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 932);
+    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_Y)), 100);
     Ok(())
 }
 

@@ -77,16 +77,73 @@ pub enum Term {
     LitU128(u128),
     /// The element of an enclosing `for`, by absolute nesting depth.
     Binding(usize),
+    /// Negation of a judgment.
+    Not(Box<Self>),
+    /// Conjunction, short-circuiting on a false left operand.
+    And(Box<Self>, Box<Self>),
+    /// Disjunction, short-circuiting on a true left operand.
+    Or(Box<Self>, Box<Self>),
+    /// Structural equality between two values of one kind.
+    Eq(Box<Self>, Box<Self>),
+    /// Strict ordering, over one integer width.
+    Lt(Box<Self>, Box<Self>),
+    /// Whether a table holds a key.
+    Contains {
+        /// The table.
+        map: Box<Self>,
+        /// The key matched against each pair's first field.
+        key: Box<Self>,
+    },
+    /// Selection between two expressions, evaluating only the taken arm.
+    If {
+        /// The judgment selecting an arm.
+        cond: Box<Self>,
+        /// Taken when the condition holds.
+        then: Box<Self>,
+        /// Taken when it does not.
+        otherwise: Box<Self>,
+    },
+    /// A sequence spelled inline — the rows of a table a package declares
+    /// rather than one a caller configures.
+    List(Vec<Self>),
+    /// A product spelled inline; a table's row is one of these.
+    Tuple(Vec<Self>),
 }
 
 impl Term {
+    /// Whether this evaluates to a judgment rather than to a value.
+    ///
+    /// What the `if`, `!`, `&&` and `||` spellings are recognised
+    /// against: `!` over an integer is a bitwise complement and `if` over
+    /// anything but a judgment is control flow, so the recognition asks
+    /// the term rather than the syntax.
+    pub const fn is_judgment(&self) -> bool {
+        matches!(
+            self,
+            Self::Not(_)
+                | Self::And(..)
+                | Self::Or(..)
+                | Self::Eq(..)
+                | Self::Lt(..)
+                | Self::Contains { .. }
+        )
+    }
+
     /// Lower to the SDK calls that build the corresponding symbolic value.
     ///
     /// Everything lands at `Opaque`, because these terms are consumed as
     /// child-key material where the DSL is dynamically typed anyway. The
     /// positions that do need a kind — a range bound, a reserve amount —
     /// cast at the use site.
+    #[allow(clippy::too_many_lines)] // one arm per Term variant
     pub fn emit(&self) -> TokenStream {
+        // The two casts the lowering makes that are not `Opaque`: a
+        // condition is a judgment, and a table is a sequence.
+        let flag = |term: &Self| {
+            let term = term.emit();
+            quote!(#term.cast::<::hyperscale_vm_sdk::Flag>())
+        };
+        let opaque = |call: TokenStream| quote!(#call.cast::<::hyperscale_vm_sdk::Opaque>());
         match self {
             Self::Arg(index) => quote!(__t.arg::<::hyperscale_vm_sdk::Opaque>(#index)),
             Self::Config(index) => quote!(__t.config::<::hyperscale_vm_sdk::Opaque>(#index)),
@@ -152,6 +209,50 @@ impl Term {
                 ::hyperscale_vm_sdk::sym::lit_u128(#value)
                     .cast::<::hyperscale_vm_sdk::Opaque>()
             ),
+            Self::Not(inner) => {
+                let inner = flag(inner);
+                opaque(quote!(::hyperscale_vm_sdk::sym::not(&#inner)))
+            }
+            Self::And(left, right) | Self::Or(left, right) => {
+                let call = if matches!(self, Self::Or(..)) {
+                    quote!(or)
+                } else {
+                    quote!(and)
+                };
+                let (left, right) = (flag(left), flag(right));
+                opaque(quote!(::hyperscale_vm_sdk::sym::#call(&#left, &#right)))
+            }
+            Self::Eq(left, right) | Self::Lt(left, right) => {
+                let call = if matches!(self, Self::Lt(..)) {
+                    quote!(lt)
+                } else {
+                    quote!(eq)
+                };
+                let (left, right) = (left.emit(), right.emit());
+                opaque(quote!(::hyperscale_vm_sdk::sym::#call(&#left, &#right)))
+            }
+            Self::Contains { map, key } => {
+                let (map, key) = (map.emit(), key.emit());
+                opaque(quote!(#map.cast::<::hyperscale_vm_sdk::Seq>().contains(&#key)))
+            }
+            Self::If {
+                cond,
+                then,
+                otherwise,
+            } => {
+                let cond = flag(cond);
+                let (then, otherwise) = (then.emit(), otherwise.emit());
+                quote!(::hyperscale_vm_sdk::sym::select(&#cond, &#then, &#otherwise))
+            }
+            Self::List(elements) | Self::Tuple(elements) => {
+                let call = if matches!(self, Self::Tuple(_)) {
+                    quote!(tuple)
+                } else {
+                    quote!(list)
+                };
+                let elements = elements.iter().map(Self::emit);
+                quote!(::hyperscale_vm_sdk::sym::#call(&[#(#elements),*]))
+            }
             Self::Binding(depth) => {
                 // The tracer owns binder identity; the lowering pass names
                 // the element by the local it was bound to, and `emit`
@@ -181,8 +282,13 @@ pub fn fresh_ident(site: usize) -> syn::Ident {
 /// What the lowering pass knows about a local binding.
 #[derive(Clone, Debug)]
 pub enum Slot {
-    /// A value the DSL can express.
+    /// A value the DSL can express, held in a guest local.
     Value(Term),
+    /// A value the DSL can express, with no guest local behind it: the
+    /// `let` that named it emitted nothing, so each use re-derives the
+    /// term and an export parameter is bound only where the guest reads
+    /// one rather than wherever the declaration does.
+    Deferred(Term),
     /// An open handle on a declared target; the modes it accumulates are
     /// recorded against the site that opened it.
     Handle(usize),

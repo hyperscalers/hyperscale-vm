@@ -321,6 +321,24 @@ pub fn select<T: Kind, E: Kind>(
     })
 }
 
+/// A sequence built element by element.
+///
+/// What makes a lookup table spellable by the package that owns it: the
+/// rows are the package's own text rather than a list a caller supplies,
+/// which is the difference between an invariant and a convention.
+#[must_use]
+pub fn list<K: Kind>(elements: &[Sym<K>]) -> Sym<Seq> {
+    Sym::new(Expr::List(
+        elements.iter().map(|e| e.expr.clone()).collect(),
+    ))
+}
+
+/// A fixed-arity product built field by field; a table's row is one.
+#[must_use]
+pub fn tuple<K: Kind>(fields: &[Sym<K>]) -> Sym<Opaque> {
+    Sym::new(Expr::Tuple(fields.iter().map(|f| f.expr.clone()).collect()))
+}
+
 /// A boolean literal.
 #[must_use]
 pub const fn lit_bool(value: bool) -> Sym<Flag> {
