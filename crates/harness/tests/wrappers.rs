@@ -14,9 +14,9 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    ComponentAddr, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
-    MetadataCache, PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr, RoleSet, Rule,
-    TestHasher, Value, admit, resource_address,
+    Address, ComponentAddr, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry,
+    ManifestGraph, MetadataCache, PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr,
+    RoleSet, Rule, TestHasher, Value, admit, resource_address,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -187,14 +187,14 @@ fn misplaced_evidence_is_refused_at_the_call_site() {
         Err(TypedError::SignatureForGuarded { .. })
     ));
     assert!(matches!(
-        b.call_minting(ALICE, "withdraw"),
+        b.call_minting(ALICE, "withdraw", ()),
         Err(TypedError::UnmintingProof { .. })
     ));
 }
 
 #[test]
 fn the_staking_wrappers_match_their_signatures() {
-    let pool = address("staking", pool_config());
+    let pool = staking::Staking::at(address("staking", pool_config()));
     let graph = admits(|b| {
         // One sign-in acts for the whole graph: the delegation round
         // trip and the operator surface both present Alice's proof.
@@ -203,50 +203,50 @@ fn the_staking_wrappers_match_their_signatures() {
         // The delegation round trip: funds in, the pool's own units out
         // and into an account, then units back to the pool.
         let funds = account::withdraw(b, alice, BASE, 100)?;
-        let units = staking::stake(b, pool, funds)?;
+        let units = pool.stake(b, funds)?;
         account::deposit(b, ALICE, units)?;
         let returned = account::withdraw(b, alice, staking_units(pool), 40)?;
-        staking::unstake(b, pool, returned)?;
+        pool.unstake(b, returned)?;
 
         // The operator surface, which supplies no funds and produces none.
-        staking::register_validator(b, alice, pool, 7, vec![0xAA; 48], vec![0xBB; 96])?;
-        staking::deactivate_validator(b, alice, pool, 7)?;
-        staking::unjail(b, alice, pool, 7)?;
-        staking::cast_param_vote(b, alice, pool, 9_000, 30, 12)?;
-        staking::clear_param_vote(b, alice, pool)
+        pool.register_validator(b, alice, 7, vec![0xAA; 48], vec![0xBB; 96])?;
+        pool.deactivate_validator(b, alice, 7)?;
+        pool.unjail(b, alice, 7)?;
+        pool.cast_param_vote(b, alice, 9_000, 30, 12)?;
+        pool.clear_param_vote(b, alice)
     });
     assert_eq!(graph.nodes.len(), 11);
 }
 
 /// The resource a pool issues, which its `stake` output derives from the
 /// pool's own address.
-fn staking_units(pool: ComponentAddr) -> ResourceAddr {
-    resource_address(&TestHasher, pool, &[])
+fn staking_units(pool: staking::Staking) -> ResourceAddr {
+    resource_address(&TestHasher, Address::from(pool), &[])
 }
 
 #[test]
 fn the_amm_wrapper_matches_its_signature() {
-    let pool = address("amm", pair_config());
+    let pool = amm::Amm::at(address("amm", pair_config()));
     admits(|b| {
         // The pool's output is typed by its second configured resource,
         // so what comes back is quote against a base input.
         let alice_proof = account::authorize(b, ALICE)?;
         let input = account::withdraw(b, alice_proof, BASE, 100)?;
-        let proceeds = amm::swap(b, pool, input, 1)?;
+        let proceeds = pool.swap(b, input, 1)?;
         account::deposit(b, ALICE, proceeds)
     });
 }
 
 #[test]
 fn the_book_wrappers_match_their_signatures() {
-    let book = address("book", pair_config());
+    let book = book::Book::at(address("book", pair_config()));
     admits(|b| {
         let alice_proof = account::authorize(b, ALICE)?;
         let offered = account::withdraw(b, alice_proof, BASE, 100)?;
-        book::place_ask(b, book, 10, offered)?;
+        book.place_ask(b, 10, offered)?;
         let bob_proof = account::authorize(b, BOB)?;
         let payment = account::withdraw(b, bob_proof, QUOTE, 50)?;
-        let [bought, unspent] = book::fill_asks(b, book, 1, 20, payment)?;
+        let [bought, unspent] = book.fill_asks(b, 1, 20, payment)?;
         account::deposit(b, BOB, bought)?;
         account::deposit(b, BOB, unspent)
     });
@@ -264,14 +264,14 @@ fn the_registry_wrappers_match_their_signatures() {
 
 #[test]
 fn the_lottery_wrappers_match_their_signatures() {
-    let lottery_addr = address("lottery", vec![]);
+    let lottery_addr = lottery::Lottery::at(address("lottery", vec![]));
     admits(|b| {
         let alice_proof = account::authorize(b, ALICE)?;
         let stake = account::withdraw(b, alice_proof, BASE, 100)?;
         // Alice pays and Bob is entered: the entrant is named by the
         // composer, not by whoever the funds came from.
-        lottery::enter(b, lottery_addr, BOB, stake)?;
-        lottery::draw(b, lottery_addr)
+        lottery_addr.enter(b, BOB, stake)?;
+        lottery_addr.draw(b)
     });
 }
 
@@ -315,30 +315,14 @@ fn the_custody_wrappers_match_their_signatures() {
 }
 
 #[test]
-fn every_stdlib_method_has_a_wrapper() {
+fn every_hand_written_method_has_a_wrapper() {
     // The one drift a call site cannot catch: a method added to a package
-    // that no wrapper names. Exhaustive on purpose — adding a method
-    // breaks this list, which is the point.
+    // that no wrapper names. Only the hand-written packages can drift —
+    // `#[blueprint]` emits a wrapper per method, so for a derived package
+    // this list would be a second text saying what the first one already
+    // says. Exhaustive over the three that are written by hand: adding a
+    // method breaks this, which is the point.
     let wrapped: Vec<(&str, &[&str])> = vec![
-        (
-            "account",
-            &[
-                "authorize",
-                "cancel",
-                "confirm",
-                "deposit",
-                "deposit-nf",
-                "present-badge",
-                "present-instance",
-                "propose",
-                "securify",
-                "withdraw",
-                "withdraw-nf",
-            ],
-        ),
-        ("amm", &["swap"]),
-        ("book", &["fill-asks", "place-ask"]),
-        ("lottery", &["draw", "enter"]),
         (
             "nf",
             &[
@@ -353,24 +337,17 @@ fn every_stdlib_method_has_a_wrapper() {
         ),
         ("registry", &["bind", "check", "drain"]),
         ("splitter", &["take"]),
-        (
-            "staking",
-            &[
-                "cast-param-vote",
-                "clear-param-vote",
-                "deactivate-validator",
-                "register-validator",
-                "stake",
-                "unjail",
-                "unstake",
-            ],
-        ),
+    ];
+    let hand_written: Vec<(&str, PackageMetadata)> = vec![
+        ("nf", nf::metadata()),
+        ("registry", registry::metadata()),
+        ("splitter", splitter::metadata()),
     ];
     // Zipping would truncate silently, so the lists are held to one
     // length first: a package appended to one and not the other is the
     // same drift as a method, and would otherwise go unchecked.
-    assert_eq!(stdlib().len(), wrapped.len());
-    for ((package, metadata), (named, methods)) in stdlib().into_iter().zip(wrapped) {
+    assert_eq!(hand_written.len(), wrapped.len());
+    for ((package, metadata), (named, methods)) in hand_written.into_iter().zip(wrapped) {
         assert_eq!(package, named);
         let declared: BTreeSet<&str> = metadata.methods.keys().map(String::as_str).collect();
         let wrapped: BTreeSet<&str> = methods.iter().copied().collect();

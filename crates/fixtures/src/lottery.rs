@@ -2,8 +2,8 @@
 //!
 //! The declaration is the package's own: `metadata()` traces the module
 //! the component is built from, so the signatures a caller routes on and
-//! the code that executes them are read off one text. What stays here is
-//! the wrappers, which a signature cannot supply.
+//! the code that executes them, and the handle a client calls it
+//! through, are all read off one text.
 //!
 //! `enter(who, funds)`: one ticket at the entrant's hashed order and the
 //! stake into the pot, both commutative with every other entry — two
@@ -18,14 +18,15 @@
 //! draw is the transaction's randomness, and no signer chooses it, so
 //! there is nothing an operator would be trusted with.
 
-use hyperscale_vm_effects::{ComponentAddr, PackageMetadata, PrincipalAddr, RoleId, package_role};
-use hyperscale_vm_manifest_builder::{BucketArg, TypedBuilder, TypedError};
+use hyperscale_vm_effects::{PackageMetadata, RoleId, package_role};
 
 // The package, read from the crate the artifact is built from rather
 // than copied into this one: a second copy is the drift the derivation
 // exists to remove.
 #[path = "../../../guests/lottery/src/lib.rs"]
 mod package;
+
+pub use package::lottery::client::*;
 
 /// The entrant cap a draw declares: the round a single draw settles.
 pub const ROUND_CAP: u32 = 64;
@@ -40,33 +41,4 @@ pub const DRAW: RoleId = package_role(1);
 #[must_use]
 pub fn metadata() -> PackageMetadata {
     package::lottery::blueprint().metadata()
-}
-
-// ─── calls ─────────────────────────────────────────────────────────────
-
-/// Enter `who` in `lottery`'s round, staking `funds` into the pot.
-///
-/// Whoever composes the call names the entrant, which is what buying
-/// somebody a ticket looks like: the authority behind an entry is the
-/// funds, gated at the withdrawal that produced them.
-///
-/// # Errors
-///
-/// Any [`TypedError`] the call does not type against `enter`.
-pub fn enter(
-    builder: &mut TypedBuilder<'_>,
-    lottery: ComponentAddr,
-    who: PrincipalAddr,
-    funds: impl BucketArg,
-) -> Result<(), TypedError> {
-    builder.call(lottery, "enter", (who, funds))?.none()
-}
-
-/// Settle `lottery`'s round on the transaction's randomness draw.
-///
-/// # Errors
-///
-/// Any [`TypedError`] the call does not type against `draw`.
-pub fn draw(builder: &mut TypedBuilder<'_>, lottery: ComponentAddr) -> Result<(), TypedError> {
-    builder.call(lottery, "draw", ())?.none()
 }

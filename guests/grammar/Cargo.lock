@@ -84,11 +84,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperscale-vm-manifest-builder"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-hbor",
+ "hyperscale-vm-effects",
+ "hyperscale-vm-types",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperscale-vm-sdk"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-effects",
  "hyperscale-vm-embed",
+ "hyperscale-vm-manifest-builder",
  "hyperscale-vm-sdk-macros",
  "wit-bindgen",
 ]

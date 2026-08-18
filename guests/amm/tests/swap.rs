@@ -1,21 +1,25 @@
 //! The pool's own test: a swap, against the real kernel.
 
+use amm_guest::amm::client::{Amm, Settings};
+use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
-    Chain, ComponentAddr, PrincipalAddr, ResourceAddr, account, package, principal, resource,
+    Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
 };
 
 const ALICE: PrincipalAddr = principal(1);
 const X: ResourceAddr = resource(0xE1);
 const Y: ResourceAddr = resource(0xE2);
-/// Thirty basis points, at the scale the pool's bounded fee type holds.
-const FEE: u128 = 30 * (1_000_000_000_000_000_000 / 10_000);
 
 /// A pool holding a thousand of each side at 30 bps, and Alice with six
 /// hundred of the side she sells.
-fn pool() -> (Chain, ComponentAddr) {
+fn pool() -> (Chain, Amm) {
     let mut chain = Chain::native();
-    let amm = chain.publish(package!(amm_guest::amm));
-    let pool = chain.instantiate(amm, (X, Y, FEE));
+    chain.publish(package!(amm_guest::amm));
+    let pool = chain.instantiate::<Amm>(Settings {
+        x: X.address(),
+        y: Y.address(),
+        fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
+    });
     chain.credit(ALICE, X, 600);
     chain.credit(pool, X, 1_000);
     chain.credit(pool, Y, 1_000);
@@ -34,7 +38,7 @@ fn a_swap_pays_the_curve_less_the_fee() {
         .transact(ALICE, |b| {
             let signed_in = account::authorize(b, ALICE)?;
             let funds = account::withdraw(b, signed_in, X, 500)?;
-            let bought = b.call(pool, "swap", (funds, 300u128))?.one()?;
+            let bought = pool.swap(b, funds, 300u128)?;
             account::deposit(b, ALICE, bought)
         })
         .expect_completed();
@@ -55,7 +59,7 @@ fn a_floor_the_pool_cannot_reach_declines() {
     let outcome = chain.transact(ALICE, |b| {
         let signed_in = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, signed_in, X, 500)?;
-        let bought = b.call(pool, "swap", (funds, 400u128))?.one()?;
+        let bought = pool.swap(b, funds, 400u128)?;
         account::deposit(b, ALICE, bought)
     });
 
@@ -75,8 +79,12 @@ fn a_floor_the_pool_cannot_reach_declines() {
 #[test]
 fn a_reserve_that_once_overflowed_the_curve_now_trades() {
     let mut chain = Chain::native();
-    let amm = chain.publish(package!(amm_guest::amm));
-    let pool = chain.instantiate(amm, (X, Y, FEE));
+    chain.publish(package!(amm_guest::amm));
+    let pool = chain.instantiate::<Amm>(Settings {
+        x: X.address(),
+        y: Y.address(),
+        fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
+    });
     chain.credit(ALICE, X, 600);
     chain.credit(pool, X, 1_000);
     chain.credit(pool, Y, u128::MAX);
@@ -85,7 +93,7 @@ fn a_reserve_that_once_overflowed_the_curve_now_trades() {
         .transact(ALICE, |b| {
             let signed_in = account::authorize(b, ALICE)?;
             let funds = account::withdraw(b, signed_in, X, 500)?;
-            let bought = b.call(pool, "swap", (funds, 0u128))?.one()?;
+            let bought = pool.swap(b, funds, 0u128)?;
             account::deposit(b, ALICE, bought)
         })
         .expect_completed();

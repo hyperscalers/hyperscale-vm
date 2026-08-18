@@ -43,7 +43,7 @@ use std::sync::Arc;
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 pub use hyperscale_vm_effects::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_effects::{
-    Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
+    CallTarget, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
     PrefixShardResolver, SubstateKey, TestHasher, Value, admit, child_key, declaration_hash,
     resource_address, route,
 };
@@ -55,18 +55,27 @@ use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 #[cfg(feature = "wasm")]
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
 
-mod config;
 mod native;
 mod outcome;
 mod package;
 #[cfg(feature = "wasm")]
 mod wasm;
 
-pub use config::{Config, Slot};
+pub use hyperscale_vm_sdk::client::{Component, ConfigValues, IntoSlot};
 pub use hyperscale_vm_stdlib::account;
 pub use native::{Dispatch, Native};
 pub use outcome::Outcome;
 pub use package::Package;
+
+/// An address the chain holds no instance of the wanted package at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("no instance of {want:?} at {address:?}")]
+pub struct WrongPackage {
+    /// The address adoption was asked about.
+    pub address: ComponentAddr,
+    /// The package a handle of that type would have to name.
+    pub want: PackageHash,
+}
 
 /// The transaction clock every [`Chain`] runs at unless told otherwise.
 ///
@@ -195,22 +204,83 @@ impl Chain {
         hash
     }
 
-    /// Create an instance of `package` under `config`, at the address its
-    /// record derives.
+    /// Create an instance of `C`'s package under `config`, and answer a
+    /// handle to it.
     ///
-    /// The configuration is written to the locked leaf and locked, which
-    /// is what a real creation does and what a body reading
-    /// `self.config` needs to be there.
+    /// The package is named once, as the handle's own type: an instance
+    /// address folds in the declaration hash, and the handle is what
+    /// carries the fact that this address runs that declaration. The
+    /// configuration is written to the locked leaf and locked, which is
+    /// what a real creation does and what a body reading `self.config`
+    /// needs to be there.
+    ///
+    /// # Panics
+    ///
+    /// If `C`'s package was never published — an instance of code the
+    /// chain does not hold answers no call — or if the configuration
+    /// does not encode, which is a slot the package could not have
+    /// declared.
+    pub fn instantiate<C: Component>(&mut self, config: C::Config) -> C {
+        let package =
+            declaration_hash(&TestHasher, &C::metadata()).expect("a traced declaration encodes");
+        assert!(
+            self.cache.get(package).is_some(),
+            "the package must be published before an instance of it is created"
+        );
+        C::at(self.create(package, config.values()))
+    }
+
+    /// Create an instance of a package the chain holds only as a hash.
+    ///
+    /// What a hand-written package uses, having no module for the macro
+    /// to derive a handle from.
     ///
     /// # Panics
     ///
     /// If the configuration does not encode — a slot the package could
     /// not have declared.
-    pub fn instantiate(&mut self, package: PackageHash, config: impl Config) -> ComponentAddr {
+    pub fn instantiate_raw(
+        &mut self,
+        package: PackageHash,
+        config: impl ConfigValues,
+    ) -> ComponentAddr {
+        self.create(package, config.values())
+    }
+
+    /// Adopt `address` as an instance of `C`'s package.
+    ///
+    /// The checked half of the handle, and the one place the check has
+    /// to happen: everything downstream of it is a call whose target is
+    /// known to answer.
+    ///
+    /// # Errors
+    ///
+    /// The address the chain holds no instance for, or holds one of some
+    /// other package at.
+    ///
+    /// # Panics
+    ///
+    /// If `C`'s traced declaration does not encode.
+    pub fn adopt<C: Component>(&self, address: ComponentAddr) -> Result<C, WrongPackage> {
+        let want =
+            declaration_hash(&TestHasher, &C::metadata()).expect("a traced declaration encodes");
+        let meta = self
+            .instances
+            .get(CallTarget::from(address))
+            .ok_or(WrongPackage { address, want })?;
+        if meta.package == want {
+            Ok(C::at(address))
+        } else {
+            Err(WrongPackage { address, want })
+        }
+    }
+
+    /// Write a creation record and its locked configuration leaf.
+    fn create(&mut self, package: PackageHash, config: Vec<Value>) -> ComponentAddr {
         self.created += 1;
         let meta = InstanceMeta {
             package,
-            config: config.values(),
+            config,
             salt: salt(self.created),
         };
         let address = meta.address(&TestHasher);
@@ -239,13 +309,13 @@ impl Chain {
     /// is what the tracer means by it and the only spelling that reaches
     /// the address the body does.
     #[must_use]
-    pub fn issued(instance: ComponentAddr, mark: &[u8]) -> ResourceAddr {
+    pub fn issued(instance: impl Into<ComponentAddr>, mark: &[u8]) -> ResourceAddr {
         let material: Vec<Vec<u8>> = if mark.is_empty() {
             Vec::new()
         } else {
             vec![mark.to_vec()]
         };
-        resource_address(&TestHasher, instance, &material)
+        resource_address(&TestHasher, instance.into(), &material)
     }
 
     /// Put `amount` of `resource` in `owner`'s vault, as though it had

@@ -89,7 +89,7 @@ fn a_typed_edge_asserts_its_own_resource() {
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
     // Nothing here says the withdrawal produces `RES`; `withdraw`'s
     // declared output does, and the deposit carries the assertion.
-    let alice = b.call_minting(ALICE, "authorize").unwrap();
+    let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
@@ -105,7 +105,7 @@ fn a_typed_edge_asserts_its_own_resource() {
 fn a_split_of_a_typed_edge_is_two_typed_edges() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    let alice = b.call_minting(ALICE, "authorize").unwrap();
+    let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
@@ -144,7 +144,7 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
 fn a_pool_types_its_units_by_itself() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    let alice = b.call_minting(ALICE, "authorize").unwrap();
+    let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
@@ -213,7 +213,7 @@ fn an_asserted_type_carries_through_the_untyped_path() {
 fn a_typed_edge_refuses_a_contradicting_assertion() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    let alice = b.call_minting(ALICE, "authorize").unwrap();
+    let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
@@ -249,7 +249,7 @@ fn a_call_is_typed_against_the_signature_it_names() {
         b.call(ALICE, "deposit", (100u128,)),
         Err(TypedError::LiteralForBucketParam { param: 0, .. })
     ));
-    let alice = b.call_minting(ALICE, "authorize").unwrap();
+    let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let one = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
@@ -270,7 +270,7 @@ fn a_call_is_typed_against_the_signature_it_names() {
 fn a_refused_call_appends_nothing() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
-    let alice = b.call_minting(ALICE, "authorize").unwrap();
+    let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
@@ -308,7 +308,7 @@ fn outputs_unpack_only_into_the_arity_the_method_declares() {
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
     // Naming a slot the producer does not have takes stating an arity,
     // and the signature is what an arity is checked against.
-    let alice = b.call_minting(ALICE, "authorize").unwrap();
+    let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let outputs = b.call_as(alice, ALICE, "withdraw", (RES, 100u128)).unwrap();
     assert_eq!(outputs.len(), 1);
     assert!(matches!(

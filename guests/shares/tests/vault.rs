@@ -1,30 +1,33 @@
 //! The share vault's own tests, against the real kernel.
 
 use hyperscale_vm_testing::{
-    Chain, ComponentAddr, PrincipalAddr, ResourceAddr, account, package, principal, resource,
+    Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
 };
+use shares_guest::shares::client::{Settings, Shares};
 
 const ALICE: PrincipalAddr = principal(1);
 const MALLORY: PrincipalAddr = principal(2);
 const ASSET: ResourceAddr = resource(0xA1);
 
 /// An empty vault, with Alice and Mallory each holding assets.
-fn vault() -> (Chain, ComponentAddr) {
+fn vault() -> (Chain, Shares) {
     let mut chain = Chain::native();
-    let package = chain.publish(package!(shares_guest::shares));
-    let vault = chain.instantiate(package, (ASSET,));
+    chain.publish(package!(shares_guest::shares));
+    let vault = chain.instantiate::<Shares>(Settings {
+        asset: ASSET.address(),
+    });
     chain.credit(ALICE, ASSET, 10_000);
     chain.credit(MALLORY, ASSET, 10_000);
     (chain, vault)
 }
 
 /// Deposit `amount` for `who`, keeping the shares in their account.
-fn deposit(chain: &mut Chain, vault: ComponentAddr, who: PrincipalAddr, amount: u128) {
+fn deposit(chain: &mut Chain, vault: Shares, who: PrincipalAddr, amount: u128) {
     chain
         .transact(who, |b| {
             let signed_in = account::authorize(b, who)?;
             let funds = account::withdraw(b, signed_in, ASSET, amount)?;
-            let shares = b.call(vault, "deposit", (funds,))?.one()?;
+            let shares = vault.deposit(b, funds)?;
             account::deposit(b, who, shares)
         })
         .expect_completed();
@@ -60,7 +63,7 @@ fn redeeming_every_share_returns_every_asset() {
         .transact(ALICE, |b| {
             let signed_in = account::authorize(b, ALICE)?;
             let units = account::withdraw(b, signed_in, Chain::issued(vault, b""), 1_000)?;
-            let back = b.call(vault, "redeem", (units,))?.one()?;
+            let back = vault.redeem(b, units)?;
             account::deposit(b, ALICE, back)
         })
         .expect_completed();
@@ -104,7 +107,7 @@ fn there_is_no_path_that_grows_assets_without_minting_shares() {
         .transact(ALICE, |b| {
             let signed_in = account::authorize(b, ALICE)?;
             let units = account::withdraw(b, signed_in, Chain::issued(vault, b""), 1_000)?;
-            let back = b.call(vault, "redeem", (units,))?.one()?;
+            let back = vault.redeem(b, units)?;
             account::deposit(b, ALICE, back)
         })
         .expect_completed();

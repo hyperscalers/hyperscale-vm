@@ -110,6 +110,7 @@ version = "0.1.0"
 dependencies = [
  "hyperscale-vm-effects",
  "hyperscale-vm-embed",
+ "hyperscale-vm-manifest-builder",
  "hyperscale-vm-sdk-macros",
  "wit-bindgen",
 ]
@@ -140,7 +141,9 @@ dependencies = [
  "hyperscale-vm-effects",
  "hyperscale-vm-kernel",
  "hyperscale-vm-manifest-builder",
+ "hyperscale-vm-sdk",
  "hyperscale-vm-stdlib",
+ "thiserror",
 ]
 
 [[package]]

@@ -20,6 +20,8 @@ wit-component.workspace = true
 arbitrary.workspace = true
 hyperscale-vm-fixtures.workspace = true
 hyperscale-vm-manifest-builder.workspace = true
+# The numeric vocabulary a configuration struct's fields are typed in.
+hyperscale-vm-sdk.workspace = true
 hyperscale-vm-stdlib.workspace = true
 hyperscale-vm-testing = { workspace = true, features = ["wasm"] }
 wasm-smith.workspace = true

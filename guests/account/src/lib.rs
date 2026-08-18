@@ -16,7 +16,7 @@
 
 use hyperscale_vm_sdk::blueprint;
 
-#[blueprint]
+#[blueprint(principals)]
 pub mod account {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{

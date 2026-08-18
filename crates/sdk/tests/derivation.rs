@@ -55,16 +55,16 @@ mod shapes {
             vault.declared();
         }
 
-        pub fn branched(&mut self, flag: u64, a: Address, b: Address) {
+        pub fn branched(&mut self, flag: u64, a: Address, other: Address) {
             match flag {
                 0 => self.vaults.at(a).declared(),
-                _ => self.vaults.at(b).declared(),
+                _ => self.vaults.at(other).declared(),
             }
         }
 
-        pub fn straight(&mut self, _flag: u64, a: Address, b: Address) {
+        pub fn straight(&mut self, _flag: u64, a: Address, other: Address) {
             self.vaults.at(a).declared();
-            self.vaults.at(b).declared();
+            self.vaults.at(other).declared();
         }
 
         pub fn asserted(&mut self, a: Address) {

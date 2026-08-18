@@ -1,0 +1,166 @@
+//! What a generated `client` wrapper is written against.
+//!
+//! `#[blueprint]` emits a `client` module beside the component and the
+//! dispatch, and those wrappers name a builder, a proof, the argument
+//! traits and — for a package whose instances are created — a handle
+//! over the address one sits at. A guest crate depends on this crate and
+//! on nothing else, so the names arrive through here rather than through
+//! an edge every package would have to declare.
+//!
+//! Off the guest build alone. A wasm artifact composes no manifest, so
+//! the wrappers are gated out of it, which is what makes emitting them
+//! move no package hash and no blob.
+
+use hyperscale_vm_effects::Value;
+pub use hyperscale_vm_effects::{
+    Address, CallTarget, ComponentAddr, PackageMetadata, PrincipalAddr, ResourceAddr, ResourceRef,
+    RoleSet, Rule, Value as ManifestValue,
+};
+pub use hyperscale_vm_manifest_builder::{
+    AddressArg, Arg, Args, Bucket, BucketArg, Outputs, Proof, TypedBuilder, TypedError,
+};
+
+use crate::num::{Quantity, UnitFixed};
+
+/// A component known to run one package.
+///
+/// An instance address folds in the hash of the package that serves it,
+/// so "this address runs that code" is a fact something can hold rather
+/// than a hope a call site carries. The handle is that fact: reached by
+/// creating the instance, or by adopting an address against a registry
+/// that agrees, and never by asserting it.
+///
+/// Only a *component* can have one. A principal's address derives from a
+/// key and folds in no package hash, so the account that answers every
+/// principal is reached through [`PrincipalAddr`] itself — there is
+/// nothing a newtype over one could check.
+pub trait Component: Copy {
+    /// What the instance was created under, named as the package spells
+    /// it rather than as a tuple of slots.
+    type Config: ConfigValues;
+
+    /// The package's declaration, as its own module traces it.
+    fn metadata() -> PackageMetadata;
+
+    /// The handle at `address`, taken on trust.
+    ///
+    /// The unchecked half, for a holder that established the fact some
+    /// other way — a chain that just created the instance. A caller
+    /// starting from a bare address wants the checked adoption its host
+    /// tier offers instead.
+    fn at(address: ComponentAddr) -> Self;
+
+    /// Where the instance sits.
+    fn address(self) -> ComponentAddr;
+}
+
+/// An instance's creation-fixed configuration, as the thing creating it
+/// writes one.
+///
+/// The kernel's form is a list of evaluated values in declaration order.
+/// A package that declares a configuration struct has the macro answer
+/// this for it, in field order; a package written the long way answers
+/// it with the tuple it would have written anyway.
+pub trait ConfigValues {
+    /// The slots, in the order the package declares them.
+    fn values(self) -> Vec<Value>;
+}
+
+/// One Rust value as the configuration slot it fills.
+///
+/// The slots a package declares are a fixed positional list, and what
+/// fills one is an ordinary value with an ordinary type. This is the
+/// conversion between the two, and it exists rather than `From<_> for
+/// Value` because the value model is the manifest's and admits shapes —
+/// tuples, lists, keys — that no configuration slot holds.
+pub trait IntoSlot {
+    /// The value this fills its slot with.
+    fn into_slot(self) -> Value;
+}
+
+impl IntoSlot for Value {
+    fn into_slot(self) -> Value {
+        self
+    }
+}
+
+impl IntoSlot for u64 {
+    fn into_slot(self) -> Value {
+        Value::U64(self)
+    }
+}
+
+impl IntoSlot for u128 {
+    fn into_slot(self) -> Value {
+        Value::U128(self)
+    }
+}
+
+macro_rules! address_slots {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl IntoSlot for $ty {
+                fn into_slot(self) -> Value {
+                    Value::Address(self.into())
+                }
+            }
+        )*
+    };
+}
+
+address_slots!(
+    Address,
+    ComponentAddr,
+    PrincipalAddr,
+    ResourceAddr,
+    ResourceRef
+);
+
+/// A bounded fraction fills a slot as the scaled integer it carries,
+/// which is the form the leaf holds and a body reads back.
+impl IntoSlot for UnitFixed {
+    fn into_slot(self) -> Value {
+        Value::U128(self.scaled())
+    }
+}
+
+impl IntoSlot for Quantity {
+    fn into_slot(self) -> Value {
+        Value::U128(self.subunits())
+    }
+}
+
+impl ConfigValues for Vec<Value> {
+    fn values(self) -> Vec<Value> {
+        self
+    }
+}
+
+impl ConfigValues for () {
+    fn values(self) -> Vec<Value> {
+        Vec::new()
+    }
+}
+
+macro_rules! config_tuples {
+    ($(($($name:ident),+),)*) => {
+        $(
+            #[allow(non_snake_case)] // one binding per tuple position
+            impl<$($name: IntoSlot),+> ConfigValues for ($($name,)+) {
+                fn values(self) -> Vec<Value> {
+                    let ($($name,)+) = self;
+                    vec![$($name.into_slot()),+]
+                }
+            }
+        )*
+    };
+}
+
+config_tuples! {
+    (A),
+    (A, B),
+    (A, B, C),
+    (A, B, C, D),
+    (A, B, C, D, E),
+    (A, B, C, D, E, F),
+}

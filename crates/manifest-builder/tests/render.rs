@@ -37,8 +37,8 @@ fn pair() -> Vec<Value> {
     ]
 }
 
-fn pool() -> ComponentAddr {
-    instance("amm", pair()).address(&TestHasher)
+fn pool() -> amm::Amm {
+    amm::Amm::at(instance("amm", pair()).address(&TestHasher))
 }
 
 fn splitter() -> ComponentAddr {
@@ -74,7 +74,7 @@ fn a_swap_reads_as_the_surface_syntax_names_it() {
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
     let alice_proof = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice_proof, XRD, 100).unwrap();
-    let proceeds = amm::swap(&mut b, pool(), funds, 1).unwrap();
+    let proceeds = pool().swap(&mut b, funds, 1).unwrap();
     account::deposit(&mut b, ALICE, proceeds).unwrap();
     let graph = b.build().unwrap();
 

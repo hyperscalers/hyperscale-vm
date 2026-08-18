@@ -143,6 +143,8 @@
 //! content-addressed package at all.
 
 pub mod blueprint;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod client;
 #[cfg(target_arch = "wasm32")]
 pub mod guest;
 pub mod handle;

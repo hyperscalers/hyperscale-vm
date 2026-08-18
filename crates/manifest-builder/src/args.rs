@@ -157,6 +157,33 @@ pub trait BucketArg: Arg {}
 impl BucketArg for Bucket {}
 impl BucketArg for Param {}
 
+/// An argument that fills a declared address parameter.
+///
+/// Every class, and every position over several of them, because a
+/// declared parameter kind is `address` and which class belongs at a
+/// position is the package's business. A wrapper over such a position
+/// therefore widens to this rather than to one class: narrowing to
+/// resources would make an address parameter that means a holder
+/// unfillable, and widening to [`Arg`] would let a number fill it.
+pub trait AddressArg: Arg {}
+
+macro_rules! address_args {
+    ($($name:ident),+ $(,)?) => {
+        $(impl AddressArg for $name {})+
+    };
+}
+
+address_args!(
+    Address,
+    PrincipalAddr,
+    ComponentAddr,
+    PackageAddr,
+    ResourceAddr,
+    NativeAddr,
+    CallTarget,
+    ResourceRef
+);
+
 /// A tuple of [`Arg`]s, bound in parameter order.
 pub trait Args: sealed::Sealed {
     /// Bind every element in order.

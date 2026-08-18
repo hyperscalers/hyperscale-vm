@@ -40,7 +40,7 @@ pub mod render;
 pub mod signing;
 pub mod typed;
 
-pub use args::{Arg, Args, BucketArg};
+pub use args::{AddressArg, Arg, Args, BucketArg};
 pub use builder::{Bucket, BuildError, GraphBuilder, Param};
 pub use envelope::{EnvelopeBuilder, EnvelopeError, IntentBuilder, YieldSink, YieldSource};
 pub use preflight::{Authority, PreflightError, Report, Required, preflight, preflight_tree};

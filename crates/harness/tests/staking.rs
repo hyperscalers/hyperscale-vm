@@ -20,11 +20,10 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    Address, AdmissionError, ComponentAddr, EnvelopeTree, Fungibility, Hash32, Hasher,
-    InstanceMeta, InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash,
-    PrefixShardResolver, PrincipalAddr, ResourceAddr, ResourceRecord, SubstateKey, TestHasher,
-    Value, admit_tree, child_key, holdings_collection, resource_address, resource_record_key,
-    route_tree,
+    Address, AdmissionError, EnvelopeTree, Fungibility, Hash32, Hasher, InstanceMeta,
+    InstanceRegistry, IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver,
+    PrincipalAddr, ResourceAddr, ResourceRecord, SubstateKey, TestHasher, Value, admit_tree,
+    child_key, holdings_collection, resource_address, resource_record_key, route_tree,
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall,
@@ -136,8 +135,8 @@ fn pool_meta() -> InstanceMeta {
 }
 
 /// The pool instance, at the address its record derives.
-fn pool() -> ComponentAddr {
-    pool_meta().address(&TestHasher)
+fn pool() -> staking::Staking {
+    staking::Staking::at(pool_meta().address(&TestHasher))
 }
 
 fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
@@ -165,7 +164,7 @@ fn stake_graph(amount: u128) -> ManifestGraph {
     graph(|b| {
         let alice = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice, XRD, amount)?;
-        let units = staking::stake(b, pool(), funds)?;
+        let units = pool().stake(b, funds)?;
         account::deposit(b, ALICE, units)
     })
 }
@@ -176,7 +175,7 @@ fn unstake_graph(amount: u128) -> ManifestGraph {
     graph(|b| {
         let alice = account::authorize(b, ALICE)?;
         let units = account::withdraw(b, alice, unit(), amount)?;
-        staking::unstake(b, pool(), units)
+        pool().unstake(b, units)
     })
 }
 
@@ -192,7 +191,7 @@ fn a_delegation_in_the_wrong_resource_is_refused_at_admission() {
     let tree = single_intent(graph(|b| {
         let alice = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice, unit(), 40)?;
-        let units = staking::stake(b, pool(), funds)?;
+        let units = pool().stake(b, funds)?;
         account::deposit(b, ALICE, units)
     }));
     let identity = tree.hash(&TestHasher);
@@ -242,10 +241,9 @@ fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
 fn register_graph(validator: u64) -> ManifestGraph {
     graph(|b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
-        staking::register_validator(
+        pool().register_validator(
             b,
             operator,
-            pool(),
             validator,
             PUBKEY.to_vec(),
             POSSESSION_PROOF.to_vec(),
@@ -567,7 +565,7 @@ fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
     let staked = receipt
         .events
         .iter()
-        .find(|event| event.emitter == pool())
+        .find(|event| event.emitter == Address::from(pool()))
         .expect("the pool emitted its event");
     assert_eq!(staked.event_type, 0);
     assert_eq!(staked.payload, encode_amount(100));
@@ -595,7 +593,7 @@ fn returned_units_are_destroyed_and_the_pool_says_what_it_owes() -> Result<()> {
     let unstaked = receipt
         .events
         .iter()
-        .find(|event| event.emitter == pool())
+        .find(|event| event.emitter == Address::from(pool()))
         .expect("the pool emitted its event");
     assert_eq!(unstaked.event_type, 1);
     assert_eq!(unstaked.payload, encode_amount(40));
@@ -614,7 +612,10 @@ fn the_emitter_names_the_pool_and_the_guest_cannot() -> Result<()> {
     let (outcome, _) = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry))?;
 
     let events = &outcome.receipts[&entry.tx].events;
-    let from_pool: Vec<_> = events.iter().filter(|e| e.emitter == pool()).collect();
+    let from_pool: Vec<_> = events
+        .iter()
+        .filter(|e| e.emitter == Address::from(pool()))
+        .collect();
     assert_eq!(from_pool.len(), 1, "the pool spoke once");
     // The payload is the amount and nothing else: there is no field in it a
     // guest could have put the wrong pool into.
@@ -641,7 +642,10 @@ fn registration_payload(validator: u64) -> Vec<u8> {
 /// The single event a pool emitted in `outcome` for `entry`.
 fn pool_event(outcome: &BatchOutcome, entry: &BatchTx) -> (u32, Vec<u8>) {
     let events = &outcome.receipts[&entry.tx].events;
-    let from_pool: Vec<_> = events.iter().filter(|e| e.emitter == pool()).collect();
+    let from_pool: Vec<_> = events
+        .iter()
+        .filter(|e| e.emitter == Address::from(pool()))
+        .collect();
     assert_eq!(from_pool.len(), 1, "the pool spoke once");
     (from_pool[0].event_type, from_pool[0].payload.clone())
 }
@@ -796,14 +800,7 @@ fn cast_payload() -> Vec<u8> {
 fn cast_graph() -> ManifestGraph {
     graph(|b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
-        staking::cast_param_vote(
-            b,
-            operator,
-            pool(),
-            SPLIT_BYTES,
-            IMPOUND_EPOCHS,
-            ACTIVATE_AT,
-        )
+        pool().cast_param_vote(b, operator, SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT)
     })
 }
 
@@ -833,7 +830,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
 
     let cleared = graph(|b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
-        staking::clear_param_vote(b, operator, pool())
+        pool().clear_param_vote(b, operator)
     });
     let entry = batch_entry(&world, &single_intent(cleared), OPERATOR)?;
     let (outcome, end) = run_both(&store, std::slice::from_ref(&entry))?;

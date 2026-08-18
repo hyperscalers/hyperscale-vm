@@ -6,10 +6,9 @@
 //! checked against the same call made directly.
 
 use hyperscale_vm_effects::{
-    AuthRole, ComponentAddr, Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    MetadataCache, PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId,
-    TestHasher, TextError, Value, admit, declared_work, footprint, resource_address, route,
-    signature_work,
+    AuthRole, Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache,
+    PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId, TestHasher, TextError,
+    Value, admit, declared_work, footprint, resource_address, route, signature_work,
 };
 use hyperscale_vm_manifest_builder::{
     Authority, EnvelopeBuilder, PreflightError, TypedBuilder, preflight, preflight_tree,
@@ -35,8 +34,8 @@ fn pool_meta() -> InstanceMeta {
     }
 }
 
-fn pool() -> ComponentAddr {
-    pool_meta().address(&TestHasher)
+fn pool() -> staking::Staking {
+    staking::Staking::at(pool_meta().address(&TestHasher))
 }
 
 /// The pool's owner badge — the identity its operator surface admits.
@@ -145,7 +144,7 @@ fn the_operator_surface_is_the_badge_holders_custody() {
     let (cache, instances) = world();
     let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
     let operator = account::present_badge(&mut b, OPERATOR, badge()).unwrap();
-    staking::unjail(&mut b, operator, pool(), 42).unwrap();
+    pool().unjail(&mut b, operator, 42).unwrap();
     let graph = b.build().unwrap();
     let report = preflight(
         &graph,

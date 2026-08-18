@@ -94,6 +94,7 @@
 #![allow(clippy::absolute_paths)]
 
 mod bind;
+mod client;
 mod emit;
 mod guest;
 mod host;
@@ -123,11 +124,36 @@ use crate::lower::{Field, FieldKind, Lowerer, Target};
 ///
 /// Never; every rejection is a `compile_error!` on the offending span.
 #[proc_macro_attribute]
-pub fn blueprint(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn blueprint(attr: TokenStream, item: TokenStream) -> TokenStream {
     let module = syn::parse_macro_input!(item as syn::ItemMod);
-    match expand(module) {
+    let attr = TokenStream2::from(attr);
+    match serves(&attr).and_then(|serves| expand(module, serves)) {
         Ok(tokens) => tokens.into(),
         Err(error) => error.to_compile_error().into(),
+    }
+}
+
+/// Which addresses the package answers, as its attribute says.
+///
+/// A package serves instances of itself unless it says otherwise, and
+/// exactly one says otherwise: the account, which the instance registry
+/// binds to every principal address by class. That is not something the
+/// module could be read for — a principal's address folds in no package
+/// hash — so it is stated.
+fn serves(attr: &TokenStream2) -> syn::Result<client::Serves> {
+    if attr.is_empty() {
+        return Ok(client::Serves::Instances);
+    }
+    let ident: syn::Ident = syn::parse2(attr.clone())?;
+    if ident == "principals" {
+        Ok(client::Serves::Principals)
+    } else {
+        Err(syn::Error::new(
+            ident.span(),
+            "`#[blueprint]` takes `principals` or nothing — the first is the package an \
+             instance registry serves to every principal address by class, and no other \
+             package can be one",
+        ))
     }
 }
 
@@ -390,7 +416,13 @@ enum Gate {
     /// Anyone may name it.
     Public,
     /// The identity the target itself names.
-    Guarded(TokenStream2),
+    Guarded {
+        /// The identity, as a tracer call.
+        identity: TokenStream2,
+        /// Whether that identity is the target's own address, which is
+        /// what lets a call take its target from the proof presented.
+        on_self: bool,
+    },
     /// The target's own stored rule, read at the named field's cell.
     Authorizing(u16),
     /// One of the target's stored roles.
@@ -419,7 +451,7 @@ enum Gate {
 fn guarded_identity(
     identity: &syn::Expr,
     params: &[(String, syn::Type)],
-) -> syn::Result<TokenStream2> {
+) -> syn::Result<(TokenStream2, bool)> {
     let refuse = || {
         syn::Error::new(
             identity.span(),
@@ -428,7 +460,7 @@ fn guarded_identity(
         )
     };
     match identity {
-        syn::Expr::Path(path) if path.path.is_ident("self") => Ok(quote!(__t.self_addr())),
+        syn::Expr::Path(path) if path.path.is_ident("self") => Ok((quote!(__t.self_addr()), true)),
         syn::Expr::Path(path) if path.path.get_ident().is_some() => {
             let name = path.path.get_ident().expect("checked").to_string();
             if params.iter().any(|(p, _)| *p == name) {
@@ -457,7 +489,7 @@ fn guarded_identity(
             match (named, mark) {
                 (true, Some(mark)) => {
                     let mark = syn::LitByteStr::new(&mark, identity.span());
-                    Ok(quote!(__t.self_resource(#mark)))
+                    Ok((quote!(__t.self_resource(#mark)), false))
                 }
                 _ => Err(refuse()),
             }
@@ -487,7 +519,8 @@ fn parse_gate(
     for attr in &method.attrs {
         if attr.path().is_ident("guarded") {
             let identity: syn::Expr = attr.parse_args()?;
-            return Ok(Gate::Guarded(guarded_identity(&identity, params)?));
+            let (identity, on_self) = guarded_identity(&identity, params)?;
+            return Ok(Gate::Guarded { identity, on_self });
         }
         if attr.path().is_ident("authorizing") {
             let field: syn::Ident = attr.parse_args()?;
@@ -712,6 +745,12 @@ struct Lowered {
     /// refuse over is the component the emission cannot build — never
     /// the body, which is the same text either way.
     host: TokenStream2,
+    /// What the method contributes to the package's calling surface.
+    ///
+    /// Emitted whether or not the guest half is, for the same reason the
+    /// declaration is: a package written the long way is still called
+    /// through the declaration it publishes.
+    client: client::Method,
 }
 
 #[allow(clippy::too_many_lines)] // one pass over a method: name, params, gate, body, export
@@ -719,9 +758,11 @@ fn lower_method(
     method: &syn::ImplItemFn,
     fields: &BTreeMap<String, Field>,
     config_fields: &[(String, syn::Type)],
+    serves: client::Serves,
 ) -> syn::Result<Lowered> {
     let published = method_name(method)?;
     let mut params = Vec::new();
+    let mut idents = Vec::new();
     let mut kinds = Vec::new();
     for arg in &method.sig.inputs {
         let syn::FnArg::Typed(arg) = arg else {
@@ -734,11 +775,13 @@ fn lower_method(
                  to arguments positionally, and a pattern has no one position",
             ));
         };
+        idents.push(ident.ident.clone());
         params.push((ident.ident.to_string(), (*arg.ty).clone()));
         kinds.push(param_type(&arg.ty)?);
     }
 
     let gate = parse_gate(method, fields, &params)?;
+    client::check_names(&idents, client::Shape::of(&gate), serves)?;
     let returns = !matches!(method.sig.output, syn::ReturnType::Default);
     let lowered = Lowerer::new(fields, config_fields, &params, returns)
         .run(&method.block)
@@ -785,24 +828,39 @@ fn lower_method(
     let declaration = quote!(
         .method(#published, &[#(#kinds),*], #closure)
     );
+    let name = published.clone();
 
     let guest = lowered.refusal.as_ref().map_or_else(
         || {
             Ok(guest::method(
-                &published,
+                &name,
                 &lowered,
                 &params,
                 config_fields,
                 declining,
             ))
         },
-        |why| Err(guest::refusal(&published, why)),
+        |why| Err(guest::refusal(&name, why)),
     );
-    let host = host::arm(&published, &lowered, &params, config_fields, declining);
+    let host = host::arm(&name, &lowered, &params, config_fields, declining);
+    let client = client::Method {
+        rust: method.sig.ident.clone(),
+        published,
+        shape: client::Shape::of(&gate),
+        outputs: lowered.outputs.len(),
+        docs: method
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("doc"))
+            .cloned()
+            .collect(),
+        params,
+    };
     Ok(Lowered {
         declaration,
         guest,
         host,
+        client,
     })
 }
 
@@ -814,7 +872,7 @@ fn lower_method(
 fn gate_calls(gate: &Gate) -> TokenStream2 {
     match gate {
         Gate::Public => quote!(),
-        Gate::Guarded(identity) => quote!({
+        Gate::Guarded { identity, .. } => quote!({
             let __identity = #identity;
             __t.guarded(&__identity);
         }),
@@ -886,7 +944,7 @@ fn check_gate_shape(
 ) -> syn::Result<()> {
     let refuse = |message: &str| Err(syn::Error::new(method.sig.ident.span(), message));
     match gate {
-        Gate::Public | Gate::Guarded(_) => Ok(()),
+        Gate::Public | Gate::Guarded { .. } => Ok(()),
         Gate::Authorizing(_) => {
             if lowered.sites.is_empty() {
                 Ok(())
@@ -932,6 +990,7 @@ fn lower_methods(
     state_name: &syn::Ident,
     fields: &BTreeMap<String, Field>,
     config_fields: &[(String, syn::Type)],
+    serves: client::Serves,
 ) -> syn::Result<Vec<Lowered>> {
     let mut lowered = Vec::new();
     for item in items {
@@ -946,7 +1005,7 @@ fn lower_methods(
                 continue;
             };
             if matches!(method.vis, syn::Visibility::Public(_)) {
-                lowered.push(lower_method(method, fields, config_fields)?);
+                lowered.push(lower_method(method, fields, config_fields, serves)?);
             }
         }
     }
@@ -994,6 +1053,29 @@ fn strip_macro_attrs(items: &mut [syn::Item], state_name: &syn::Ident) {
     }
 }
 
+/// Open the configuration struct and its fields to whoever creates an
+/// instance.
+///
+/// The visibility is the macro's rather than the author's, and so is the
+/// documentation obligation that would come with it: a field an author
+/// did not write `pub` on is not one they undertook to document, and a
+/// slot's meaning is the declaration's — which is where a reader should
+/// find it. An author who has something to say about a slot still says
+/// it, and the allow costs them nothing.
+fn publish_config(items: &mut [syn::Item], config: &syn::Ident) {
+    for item in items {
+        if let syn::Item::Struct(item) = item
+            && item.ident == *config
+        {
+            item.vis = syn::parse_quote!(pub);
+            item.attrs.push(syn::parse_quote!(#[allow(missing_docs)]));
+            for field in &mut item.fields {
+                field.vis = syn::parse_quote!(pub);
+            }
+        }
+    }
+}
+
 /// One inherent `emit` per event type, at the index the name table fixes.
 ///
 /// The index is the macro's, never the author's: a constant beside a name
@@ -1023,7 +1105,7 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
         .collect()
 }
 
-fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
+fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<TokenStream2> {
     let span = module.span();
     let world = kebab(&module.ident.to_string());
     let Some((_, items)) = &mut module.content else {
@@ -1038,7 +1120,15 @@ fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
     let config_fields = config_slots(items, config_name.as_ref());
     let events = event_names(items);
     let errors = error_names(items);
-    let methods = lower_methods(items, &state_name, &fields, &config_fields)?;
+    let methods = lower_methods(items, &state_name, &fields, &config_fields, serves)?;
+    let calls: Vec<_> = methods.iter().map(|m| &m.client).collect();
+    let client = client::module(
+        &state_name,
+        config_name.as_ref(),
+        &config_fields,
+        serves,
+        &calls,
+    );
 
     let declarations = methods.iter().map(|m| &m.declaration);
     let event_table = events.iter().map(|(_, name)| quote!(.event(#name)));
@@ -1070,6 +1160,13 @@ fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
     };
 
     strip_macro_attrs(items, &state_name);
+    // A configuration is by definition what a creator supplies, so a
+    // private one is unfillable rather than deliberately closed. The
+    // macro opens the struct it found rather than asking every author to
+    // spell the visibility of a record only creation writes.
+    if let Some(config) = &config_name {
+        publish_config(items, config);
+    }
     // Nothing in a package constructs its own state: the struct names
     // the roles the kernel materializes storage under, and the
     // configuration record is an instance's, not the code's. On a guest
@@ -1105,6 +1202,7 @@ fn expand(mut module: syn::ItemMod) -> syn::Result<TokenStream2> {
     ));
     items.push(syn::Item::Verbatim(component));
     items.push(syn::Item::Verbatim(dispatch));
+    items.push(syn::Item::Verbatim(client));
 
     Ok(quote!(#module))
 }

@@ -11,16 +11,15 @@
 //! could differ silently, the loop would be a comfort rather than a
 //! check.
 
-use hyperscale_vm_fixtures::amm;
+use hyperscale_vm_fixtures::amm::{self, Settings};
 use hyperscale_vm_harness::fixtures::repo_root;
 use hyperscale_vm_kernel::Receipt;
+use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
-    Chain, ComponentAddr, Package, PrincipalAddr, ResourceAddr, account, principal, resource,
+    Chain, Package, PrincipalAddr, ResourceAddr, account, principal, resource,
 };
 
 const ALICE: PrincipalAddr = principal(0x41);
-/// Thirty basis points, at the scale the pool's bounded fee type holds.
-const FEE: u128 = 30 * (1_000_000_000_000_000_000 / 10_000);
 const X: ResourceAddr = resource(0xE1);
 const Y: ResourceAddr = resource(0xE2);
 
@@ -37,9 +36,13 @@ fn amm() -> Package {
 }
 
 /// A pool with a thousand of each side, and Alice holding six hundred.
-fn pool(mut chain: Chain) -> (Chain, ComponentAddr) {
-    let amm = chain.publish(amm());
-    let pool = chain.instantiate(amm, (X, Y, FEE));
+fn pool(mut chain: Chain) -> (Chain, amm::Amm) {
+    chain.publish(amm());
+    let pool = chain.instantiate::<amm::Amm>(Settings {
+        x: X.address(),
+        y: Y.address(),
+        fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
+    });
     chain.credit(ALICE, X, 600);
     chain.credit(pool, X, 1_000);
     chain.credit(pool, Y, 1_000);
@@ -52,7 +55,7 @@ fn swap(chain: Chain, floor: u128) -> (Receipt, [u128; 4]) {
     let outcome = chain.transact(ALICE, |b| {
         let signed_in = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, signed_in, X, 500)?;
-        let bought = b.call(pool, "swap", (funds, floor))?.one()?;
+        let bought = pool.swap(b, funds, floor)?;
         account::deposit(b, ALICE, bought)
     });
     let receipt = outcome.receipt().clone();

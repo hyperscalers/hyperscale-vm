@@ -52,12 +52,12 @@ fn operated() -> Vec<Value> {
     ]
 }
 
-fn pool() -> ComponentAddr {
-    instance("amm", pair()).address(&TestHasher)
+fn pool() -> amm::Amm {
+    amm::Amm::at(instance("amm", pair()).address(&TestHasher))
 }
 
-fn stake_pool() -> ComponentAddr {
-    instance("staking", operated()).address(&TestHasher)
+fn stake_pool() -> staking::Staking {
+    staking::Staking::at(instance("staking", operated()).address(&TestHasher))
 }
 
 fn splitter() -> ComponentAddr {
@@ -121,7 +121,7 @@ fn main() {
             build(&|b| {
                 let alice = account::authorize(b, ALICE)?;
                 let funds = account::withdraw(b, alice, XRD, 100)?;
-                let proceeds = amm::swap(b, pool(), funds, 90)?;
+                let proceeds = pool().swap(b, funds, 90)?;
                 account::deposit(b, ALICE, proceeds)
             }),
         ),
@@ -140,13 +140,13 @@ fn main() {
             build(&|b| {
                 let alice = account::authorize(b, ALICE)?;
                 let funds = account::withdraw(b, alice, XRD, 1_000)?;
-                let position = staking::stake(b, stake_pool(), funds)?;
+                let position = stake_pool().stake(b, funds)?;
                 account::deposit(b, ALICE, position)?;
                 // The operator surface is the configured operator's, so
                 // it acts under the operator's own sign-in beside
                 // Alice's.
                 let operator = account::authorize(b, OPERATOR)?;
-                staking::unjail(b, operator, stake_pool(), 42)
+                stake_pool().unjail(b, operator, 42)
             }),
         ),
     ];

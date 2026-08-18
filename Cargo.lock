@@ -709,6 +709,7 @@ dependencies = [
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-ref",
  "hyperscale-vm-runtime",
+ "hyperscale-vm-sdk",
  "hyperscale-vm-stdlib",
  "hyperscale-vm-testing",
  "wasm-smith",
@@ -772,6 +773,7 @@ dependencies = [
  "hyperscale-vm-embed",
  "hyperscale-vm-fixtures",
  "hyperscale-vm-kernel",
+ "hyperscale-vm-manifest-builder",
  "hyperscale-vm-sdk-macros",
  "hyperscale-vm-stdlib",
  "trybuild",
@@ -810,6 +812,7 @@ dependencies = [
  "hyperscale-vm-runtime",
  "hyperscale-vm-sdk",
  "hyperscale-vm-stdlib",
+ "thiserror 2.0.19",
  "wasmtime",
 ]
 

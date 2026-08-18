@@ -27,6 +27,10 @@ wit-bindgen.workspace = true
 # mirrors `wit-bindgen` being the wasm32-only one.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 hyperscale-vm-embed.workspace = true
+# The types a generated `client` wrapper names. Off the guest build,
+# where nothing composes a manifest — which is what keeps the wasm
+# artifact byte-identical whether or not the wrappers were emitted.
+hyperscale-vm-manifest-builder.workspace = true
 
 [dev-dependencies]
 hyperscale-vm-fixtures.workspace = true

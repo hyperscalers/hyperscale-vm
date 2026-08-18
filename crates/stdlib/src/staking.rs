@@ -3,12 +3,11 @@
 //!
 //! The declaration is the package's own: `metadata()` traces the module
 //! the component is built from, so the signatures a caller routes on and
-//! the code that executes them are read off one text. What stays here is
-//! the roles a consumer keys by and the wrappers a client calls it
-//! through, neither of which a signature supplies.
+//! the code that executes them, and the handle a client calls it
+//! through, are all read off one text. What stays here is the roles a
+//! consumer keys by, which a signature does not supply.
 
-use hyperscale_vm_effects::{ComponentAddr, PackageMetadata, RoleId, package_role};
-use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
+use hyperscale_vm_effects::{PackageMetadata, RoleId, package_role};
 
 // The package, read from the crate the artifact is built from rather
 // than copied into this one: a second copy is the drift the derivation
@@ -16,6 +15,7 @@ use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, Typ
 #[path = "../../../guests/staking/src/lib.rs"]
 mod package;
 
+pub use package::staking::client::*;
 /// The package's own bodies, dispatched natively.
 ///
 /// The same module the declaration is traced from, so a test running
@@ -91,133 +91,4 @@ pub const OWNER_BADGE: &[u8] = b"owner-badge";
 #[must_use]
 pub fn metadata() -> PackageMetadata {
     package::staking::blueprint().metadata()
-}
-
-// ─── calls ─────────────────────────────────────────────────────────────
-
-/// Delegate `funds` to `pool`, receiving the pool's own stake units —
-/// an edge typed by the pool rather than by what was staked.
-///
-/// # Errors
-///
-/// Any [`TypedError`] the call does not type against `stake`.
-pub fn stake(
-    builder: &mut TypedBuilder<'_>,
-    pool: ComponentAddr,
-    funds: impl BucketArg,
-) -> Result<Bucket, TypedError> {
-    builder.call(pool, "stake", (funds,))?.one()
-}
-
-/// Return `units` to `pool`, growing what it owes on release.
-///
-/// # Errors
-///
-/// Any [`TypedError`] the call does not type against `unstake`.
-pub fn unstake(
-    builder: &mut TypedBuilder<'_>,
-    pool: ComponentAddr,
-    units: impl BucketArg,
-) -> Result<(), TypedError> {
-    builder.call(pool, "unstake", (units,))?.none()
-}
-
-/// Record `validator` on `pool`'s own leaf for it, under the key it
-/// will sign with and the proof it holds the key.
-///
-/// # Errors
-///
-/// Any [`TypedError`] the call does not type against
-/// `register-validator`.
-pub fn register_validator(
-    builder: &mut TypedBuilder<'_>,
-    operator: Proof,
-    pool: ComponentAddr,
-    validator: u64,
-    key: Vec<u8>,
-    possession_proof: Vec<u8>,
-) -> Result<(), TypedError> {
-    builder
-        .call_as(
-            operator,
-            pool,
-            "register-validator",
-            (validator, key, possession_proof),
-        )?
-        .none()
-}
-
-/// Retire `validator` from `pool`'s operating set.
-///
-/// # Errors
-///
-/// Any [`TypedError`] the call does not type against
-/// `deactivate-validator`.
-pub fn deactivate_validator(
-    builder: &mut TypedBuilder<'_>,
-    operator: Proof,
-    pool: ComponentAddr,
-    validator: u64,
-) -> Result<(), TypedError> {
-    builder
-        .call_as(operator, pool, "deactivate-validator", (validator,))?
-        .none()
-}
-
-/// Return `validator` to service.
-///
-/// # Errors
-///
-/// Any [`TypedError`] the call does not type against `unjail`.
-pub fn unjail(
-    builder: &mut TypedBuilder<'_>,
-    operator: Proof,
-    pool: ComponentAddr,
-    validator: u64,
-) -> Result<(), TypedError> {
-    builder
-        .call_as(operator, pool, "unjail", (validator,))?
-        .none()
-}
-
-/// Replace `pool`'s single network-parameter vote with this one. The
-/// parameters travel as themselves, so a malformed vote fails its
-/// transaction rather than being counted and discarded.
-///
-/// # Errors
-///
-/// Any [`TypedError`] the call does not type against
-/// `cast-param-vote`.
-pub fn cast_param_vote(
-    builder: &mut TypedBuilder<'_>,
-    operator: Proof,
-    pool: ComponentAddr,
-    split_bytes: u64,
-    impound_epochs: u64,
-    activate_at: u64,
-) -> Result<(), TypedError> {
-    builder
-        .call_as(
-            operator,
-            pool,
-            "cast-param-vote",
-            (split_bytes, impound_epochs, activate_at),
-        )?
-        .none()
-}
-
-/// Empty `pool`'s vote leaf, so it backs nothing.
-///
-/// # Errors
-///
-/// Any [`TypedError`] the call does not type against
-/// `clear-param-vote`.
-pub fn clear_param_vote(
-    builder: &mut TypedBuilder<'_>,
-    operator: Proof,
-    pool: ComponentAddr,
-) -> Result<(), TypedError> {
-    builder
-        .call_as(operator, pool, "clear-param-vote", ())?
-        .none()
 }

@@ -346,13 +346,13 @@ impl<'a> TypedBuilder<'a> {
             .map(|(_, outputs)| outputs)
     }
 
-    /// Append an invocation of `method`, an authorizing method of
-    /// `target`, and return the proof it mints.
+    /// Append an invocation of `method`, a minting method of `target`,
+    /// and return the proof it mints.
     ///
     /// The call presents the intent's signature proof to its own gate —
-    /// signing in starts from a signature. Signing in through an
-    /// identity minted earlier is
-    /// [`call_minting_as`](Self::call_minting_as).
+    /// signing in starts from a signature. The arguments are the gate's
+    /// where it has any: a custodial method names the badge it presents,
+    /// where a sign-in names nothing.
     ///
     /// # Errors
     ///
@@ -366,30 +366,12 @@ impl<'a> TypedBuilder<'a> {
         &mut self,
         target: impl Into<CallTarget>,
         method: &str,
-    ) -> Result<Proof, TypedError> {
-        self.mint(target.into(), method, (), &[])
-    }
-
-    /// A minting call with arguments — a custodial method takes the
-    /// badge it presents, where a sign-in takes nothing.
-    ///
-    /// # Errors
-    ///
-    /// As [`call_minting`](Self::call_minting).
-    ///
-    /// # Panics
-    ///
-    /// As [`call`](Self::call).
-    pub fn call_minting_args<A: Args>(
-        &mut self,
-        target: impl Into<CallTarget>,
-        method: &str,
-        args: A,
+        args: impl Args,
     ) -> Result<Proof, TypedError> {
         self.mint(target.into(), method, args, &[])
     }
 
-    /// The same sign-in, presenting `proof` instead of the intent's
+    /// The same minting call, presenting `proof` instead of the intent's
     /// signature — how a target whose stored rule names another
     /// account's identity is signed into through that account's own
     /// sign-in, and the only way in when the rule names no key the
@@ -407,8 +389,31 @@ impl<'a> TypedBuilder<'a> {
         proof: Proof,
         target: impl Into<CallTarget>,
         method: &str,
+        args: impl Args,
     ) -> Result<Proof, TypedError> {
-        self.mint(target.into(), method, (), &[proof])
+        self.mint(target.into(), method, args, &[proof])
+    }
+
+    /// The same minting call, presenting every proof in `proofs`.
+    ///
+    /// What a minting gate over a threshold takes, and the general form
+    /// the two above are the empty and one-proof cases of.
+    ///
+    /// # Errors
+    ///
+    /// As [`call_minting`](Self::call_minting).
+    ///
+    /// # Panics
+    ///
+    /// As [`call`](Self::call).
+    pub fn call_minting_presenting(
+        &mut self,
+        proofs: &[Proof],
+        target: impl Into<CallTarget>,
+        method: &str,
+        args: impl Args,
+    ) -> Result<Proof, TypedError> {
+        self.mint(target.into(), method, args, proofs)
     }
 
     fn mint<A: Args>(

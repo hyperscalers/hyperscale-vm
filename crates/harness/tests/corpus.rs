@@ -148,8 +148,8 @@ fn pool_meta() -> InstanceMeta {
 }
 
 /// The pool instance, at the address its record derives.
-fn pool() -> ComponentAddr {
-    pool_meta().address(&TestHasher)
+fn pool() -> amm::Amm {
+    amm::Amm::at(pool_meta().address(&TestHasher))
 }
 
 /// The share vault, over the asset it prices shares against.
@@ -162,13 +162,13 @@ fn shares_meta() -> InstanceMeta {
 }
 
 /// The share vault instance.
-fn shares_vault() -> ComponentAddr {
-    shares_meta().address(&TestHasher)
+fn shares_vault() -> shares::Shares {
+    shares::Shares::at(shares_meta().address(&TestHasher))
 }
 
 /// The share the vault issues against deposits.
 fn shares_unit() -> ResourceAddr {
-    resource_address(&TestHasher, shares_vault().address(), &[])
+    resource_address(&TestHasher, Address::from(shares_vault()), &[])
 }
 
 fn book_meta() -> InstanceMeta {
@@ -183,8 +183,8 @@ fn book_meta() -> InstanceMeta {
 }
 
 /// The order book instance.
-fn book() -> ComponentAddr {
-    book_meta().address(&TestHasher)
+fn book() -> book::Book {
+    book::Book::at(book_meta().address(&TestHasher))
 }
 
 fn registry_meta() -> InstanceMeta {
@@ -255,8 +255,8 @@ fn lottery_meta() -> InstanceMeta {
 }
 
 /// The lottery instance.
-fn lottery_addr() -> ComponentAddr {
-    lottery_meta().address(&TestHasher)
+fn lottery_addr() -> lottery::Lottery {
+    lottery::Lottery::at(lottery_meta().address(&TestHasher))
 }
 
 fn mirror_meta() -> InstanceMeta {
@@ -1633,7 +1633,7 @@ fn swap_graph(min_out: u128) -> ManifestGraph {
     graph(|b| {
         let alice = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice, RES_X, 500)?;
-        let out = amm::swap(b, pool(), funds, min_out)?;
+        let out = pool().swap(b, funds, min_out)?;
         account::deposit(b, ALICE, out)
     })
 }
@@ -1644,7 +1644,7 @@ fn wrong_side_swap_graph() -> ManifestGraph {
     graph(|b| {
         let alice = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice, RES_Y, 500)?;
-        let out = amm::swap(b, pool(), funds, 0)?;
+        let out = pool().swap(b, funds, 0)?;
         account::deposit(b, ALICE, out)
     })
 }
@@ -1824,7 +1824,7 @@ fn place_graph() -> ManifestGraph {
     graph(|b| {
         let maker = account::authorize(b, MAKER)?;
         let funds = account::withdraw(b, maker, BASE, 50)?;
-        book::place_ask(b, book(), 3, funds)
+        book().place_ask(b, 3, funds)
     })
 }
 
@@ -1832,7 +1832,7 @@ fn fill_graph() -> ManifestGraph {
     graph(|b| {
         let taker = account::authorize(b, TAKER)?;
         let payment = account::withdraw(b, taker, QUOTE, 100)?;
-        let [bought, refund] = book::fill_asks(b, book(), 3, 5, payment)?;
+        let [bought, refund] = book().fill_asks(b, 3, 5, payment)?;
         account::deposit(b, TAKER, bought)?;
         account::deposit(b, TAKER, refund)
     })
@@ -1857,7 +1857,7 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
     let wrong_ask = graph(|b| {
         let maker = account::authorize(b, MAKER)?;
         let funds = account::withdraw(b, maker, QUOTE, 50)?;
-        book::place_ask(b, book(), 3, funds)
+        book().place_ask(b, 3, funds)
     });
     assert!(
         matches!(
@@ -1872,7 +1872,7 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
     let wrong_fill = graph(|b| {
         let taker = account::authorize(b, TAKER)?;
         let payment = account::withdraw(b, taker, BASE, 100)?;
-        let [bought, refund] = book::fill_asks(b, book(), 3, 5, payment)?;
+        let [bought, refund] = book().fill_asks(b, 3, 5, payment)?;
         account::deposit(b, TAKER, bought)?;
         account::deposit(b, TAKER, refund)
     });
@@ -2065,7 +2065,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
     // A resting ask at price 5 from an earlier session, escrow included.
     store
         .entry_write(
-            book().address(),
+            Address::from(book()),
             asks(),
             (5u128 << 64) | 7,
             encode_amount(10).to_vec(),
@@ -2099,7 +2099,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
     let admitted = admit(&place, MAKER, &world.0, &world.1, &TestHasher).unwrap();
     let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0, 0);
     let placed_ask = EntryKey {
-        owner: book().address(),
+        owner: Address::from(book()),
         collection: asks(),
         order: (3u128 << 64) | u128::from(seq),
     };
@@ -2815,10 +2815,10 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
         graph(move |b| {
             let proof = account::authorize(b, who)?;
             let funds = account::withdraw(b, proof, RES_X, stake)?;
-            lottery::enter(b, lottery_addr(), who, funds)
+            lottery_addr().enter(b, who, funds)
         })
     };
-    let draw = graph(|b| lottery::draw(b, lottery_addr()));
+    let draw = graph(|b| lottery_addr().draw(b));
 
     // The empty round first: nobody has entered, and the draw still
     // settles — recording what it drew and naming no winner.
@@ -2942,7 +2942,7 @@ fn the_share_vault_rounds_toward_the_pool_on_both_runtimes() -> Result<()> {
     let deposit = graph(|b| {
         let alice = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice, RES_X, 100)?;
-        let units = shares::deposit(b, shares_vault(), funds)?;
+        let units = shares_vault().deposit(b, funds)?;
         account::deposit(b, ALICE, units)
     });
     let (results, store) = run_both(
@@ -2966,7 +2966,7 @@ fn the_share_vault_rounds_toward_the_pool_on_both_runtimes() -> Result<()> {
     let redeem = graph(|b| {
         let alice = account::authorize(b, ALICE)?;
         let units = account::withdraw(b, alice, shares_unit(), 77)?;
-        let assets = shares::redeem(b, shares_vault(), units)?;
+        let assets = shares_vault().redeem(b, units)?;
         account::deposit(b, ALICE, assets)
     });
     let (results, mut end) = run_both(

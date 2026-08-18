@@ -128,6 +128,7 @@ fn first_test(module: &str) -> String {
         "//! What this package does, against the real kernel.\n\
          \n\
          use hyperscale_vm_testing::{{Chain, account, package, principal, resource}};\n\
+         use {module}::{module}::client::State;\n\
          \n\
          #[test]\n\
          fn a_deposit_lands_in_the_vault() {{\n\
@@ -135,15 +136,15 @@ fn first_test(module: &str) -> String {
          \x20   let xrd = resource(0xE1);\n\
          \n\
          \x20   let mut chain = Chain::native();\n\
-         \x20   let package = chain.publish(package!({module}::{module}));\n\
-         \x20   let instance = chain.instantiate(package, ());\n\
+         \x20   chain.publish(package!({module}::{module}));\n\
+         \x20   let instance = chain.instantiate::<State>(());\n\
          \x20   chain.credit(alice, xrd, 100);\n\
          \n\
          \x20   chain\n\
          \x20       .transact(alice, |b| {{\n\
          \x20           let signed_in = account::authorize(b, alice)?;\n\
          \x20           let funds = account::withdraw(b, signed_in, xrd, 40)?;\n\
-         \x20           b.call(instance, \"deposit\", (funds,))?.none()\n\
+         \x20           instance.deposit(b, funds)\n\
          \x20       }})\n\
          \x20       .expect_completed();\n\
          \n\

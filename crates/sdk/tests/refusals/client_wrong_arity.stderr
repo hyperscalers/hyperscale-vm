@@ -1,0 +1,18 @@
+error[E0061]: this method takes 2 arguments but 1 argument was supplied
+  --> tests/refusals/client_wrong_arity.rs:29:10
+   |
+29 |     pool.deposit(builder)
+   |          ^^^^^^^--------- argument #2 is missing
+   |
+note: method defined here
+  --> tests/refusals/client_wrong_arity.rs:15:16
+   |
+ 4 | #[blueprint]
+   | ------------
+...
+15 |         pub fn deposit(&mut self, funds: Bucket) {
+   |                ^^^^^^^
+help: provide the argument
+   |
+29 |     pool.deposit(builder, /* funds */)
+   |                         +++++++++++++
