@@ -73,8 +73,9 @@ pub struct Seq;
 /// A judgment — what a predicate evaluates to.
 ///
 /// The one kind with no [`ParamType`], and deliberately: no manifest
-/// argument carries a boolean, and the only boolean an export receives is
-/// a clause's own verdict.
+/// argument carries a boolean and no export is handed one. A judgment
+/// lives in the declaration, where it selects; what reaches a body is
+/// the value it selected.
 #[derive(Clone, Copy, Debug)]
 pub struct Flag;
 

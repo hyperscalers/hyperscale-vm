@@ -919,11 +919,11 @@ fn guest_arg(value: &Value) -> Option<CallArg> {
                 .collect::<Option<Vec<u64>>>()?;
             Some(CallArg::Bytes(ids_cell(&ids)))
         }
-        // A judgment has no guest representation. The one boolean an
-        // export receives is a clause's own verdict, read off the
-        // declaration rather than computed a second time, so a derived
-        // parameter evaluating to one is refused here like every other
-        // unrepresentable kind.
+        // A judgment has no guest representation and no export takes
+        // one: a selection hands over the value it chose, and a body
+        // needing the comparison rebuilds it from operands that do
+        // cross. A derived parameter evaluating to a judgment is refused
+        // here like every other unrepresentable kind.
         Value::Key(_) | Value::Bucket { .. } | Value::Tuple(_) | Value::Bool(_) => None,
     }
 }

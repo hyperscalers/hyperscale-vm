@@ -622,18 +622,26 @@ pub enum AbiError {
         /// What that parameter actually is.
         kind: &'static str,
     },
-    /// An authority expression reading what the caller supplies.
+    /// A rule leaf reading what the caller supplies.
     ///
-    /// A caller who names the identity they must present can always
-    /// present it, so the method reads as guarded and admits everyone.
+    /// A caller who names the claim they must present can always present
+    /// it, so the method reads as guarded and admits everyone. Every
+    /// leaf answers, because one caller-named branch of a threshold is
+    /// one branch the caller satisfies for free.
     #[error("the authority this method requires is one its caller names")]
     CallerNamedAuthority,
     /// A custodial method whose declaration is not the pinned custody
-    /// shape: a named badge, the rule cell's read, and the two
-    /// badge-keyed possession reads.
+    /// shape: the holder's rule cell read, and the one possession read
+    /// its claim names, keyed by exactly the expressions the gate mints.
+    ///
+    /// Which read that is follows from the claim, because a resource is
+    /// issued fungible or non-fungible and never both: a fungible claim
+    /// reads the badge-keyed vault, an instance claim the badge's
+    /// holdings entry at the id it names.
     #[error(
-        "a custodial method names its badge and declares three reads: \
-         its rule cell, the badge-keyed vault, the badge-keyed holdings"
+        "a custodial method declares two reads: its rule cell, and the \
+         badge-keyed vault for a fungible claim or the holdings entry at \
+         the id for an instance one"
     )]
     CustodialShape,
     /// One bucket parameter carried by more than one ABI parameter.

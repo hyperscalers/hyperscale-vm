@@ -24,7 +24,7 @@ Access is a pure function of the signed transaction plus immutable metadata. Con
 | `locked` | Read of a permanently locked substate — the target cannot change |
 | `delta` | Unconditional commutative increment/decrement; the amount is runtime-determined, never declared |
 | `reserve(n)` | Conditional decrement, feasible iff committed balance minus prior reservations covers `n` |
-| `write` | Exclusive read-modify-write |
+| `write` | Exclusive read-modify-write, optionally requiring the leaf absent or present |
 
 Scheduling compatibility (two in-flight transactions touching the same key):
 
@@ -36,6 +36,10 @@ Scheduling compatibility (two in-flight transactions touching the same key):
 | `reserve` | ✗ | ✓ | ✓ | ✓ | ✗ |
 | `write` | ✗ | ✓ | ✗ | ✗ | ✗ |
 
+**A write says what it requires of the leaf.** `write` carries a *presence* — `either` by default, or `absent` or `present` — and the shard holding the leaf judges it against committed state before the body runs, where it already judges a reservation's feasibility. A requirement the leaf does not meet aborts the transaction with the protocol's own reason rather than a trap the guest wrote, which is what puts a one-way door in the declaration: a caller routes on it, and a wallet can say "this call creates your authority cell, and fails if you already have one" without running anything. Contention is untouched — a create and a write exclude each other exactly as two writes do — so the presence is a feasibility parameter beside `reserve`'s amount, not a mode of its own, and the compatibility table below reads the same whichever it carries.
+
+The requirement is about *the leaf a write lands on*, so it is carried by the two targets that name one — a cell, and a single collection entry — and refused on an interval, which names none and stays valid whatever enters or leaves it. Two clauses on one target meet: `either` concedes to a named requirement, and a requirement against its own opposite is refused where the declaration is written rather than left for a shard to discover.
+
 `locked`'s row is a consequence rather than a stipulation: every mutating mode refuses a locked target, so no transaction can hold a conflicting mode on one.
 
 Determinism rules for the commutative modes: `delta` application order is canonical (transaction hash) and outcome-invariant; `reserve` feasibility is judged against committed balance minus reservations already held, ordered by transaction hash, and never counts in-flight deltas — so feasibility verdicts are identical on every replica regardless of scheduling. Reservation settle and release happen at finalization with the same ordering.
@@ -46,7 +50,7 @@ Determinism rules for the commutative modes: `delta` application order is canoni
 
 ## 3. Modes reshape provisioning
 
-A provision needs to carry only what a counterpart must *read*: fresh-`read` values and the prior values of read-modify-`write` keys. A `delta` reads nothing; a `reserve`'s feasibility is judged at the owning shard; a blind `write` needs no prior value. Cross-shard legs composed of commutative effects therefore provision nothing, their dependency sets shrink or empty, and a leg with no dependencies dispatches immediately — coupling reduction that falls out of the lattice alone ([08-host-integration.md](08-host-integration.md) §1).
+A provision needs to carry only what a counterpart must *read*: fresh-`read` values and the prior values of read-modify-`write` keys. A `delta` reads nothing; a `reserve`'s feasibility is judged at the owning shard; a `write` needs the prior value only where it reads one, and its presence requirement needs the leaf's *existence* — which the same provision carries, so every participant reaches the identical verdict on it rather than reading its own store for a leaf it may not hold. Cross-shard legs composed of commutative effects therefore provision nothing, their dependency sets shrink or empty, and a leg with no dependencies dispatches immediately — coupling reduction that falls out of the lattice alone ([08-host-integration.md](08-host-integration.md) §1).
 
 ## 4. Locked reads
 

@@ -102,7 +102,7 @@ const DOMAIN_INSTANCE_CONFIG: &[u8] = b"hyperscale-vm/instance-config";
 
 /// The canonical child key for slot-bound state under `owner`.
 ///
-/// The local half is the hash of the owner, the role, and the material,
+/// The local half is the hash of the owner, the slot, and the material,
 /// truncated to 16 bytes — which is what makes level-one access ("the vault
 /// for resource R under account A") pure computation, never a state read.
 ///
@@ -122,10 +122,10 @@ pub fn child_key(
 ) -> SubstateKey {
     let owner = owner.into();
     let owner_bytes = owner.to_bytes();
-    let role_bytes = slot.0.to_le_bytes();
+    let slot_bytes = slot.0.to_le_bytes();
     let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
     parts.push(&owner_bytes);
-    parts.push(&role_bytes);
+    parts.push(&slot_bytes);
     parts.extend(material.iter().map(Vec::as_slice));
     let digest = hasher.hash(DOMAIN_CHILD, &parts);
     let mut local = [0u8; 16];
@@ -136,7 +136,7 @@ pub fn child_key(
     }
 }
 
-/// The collection identity for `role` and `material` under `owner`.
+/// The collection identity for `slot` and `material` under `owner`.
 ///
 /// Sixteen bytes and owner-salted for the same reasons as [`child_key`]:
 /// the truncation sits at a 64-bit birthday bound, material can be chosen
@@ -151,10 +151,10 @@ pub fn collection_id(
     material: &[Vec<u8>],
 ) -> CollectionId {
     let owner_bytes = owner.into().to_bytes();
-    let role_bytes = slot.0.to_le_bytes();
+    let slot_bytes = slot.0.to_le_bytes();
     let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
     parts.push(&owner_bytes);
-    parts.push(&role_bytes);
+    parts.push(&slot_bytes);
     parts.extend(material.iter().map(Vec::as_slice));
     let digest = hasher.hash(DOMAIN_COLLECTION, &parts);
     let mut id = [0u8; 16];
@@ -162,13 +162,13 @@ pub fn collection_id(
     CollectionId(id)
 }
 
-/// The order key for `material` in the collection at `role` under `owner`
+/// The order key for `material` in the collection at `slot` under `owner`
 /// — where a hashed key lands in a collection's order space.
 ///
 /// This is what makes a collection *unordered*: hashing the logical key
 /// gives it an arbitrary-but-canonical position, so point access stays
 /// pure computation and a capped range walks the entries in an order
-/// nobody chose. Owner-and-role-salted and truncated to sixteen bytes for
+/// nobody chose. Owner-and-slot-salted and truncated to sixteen bytes for
 /// the same reasons as [`collection_id`], and domain-separated from it, so
 /// a key's position never aliases a collection's identity.
 #[must_use]
@@ -179,10 +179,10 @@ pub fn order_key(
     material: &[Vec<u8>],
 ) -> u128 {
     let owner_bytes = owner.into().to_bytes();
-    let role_bytes = slot.0.to_le_bytes();
+    let slot_bytes = slot.0.to_le_bytes();
     let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
     parts.push(&owner_bytes);
-    parts.push(&role_bytes);
+    parts.push(&slot_bytes);
     parts.extend(material.iter().map(Vec::as_slice));
     let digest = hasher.hash(DOMAIN_ORDER, &parts);
     let mut order = [0u8; 16];
@@ -350,10 +350,12 @@ pub enum Value {
     List(Vec<Self>),
     /// A judgment: what a predicate evaluates to.
     ///
-    /// The one kind with no guest representation. The single boolean an
-    /// export receives is a clause's own verdict, read off the
-    /// declaration rather than computed a second time, which is what
-    /// leaves a guest nothing to disagree with.
+    /// The one kind with no guest representation, and nothing hands one
+    /// to an export: what crosses from a selection is the value the
+    /// declaration chose, never the condition it chose by. Where a body
+    /// needs the comparison itself, the operands cross and it is rebuilt
+    /// there — so a boolean is never two copies agreeing by convention,
+    /// because there is only ever the one.
     Bool(bool),
 }
 
@@ -783,7 +785,7 @@ mod tests {
     }
 
     #[test]
-    fn child_keys_separate_by_role_and_material() {
+    fn child_keys_separate_by_slot_and_material() {
         let owner = Address::new([1; 31], AddressClass::Component);
         let a = child_key(&TestHasher, owner, SlotId(1), &[vec![9]]);
         assert_eq!(a, child_key(&TestHasher, owner, SlotId(1), &[vec![9]]));
