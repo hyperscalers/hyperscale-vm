@@ -21,7 +21,8 @@ use crate::hash::Hasher;
 use crate::invoke::EdgeKind;
 use crate::manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{
-    Accessibility, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash, ParamType,
+    AbiError, Accessibility, GateShape, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
+    ParamType,
 };
 use crate::resource::holdings_collection;
 use crate::route::MAX_MANIFEST_NODES;
@@ -139,15 +140,6 @@ pub enum AdmissionError {
     /// address — a gate with nothing possessable to verify.
     #[error("node {node} mints an identity that is not a resource address")]
     MintType {
-        /// The offending node.
-        node: u32,
-    },
-    /// A minted identity named on anything but a custodial method —
-    /// re-asked of the signature here, like the rule cell's shape, so a
-    /// cached package that never passed the publish check refuses rather
-    /// than minting an identity untied to any gate.
-    #[error("node {node} names a minted identity its gate cannot honour")]
-    MintWithoutGate {
         /// The offending node.
         node: u32,
     },
@@ -872,38 +864,22 @@ pub(crate) fn admit_intents(
         // nothing. Whether what it presents satisfies the target's rule
         // is the target's own business, answered where the target's
         // state is.
-        let required = match &signature.accessibility {
-            Accessibility::Public => {
-                if !node.evidence.is_empty() {
-                    return Err(AdmissionError::UnexpectedEvidence { node: node_index });
-                }
-                None
+        if signature.accessibility.requires_evidence() {
+            if node.evidence.is_empty() {
+                return Err(AdmissionError::MissingEvidence { node: node_index });
             }
-            Accessibility::Guarded(identity) => {
-                if node.evidence.is_empty() {
-                    return Err(AdmissionError::MissingEvidence { node: node_index });
-                }
-                Some(identity)
-            }
-            Accessibility::Authorizing | Accessibility::RoleGated(_) | Accessibility::Custodial => {
-                if node.evidence.is_empty() {
-                    return Err(AdmissionError::MissingEvidence { node: node_index });
-                }
-                None
-            }
-        };
-        // A rule-reading gate is its target's stored rule, at the cell
-        // the method's own declaration names — asked of the signature
-        // itself, so a cached package that never passed the publish
-        // check is a refusal rather than an ungated node.
-        let rule_cell = match &signature.accessibility {
-            Accessibility::Authorizing | Accessibility::RoleGated(_) => Some(
-                signature
-                    .rule_cell()
-                    .ok_or(AdmissionError::RuleCell { node: node_index })?,
-            ),
-            Accessibility::Public | Accessibility::Guarded(_) | Accessibility::Custodial => None,
-        };
+        } else if !node.evidence.is_empty() {
+            return Err(AdmissionError::UnexpectedEvidence { node: node_index });
+        }
+        // What the gate judges, and what the declaration reads to judge
+        // it — asked of the signature itself, so a cached package that
+        // never passed the publish check is a refusal rather than an
+        // ungated node. The accessor returns shape refusals alone, and
+        // both rule shapes are one verdict here.
+        let gate = signature.gate().map_err(|error| match error {
+            AbiError::CustodialShape => AdmissionError::CustodyShape { node: node_index },
+            _ => AdmissionError::RuleCell { node: node_index },
+        })?;
         // A proof is scoped to the intent that produced it — a signature
         // proof to the intent whose signature, a node proof to the intent
         // whose node — so the identities resolve against this node's own
@@ -917,12 +893,7 @@ pub(crate) fn admit_intents(
                     // authority is the account's rule, so the only
                     // gates it may reach are the ones that read a rule
                     // — the sign-in, and the recovery surface.
-                    if !matches!(
-                        signature.accessibility,
-                        Accessibility::Authorizing
-                            | Accessibility::RoleGated(_)
-                            | Accessibility::Custodial
-                    ) {
+                    if !signature.accessibility.reads_a_rule() {
                         return Err(AdmissionError::SignatureForGuarded { node: node_index });
                     }
                     let signer = intent
@@ -998,21 +969,12 @@ pub(crate) fn admit_intents(
                 });
             }
         }
-        // A minted identity belongs to the custody gate and nowhere else
-        // — re-asked of the signature like the rule cell's shape.
-        if signature.mints.is_some() && !matches!(signature.accessibility, Accessibility::Custodial)
-        {
-            return Err(AdmissionError::MintWithoutGate { node: node_index });
-        }
         // A custodial gate: the holder's stored primary plus possession
-        // of the badge its mint names. The pinned shape ties the
-        // possession reads to the minted expression, so the vault key
-        // and holdings collection are the badge's own derivations.
-        let custody = match &signature.accessibility {
-            Accessibility::Custodial => {
-                let (badge, rule) = signature
-                    .custody_shape()
-                    .ok_or(AdmissionError::CustodyShape { node: node_index })?;
+        // of the badge it mints. The pinned shape ties the possession
+        // reads to that expression, so the vault key and holdings
+        // collection are the badge's own derivations.
+        let custody = match gate {
+            GateShape::Custody { cell: rule, badge } => {
                 let eval = |expr| {
                     evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
                         AdmissionError::Eval {
@@ -1044,17 +1006,15 @@ pub(crate) fn admit_intents(
                     },
                 ))
             }
-            Accessibility::Public
-            | Accessibility::Guarded(_)
-            | Accessibility::Authorizing
-            | Accessibility::RoleGated(_) => None,
+            GateShape::Open | GateShape::Identity(_) | GateShape::Rule { .. } => None,
         };
-        // The identity a guarded call must present, over the same inputs
-        // the output types evaluate against: what the target itself names,
+        // The gate this call is judged against, over the same inputs the
+        // output types evaluate against: what the target itself names,
         // never what the caller claims.
-        let authority = match (required, rule_cell) {
-            (None, None) => custody.map(|(_, gate)| gate),
-            (Some(expr), _) => {
+        let authority = match gate {
+            GateShape::Open => None,
+            GateShape::Custody { .. } => custody.map(|(_, gate)| gate),
+            GateShape::Identity(expr) => {
                 let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
                     AdmissionError::Eval {
                         node: node_index,
@@ -1066,8 +1026,8 @@ pub(crate) fn admit_intents(
                     _ => return Err(AdmissionError::AuthorityType { node: node_index }),
                 }
             }
-            (None, Some((target, role))) => {
-                let value = evaluate_expr(target, &eval_inputs, hasher).map_err(|source| {
+            GateShape::Rule { cell, role } => {
+                let value = evaluate_expr(cell, &eval_inputs, hasher).map_err(|source| {
                     AdmissionError::Eval {
                         node: node_index,
                         source,
@@ -1106,7 +1066,7 @@ pub(crate) fn admit_intents(
         // a custodial method's badge, and nothing from anything else.
         minted.push(match &signature.accessibility {
             Accessibility::Authorizing => Some(node.target.address()),
-            Accessibility::Custodial => custody.map(|(badge, _)| badge),
+            Accessibility::Custodial(_) => custody.map(|(badge, _)| badge),
             Accessibility::Public | Accessibility::Guarded(_) | Accessibility::RoleGated(_) => None,
         });
         consumed.push(vec![0; node_outputs.len()]);

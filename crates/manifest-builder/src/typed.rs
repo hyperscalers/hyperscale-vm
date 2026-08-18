@@ -26,10 +26,10 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    Accessibility, Address, CallTarget, Constraint, EdgeContent, EdgeRef, EvalInputs, EvidenceRef,
-    Expr, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph,
-    ManifestHash, MetadataCache, MethodSignature, PackageHash, ParamType, PrincipalAddr,
-    ResourceRef, Value, evaluate_expr,
+    Address, CallTarget, Constraint, EdgeContent, EdgeRef, EvalInputs, EvidenceRef, Expr, GraphArg,
+    Hash32, Hasher, InstanceMeta, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash,
+    MetadataCache, MethodSignature, PackageHash, ParamType, PrincipalAddr, ResourceRef, Value,
+    evaluate_expr,
 };
 
 use crate::args::Args;
@@ -393,10 +393,7 @@ impl<'a> TypedBuilder<'a> {
         proof: Option<Proof>,
     ) -> Result<Proof, TypedError> {
         let (_, signature) = self.resolve(target, method)?;
-        if !matches!(
-            signature.accessibility,
-            Accessibility::Authorizing | Accessibility::Custodial
-        ) {
+        if !signature.accessibility.mints() {
             return Err(TypedError::UnmintingProof {
                 method: method.to_owned(),
             });
@@ -463,29 +460,24 @@ impl<'a> TypedBuilder<'a> {
         // The signature says which methods take evidence at all, so no
         // call site has to. Signing in starts from the intent's
         // signature; everything guarded takes a proof minted earlier.
-        let evidence = match (&signature.accessibility, proof) {
-            (Accessibility::Public, None) => BTreeSet::new(),
-            (Accessibility::Public, Some(_)) => {
+        let evidence = match (signature.accessibility.requires_evidence(), proof) {
+            (false, None) => BTreeSet::new(),
+            (false, Some(_)) => {
                 return Err(TypedError::UnexpectedEvidence {
                     method: method.to_owned(),
                 });
             }
-            (
-                Accessibility::Authorizing | Accessibility::RoleGated(_) | Accessibility::Custodial,
-                None,
-            ) => BTreeSet::from([EvidenceRef::IntentSignature]),
-            (Accessibility::Guarded(_), None) => {
-                return Err(TypedError::SignatureForGuarded {
-                    method: method.to_owned(),
-                });
+            (true, Some(proof)) => BTreeSet::from([EvidenceRef::Node(proof.node)]),
+            // A signature signs in, so it reaches only a gate that reads
+            // a rule; an identity a declaration names takes a proof.
+            (true, None) => {
+                if !signature.accessibility.reads_a_rule() {
+                    return Err(TypedError::SignatureForGuarded {
+                        method: method.to_owned(),
+                    });
+                }
+                BTreeSet::from([EvidenceRef::IntentSignature])
             }
-            (
-                Accessibility::Guarded(_)
-                | Accessibility::Authorizing
-                | Accessibility::RoleGated(_)
-                | Accessibility::Custodial,
-                Some(proof),
-            ) => BTreeSet::from([EvidenceRef::Node(proof.node)]),
         };
         let outputs = resources.len();
         let producer = self

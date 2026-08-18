@@ -236,22 +236,63 @@ pub enum Accessibility {
     /// recovery methods and nothing else.
     RoleGated(AuthRole),
     /// Naming this method requires satisfying the target's own rule
-    /// *and* the target holding the badge the method's [`mints`] names —
-    /// and doing so mints the badge resource's address as evidence.
+    /// *and* the target holding the badge this expression evaluates to —
+    /// and doing so mints that badge's address as evidence.
     ///
     /// Holding as the third way to mint a proof. Judged like an
     /// authorizing gate over the same stored rule — the holder acts,
     /// nobody else presents its badges — with possession beside it: the
     /// badge-keyed vault non-empty, or any held instance in the
-    /// badge-keyed holdings interval. The whole declaration is the
-    /// pinned [`custody_shape`]: the rule cell's read and the two
-    /// possession reads, both keyed by exactly the minted expression, so
-    /// the identity minted and the thing held cannot name different
-    /// resources.
+    /// badge-keyed holdings interval. The whole declaration is the shape
+    /// [`gate`] pins: the rule cell's read and the two possession reads,
+    /// both keyed by exactly this expression, so the identity minted and
+    /// the thing held cannot name different resources.
     ///
-    /// [`mints`]: MethodSignature::mints
-    /// [`custody_shape`]: MethodSignature::custody_shape
-    Custodial,
+    /// A possession gate mints the badge resource's address rather than
+    /// the holder's own, so what a guarded consumer matches is the thing
+    /// held, never who holds it. Exactly this accessibility names what
+    /// it mints: an authorizing method always mints the target itself —
+    /// letting it name anything else would be forgeable identity, since
+    /// satisfying one's own stored rule is no feat — while a custodial
+    /// mint is honest by construction, the same expression keying the
+    /// possession reads its gate judges.
+    ///
+    /// [`gate`]: MethodSignature::gate
+    Custodial(Expr),
+}
+
+impl Accessibility {
+    /// Whether naming the method requires presenting anything.
+    ///
+    /// The one authority question the signed form answers on its own:
+    /// whether what is presented satisfies the target is the target's
+    /// own business, answered where its state is.
+    #[must_use]
+    pub const fn requires_evidence(&self) -> bool {
+        !matches!(self, Self::Public)
+    }
+
+    /// Whether the gate judges against a rule the target stores, rather
+    /// than an identity the declaration names.
+    ///
+    /// What the intent's own signature may reach, and nothing else: a
+    /// signature signs in, and whether the key behind it still holds the
+    /// account's authority is the stored rule's answer. An identity a
+    /// declaration names is not something a signature can stand in for.
+    #[must_use]
+    pub const fn reads_a_rule(&self) -> bool {
+        matches!(
+            self,
+            Self::Authorizing | Self::RoleGated(_) | Self::Custodial(_)
+        )
+    }
+
+    /// Whether naming the method mints evidence for later nodes of the
+    /// same intent.
+    #[must_use]
+    pub const fn mints(&self) -> bool {
+        matches!(self, Self::Authorizing | Self::Custodial(_))
+    }
 }
 
 /// How completely a method can be relied on to return.
@@ -309,19 +350,6 @@ pub struct MethodSignature {
     /// locally and offers no veto, so it must be one that cannot come
     /// back with a refusal or a trap for the core to have to answer.
     pub totality: Totality,
-    /// The badge a custodial method's gate reads and its mint names, over
-    /// the target's own inputs.
-    ///
-    /// A possession gate mints the badge resource's address rather than
-    /// the holder's own, so what a guarded consumer matches is the thing
-    /// held, never who holds it. Exactly the custodial accessibility
-    /// carries one: an authorizing method always mints the target itself
-    /// — letting it name anything else would be forgeable identity,
-    /// since satisfying one's own stored rule is no feat — while a
-    /// custodial mint is honest by construction, the same expression
-    /// keying the possession reads its gate judges. The publish check
-    /// holds both sides of that.
-    pub mints: Option<Expr>,
     /// The mark of the resource this method may bring into or out of
     /// existence, where it may.
     ///
@@ -369,29 +397,82 @@ pub struct MethodSignature {
     pub abi: Vec<AbiParam>,
 }
 
+/// The whole shape of a method's gate: what a caller presents, and what
+/// the declaration reads to judge it.
+///
+/// One shape rather than one accessor per accessibility, because the
+/// choice of refusal is a function of the accessibility the accessor
+/// just matched on. A caller left to draw its own conclusion from a
+/// `None` is a caller free to disagree about which gate it is looking
+/// at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GateShape<'a> {
+    /// Nothing to present, and nothing read to judge it.
+    Open,
+    /// The identity a caller must present, over the target's own inputs.
+    Identity(&'a Expr),
+    /// A rule the target stores, and the role that judges: the primary
+    /// for a sign-in, the named role for a recovery op.
+    Rule {
+        /// The cell expression the stored rules live at.
+        cell: &'a Expr,
+        /// The role the presented set must satisfy.
+        role: AuthRole,
+    },
+    /// The holder's stored primary, and the badge the declaration reads
+    /// possession of and the gate mints.
+    Custody {
+        /// The cell expression the holder's stored rules live at.
+        cell: &'a Expr,
+        /// The badge expression keying both possession reads.
+        badge: &'a Expr,
+    },
+}
+
 impl MethodSignature {
-    /// A rule-reading gate's whole declaration: the cell expression its
-    /// stored rule lives at, and the role judging it — the primary for
-    /// an authorizing method, the named role for a role-gated one.
+    /// The gate's whole shape: what a caller must present, and what the
+    /// declaration reads to judge it.
     ///
-    /// `Some` exactly when the accessibility reads a rule and the
-    /// declaration is the pinned shape: one point clause, read for a
-    /// sign-in — which is what provisions the cell to every participant
-    /// — and exclusively written for a recovery op, which keeps a role
-    /// rewrite out of any wave that signs in under the roles it
-    /// replaces. Every judge of the shape asks here, so none can drift:
-    /// the publish check refuses a rule-reading signature this returns
-    /// `None` for, and admission re-asks so a cached package that never
-    /// passed one refuses rather than lowering an ungated node.
-    #[must_use]
-    pub fn rule_cell(&self) -> Option<(&Expr, AuthRole)> {
-        let (role, mode) = match &self.accessibility {
-            Accessibility::Authorizing => (AuthRole::Primary, ModeExpr::Read),
-            Accessibility::RoleGated(role) => (*role, ModeExpr::Write),
-            Accessibility::Public | Accessibility::Guarded(_) | Accessibility::Custodial => {
-                return None;
-            }
-        };
+    /// `Ok` exactly when the accessibility and the declaration agree on
+    /// the shape that accessibility pins. A rule-reading gate declares
+    /// one point clause — read for a sign-in, which is what provisions
+    /// the cell to every participant, and exclusively written for a
+    /// recovery op, which keeps a role rewrite out of any wave that
+    /// signs in under the roles it replaces. A custodial gate declares
+    /// that read and the two possession reads beside it, keyed by
+    /// *exactly* the badge it mints, which is what makes the identity
+    /// minted and the thing held one resource.
+    ///
+    /// Every judge of the shape asks here, so none can drift: the
+    /// publish check refuses a signature this refuses, and admission
+    /// re-asks, so a cached package that never passed one refuses rather
+    /// than lowering an ungated node.
+    ///
+    /// # Errors
+    ///
+    /// The shape refusal named for the accessibility that was declared.
+    pub fn gate(&self) -> Result<GateShape<'_>, AbiError> {
+        match &self.accessibility {
+            Accessibility::Public => Ok(GateShape::Open),
+            Accessibility::Guarded(identity) => Ok(GateShape::Identity(identity)),
+            Accessibility::Authorizing => self
+                .rule_point(&ModeExpr::Read)
+                .map(|cell| GateShape::Rule {
+                    cell,
+                    role: AuthRole::Primary,
+                })
+                .ok_or(AbiError::AuthorizingShape),
+            Accessibility::RoleGated(role) => self
+                .rule_point(&ModeExpr::Write)
+                .map(|cell| GateShape::Rule { cell, role: *role })
+                .ok_or(AbiError::RoleGatedShape),
+            Accessibility::Custodial(badge) => self.custody(badge).ok_or(AbiError::CustodialShape),
+        }
+    }
+
+    /// The cell a rule-reading gate judges at, when the declaration is
+    /// that one point clause in that mode and nothing else.
+    fn rule_point(&self, mode: &ModeExpr) -> Option<&Expr> {
         match self.effects.as_slice() {
             [
                 Clause::Effect {
@@ -399,33 +480,17 @@ impl MethodSignature {
                     mode: declared,
                     ..
                 },
-            ] if *declared == mode => Some((cell, role)),
+            ] if declared == mode => Some(cell),
             _ => None,
         }
     }
 
-    /// A custodial gate's whole declaration: the badge expression its
-    /// mint names, and the cell expression the holder's stored rule
-    /// lives at.
-    ///
-    /// `Some` exactly when the accessibility is custodial and the
-    /// declaration is the pinned shape: the rule cell's point read, the
-    /// badge-keyed vault's point read, and the [`holdings_range`] of the
-    /// badge — the last two keyed by *exactly* the minted expression,
-    /// which is what makes the identity minted and the thing held one
-    /// resource. Every judge of the shape asks here, so none can drift:
-    /// the publish check refuses a custodial signature this returns
-    /// `None` for, and admission re-asks so a cached package that never
-    /// passed one refuses rather than minting an untied identity.
-    #[must_use]
-    pub fn custody_shape(&self) -> Option<(&Expr, &Expr)> {
-        if !matches!(self.accessibility, Accessibility::Custodial) {
-            return None;
-        }
-        let badge = self.mints.as_ref()?;
+    /// The custody shape over `badge`: the holder's rule cell, the
+    /// badge-keyed vault, and the badge's own holdings range.
+    fn custody<'a>(&'a self, badge: &'a Expr) -> Option<GateShape<'a>> {
         let [
             Clause::Effect {
-                target: TargetExpr::Point(rule),
+                target: TargetExpr::Point(cell),
                 mode: ModeExpr::Read,
                 ..
             },
@@ -449,7 +514,7 @@ impl MethodSignature {
             material: vec![badge.clone()],
         };
         (*vault == vault_shape && *cap >= 1 && *holdings == holdings_range(badge.clone(), *cap))
-            .then_some((badge, rule))
+            .then_some(GateShape::Custody { cell, badge })
     }
 }
 
@@ -521,13 +586,6 @@ pub enum AbiError {
     /// present it, so the method reads as guarded and admits everyone.
     #[error("the authority this method requires is one its caller names")]
     CallerNamedAuthority,
-    /// A minted identity named on anything but a custodial method.
-    ///
-    /// An authorizing method mints the target itself — its rule is the
-    /// target's to satisfy, so anything else it named would be identity
-    /// its publisher can forge — and the rest mint nothing at all.
-    #[error("only a custodial method names the identity it mints")]
-    MintWithoutGate,
     /// A custodial method whose declaration is not the pinned custody
     /// shape: a named badge, the rule cell's read, and the two
     /// badge-keyed possession reads.
@@ -572,24 +630,9 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
     {
         return Err(AbiError::CallerNamedAuthority);
     }
-    if signature.mints.is_some() && !matches!(signature.accessibility, Accessibility::Custodial) {
-        return Err(AbiError::MintWithoutGate);
-    }
-    // A rule-reading method's whole declaration is the cell its gate
-    // judges at, in the shape `rule_cell` pins; a custodial method's is
-    // the badge-tied shape `custody_shape` pins.
-    if signature.rule_cell().is_none() {
-        match signature.accessibility {
-            Accessibility::Authorizing => return Err(AbiError::AuthorizingShape),
-            Accessibility::RoleGated(_) => return Err(AbiError::RoleGatedShape),
-            Accessibility::Custodial => {
-                if signature.custody_shape().is_none() {
-                    return Err(AbiError::CustodialShape);
-                }
-            }
-            Accessibility::Public | Accessibility::Guarded(_) => {}
-        }
-    }
+    // A gated method's whole declaration is what its gate judges at, in
+    // the shape its accessibility pins.
+    signature.gate()?;
     let bound = |count: usize| u32::try_from(count).unwrap_or(u32::MAX);
     let mut carried = vec![0u32; signature.params.len()];
     for (index, binding) in signature.abi.iter().enumerate() {
@@ -815,11 +858,11 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
 }
 
 fn check_signature_bounds(signature: &MethodSignature) -> Result<(), MetadataBoundsError> {
-    if let Accessibility::Guarded(identity) = &signature.accessibility {
-        check_expr_bounds(identity, 0)?;
-    }
-    if let Some(minted) = &signature.mints {
-        check_expr_bounds(minted, 0)?;
+    match &signature.accessibility {
+        Accessibility::Guarded(expr) | Accessibility::Custodial(expr) => {
+            check_expr_bounds(expr, 0)?;
+        }
+        Accessibility::Public | Accessibility::Authorizing | Accessibility::RoleGated(_) => {}
     }
     for output in &signature.outputs {
         check_expr_bounds(output, 0)?;
@@ -1634,16 +1677,25 @@ mod tests {
 
         // The accessor itself names the judging role.
         let sign_in = shaped(Accessibility::Authorizing, ModeExpr::Read);
-        assert!(matches!(sign_in.rule_cell(), Some((_, AuthRole::Primary))));
+        assert!(matches!(
+            sign_in.gate(),
+            Ok(GateShape::Rule {
+                role: AuthRole::Primary,
+                ..
+            })
+        ));
         let confirm = shaped(
             Accessibility::RoleGated(AuthRole::Confirmation),
             ModeExpr::Write,
         );
         assert!(matches!(
-            confirm.rule_cell(),
-            Some((_, AuthRole::Confirmation))
+            confirm.gate(),
+            Ok(GateShape::Rule {
+                role: AuthRole::Confirmation,
+                ..
+            })
         ));
-        assert_eq!(MethodSignature::default().rule_cell(), None);
+        assert_eq!(MethodSignature::default().gate(), Ok(GateShape::Open));
     }
 
     /// A method requiring an identity its own caller names admits
@@ -1673,14 +1725,12 @@ mod tests {
     }
 
     /// The custody shape: a badge-keyed pair of possession reads behind
-    /// the rule cell's own, tied to the minted expression — and the one
-    /// accessibility that may name a mint at all.
+    /// the rule cell's own, tied to the badge the gate mints.
     #[test]
-    fn a_minted_identity_belongs_to_the_custody_shape_alone() {
-        let shaped = |mints: Option<Expr>, effects| MethodSignature {
+    fn the_custody_shape_ties_possession_to_the_minted_badge() {
+        let shaped = |badge: Expr, effects| MethodSignature {
             totality: Totality::Fallible,
-            accessibility: Accessibility::Custodial,
-            mints,
+            accessibility: Accessibility::Custodial(badge),
             effects,
             ..MethodSignature::default()
         };
@@ -1709,34 +1759,24 @@ mod tests {
             ]
         };
 
-        let well_formed = shaped(Some(badge.clone()), clauses(badge.clone(), badge.clone()));
+        let well_formed = shaped(badge.clone(), clauses(badge.clone(), badge.clone()));
         assert_eq!(check_abi(&well_formed), Ok(()));
-        assert!(well_formed.custody_shape().is_some());
+        assert!(matches!(well_formed.gate(), Ok(GateShape::Custody { .. })));
 
         // A possession read keyed by anything but the minted expression
         // would verify holding one thing while minting another.
         assert_eq!(
-            check_abi(&shaped(
-                Some(badge.clone()),
-                clauses(Expr::Arg(1), badge.clone())
-            )),
+            check_abi(&shaped(badge.clone(), clauses(Expr::Arg(1), badge.clone()))),
             Err(AbiError::CustodialShape)
         );
         assert_eq!(
-            check_abi(&shaped(
-                Some(badge.clone()),
-                clauses(badge.clone(), Expr::Arg(1))
-            )),
+            check_abi(&shaped(badge.clone(), clauses(badge.clone(), Expr::Arg(1)))),
             Err(AbiError::CustodialShape)
         );
-        // No badge named, and no possession reads at all.
-        assert_eq!(
-            check_abi(&shaped(None, clauses(badge.clone(), badge.clone()))),
-            Err(AbiError::CustodialShape)
-        );
+        // The rule cell's read alone, with no possession beside it.
         assert_eq!(
             check_abi(&shaped(
-                Some(badge),
+                badge,
                 vec![Clause::Effect {
                     target: TargetExpr::Point(Expr::SelfAddr),
                     mode: ModeExpr::Read,
@@ -1745,30 +1785,6 @@ mod tests {
             )),
             Err(AbiError::CustodialShape)
         );
-
-        // No other accessibility names a mint: an authorizing method's
-        // rule is its publisher's to satisfy, so anything it named
-        // beyond itself would be forgeable identity.
-        for accessibility in [
-            Accessibility::Public,
-            Accessibility::Authorizing,
-            Accessibility::RoleGated(AuthRole::Recovery),
-        ] {
-            assert_eq!(
-                check_abi(&MethodSignature {
-                    totality: Totality::Fallible,
-                    accessibility,
-                    mints: Some(Expr::Config(0)),
-                    effects: vec![Clause::Effect {
-                        target: TargetExpr::Point(Expr::SelfAddr),
-                        mode: ModeExpr::Read,
-                        denomination: None,
-                    }],
-                    ..MethodSignature::default()
-                }),
-                Err(AbiError::MintWithoutGate)
-            );
-        }
     }
 
     #[test]
@@ -1830,7 +1846,7 @@ mod tests {
         for accessibility in [
             Accessibility::Guarded(Expr::SelfAddr),
             Accessibility::Authorizing,
-            Accessibility::Custodial,
+            Accessibility::Custodial(Expr::Arg(0)),
             Accessibility::RoleGated(AuthRole::Primary),
         ] {
             assert_eq!(

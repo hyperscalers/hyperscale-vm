@@ -69,7 +69,7 @@ pub use hyperscale_vm_types::{
 pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, cell_ids, ids_cell};
 pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
-    AbiError, AbiParam, Accessibility, DeclarationError, InstanceMeta, InstanceRegistry,
+    AbiError, AbiParam, Accessibility, DeclarationError, GateShape, InstanceMeta, InstanceRegistry,
     MetadataBoundsError, MetadataCache, MethodSignature, PACKAGE_ROLE, PackageHash,
     PackageMetadata, ParamType, Totality, check_abi, check_declarations, check_metadata,
     package_hash, package_key,

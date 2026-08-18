@@ -66,8 +66,6 @@ pub struct Trace {
     last_clause: Option<u32>,
     /// Whose authority naming this method requires.
     accessibility: Accessibility,
-    /// The badge a custodial gate reads and mints.
-    mints: Option<Expr>,
     /// The mark of the resource this method may issue.
     issues: Option<Vec<u8>>,
     /// Whether the method carries an error arm.
@@ -87,7 +85,6 @@ impl Trace {
             values: Vec::new(),
             last_clause: None,
             accessibility: Accessibility::Public,
-            mints: None,
             issues: None,
             totality: Totality::Infallible,
         }
@@ -511,8 +508,7 @@ impl Trace {
     /// its possession of `badge`, and mints the badge's address.
     pub fn custodial(&mut self, badge: &Sym<Addr>) {
         let expr = self.lower(badge.expr().clone());
-        self.accessibility = Accessibility::Custodial;
-        self.mints = Some(expr);
+        self.accessibility = Accessibility::Custodial(expr);
     }
 
     /// Record that this method produces a value edge carrying `resource`.
@@ -588,7 +584,6 @@ impl Trace {
             worst_case: self.worst_case,
             abi,
             accessibility: self.accessibility,
-            mints: self.mints,
             issues: self.issues,
             totality: self.totality,
         }
@@ -674,7 +669,6 @@ pub(crate) struct Recorded {
     pub(crate) worst_case: usize,
     pub(crate) abi: Vec<AbiParam>,
     pub(crate) accessibility: Accessibility,
-    pub(crate) mints: Option<Expr>,
     pub(crate) issues: Option<Vec<u8>>,
     pub(crate) totality: Totality,
 }

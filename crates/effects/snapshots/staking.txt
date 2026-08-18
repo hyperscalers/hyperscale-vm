@@ -25,7 +25,6 @@ PackageMetadata {
                 },
             ),
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [
                 U64,
@@ -95,7 +94,6 @@ PackageMetadata {
                 },
             ),
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [],
             outputs: [],
@@ -146,7 +144,6 @@ PackageMetadata {
                 },
             ),
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [
                 U64,
@@ -208,7 +205,6 @@ PackageMetadata {
                 },
             ),
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [
                 U64,
@@ -260,7 +256,6 @@ PackageMetadata {
         "stake": MethodSignature {
             accessibility: Public,
             totality: Infallible,
-            mints: None,
             issues: Some(
                 [],
             ),
@@ -337,7 +332,6 @@ PackageMetadata {
                 },
             ),
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [
                 U64,
@@ -377,7 +371,6 @@ PackageMetadata {
         "unstake": MethodSignature {
             accessibility: Public,
             totality: Infallible,
-            mints: None,
             issues: Some(
                 [],
             ),

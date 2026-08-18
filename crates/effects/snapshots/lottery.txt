@@ -3,7 +3,6 @@ PackageMetadata {
         "draw": MethodSignature {
             accessibility: Public,
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [],
             outputs: [],
@@ -57,7 +56,6 @@ PackageMetadata {
         "enter": MethodSignature {
             accessibility: Public,
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [
                 Address,

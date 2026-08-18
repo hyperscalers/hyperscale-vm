@@ -3,7 +3,6 @@ PackageMetadata {
         "fill-asks": MethodSignature {
             accessibility: Public,
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [
                 U64,
@@ -123,7 +122,6 @@ PackageMetadata {
         "place-ask": MethodSignature {
             accessibility: Public,
             totality: Fallible,
-            mints: None,
             issues: None,
             params: [
                 U64,

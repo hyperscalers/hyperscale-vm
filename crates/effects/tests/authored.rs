@@ -69,7 +69,11 @@ fn every_authored_method_declares_who_may_call_it() {
         ),
         ("account", "deposit", Accessibility::Public),
         ("account", "deposit-nf", Accessibility::Public),
-        ("account", "present-badge", Accessibility::Custodial),
+        (
+            "account",
+            "present-badge",
+            Accessibility::Custodial(Expr::Arg(0)),
+        ),
         (
             "account",
             "propose",

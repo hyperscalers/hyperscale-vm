@@ -111,11 +111,11 @@ pub fn holdings_collection(
 ///
 /// Every holdings declaration is this one shape — deposit and withdraw
 /// range over it, and the custody gate admits a possession read only as
-/// this target keyed by exactly the minted expression
-/// ([`MethodSignature::custody_shape`]) — so a declaration that spells
-/// the fold any other way is refused rather than silently unmatched.
+/// this target keyed by exactly the badge it mints
+/// ([`MethodSignature::gate`]) — so a declaration that spells the fold
+/// any other way is refused rather than silently unmatched.
 ///
-/// [`MethodSignature::custody_shape`]: crate::metadata::MethodSignature::custody_shape
+/// [`MethodSignature::gate`]: crate::metadata::MethodSignature::gate
 #[must_use]
 pub fn holdings_range(resource: Expr, cap: u32) -> TargetExpr {
     TargetExpr::Range {

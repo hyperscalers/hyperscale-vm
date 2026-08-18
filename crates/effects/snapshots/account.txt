@@ -3,7 +3,6 @@ PackageMetadata {
         "authorize": MethodSignature {
             accessibility: Authorizing,
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [],
             outputs: [],
@@ -30,7 +29,6 @@ PackageMetadata {
                 Primary,
             ),
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [],
             outputs: [],
@@ -61,7 +59,6 @@ PackageMetadata {
                 Confirmation,
             ),
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [],
             outputs: [],
@@ -90,7 +87,6 @@ PackageMetadata {
         "deposit": MethodSignature {
             accessibility: Public,
             totality: Total,
-            mints: None,
             issues: None,
             params: [
                 Bucket,
@@ -161,7 +157,6 @@ PackageMetadata {
         "deposit-nf": MethodSignature {
             accessibility: Public,
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [
                 NfBucket,
@@ -214,13 +209,12 @@ PackageMetadata {
             ],
         },
         "present-badge": MethodSignature {
-            accessibility: Custodial,
-            totality: Infallible,
-            mints: Some(
+            accessibility: Custodial(
                 Arg(
                     0,
                 ),
             ),
+            totality: Infallible,
             issues: None,
             params: [
                 Address,
@@ -292,7 +286,6 @@ PackageMetadata {
                 Recovery,
             ),
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [
                 RoleSet,
@@ -336,7 +329,6 @@ PackageMetadata {
                 SelfAddr,
             ),
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [
                 RoleSet,
@@ -380,7 +372,6 @@ PackageMetadata {
                 SelfAddr,
             ),
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [
                 Address,
@@ -430,7 +421,6 @@ PackageMetadata {
                 SelfAddr,
             ),
             totality: Infallible,
-            mints: None,
             issues: None,
             params: [
                 Address,

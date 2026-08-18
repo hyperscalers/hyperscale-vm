@@ -38,7 +38,6 @@ pub fn metadata() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
-            mints: None,
             // The pool's own resource, by the mark that separates it from
             // the instance's others — which is what the grant is for and
             // what makes another issuer's inexpressible here.
@@ -70,7 +69,6 @@ pub fn metadata() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
-            mints: None,
             issues: None,
             params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
@@ -87,7 +85,6 @@ pub fn metadata() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
-            mints: None,
             issues: None,
             params: vec![ParamType::Address, ParamType::Ids],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
@@ -108,7 +105,6 @@ pub fn metadata() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
-            mints: None,
             // Bringing value out of existence is as declared as bringing
             // it in, and under the same grant.
             issues: Some(Vec::new()),
@@ -125,7 +121,6 @@ pub fn metadata() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             accessibility: Accessibility::Guarded(Expr::Config(0)),
-            mints: None,
             issues: None,
             ..MethodSignature::default()
         },

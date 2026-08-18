@@ -170,7 +170,6 @@ mod tests {
         let signature = MethodSignature {
             accessibility: Accessibility::Guarded(Expr::SelfAddr),
             totality: Totality::Fallible,
-            mints: None,
             issues: None,
             abi: Vec::new(),
             params: vec![

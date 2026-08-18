@@ -3,7 +3,6 @@ PackageMetadata {
         "swap": MethodSignature {
             accessibility: Public,
             totality: Fallible,
-            mints: None,
             issues: None,
             params: [
                 Bucket,

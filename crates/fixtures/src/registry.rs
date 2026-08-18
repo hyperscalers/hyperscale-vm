@@ -50,7 +50,6 @@ pub fn metadata() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
-            mints: None,
             issues: None,
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![
@@ -72,7 +71,6 @@ pub fn metadata() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
-            mints: None,
             issues: None,
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
@@ -89,7 +87,6 @@ pub fn metadata() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             accessibility: Accessibility::Public,
-            mints: None,
             issues: None,
             params: vec![ParamType::U128],
             abi: vec![AbiParam::Handle(0)],

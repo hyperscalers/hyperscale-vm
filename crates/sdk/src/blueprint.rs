@@ -212,7 +212,6 @@ impl Builder {
             signature: MethodSignature {
                 totality: recorded.totality,
                 accessibility: recorded.accessibility,
-                mints: recorded.mints,
                 issues: recorded.issues,
                 params: params.to_vec(),
                 abi: recorded.abi,
