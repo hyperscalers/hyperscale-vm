@@ -155,4 +155,4 @@ pub use hyperscale_vm_effects::{
 #[cfg(feature = "macros")]
 pub use hyperscale_vm_sdk_macros::blueprint;
 pub use sym::{Addr, Amount, Blob, Bucket, Flag, Key, Kind, Num, Opaque, Seq, Sym};
-pub use trace::{Access, Interval, Leaf, Trace};
+pub use trace::{Access, Interval, Leaf, Requirement, Trace};

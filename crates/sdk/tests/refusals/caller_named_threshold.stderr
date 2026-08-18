@@ -1,0 +1,5 @@
+error: the authority this method requires is one its caller names, so the gate would admit everyone — name `self`, a badge it issues, or a configuration field instead
+  --> tests/refusals/caller_named_threshold.rs:22:34
+   |
+22 |         #[guarded(n_of(2, chair, whoever, chair))]
+   |                                  ^^^^^^^

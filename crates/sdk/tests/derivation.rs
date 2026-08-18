@@ -330,6 +330,85 @@ fn an_instance_issues_resources_its_own_address_derives() {
     );
 }
 
+/// A component whose admin set is configuration rather than storage:
+/// the free gate, whose reads take no admission key and make its owner
+/// no participant. Both shapes an admin set takes are here — either of
+/// two, and two of three.
+#[blueprint]
+mod board {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Cell, Quantity};
+
+    #[config]
+    struct Settings {
+        chair: Address,
+        deputy: Address,
+        third: Address,
+    }
+
+    #[state]
+    struct Board {
+        fee: Cell<Quantity>,
+    }
+
+    impl Board {
+        /// Either officer alone.
+        #[guarded(chair || deputy)]
+        pub fn set_fee(&mut self, fee: Quantity) {
+            self.fee.set(fee);
+        }
+
+        /// Two of the three, whichever two.
+        #[guarded(n_of(2, chair, deputy, third))]
+        pub fn clear_fee(&mut self) {
+            self.fee.set(Quantity::ZERO);
+        }
+
+        /// Both officers, and the chain flattens rather than nesting.
+        #[guarded(chair && deputy && third)]
+        pub fn dissolve(&mut self) {
+            self.fee.set(Quantity::ZERO);
+        }
+    }
+}
+
+/// The algebra a stored rule has, on the side that declares rather than
+/// stores: a threshold over configuration slots, written with Rust's own
+/// operators and its own precedence.
+#[test]
+fn a_declared_gate_carries_the_whole_threshold_algebra() {
+    use hyperscale_vm_effects::{Accessibility, Expr};
+
+    let metadata = board::blueprint().metadata();
+    let slot = |index| RuleExpr::Require(Expr::Config(index));
+
+    // `||` is a count of one.
+    assert_eq!(
+        metadata.methods["set_fee"].accessibility,
+        Accessibility::Guarded(RuleExpr::CountOf {
+            count: 1,
+            rules: vec![slot(0), slot(1)],
+        }),
+    );
+    // `n_of` is the threshold no operator expresses.
+    assert_eq!(
+        metadata.methods["clear_fee"].accessibility,
+        Accessibility::Guarded(RuleExpr::CountOf {
+            count: 2,
+            rules: vec![slot(0), slot(1), slot(2)],
+        }),
+    );
+    // `&&` is a count of every branch, and a chain of one operator is
+    // one threshold rather than two — depth is the cap that binds first.
+    assert_eq!(
+        metadata.methods["dissolve"].accessibility,
+        Accessibility::Guarded(RuleExpr::CountOf {
+            count: 3,
+            rules: vec![slot(0), slot(1), slot(2)],
+        }),
+    );
+}
+
 /// A method taking two edges and banking them as one. Whatever the merge
 /// produces is credited to a configured vault, so both halves are fixed —
 /// the one the body names at the cell, and the one it names at the merge.

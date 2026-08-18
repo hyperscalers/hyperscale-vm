@@ -31,11 +31,19 @@
 
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, AuthRole, Clause, CustodyClaim, Expr, MAX_CLAUSE_DEPTH,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, ParamType, Presence, RuleExpr, SlotId,
-    TargetExpr, Totality, Value,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, ModeExpr, ParamType,
+    Presence, RuleExpr, SlotId, TargetExpr, Totality, Value,
 };
 
 use crate::sym::{Addr, Amount, Key, Kind, Num, Opaque, Seq, Sym, expr_depth};
+
+/// One node of a gate's rule, built through the tracer.
+///
+/// Opaque, and deliberately: a rule's shape is static — only its leaves
+/// evaluate — so what an author composes is a tree the tracer built and
+/// held to the vocabulary's caps as it went, never one a body assembled.
+#[derive(Clone, Debug)]
+pub struct Requirement(RuleExpr);
 
 /// The recorder a declaration is traced against.
 ///
@@ -492,25 +500,58 @@ impl Trace {
         self.totality = Totality::Total;
     }
 
-    /// Record that naming this method requires presenting the claim
-    /// `identity` evaluates to.
-    pub fn guarded(&mut self, identity: &Sym<Addr>) {
-        let expr = self.lower(identity.expr().clone());
-        self.accessibility = Accessibility::Guarded(RuleExpr::Require(expr));
+    /// The requirement that the claim `identity` evaluates to is
+    /// presented.
+    #[must_use]
+    pub fn claim(&self, identity: &Sym<Addr>) -> Requirement {
+        Requirement(RuleExpr::Require(self.lower(identity.expr().clone())))
     }
 
-    /// Record that naming this method requires satisfying `count` of the
-    /// claims `identities` evaluate to.
+    /// The requirement that `count` of `branches` are met.
     ///
-    /// The threshold a fixed admin set is written as: three configured
-    /// badge instances gated at two, rotated by issuing and revoked by
-    /// burning, with no redeploy and no configuration slot per admin.
-    pub fn guarded_by_threshold(&mut self, count: u8, identities: &[Sym<Addr>]) {
-        let rules = identities
-            .iter()
-            .map(|identity| RuleExpr::Require(self.lower(identity.expr().clone())))
-            .collect();
-        self.accessibility = Accessibility::Guarded(RuleExpr::CountOf { count, rules });
+    /// One constructor for the whole algebra: a count of one is
+    /// disjunction, a count of the branch width is conjunction, and
+    /// anything between is the threshold a fixed admin set is written as
+    /// — three configured badge instances gated at two, rotated by
+    /// issuing and revoked by burning, with no redeploy and no
+    /// configuration slot per admin.
+    ///
+    /// # Panics
+    ///
+    /// On a tree past the vocabulary's caps, or a threshold nobody meant:
+    /// a count of zero admits anyone and a count past the branch width
+    /// admits no one. Refused here, on the line that wrote it, rather
+    /// than at publish where the shape is all that is left.
+    #[must_use]
+    pub fn n_of(&self, count: u8, branches: Vec<Requirement>) -> Requirement {
+        assert!(
+            branches.len() <= MAX_RULE_BRANCHES,
+            "a threshold over {} branches is past the {MAX_RULE_BRANCHES} the vocabulary admits",
+            branches.len()
+        );
+        assert!(
+            count >= 1,
+            "a threshold requiring nothing would admit anyone"
+        );
+        assert!(
+            usize::from(count) <= branches.len(),
+            "a threshold requiring {count} of {} branches would admit no one",
+            branches.len()
+        );
+        let rule = RuleExpr::CountOf {
+            count,
+            rules: branches.into_iter().map(|branch| branch.0).collect(),
+        };
+        assert!(
+            rule.within_caps(0),
+            "the rule nests past the {MAX_RULE_DEPTH} the vocabulary admits"
+        );
+        Requirement(rule)
+    }
+
+    /// Record that naming this method requires meeting `rule`.
+    pub fn guarded_by(&mut self, rule: Requirement) {
+        self.accessibility = Accessibility::Guarded(rule.0);
     }
 
     /// Record that naming this method requires satisfying the target's own
@@ -892,7 +933,9 @@ mod tests {
     fn a_declared_threshold_lowers_to_the_rule_it_names() {
         let mut trace = Trace::new(vec![]);
         let admins: Vec<Sym<Addr>> = (0..3).map(|slot| trace.config(slot)).collect();
-        trace.guarded_by_threshold(2, &admins);
+        let branches = admins.iter().map(|admin| trace.claim(admin)).collect();
+        let rule = trace.n_of(2, branches);
+        trace.guarded_by(rule);
 
         let Accessibility::Guarded(RuleExpr::CountOf { count, rules }) =
             trace.finish().accessibility
@@ -916,7 +959,8 @@ mod tests {
     fn a_single_identity_guard_is_not_a_threshold() {
         let mut trace = Trace::new(vec![]);
         let owner = trace.self_addr();
-        trace.guarded(&owner);
+        let rule = trace.claim(&owner);
+        trace.guarded_by(rule);
         assert_eq!(
             trace.finish().accessibility,
             Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr))

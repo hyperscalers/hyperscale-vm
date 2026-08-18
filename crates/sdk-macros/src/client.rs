@@ -37,10 +37,12 @@ pub enum Serves {
 pub enum Shape {
     /// Anyone may name it.
     Public,
-    /// An identity the target names. `on_self` is the case where that
-    /// identity is the target itself, which is what lets the call take
-    /// its target from the proof rather than from an argument.
-    Guarded { on_self: bool },
+    /// A rule over identities the target names. `on_self` is the case
+    /// where the rule is the target's own address and nothing else,
+    /// which is what lets the call take its target from the proof rather
+    /// than from an argument. `threshold` is where meeting it can take
+    /// more than one claim, so a caller presents a set.
+    Guarded { on_self: bool, threshold: bool },
     /// The target's stored primary, minting the target's identity.
     Authorizing,
     /// One of the target's stored roles, minting nothing.
@@ -55,7 +57,12 @@ impl Shape {
     pub const fn of(gate: &Gate) -> Self {
         match gate {
             Gate::Public => Self::Public,
-            Gate::Guarded { on_self, .. } => Self::Guarded { on_self: *on_self },
+            Gate::Guarded {
+                on_self, threshold, ..
+            } => Self::Guarded {
+                on_self: *on_self,
+                threshold: *threshold,
+            },
             Gate::Authorizing(_) => Self::Authorizing,
             Gate::RoleGated(_) => Self::RoleGated,
             Gate::Custodial { .. } => Self::Custodial,
@@ -90,8 +97,10 @@ impl Shape {
 pub fn check_names(params: &[syn::Ident], shape: Shape, serves: Serves) -> syn::Result<()> {
     let injects = |name: &str| match name {
         "builder" => true,
-        "proof" => shape.requires_evidence() || shape.reads_a_rule(),
-        "who" => serves == Serves::Principals && !matches!(shape, Shape::Guarded { on_self: true }),
+        "proof" | "proofs" => shape.requires_evidence() || shape.reads_a_rule(),
+        "who" => {
+            serves == Serves::Principals && !matches!(shape, Shape::Guarded { on_self: true, .. })
+        }
         _ => false,
     };
     for param in params {
@@ -197,6 +206,9 @@ enum Presenting {
     Signature,
     /// A proof an earlier node minted.
     Proof,
+    /// A set of them: what a threshold takes, where one claim is not
+    /// enough and the wrapper cannot say which are.
+    Proofs,
 }
 
 /// One wrapper.
@@ -227,8 +239,8 @@ fn wrapper(
     // Whose address the call is made against. A handle is the target;
     // a principal package names one, except where the gate is the
     // target's own identity and the proof is therefore the actor.
-    let from_proof =
-        presenting == Presenting::Proof && matches!(method.shape, Shape::Guarded { on_self: true });
+    let from_proof = presenting == Presenting::Proof
+        && matches!(method.shape, Shape::Guarded { on_self: true, .. });
     let (receiver, target) = match (serves, from_proof) {
         (Serves::Instances, _) => (quote!(self,), quote!(self.0)),
         (Serves::Principals, true) => (quote!(), quote!(proof.target())),
@@ -236,7 +248,11 @@ fn wrapper(
     };
     let who = matches!((serves, from_proof), (Serves::Principals, false))
         .then(|| quote!(who: #principal,));
-    let proof = (presenting == Presenting::Proof).then(|| quote!(proof: #proof_ty,));
+    let proof = match presenting {
+        Presenting::Proof => Some(quote!(proof: #proof_ty,)),
+        Presenting::Proofs => Some(quote!(proofs: &[#proof_ty],)),
+        Presenting::Signature => None,
+    };
 
     let (returns, body) = if method.shape.mints() {
         let call = match presenting {
@@ -246,6 +262,8 @@ fn wrapper(
             Presenting::Proof => {
                 quote!(builder.call_minting_as(proof, #target, #published, (#(#args,)*)))
             }
+            // A minting gate reads a rule, so it is never a threshold.
+            Presenting::Proofs => unreachable!("a minting gate presents one proof"),
         };
         (quote!(#proof_ty), call)
     } else {
@@ -253,6 +271,9 @@ fn wrapper(
         let call = match presenting {
             Presenting::Signature => quote!(builder.call(#target, #published, (#(#args,)*))),
             Presenting::Proof => quote!(builder.call_as(proof, #target, #published, (#(#args,)*))),
+            Presenting::Proofs => {
+                quote!(builder.call_presenting(proofs, #target, #published, (#(#args,)*)))
+            }
         };
         (returns, quote!(#call? #projection))
     };
@@ -290,10 +311,12 @@ fn wrappers(method: &Method, serves: Serves) -> Vec<TokenStream2> {
             wrapper(method, serves, Presenting::Proof, Some("as")),
         ];
     }
-    let presenting = if shape.requires_evidence() {
-        Presenting::Proof
-    } else {
-        Presenting::Signature
+    let presenting = match shape {
+        Shape::Guarded {
+            threshold: true, ..
+        } => Presenting::Proofs,
+        _ if shape.requires_evidence() => Presenting::Proof,
+        _ => Presenting::Signature,
     };
     vec![wrapper(method, serves, presenting, None)]
 }

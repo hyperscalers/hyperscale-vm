@@ -397,13 +397,17 @@ fn strip(attrs: &mut Vec<syn::Attribute>) {
 enum Gate {
     /// Anyone may name it.
     Public,
-    /// The identity the target itself names.
+    /// A rule over identities the target itself names.
     Guarded {
-        /// The identity, as a tracer call.
-        identity: TokenStream2,
-        /// Whether that identity is the target's own address, which is
-        /// what lets a call take its target from the proof presented.
+        /// The rule, as a tracer call answering a `Requirement`.
+        rule: TokenStream2,
+        /// Whether the rule is the target's own address and nothing
+        /// else, which is what lets a call take its target from the
+        /// proof presented.
         on_self: bool,
+        /// Whether meeting it can take more than one claim, so a caller
+        /// presents a set rather than a proof.
+        threshold: bool,
     },
     /// The target's own stored rule, read at the named field's cell.
     Authorizing(u16),
@@ -423,6 +427,117 @@ enum Gate {
     },
 }
 
+/// The rule a `#[guarded]` method requires, as a tracer call answering a
+/// `Requirement`.
+///
+/// Rust's own operators carry the algebra: `||` is a count of one, `&&`
+/// a count of every branch, and `n_of(k, …)` the threshold no operator
+/// expresses. Precedence and grouping are the language's, so an author
+/// reads a gate the way they read any other condition — and a chain of
+/// one operator flattens into one threshold rather than nesting, because
+/// depth is the cap that binds first.
+///
+/// Answers the rule, whether it is the target's own address alone, and
+/// whether meeting it can take more than one claim.
+fn guarded_rule(
+    expr: &syn::Expr,
+    config_fields: &[(String, syn::Type)],
+    params: &[(String, syn::Type)],
+) -> syn::Result<(TokenStream2, bool, bool)> {
+    match expr {
+        syn::Expr::Paren(inner) => guarded_rule(&inner.expr, config_fields, params),
+        syn::Expr::Binary(binary) => {
+            let count = match binary.op {
+                syn::BinOp::Or(_) => None,
+                syn::BinOp::And(_) => Some(()),
+                _ => {
+                    return Err(syn::Error::new(
+                        binary.op.span(),
+                        "a gate combines claims with `||`, `&&`, or `n_of(k, …)`",
+                    ));
+                }
+            };
+            let branches = flatten(expr, &binary.op);
+            let lowered = branches
+                .iter()
+                .map(|branch| guarded_rule(branch, config_fields, params).map(|(rule, _, _)| rule))
+                .collect::<syn::Result<Vec<_>>>()?;
+            let width = lowered.len();
+            let count = if count.is_some() {
+                u8::try_from(width).unwrap_or(u8::MAX)
+            } else {
+                1
+            };
+            Ok((
+                quote!(__t.n_of(#count, ::std::vec![#(#lowered),*])),
+                false,
+                true,
+            ))
+        }
+        // A threshold no operator expresses: `n_of(2, a, b, c)`.
+        syn::Expr::Call(call) if named(&call.func, "n_of") => {
+            let mut args = call.args.iter();
+            let count = args.next().and_then(count_literal).ok_or_else(|| {
+                syn::Error::new(
+                    call.span(),
+                    "`n_of` takes a literal count and then the claims it counts",
+                )
+            })?;
+            let lowered = args
+                .map(|branch| guarded_rule(branch, config_fields, params).map(|(rule, _, _)| rule))
+                .collect::<syn::Result<Vec<_>>>()?;
+            Ok((
+                quote!(__t.n_of(#count, ::std::vec![#(#lowered),*])),
+                false,
+                true,
+            ))
+        }
+        leaf => {
+            let (identity, on_self) = guarded_identity(leaf, config_fields, params)?;
+            Ok((quote!(__t.claim(&#identity)), on_self, false))
+        }
+    }
+}
+
+/// One operator's whole chain as a flat branch list.
+///
+/// `a || b || c` parses left-nested, and nesting is what the depth cap
+/// binds first — so a chain of one operator is one threshold over three
+/// branches rather than two over two.
+fn flatten<'a>(expr: &'a syn::Expr, op: &syn::BinOp) -> Vec<&'a syn::Expr> {
+    let same = |other: &syn::BinOp| {
+        matches!(
+            (op, other),
+            (syn::BinOp::Or(_), syn::BinOp::Or(_)) | (syn::BinOp::And(_), syn::BinOp::And(_))
+        )
+    };
+    match expr {
+        syn::Expr::Binary(binary) if same(&binary.op) => {
+            let mut out = flatten(&binary.left, op);
+            out.extend(flatten(&binary.right, op));
+            out
+        }
+        other => vec![other],
+    }
+}
+
+/// Whether a call names `name`, by its last path segment.
+fn named(func: &syn::Expr, name: &str) -> bool {
+    matches!(func, syn::Expr::Path(path)
+        if path.path.segments.last().is_some_and(|s| s.ident == name))
+}
+
+/// A `u8` count written as a literal.
+fn count_literal(expr: &syn::Expr) -> Option<u8> {
+    match expr {
+        syn::Expr::Lit(lit) => match &lit.lit {
+            syn::Lit::Int(int) => int.base10_parse().ok(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The identity a `#[guarded]` method requires, as a tracer call.
 ///
 /// Every identity a method can require is one the target itself names.
@@ -432,6 +547,7 @@ enum Gate {
 /// line that wrote it.
 fn guarded_identity(
     identity: &syn::Expr,
+    config_fields: &[(String, syn::Type)],
     params: &[(String, syn::Type)],
 ) -> syn::Result<(TokenStream2, bool)> {
     let refuse = || {
@@ -453,7 +569,17 @@ fn guarded_identity(
                      or a configuration field instead",
                 ));
             }
-            Err(refuse())
+            // Creation-fixed, so the claim is the target's own: an
+            // object whose address derives from no key admits somebody
+            // by naming them where it was created.
+            let Some(slot) = config_fields.iter().position(|(f, _)| *f == name) else {
+                return Err(refuse());
+            };
+            let slot = u32::try_from(slot).unwrap_or(u32::MAX);
+            Ok((
+                quote!(__t.config::<::hyperscale_vm_sdk::Addr>(#slot)),
+                false,
+            ))
         }
         // A badge the instance issues: holding it is operating the
         // instance, and it derives from the address rather than from
@@ -497,6 +623,7 @@ fn parse_gate(
     method: &syn::ImplItemFn,
     fields: &BTreeMap<String, Field>,
     accessors: &BTreeMap<String, Field>,
+    config_fields: &[(String, syn::Type)],
     params: &[(String, syn::Type)],
 ) -> syn::Result<Gate> {
     // A gate names the cell its rule lives in the way a body would, and a
@@ -516,9 +643,13 @@ fn parse_gate(
     };
     for attr in &method.attrs {
         if attr.path().is_ident("guarded") {
-            let identity: syn::Expr = attr.parse_args()?;
-            let (identity, on_self) = guarded_identity(&identity, params)?;
-            return Ok(Gate::Guarded { identity, on_self });
+            let written: syn::Expr = attr.parse_args()?;
+            let (rule, on_self, threshold) = guarded_rule(&written, config_fields, params)?;
+            return Ok(Gate::Guarded {
+                rule,
+                on_self,
+                threshold,
+            });
         }
         if attr.path().is_ident("authorizing") {
             let field: syn::Ident = attr.parse_args()?;
@@ -845,7 +976,7 @@ fn lower_method(
         kinds.push(param_type(&arg.ty)?);
     }
 
-    let gate = parse_gate(method, fields, accessors, &params)?;
+    let gate = parse_gate(method, fields, accessors, config_fields, &params)?;
     client::check_names(&idents, client::Shape::of(&gate), serves)?;
     let returns = !matches!(method.sig.output, syn::ReturnType::Default);
     let lowered = Lowerer::new(fields, accessors, config_fields, &params, returns)
@@ -937,9 +1068,9 @@ fn lower_method(
 fn gate_calls(gate: &Gate) -> TokenStream2 {
     match gate {
         Gate::Public => quote!(),
-        Gate::Guarded { identity, .. } => quote!({
-            let __identity = #identity;
-            __t.guarded(&__identity);
+        Gate::Guarded { rule, .. } => quote!({
+            let __rule = #rule;
+            __t.guarded_by(__rule);
         }),
         Gate::Authorizing(slot) => quote!({
             let __owner = __t.self_addr();

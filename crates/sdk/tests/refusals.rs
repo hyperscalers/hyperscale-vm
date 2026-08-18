@@ -67,6 +67,19 @@ fn the_lowering_refuses_a_mark_it_can_see_is_wrong() {
     refuse.compile_fail("tests/refusals/total_gated.rs");
 }
 
+/// A gate names an identity its target names, at every leaf.
+///
+/// A caller who names the claim they must present can always present
+/// it, so one caller-named branch of a threshold is one branch the
+/// caller satisfies for free — which is why every leaf answers rather
+/// than the root alone.
+#[test]
+fn the_lowering_refuses_authority_a_caller_names() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/caller_named_branch.rs");
+    refuse.compile_fail("tests/refusals/caller_named_threshold.rs");
+}
+
 /// What the generated calling surface refuses.
 ///
 /// Each of these is a fact the wrapper's own signature carries — the
@@ -81,4 +94,5 @@ fn the_generated_client_refuses_a_call_it_cannot_shape() {
     refuse.compile_fail("tests/refusals/client_proof_to_public.rs");
     refuse.compile_fail("tests/refusals/client_proof_omitted.rs");
     refuse.compile_fail("tests/refusals/client_foreign_handle.rs");
+    refuse.compile_fail("tests/refusals/client_threshold_one_proof.rs");
 }
