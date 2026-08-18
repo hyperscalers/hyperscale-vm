@@ -860,7 +860,9 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{Clause, Expr, ParamType, SlotId, TargetExpr};
+    use hyperscale_vm_effects::{
+        Accessibility, Clause, Expr, ParamType, RuleExpr, SlotId, TargetExpr,
+    };
 
     use super::{MAX_FOREACH_ELEMENTS, Trace, absolute, rebind};
     use crate::sym::{Addr, Amount, Key, Opaque, Seq, Sym};
@@ -879,6 +881,44 @@ mod tests {
     #[should_panic(expected = "escaped its closure")]
     fn a_binder_used_outside_its_scope_is_rejected() {
         rebind(Expr::Binding(absolute(0)), 0);
+    }
+
+    /// A threshold names its branches in order and keeps the count it was
+    /// given, so what a fixed admin set declares is the rule a stored one
+    /// would have been — the same algebra on the side that declares.
+    #[test]
+    fn a_declared_threshold_lowers_to_the_rule_it_names() {
+        let mut trace = Trace::new(vec![]);
+        let admins: Vec<Sym<Addr>> = (0..3).map(|slot| trace.config(slot)).collect();
+        trace.guarded_by_threshold(2, &admins);
+
+        let Accessibility::Guarded(RuleExpr::CountOf { count, rules }) =
+            trace.finish().accessibility
+        else {
+            panic!("a threshold declares a counted rule");
+        };
+        assert_eq!(count, 2);
+        assert_eq!(
+            rules,
+            (0..3)
+                .map(|slot| RuleExpr::Require(Expr::Config(slot)))
+                .collect::<Vec<_>>(),
+            "the branches keep the order they were named in"
+        );
+    }
+
+    /// One leaf is the degenerate case of the same constructor, so the
+    /// single-identity spelling stays a `Require` rather than a threshold
+    /// of one — a stored rule the decode gate would refuse to widen.
+    #[test]
+    fn a_single_identity_guard_is_not_a_threshold() {
+        let mut trace = Trace::new(vec![]);
+        let owner = trace.self_addr();
+        trace.guarded(&owner);
+        assert_eq!(
+            trace.finish().accessibility,
+            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr))
+        );
     }
 
     #[test]
