@@ -198,8 +198,10 @@ pub mod fixtures {
     /// zero and removes the last entry of a write interval; `place` inserts
     /// order 42; `escape` passes a delta handle to a read-cell function
     /// (the mode-escape trap); `forge` passes a handle index the host never
-    /// lowered; `leak` never drops its borrow; `no-such-entry` removes past
-    /// the interval's last entry (a deterministic kernel refusal).
+    /// lowered; `read-value` reads whatever read cell it is handed, which
+    /// is how a test reaches the rep a clause nobody declared would have
+    /// occupied; `leak` never drops its borrow; `no-such-entry` removes
+    /// past the interval's last entry (a deterministic kernel refusal).
     pub const KERNEL_GUEST_WAT: &str = r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
@@ -521,6 +523,16 @@ pub mod fixtures {
       i32.load
       i64.extend_i32_u)
 
+    (func (export "read-value") (param i32) (result i64)
+      local.get 0
+      i32.const 8
+      call $read_get
+      local.get 0
+      call $drop_r
+      i32.const 12
+      i32.load
+      i64.extend_i32_u)
+
     (func (export "leak") (param i32) (result i64)
       local.get 0
       i32.const 8
@@ -592,6 +604,9 @@ pub mod fixtures {
     (canon lift (core func $i "handle-value")))
   (func (export "forge-zero") (result u64)
     (canon lift (core func $i "forge-zero")))
+  (func (export "read-value")
+    (param "c" (borrow $rcell)) (result u64)
+    (canon lift (core func $i "read-value")))
   (func (export "leak")
     (param "c" (borrow $rcell)) (result u64)
     (canon lift (core func $i "leak")))

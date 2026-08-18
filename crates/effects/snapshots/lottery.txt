@@ -9,6 +9,7 @@ PackageMetadata {
             denominations: [],
             effects: [
                 Effect {
+                    guard: None,
                     target: Range {
                         owner: SelfAddr,
                         collection: SlotId(
@@ -31,6 +32,7 @@ PackageMetadata {
                     denomination: None,
                 },
                 Effect {
+                    guard: None,
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
@@ -67,6 +69,7 @@ PackageMetadata {
             denominations: [],
             effects: [
                 Effect {
+                    guard: None,
                     target: Entry {
                         owner: SelfAddr,
                         collection: SlotId(
@@ -91,6 +94,7 @@ PackageMetadata {
                     denomination: None,
                 },
                 Effect {
+                    guard: None,
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,

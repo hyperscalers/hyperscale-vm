@@ -53,6 +53,7 @@ PackageMetadata {
             ],
             effects: [
                 Effect {
+                    guard: None,
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
@@ -66,6 +67,7 @@ PackageMetadata {
                     denomination: None,
                 },
                 Effect {
+                    guard: None,
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
@@ -119,6 +121,7 @@ PackageMetadata {
                     ),
                 },
                 Effect {
+                    guard: None,
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,

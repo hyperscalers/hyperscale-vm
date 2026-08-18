@@ -17,8 +17,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    AbortReason, Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, ISSUER_REP,
-    Mode, Presence, SubstateKey, cell_ids,
+    ABSENT_REP, AbortReason, Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey,
+    ISSUER_REP, Mode, Presence, SubstateKey, cell_ids,
 };
 use hyperscale_vm_embed::math::{MathError, Rounding, U256, mul_div};
 
@@ -189,6 +189,14 @@ pub enum SessionTrap {
     /// through the typed world surface, kept as an honest error.
     #[error("handle {0} does not grant this operation")]
     WrongMode(u32),
+    /// A handle whose clause was guarded out, reached anyway.
+    ///
+    /// The guest was handed the guard's verdict and branched the other
+    /// way, so its control flow and its declaration disagree. Named
+    /// rather than folded into an unknown handle because the diagnostic
+    /// is the whole value: nothing was materialized here on purpose.
+    #[error("a capability whose clause was not declared was reached")]
+    UndeclaredBranch,
     /// Value credited to a cell denominated in some other resource.
     ///
     /// Reachable only from a package whose declaration says one thing and
@@ -306,6 +314,7 @@ impl From<SessionTrap> for AbortReason {
         match trap {
             SessionTrap::UnknownHandle(_) => Self::HandleUnknown,
             SessionTrap::WrongMode(_) => Self::HandleWrongMode,
+            SessionTrap::UndeclaredBranch => Self::UndeclaredBranch,
             SessionTrap::IndexOutOfBounds { .. } => Self::EntryIndexOutOfBounds,
             SessionTrap::OrderOutsideInterval => Self::OrderOutsideInterval,
             SessionTrap::WriteCapExceeded { .. } => Self::IntervalWriteCapExceeded,
@@ -1109,6 +1118,9 @@ impl KernelSession {
     }
 
     fn capability(&self, rep: u32) -> Result<Capability, SessionTrap> {
+        if rep == ABSENT_REP {
+            return Err(SessionTrap::UndeclaredBranch);
+        }
         usize::try_from(rep)
             .ok()
             .and_then(|index| self.table.get(index))
@@ -2127,8 +2139,9 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        AbortReason, Address, AddressClass, CollectionId, Effect, EffectConflict, EffectSet,
-        EffectTarget, Hash32, Mode, SlotId, SubstateKey, TestHasher, child_key, ids_cell,
+        ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Effect, EffectConflict,
+        EffectSet, EffectTarget, Hash32, Mode, SlotId, SubstateKey, TestHasher, child_key,
+        ids_cell,
     };
     use hyperscale_vm_types::Presence;
 
@@ -2644,6 +2657,34 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &set);
         assert_eq!(session.read_cell(7), Err(SessionTrap::UnknownHandle(7)));
         assert_eq!(session.range_count(7), Err(SessionTrap::UnknownHandle(7)));
+    }
+
+    #[test]
+    fn the_reserved_rep_names_a_branch_that_was_not_declared() {
+        // A guest is handed a handle for every clause its signature
+        // declares, guarded-out ones included — an export's parameter
+        // list is a function of its signature and cannot lose a
+        // parameter to a branch. Touching that one is a body whose
+        // control flow disagrees with the verdict it was given, and the
+        // diagnostic is the whole value of naming it: nothing was
+        // materialized here on purpose.
+        let set = declared(&[Effect {
+            target: EffectTarget::Point(key(1)),
+            mode: Mode::Read,
+        }]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        assert_eq!(
+            session.read_cell(ABSENT_REP),
+            Err(SessionTrap::UndeclaredBranch)
+        );
+        assert_eq!(
+            session.range_count(ABSENT_REP),
+            Err(SessionTrap::UndeclaredBranch)
+        );
+        assert_eq!(
+            AbortReason::from(SessionTrap::UndeclaredBranch),
+            AbortReason::UndeclaredBranch
+        );
     }
 
     #[test]

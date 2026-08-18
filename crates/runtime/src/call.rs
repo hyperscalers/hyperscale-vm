@@ -117,6 +117,7 @@ pub fn call_export<T: 'static>(
             GuestArg::Handle { rep, kind } => {
                 Val::Resource(handle(*kind, *rep, store.as_context_mut())?)
             }
+            GuestArg::Bool(taken) => Val::Bool(*taken),
             GuestArg::U64(scalar) => Val::U64(*scalar),
             GuestArg::Address(address) => address_val(*address),
             GuestArg::Bytes(bytes) => Val::List(bytes.iter().copied().map(Val::U8).collect()),

@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::admission::Admitted;
 use crate::dsl::{
     Clause, Declaration, EvalError, EvalInputs, ModeExpr, evaluate_declaration, evaluate_expr,
+    materialized_kind,
 };
 use crate::hash::Hasher;
 use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, ids_cell};
@@ -175,8 +176,10 @@ impl Routing {
             ordered,
             denominations,
             // A clause index is a method's; this is every frame's clauses
-            // concatenated, so there is no clause to index.
+            // concatenated, so there is no clause to index and no verdict
+            // to bind.
             clause_spans: Vec::new(),
+            clause_taken: Vec::new(),
         })
     }
 }
@@ -192,7 +195,6 @@ impl From<EffectConflict> for RouteError {
         }
     }
 }
-
 /// Why routing rejected a transaction. Deterministic: every node reaches
 /// the identical verdict.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -252,29 +254,6 @@ pub enum RouteError {
         clause: u32,
         /// The prefix it reached for.
         owner: Address,
-    },
-    /// A handle binding naming a clause that did not evaluate to exactly
-    /// one declared access.
-    ///
-    /// A handle is one capability, and a `for-each` clause expands over
-    /// the target's creation-fixed configuration — so whether a clause
-    /// can back a handle is a property of the instance, not of the
-    /// signature, and cannot be settled when the package publishes.
-    #[error(
-        "node {node}: `{method}` binds ABI parameter {param} to effect clause {clause}, which \
-         declared {effects} accesses rather than one"
-    )]
-    AmbiguousClause {
-        /// The manifest node being routed.
-        node: u32,
-        /// The method whose binding this is.
-        method: String,
-        /// The ABI parameter position.
-        param: u32,
-        /// The effect clause it names.
-        clause: u32,
-        /// How many accesses that clause declared.
-        effects: u32,
     },
     /// A signature whose ABI binding is not well-formed against its own
     /// declaration.
@@ -721,6 +700,38 @@ fn own_prefix_only(
     Ok(())
 }
 
+/// The argument a handle binding lowers to: the capability at the
+/// clause's position, or the absence the guest is told about.
+///
+/// A span of one is the ordinary case. Zero is a clause that was guarded
+/// out, and the kind travels with the argument because nothing
+/// downstream can recover it — an engine reads a handle's type off the
+/// capability at its rep, and there is none. More than one is a
+/// `for-each`, whose width is the instance's rather than the signature's,
+/// so no fixed export parameter can name it.
+///
+/// A span is one or zero and never more: `check_abi` has already
+/// refused a handle naming anything but a single access, and an access
+/// contributes one entry when it is declared and none when it is not.
+fn bind_handle(
+    signature: &MethodSignature,
+    declaration: &Declaration,
+    clause: u32,
+    offset: u32,
+) -> Option<CallArg> {
+    let index = usize::try_from(clause).ok()?;
+    let (start, len) = declaration.clause_spans.get(index).copied()?;
+    match len {
+        1 => start.checked_add(offset).map(CallArg::Handle),
+        0 => signature
+            .effects
+            .get(index)
+            .and_then(materialized_kind)
+            .map(CallArg::AbsentHandle),
+        _ => None,
+    }
+}
+
 fn lower_call(
     node_index: u32,
     signature: &MethodSignature,
@@ -756,29 +767,17 @@ fn lower_call(
             reason,
         };
         args.push(match binding {
-            AbiParam::Handle(clause) => {
-                let span = usize::try_from(*clause)
+            AbiParam::Handle(clause) => bind_handle(signature, declaration, *clause, offset)
+                .ok_or_else(|| unbindable(format!("clause {clause} binds no handle")))?,
+            AbiParam::Guard(clause) => {
+                let taken = usize::try_from(*clause)
                     .ok()
-                    .and_then(|index| declaration.clause_spans.get(index))
+                    .and_then(|index| declaration.clause_taken.get(index))
                     .copied()
                     .ok_or_else(|| {
                         unbindable(format!("no effect clause {clause} in the signature"))
                     })?;
-                let (start, len) = span;
-                if len != 1 {
-                    return Err(RouteError::AmbiguousClause {
-                        node: node_index,
-                        method: method.to_owned(),
-                        param,
-                        clause: *clause,
-                        effects: len,
-                    });
-                }
-                CallArg::Handle(
-                    offset
-                        .checked_add(start)
-                        .ok_or_else(|| unbindable("capability table overflows".into()))?,
-                )
+                CallArg::Bool(taken)
             }
             AbiParam::Bucket(declared) => {
                 let input = usize::try_from(*declared)
@@ -1041,12 +1040,12 @@ mod tests {
     use crate::hash::{Hash32, Hasher, TestHasher};
     use crate::manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
     use crate::metadata::{
-        InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
+        AbiError, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
         PackageMetadata, ParamType, Totality,
     };
     use crate::types::{
-        Address, AddressClass, ComponentAddr, EdgeContent, Effect, EffectSet, EffectTarget,
-        MAX_IDS_PER_EDGE, Mode, Presence, ShardId, SlotId, Value, child_key,
+        Address, AddressClass, CellKind, ComponentAddr, EdgeContent, Effect, EffectSet,
+        EffectTarget, MAX_IDS_PER_EDGE, Mode, Presence, ShardId, SlotId, Value, child_key,
     };
 
     fn pkg(name: &str) -> PackageHash {
@@ -1089,6 +1088,7 @@ mod tests {
 
     fn self_point(slot: SlotId, mode: ModeExpr) -> Clause {
         Clause::Effect {
+            guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
                 slot,
@@ -1216,6 +1216,7 @@ mod tests {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 effects: vec![Clause::Effect {
+                    guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
                         slot: SlotId(2),
@@ -1838,6 +1839,7 @@ mod tests {
         meta.methods.insert(
             "take".into(),
             method(vec![Clause::Effect {
+                guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
                     slot: SlotId(1),
@@ -1940,8 +1942,10 @@ mod tests {
                 abi,
                 effects: vec![
                     Clause::ForEach {
+                        guard: None,
                         list: Expr::Config(0),
                         body: vec![Clause::Effect {
+                            guard: None,
                             target: TargetExpr::Point(Expr::ChildKey {
                                 owner: Box::new(Expr::SelfAddr),
                                 slot: SlotId(9),
@@ -2018,12 +2022,218 @@ mod tests {
         }
     }
 
+    /// A world whose one method guards its point clause on whether the
+    /// instance's first configuration slot equals its second, with the
+    /// clause's own verdict bound beside the handle it backs.
+    fn guarded_world(
+        left: Value,
+        right: Value,
+        abi: Vec<AbiParam>,
+    ) -> (MetadataCache, InstanceRegistry, Manifest) {
+        let mut package = PackageMetadata::default();
+        package.methods.insert(
+            "m".into(),
+            MethodSignature {
+                totality: Totality::Fallible,
+                abi,
+                effects: vec![Clause::Effect {
+                    guard: Some(Box::new(Expr::Eq(
+                        Box::new(Expr::Config(0)),
+                        Box::new(Expr::Config(1)),
+                    ))),
+                    target: TargetExpr::Point(Expr::ChildKey {
+                        owner: Box::new(Expr::SelfAddr),
+                        slot: SlotId(1),
+                        material: vec![],
+                    }),
+                    mode: ModeExpr::Write {
+                        requires: Presence::Either,
+                    },
+                    denomination: None,
+                }],
+                ..MethodSignature::default()
+            },
+        );
+        let mut cache = MetadataCache::new();
+        cache.publish(pkg("guarded"), package);
+        let mut instances = InstanceRegistry::new();
+        let target = instances.create(
+            &TestHasher,
+            InstanceMeta {
+                package: pkg("guarded"),
+                config: vec![left, right],
+                salt: Hash32([21; 32]),
+            },
+        );
+        (cache, instances, one_node(target))
+    }
+
+    #[test]
+    fn a_guarded_out_clause_declares_nothing_and_locks_nothing() {
+        // The precision half: a method that writes one of two cells
+        // declares, locks and routes to exactly the one it will write.
+        let (cache, instances, manifest) = guarded_world(Value::U64(1), Value::U64(2), Vec::new());
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect("routes");
+        assert_eq!(
+            routing.declaration().expect("folds").set.len(),
+            0,
+            "a guarded-out clause is out of the declared set"
+        );
+        assert_eq!(
+            routing.shards().count(),
+            0,
+            "and out of the routed shard set, so its owner is no participant"
+        );
+
+        // The same signature over a configuration its guard holds for.
+        let (cache, instances, manifest) = guarded_world(Value::U64(1), Value::U64(1), Vec::new());
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect("routes");
+        assert_eq!(routing.declaration().expect("folds").set.len(), 1);
+    }
+
+    #[test]
+    fn a_guarded_out_handle_is_absent_rather_than_unbindable() {
+        // An export's parameter list is a function of its signature and
+        // cannot lose a parameter to a branch, so the guest is handed a
+        // handle that answers nothing — carrying the type routing is the
+        // last thing to know, beside the verdict that says so.
+        let abi = vec![AbiParam::Handle(0), AbiParam::Guard(0)];
+        let (cache, instances, manifest) = guarded_world(Value::U64(1), Value::U64(2), abi.clone());
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect("routes");
+        assert_eq!(
+            routing.calls[0].args,
+            vec![CallArg::AbsentHandle(CellKind::Write), CallArg::Bool(false)]
+        );
+
+        let (cache, instances, manifest) = guarded_world(Value::U64(1), Value::U64(1), abi);
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect("routes");
+        assert!(matches!(routing.calls[0].args[0], CallArg::Handle(_)));
+        assert_eq!(routing.calls[0].args[1], CallArg::Bool(true));
+    }
+
+    #[test]
+    fn a_guard_inside_a_loop_body_declares_per_element() {
+        // Clauses land in whatever scope encloses them, so a guard
+        // written inside a `for-each` is judged once per element against
+        // that element's own binding — and the loop's own verdict is the
+        // top-level one, which is the only one an ABI binding can name.
+        let mut package = PackageMetadata::default();
+        package.methods.insert(
+            "m".into(),
+            MethodSignature {
+                totality: Totality::Fallible,
+                effects: vec![Clause::ForEach {
+                    guard: None,
+                    list: Expr::Config(0),
+                    body: vec![Clause::Effect {
+                        guard: Some(Box::new(Expr::Eq(
+                            Box::new(Expr::Binding(0)),
+                            Box::new(Expr::Literal(Value::U64(2))),
+                        ))),
+                        target: TargetExpr::Point(Expr::ChildKey {
+                            owner: Box::new(Expr::SelfAddr),
+                            slot: SlotId(9),
+                            material: vec![Expr::Binding(0)],
+                        }),
+                        mode: ModeExpr::Delta,
+                        denomination: None,
+                    }],
+                }],
+                ..MethodSignature::default()
+            },
+        );
+        let mut cache = MetadataCache::new();
+        cache.publish(pkg("looped"), package);
+        let mut instances = InstanceRegistry::new();
+        let target = instances.create(
+            &TestHasher,
+            InstanceMeta {
+                package: pkg("looped"),
+                config: vec![Value::List(vec![
+                    Value::U64(1),
+                    Value::U64(2),
+                    Value::U64(3),
+                ])],
+                salt: Hash32([22; 32]),
+            },
+        );
+        let manifest = one_node(target);
+        let routing = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect("routes");
+        let declaration = routing.declaration().expect("folds");
+        assert_eq!(
+            declaration.set.len(),
+            1,
+            "one of three elements satisfies the guard"
+        );
+    }
+
+    #[test]
+    fn a_guard_binding_on_an_unguarded_clause_is_refused() {
+        // Its verdict is the constant true, which no export needs told.
+        let (cache, instances, manifest) =
+            spreading_world(vec![Value::U64(1)], vec![AbiParam::Guard(1)]);
+        let error = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect_err("an unguarded clause has no verdict to bind");
+        assert!(
+            matches!(
+                error,
+                RouteError::MalformedAbi {
+                    source: AbiError::UnguardedClause { clause: 1, .. },
+                    ..
+                }
+            ),
+            "unexpected refusal: {error:?}"
+        );
+    }
+
     #[test]
     fn a_handle_on_a_spreading_clause_is_refused() {
-        // Two elements make clause 0 declare two accesses, and a handle
-        // is one capability — so the binding cannot be honoured, and the
-        // verdict is the same on every node because the configuration it
-        // depends on is creation-fixed.
+        // A `for-each` expands over the target's creation-fixed
+        // configuration, so a handle on one asks for a capability whose
+        // count is the instance's rather than the signature's. Judged on
+        // the signature, before any evaluation reaches the spread: the
+        // clause is not a single access whatever the configuration says.
         let spread = vec![Value::U64(1), Value::U64(2)];
         let (cache, instances, manifest) = spreading_world(spread, vec![AbiParam::Handle(0)]);
         let error = route(
@@ -2037,9 +2247,8 @@ mod tests {
         assert!(
             matches!(
                 error,
-                RouteError::AmbiguousClause {
-                    clause: 0,
-                    effects: 2,
+                RouteError::MalformedAbi {
+                    source: AbiError::NotAnAccess { clause: 0, .. },
                     ..
                 }
             ),
@@ -2356,6 +2565,7 @@ mod tests {
                     totality: Totality::Fallible,
                     params: vec![ParamType::Address],
                     effects: vec![Clause::Effect {
+                        guard: None,
                         target: TargetExpr::Point(Expr::ChildKey {
                             owner: Box::new(owner),
                             slot: SlotId(1),

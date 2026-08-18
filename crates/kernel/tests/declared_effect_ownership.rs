@@ -67,6 +67,7 @@ fn predator() -> PackageMetadata {
             totality: Totality::Fallible,
             params: vec![ParamType::Address],
             effects: vec![Clause::Effect {
+                guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::Arg(0)),
                     slot: VAULT,

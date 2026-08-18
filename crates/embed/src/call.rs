@@ -1,30 +1,6 @@
 //! One assembled invocation: what goes in, and how it ended.
 
-use hyperscale_vm_types::{AbortReason, Address};
-
-/// Which handle type a rep names — the kernel's mode lattice as the
-/// runtimes' resource types.
-///
-/// Derived from the capability itself rather than declared beside it, so
-/// an engine is told what to construct instead of inferring it from the
-/// export it happens to be calling.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CellKind {
-    /// `read-cell`.
-    Read,
-    /// `locked-cell`.
-    Locked,
-    /// `write-cell`.
-    Write,
-    /// `delta-cell`.
-    Delta,
-    /// `reserve-cell`.
-    Reserve,
-    /// `range-read`.
-    RangeRead,
-    /// `range-write`.
-    RangeWrite,
-}
+use hyperscale_vm_types::{AbortReason, Address, CellKind};
 
 /// One assembled argument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +13,8 @@ pub enum GuestArg<'a> {
         /// The handle type.
         kind: CellKind,
     },
+    /// A clause's own guard verdict.
+    Bool(bool),
     /// A 64-bit scalar.
     U64(u64),
     /// An address, as the world's own record.

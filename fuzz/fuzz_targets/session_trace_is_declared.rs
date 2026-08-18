@@ -49,6 +49,7 @@ const EXPORTS: &[&str] = &[
     "escape",
     "forge",
     "forge-zero",
+    "read-value",
     "handle-value",
     "leak",
     "bad-amount",

@@ -13,9 +13,9 @@ use hyperscale_hbor::Hbor;
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::types::{
-    Address, CollectionId, EdgeContent, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey,
-    MAX_IDS_PER_EDGE, Mode, Presence, SlotId, SubstateKey, Value, child_key, collection_id,
-    order_key, resource_address,
+    Address, CellKind, CollectionId, EdgeContent, Effect, EffectConflict, EffectSet, EffectTarget,
+    LocalKey, MAX_IDS_PER_EDGE, Mode, Presence, SlotId, SubstateKey, Value, child_key,
+    collection_id, order_key, resource_address,
 };
 
 /// The bound on any collection a `for-each` clause maps over. Keeps
@@ -331,12 +331,56 @@ pub enum TargetExpr {
     },
 }
 
+/// The handle type a clause's mode and target materialize, when the
+/// clause pins one statically.
+///
+/// A `for-each` clause yields `None`: naming one as a handle parameter
+/// is a deterministic refusal at materialization, so there is no single
+/// type to answer with. So does a mode and target pairing no capability
+/// is built for.
+///
+/// Two callers, and neither can recover this from what it holds. The
+/// publish gate holds an export's declared resource to the clause it
+/// borrows, before any evaluation. Routing names the type of a handle it
+/// is deliberately *not* materializing, where an engine would otherwise
+/// read the type off a capability that is not there.
+#[must_use]
+pub const fn materialized_kind(clause: &Clause) -> Option<CellKind> {
+    let Clause::Effect { target, mode, .. } = clause else {
+        return None;
+    };
+    match (target, mode) {
+        (TargetExpr::Point(_), ModeExpr::Read) => Some(CellKind::Read),
+        (TargetExpr::Point(_), ModeExpr::Locked) => Some(CellKind::Locked),
+        (TargetExpr::Point(_), ModeExpr::Write { .. }) => Some(CellKind::Write),
+        (TargetExpr::Point(_), ModeExpr::Delta) => Some(CellKind::Delta),
+        (TargetExpr::Point(_), ModeExpr::Reserve(_)) => Some(CellKind::Reserve),
+        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Read) => {
+            Some(CellKind::RangeRead)
+        }
+        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write { .. }) => {
+            Some(CellKind::RangeWrite)
+        }
+        _ => None,
+    }
+}
+
 /// One clause of an effect signature.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 #[allow(clippy::large_enum_variant)] // an access carries a target; a loop carries none
 pub enum Clause {
     /// A single declared access.
     Effect {
+        /// When this clause is declared at all, or always where absent.
+        ///
+        /// A guard rather than a nesting block, because an ABI binding
+        /// names a top-level clause index and four consumers read that
+        /// index. Nesting would make it a preorder over a tree and move
+        /// all four; a guard leaves every index meaning what it meant.
+        /// An `if` around three accesses is three clauses carrying one
+        /// condition each, and `if a { if b { … } }` guards on `And(a,
+        /// b)` — so nothing about clause depth changes either.
+        guard: Option<Box<Expr>>,
         /// What is accessed.
         target: TargetExpr,
         /// How it is accessed.
@@ -358,11 +402,26 @@ pub enum Clause {
     /// One access set per element of a bounded input collection; inside
     /// the body, the element is the innermost [`Expr::Binding`].
     ForEach {
+        /// When this clause is declared at all, or always where absent.
+        guard: Option<Box<Expr>>,
         /// The collection to map over; must evaluate to a list.
         list: Expr,
         /// The clauses evaluated per element.
         body: Vec<Self>,
     },
+}
+
+impl Clause {
+    /// The condition this clause is declared under, where it carries one.
+    #[must_use]
+    pub const fn guard(&self) -> Option<&Expr> {
+        match self {
+            Self::Effect { guard, .. } | Self::ForEach { guard, .. } => match guard {
+                Some(cond) => Some(cond),
+                None => None,
+            },
+        }
+    }
 }
 
 /// Why signature evaluation rejected its inputs. Deterministic: the same
@@ -609,6 +668,19 @@ pub struct Declaration {
     /// concatenating frames leaves it empty: the ABI binding is a
     /// method's, so the walk resolves it against that method's frame.
     pub clause_spans: Vec<(u32, u32)>,
+    /// Whether each top-level clause was declared at all, in clause order.
+    ///
+    /// True where the clause carries no guard, and where its guard held.
+    /// This is what an [`AbiParam::Guard`] binding answers with, so the
+    /// guest branches on the declaration's own evaluation rather than on
+    /// a second copy of the condition — there being nothing for it to
+    /// disagree with is what makes agreement structural.
+    ///
+    /// Not recoverable from [`Declaration::clause_spans`]: an empty
+    /// `for-each` contributes no effects and was taken all the same.
+    ///
+    /// [`AbiParam::Guard`]: crate::metadata::AbiParam::Guard
+    pub clause_taken: Vec<bool>,
 }
 
 impl Declaration {
@@ -631,6 +703,7 @@ impl Declaration {
             // A set has already discarded which clause declared what, so
             // there is nothing left to say a cell holds.
             denominations: vec![None; ordered.len()],
+            clause_taken: vec![true; ordered.len()],
             set,
             ordered,
             clause_spans,
@@ -737,11 +810,26 @@ fn eval_clauses(
         return Err(EvalError::ClausesTooDeep);
     }
     for clause in clauses {
+        // A clause depth of zero is a clause an ABI binding can name, so
+        // its verdict is one the guest may be handed. Deeper ones are
+        // inside a `for-each` body, where no fixed export parameter
+        // reaches them.
+        let taken = match clause.guard() {
+            Some(cond) => as_bool(eval_expr(cond, inputs, hasher, bindings, 0)?)?,
+            None => true,
+        };
+        if budget.clause_depth == 0 {
+            out.clause_taken.push(taken);
+        }
+        if !taken {
+            continue;
+        }
         match clause {
             Clause::Effect {
                 target,
                 mode,
                 denomination,
+                ..
             } => {
                 let target = eval_target(target, inputs, hasher, bindings)?;
                 let mode = eval_mode(mode, inputs, hasher, bindings)?;
@@ -766,7 +854,7 @@ fn eval_clauses(
                 out.ordered.push(effect);
                 out.denominations.push(held);
             }
-            Clause::ForEach { list, body } => {
+            Clause::ForEach { list, body, .. } => {
                 let items = as_list(eval_expr(list, inputs, hasher, bindings, 0)?)?;
                 if items.len() > MAX_FOREACH_ELEMENTS {
                     return Err(EvalError::ForEachTooLong { len: items.len() });
@@ -1259,6 +1347,7 @@ mod tests {
         };
         let clauses = vec![
             Clause::Effect {
+                guard: None,
                 target: point(0xF0),
                 mode: ModeExpr::Write {
                     requires: Presence::Either,
@@ -1266,6 +1355,7 @@ mod tests {
                 denomination: None,
             },
             Clause::Effect {
+                guard: None,
                 target: point(0x0F),
                 mode: ModeExpr::Write {
                     requires: Presence::Either,
@@ -1275,6 +1365,7 @@ mod tests {
             // The same target as the first clause: a degenerate instance
             // configuration produces exactly this shape.
             Clause::Effect {
+                guard: None,
                 target: point(0xF0),
                 mode: ModeExpr::Write {
                     requires: Presence::Either,
@@ -1386,8 +1477,10 @@ mod tests {
         ])];
         let ins = inputs(&args, &[]);
         let clauses = [Clause::ForEach {
+            guard: None,
             list: Expr::Arg(0),
             body: vec![Clause::Effect {
+                guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::Field(Box::new(Expr::Binding(0)), 0)),
                     slot: SlotId(1),
@@ -1453,6 +1546,7 @@ mod tests {
         let args = [Value::List(vec![Value::U64(0)])];
         let ins = inputs(&args, &[]);
         let effect = Clause::Effect {
+            guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
                 slot: SlotId(1),
@@ -1465,6 +1559,7 @@ mod tests {
             let mut clause = effect.clone();
             for _ in 0..depth {
                 clause = Clause::ForEach {
+                    guard: None,
                     list: Expr::Arg(0),
                     body: vec![clause],
                 };
@@ -1492,6 +1587,7 @@ mod tests {
         let args = [Value::List(vec![Value::U64(0); MAX_FOREACH_ELEMENTS + 1])];
         let ins = inputs(&args, &[]);
         let clauses = [Clause::ForEach {
+            guard: None,
             list: Expr::Arg(0),
             body: vec![],
         }];
@@ -1513,11 +1609,13 @@ mod tests {
         let wide = [Value::List(vec![Value::U64(0); MAX_FOREACH_ELEMENTS])];
         let ins = inputs(&wide, &[]);
         let mut clause = Clause::ForEach {
+            guard: None,
             list: Expr::Arg(0),
             body: Vec::new(),
         };
         for _ in 1..MAX_CLAUSE_DEPTH {
             clause = Clause::ForEach {
+                guard: None,
                 list: Expr::Arg(0),
                 body: vec![clause],
             };
@@ -1538,6 +1636,7 @@ mod tests {
         let short = [Value::List(vec![Value::U64(0), Value::U64(1)])];
         let ins = inputs(&short, &[]);
         let mut clause = Clause::Effect {
+            guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
                 slot: SlotId(1),
@@ -1548,6 +1647,7 @@ mod tests {
         };
         for _ in 0..MAX_CLAUSE_DEPTH {
             clause = Clause::ForEach {
+                guard: None,
                 list: Expr::Arg(0),
                 body: vec![clause],
             };
@@ -1561,6 +1661,7 @@ mod tests {
         let ins = inputs(&args, &[]);
         let clauses = [
             Clause::Effect {
+                guard: None,
                 target: TargetExpr::Range {
                     owner: Expr::SelfAddr,
                     collection: SlotId(4),
@@ -1575,6 +1676,7 @@ mod tests {
                 denomination: None,
             },
             Clause::Effect {
+                guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
                     slot: SlotId(9),
@@ -1603,6 +1705,7 @@ mod tests {
         }));
 
         let inverted = [Clause::Effect {
+            guard: None,
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
                 collection: SlotId(4),
@@ -1632,6 +1735,7 @@ mod tests {
         let args = [resource_a.clone(), resource_b.clone()];
         let ins = inputs(&args, &[]);
         let entry_for = |slot: u32| Clause::Effect {
+            guard: None,
             target: TargetExpr::Entry {
                 owner: Expr::SelfAddr,
                 collection: SlotId(4),
@@ -1687,6 +1791,7 @@ mod tests {
         let args = [name_a.clone(), name_b.clone()];
         let ins = inputs(&args, &[]);
         let entry_for = |slot: u32| Clause::Effect {
+            guard: None,
             target: TargetExpr::Entry {
                 owner: Expr::SelfAddr,
                 collection: SlotId(2),
@@ -1850,6 +1955,7 @@ mod tests {
         ];
         let ins = inputs(&args, &[]);
         let clauses = [Clause::Effect {
+            guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
                 slot: SlotId(1),

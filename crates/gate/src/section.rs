@@ -61,7 +61,7 @@ mod tests {
     use hyperscale_hbor::to_vec_with_depth;
     use hyperscale_vm_effects::vocabulary::VAULT;
     use hyperscale_vm_effects::{
-        Accessibility, Address, AddressClass, Clause, EdgeContent, Expr, LocalKey,
+        AbiParam, Accessibility, Address, AddressClass, Clause, EdgeContent, Expr, LocalKey,
         MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_VALUE_DEPTH,
         METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType, Presence, RuleExpr, SlotId,
         SubstateKey, TargetExpr, Totality, Value,
@@ -85,6 +85,7 @@ mod tests {
     fn signature_over(expr: Expr) -> MethodSignature {
         MethodSignature {
             effects: vec![Clause::Effect {
+                guard: None,
                 target: TargetExpr::Point(expr),
                 mode: ModeExpr::Write {
                     requires: Presence::Either,
@@ -136,12 +137,14 @@ mod tests {
 
     fn nested_foreach(depth: usize) -> Clause {
         let mut clause = Clause::Effect {
+            guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
             denomination: None,
         };
         for _ in 0..depth {
             clause = Clause::ForEach {
+                guard: None,
                 list: Expr::Arg(0),
                 body: vec![clause],
             };
@@ -163,17 +166,16 @@ mod tests {
         }
     }
 
-    #[test]
-    fn every_authored_shape_survives_the_codec() {
-        // The stdlib does not author every variant, so the coverage the
-        // round-trip test cannot give comes from one method that does:
-        // each expression form, each target form, each mode, a nested
-        // for-each body, a call site, and a deep literal.
-        let signature = MethodSignature {
+    /// One method authoring every variant the stdlib does not: each
+    /// expression form, each target form, each mode, a guarded clause
+    /// and the binding that reads its verdict, a nested for-each body, a
+    /// call site, and a deep literal.
+    fn every_authored_shape() -> MethodSignature {
+        MethodSignature {
             accessibility: Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
             totality: Totality::Fallible,
             issues: None,
-            abi: Vec::new(),
+            abi: vec![AbiParam::Guard(0)],
             params: vec![
                 ParamType::U64,
                 ParamType::U128,
@@ -202,6 +204,7 @@ mod tests {
             denominations: vec![None, None, None, None, Some(Expr::Config(2))],
             effects: vec![
                 Clause::Effect {
+                    guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
                         slot: VAULT,
@@ -211,6 +214,7 @@ mod tests {
                     denomination: None,
                 },
                 Clause::Effect {
+                    guard: None,
                     target: TargetExpr::Entry {
                         owner: Expr::Field(Box::new(Expr::Config(0)), 2),
                         collection: SlotId(9),
@@ -224,6 +228,7 @@ mod tests {
                     denomination: None,
                 },
                 Clause::Effect {
+                    guard: None,
                     target: TargetExpr::Range {
                         owner: Expr::SelfAddr,
                         collection: SlotId(4),
@@ -236,10 +241,13 @@ mod tests {
                     denomination: None,
                 },
                 Clause::ForEach {
+                    guard: None,
                     list: Expr::Arg(2),
                     body: vec![Clause::ForEach {
+                        guard: None,
                         list: Expr::Binding(0),
                         body: vec![Clause::Effect {
+                            guard: None,
                             target: TargetExpr::Point(Expr::Lookup {
                                 map: Box::new(Expr::Binding(1)),
                                 key: Box::new(Expr::Binding(0)),
@@ -250,13 +258,21 @@ mod tests {
                     }],
                 },
                 Clause::Effect {
+                    guard: Some(Box::new(Expr::Not(Box::new(Expr::Eq(
+                        Box::new(Expr::Arg(0)),
+                        Box::new(Expr::Config(1)),
+                    ))))),
                     target: TargetExpr::Point(Expr::SelfAddr),
                     mode: ModeExpr::Read,
                     denomination: None,
                 },
             ],
-        };
-        let mut metadata = one_method(signature);
+        }
+    }
+
+    #[test]
+    fn every_authored_shape_survives_the_codec() {
+        let mut metadata = one_method(every_authored_shape());
         metadata
             .methods
             .insert("another".into(), MethodSignature::default());
@@ -366,6 +382,7 @@ mod tests {
             };
         }
         let mut clause = Clause::Effect {
+            guard: None,
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
                 collection: SlotId(4),
@@ -379,6 +396,7 @@ mod tests {
         };
         for _ in 0..MAX_CLAUSE_DEPTH {
             clause = Clause::ForEach {
+                guard: None,
                 list: Expr::Arg(0),
                 body: vec![clause],
             };
@@ -417,6 +435,7 @@ mod tests {
     #[test]
     fn a_clause_tree_wider_than_a_signature_can_declare_is_refused() {
         let effect = Clause::Effect {
+            guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
             denomination: None,

@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Hash32, Hasher,
-    Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
+    ABSENT_REP, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey,
+    Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
@@ -213,7 +213,7 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Resour
         "scan-sum" => vec![range(ResourceKind::RangeRead)],
         "fill" | "place" | "no-such-entry" => vec![range(ResourceKind::RangeWrite)],
         "escape" => vec![point(fx.recipient, ResourceKind::DeltaCell)],
-        "leak" | "handle-value" => vec![point(fx.readable, ResourceKind::ReadCell)],
+        "leak" | "handle-value" | "read-value" => vec![point(fx.readable, ResourceKind::ReadCell)],
         "forge" | "forge-zero" | "hash-tag" => vec![],
         other => unreachable!("unknown export {other}"),
     }
@@ -264,7 +264,11 @@ fn call1<T: 'static>(
         .map(|(v,)| v)
 }
 
-fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, KernelSession, u64)> {
+fn run_blessed(
+    fx: &Fixture,
+    export: &str,
+    over: Option<&[(u32, ResourceKind)]>,
+) -> Result<(LaneOutcome, KernelSession, u64)> {
     let bytes = parse_str(KERNEL_GUEST_WAT)?;
     validate_component(&bytes)?;
     let engine = blessed_engine()?;
@@ -272,7 +276,7 @@ fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, KernelSession
     let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let host = session(fx);
-    let args = args_for(fx, host.capabilities(), export);
+    let args = over.map_or_else(|| args_for(fx, host.capabilities(), export), <[_]>::to_vec);
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
@@ -318,11 +322,16 @@ fn run_blessed(fx: &Fixture, export: &str) -> Result<(LaneOutcome, KernelSession
     Ok((outcome, store.into_data(), fuel))
 }
 
-fn run_ref(fx: &Fixture, export: &str) -> Result<(LaneOutcome, KernelSession, u64)> {
+fn run_ref(
+    fx: &Fixture,
+    export: &str,
+    over: Option<&[(u32, ResourceKind)]>,
+) -> Result<(LaneOutcome, KernelSession, u64)> {
     let bytes = parse_str(KERNEL_GUEST_WAT)?;
     let comp = RefComponent::decode(&bytes)?;
     let host = session(fx);
-    let args: Vec<CVal> = args_for(fx, host.capabilities(), export)
+    let args: Vec<CVal> = over
+        .map_or_else(|| args_for(fx, host.capabilities(), export), <[_]>::to_vec)
         .into_iter()
         .map(|(rep, kind)| CVal::Borrow(rep, kind))
         .collect();
@@ -346,10 +355,21 @@ fn run_ref(fx: &Fixture, export: &str) -> Result<(LaneOutcome, KernelSession, u6
 /// Runs one export on both lanes, comparing outcome, access log, and fuel;
 /// returns the blessed side for further assertions.
 fn both(fx: &Fixture, export: &str) -> Result<(LaneOutcome, KernelSession, u64)> {
+    both_with(fx, export, None)
+}
+
+/// As [`both`], over arguments the caller names rather than the ones the
+/// fixture's own capabilities supply — how a test reaches a rep no
+/// materialization assigns.
+fn both_with(
+    fx: &Fixture,
+    export: &str,
+    over: Option<&[(u32, ResourceKind)]>,
+) -> Result<(LaneOutcome, KernelSession, u64)> {
     let (blessed, blessed_host, blessed_fuel) =
-        run_blessed(fx, export).with_context(|| format!("blessed {export}"))?;
+        run_blessed(fx, export, over).with_context(|| format!("blessed {export}"))?;
     let (reference, ref_host, ref_fuel) =
-        run_ref(fx, export).with_context(|| format!("ref {export}"))?;
+        run_ref(fx, export, over).with_context(|| format!("ref {export}"))?;
     assert_eq!(blessed, reference, "{export} outcome diverged");
     assert_eq!(
         blessed_host.store().access_log(),
@@ -364,9 +384,9 @@ fn both(fx: &Fixture, export: &str) -> Result<(LaneOutcome, KernelSession, u64)>
 /// a clean oracle); returns the receipt.
 fn receipts_agree(fx: &Fixture, export: &str) -> Result<Receipt> {
     let (blessed, blessed_host, blessed_fuel) =
-        run_blessed(fx, export).with_context(|| format!("blessed {export}"))?;
+        run_blessed(fx, export, None).with_context(|| format!("blessed {export}"))?;
     let (reference, ref_host, ref_fuel) =
-        run_ref(fx, export).with_context(|| format!("ref {export}"))?;
+        run_ref(fx, export, None).with_context(|| format!("ref {export}"))?;
     assert_eq!(blessed, reference);
     let LaneOutcome::Value(value) = blessed else {
         panic!("{export} did not complete: {blessed:?}");
@@ -493,6 +513,25 @@ fn handle_values_agree_and_index_zero_is_never_allocatable() -> Result<()> {
     // first live handle.
     let (zero, _, _) = both(&fx, "forge-zero")?;
     assert_eq!(zero, LaneOutcome::UnknownHandle);
+
+    Ok(())
+}
+
+/// A guarded-out clause materializes nothing, and the guest is handed a
+/// handle at the reserved rep all the same — an export's parameter list
+/// is a function of its signature and cannot lose a parameter to a
+/// branch. Reaching it is a body whose control flow disagrees with the
+/// verdict it was given, and both lanes say so by name rather than
+/// reporting a handle nobody lowered.
+#[test]
+fn the_reserved_rep_is_an_undeclared_branch_on_both_lanes() -> Result<()> {
+    let fx = fixture();
+    let (outcome, _, _) = both_with(
+        &fx,
+        "read-value",
+        Some(&[(ABSENT_REP, ResourceKind::ReadCell)]),
+    )?;
+    assert_eq!(outcome, LaneOutcome::Refusal(AbortReason::UndeclaredBranch));
     Ok(())
 }
 

@@ -554,6 +554,20 @@ pub fn scalar(args: &[GuestArg<'_>], at: usize) -> u64 {
     }
 }
 
+/// Whether the clause the parameter at `at` speaks for was declared.
+///
+/// The declaration's own verdict, reached once by the evaluation routing
+/// already ran. A body branches on this rather than on a second copy of
+/// the condition, so the two cannot disagree — and taking the other
+/// branch reaches a capability nothing materialized.
+#[must_use]
+pub fn flag(args: &[GuestArg<'_>], at: usize) -> bool {
+    match *arg(args, at) {
+        GuestArg::Bool(taken) => taken,
+        _ => refuse(AbortReason::AbiViolation),
+    }
+}
+
 /// The address at `at`.
 #[must_use]
 pub fn address(args: &[GuestArg<'_>], at: usize) -> Address {

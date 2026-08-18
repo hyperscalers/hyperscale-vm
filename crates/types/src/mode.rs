@@ -43,6 +43,55 @@ pub enum Mode {
     },
 }
 
+/// Which handle type a rep names — the mode lattice as the runtimes'
+/// resource types.
+///
+/// Derived from the capability itself rather than declared beside it, so
+/// an engine is told what to construct instead of inferring it from the
+/// export it happens to be calling. Here rather than beside the engines
+/// because two sides need it and neither is downstream of the other: an
+/// engine constructing a handle, and routing naming the type of one it
+/// is *not* going to construct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CellKind {
+    /// `read-cell`.
+    Read,
+    /// `locked-cell`.
+    Locked,
+    /// `write-cell`.
+    Write,
+    /// `delta-cell`.
+    Delta,
+    /// `reserve-cell`.
+    Reserve,
+    /// `range-read`.
+    RangeRead,
+    /// `range-write`.
+    RangeWrite,
+}
+
+impl CellKind {
+    /// The world's name for this handle type.
+    ///
+    /// The WIT resource an engine constructs and an export borrows, so
+    /// the publish gate holds a declared parameter to it and the macro
+    /// renders it. One mapping, because a name that disagreed across the
+    /// two would fail a package at publish for a reason neither side
+    /// could name.
+    #[must_use]
+    pub const fn world_type(self) -> &'static str {
+        match self {
+            Self::Read => "read-cell",
+            Self::Locked => "locked-cell",
+            Self::Write => "write-cell",
+            Self::Delta => "delta-cell",
+            Self::Reserve => "reserve-cell",
+            Self::RangeRead => "range-read",
+            Self::RangeWrite => "range-write",
+        }
+    }
+}
+
 /// What a write requires of the leaf it lands on.
 ///
 /// Three places need "this write may only create" or "this write may

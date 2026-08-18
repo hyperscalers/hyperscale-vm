@@ -47,7 +47,8 @@ pub use auth::{
 pub use dsl::{
     Clause, Declaration, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RANGE_CAP, ModeExpr, TargetExpr,
-    evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local, self_child,
+    evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local,
+    materialized_kind, self_child,
 };
 pub use envelope::{
     AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_SLOT, Subintent,
@@ -63,10 +64,10 @@ pub use graph::{
 };
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
-    AUTH_BYTE_WEIGHT, AbortReason, EntryKey, EntryLeaf, Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT,
-    ISSUER_REP, MAX_CELL_VALUE_LEN, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
-    MAX_EVENTS_PER_TX, Outcome, SettledWrites, StateWrites, TX_UNITS, TxHash, VERIFY_WEIGHT,
-    declared_work, entry_leaf_key, signature_work, work_units,
+    ABSENT_REP, AUTH_BYTE_WEIGHT, AbortReason, EntryKey, EntryLeaf, Event, FOOTPRINT_WEIGHT,
+    FUEL_WEIGHT, ISSUER_REP, MAX_CELL_VALUE_LEN, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES,
+    MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, SettledWrites, StateWrites, TX_UNITS, TxHash,
+    VERIFY_WEIGHT, declared_work, entry_leaf_key, signature_work, work_units,
 };
 pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, cell_ids, ids_cell};
 pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};

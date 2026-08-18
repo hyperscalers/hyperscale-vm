@@ -16,7 +16,7 @@
 use crate::manifest::{AuthorityGate, Bounds};
 use crate::metadata::PackageHash;
 use crate::presented::Presented;
-use crate::types::{Address, EdgeContent, MAX_IDS_PER_EDGE};
+use crate::types::{Address, CellKind, EdgeContent, MAX_IDS_PER_EDGE};
 
 /// What kind of value an edge carries.
 ///
@@ -118,6 +118,16 @@ pub enum CallArg {
         /// Which of the producer's outputs the edge carries.
         output: u32,
     },
+    /// A handle position no capability occupies: the clause that would
+    /// have backed it was guarded out.
+    ///
+    /// The kind travels because nothing downstream can recover it. An
+    /// engine reads a handle's world type off the capability at its rep,
+    /// and there is no capability here — routing has the type, from the
+    /// clause's own target and mode, and is the last thing that does.
+    AbsentHandle(CellKind),
+    /// A clause's own guard verdict, as the export's `bool`.
+    Bool(bool),
     /// A 64-bit scalar the signature derived from the node's inputs.
     U64(u64),
     /// An address the signature derived from the node's inputs.

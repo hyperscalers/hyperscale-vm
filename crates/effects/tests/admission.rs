@@ -297,6 +297,7 @@ fn custodian_world(
     config: Vec<Value>,
 ) -> (MetadataCache, InstanceRegistry, ComponentAddr) {
     let rule = Clause::Effect {
+        guard: None,
         target: TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
             slot: AUTH,
@@ -306,6 +307,7 @@ fn custodian_world(
         denomination: None,
     };
     let possession = |target| Clause::Effect {
+        guard: None,
         target,
         mode: ModeExpr::Read,
         denomination: None,

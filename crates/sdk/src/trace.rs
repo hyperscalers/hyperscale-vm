@@ -401,6 +401,7 @@ impl Trace {
             .expect("the scope pushed above is the one popped");
 
         self.emit(Clause::ForEach {
+            guard: None,
             list: list_expr,
             body: inner,
         });
@@ -657,6 +658,7 @@ pub struct Access<'a, Shape> {
 impl<Shape> Access<'_, Shape> {
     fn declare(self, mode: ModeExpr) {
         self.trace.emit(Clause::Effect {
+            guard: None,
             target: self.target,
             mode,
             denomination: self.denomination,

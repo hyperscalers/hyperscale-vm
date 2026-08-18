@@ -157,6 +157,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
     assert_eq!(
         metadata.methods["bind"].effects,
         vec![Clause::Effect {
+            guard: None,
             target: hashed_entry(),
             mode: ModeExpr::Write {
                 requires: Presence::Either,
@@ -167,6 +168,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
     assert_eq!(
         metadata.methods["resolve"].effects,
         vec![Clause::Effect {
+            guard: None,
             target: hashed_entry(),
             mode: ModeExpr::Read,
             denomination: None,
@@ -175,6 +177,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
     assert_eq!(
         metadata.methods["sweep"].effects,
         vec![Clause::Effect {
+            guard: None,
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
                 collection: SlotId(16),

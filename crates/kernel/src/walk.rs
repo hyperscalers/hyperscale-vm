@@ -11,8 +11,8 @@
 //! embedding wrong; it cannot get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
-    AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, MAX_ERROR_CODES, NodeCall,
-    PackageHash, Possession,
+    ABSENT_REP, AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, MAX_ERROR_CODES,
+    NodeCall, PackageHash, Possession,
 };
 use hyperscale_vm_embed::{CellKind, GuestArg, Invoked};
 
@@ -164,6 +164,11 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                     };
                     args.push(GuestArg::Bucket(*produced));
                 }
+                CallArg::AbsentHandle(kind) => args.push(GuestArg::Handle {
+                    rep: ABSENT_REP,
+                    kind: *kind,
+                }),
+                CallArg::Bool(taken) => args.push(GuestArg::Bool(*taken)),
                 CallArg::Issuer => args.push(GuestArg::Issuer),
                 CallArg::U64(scalar) => args.push(GuestArg::U64(*scalar)),
                 CallArg::Address(address) => args.push(GuestArg::Address(*address)),

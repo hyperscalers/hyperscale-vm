@@ -24,5 +24,6 @@ mod call;
 mod host;
 pub mod math;
 
-pub use call::{CellKind, GuestArg, Invoked};
+pub use call::{GuestArg, Invoked};
 pub use host::KernelHost;
+pub use hyperscale_vm_types::CellKind;

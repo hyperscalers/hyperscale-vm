@@ -13,6 +13,17 @@
 /// because the kernel hands the grant out and the embedding lowers it.
 pub const ISSUER_REP: u32 = 0;
 
+/// The rep a handle occupies when the clause behind it was guarded out.
+///
+/// The capability table is indexed from zero, so the top of the range is
+/// a position it never assigns. A guest is handed the handle all the
+/// same, because an export's parameter list is a function of its
+/// signature and cannot lose a parameter to a branch — what it is handed
+/// is a handle that answers nothing, beside the flag saying so. Touching
+/// one is a body whose control flow disagrees with the verdict it was
+/// given, which is a defect and traps by its own name.
+pub const ABSENT_REP: u32 = u32::MAX;
+
 use hyperscale_hbor::Hbor;
 
 use crate::address::{Address, EffectTarget, SubstateKey};
@@ -117,6 +128,9 @@ pub enum AbortReason {
     HandleUnknown,
     /// A handle whose capability does not grant the operation.
     HandleWrongMode,
+    /// A handle whose clause was guarded out, reached anyway: a body
+    /// whose control flow disagrees with the verdict it was handed.
+    UndeclaredBranch,
     /// A stored cell that is not a well-formed amount.
     ///
     /// A defect in state rather than in a call: amounts reach the kernel

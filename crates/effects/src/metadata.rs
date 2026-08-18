@@ -183,6 +183,19 @@ pub enum AbiParam {
     /// binding naming one where the signature issues nothing is a
     /// package asking for a handle nothing would hand it.
     Issuer,
+    /// Whether the clause this names was declared: the guard's own
+    /// verdict, as a `bool` the export takes.
+    ///
+    /// Answered from [`Declaration::clause_taken`], which the evaluation
+    /// routing already ran has recorded — so the guest branches on the
+    /// declaration rather than on a second copy of the condition, and
+    /// there is nothing for the two to disagree about. A body whose
+    /// control flow diverges from the flag it was handed reaches a
+    /// capability that was never materialized, which is a defect and
+    /// traps as one.
+    ///
+    /// [`Declaration::clause_taken`]: crate::dsl::Declaration::clause_taken
+    Guard(u32),
     /// A value evaluated over the method's bound inputs.
     ///
     /// The same evaluation the effect clauses run, against the same
@@ -598,6 +611,27 @@ pub enum AbiError {
         /// How many clauses the signature declares.
         declared: u32,
     },
+    /// A guard binding naming a clause that carries no guard. Its
+    /// verdict is the constant true, which no export needs told.
+    #[error("ABI parameter {position} takes the verdict of clause {clause}, which has no guard")]
+    UnguardedClause {
+        /// The ABI parameter position.
+        position: u32,
+        /// The clause it names.
+        clause: u32,
+    },
+    /// A handle binding naming a clause that is not a single access.
+    ///
+    /// A `for-each` clause expands over configuration, so it backs no
+    /// fixed export parameter — a refusal routing would otherwise reach
+    /// by arity, made here where the signature is judged.
+    #[error("ABI parameter {position} borrows clause {clause}, which is not a single access")]
+    NotAnAccess {
+        /// The ABI parameter position.
+        position: u32,
+        /// The clause it names.
+        clause: u32,
+    },
     /// A bucket binding naming a parameter the signature does not declare.
     #[error("ABI parameter {position} names parameter {param}, past the {declared} declared")]
     NoSuchParam {
@@ -692,11 +726,35 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
                 let declared = usize::try_from(*clause)
                     .ok()
                     .and_then(|index| signature.effects.get(index));
-                if declared.is_none() {
+                let Some(declared) = declared else {
                     return Err(AbiError::NoSuchClause {
                         position,
                         clause: *clause,
                         declared: bound(signature.effects.len()),
+                    });
+                };
+                if !matches!(declared, Clause::Effect { .. }) {
+                    return Err(AbiError::NotAnAccess {
+                        position,
+                        clause: *clause,
+                    });
+                }
+            }
+            AbiParam::Guard(clause) => {
+                let declared = usize::try_from(*clause)
+                    .ok()
+                    .and_then(|index| signature.effects.get(index));
+                let Some(declared) = declared else {
+                    return Err(AbiError::NoSuchClause {
+                        position,
+                        clause: *clause,
+                        declared: bound(signature.effects.len()),
+                    });
+                };
+                if declared.guard().is_none() {
+                    return Err(AbiError::UnguardedClause {
+                        position,
+                        clause: *clause,
                     });
                 }
             }
@@ -764,6 +822,11 @@ pub enum DeclarationError {
     /// A method claiming totality behind a gate that can turn it away.
     #[error("a total method admits every caller, and this one is gated")]
     GatedTotality,
+    /// A method claiming totality over a guarded clause. A total leg
+    /// runs with every declared handle materialized, and a guarded-out
+    /// clause materializes none.
+    #[error("a total method materialises every handle it declares, and a guard leaves one absent")]
+    GuardedTotality,
     /// Two writes on one target requiring opposite presences.
     ///
     /// Refused here as well as where the set is built, because metadata
@@ -839,6 +902,21 @@ fn flat_clauses(clauses: &[Clause]) -> Vec<&Clause> {
     flat
 }
 
+/// Whether two clauses' guards are each other's negation, so no
+/// evaluation declares both.
+///
+/// Syntactic, because this runs at publish where no arguments exist —
+/// the same standard the target comparison beside it holds to. An
+/// unguarded clause is complementary to nothing: it fires always, so it
+/// meets whatever else lands on its target.
+fn complementary(left: Option<&Expr>, right: Option<&Expr>) -> bool {
+    let (Some(left), Some(right)) = (left, right) else {
+        return false;
+    };
+    matches!(left, Expr::Not(inner) if inner.as_ref() == right)
+        || matches!(right, Expr::Not(inner) if inner.as_ref() == left)
+}
+
 /// Judge a signature's declared effects against the prefix they are the
 /// signature's to declare.
 ///
@@ -899,9 +977,19 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // because this runs at publish where no arguments exist — which
     // catches the contradiction an author wrote and leaves the one two
     // different expressions happen to evaluate onto for the set to fold.
-    let mut required: Vec<(&TargetExpr, Presence)> = Vec::new();
+    //
+    // Two clauses that cannot both fire are not a contradiction, and
+    // "create it if absent, otherwise update it" is exactly the shape
+    // that takes. So the fold compares guards beside targets and lets
+    // complementary ones through — syntactically complementary, one the
+    // `Not` of the other, which is what an `if`/`else` emits and the
+    // same standard the target comparison beside it already holds to.
+    // The evaluated conflict in `EffectSet::insert` is untouched: two
+    // clauses that cannot both fire never both land.
+    let mut required: Vec<(&TargetExpr, Option<&Expr>, Presence)> = Vec::new();
     for clause in flat_clauses(&signature.effects) {
         let Clause::Effect {
+            guard,
             target,
             mode: ModeExpr::Write { requires },
             ..
@@ -909,13 +997,17 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
         else {
             continue;
         };
-        match required.iter_mut().find(|(seen, _)| *seen == target) {
-            Some((_, prior)) => {
+        let guard = guard.as_deref();
+        let met = required
+            .iter_mut()
+            .find(|(seen, seen_guard, _)| *seen == target && !complementary(*seen_guard, guard));
+        match met {
+            Some((_, _, prior)) => {
                 *prior = prior
                     .meet(*requires)
                     .ok_or(DeclarationError::PresenceConflict)?;
             }
-            None => required.push((target, *requires)),
+            None => required.push((target, guard, *requires)),
         }
     }
     // A gate is an error arm the vocabulary can see. Trap freedom is what
@@ -925,6 +1017,22 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // refusal a total leg promises cannot happen.
     if signature.totality.is_total() && signature.accessibility != Accessibility::Public {
         return Err(DeclarationError::GatedTotality);
+    }
+    // Trap freedom for a total leg rests on every handle being
+    // materialized from the declared effect set, and an absent
+    // capability is precisely a change to that. Precision is what a
+    // total method trades for the mark, and it trades it in the one
+    // direction that keeps both properties true.
+    if signature.totality.is_total()
+        && (flat_clauses(&signature.effects)
+            .iter()
+            .any(|clause| clause.guard().is_some())
+            || signature
+                .abi
+                .iter()
+                .any(|binding| matches!(binding, AbiParam::Guard(_))))
+    {
+        return Err(DeclarationError::GuardedTotality);
     }
     // A denomination is read at the position it indexes, so a list that
     // does not cover the parameters is one whose entries name positions
@@ -1044,10 +1152,14 @@ fn check_clause_bounds(
     for clause in clauses {
         match clause {
             Clause::Effect {
+                guard,
                 target,
                 mode,
                 denomination,
             } => {
+                if let Some(cond) = guard {
+                    check_expr_bounds(cond, 0)?;
+                }
                 *declared += 1;
                 if *declared > MAX_EFFECTS_PER_SIGNATURE {
                     return Err(MetadataBoundsError(format!(
@@ -1060,7 +1172,10 @@ fn check_clause_bounds(
                     check_expr_bounds(denomination, 0)?;
                 }
             }
-            Clause::ForEach { list, body } => {
+            Clause::ForEach { guard, list, body } => {
+                if let Some(cond) = guard {
+                    check_expr_bounds(cond, 0)?;
+                }
                 check_expr_bounds(list, 0)?;
                 check_clause_bounds(body, depth + 1, declared)?;
             }
@@ -1453,6 +1568,7 @@ mod tests {
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Effect {
+                guard: None,
                 target: TargetExpr::Point(expr),
                 mode: ModeExpr::Write {
                     requires: Presence::Either,
@@ -1491,12 +1607,14 @@ mod tests {
 
     fn nested_foreach(depth: usize) -> Clause {
         let mut clause = Clause::Effect {
+            guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
             denomination: None,
         };
         for _ in 0..depth {
             clause = Clause::ForEach {
+                guard: None,
                 list: Expr::Arg(0),
                 body: vec![clause],
             };
@@ -1551,6 +1669,7 @@ mod tests {
             one_method(MethodSignature {
                 totality: Totality::Fallible,
                 effects: vec![Clause::Effect {
+                    guard: None,
                     target: TargetExpr::Range {
                         owner: Expr::SelfAddr,
                         collection: SlotId(PACKAGE_SLOT_BASE),
@@ -1571,6 +1690,7 @@ mod tests {
     #[test]
     fn a_clause_tree_wider_than_a_signature_can_declare_is_refused() {
         let effect = Clause::Effect {
+            guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
             denomination: None,
@@ -1805,6 +1925,7 @@ mod tests {
 
     fn clause() -> Clause {
         Clause::Effect {
+            guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Delta,
             denomination: None,
@@ -1865,6 +1986,7 @@ mod tests {
             totality: Totality::Fallible,
             accessibility,
             effects: vec![Clause::Effect {
+                guard: None,
                 target: TargetExpr::Point(Expr::SelfAddr),
                 mode,
                 denomination: None,
@@ -2047,11 +2169,13 @@ mod tests {
             ..MethodSignature::default()
         };
         let rule = || Clause::Effect {
+            guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
             denomination: None,
         };
         let read = |target| Clause::Effect {
+            guard: None,
             target,
             mode: ModeExpr::Read,
             denomination: None,
@@ -2225,6 +2349,7 @@ mod tests {
         let declared = |target, requires| {
             check_declarations(&MethodSignature {
                 effects: vec![Clause::Effect {
+                    guard: None,
                     target,
                     mode: ModeExpr::Write { requires },
                     denomination: None,
@@ -2268,6 +2393,111 @@ mod tests {
         assert_eq!(declared(range, Presence::Either), Ok(()));
     }
 
+    /// "Create it if absent, otherwise update it" is two writes on one
+    /// cell requiring opposite presences, and it is not a contradiction:
+    /// no evaluation declares both. Complementarity is syntactic,
+    /// because publish has no arguments — the same standard the target
+    /// comparison beside it holds to.
+    #[test]
+    fn complementary_guards_carry_opposite_presences_and_nothing_else_does() {
+        let cond = || Expr::Eq(Box::new(Expr::Arg(0)), Box::new(Expr::Config(0)));
+        let write = |guard: Option<Expr>, requires| Clause::Effect {
+            guard: guard.map(Box::new),
+            target: TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: VAULT,
+                material: vec![],
+            }),
+            mode: ModeExpr::Write { requires },
+            denomination: None,
+        };
+        let declared = |clauses: Vec<Clause>| {
+            check_declarations(&MethodSignature {
+                effects: clauses,
+                ..MethodSignature::default()
+            })
+        };
+
+        // What an `if`/`else` emits, in either order.
+        let negated = Expr::Not(Box::new(cond()));
+        assert_eq!(
+            declared(vec![
+                write(Some(cond()), Presence::Absent),
+                write(Some(negated.clone()), Presence::Present),
+            ]),
+            Ok(())
+        );
+        assert_eq!(
+            declared(vec![
+                write(Some(negated), Presence::Present),
+                write(Some(cond()), Presence::Absent),
+            ]),
+            Ok(())
+        );
+
+        // Two guards that are merely different can both hold, so the
+        // contradiction stands.
+        let other = Expr::Eq(Box::new(Expr::Arg(1)), Box::new(Expr::Config(0)));
+        assert_eq!(
+            declared(vec![
+                write(Some(cond()), Presence::Absent),
+                write(Some(other), Presence::Present),
+            ]),
+            Err(DeclarationError::PresenceConflict)
+        );
+
+        // And a guard is complementary to nothing when the other clause
+        // fires always.
+        assert_eq!(
+            declared(vec![
+                write(Some(cond()), Presence::Absent),
+                write(None, Presence::Present),
+            ]),
+            Err(DeclarationError::PresenceConflict)
+        );
+    }
+
+    /// Trap freedom for a total leg rests on every declared handle being
+    /// materialized, and a guarded-out clause materializes none. The
+    /// mark and the precision are the trade.
+    #[test]
+    fn a_total_method_carries_no_guard() {
+        let guarded = Clause::Effect {
+            guard: Some(Box::new(Expr::Eq(
+                Box::new(Expr::Arg(0)),
+                Box::new(Expr::Config(0)),
+            ))),
+            target: TargetExpr::Point(Expr::SelfAddr),
+            mode: ModeExpr::Read,
+            denomination: None,
+        };
+        assert_eq!(
+            check_declarations(&MethodSignature {
+                totality: Totality::Total,
+                effects: vec![guarded],
+                ..MethodSignature::default()
+            }),
+            Err(DeclarationError::GuardedTotality)
+        );
+
+        // The binding alone is enough: it is the parameter an absent
+        // capability travels beside.
+        assert_eq!(
+            check_declarations(&MethodSignature {
+                totality: Totality::Total,
+                abi: vec![AbiParam::Guard(0)],
+                effects: vec![Clause::Effect {
+                    guard: None,
+                    target: TargetExpr::Point(Expr::SelfAddr),
+                    mode: ModeExpr::Read,
+                    denomination: None,
+                }],
+                ..MethodSignature::default()
+            }),
+            Err(DeclarationError::GuardedTotality)
+        );
+    }
+
     /// Metadata can be authored rather than derived, so the
     /// contradiction the macro refuses at the second call site is
     /// refused here too — against the target expressions, since publish
@@ -2282,6 +2512,7 @@ mod tests {
             })
         };
         let write = |requires| Clause::Effect {
+            guard: None,
             target: cell(vec![]),
             mode: ModeExpr::Write { requires },
             denomination: None,
@@ -2349,6 +2580,7 @@ mod tests {
             declared(vec![
                 write(Presence::Absent),
                 Clause::Effect {
+                    guard: None,
                     target: cell(vec![Expr::Config(0)]),
                     mode: ModeExpr::Write {
                         requires: Presence::Present,
@@ -2427,6 +2659,7 @@ mod tests {
         let declaring = |target: TargetExpr| MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Effect {
+                guard: None,
                 target,
                 mode: ModeExpr::Delta,
                 denomination: None,
@@ -2480,8 +2713,10 @@ mod tests {
         let looped = MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::ForEach {
+                guard: None,
                 list: Expr::Arg(0),
                 body: vec![Clause::Effect {
+                    guard: None,
                     target: child_of(Expr::Binding(0)),
                     mode: ModeExpr::Delta,
                     denomination: None,

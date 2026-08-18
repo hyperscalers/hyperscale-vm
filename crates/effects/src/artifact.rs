@@ -355,6 +355,7 @@ mod tests {
             MethodSignature {
                 totality: Totality::Fallible,
                 effects: vec![Clause::Effect {
+                    guard: None,
                     target: TargetExpr::Point(expr),
                     mode: ModeExpr::Write {
                         requires: Presence::Either,

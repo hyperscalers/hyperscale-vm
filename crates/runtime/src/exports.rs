@@ -33,6 +33,8 @@ pub enum ExportParam {
     Bytes,
     /// A scalar `u64`.
     U64,
+    /// A `bool`, which only a clause's guard verdict crosses as.
+    Flag,
     /// The world's `address` record.
     Address,
     /// Anything else the world's grammar admits but no binding names.
@@ -192,6 +194,7 @@ fn param_shape(
 ) -> ExportParam {
     match param {
         ComponentValType::Primitive(PrimitiveValType::U64) => ExportParam::U64,
+        ComponentValType::Primitive(PrimitiveValType::Bool) => ExportParam::Flag,
         ComponentValType::Type(id) => match types.get(*id) {
             Some(ComponentDefinedType::List {
                 element: ComponentValType::Primitive(PrimitiveValType::U8),

@@ -97,6 +97,8 @@ impl ResourceKind {
 /// A component-level value at the export boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CVal {
+    /// `bool`, which only a clause's guard verdict crosses as.
+    Bool(bool),
     /// `u32`.
     U32(u32),
     /// `u64`.
@@ -129,6 +131,7 @@ impl From<&GuestArg<'_>> for CVal {
     fn from(arg: &GuestArg<'_>) -> Self {
         match arg {
             GuestArg::Handle { rep, kind } => Self::Borrow(*rep, ResourceKind::of(*kind)),
+            GuestArg::Bool(taken) => Self::Bool(*taken),
             GuestArg::U64(scalar) => Self::U64(*scalar),
             GuestArg::Address(address) => Self::Address(address.to_bytes()),
             GuestArg::Bytes(bytes) => Self::Bytes(bytes.to_vec()),

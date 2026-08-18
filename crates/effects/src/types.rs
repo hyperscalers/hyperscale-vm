@@ -5,10 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::{
-    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, EffectTarget, InvalidAddress,
-    LocalKey, Mode, ModeKind, NativeAddr, NetworkWord, NotAResource, NotCallable, PackageAddr,
-    Presence, PrincipalAddr, ResourceAddr, ResourceRef, SchemeId, SubstateKey, TextError,
-    WrongClass, compatible,
+    Address, AddressClass, CallTarget, CellKind, CollectionId, ComponentAddr, EffectTarget,
+    InvalidAddress, LocalKey, Mode, ModeKind, NativeAddr, NetworkWord, NotAResource, NotCallable,
+    PackageAddr, Presence, PrincipalAddr, ResourceAddr, ResourceRef, SchemeId, SubstateKey,
+    TextError, WrongClass, compatible,
 };
 
 use crate::hash::{Hash32, Hasher};

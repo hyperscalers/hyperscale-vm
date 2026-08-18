@@ -53,6 +53,7 @@ pub fn metadata() -> PackageMetadata {
                 ids: Box::new(Expr::List(vec![minted_id.clone()])),
             }],
             effects: vec![Clause::Effect {
+                guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
                     slot: INSTANCE,
@@ -80,6 +81,7 @@ pub fn metadata() -> PackageMetadata {
             params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             effects: vec![Clause::Effect {
+                guard: None,
                 target: holdings_range(Expr::ResourceOf(Box::new(Expr::Arg(0))), NF_MOVE_CAP),
                 mode: ModeExpr::Write {
                     requires: Presence::Either,
@@ -102,6 +104,7 @@ pub fn metadata() -> PackageMetadata {
                 ids: Box::new(Expr::Arg(1)),
             }],
             effects: vec![Clause::Effect {
+                guard: None,
                 target: holdings_range(Expr::Arg(0), NF_MOVE_CAP),
                 mode: ModeExpr::Write {
                     requires: Presence::Either,

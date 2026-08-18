@@ -19,8 +19,8 @@
 
 pub use hyperscale_vm_effects::METADATA_SECTION;
 use hyperscale_vm_effects::{
-    AbiParam, Clause, MethodSignature, ModeExpr, PackageMetadata, TargetExpr, Totality,
-    attach_metadata as attach_canonical, check_abi, check_declarations, metadata_section,
+    AbiParam, MethodSignature, PackageMetadata, Totality, attach_metadata as attach_canonical,
+    check_abi, check_declarations, materialized_kind, metadata_section,
 };
 use hyperscale_vm_runtime::{
     ExportParam, ExportShape, check_method, component_exports, validate_component,
@@ -276,14 +276,15 @@ fn check_abi_against_export(
                 let expected = usize::try_from(*clause)
                     .ok()
                     .and_then(|index| signature.effects.get(index))
-                    .and_then(expected_resource);
+                    .and_then(materialized_kind);
                 if let Some(expected) = expected
-                    && resource != expected
+                    && resource != expected.world_type()
                 {
                     return Err(GateError(format!(
                         "method {method:?}: ABI parameter {position} borrows \
                          `{resource}`, but clause {clause}'s mode materialises a \
-                         `{expected}`"
+                         `{}`",
+                        expected.world_type()
                     )));
                 }
             }
@@ -303,6 +304,14 @@ fn check_abi_against_export(
                     )));
                 }
             }
+            AbiParam::Guard(_) => {
+                if *param != ExportParam::Flag {
+                    return Err(GateError(format!(
+                        "method {method:?}: ABI parameter {position} is a clause's guard \
+                         verdict, but the export takes {param:?}"
+                    )));
+                }
+            }
             AbiParam::Derived(_) => {
                 if matches!(param, ExportParam::Handle(_) | ExportParam::Bucket) {
                     return Err(GateError(format!(
@@ -314,30 +323,6 @@ fn check_abi_against_export(
         }
     }
     Ok(())
-}
-
-/// The state resource a clause's handle parameter borrows, when the
-/// clause pins one statically.
-///
-/// A `for-each` clause yields `None`: naming one as a handle parameter
-/// is a deterministic refusal at materialization, so there is no single
-/// resource to hold the export to here.
-const fn expected_resource(clause: &Clause) -> Option<&'static str> {
-    let Clause::Effect { target, mode, .. } = clause else {
-        return None;
-    };
-    match (target, mode) {
-        (TargetExpr::Point(_), ModeExpr::Read) => Some("read-cell"),
-        (TargetExpr::Point(_), ModeExpr::Locked) => Some("locked-cell"),
-        (TargetExpr::Point(_), ModeExpr::Write { .. }) => Some("write-cell"),
-        (TargetExpr::Point(_), ModeExpr::Delta) => Some("delta-cell"),
-        (TargetExpr::Point(_), ModeExpr::Reserve(_)) => Some("reserve-cell"),
-        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Read) => Some("range-read"),
-        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write { .. }) => {
-            Some("range-write")
-        }
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -702,6 +687,7 @@ mod tests {
         {
             let signature = wrong_kind.methods.get_mut("m").expect("declared");
             signature.effects = vec![Clause::Effect {
+                guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
                     slot: SlotId(1),
@@ -736,6 +722,7 @@ mod tests {
         {
             let signature = wrong_resource.methods.get_mut("m").expect("declared");
             signature.effects = vec![Clause::Effect {
+                guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
                     slot: SlotId(1),
@@ -756,6 +743,7 @@ mod tests {
         {
             let signature = sound.methods.get_mut("m").expect("declared");
             signature.effects = vec![Clause::Effect {
+                guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
                     slot: SlotId(1),
