@@ -348,6 +348,13 @@ pub enum Value {
     Tuple(Vec<Self>),
     /// A bounded homogeneous sequence.
     List(Vec<Self>),
+    /// A judgment: what a predicate evaluates to.
+    ///
+    /// The one kind with no guest representation. The single boolean an
+    /// export receives is a clause's own verdict, read off the
+    /// declaration rather than computed a second time, which is what
+    /// leaves a guest nothing to disagree with.
+    Bool(bool),
 }
 
 impl Value {
@@ -363,6 +370,7 @@ impl Value {
             Self::Bucket { .. } => "bucket",
             Self::Tuple(_) => "tuple",
             Self::List(_) => "list",
+            Self::Bool(_) => "bool",
         }
     }
 

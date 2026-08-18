@@ -84,6 +84,22 @@ impl IntoSlot for Value {
     }
 }
 
+/// A judgment fills a slot as itself.
+///
+/// The kind a configuration slot holds is gated nowhere — the values are
+/// depth-bounded and otherwise the creator's — so a boolean policy fixed
+/// at creation is a slot like any other, and an [`Expr::If`] over it is
+/// how a package reads one. It cannot leak into a body: routing refuses a
+/// derived guest argument that evaluates to a boolean whatever expression
+/// produced it, a configuration slot included.
+///
+/// [`Expr::If`]: hyperscale_vm_effects::Expr::If
+impl IntoSlot for bool {
+    fn into_slot(self) -> Value {
+        Value::Bool(self)
+    }
+}
+
 impl IntoSlot for u64 {
     fn into_slot(self) -> Value {
         Value::U64(self)

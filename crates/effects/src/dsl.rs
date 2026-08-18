@@ -173,6 +173,49 @@ pub enum Expr {
         /// The logical key, canonically encoded into the hash.
         material: Vec<Self>,
     },
+    /// Negation of a judgment.
+    Not(Box<Self>),
+    /// Conjunction, short-circuiting: a false left operand is the answer,
+    /// and the right one is never evaluated.
+    And(Box<Self>, Box<Self>),
+    /// Disjunction, short-circuiting on a true left operand.
+    Or(Box<Self>, Box<Self>),
+    /// Structural equality between two values of one kind.
+    ///
+    /// Tuples and lists compare element by element, which is what makes a
+    /// pair equal to a pair. A bucket is refused wherever it appears in
+    /// either operand: an edge projection is a routable summary of a value
+    /// in flight, its amount is not in the projection, and two summaries
+    /// comparing equal would answer a question about amounts it cannot
+    /// see.
+    Eq(Box<Self>, Box<Self>),
+    /// Strict ordering, over `u64` against `u64` and `u128` against
+    /// `u128` and nothing else. An address has no meaningful order, and
+    /// ordering bytes invites a lexicographic key nobody meant.
+    Lt(Box<Self>, Box<Self>),
+    /// Whether a table holds a key — the question [`Expr::Lookup`]
+    /// answers destructively. Reads the same list-of-pairs shape and
+    /// shares its walk.
+    Contains {
+        /// The list of pairs to search.
+        map: Box<Self>,
+        /// The key to match against each pair's first field.
+        key: Box<Self>,
+    },
+    /// Selection between two expressions, evaluating only the taken arm.
+    ///
+    /// The short-circuit is the point rather than an optimization: it is
+    /// what lets a conditional guard an expression that would otherwise
+    /// refuse, so `If { cond: Contains(t, k), then: Lookup(t, k), .. }`
+    /// turns a hard routing refusal into something a package can handle.
+    If {
+        /// The judgment selecting an arm.
+        cond: Box<Self>,
+        /// Evaluated when the condition holds.
+        then: Box<Self>,
+        /// Evaluated when it does not.
+        otherwise: Box<Self>,
+    },
 }
 
 impl Expr {
@@ -193,7 +236,9 @@ impl Expr {
             Self::Field(inner, _) | Self::ResourceOf(inner) | Self::IdsOf(inner) => {
                 inner.reads_call_inputs()
             }
-            Self::Lookup { map, key } => map.reads_call_inputs() || key.reads_call_inputs(),
+            Self::Lookup { map, key } | Self::Contains { map, key } => {
+                map.reads_call_inputs() || key.reads_call_inputs()
+            }
             Self::Pack { hi, lo } => hi.reads_call_inputs() || lo.reads_call_inputs(),
             Self::NfBucket { resource, ids } => {
                 resource.reads_call_inputs() || ids.reads_call_inputs()
@@ -208,6 +253,20 @@ impl Expr {
             | Self::OrderKey {
                 owner, material, ..
             } => owner.reads_call_inputs() || material.iter().any(Self::reads_call_inputs),
+            Self::Not(inner) => inner.reads_call_inputs(),
+            Self::And(left, right)
+            | Self::Or(left, right)
+            | Self::Eq(left, right)
+            | Self::Lt(left, right) => left.reads_call_inputs() || right.reads_call_inputs(),
+            Self::If {
+                cond,
+                then,
+                otherwise,
+            } => {
+                cond.reads_call_inputs()
+                    || then.reads_call_inputs()
+                    || otherwise.reads_call_inputs()
+            }
         }
     }
 }
@@ -409,6 +468,23 @@ pub struct EvalInputs<'a> {
     /// The transaction's identity — the signed graph's hash; the one root
     /// of every fresh-ID derivation.
     pub identity: ManifestHash,
+}
+
+impl EvalInputs<'_> {
+    /// The 64-bit id drawn at `slot` in this frame.
+    fn fresh_id(&self, hasher: &dyn Hasher, slot: u32) -> u64 {
+        fresh_id(hasher, self.identity, self.node_index, self.frame, slot)
+    }
+
+    /// The substate key drawn at `slot`, under the target instance's own
+    /// prefix — the same derivation, so an object's key and the id a body
+    /// is handed for it are one draw rather than two.
+    fn fresh_key(&self, hasher: &dyn Hasher, slot: u32) -> SubstateKey {
+        SubstateKey {
+            owner: self.self_addr,
+            local: fresh_local(hasher, self.identity, self.node_index, self.frame, slot),
+        }
+    }
 }
 
 const DOMAIN_FRESH: &[u8] = b"hyperscale-vm/fresh-id";
@@ -854,6 +930,9 @@ fn eval_expr(
         return Err(EvalError::ExpressionTooDeep);
     }
     let deeper = depth + 1;
+    let sub = |expr| eval_expr(expr, inputs, hasher, bindings, deeper);
+    let material = |material| eval_material(material, inputs, hasher, bindings, deeper);
+    let all = |elements| eval_all(elements, inputs, hasher, bindings, deeper);
     match expr {
         Expr::Literal(value) => Ok(value.clone()),
         Expr::Arg(index) => indexed(inputs.args, *index)
@@ -869,83 +948,74 @@ fn eval_expr(
             .cloned()
             .ok_or(EvalError::BindingOutOfRange(*index)),
         Expr::SelfAddr => Ok(Value::Address(inputs.self_addr)),
-        Expr::Field(tuple, index) => {
-            let fields = as_tuple(eval_expr(tuple, inputs, hasher, bindings, deeper)?)?;
-            field(&fields, *index)
-        }
-        Expr::ResourceOf(bucket) => {
-            let (resource, _) = bucket_parts(eval_expr(bucket, inputs, hasher, bindings, deeper)?)?;
-            Ok(Value::Address(resource))
-        }
-        Expr::IdsOf(bucket) => {
-            let (_, content) = bucket_parts(eval_expr(bucket, inputs, hasher, bindings, deeper)?)?;
-            edge_ids(content)
-        }
-        Expr::Lookup { map, key } => {
-            let pairs = as_list(eval_expr(map, inputs, hasher, bindings, deeper)?)?;
-            let key = eval_expr(key, inputs, hasher, bindings, deeper)?;
-            lookup(pairs, &key)
-        }
-        Expr::SelfResource { material } => {
-            let encoded = eval_material(material, inputs, hasher, bindings, deeper)?;
-            Ok(Value::Address(
-                resource_address(hasher, inputs.self_addr, &encoded).into(),
-            ))
-        }
+        Expr::Field(tuple, index) => field(&as_tuple(sub(tuple)?)?, *index),
+        Expr::ResourceOf(bucket) => Ok(Value::Address(bucket_parts(sub(bucket)?)?.0)),
+        Expr::IdsOf(bucket) => edge_ids(bucket_parts(sub(bucket)?)?.1),
+        Expr::Lookup { map, key } => lookup(as_list(sub(map)?)?, &sub(key)?),
+        Expr::SelfResource { material: parts } => Ok(Value::Address(
+            resource_address(hasher, inputs.self_addr, &material(parts)?).into(),
+        )),
         Expr::ChildKey {
             owner,
             slot,
-            material,
-        } => {
-            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, deeper)?)?;
-            let encoded = eval_material(material, inputs, hasher, bindings, deeper)?;
-            Ok(Value::Key(child_key(hasher, owner, *slot, &encoded)))
-        }
+            material: parts,
+        } => Ok(Value::Key(child_key(
+            hasher,
+            as_address(sub(owner)?)?,
+            *slot,
+            &material(parts)?,
+        ))),
         Expr::OrderKey {
             owner,
             slot,
-            material,
-        } => {
-            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, deeper)?)?;
-            let encoded = eval_material(material, inputs, hasher, bindings, deeper)?;
-            Ok(Value::U128(order_key(hasher, owner, *slot, &encoded)))
-        }
-        Expr::FreshId { slot } => Ok(Value::U64(fresh_id(
+            material: parts,
+        } => Ok(Value::U128(order_key(
             hasher,
-            inputs.identity,
-            inputs.node_index,
-            inputs.frame,
+            as_address(sub(owner)?)?,
             *slot,
+            &material(parts)?,
         ))),
-        Expr::FreshKey { slot } => Ok(Value::Key(SubstateKey {
-            owner: inputs.self_addr,
-            local: fresh_local(
-                hasher,
-                inputs.identity,
-                inputs.node_index,
-                inputs.frame,
-                *slot,
-            ),
-        })),
+        Expr::FreshId { slot } => Ok(Value::U64(inputs.fresh_id(hasher, *slot))),
+        Expr::FreshKey { slot } => Ok(Value::Key(inputs.fresh_key(hasher, *slot))),
         Expr::Pack { hi, lo } => {
-            let hi = as_u64(eval_expr(hi, inputs, hasher, bindings, deeper)?)?;
-            let lo = as_u64(eval_expr(lo, inputs, hasher, bindings, deeper)?)?;
+            let hi = as_u64(sub(hi)?)?;
+            let lo = as_u64(sub(lo)?)?;
             Ok(Value::U128((u128::from(hi) << 64) | u128::from(lo)))
         }
-        Expr::List(elements) => Ok(Value::List(eval_all(
-            elements, inputs, hasher, bindings, deeper,
-        )?)),
-        Expr::Tuple(fields) => Ok(Value::Tuple(eval_all(
-            fields, inputs, hasher, bindings, deeper,
-        )?)),
-        Expr::NfBucket { resource, ids } => {
-            let resource = as_address(eval_expr(resource, inputs, hasher, bindings, deeper)?)?;
-            let ids = id_set(as_list(eval_expr(ids, inputs, hasher, bindings, deeper)?)?)?;
-            Ok(Value::Bucket {
-                resource,
-                content: EdgeContent::NonFungible { ids },
-            })
+        Expr::List(elements) => Ok(Value::List(all(elements)?)),
+        Expr::Tuple(fields) => Ok(Value::Tuple(all(fields)?)),
+        Expr::NfBucket { resource, ids } => Ok(Value::Bucket {
+            resource: as_address(sub(resource)?)?,
+            content: EdgeContent::NonFungible {
+                ids: id_set(as_list(sub(ids)?)?)?,
+            },
+        }),
+        Expr::Not(inner) => Ok(Value::Bool(!as_bool(sub(inner)?)?)),
+        // Short-circuiting: a false `And` and a true `Or` are answered by
+        // the left operand alone, and the right one is never evaluated.
+        // That is what lets one arm of a judgment be an expression the
+        // other case would refuse.
+        Expr::And(left, right) | Expr::Or(left, right) => {
+            let short = matches!(expr, Expr::Or(..));
+            if as_bool(sub(left)?)? == short {
+                return Ok(Value::Bool(short));
+            }
+            Ok(Value::Bool(as_bool(sub(right)?)?))
         }
+        Expr::Eq(left, right) => equals(&sub(left)?, &sub(right)?),
+        Expr::Lt(left, right) => less_than(&sub(left)?, &sub(right)?),
+        Expr::Contains { map, key } => Ok(Value::Bool(
+            find(as_list(sub(map)?)?, &sub(key)?)?.is_some(),
+        )),
+        Expr::If {
+            cond,
+            then,
+            otherwise,
+        } => sub(if as_bool(sub(cond)?)? {
+            then
+        } else {
+            otherwise
+        }),
     }
 }
 
@@ -976,6 +1046,13 @@ fn field(fields: &[Value], index: u32) -> Result<Value, EvalError> {
 /// The value of the first pair whose key matches, over a list of
 /// `(key, value)` tuples.
 fn lookup(pairs: Vec<Value>, key: &Value) -> Result<Value, EvalError> {
+    find(pairs, key)?.ok_or(EvalError::LookupMiss)
+}
+
+/// The first matching pair's value, or `None` where the table holds no
+/// such key. The one walk under both [`Expr::Lookup`], which refuses a
+/// miss, and [`Expr::Contains`], which reports it.
+fn find(pairs: Vec<Value>, key: &Value) -> Result<Option<Value>, EvalError> {
     for pair in pairs {
         let Value::Tuple(fields) = pair else {
             return Err(EvalError::LookupNotPairs);
@@ -984,10 +1061,67 @@ fn lookup(pairs: Vec<Value>, key: &Value) -> Result<Value, EvalError> {
             return Err(EvalError::LookupNotPairs);
         };
         if pair_key == key {
-            return Ok(pair_value.clone());
+            return Ok(Some(pair_value.clone()));
         }
     }
-    Err(EvalError::LookupMiss)
+    Ok(None)
+}
+
+/// Structural equality between two values of one kind.
+///
+/// Kinds must agree — a `u64` and a `u128` of the same magnitude are not
+/// equal, because the widening that would make them so is a comparison
+/// nobody wrote. A bucket anywhere in either operand is refused.
+fn equals(left: &Value, right: &Value) -> Result<Value, EvalError> {
+    reject_bucket(left)?;
+    reject_bucket(right)?;
+    if left.kind() != right.kind() {
+        return Err(EvalError::TypeMismatch {
+            expected: left.kind(),
+            found: right.kind(),
+        });
+    }
+    Ok(Value::Bool(left == right))
+}
+
+/// Strict ordering over the two integer widths, and nothing else.
+fn less_than(left: &Value, right: &Value) -> Result<Value, EvalError> {
+    match (left, right) {
+        (Value::U64(left), Value::U64(right)) => Ok(Value::Bool(left < right)),
+        (Value::U128(left), Value::U128(right)) => Ok(Value::Bool(left < right)),
+        (Value::U64(_), other) => Err(EvalError::TypeMismatch {
+            expected: "u64",
+            found: other.kind(),
+        }),
+        (Value::U128(_), other) => Err(EvalError::TypeMismatch {
+            expected: "u128",
+            found: other.kind(),
+        }),
+        (other, _) => Err(EvalError::TypeMismatch {
+            expected: "u64 or u128",
+            found: other.kind(),
+        }),
+    }
+}
+
+/// Refuse a bucket wherever it sits in a value, including inside a tuple
+/// or a list. Walked over an explicit stack, like [`Value::depth`], for
+/// the same reason.
+fn reject_bucket(value: &Value) -> Result<(), EvalError> {
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            Value::Bucket { .. } => {
+                return Err(EvalError::TypeMismatch {
+                    expected: "a comparable value",
+                    found: "bucket",
+                });
+            }
+            Value::Tuple(values) | Value::List(values) => stack.extend(values),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// A well-formed instance id set: every element a `u64`, at most
@@ -1060,6 +1194,16 @@ fn as_tuple(value: Value) -> Result<Vec<Value>, EvalError> {
         Value::Tuple(fields) => Ok(fields),
         other => Err(EvalError::TypeMismatch {
             expected: "tuple",
+            found: other.kind(),
+        }),
+    }
+}
+
+fn as_bool(value: Value) -> Result<bool, EvalError> {
+    match value {
+        Value::Bool(flag) => Ok(flag),
+        other => Err(EvalError::TypeMismatch {
+            expected: "bool",
             found: other.kind(),
         }),
     }
@@ -1725,5 +1869,249 @@ mod tests {
             target: EffectTarget::Point(expected),
             mode: Mode::Reserve { amount: 75 },
         }));
+    }
+
+    /// The judgment vocabulary, over one set of inputs: arg 0 is a `u64`,
+    /// arg 1 the same `u64` widened, arg 2 an address, arg 3 a bucket of
+    /// it, and config 0 a two-row table.
+    fn judgment_args() -> [Value; 4] {
+        let resource = Address::new([0xAB; 31], AddressClass::Resource);
+        [
+            Value::U64(7),
+            Value::U128(7),
+            Value::Address(resource),
+            Value::Bucket {
+                resource,
+                content: EdgeContent::Fungible,
+            },
+        ]
+    }
+
+    fn table() -> Value {
+        Value::List(vec![
+            Value::Tuple(vec![Value::U64(7), Value::U64(70)]),
+            Value::Tuple(vec![Value::U64(8), Value::U64(80)]),
+        ])
+    }
+
+    fn judge(expr: &Expr) -> Result<Value, EvalError> {
+        let args = judgment_args();
+        let config = [table()];
+        evaluate_expr(expr, &inputs(&args, &config), &TestHasher)
+    }
+
+    fn lit(value: Value) -> Expr {
+        Expr::Literal(value)
+    }
+
+    fn flag(value: bool) -> Expr {
+        lit(Value::Bool(value))
+    }
+
+    fn num(value: u64) -> Expr {
+        lit(Value::U64(value))
+    }
+
+    fn not(inner: Expr) -> Expr {
+        Expr::Not(Box::new(inner))
+    }
+
+    fn and(left: Expr, right: Expr) -> Expr {
+        Expr::And(Box::new(left), Box::new(right))
+    }
+
+    fn or(left: Expr, right: Expr) -> Expr {
+        Expr::Or(Box::new(left), Box::new(right))
+    }
+
+    fn eq(left: Expr, right: Expr) -> Expr {
+        Expr::Eq(Box::new(left), Box::new(right))
+    }
+
+    fn lt(left: Expr, right: Expr) -> Expr {
+        Expr::Lt(Box::new(left), Box::new(right))
+    }
+
+    fn contains(map: Expr, key: Expr) -> Expr {
+        Expr::Contains {
+            map: Box::new(map),
+            key: Box::new(key),
+        }
+    }
+
+    fn select(cond: Expr, then: Expr, otherwise: Expr) -> Expr {
+        Expr::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            otherwise: Box::new(otherwise),
+        }
+    }
+
+    /// The kind an expression required against the kind it found.
+    fn mismatch<T>(expected: &'static str, found: &'static str) -> Result<T, EvalError> {
+        Err(EvalError::TypeMismatch { expected, found })
+    }
+
+    /// A judgment's verdict, for the assertions that want the answer
+    /// rather than the value carrying it.
+    fn judged(expr: &Expr) -> Result<bool, EvalError> {
+        judge(expr).map(|value| match value {
+            Value::Bool(flag) => flag,
+            other => panic!("a judgment evaluated to a {}", other.kind()),
+        })
+    }
+
+    #[test]
+    fn negation_conjunction_and_disjunction_take_booleans() {
+        assert_eq!(judged(&not(flag(true))), Ok(false));
+        assert_eq!(judged(&and(flag(true), flag(false))), Ok(false));
+        assert_eq!(judged(&and(flag(true), flag(true))), Ok(true));
+        assert_eq!(judged(&or(flag(false), flag(true))), Ok(true));
+        assert_eq!(judged(&or(flag(false), flag(false))), Ok(false));
+        assert_eq!(judged(&not(num(1))), mismatch("bool", "u64"));
+    }
+
+    #[test]
+    fn conjunction_and_disjunction_short_circuit() {
+        // The right operand would refuse on its own, so evaluating it is
+        // the only way these could fail.
+        let refuses = || Expr::Arg(9);
+        assert_eq!(judged(&and(flag(false), refuses())), Ok(false));
+        assert_eq!(judged(&or(flag(true), refuses())), Ok(true));
+        // And the same operand still refuses where the answer needs it.
+        assert_eq!(
+            judged(&and(flag(true), refuses())),
+            Err(EvalError::ArgOutOfRange(9))
+        );
+    }
+
+    #[test]
+    fn equality_compares_within_one_kind() {
+        assert_eq!(judged(&eq(num(7), Expr::Arg(0))), Ok(true));
+        assert_eq!(judged(&eq(num(8), Expr::Arg(0))), Ok(false));
+        // Tuples and lists compare structurally, which is what makes a
+        // pair equal to a pair.
+        let pair = |a, b| lit(Value::Tuple(vec![Value::U64(a), Value::U64(b)]));
+        assert_eq!(judged(&eq(pair(1, 2), pair(1, 2))), Ok(true));
+        assert_eq!(judged(&eq(pair(1, 2), pair(2, 1))), Ok(false));
+        // A u64 and a u128 of one magnitude are two kinds, not one value.
+        assert_eq!(
+            judged(&eq(Expr::Arg(0), Expr::Arg(1))),
+            mismatch("u64", "u128")
+        );
+    }
+
+    #[test]
+    fn equality_refuses_a_bucket_wherever_it_sits() {
+        let bucket = || Expr::Arg(3);
+        let refused = mismatch("a comparable value", "bucket");
+        assert_eq!(judged(&eq(bucket(), bucket())), refused);
+        assert_eq!(judged(&eq(bucket(), num(1))), refused);
+        assert_eq!(judged(&eq(num(1), bucket())), refused);
+        // Nested is the case that matters: a pair of buckets comparing
+        // equal would answer a question about amounts it cannot see.
+        let wrapped = || Expr::Tuple(vec![bucket(), num(1)]);
+        assert_eq!(judged(&eq(wrapped(), wrapped())), refused);
+        // The resource an edge carries is comparable; the edge is not.
+        assert_eq!(
+            judged(&eq(Expr::ResourceOf(Box::new(bucket())), Expr::Arg(2))),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn ordering_holds_to_one_integer_width() {
+        let amount = |value: u128| lit(Value::U128(value));
+        assert_eq!(judged(&lt(num(6), num(7))), Ok(true));
+        assert_eq!(judged(&lt(num(7), num(7))), Ok(false));
+        assert_eq!(judged(&lt(amount(6), amount(7))), Ok(true));
+        // No widening: the comparison nobody wrote is not the one made.
+        assert_eq!(judged(&lt(num(6), amount(7))), mismatch("u64", "u128"));
+        // An address has no meaningful order.
+        assert_eq!(
+            judged(&lt(Expr::Arg(2), Expr::Arg(2))),
+            mismatch("u64 or u128", "address")
+        );
+    }
+
+    #[test]
+    fn membership_answers_what_lookup_refuses() {
+        assert_eq!(judged(&contains(Expr::Config(0), num(7))), Ok(true));
+        assert_eq!(judged(&contains(Expr::Config(0), num(9))), Ok(false));
+        assert_eq!(
+            judge(&Expr::Lookup {
+                map: Box::new(Expr::Config(0)),
+                key: Box::new(num(9)),
+            }),
+            Err(EvalError::LookupMiss)
+        );
+        // One walk under both, so a malformed table refuses identically.
+        let ragged = lit(Value::List(vec![Value::U64(1)]));
+        assert_eq!(
+            judged(&contains(ragged, num(1))),
+            Err(EvalError::LookupNotPairs)
+        );
+    }
+
+    #[test]
+    fn a_conditional_evaluates_only_the_taken_arm() {
+        // The untaken arm is a lookup that would refuse, which is the
+        // shape a package guards on membership to handle a miss itself.
+        let guarded = |key: u64| {
+            select(
+                contains(Expr::Config(0), num(key)),
+                Expr::Lookup {
+                    map: Box::new(Expr::Config(0)),
+                    key: Box::new(num(key)),
+                },
+                num(0),
+            )
+        };
+        assert_eq!(judge(&guarded(7)), Ok(Value::U64(70)));
+        assert_eq!(judge(&guarded(9)), Ok(Value::U64(0)));
+        // And the condition itself is still judged.
+        assert_eq!(
+            judge(&select(num(1), num(1), num(0))),
+            mismatch("bool", "u64")
+        );
+    }
+
+    #[test]
+    fn judgments_nest_under_the_expression_bound() {
+        // One negation per level over a literal, so what rejects the
+        // deeper expression is the bound and not its operand.
+        let nested = |depth: usize| {
+            let mut expr = flag(true);
+            for _ in 0..depth {
+                expr = not(expr);
+            }
+            expr
+        };
+        assert_eq!(judged(&nested(MAX_EXPR_DEPTH)), Ok(true));
+        assert_eq!(
+            judged(&nested(MAX_EXPR_DEPTH + 1)),
+            Err(EvalError::ExpressionTooDeep)
+        );
+    }
+
+    #[test]
+    fn a_judgment_over_an_argument_reads_call_inputs() {
+        // What keeps a guarded method's rule from being one a caller can
+        // always satisfy: every new variant carries the taint through.
+        let arg = || Expr::Arg(0);
+        for expr in [
+            not(eq(arg(), num(1))),
+            and(eq(arg(), num(1)), flag(true)),
+            and(flag(true), eq(arg(), num(1))),
+            or(eq(arg(), num(1)), flag(true)),
+            eq(arg(), num(1)),
+            lt(arg(), num(1)),
+            contains(Expr::Config(0), arg()),
+            select(flag(true), arg(), num(1)),
+            select(eq(arg(), num(1)), num(1), num(1)),
+        ] {
+            assert!(expr.reads_call_inputs(), "{expr:?}");
+        }
+        assert!(!not(eq(Expr::Config(0), Expr::SelfAddr)).reads_call_inputs());
     }
 }

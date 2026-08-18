@@ -786,6 +786,36 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
             slot,
             material: material.into_iter().map(|m| rebind(m, depth)).collect(),
         },
+        Expr::Not(inner) => Expr::Not(Box::new(rebind(*inner, depth))),
+        Expr::And(left, right) => Expr::And(
+            Box::new(rebind(*left, depth)),
+            Box::new(rebind(*right, depth)),
+        ),
+        Expr::Or(left, right) => Expr::Or(
+            Box::new(rebind(*left, depth)),
+            Box::new(rebind(*right, depth)),
+        ),
+        Expr::Eq(left, right) => Expr::Eq(
+            Box::new(rebind(*left, depth)),
+            Box::new(rebind(*right, depth)),
+        ),
+        Expr::Lt(left, right) => Expr::Lt(
+            Box::new(rebind(*left, depth)),
+            Box::new(rebind(*right, depth)),
+        ),
+        Expr::Contains { map, key } => Expr::Contains {
+            map: Box::new(rebind(*map, depth)),
+            key: Box::new(rebind(*key, depth)),
+        },
+        Expr::If {
+            cond,
+            then,
+            otherwise,
+        } => Expr::If {
+            cond: Box::new(rebind(*cond, depth)),
+            then: Box::new(rebind(*then, depth)),
+            otherwise: Box::new(rebind(*otherwise, depth)),
+        },
         leaf @ (Expr::Literal(_)
         | Expr::Arg(_)
         | Expr::Config(_)

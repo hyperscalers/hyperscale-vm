@@ -919,7 +919,12 @@ fn guest_arg(value: &Value) -> Option<CallArg> {
                 .collect::<Option<Vec<u64>>>()?;
             Some(CallArg::Bytes(ids_cell(&ids)))
         }
-        Value::Key(_) | Value::Bucket { .. } | Value::Tuple(_) => None,
+        // A judgment has no guest representation. The one boolean an
+        // export receives is a clause's own verdict, read off the
+        // declaration rather than computed a second time, so a derived
+        // parameter evaluating to one is refused here like every other
+        // unrepresentable kind.
+        Value::Key(_) | Value::Bucket { .. } | Value::Tuple(_) | Value::Bool(_) => None,
     }
 }
 
@@ -2043,6 +2048,36 @@ mod tests {
     }
 
     #[test]
+    fn a_derived_judgment_has_no_guest_representation() {
+        // A predicate is evaluated once, by routing, and the guest is told
+        // the answer through a clause's verdict — never by being handed
+        // the judgment as an argument, which would leave two copies of one
+        // condition agreeing by convention.
+        let spread = vec![Value::U64(1)];
+        let judgment = AbiParam::Derived(Expr::Eq(
+            Box::new(Expr::Config(0)),
+            Box::new(Expr::Config(0)),
+        ));
+        let (cache, instances, manifest) = spreading_world(spread, vec![judgment]);
+        let error = route(
+            &admitted(&manifest),
+            &cache,
+            &instances,
+            &TestHasher,
+            &resolver(),
+        )
+        .expect_err("a boolean cannot cross the ABI");
+        assert!(
+            matches!(
+                &error,
+                RouteError::UnbindableAbiParam { param: 0, reason, .. }
+                    if reason == "a bool has no guest representation"
+            ),
+            "unexpected refusal: {error:?}"
+        );
+    }
+
+    #[test]
     fn an_id_list_crosses_the_abi_as_the_edge_cell_framing() {
         use super::guest_arg;
         use crate::invoke::ids_cell;
@@ -2051,8 +2086,10 @@ mod tests {
             guest_arg(&Value::List(vec![Value::U64(3), Value::U64(9)])),
             Some(CallArg::Bytes(ids_cell(&[3, 9]))),
         );
-        // A list of anything else has no guest representation.
+        // A list of anything else has no guest representation, and
+        // neither has a judgment.
         assert_eq!(guest_arg(&Value::List(vec![Value::U128(3)])), None);
+        assert_eq!(guest_arg(&Value::Bool(true)), None);
         let over_cap: Vec<Value> = (0..=u64::try_from(MAX_IDS_PER_EDGE).unwrap())
             .map(Value::U64)
             .collect();

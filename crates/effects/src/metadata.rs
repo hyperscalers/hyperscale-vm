@@ -1089,10 +1089,23 @@ fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), MetadataBoundsErro
         | Expr::SelfAddr
         | Expr::FreshId { .. }
         | Expr::FreshKey { .. } => Ok(()),
-        Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) => {
+        Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) | Expr::Not(inner) => {
             check_expr_bounds(inner, deeper)
         }
+        Expr::If {
+            cond,
+            then,
+            otherwise,
+        } => {
+            check_expr_bounds(cond, deeper)?;
+            check_expr_bounds(then, deeper)?;
+            check_expr_bounds(otherwise, deeper)
+        }
         Expr::Lookup {
+            map: first,
+            key: second,
+        }
+        | Expr::Contains {
             map: first,
             key: second,
         }
@@ -1103,7 +1116,11 @@ fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), MetadataBoundsErro
         | Expr::NfBucket {
             resource: first,
             ids: second,
-        } => {
+        }
+        | Expr::And(first, second)
+        | Expr::Or(first, second)
+        | Expr::Eq(first, second)
+        | Expr::Lt(first, second) => {
             check_expr_bounds(first, deeper)?;
             check_expr_bounds(second, deeper)
         }
@@ -1522,6 +1539,63 @@ mod tests {
             &with(MAX_EFFECTS_PER_SIGNATURE),
             &with(MAX_EFFECTS_PER_SIGNATURE + 1),
         );
+    }
+
+    #[test]
+    fn every_judgment_walks_its_subterms_at_publish() {
+        // What a new variant costs is one recursive case, and a missing
+        // one is silent: the subterm slips past publish and the package
+        // is already immutable when routing refuses every call over it.
+        // So the deep term is buried in each position in turn.
+        let wrapped = |inner: &Expr| {
+            let inner = || Box::new(inner.clone());
+            let shallow = || Box::new(Expr::SelfAddr);
+            vec![
+                Expr::Not(inner()),
+                Expr::And(inner(), shallow()),
+                Expr::And(shallow(), inner()),
+                Expr::Or(inner(), shallow()),
+                Expr::Or(shallow(), inner()),
+                Expr::Eq(inner(), shallow()),
+                Expr::Eq(shallow(), inner()),
+                Expr::Lt(inner(), shallow()),
+                Expr::Lt(shallow(), inner()),
+                Expr::Contains {
+                    map: inner(),
+                    key: shallow(),
+                },
+                Expr::Contains {
+                    map: shallow(),
+                    key: inner(),
+                },
+                Expr::If {
+                    cond: inner(),
+                    then: shallow(),
+                    otherwise: shallow(),
+                },
+                Expr::If {
+                    cond: shallow(),
+                    then: inner(),
+                    otherwise: shallow(),
+                },
+                Expr::If {
+                    cond: shallow(),
+                    then: shallow(),
+                    otherwise: inner(),
+                },
+            ]
+        };
+        // One level down, so the chain that fits exactly still fits and
+        // the one at the bound no longer does.
+        for (admitted, refused) in wrapped(&nested_projection(MAX_EXPR_DEPTH - 1))
+            .into_iter()
+            .zip(wrapped(&nested_projection(MAX_EXPR_DEPTH)))
+        {
+            assert_bounded(
+                &one_method(signature_over(admitted)),
+                &one_method(signature_over(refused)),
+            );
+        }
     }
 
     #[test]

@@ -8,13 +8,14 @@
 //!
 //! What is *absent* from this type is load-bearing. `Sym` implements
 //! `Clone` and `Debug` and nothing else: no `PartialEq`, no `PartialOrd`,
-//! no `Deref`, no arithmetic, no conversion to a primitive. The DSL has no
-//! conditional — there is no `Expr::If` — so a declaration that branched on
-//! an input would be untraceable, and the trace would silently record
-//! whichever side ran. Leaving the comparison operators unimplemented turns
-//! that from a wrong answer into a type error. Data-dependent selection has
-//! a supported spelling: [`Sym::lookup`], which is what the DSL offers in
-//! place of a branch.
+//! no `Deref`, no arithmetic, no conversion to a primitive. A comparison
+//! written in a body is *lowered* — the macro reads it syntactically and
+//! builds the term — and a `Sym` that compared at Rust level would instead
+//! hand the body a real `bool` to branch on, at which point the trace
+//! records whichever side happened to run. Leaving the operators
+//! unimplemented turns that from a wrong answer into a type error, and
+//! leaves the judgment vocabulary — [`eq`], [`lt`], [`select`] and the
+//! rest — as the only way to say one.
 //!
 //! Kinds are a convenience over a dynamically typed evaluator, not a
 //! soundness claim: the evaluator type-checks every term anyway. Where the
@@ -69,6 +70,14 @@ pub struct Bucket;
 #[derive(Clone, Copy, Debug)]
 pub struct Seq;
 
+/// A judgment — what a predicate evaluates to.
+///
+/// The one kind with no [`ParamType`], and deliberately: no manifest
+/// argument carries a boolean, and the only boolean an export receives is
+/// a clause's own verdict.
+#[derive(Clone, Copy, Debug)]
+pub struct Flag;
+
 /// A kind the SDK cannot name statically — a tuple projection or a lookup
 /// result. Narrow it with [`Sym::cast`].
 #[derive(Clone, Copy, Debug)]
@@ -100,6 +109,9 @@ impl Kind for Bucket {
 impl Kind for Seq {
     const NAME: &'static str = "list";
 }
+impl Kind for Flag {
+    const NAME: &'static str = "bool";
+}
 impl Kind for Opaque {
     const NAME: &'static str = "opaque";
 }
@@ -114,7 +126,7 @@ impl Kind for Opaque {
 /// ```compile_fail
 /// # use hyperscale_vm_sdk::sym::{Amount, Sym};
 /// fn branch(fee: Sym<Amount>, floor: Sym<Amount>) {
-///     // The DSL has no conditional; `Sym` has no `PartialOrd`.
+///     // A judgment is lowered, never evaluated; `Sym` has no `PartialOrd`.
 ///     if fee > floor {
 ///         unimplemented!()
 ///     }
@@ -190,6 +202,20 @@ impl Sym<Seq> {
             key: Box::new(key.expr.clone()),
         })
     }
+
+    /// Whether the table holds `key` — the question [`Sym::lookup`]
+    /// answers destructively.
+    ///
+    /// What makes a miss handleable: guarding a lookup on this is what
+    /// turns a routing refusal into a default the package chose, and it
+    /// works because [`select`] evaluates only the arm it takes.
+    #[must_use]
+    pub fn contains<K: Kind>(&self, key: &Sym<K>) -> Sym<Flag> {
+        Sym::new(Expr::Contains {
+            map: Box::new(self.expr.clone()),
+            key: Box::new(key.expr.clone()),
+        })
+    }
 }
 
 impl Sym<Addr> {
@@ -229,6 +255,76 @@ pub fn nf_bucket(resource: &Sym<Addr>, ids: &Sym<Opaque>) -> Sym<Opaque> {
         resource: Box::new(resource.expr.clone()),
         ids: Box::new(ids.expr.clone()),
     })
+}
+
+/// Negation.
+#[must_use]
+pub fn not(value: &Sym<Flag>) -> Sym<Flag> {
+    Sym::new(Expr::Not(Box::new(value.expr.clone())))
+}
+
+/// Conjunction, short-circuiting on a false left operand.
+#[must_use]
+pub fn and(left: &Sym<Flag>, right: &Sym<Flag>) -> Sym<Flag> {
+    Sym::new(Expr::And(
+        Box::new(left.expr.clone()),
+        Box::new(right.expr.clone()),
+    ))
+}
+
+/// Disjunction, short-circuiting on a true left operand.
+#[must_use]
+pub fn or(left: &Sym<Flag>, right: &Sym<Flag>) -> Sym<Flag> {
+    Sym::new(Expr::Or(
+        Box::new(left.expr.clone()),
+        Box::new(right.expr.clone()),
+    ))
+}
+
+/// Structural equality.
+///
+/// Generic over both kinds for the reason [`Sym::cast`] exists: the DSL's
+/// own typing is dynamic where a projection or a lookup lands, and the
+/// evaluator refuses a mismatch at routing whatever the static kinds
+/// claimed.
+#[must_use]
+pub fn eq<A: Kind, B: Kind>(left: &Sym<A>, right: &Sym<B>) -> Sym<Flag> {
+    Sym::new(Expr::Eq(
+        Box::new(left.expr.clone()),
+        Box::new(right.expr.clone()),
+    ))
+}
+
+/// Strict ordering, over the two integer widths.
+#[must_use]
+pub fn lt<A: Kind, B: Kind>(left: &Sym<A>, right: &Sym<B>) -> Sym<Flag> {
+    Sym::new(Expr::Lt(
+        Box::new(left.expr.clone()),
+        Box::new(right.expr.clone()),
+    ))
+}
+
+/// Selection between two expressions.
+///
+/// Only the taken arm is evaluated, which is what lets one arm be an
+/// expression the other case would refuse.
+#[must_use]
+pub fn select<T: Kind, E: Kind>(
+    cond: &Sym<Flag>,
+    then: &Sym<T>,
+    otherwise: &Sym<E>,
+) -> Sym<Opaque> {
+    Sym::new(Expr::If {
+        cond: Box::new(cond.expr.clone()),
+        then: Box::new(then.expr.clone()),
+        otherwise: Box::new(otherwise.expr.clone()),
+    })
+}
+
+/// A boolean literal.
+#[must_use]
+pub const fn lit_bool(value: bool) -> Sym<Flag> {
+    Sym::new(Expr::Literal(Value::Bool(value)))
 }
 
 /// A `u64` literal.
@@ -273,9 +369,24 @@ pub fn expr_depth(expr: &Expr) -> usize {
         | Expr::SelfAddr
         | Expr::FreshId { .. }
         | Expr::FreshKey { .. } => 0,
-        Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) => expr_depth(inner),
-        Expr::Lookup { map, key } => expr_depth(map).max(expr_depth(key)),
+        Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) | Expr::Not(inner) => {
+            expr_depth(inner)
+        }
+        Expr::Lookup { map, key } | Expr::Contains { map, key } => {
+            expr_depth(map).max(expr_depth(key))
+        }
         Expr::Pack { hi, lo } => expr_depth(hi).max(expr_depth(lo)),
+        Expr::And(left, right)
+        | Expr::Or(left, right)
+        | Expr::Eq(left, right)
+        | Expr::Lt(left, right) => expr_depth(left).max(expr_depth(right)),
+        Expr::If {
+            cond,
+            then,
+            otherwise,
+        } => expr_depth(cond)
+            .max(expr_depth(then))
+            .max(expr_depth(otherwise)),
         Expr::NfBucket { resource, ids } => expr_depth(resource).max(expr_depth(ids)),
         Expr::List(elements) | Expr::Tuple(elements) => {
             elements.iter().map(expr_depth).max().unwrap_or(0)
@@ -296,14 +407,77 @@ pub fn expr_depth(expr: &Expr) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{Expr, SlotId};
+    use hyperscale_vm_effects::{Expr, SlotId, Value};
 
-    use super::{Addr, Bucket, Sym, expr_depth, lit_u64};
+    use super::{
+        Addr, Bucket, Flag, Kind, Seq, Sym, and, eq, expr_depth, lit_bool, lit_u64, lt, not, or,
+        select,
+    };
 
     #[test]
     fn a_leaf_is_depth_one() {
         assert_eq!(expr_depth(&Expr::SelfAddr), 1);
         assert_eq!(expr_depth(lit_u64(7).expr()), 1);
+    }
+
+    #[test]
+    fn a_judgment_claims_no_manifest_parameter() {
+        // No manifest argument carries a boolean, so the kind declines to
+        // claim one and the tracer's parameter check never matches it.
+        assert!(Flag::PARAM.is_none());
+    }
+
+    #[test]
+    fn the_judgment_constructors_build_their_terms() {
+        let table: Sym<Seq> = Sym::new(Expr::Config(0));
+        let key = lit_u64(7);
+        let guarded = select(&table.contains(&key), &table.lookup(&key), &lit_u64(0));
+        assert_eq!(
+            guarded.expr(),
+            &Expr::If {
+                cond: Box::new(Expr::Contains {
+                    map: Box::new(Expr::Config(0)),
+                    key: Box::new(Expr::Literal(Value::U64(7))),
+                }),
+                then: Box::new(Expr::Lookup {
+                    map: Box::new(Expr::Config(0)),
+                    key: Box::new(Expr::Literal(Value::U64(7))),
+                }),
+                otherwise: Box::new(Expr::Literal(Value::U64(0))),
+            }
+        );
+        let flag: Sym<Flag> = lit_bool(true);
+        assert_eq!(
+            or(&and(&flag, &not(&flag)), &eq(&key, &key)).expr(),
+            &Expr::Or(
+                Box::new(Expr::And(
+                    Box::new(Expr::Literal(Value::Bool(true))),
+                    Box::new(Expr::Not(Box::new(Expr::Literal(Value::Bool(true))))),
+                )),
+                Box::new(Expr::Eq(
+                    Box::new(Expr::Literal(Value::U64(7))),
+                    Box::new(Expr::Literal(Value::U64(7))),
+                )),
+            )
+        );
+    }
+
+    #[test]
+    fn depth_counts_a_judgment_the_way_the_evaluator_does() {
+        // Both arms are walked even though only one is evaluated: the
+        // bound is on the expression a signature carries, not on the
+        // path a call takes through it.
+        let shallow = lit_u64(0);
+        let deep = lt(&lit_u64(1), &not(&lit_bool(true)));
+        assert_eq!(expr_depth(deep.expr()), 3);
+        assert_eq!(
+            expr_depth(select(&lit_bool(true), &shallow, &deep).expr()),
+            4
+        );
+        assert_eq!(
+            expr_depth(select(&lit_bool(true), &deep, &shallow).expr()),
+            4
+        );
     }
 
     #[test]

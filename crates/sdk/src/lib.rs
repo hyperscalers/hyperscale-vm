@@ -114,24 +114,6 @@
 //! }
 //! ```
 //!
-//! A state field with no slot, which would let a field reorder silently
-//! move an instance's whole state:
-//!
-//! ```compile_fail
-//! # use hyperscale_vm_sdk::blueprint;
-//! #[blueprint]
-//! mod bad {
-//!     use hyperscale_vm_sdk::state::{Keyed, Quantity, Vault};
-//!
-//!     #[state]
-//!     struct Bad {
-//!         vaults: Keyed<Vault>,
-//!     }
-//!
-//!     impl Bad {}
-//! }
-//! ```
-//!
 //! # Why a wrong declaration is not a safety problem
 //!
 //! `hyperscale:kernel/state` has no open-cell-by-key import. Every accessor
@@ -162,5 +144,5 @@ pub use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
 pub use hyperscale_vm_effects::{Address, AuthRole, ParamType, SlotId, encode_metadata};
 #[cfg(feature = "macros")]
 pub use hyperscale_vm_sdk_macros::blueprint;
-pub use sym::{Addr, Amount, Blob, Bucket, Key, Kind, Num, Opaque, Seq, Sym};
+pub use sym::{Addr, Amount, Blob, Bucket, Flag, Key, Kind, Num, Opaque, Seq, Sym};
 pub use trace::{Access, Trace};

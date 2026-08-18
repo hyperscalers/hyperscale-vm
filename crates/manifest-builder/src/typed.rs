@@ -734,9 +734,23 @@ fn resolvable(expr: &Expr, known: &[bool], depth: usize) -> bool {
         // No `for-each` encloses an output expression, and no identity
         // exists to derive from yet.
         Expr::Binding(_) | Expr::FreshId { .. } | Expr::FreshKey { .. } => false,
-        Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) => deeper(inner),
-        Expr::Lookup { map, key } => deeper(map) && deeper(key),
+        Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) | Expr::Not(inner) => {
+            deeper(inner)
+        }
+        Expr::Lookup { map, key } | Expr::Contains { map, key } => deeper(map) && deeper(key),
         Expr::Pack { hi, lo } => deeper(hi) && deeper(lo),
+        Expr::And(left, right)
+        | Expr::Or(left, right)
+        | Expr::Eq(left, right)
+        | Expr::Lt(left, right) => deeper(left) && deeper(right),
+        // Which arm a conditional takes is a fact about arguments a graph
+        // under construction may not have yet, so both arms must resolve
+        // before the selection does.
+        Expr::If {
+            cond,
+            then,
+            otherwise,
+        } => deeper(cond) && deeper(then) && deeper(otherwise),
         Expr::NfBucket { resource, ids } => deeper(resource) && deeper(ids),
         Expr::List(elements) | Expr::Tuple(elements) => elements.iter().all(deeper),
         Expr::SelfResource { material } => material.iter().all(deeper),

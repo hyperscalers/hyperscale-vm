@@ -241,6 +241,7 @@ impl Printer<'_> {
             Value::Bytes(bytes) => format!("0x{}", hex(bytes)),
             Value::Address(address) => format!("@{}", self.address(*address)?),
             Value::Key(key) => self.key(key)?,
+            Value::Bool(flag) => flag.to_string(),
             // Never a manifest literal — a bucket arrives as an edge — so
             // this is only reachable through the escape hatch that lets a
             // caller write any value.
