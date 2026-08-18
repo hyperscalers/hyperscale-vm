@@ -1,0 +1,19 @@
+use hyperscale_vm_sdk::{Amount, Blueprint, ParamType, SlotId, Sym, Trace};
+
+fn main() {
+    let _ = Blueprint::builder()
+        .method("sweep", &[ParamType::U128], |t: &mut Trace| {
+            let owner = t.self_addr();
+            let cursor: Sym<Amount> = t.arg(0);
+            // A presence requirement is about the leaf a write lands on,
+            // and an interval has none: it stays valid whatever entries
+            // enter or leave it, which is what makes it declarable ahead
+            // of execution at all. So neither requirement is offered on
+            // one, and reaching for either is a type error rather than a
+            // published method the kernel would have to read past.
+            t.sweep(&owner, SlotId(16), &cursor, 4).create();
+            t.range(&owner, SlotId(16), &[], &cursor, &cursor, 4)
+                .existing();
+        })
+        .build();
+}

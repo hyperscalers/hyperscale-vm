@@ -1,10 +1,15 @@
-//! What `#[blueprint]` refuses, and where the message lands.
+//! What the authoring vocabulary refuses, and where the message lands.
 //!
-//! Every case is a body whose declaration would come out *smaller* than
-//! what the body does if the lowering guessed — a dropped effect, a stale
-//! key, an output the tail never declared. The macro's contract is that
-//! its only failure mode is a hard error on the offending line, so these
-//! pin the line as much as the refusal.
+//! Most cases are the macro's: a body whose declaration would come out
+//! *smaller* than what the body does if the lowering guessed — a dropped
+//! effect, a stale key, an output the tail never declared. The macro's
+//! contract is that its only failure mode is a hard error on the
+//! offending line, so these pin the line as much as the refusal.
+//!
+//! The rest are the declaring types' own, where nothing is guessing at
+//! anything: a target that does not offer what is being reached for, so
+//! the compiler answers before the macro has an opinion. Same
+//! instrument, same pinned line.
 
 use trybuild::TestCases;
 
@@ -16,6 +21,15 @@ fn the_lowering_refuses_what_it_cannot_see_into() {
     refuse.compile_fail("tests/refusals/closure.rs");
     refuse.compile_fail("tests/refusals/unknown_macro.rs");
     refuse.compile_fail("tests/refusals/untyped_credit.rs");
+}
+
+/// Not a lowering refusal but a type: a target that names no leaf does
+/// not offer a requirement about one, so the hand-written declaration
+/// path meets the same rule the macro path meets by construction.
+#[test]
+fn the_tracer_offers_a_presence_only_where_a_leaf_is_named() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/interval_presence.rs");
 }
 
 #[test]

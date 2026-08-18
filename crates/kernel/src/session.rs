@@ -141,17 +141,20 @@ pub enum MaterializeError {
     /// sound only where no version of the target differs.
     #[error("declared locked read of unlocked substate {0:?}")]
     UnlockedTarget(SubstateKey),
-    /// A write requiring the leaf absent, on a key the store holds.
+    /// A write requiring the leaf absent, on a target the store holds.
     ///
     /// The same class of verdict as an infeasible reservation, and at
     /// the same seam: a precondition on committed state, judged by the
-    /// shard that holds the cell, before any body observes anything.
+    /// shard that holds the leaf, before any body observes anything.
+    /// Carries the target rather than a key, because the two shapes that
+    /// name one leaf are a cell and a collection entry, and only one of
+    /// them is a key.
     #[error("a write requiring an absent leaf lands on occupied {0:?}")]
-    Occupied(SubstateKey),
-    /// A write requiring the leaf there, on a key the store does not
+    Occupied(EffectTarget),
+    /// A write requiring the leaf there, on a target the store does not
     /// hold.
     #[error("a write requiring a present leaf lands on absent {0:?}")]
-    Absent(SubstateKey),
+    Absent(EffectTarget),
     /// A declared reservation the committed balance cannot cover.
     #[error("reservation of {amount} on {key:?} is infeasible")]
     Infeasible {
@@ -700,15 +703,42 @@ impl KernelSession {
         // reservation's feasibility already is: over the committed
         // store, before the body runs, so a create that cannot create
         // aborts rather than trapping inside a guest.
+        //
+        // Exhaustive over the target shapes, never skipping one it does
+        // not read: a requirement this cannot honour is refused, because
+        // a declaration that states a precondition nothing enforces is
+        // worse than one that never published.
         for effect in declared.iter() {
-            let (EffectTarget::Point(key), Mode::Write { requires }) = (effect.target, effect.mode)
-            else {
+            let Mode::Write { requires } = effect.mode else {
                 continue;
             };
-            let held = store.read(key)?.is_some();
+            if requires == Presence::Either {
+                continue;
+            }
+            let held = match effect.target {
+                // The two shapes that name one leaf. An entry's presence
+                // is the same question a custody gate's possession read
+                // asks, over the same width-one interval.
+                EffectTarget::Point(key) => store.read(key)?.is_some(),
+                EffectTarget::Entry {
+                    owner,
+                    collection,
+                    order,
+                } => !store
+                    .entries_in_range(owner, collection, order, order, 1)?
+                    .is_empty(),
+                // An interval names no leaf for a requirement to be
+                // about — it stays valid whatever enters or leaves it,
+                // which is the property that makes it declarable at all.
+                // Refused at publish, and again here, because metadata
+                // can be authored rather than derived.
+                EffectTarget::Range { .. } => {
+                    return Err(MaterializeError::Unsupported(Box::new(effect)));
+                }
+            };
             match (requires, held) {
-                (Presence::Absent, true) => return Err(MaterializeError::Occupied(key)),
-                (Presence::Present, false) => return Err(MaterializeError::Absent(key)),
+                (Presence::Absent, true) => return Err(MaterializeError::Occupied(effect.target)),
+                (Presence::Present, false) => return Err(MaterializeError::Absent(effect.target)),
                 _ => {}
             }
         }
@@ -2154,54 +2184,131 @@ mod tests {
         set.iter().collect()
     }
 
+    /// Materialize one write over a store, for the presence tests.
+    fn presence_verdict(
+        store: MemoryStore,
+        target: EffectTarget,
+        requires: Presence,
+    ) -> Result<(), MaterializeError> {
+        let set = declared(&[Effect {
+            target,
+            mode: Mode::Write { requires },
+        }]);
+        let ordered = ord(&set);
+        KernelSession::materialize(
+            OverlayStore::new(Arc::new(store)),
+            &set,
+            &ordered,
+            &[],
+            tx(1),
+            env(),
+            hash,
+        )
+        .map(|_| ())
+    }
+
     /// A write says what it requires of the leaf, and the shard holding
-    /// the cell judges it before the body runs — the same seam, and the
+    /// the leaf judges it before the body runs — the same seam, and the
     /// same class of verdict, as an infeasible reservation.
+    ///
+    /// Both shapes that name one leaf answer, because the requirement is
+    /// about the leaf rather than about how the target spells it: a cell
+    /// and a collection entry are each exactly one.
     #[test]
     fn a_write_requiring_a_presence_the_leaf_does_not_have_refuses() {
-        let key = key(0xC1);
-        let write = |requires| Effect {
-            target: EffectTarget::Point(key),
-            mode: Mode::Write { requires },
+        let cell = EffectTarget::Point(key(0xC1));
+        let owner = Address::new([0xC1; 31], AddressClass::Component);
+        let collection = CollectionId([9; 16]);
+        let entry = EffectTarget::Entry {
+            owner,
+            collection,
+            order: 7,
         };
-        let materialize = |store: MemoryStore, requires| {
-            let set = declared(&[write(requires)]);
-            let ordered = ord(&set);
-            KernelSession::materialize(
-                OverlayStore::new(Arc::new(store)),
-                &set,
-                &ordered,
-                &[],
-                tx(1),
-                env(),
-                hash,
-            )
-            .map(|_| ())
-        };
-        let occupied = || {
+        let empty = |_: EffectTarget| MemoryStore::new();
+        let occupied = |target: EffectTarget| {
             let mut store = MemoryStore::new();
-            store.write(key, vec![7]).expect("seed");
+            match target {
+                EffectTarget::Point(key) => {
+                    store.write(key, vec![7]).expect("seed");
+                }
+                EffectTarget::Entry {
+                    owner,
+                    collection,
+                    order,
+                } => {
+                    store
+                        .entry_write(owner, collection, order, vec![7])
+                        .expect("seed");
+                }
+                EffectTarget::Range { .. } => unreachable!("not a leaf"),
+            }
             store
         };
 
-        // A create lands only where nothing is.
-        assert_eq!(materialize(MemoryStore::new(), Presence::Absent), Ok(()));
-        assert_eq!(
-            materialize(occupied(), Presence::Absent),
-            Err(MaterializeError::Occupied(key))
-        );
+        for target in [cell, entry] {
+            // A create lands only where nothing is.
+            assert_eq!(
+                presence_verdict(empty(target), target, Presence::Absent),
+                Ok(()),
+                "{target:?}"
+            );
+            assert_eq!(
+                presence_verdict(occupied(target), target, Presence::Absent),
+                Err(MaterializeError::Occupied(target)),
+                "{target:?}"
+            );
 
-        // And its dual.
-        assert_eq!(materialize(occupied(), Presence::Present), Ok(()));
-        assert_eq!(
-            materialize(MemoryStore::new(), Presence::Present),
-            Err(MaterializeError::Absent(key))
-        );
+            // And its dual.
+            assert_eq!(
+                presence_verdict(occupied(target), target, Presence::Present),
+                Ok(()),
+                "{target:?}"
+            );
+            assert_eq!(
+                presence_verdict(empty(target), target, Presence::Present),
+                Err(MaterializeError::Absent(target)),
+                "{target:?}"
+            );
 
-        // An ordinary write is indifferent, which is what every
-        // declaration that says nothing means.
-        assert_eq!(materialize(MemoryStore::new(), Presence::Either), Ok(()));
-        assert_eq!(materialize(occupied(), Presence::Either), Ok(()));
+            // An ordinary write is indifferent, which is what every
+            // declaration that says nothing means.
+            for store in [empty(target), occupied(target)] {
+                assert_eq!(
+                    presence_verdict(store, target, Presence::Either),
+                    Ok(()),
+                    "{target:?}"
+                );
+            }
+        }
+    }
+
+    /// An interval names no leaf, so a requirement about one is refused
+    /// rather than read past — the publish gate says the same, and this
+    /// is what holds for metadata that was authored rather than derived.
+    #[test]
+    fn a_presence_requirement_on_an_interval_refuses() {
+        let range = EffectTarget::Range {
+            owner: Address::new([0xC3; 31], AddressClass::Component),
+            collection: CollectionId([9; 16]),
+            lo: 0,
+            hi: u128::MAX,
+            cap: 4,
+        };
+        for requires in [Presence::Absent, Presence::Present] {
+            assert_eq!(
+                presence_verdict(MemoryStore::new(), range, requires),
+                Err(MaterializeError::Unsupported(Box::new(Effect {
+                    target: range,
+                    mode: Mode::Write { requires },
+                }))),
+                "{requires:?}"
+            );
+        }
+        // The indifferent one is every range write there has ever been.
+        assert_eq!(
+            presence_verdict(MemoryStore::new(), range, Presence::Either),
+            Ok(())
+        );
     }
 
     /// Two clauses on one cell are one access, and what it requires is

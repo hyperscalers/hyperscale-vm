@@ -764,6 +764,20 @@ pub enum DeclarationError {
     /// published.
     #[error("two write clauses on one target require opposite presences")]
     PresenceConflict,
+    /// A presence requirement on a target that names no single leaf.
+    ///
+    /// `Absent` and `Present` are what a write requires of *the leaf it
+    /// lands on*, and an interval has none: it stays valid whatever
+    /// entries enter or leave it, which is the property that makes it
+    /// declarable ahead of execution at all. A point and a collection
+    /// entry each name one leaf and carry the requirement; a range
+    /// carries only the indifferent one.
+    #[error("effect clause {clause} requires a presence of an interval, which names no leaf")]
+    PresenceOnInterval {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+    },
     /// A denomination list that does not line up with the parameters it
     /// indexes.
     #[error("{found} denominations against {expected} parameters")]
@@ -836,9 +850,27 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
             let clause_index = *next;
             *next = next.saturating_add(1);
             match clause {
-                Clause::Effect { target, .. } => {
+                Clause::Effect { target, mode, .. } => {
                     if !targets_own_prefix(target) {
                         return Err(DeclarationError::ForeignPrefix {
+                            clause: clause_index,
+                        });
+                    }
+                    // A presence requirement is about the leaf a write
+                    // lands on, and an interval has none. Refused here
+                    // so an author hears about it, and again at
+                    // materialization, which honours the requirement
+                    // rather than reading past it.
+                    if matches!(
+                        (target, mode),
+                        (
+                            TargetExpr::Range { .. },
+                            ModeExpr::Write {
+                                requires: Presence::Absent | Presence::Present,
+                            },
+                        )
+                    ) {
+                        return Err(DeclarationError::PresenceOnInterval {
                             clause: clause_index,
                         });
                     }
@@ -2173,6 +2205,59 @@ mod tests {
                 Err(DeclarationError::GatedTotality),
             );
         }
+    }
+
+    /// A presence requirement is about the leaf a write lands on, so the
+    /// targets that name one carry it and the interval does not. Refused
+    /// at publish, where an author hears about it — and again at
+    /// materialization, which honours the requirement rather than
+    /// reading past it.
+    #[test]
+    fn a_presence_requirement_needs_a_target_that_names_a_leaf() {
+        let declared = |target, requires| {
+            check_declarations(&MethodSignature {
+                effects: vec![Clause::Effect {
+                    target,
+                    mode: ModeExpr::Write { requires },
+                    denomination: None,
+                }],
+                ..MethodSignature::default()
+            })
+        };
+        let point = TargetExpr::Point(Expr::ChildKey {
+            owner: Box::new(Expr::SelfAddr),
+            slot: VAULT,
+            material: vec![],
+        });
+        let entry = TargetExpr::Entry {
+            owner: Expr::SelfAddr,
+            collection: SlotId(PACKAGE_SLOT_BASE),
+            material: vec![],
+            order: Expr::Literal(Value::U128(7)),
+        };
+        let range = TargetExpr::Range {
+            owner: Expr::SelfAddr,
+            collection: SlotId(PACKAGE_SLOT_BASE),
+            material: vec![],
+            lo: Expr::Literal(Value::U128(0)),
+            hi: Expr::Literal(Value::U128(u128::MAX)),
+            cap: 4,
+        };
+
+        for requires in [Presence::Absent, Presence::Present] {
+            // A cell and one collection entry each name exactly one leaf.
+            assert_eq!(declared(point.clone(), requires), Ok(()), "{requires:?}");
+            assert_eq!(declared(entry.clone(), requires), Ok(()), "{requires:?}");
+            // An interval names none.
+            assert_eq!(
+                declared(range.clone(), requires),
+                Err(DeclarationError::PresenceOnInterval { clause: 0 }),
+                "{requires:?}"
+            );
+        }
+
+        // The indifferent requirement is what every range write carries.
+        assert_eq!(declared(range, Presence::Either), Ok(()));
     }
 
     /// Metadata can be authored rather than derived, so the

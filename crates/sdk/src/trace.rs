@@ -229,12 +229,13 @@ impl Trace {
 
     /// Declare accesses to one substate leaf.
     #[must_use]
-    pub fn point(&mut self, key: &Sym<Key>) -> Access<'_> {
+    pub fn point(&mut self, key: &Sym<Key>) -> Access<'_, Leaf> {
         let target = TargetExpr::Point(self.lower(key.expr().clone()));
         Access {
             trace: self,
             target,
             denomination: None,
+            shape: core::marker::PhantomData,
         }
     }
 
@@ -250,7 +251,7 @@ impl Trace {
         collection: SlotId,
         material: &[Sym<Opaque>],
         order: &Sym<Amount>,
-    ) -> Access<'_> {
+    ) -> Access<'_, Leaf> {
         let target = TargetExpr::Entry {
             owner: self.lower(owner.expr().clone()),
             collection,
@@ -261,6 +262,7 @@ impl Trace {
             trace: self,
             target,
             denomination: None,
+            shape: core::marker::PhantomData,
         }
     }
 
@@ -287,7 +289,7 @@ impl Trace {
         owner: &Sym<Addr>,
         collection: SlotId,
         key: &Sym<Opaque>,
-    ) -> Access<'_> {
+    ) -> Access<'_, Leaf> {
         let owner_expr = self.lower(owner.expr().clone());
         let target = TargetExpr::Entry {
             owner: owner_expr.clone(),
@@ -303,6 +305,7 @@ impl Trace {
             trace: self,
             target,
             denomination: None,
+            shape: core::marker::PhantomData,
         }
     }
 
@@ -320,7 +323,7 @@ impl Trace {
         collection: SlotId,
         cursor: &Sym<Amount>,
         cap: u32,
-    ) -> Access<'_> {
+    ) -> Access<'_, Interval> {
         let target = TargetExpr::Range {
             owner: self.lower(owner.expr().clone()),
             collection,
@@ -333,6 +336,7 @@ impl Trace {
             trace: self,
             target,
             denomination: None,
+            shape: core::marker::PhantomData,
         }
     }
 
@@ -350,7 +354,7 @@ impl Trace {
         lo: &Sym<Amount>,
         hi: &Sym<Amount>,
         cap: u32,
-    ) -> Access<'_> {
+    ) -> Access<'_, Interval> {
         let target = TargetExpr::Range {
             owner: self.lower(owner.expr().clone()),
             collection,
@@ -363,6 +367,7 @@ impl Trace {
             trace: self,
             target,
             denomination: None,
+            shape: core::marker::PhantomData,
         }
     }
 
@@ -615,19 +620,41 @@ impl Trace {
     }
 }
 
+/// A target that names exactly one leaf: a cell, or one entry of a
+/// collection at a declared order key.
+///
+/// The shape a presence requirement can be about, which is why it is a
+/// type rather than a check — [`Access::create`] and [`Access::existing`]
+/// exist only on this one.
+#[derive(Clone, Copy, Debug)]
+pub struct Leaf;
+
+/// A target that names an interval of a collection's order-key space.
+///
+/// It stays valid whatever entries enter or leave it, which is what
+/// makes it declarable ahead of execution — and the same property is why
+/// there is no leaf for a presence requirement to be about.
+#[derive(Clone, Copy, Debug)]
+pub struct Interval;
+
 /// A target awaiting the mode it is accessed under.
 ///
 /// Splitting target from mode is what makes the declaration read as a
 /// sentence — `t.point(vault).write()` — and it makes the mode a required
 /// choice: there is no way to name a target without saying how it is
 /// touched.
-pub struct Access<'a> {
+///
+/// `Shape` is [`Leaf`] or [`Interval`], and it decides which modes the
+/// target can be reached under: every mode is on both, and the presence
+/// requirements are on the leaf alone.
+pub struct Access<'a, Shape> {
     trace: &'a mut Trace,
     target: TargetExpr,
     denomination: Option<Box<Expr>>,
+    shape: core::marker::PhantomData<fn() -> Shape>,
 }
 
-impl Access<'_> {
+impl<Shape> Access<'_, Shape> {
     fn declare(self, mode: ModeExpr) {
         self.trace.emit(Clause::Effect {
             target: self.target,
@@ -687,7 +714,13 @@ impl Access<'_> {
             requires: Presence::Either,
         });
     }
+}
 
+/// What a write can require of the leaf it lands on — so, only where the
+/// target names one. An interval offers neither, which is what makes a
+/// requirement nothing could judge a compile error rather than a publish
+/// refusal.
+impl Access<'_, Leaf> {
     /// The same write, feasible only where the leaf is absent: the
     /// creation a one-way door is made of.
     pub fn create(self) {

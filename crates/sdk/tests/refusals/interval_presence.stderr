@@ -1,0 +1,22 @@
+error[E0599]: no method named `create` found for struct `Access<'_, hyperscale_vm_sdk::Interval>` in the current scope
+  --> tests/refusals/interval_presence.rs:14:53
+   |
+14 |             t.sweep(&owner, SlotId(16), &cursor, 4).create();
+   |                                                     ^^^^^^
+   |
+help: there is a method `read` with a similar name
+   |
+14 -             t.sweep(&owner, SlotId(16), &cursor, 4).create();
+14 +             t.sweep(&owner, SlotId(16), &cursor, 4).read();
+   |
+
+error[E0599]: no method named `existing` found for struct `Access<'_, hyperscale_vm_sdk::Interval>` in the current scope
+  --> tests/refusals/interval_presence.rs:16:18
+   |
+15 | /             t.range(&owner, SlotId(16), &[], &cursor, &cursor, 4)
+16 | |                 .existing();
+   | |                 -^^^^^^^^ method not found in `Access<'_, hyperscale_vm_sdk::Interval>`
+   | |_________________|
+   |
+   |
+   = note: the method was found for `Access<'_, Leaf>`
