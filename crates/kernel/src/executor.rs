@@ -626,39 +626,35 @@ fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
 /// what it was judged against rather than a class.
 impl From<MaterializeError> for Outcome {
     fn from(defect: MaterializeError) -> Self {
-        materialize_abort(defect)
-    }
-}
-
-fn materialize_abort(defect: MaterializeError) -> Outcome {
-    match defect {
-        MaterializeError::Infeasible { key, amount } => Outcome::Infeasible { key, amount },
-        MaterializeError::HeldMismatch(_) => Outcome::ProtocolError {
-            reason: AbortReason::ReservationMismatch,
-        },
-        MaterializeError::Store(store) => Outcome::ProtocolError {
-            reason: store.into(),
-        },
-        MaterializeError::Unsupported(_) => Outcome::UserError {
-            reason: AbortReason::EffectUnsupported,
-        },
-        MaterializeError::MutationOfLocked(_) => Outcome::UserError {
-            reason: AbortReason::MutationOfLocked,
-        },
-        MaterializeError::UnlockedTarget(_) => Outcome::UserError {
-            reason: AbortReason::LockedReadOfUnlocked,
-        },
-        MaterializeError::SelfConflicting(_) => Outcome::UserError {
-            reason: AbortReason::SelfConflictingModes,
-        },
-        MaterializeError::Occupied(target) => Outcome::PresenceUnmet {
-            target,
-            required: Presence::Absent,
-        },
-        MaterializeError::Absent(target) => Outcome::PresenceUnmet {
-            target,
-            required: Presence::Present,
-        },
+        match defect {
+            MaterializeError::Infeasible { key, amount } => Self::Infeasible { key, amount },
+            MaterializeError::HeldMismatch(_) => Self::ProtocolError {
+                reason: AbortReason::ReservationMismatch,
+            },
+            MaterializeError::Store(store) => Self::ProtocolError {
+                reason: store.into(),
+            },
+            MaterializeError::Unsupported(_) => Self::UserError {
+                reason: AbortReason::EffectUnsupported,
+            },
+            MaterializeError::MutationOfLocked(_) => Self::UserError {
+                reason: AbortReason::MutationOfLocked,
+            },
+            MaterializeError::UnlockedTarget(_) => Self::UserError {
+                reason: AbortReason::LockedReadOfUnlocked,
+            },
+            MaterializeError::SelfConflicting(_) => Self::UserError {
+                reason: AbortReason::SelfConflictingModes,
+            },
+            MaterializeError::Occupied(target) => Self::PresenceUnmet {
+                target,
+                required: Presence::Absent,
+            },
+            MaterializeError::Absent(target) => Self::PresenceUnmet {
+                target,
+                required: Presence::Present,
+            },
+        }
     }
 }
 
@@ -725,7 +721,7 @@ fn run_group<R: GuestRunner>(
                 session.with_locality(locality.clone())
             }
             Err(defect) => {
-                receipts.push((entry.tx, abort_receipt(materialize_abort(defect), 0)));
+                receipts.push((entry.tx, abort_receipt(defect.into(), 0)));
                 store = before;
                 continue;
             }
@@ -1102,7 +1098,7 @@ mod tests {
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
 
-    use super::{BatchTx, Outcome, conflict_groups, materialize_abort, merge, root};
+    use super::{BatchTx, Outcome, conflict_groups, merge, root};
     use crate::conflict::conflicts;
     use crate::modes::{ModeError, TxHash};
     use crate::session::MaterializeError;
@@ -1263,7 +1259,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    materialize_abort(sender_fault.clone()),
+                    Outcome::from(sender_fault.clone()),
                     Outcome::UserError { .. }
                 ),
                 "{sender_fault:?} is the sender's declaration defect"
@@ -1277,7 +1273,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    materialize_abort(kernel_defect.clone()),
+                    Outcome::from(kernel_defect.clone()),
                     Outcome::ProtocolError { .. }
                 ),
                 "{kernel_defect:?} is our own bookkeeping"
