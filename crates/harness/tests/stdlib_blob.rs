@@ -400,7 +400,7 @@ const ENTRANT: Address = Address::new([5; 31], AddressClass::Component);
 
 /// The lottery's settled-round cell and its entrants collection.
 fn draw_key() -> SubstateKey {
-    child_key(&TestHasher, LOTTERY, lottery::DRAW, &[])
+    child_key(&TestHasher, LOTTERY, lottery::OUTCOME, &[])
 }
 
 fn ticket_collection() -> CollectionId {

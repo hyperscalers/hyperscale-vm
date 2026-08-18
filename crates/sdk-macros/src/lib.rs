@@ -192,36 +192,31 @@ fn element_of(ty: &syn::Type) -> Option<syn::Type> {
 }
 
 /// The state field's slot and shape, read off its declaration.
-fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
+fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
     let name = field
         .ident
         .as_ref()
         .ok_or_else(|| syn::Error::new(field.span(), "a state field must be named"))?
         .to_string();
 
-    let mut slot = None;
+    let mut pinned = None;
     let mut denomination = None;
     for attr in &field.attrs {
         if attr.path().is_ident("slot") {
             let literal: syn::LitInt = attr.parse_args()?;
-            slot = Some(literal.base10_parse::<u16>()?);
+            pinned = Some(literal.base10_parse::<u16>()?);
         }
         if attr.path().is_ident("denomination") {
             denomination = Some(attr.parse_args::<syn::Expr>()?);
         }
     }
-    // Roles are explicit rather than positional. A package's own leaves sit
-    // under the same owner as the protocol's, so a number carries which of
-    // the two a field means — and a system package, whose objects outlive
-    // the version that wrote them, needs the number to hold across one.
-    let slot = slot.ok_or_else(|| {
-        syn::Error::new(
-            field.span(),
-            "a state field needs an explicit `#[slot(n)]` — the slot is hashed into every \
-             key under this field, and it says whether the field is the package's own or \
-             one of the protocol's cells under the same owner",
-        )
-    })?;
+    // A slot an author does not pin is the next of the package's own, in
+    // declaration order. Safe because a user package is immutable and its
+    // instance addresses commit to its hash: reordering fields produces a
+    // different package at a different address rather than relocating
+    // anything live. A system package upgrades in place under one address
+    // and pins every slot, which is what `#[slot(n)]` is left for.
+    let slot = pinned.unwrap_or(next);
 
     let syn::Type::Path(path) = &field.ty else {
         return Err(syn::Error::new(field.ty.span(), "unsupported state type"));
@@ -609,6 +604,11 @@ fn parse_state(
     // field itself fixes. Two fields agreeing on both are one leaf under
     // two names, which no accessor can tell apart afterwards.
     let mut named: BTreeMap<(u16, String), String> = BTreeMap::new();
+    // The package band's next free slot. A pinned slot advances it too,
+    // so an unpinned field never lands on one a later pin also names —
+    // the collision that remains is a pin *below* the counter, which the
+    // duplicate check below reports on the line that wrote it.
+    let mut next = PACKAGE_SLOT_BASE;
     for item in items {
         let syn::Item::Struct(item) = item else {
             continue;
@@ -618,7 +618,10 @@ fn parse_state(
         }
         state_name = Some(item.ident.clone());
         for field in &item.fields {
-            let (name, parsed) = parse_field(field)?;
+            let (name, parsed) = parse_field(field, next)?;
+            if parsed.slot >= PACKAGE_SLOT_BASE {
+                next = next.max(parsed.slot + 1);
+            }
             let material = parsed
                 .denomination
                 .as_ref()
@@ -1122,10 +1125,15 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     let errors = error_names(items);
     let methods = lower_methods(items, &state_name, &fields, &config_fields, serves)?;
     let calls: Vec<_> = methods.iter().map(|m| &m.client).collect();
+    let slots: BTreeMap<String, u16> = fields
+        .iter()
+        .map(|(name, field)| (name.clone(), field.slot))
+        .collect();
     let client = client::module(
         &state_name,
         config_name.as_ref(),
         &config_fields,
+        &slots,
         serves,
         &calls,
     );

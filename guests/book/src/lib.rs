@@ -38,7 +38,6 @@ pub mod book {
     struct Book {
         /// The standing ladder: a quantity of base per entry, which is a
         /// number the book records rather than value it holds.
-        #[slot(16)]
         asks: Ordered<Quantity>,
         /// What makers escrow and takers buy.
         #[slot(1)]

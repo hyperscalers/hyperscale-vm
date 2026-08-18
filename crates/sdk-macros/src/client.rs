@@ -13,6 +13,8 @@
 //! every principal by class — so there is nothing a handle could check
 //! and the wrappers are free functions over the address itself.
 
+use std::collections::BTreeMap;
+
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 
@@ -317,14 +319,39 @@ fn config_values(config: &syn::Ident, fields: &[(String, syn::Type)]) -> TokenSt
     )
 }
 
+/// One `pub const` per declared state field, at the slot the numbering
+/// gave it.
+///
+/// A consumer keying a leaf under a package names the field it belongs
+/// to. The alternative is the number, written out beside the package and
+/// agreeing with it until it does not — which is the drift the whole
+/// derivation exists to remove, and the reason the slot is emitted rather
+/// than documented.
+fn slots(fields: &BTreeMap<String, u16>) -> Vec<TokenStream2> {
+    let slot_id = sdk("SlotId");
+    fields
+        .iter()
+        .map(|(name, slot)| {
+            let konst = format_ident!("{}", name.to_uppercase());
+            let doc = format!("The slot `{name}` sits under.");
+            quote!(
+                #[doc = #doc]
+                pub const #konst: #slot_id = #slot_id(#slot);
+            )
+        })
+        .collect()
+}
+
 /// The package's calling surface.
 pub fn module(
     handle: &syn::Ident,
     config: Option<&syn::Ident>,
     config_fields: &[(String, syn::Type)],
+    fields: &BTreeMap<String, u16>,
     serves: Serves,
     methods: &[&Method],
 ) -> TokenStream2 {
+    let slots = slots(fields);
     let calls: Vec<_> = methods
         .iter()
         .flat_map(|method| wrappers(method, serves))
@@ -428,9 +455,12 @@ pub fn module(
         ///
         /// One wrapper per method, derived from the method itself: the
         /// published name, the parameter kinds, the output count and the
-        /// gate are all facts the declaration already carries.
+        /// gate are all facts the declaration already carries — and one
+        /// constant per state field, at the slot the numbering gave it.
         #[cfg(not(target_arch = "wasm32"))]
         pub mod client {
+            #(#slots)*
+
             #surface
         }
     )

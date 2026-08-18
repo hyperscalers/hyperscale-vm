@@ -75,7 +75,6 @@ pub mod shares {
         assets: Cell<Vault>,
         /// Shares in circulation, which is what a redemption is priced
         /// against.
-        #[slot(17)]
         supply: Cell<Quantity>,
     }
 

@@ -2782,7 +2782,12 @@ fn ticket_order(who: PrincipalAddr) -> u128 {
 /// The lottery's settled-round cell.
 fn draw_cell(store: &mut MemoryStore) -> Option<Vec<u8>> {
     store
-        .read(child_key(&TestHasher, lottery_addr(), lottery::DRAW, &[]))
+        .read(child_key(
+            &TestHasher,
+            lottery_addr(),
+            lottery::OUTCOME,
+            &[],
+        ))
         .unwrap()
 }
 
@@ -2916,7 +2921,7 @@ fn shares_store() -> MemoryStore {
 
 /// The vault's circulating-supply leaf.
 fn supply_leaf(owner: impl Into<Address>) -> SubstateKey {
-    child_key(&TestHasher, owner, SlotId(17), &[])
+    child_key(&TestHasher, owner, shares::SUPPLY, &[])
 }
 
 /// A deposit and a redemption of what it bought, on both runtimes, over a

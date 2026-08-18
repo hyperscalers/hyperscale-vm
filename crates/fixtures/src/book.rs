@@ -14,14 +14,10 @@ use hyperscale_vm_effects::PackageMetadata;
 #[path = "../../../guests/book/src/lib.rs"]
 mod package;
 
-use hyperscale_vm_effects::{SlotId, package_slot};
 pub use package::book::client::*;
 
 /// The entry cap the book's fill range declares.
 pub const FILL_CAP: u32 = 64;
-
-/// The order book's ask-side ordered collection.
-pub const ASKS: SlotId = package_slot(0);
 
 /// The package's declaration, traced from its own module.
 #[must_use]

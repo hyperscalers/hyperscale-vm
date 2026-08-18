@@ -39,13 +39,9 @@ pub mod lottery {
     #[state]
     struct Lottery {
         /// One entry per entrant, at the entrant's hashed order, so a
-        /// second entry from one address lands on its own ticket. The
-        /// role is the package band's first, which is what
-        /// `package_slot(0)` names.
-        #[slot(16)]
+        /// second entry from one address lands on its own ticket.
         tickets: Unordered<Vec<u8>>,
         /// The settled round: the draw, and the entrant it selected.
-        #[slot(17)]
         outcome: Cell<Vec<u8>>,
         #[slot(1)]
         vaults: Keyed<Vault>,
