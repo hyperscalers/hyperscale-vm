@@ -1030,25 +1030,28 @@ pub(crate) fn admit_intents(
                 };
                 Some((minted, AuthorityGate::Custody { cell, possession }))
             }
-            GateShape::Open | GateShape::Identity(_) | GateShape::Rule { .. } => None,
+            GateShape::Open | GateShape::Guarded(_) | GateShape::Rule { .. } => None,
         };
         // The gate this call is judged against, over the same inputs the
         // output types evaluate against: what the target itself names,
         // never what the caller claims.
         let authority = match gate {
             GateShape::Open => None,
-            GateShape::Custody { .. } => custody.as_ref().map(|(_, gate)| *gate),
-            GateShape::Identity(expr) => {
-                let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
-                    AdmissionError::Eval {
-                        node: node_index,
-                        source,
-                    }
+            GateShape::Custody { .. } => custody.as_ref().map(|(_, gate)| gate.clone()),
+            GateShape::Guarded(rule) => {
+                // Every leaf, over the same inputs the output types
+                // evaluate against — the shape is the declaration's and
+                // only the claims are computed.
+                let rule = rule.evaluate(&mut |expr| {
+                    let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
+                        AdmissionError::Eval {
+                            node: node_index,
+                            source,
+                        }
+                    })?;
+                    Presented::of(&value).ok_or(AdmissionError::AuthorityType { node: node_index })
                 })?;
-                match Presented::of(&value) {
-                    Some(claim) => Some(AuthorityGate::Identity(claim)),
-                    None => return Err(AdmissionError::AuthorityType { node: node_index }),
-                }
+                Some(AuthorityGate::Presented(rule))
             }
             GateShape::Rule { cell, role } => {
                 let value = evaluate_expr(cell, &eval_inputs, hasher).map_err(|source| {

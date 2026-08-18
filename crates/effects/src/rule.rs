@@ -16,6 +16,7 @@
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 
+use crate::dsl::Expr;
 use crate::presented::Presented;
 
 /// The bound on a rule's nesting depth: a lone identity is one, a
@@ -135,6 +136,99 @@ impl Rule {
     /// past either cap, or a degenerate threshold.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, DecodeError> {
         from_slice_with_depth(bytes, MAX_RULE_WIRE_DEPTH)
+    }
+}
+
+/// The declaring side of the same vocabulary: a rule whose leaves are
+/// expressions over a method's own inputs.
+///
+/// A compile-time gate had `evidence.contains` and nothing else while a
+/// stored one had the whole threshold algebra, so an object whose admins
+/// are fixed at publish could not say "two of these three" and an
+/// account whose keys are stored could. Nothing justified the split.
+///
+/// Authored as its own tree rather than an expression evaluating to a
+/// rule: a rule-valued expression would let a rule's *shape* depend on
+/// evaluation, so the depth a signature declares could not be bounded at
+/// publish. Here the shape is static and only the leaves evaluate, which
+/// is what lets [`check_signature_bounds`] hold an authored tree to the
+/// same caps the decode gate holds a stored one to.
+///
+/// [`check_signature_bounds`]: crate::metadata::check_metadata
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub enum RuleExpr {
+    /// Satisfied by the claim this expression names, read off the value's
+    /// own class.
+    Require(Expr),
+    /// Satisfied when enough branches are.
+    CountOf {
+        /// How many of `rules` must be satisfied.
+        count: u8,
+        /// The branches, each judged independently over the same
+        /// presented set.
+        #[hbor(max = MAX_RULE_BRANCHES)]
+        rules: Vec<Self>,
+    },
+}
+
+impl RuleExpr {
+    /// Whether any leaf reads what the caller supplies.
+    ///
+    /// A caller who names the claim they must present can always present
+    /// it, so the method reads as guarded and admits everyone. Every
+    /// leaf answers, because one caller-named branch of a threshold is
+    /// one branch the caller satisfies for free.
+    #[must_use]
+    pub fn reads_call_inputs(&self) -> bool {
+        match self {
+            Self::Require(claim) => claim.reads_call_inputs(),
+            Self::CountOf { rules, .. } => rules.iter().any(Self::reads_call_inputs),
+        }
+    }
+
+    /// Whether the tree sits inside the caps a stored rule is decoded
+    /// under, so a signature that passes bounds cannot evaluate into a
+    /// rule the decode gate would refuse.
+    ///
+    /// The degenerate thresholds go with them: a count of zero admits
+    /// anyone and a count past the branch list admits no one, and
+    /// neither is a gate anybody meant to write.
+    #[must_use]
+    pub fn within_caps(&self, depth: usize) -> bool {
+        if depth >= MAX_RULE_DEPTH {
+            return false;
+        }
+        match self {
+            Self::Require(_) => true,
+            Self::CountOf { count, rules } => {
+                *count >= 1
+                    && usize::from(*count) <= rules.len()
+                    && rules.len() <= MAX_RULE_BRANCHES
+                    && rules.iter().all(|rule| rule.within_caps(depth + 1))
+            }
+        }
+    }
+
+    /// The concrete rule this declares, with every leaf evaluated.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `evaluate` refuses: a leaf that does not evaluate, or one
+    /// whose value names no claim.
+    pub fn evaluate<E>(
+        &self,
+        evaluate: &mut impl FnMut(&Expr) -> Result<Presented, E>,
+    ) -> Result<Rule, E> {
+        Ok(match self {
+            Self::Require(claim) => Rule::Require(evaluate(claim)?),
+            Self::CountOf { count, rules } => Rule::CountOf {
+                count: *count,
+                rules: rules
+                    .iter()
+                    .map(|rule| rule.evaluate(evaluate))
+                    .collect::<Result<_, _>>()?,
+            },
+        })
     }
 }
 

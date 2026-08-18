@@ -293,7 +293,7 @@ impl<'a> TypedBuilder<'a> {
         method: &str,
         args: impl Args,
     ) -> Result<Outputs, TypedError> {
-        self.append(target.into(), method, args, None)
+        self.append(target.into(), method, args, &[])
             .map(|(_, outputs)| outputs)
     }
 
@@ -316,7 +316,33 @@ impl<'a> TypedBuilder<'a> {
         method: &str,
         args: impl Args,
     ) -> Result<Outputs, TypedError> {
-        self.append(target.into(), method, args, Some(proof))
+        self.append(target.into(), method, args, &[proof])
+            .map(|(_, outputs)| outputs)
+    }
+
+    /// The same call, presenting every proof in `proofs`.
+    ///
+    /// What a threshold gate takes: satisfying two of three means
+    /// presenting two, and each is a node of its own earlier in the same
+    /// intent. One proof is [`call_as`](Self::call_as); this is the
+    /// general form behind it.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::UnexpectedEvidence`] on a method that admits
+    /// anyone, and everything [`call`](Self::call) refuses.
+    ///
+    /// # Panics
+    ///
+    /// As [`call`](Self::call).
+    pub fn call_presenting(
+        &mut self,
+        proofs: &[Proof],
+        target: impl Into<CallTarget>,
+        method: &str,
+        args: impl Args,
+    ) -> Result<Outputs, TypedError> {
+        self.append(target.into(), method, args, proofs)
             .map(|(_, outputs)| outputs)
     }
 
@@ -341,7 +367,7 @@ impl<'a> TypedBuilder<'a> {
         target: impl Into<CallTarget>,
         method: &str,
     ) -> Result<Proof, TypedError> {
-        self.mint(target.into(), method, (), None)
+        self.mint(target.into(), method, (), &[])
     }
 
     /// A minting call with arguments — a custodial method takes the
@@ -360,7 +386,7 @@ impl<'a> TypedBuilder<'a> {
         method: &str,
         args: A,
     ) -> Result<Proof, TypedError> {
-        self.mint(target.into(), method, args, None)
+        self.mint(target.into(), method, args, &[])
     }
 
     /// The same sign-in, presenting `proof` instead of the intent's
@@ -382,7 +408,7 @@ impl<'a> TypedBuilder<'a> {
         target: impl Into<CallTarget>,
         method: &str,
     ) -> Result<Proof, TypedError> {
-        self.mint(target.into(), method, (), Some(proof))
+        self.mint(target.into(), method, (), &[proof])
     }
 
     fn mint<A: Args>(
@@ -390,7 +416,7 @@ impl<'a> TypedBuilder<'a> {
         target: CallTarget,
         method: &str,
         args: A,
-        proof: Option<Proof>,
+        proofs: &[Proof],
     ) -> Result<Proof, TypedError> {
         let (_, signature) = self.resolve(target, method)?;
         if !signature.accessibility.mints() {
@@ -398,7 +424,7 @@ impl<'a> TypedBuilder<'a> {
                 method: method.to_owned(),
             });
         }
-        let (node, outputs) = self.append(target, method, args, proof)?;
+        let (node, outputs) = self.append(target, method, args, proofs)?;
         outputs.none()?;
         Ok(Proof { node, target })
     }
@@ -434,7 +460,7 @@ impl<'a> TypedBuilder<'a> {
         target: CallTarget,
         method: &str,
         args: impl Args,
-        proof: Option<Proof>,
+        proofs: &[Proof],
     ) -> Result<(u32, Outputs), TypedError> {
         let (meta, signature) = self.resolve(target, method)?;
         let hasher = self.hasher;
@@ -459,18 +485,20 @@ impl<'a> TypedBuilder<'a> {
 
         // The signature says which methods take evidence at all, so no
         // call site has to. Signing in starts from the intent's
-        // signature; everything guarded takes a proof minted earlier.
-        let evidence = match (signature.accessibility.requires_evidence(), proof) {
-            (false, None) => BTreeSet::new(),
-            (false, Some(_)) => {
+        // signature; everything guarded presents proofs minted earlier —
+        // more than one where the gate is a threshold, since satisfying
+        // two of three means presenting two.
+        let evidence = match (signature.accessibility.requires_evidence(), proofs) {
+            (false, []) => BTreeSet::new(),
+            (false, _) => {
                 return Err(TypedError::UnexpectedEvidence {
                     method: method.to_owned(),
                 });
             }
-            (true, Some(proof)) => BTreeSet::from([EvidenceRef::Node(proof.node)]),
-            // A signature signs in, so it reaches only a gate that reads
-            // a rule; an identity a declaration names takes a proof.
-            (true, None) => {
+            (true, []) => {
+                // A signature signs in, so it reaches only a gate that
+                // reads a rule; a claim a declaration names takes a
+                // proof.
                 if !signature.accessibility.reads_a_rule() {
                     return Err(TypedError::SignatureForGuarded {
                         method: method.to_owned(),
@@ -478,6 +506,10 @@ impl<'a> TypedBuilder<'a> {
                 }
                 BTreeSet::from([EvidenceRef::IntentSignature])
             }
+            (true, presented) => presented
+                .iter()
+                .map(|proof| EvidenceRef::Node(proof.node))
+                .collect(),
         };
         let outputs = resources.len();
         let producer = self

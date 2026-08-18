@@ -321,10 +321,10 @@ fn gated(
 /// bytes to [`AuthCell::admits`], the verdict this gate shares with the
 /// payer shard's binding check, judged at the transaction clock.
 fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, SessionTrap> {
-    match call.authority {
+    match &call.authority {
         None => Ok(true),
-        Some(AuthorityGate::Identity(required)) => Ok(call.evidence.contains(&required)),
-        Some(AuthorityGate::StoredRule { cell, role }) => {
+        Some(AuthorityGate::Presented(rule)) => Ok(rule.satisfied_by(&call.evidence)),
+        &Some(AuthorityGate::StoredRule { cell, role }) => {
             let bytes = session.declared_cell(cell)?;
             let clock = session.clock_ms();
             Ok(AuthCell::admits(
@@ -335,7 +335,7 @@ fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, Sess
                 clock,
             ))
         }
-        Some(AuthorityGate::Custody { cell, possession }) => {
+        &Some(AuthorityGate::Custody { cell, possession }) => {
             // The holder acts — its stored primary judges the presented
             // set exactly as a sign-in would — and the holder holds what
             // the claim names: value in the badge-keyed vault, or the

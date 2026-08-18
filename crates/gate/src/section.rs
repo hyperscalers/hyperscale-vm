@@ -63,8 +63,8 @@ mod tests {
     use hyperscale_vm_effects::{
         Accessibility, Address, AddressClass, Clause, EdgeContent, Expr, LocalKey,
         MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_VALUE_DEPTH,
-        METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType, RoleId, SubstateKey, TargetExpr,
-        Totality, Value,
+        METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType, RoleId, RuleExpr, SubstateKey,
+        TargetExpr, Totality, Value,
     };
     use hyperscale_vm_fixtures::{amm, book, splitter};
     use hyperscale_vm_stdlib::account;
@@ -168,7 +168,7 @@ mod tests {
         // each expression form, each target form, each mode, a nested
         // for-each body, a call site, and a deep literal.
         let signature = MethodSignature {
-            accessibility: Accessibility::Guarded(Expr::SelfAddr),
+            accessibility: Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
             totality: Totality::Fallible,
             issues: None,
             abi: Vec::new(),

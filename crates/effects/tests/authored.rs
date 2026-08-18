@@ -6,7 +6,7 @@
 //! defining the rules.
 
 use hyperscale_vm_effects::{
-    Accessibility, AuthRole, CustodyClaim, Expr, PackageMetadata, Value, check_abi,
+    Accessibility, AuthRole, CustodyClaim, Expr, PackageMetadata, RuleExpr, Value, check_abi,
     check_declarations,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, splitter};
@@ -91,17 +91,17 @@ fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> 
         (
             "account",
             "securify",
-            Accessibility::Guarded(Expr::SelfAddr),
+            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
         ),
         (
             "account",
             "withdraw",
-            Accessibility::Guarded(Expr::SelfAddr),
+            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
         ),
         (
             "account",
             "withdraw-nf",
-            Accessibility::Guarded(Expr::SelfAddr),
+            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
         ),
         ("amm", "swap", Accessibility::Public),
         ("book", "fill-asks", Accessibility::Public),
@@ -112,38 +112,38 @@ fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> 
         (
             "staking",
             "cast-param-vote",
-            Accessibility::Guarded(Expr::SelfResource {
+            Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
                 material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-            }),
+            })),
         ),
         (
             "staking",
             "clear-param-vote",
-            Accessibility::Guarded(Expr::SelfResource {
+            Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
                 material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-            }),
+            })),
         ),
         (
             "staking",
             "deactivate-validator",
-            Accessibility::Guarded(Expr::SelfResource {
+            Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
                 material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-            }),
+            })),
         ),
         (
             "staking",
             "register-validator",
-            Accessibility::Guarded(Expr::SelfResource {
+            Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
                 material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-            }),
+            })),
         ),
         ("staking", "stake", Accessibility::Public),
         (
             "staking",
             "unjail",
-            Accessibility::Guarded(Expr::SelfResource {
+            Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
                 material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-            }),
+            })),
         ),
         ("staking", "unstake", Accessibility::Public),
     ]

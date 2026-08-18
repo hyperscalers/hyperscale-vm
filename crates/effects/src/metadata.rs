@@ -15,7 +15,7 @@ use crate::dsl::{
 use crate::hash::{Hash32, Hasher};
 use crate::invoke::EdgeKind;
 use crate::resource::holdings_entry;
-use crate::rule::Rule;
+use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule, RuleExpr};
 use crate::types::{
     Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, RoleId, SubstateKey,
     Value, child_key, component_address, config_hash,
@@ -205,19 +205,22 @@ pub enum Accessibility {
     /// supplies is the caller's own, gated wherever it was obtained.
     #[default]
     Public,
-    /// Naming this method requires presenting the identity this
-    /// expression evaluates to, over the target's own inputs.
+    /// Naming this method requires satisfying this rule, over the
+    /// target's own inputs.
     ///
-    /// `SelfAddr` is a method only the target itself may be made to
-    /// perform; a configuration slot is how an object nobody owns admits
-    /// somebody, since a pool's address derives from no key while a
-    /// configured field can name an identity that does.
+    /// `Require(SelfAddr)` is a method only the target itself may be
+    /// made to perform; a configuration slot is how an object nobody
+    /// owns admits somebody, since a pool's address derives from no key
+    /// while a configured field can name a claim that does. A threshold
+    /// over configured slots is how a fixed admin set says "two of these
+    /// three" — the same algebra a stored rule has, on the side that
+    /// declares rather than stores.
     ///
-    /// Every identity a method can require is one the target itself
-    /// names, so an authority verdict never reaches state under a prefix
-    /// the manifest did not name. Authority held by somebody else is a
-    /// call to *them*, which the manifest writes down like any other.
-    Guarded(Expr),
+    /// Every claim a method can require is one the target itself names,
+    /// so an authority verdict never reaches state under a prefix the
+    /// manifest did not name. Authority held by somebody else is a call
+    /// to *them*, which the manifest writes down like any other.
+    Guarded(RuleExpr),
     /// Naming this method requires satisfying the target's own rule, and
     /// doing so mints the target's identity as evidence for later nodes
     /// of the same intent.
@@ -442,8 +445,9 @@ pub struct MethodSignature {
 pub enum GateShape<'a> {
     /// Nothing to present, and nothing read to judge it.
     Open,
-    /// The identity a caller must present, over the target's own inputs.
-    Identity(&'a Expr),
+    /// The rule a caller's presented set must satisfy, over the target's
+    /// own inputs.
+    Guarded(&'a RuleExpr),
     /// A rule the target stores, and the role that judges: the primary
     /// for a sign-in, the named role for a recovery op.
     Rule {
@@ -487,7 +491,7 @@ impl MethodSignature {
     pub fn gate(&self) -> Result<GateShape<'_>, AbiError> {
         match &self.accessibility {
             Accessibility::Public => Ok(GateShape::Open),
-            Accessibility::Guarded(identity) => Ok(GateShape::Identity(identity)),
+            Accessibility::Guarded(rule) => Ok(GateShape::Guarded(rule)),
             Accessibility::Authorizing => self
                 .rule_point(&ModeExpr::Read)
                 .map(|cell| GateShape::Rule {
@@ -656,8 +660,8 @@ pub enum AbiError {
 /// Any [`AbiError`]; verdicts are deterministic and identical on every
 /// node.
 pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
-    if let Accessibility::Guarded(identity) = &signature.accessibility
-        && identity.reads_call_inputs()
+    if let Accessibility::Guarded(rule) = &signature.accessibility
+        && rule.reads_call_inputs()
     {
         return Err(AbiError::CallerNamedAuthority);
     }
@@ -888,9 +892,24 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
     Ok(())
 }
 
+/// A declared rule under the caps a stored one is decoded under, and
+/// every leaf under the expression caps.
+fn check_rule_bounds(rule: &RuleExpr) -> Result<(), MetadataBoundsError> {
+    if !rule.within_caps(0) {
+        return Err(MetadataBoundsError(format!(
+            "a declared rule nests past {MAX_RULE_DEPTH}, branches past \
+             {MAX_RULE_BRANCHES}, or holds a threshold nobody meant"
+        )));
+    }
+    match rule {
+        RuleExpr::Require(claim) => check_expr_bounds(claim, 0),
+        RuleExpr::CountOf { rules, .. } => rules.iter().try_for_each(check_rule_bounds),
+    }
+}
+
 fn check_signature_bounds(signature: &MethodSignature) -> Result<(), MetadataBoundsError> {
     match &signature.accessibility {
-        Accessibility::Guarded(identity) => check_expr_bounds(identity, 0)?,
+        Accessibility::Guarded(rule) => check_rule_bounds(rule)?,
         Accessibility::Custodial(CustodyClaim::Fungible(badge)) => check_expr_bounds(badge, 0)?,
         Accessibility::Custodial(CustodyClaim::Instance { badge, id }) => {
             check_expr_bounds(badge, 0)?;
@@ -1738,25 +1757,97 @@ mod tests {
     /// where the package publishes.
     #[test]
     fn an_authority_the_caller_names_is_refused() {
-        let guarded = |identity: Expr| MethodSignature {
+        let guarded = |rule: RuleExpr| MethodSignature {
             totality: Totality::Fallible,
-            accessibility: Accessibility::Guarded(identity),
+            accessibility: Accessibility::Guarded(rule),
             ..MethodSignature::default()
         };
-        assert_eq!(check_abi(&guarded(Expr::SelfAddr)), Ok(()));
-        assert_eq!(check_abi(&guarded(Expr::Config(0))), Ok(()));
+        let require = |expr| guarded(RuleExpr::Require(expr));
+        assert_eq!(check_abi(&require(Expr::SelfAddr)), Ok(()));
+        assert_eq!(check_abi(&require(Expr::Config(0))), Ok(()));
         assert_eq!(
-            check_abi(&guarded(Expr::Arg(0))),
+            check_abi(&require(Expr::Arg(0))),
             Err(AbiError::CallerNamedAuthority)
         );
         // And however deeply the argument is buried.
         assert_eq!(
-            check_abi(&guarded(Expr::ResourceOf(Box::new(Expr::Field(
+            check_abi(&require(Expr::ResourceOf(Box::new(Expr::Field(
                 Box::new(Expr::Arg(1)),
                 0
             ))))),
             Err(AbiError::CallerNamedAuthority)
         );
+
+        // One caller-named branch of a threshold is one branch the
+        // caller satisfies for free, so every leaf answers.
+        assert_eq!(
+            check_abi(&guarded(RuleExpr::CountOf {
+                count: 2,
+                rules: vec![
+                    RuleExpr::Require(Expr::Config(0)),
+                    RuleExpr::Require(Expr::Config(1)),
+                    RuleExpr::Require(Expr::Arg(0)),
+                ],
+            })),
+            Err(AbiError::CallerNamedAuthority)
+        );
+    }
+
+    /// A declared threshold sits under the caps a stored one is decoded
+    /// under, so a signature that publishes cannot evaluate into a rule
+    /// the decode gate would refuse.
+    #[test]
+    fn a_declared_rule_is_held_to_the_stored_rules_caps() {
+        let guarded = |rule: RuleExpr| PackageMetadata {
+            methods: BTreeMap::from([(
+                "m".to_owned(),
+                MethodSignature {
+                    accessibility: Accessibility::Guarded(rule),
+                    ..MethodSignature::default()
+                },
+            )]),
+            ..PackageMetadata::default()
+        };
+        let leaf = || RuleExpr::Require(Expr::Config(0));
+        let nest = |levels: usize| {
+            let mut rule = leaf();
+            for _ in 0..levels {
+                rule = RuleExpr::CountOf {
+                    count: 1,
+                    rules: vec![rule],
+                };
+            }
+            rule
+        };
+
+        assert!(check_metadata(&guarded(nest(MAX_RULE_DEPTH - 1))).is_ok());
+        assert!(check_metadata(&guarded(nest(MAX_RULE_DEPTH))).is_err());
+        assert!(
+            check_metadata(&guarded(RuleExpr::CountOf {
+                count: 1,
+                rules: vec![leaf(); MAX_RULE_BRANCHES],
+            }))
+            .is_ok()
+        );
+        assert!(
+            check_metadata(&guarded(RuleExpr::CountOf {
+                count: 1,
+                rules: vec![leaf(); MAX_RULE_BRANCHES + 1],
+            }))
+            .is_err()
+        );
+
+        // The degenerate thresholds a stored rule is refused for: one
+        // that admits anyone, and one that admits no one.
+        for count in [0, 3] {
+            assert!(
+                check_metadata(&guarded(RuleExpr::CountOf {
+                    count,
+                    rules: vec![leaf(), leaf()],
+                }))
+                .is_err()
+            );
+        }
     }
 
     /// The custody shape: one possession read behind the rule cell's
@@ -1925,7 +2016,7 @@ mod tests {
 
         // Every gate is a caller this method can turn away.
         for accessibility in [
-            Accessibility::Guarded(Expr::SelfAddr),
+            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
             Accessibility::Authorizing,
             Accessibility::Custodial(CustodyClaim::Fungible(Expr::Arg(0))),
             Accessibility::RoleGated(AuthRole::Primary),

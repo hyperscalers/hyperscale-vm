@@ -31,7 +31,8 @@
 
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, AuthRole, Clause, CustodyClaim, Expr, MAX_CLAUSE_DEPTH,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, ParamType, RoleId, TargetExpr, Totality, Value,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, ParamType, RoleId, RuleExpr, TargetExpr,
+    Totality, Value,
 };
 
 use crate::sym::{Addr, Amount, Key, Kind, Num, Opaque, Seq, Sym, expr_depth};
@@ -485,11 +486,25 @@ impl Trace {
         self.totality = Totality::Total;
     }
 
-    /// Record that naming this method requires presenting the identity
+    /// Record that naming this method requires presenting the claim
     /// `identity` evaluates to.
     pub fn guarded(&mut self, identity: &Sym<Addr>) {
         let expr = self.lower(identity.expr().clone());
-        self.accessibility = Accessibility::Guarded(expr);
+        self.accessibility = Accessibility::Guarded(RuleExpr::Require(expr));
+    }
+
+    /// Record that naming this method requires satisfying `count` of the
+    /// claims `identities` evaluate to.
+    ///
+    /// The threshold a fixed admin set is written as: three configured
+    /// badge instances gated at two, rotated by issuing and revoked by
+    /// burning, with no redeploy and no configuration slot per admin.
+    pub fn guarded_by_threshold(&mut self, count: u8, identities: &[Sym<Addr>]) {
+        let rules = identities
+            .iter()
+            .map(|identity| RuleExpr::Require(self.lower(identity.expr().clone())))
+            .collect();
+        self.accessibility = Accessibility::Guarded(RuleExpr::CountOf { count, rules });
     }
 
     /// Record that naming this method requires satisfying the target's own

@@ -347,6 +347,7 @@ fn every_stdlib_method_has_a_wrapper() {
                 "mint",
                 "operate",
                 "operate-instance",
+                "operate-quorum",
                 "withdraw",
             ],
         ),

@@ -10,7 +10,7 @@ use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::vocabulary::{INSTANCE, NF_MOVE_CAP};
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, ComponentAddr, Expr, MethodSignature, PackageMetadata, ParamType,
-    ResourceRef, Totality, Value, holdings_range,
+    ResourceRef, RuleExpr, Totality, Value, holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
 
@@ -113,34 +113,48 @@ pub fn metadata() -> PackageMetadata {
             ..MethodSignature::default()
         },
     );
-    // The badge-gated consumer: opens for whoever presents the identity
-    // the configured badge resource names — the whole consumer side of
-    // custody, one config slot.
-    methods.methods.insert(
-        "operate".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Guarded(Expr::Config(0)),
-            issues: None,
-            ..MethodSignature::default()
-        },
-    );
-    // The same consumer at instance resolution: the configured resource
-    // and the configured id name one instance, and holding any other
-    // instance of that resource opens nothing.
-    methods.methods.insert(
-        "operate-instance".into(),
-        MethodSignature {
-            totality: Totality::Infallible,
-            accessibility: Accessibility::Guarded(Expr::Tuple(vec![
-                Expr::Config(0),
-                Expr::Config(1),
-            ])),
-            issues: None,
-            ..MethodSignature::default()
-        },
-    );
+    // The consumer side of custody, in three resolutions: the badge at
+    // large, one named instance of it, and a quorum over three.
+    for (name, rule) in consumer_gates() {
+        methods.methods.insert(
+            name.into(),
+            MethodSignature {
+                totality: Totality::Infallible,
+                accessibility: Accessibility::Guarded(rule),
+                issues: None,
+                ..MethodSignature::default()
+            },
+        );
+    }
     methods
+}
+
+/// Each badge-gated consumer method and the rule that opens it.
+///
+/// One config slot names the badge; the slots after it name the
+/// instances an admin set is written as.
+fn consumer_gates() -> [(&'static str, RuleExpr); 3] {
+    let instance = |slot| RuleExpr::Require(Expr::Tuple(vec![Expr::Config(0), Expr::Config(slot)]));
+    [
+        // Opens for whoever presents the identity the configured badge
+        // resource names.
+        ("operate", RuleExpr::Require(Expr::Config(0))),
+        // The same at instance resolution: the configured resource and
+        // the configured id name one instance, and holding any other
+        // instance of that resource opens nothing.
+        ("operate-instance", instance(1)),
+        // The same over an admin set: three badge instances in
+        // configuration, any two of which open the surface. One badge
+        // resource, one instance per admin — rotate by issuing, revoke
+        // by burning, and never redeploy to seat a fourth.
+        (
+            "operate-quorum",
+            RuleExpr::CountOf {
+                count: 2,
+                rules: (1..=3).map(instance).collect(),
+            },
+        ),
+    ]
 }
 
 // ─── calls ─────────────────────────────────────────────────────────────
@@ -197,6 +211,25 @@ pub fn burn(
     funds: impl BucketArg,
 ) -> Result<(), TypedError> {
     builder.call(issuer, "burn", (funds,))?.none()
+}
+
+/// Act on the quorum-gated consumer, presenting one admin's instance.
+///
+/// Two presentations of two distinct configured instances open it; one
+/// opens nothing, and a fourth instance of the same resource is not an
+/// admin.
+///
+/// # Errors
+///
+/// Any [`TypedError`] the call does not type against `operate-quorum`.
+pub fn operate_quorum(
+    builder: &mut TypedBuilder<'_>,
+    gated: ComponentAddr,
+    proofs: &[Proof],
+) -> Result<(), TypedError> {
+    builder
+        .call_presenting(proofs, gated, "operate-quorum", ())?
+        .none()
 }
 
 /// Act on the instance-gated consumer, presenting the instance claim a

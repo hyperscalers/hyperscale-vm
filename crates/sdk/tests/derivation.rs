@@ -16,7 +16,7 @@
 // the appearance is an artifact of a contract living inside a test binary.
 #![allow(dead_code)]
 
-use hyperscale_vm_effects::{Clause, ModeExpr};
+use hyperscale_vm_effects::{Clause, ModeExpr, RuleExpr};
 use hyperscale_vm_sdk::blueprint;
 
 /// Control-flow spellings of one access set, each beside its straight-line
@@ -321,9 +321,9 @@ fn an_instance_issues_resources_its_own_address_derives() {
     // The badge is the same derivation over the mark that separates it.
     assert_eq!(
         metadata.methods["retire"].accessibility,
-        Accessibility::Guarded(Expr::SelfResource {
+        Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
             material: vec![Expr::Literal(Value::Bytes(b"owner-badge".to_vec()))],
-        }),
+        })),
     );
 }
 

@@ -816,7 +816,7 @@ fn lower_call(
             resource_address(lowering.hasher, instance, &material).address()
         }),
         evidence: node.evidence.clone(),
-        authority: node.authority,
+        authority: node.authority.clone(),
     })
 }
 

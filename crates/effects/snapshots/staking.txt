@@ -2,27 +2,29 @@ PackageMetadata {
     methods: {
         "cast-param-vote": MethodSignature {
             accessibility: Guarded(
-                SelfResource {
-                    material: [
-                        Literal(
-                            Bytes(
-                                [
-                                    111,
-                                    119,
-                                    110,
-                                    101,
-                                    114,
-                                    45,
-                                    98,
-                                    97,
-                                    100,
-                                    103,
-                                    101,
-                                ],
+                Require(
+                    SelfResource {
+                        material: [
+                            Literal(
+                                Bytes(
+                                    [
+                                        111,
+                                        119,
+                                        110,
+                                        101,
+                                        114,
+                                        45,
+                                        98,
+                                        97,
+                                        100,
+                                        103,
+                                        101,
+                                    ],
+                                ),
                             ),
-                        ),
-                    ],
-                },
+                        ],
+                    },
+                ),
             ),
             totality: Infallible,
             issues: None,
@@ -71,27 +73,29 @@ PackageMetadata {
         },
         "clear-param-vote": MethodSignature {
             accessibility: Guarded(
-                SelfResource {
-                    material: [
-                        Literal(
-                            Bytes(
-                                [
-                                    111,
-                                    119,
-                                    110,
-                                    101,
-                                    114,
-                                    45,
-                                    98,
-                                    97,
-                                    100,
-                                    103,
-                                    101,
-                                ],
+                Require(
+                    SelfResource {
+                        material: [
+                            Literal(
+                                Bytes(
+                                    [
+                                        111,
+                                        119,
+                                        110,
+                                        101,
+                                        114,
+                                        45,
+                                        98,
+                                        97,
+                                        100,
+                                        103,
+                                        101,
+                                    ],
+                                ),
                             ),
-                        ),
-                    ],
-                },
+                        ],
+                    },
+                ),
             ),
             totality: Infallible,
             issues: None,
@@ -121,27 +125,29 @@ PackageMetadata {
         },
         "deactivate-validator": MethodSignature {
             accessibility: Guarded(
-                SelfResource {
-                    material: [
-                        Literal(
-                            Bytes(
-                                [
-                                    111,
-                                    119,
-                                    110,
-                                    101,
-                                    114,
-                                    45,
-                                    98,
-                                    97,
-                                    100,
-                                    103,
-                                    101,
-                                ],
+                Require(
+                    SelfResource {
+                        material: [
+                            Literal(
+                                Bytes(
+                                    [
+                                        111,
+                                        119,
+                                        110,
+                                        101,
+                                        114,
+                                        45,
+                                        98,
+                                        97,
+                                        100,
+                                        103,
+                                        101,
+                                    ],
+                                ),
                             ),
-                        ),
-                    ],
-                },
+                        ],
+                    },
+                ),
             ),
             totality: Infallible,
             issues: None,
@@ -182,27 +188,29 @@ PackageMetadata {
         },
         "register-validator": MethodSignature {
             accessibility: Guarded(
-                SelfResource {
-                    material: [
-                        Literal(
-                            Bytes(
-                                [
-                                    111,
-                                    119,
-                                    110,
-                                    101,
-                                    114,
-                                    45,
-                                    98,
-                                    97,
-                                    100,
-                                    103,
-                                    101,
-                                ],
+                Require(
+                    SelfResource {
+                        material: [
+                            Literal(
+                                Bytes(
+                                    [
+                                        111,
+                                        119,
+                                        110,
+                                        101,
+                                        114,
+                                        45,
+                                        98,
+                                        97,
+                                        100,
+                                        103,
+                                        101,
+                                    ],
+                                ),
                             ),
-                        ),
-                    ],
-                },
+                        ],
+                    },
+                ),
             ),
             totality: Infallible,
             issues: None,
@@ -309,27 +317,29 @@ PackageMetadata {
         },
         "unjail": MethodSignature {
             accessibility: Guarded(
-                SelfResource {
-                    material: [
-                        Literal(
-                            Bytes(
-                                [
-                                    111,
-                                    119,
-                                    110,
-                                    101,
-                                    114,
-                                    45,
-                                    98,
-                                    97,
-                                    100,
-                                    103,
-                                    101,
-                                ],
+                Require(
+                    SelfResource {
+                        material: [
+                            Literal(
+                                Bytes(
+                                    [
+                                        111,
+                                        119,
+                                        110,
+                                        101,
+                                        114,
+                                        45,
+                                        98,
+                                        97,
+                                        100,
+                                        103,
+                                        101,
+                                    ],
+                                ),
                             ),
-                        ),
-                    ],
-                },
+                        ],
+                    },
+                ),
             ),
             totality: Infallible,
             issues: None,

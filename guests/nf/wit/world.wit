@@ -30,4 +30,8 @@ world nf {
     /// The same, at instance resolution: opens for whoever presents the
     /// one instance the configured resource and id name.
     export operate-instance: func();
+
+    /// The same over an admin set: opens for whoever presents two of the
+    /// three configured instances.
+    export operate-quorum: func();
 }

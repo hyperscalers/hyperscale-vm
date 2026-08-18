@@ -343,7 +343,9 @@ const fn expected_resource(clause: &Clause) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
 
-    use hyperscale_vm_effects::{AbiParam, Accessibility, Expr, MethodSignature, PackageMetadata};
+    use hyperscale_vm_effects::{
+        AbiParam, Accessibility, Expr, MethodSignature, PackageMetadata, RuleExpr,
+    };
     use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, book, lottery};
     use hyperscale_vm_stdlib::{account, account_artifact, staking_artifact};
     use wat::parse_str;
@@ -490,13 +492,13 @@ mod tests {
             .methods
             .get_mut("withdraw")
             .expect("declared")
-            .accessibility = Accessibility::Guarded(Expr::SelfAddr);
+            .accessibility = Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr));
         let artifact = attach_metadata(&component, &metadata).expect("attaches");
 
         let admitted = admit_package(&artifact).expect("admits");
         assert_eq!(
             admitted.methods["withdraw"].accessibility,
-            Accessibility::Guarded(Expr::SelfAddr)
+            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr))
         );
         assert_eq!(
             admitted.methods["deposit"].accessibility,

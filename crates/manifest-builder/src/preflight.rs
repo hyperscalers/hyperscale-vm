@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use hyperscale_vm_effects::{
     Address, AdmissionError, Admitted, AuthRole, AuthorityGate, EnvelopeTree, Hasher,
     InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache, NetworkWord, Presented,
-    PrincipalAddr, RouteError, Routing, SchemeId, ShardId, ShardResolver, SubintentRecord,
+    PrincipalAddr, RouteError, Routing, Rule, SchemeId, ShardId, ShardResolver, SubintentRecord,
     TextError, admit, admit_tree, declared_work, footprint, route, route_tree, signature_work,
 };
 
@@ -80,6 +80,16 @@ pub enum Authority {
     /// method names — the custody gate; only state knows whether the
     /// badge is held.
     Custody,
+    /// A threshold the method itself declares: `count` of `branches`,
+    /// each a claim of its own. What satisfies which branch is the
+    /// holder's to know, so the report states the shape rather than
+    /// choosing a way through it.
+    Threshold {
+        /// How many branches must be satisfied.
+        count: u8,
+        /// How many there are.
+        branches: u32,
+    },
 }
 
 /// What one node of the flattened manifest requires of a signature.
@@ -178,7 +188,10 @@ impl Report {
                 Authority::StoredRule(_) | Authority::Custody => {
                     PrincipalAddr::try_from(required.target).ok()
                 }
-                Authority::Anyone | Authority::TargetHasNoKey | Authority::Badge { .. } => None,
+                Authority::Anyone
+                | Authority::TargetHasNoKey
+                | Authority::Badge { .. }
+                | Authority::Threshold { .. } => None,
             })
             .chain(self.subintents.iter().map(|record| record.signer))
             .collect()
@@ -254,6 +267,23 @@ fn report(
         .map(|(shard, declared)| (*shard, footprint(declared)))
         .collect();
 
+    // What one claim asks of a signer: a principal's address derives
+    // from its key material, so its own authority is a signature; every
+    // other class derives from a hash of what it is, and nothing signs
+    // for that.
+    let claimed = |claim: &Presented| match claim {
+        Presented::Identity(identity) => PrincipalAddr::try_from(*identity)
+            .map_or(Authority::TargetHasNoKey, Authority::Signature),
+        Presented::Resource(resource) => Authority::Badge {
+            resource: *resource,
+            instance: None,
+        },
+        Presented::Instance(resource, id) => Authority::Badge {
+            resource: *resource,
+            instance: Some(*id),
+        },
+    };
+
     // The authority gate admission resolved for each node, read back
     // rather than re-derived: the report answers with the verdict
     // execution will judge, over the node's real bound inputs. A
@@ -264,18 +294,16 @@ fn report(
     for (index, node) in admitted.manifest().nodes.iter().enumerate() {
         let required = match &node.authority {
             None => Authority::Anyone,
-            Some(AuthorityGate::Identity(Presented::Identity(identity))) => {
-                PrincipalAddr::try_from(*identity)
-                    .map_or(Authority::TargetHasNoKey, Authority::Signature)
+            Some(AuthorityGate::Presented(Rule::Require(claim))) => claimed(claim),
+            // A threshold names more than one thing, and which of them a
+            // holder can produce is theirs to know: the report says what
+            // is asked rather than picking a way to satisfy it.
+            Some(AuthorityGate::Presented(Rule::CountOf { count, rules })) => {
+                Authority::Threshold {
+                    count: *count,
+                    branches: u32::try_from(rules.len()).unwrap_or(u32::MAX),
+                }
             }
-            Some(AuthorityGate::Identity(Presented::Resource(resource))) => Authority::Badge {
-                resource: *resource,
-                instance: None,
-            },
-            Some(AuthorityGate::Identity(Presented::Instance(resource, id))) => Authority::Badge {
-                resource: *resource,
-                instance: Some(*id),
-            },
             Some(AuthorityGate::StoredRule { role, .. }) => Authority::StoredRule(*role),
             Some(AuthorityGate::Custody { .. }) => Authority::Custody,
         };

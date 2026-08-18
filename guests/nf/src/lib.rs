@@ -50,6 +50,12 @@ impl Guest for Nf {
         // Likewise: what differs is which claim the gate names, which is
         // the declaration's business and never this body's.
     }
+
+    fn operate_quorum() {
+        // Likewise again: a threshold is a shape the declaration holds,
+        // so counting the presentations is the kernel's and not this
+        // body's either.
+    }
 }
 
 export!(Nf);

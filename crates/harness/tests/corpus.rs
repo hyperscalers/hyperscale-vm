@@ -2504,6 +2504,124 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() -> Result<()> {
     Ok(())
 }
 
+/// A fixed admin set, expressed once: three badge instances in
+/// configuration, any two of which open the surface.
+///
+/// The asymmetry this closes is that a *stored* rule always had the
+/// threshold algebra while a *compile-time* gate had `contains` and
+/// nothing else, so an object whose admins are fixed at publish could
+/// not say "two of these three" and an account whose keys are stored
+/// could.
+///
+/// What the gate counts is claims, not signers: the three instances are
+/// seated on one holder here because one intent carries one signature,
+/// and a deployment seating them on three accounts composes the same
+/// presentations across three signed intents.
+#[test]
+fn a_declared_threshold_admits_exactly_its_quorum() -> Result<()> {
+    let (cache, mut instances) = world();
+    let engines = Engines::build()?;
+    let store = MemoryStore::new();
+    let badge = nf_resource();
+
+    // Four instances: three the configuration names, one it does not.
+    let seat = graph(|b| {
+        for _ in 0..4 {
+            let minted = nf::mint(b, nf_issuer())?;
+            account::deposit_nf(b, ALICE, minted)?;
+        }
+        Ok(())
+    });
+    let (results, store) = run_both(
+        &engines,
+        &(cache.clone(), instances.clone()),
+        &store,
+        &[(&seat, TxHash(Hash32([0x91; 32])))],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    let mut ids: Vec<u64> = store
+        .collection_entries()
+        .filter(|(key, _)| {
+            (key.owner, key.collection)
+                == (
+                    ALICE.address(),
+                    holdings_collection(&TestHasher, ALICE, badge),
+                )
+        })
+        .map(|(key, _)| u64::try_from(key.order).unwrap())
+        .collect();
+    ids.sort_unstable();
+    let (admins, rest) = ids.split_at(3);
+    let outsider = rest[0];
+
+    // The consumer names the three and asks for two.
+    let quorum = InstanceMeta {
+        package: pkg("nf"),
+        config: vec![
+            Value::Address(badge.address()),
+            Value::U64(admins[0]),
+            Value::U64(admins[1]),
+            Value::U64(admins[2]),
+        ],
+        salt: Hash32([13; 32]),
+    };
+    let quorum_addr = quorum.address(&TestHasher);
+    instances.create(&TestHasher, quorum);
+    let world = (cache, instances);
+
+    let operate = |presented: &[u64]| {
+        let presented = presented.to_vec();
+        graph_in(&world, |b| {
+            let proofs = presented
+                .into_iter()
+                .map(|id| account::present_instance(b, ALICE, badge, id))
+                .collect::<Result<Vec<_>, _>>()?;
+            nf::operate_quorum(b, quorum_addr, &proofs)
+        })
+    };
+
+    // Two of the three opens it, in either pairing.
+    let (results, _) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[
+            (
+                &operate(&[admins[0], admins[1]]),
+                TxHash(Hash32([0x92; 32])),
+            ),
+            (
+                &operate(&[admins[1], admins[2]]),
+                TxHash(Hash32([0x93; 32])),
+            ),
+        ],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    assert!(matches!(results[1], TxResult::Completed(_)));
+
+    // One is not a quorum, and an instance the configuration does not
+    // name is not an admin — so a pair including it is one branch short,
+    // though its holder holds the badge and every instance is real.
+    let (results, _) = run_both(
+        &engines,
+        &world,
+        &store,
+        &[
+            (&operate(&[admins[0]]), TxHash(Hash32([0x94; 32]))),
+            (&operate(&[admins[0], outsider]), TxHash(Hash32([0x95; 32]))),
+        ],
+    );
+    assert_eq!(
+        results[0],
+        TxResult::Refused(Outcome::Unauthorized { node: 1 })
+    );
+    assert_eq!(
+        results[1],
+        TxResult::Refused(Outcome::Unauthorized { node: 2 })
+    );
+    Ok(())
+}
+
 #[test]
 fn a_fungible_badge_is_custody_while_the_vault_is_funded() -> Result<()> {
     let world = world();
