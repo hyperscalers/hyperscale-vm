@@ -776,7 +776,10 @@ fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
             Field {
                 slot: NF_VAULT.0,
                 kind: FieldKind::Ordered,
-                element: Some(syn::parse_quote!(::std::vec::Vec<u8>)),
+                // Presence and nothing else: the instance's id is the
+                // entry's own order key, so an entry has nothing left to
+                // hold and no marker for a body to invent.
+                element: Some(syn::parse_quote!(())),
                 denomination: None,
             },
         ),
@@ -1361,9 +1364,7 @@ fn authoring_accessors(state: &syn::Ident, config: Option<&syn::Ident>) -> Token
             }
 
             /// The holder's instances of `resource`.
-            fn holdings<K>(&self, resource: K) -> ::hyperscale_vm_sdk::state::Ordered<
-                ::std::vec::Vec<u8>,
-            > {
+            fn holdings<K>(&self, resource: K) -> ::hyperscale_vm_sdk::state::Ordered<()> {
                 let _ = resource;
                 ::core::unimplemented!("a contract body runs on the guest")
             }

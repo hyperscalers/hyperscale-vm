@@ -35,10 +35,6 @@ pub mod account {
         amount: Quantity,
     }
 
-    /// What a holdings entry holds: presence, and nothing else. Which
-    /// instance it is, is the entry's own order key.
-    const HELD: [u8; 1] = [1];
-
     /// The account stores nothing of its own. Every cell it uses —
     /// balances, the delivery fallback, the stored authority, the
     /// instances held — is one the protocol gives every owner.
@@ -94,7 +90,7 @@ pub mod account {
         /// The filing is the kernel's: each instance lands at the order
         /// it was taken under, so the body names no id at all.
         pub fn deposit_nf(&mut self, funds: NfBucket) {
-            self.holdings(funds.resource()).all(64).put(funds, &HELD);
+            self.holdings(funds.resource()).all(64).file(funds);
         }
 
         /// Take the named instances out of the holdings interval,

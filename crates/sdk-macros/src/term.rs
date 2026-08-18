@@ -340,7 +340,7 @@ impl Op {
             "get" | "peek" | "count" | "entry" | "order" | "balance" | "pick" | "picked" => {
                 Some(Self::Get)
             }
-            "put" | "take" | "declared" => Some(Self::Move),
+            "put" | "take" | "declared" | "file" => Some(Self::Move),
             "reserve" => Some(Self::Reserve),
             "set" | "insert" | "remove" => Some(Self::Set),
             "create" => Some(Self::Create),

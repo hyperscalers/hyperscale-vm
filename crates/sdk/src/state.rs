@@ -299,6 +299,25 @@ impl Cellular for Address {
     }
 }
 
+/// A collection whose entries carry nothing: the entry existing is the
+/// whole of what it says.
+///
+/// A membership set, a holdings interval, an index of what has been
+/// seen — each is a collection where the order key names the thing and
+/// there is nothing else to store. Written as any other value would be,
+/// so a body that files one names no marker and a reader that would
+/// decode one has nothing to decode. Presence is read off the entry
+/// rather than out of it, which is what every consumer already does:
+/// the kernel's own custody check asks whether an entry is in range and
+/// never what it holds.
+impl Cellular for () {
+    fn to_cell(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn from_cell(_: &[u8]) -> Self {}
+}
+
 impl Cellular for Vec<u8> {
     fn from_cell(cell: &[u8]) -> Self {
         cell.to_vec()
@@ -1006,6 +1025,22 @@ impl<T: Cellular> Entry<T> {
         return crate::guest::entry_insert(self.handle, self.order, &value.to_cell());
         #[cfg(not(target_arch = "wasm32"))]
         return host::entry_insert(self.handle, self.order, &value.to_cell());
+    }
+}
+
+#[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
+impl Interval<()> {
+    /// File the instances a bucket carries, each at the order it was
+    /// taken under, holding nothing.
+    ///
+    /// What a holdings entry says is that the holder holds it, and the
+    /// instance's id is the entry's own order key — so there is no value
+    /// to name and no marker for an author to invent. On the
+    /// presence-only interval alone, because it is the only one with
+    /// nothing to say.
+    #[inline(always)]
+    pub fn file(&mut self, funds: Bucket) {
+        self.put(funds, &[]);
     }
 }
 
