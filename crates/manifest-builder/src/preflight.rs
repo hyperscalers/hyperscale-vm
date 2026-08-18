@@ -25,8 +25,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use hyperscale_vm_effects::{
     Address, AdmissionError, Admitted, AuthRole, AuthorityGate, EnvelopeTree, Hasher,
     InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache, NetworkWord, Presented,
-    PrincipalAddr, RouteError, Routing, Rule, SchemeId, ShardId, ShardResolver, SubintentRecord,
-    TextError, admit, admit_tree, declared_work, footprint, route, route_tree, signature_work,
+    PrincipalAddr, RouteError, Routing, SchemeId, ShardId, ShardResolver, StoredRule,
+    SubintentRecord, TextError, admit, admit_tree, declared_work, footprint, route, route_tree,
+    signature_work,
 };
 
 /// Why a transaction could not be preflighted.
@@ -294,11 +295,11 @@ fn report(
     for (index, node) in admitted.manifest().nodes.iter().enumerate() {
         let required = match &node.authority {
             None => Authority::Anyone,
-            Some(AuthorityGate::Presented(Rule::Require(claim))) => claimed(claim),
+            Some(AuthorityGate::Presented(StoredRule::Require(claim))) => claimed(claim),
             // A threshold names more than one thing, and which of them a
             // holder can produce is theirs to know: the report says what
             // is asked rather than picking a way to satisfy it.
-            Some(AuthorityGate::Presented(Rule::CountOf { count, rules })) => {
+            Some(AuthorityGate::Presented(StoredRule::CountOf { count, rules })) => {
                 Authority::Threshold {
                     count: *count,
                     branches: u32::try_from(rules.len()).unwrap_or(u32::MAX),

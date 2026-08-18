@@ -14,8 +14,8 @@ use hyperscale_vm_effects::{
     Clause, ComponentAddr, Constraint, CustodyClaim, EdgeKind, EdgeRef, Effect, EffectTarget,
     EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
     MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr,
-    PackageMetadata, ParamType, Possession, Presented, ResourceAddr, Rule, RuleExpr, TargetExpr,
-    TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
+    PackageMetadata, ParamType, Possession, Presented, ResourceAddr, RuleExpr, StoredRule,
+    TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -281,7 +281,7 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     );
     assert_eq!(
         withdraw.authority,
-        Some(AuthorityGate::Presented(Rule::Require(
+        Some(AuthorityGate::Presented(StoredRule::Require(
             Presented::Identity(ALICE.address())
         )))
     );
@@ -414,7 +414,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     );
     assert_eq!(
         operate.authority,
-        Some(AuthorityGate::Presented(Rule::Require(
+        Some(AuthorityGate::Presented(StoredRule::Require(
             Presented::Resource(badge)
         ))),
         "a gate naming a resource address wants the badge, by the class alone"

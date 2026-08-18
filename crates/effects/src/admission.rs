@@ -1042,7 +1042,7 @@ pub(crate) fn admit_intents(
                 // Every leaf, over the same inputs the output types
                 // evaluate against — the shape is the declaration's and
                 // only the claims are computed.
-                let rule = rule.evaluate(&mut |expr| {
+                let rule = rule.map_leaves(&mut |expr| {
                     let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
                         AdmissionError::Eval {
                             node: node_index,

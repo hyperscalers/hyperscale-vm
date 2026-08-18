@@ -10,7 +10,7 @@
 use crate::auth::AuthRole;
 use crate::hash::Hash32;
 use crate::presented::Presented;
-use crate::rule::Rule;
+use crate::rule::StoredRule;
 use crate::types::{Address, CollectionId, EdgeContent, SubstateKey, Value};
 
 /// A consumer's signed amount bounds on an edge, folded to their
@@ -106,7 +106,7 @@ pub enum AuthorityGate {
     /// named, evaluated at admission with every leaf read off its value's
     /// own class, so a gate naming a configured resource address wants
     /// the badge and one naming three of them can want two.
-    Presented(Rule),
+    Presented(StoredRule),
     /// The presented set must satisfy one of the target's stored rules
     /// at this cell — or, while the cell is absent, carry the identity
     /// the target's address derives. The cell is the method's own

@@ -13,7 +13,7 @@
 //!
 //! [`PrincipalAddr`]: hyperscale_vm_effects::PrincipalAddr
 
-use hyperscale_vm_effects::{PackageMetadata, RoleSet, Rule};
+use hyperscale_vm_effects::{PackageMetadata, RoleSet, StoredRule};
 use hyperscale_vm_manifest_builder::{Proof, TypedBuilder, TypedError};
 
 // The package, read from the crate the artifact is built from rather
@@ -55,7 +55,7 @@ pub fn metadata() -> PackageMetadata {
 pub fn securify_uniform(
     b: &mut TypedBuilder<'_>,
     proof: Proof,
-    rule: Rule,
+    rule: StoredRule,
     recovery_delay_ms: u64,
 ) -> Result<(), TypedError> {
     securify(b, proof, RoleSet::uniform(rule), recovery_delay_ms)

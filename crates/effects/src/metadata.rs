@@ -15,7 +15,7 @@ use crate::dsl::{
 use crate::hash::{Hash32, Hasher};
 use crate::invoke::EdgeKind;
 use crate::resource::holdings_entry;
-use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule, RuleExpr};
+use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, StoredRule};
 use crate::types::{
     Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Presence, SlotId,
     SubstateKey, Value, child_key, component_address, config_hash,
@@ -145,7 +145,7 @@ impl ParamType {
             | (Self::U128, Value::U128(_))
             | (Self::Bytes, Value::Bytes(_))
             | (Self::Address, Value::Address(_)) => true,
-            (Self::Rule, Value::Bytes(bytes)) => Rule::from_slice(bytes).is_ok(),
+            (Self::Rule, Value::Bytes(bytes)) => StoredRule::from_slice(bytes).is_ok(),
             (Self::RoleSet, Value::Bytes(bytes)) => RoleSet::from_slice(bytes).is_ok(),
             (Self::Ids, Value::List(elements)) => {
                 elements.len() <= MAX_IDS_PER_EDGE

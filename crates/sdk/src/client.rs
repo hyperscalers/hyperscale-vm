@@ -14,7 +14,7 @@
 use hyperscale_vm_effects::Value;
 pub use hyperscale_vm_effects::{
     Address, CallTarget, ComponentAddr, PackageMetadata, PrincipalAddr, ResourceAddr, ResourceRef,
-    RoleSet, Rule, SlotId, Value as ManifestValue,
+    RoleSet, SlotId, StoredRule, Value as ManifestValue,
 };
 pub use hyperscale_vm_manifest_builder::{
     AddressArg, Arg, Args, Bucket, BucketArg, Outputs, Proof, TypedBuilder, TypedError,

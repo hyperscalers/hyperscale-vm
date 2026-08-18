@@ -15,7 +15,7 @@
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 
 use crate::presented::Presented;
-use crate::rule::{MAX_RULE_WIRE_DEPTH, Rule};
+use crate::rule::{MAX_RULE_WIRE_DEPTH, StoredRule};
 use crate::types::Address;
 
 /// The decoder cap that admits exactly the role sets within the rule
@@ -41,17 +41,17 @@ pub enum AuthRole {
 pub struct RoleSet {
     /// Governs `authorize`, and so everything the account does —
     /// including paying, at the payer shard's binding verdict.
-    pub primary: Rule,
+    pub primary: StoredRule,
     /// Governs `propose`.
-    pub recovery: Rule,
+    pub recovery: StoredRule,
     /// Governs `confirm`.
-    pub confirmation: Rule,
+    pub confirmation: StoredRule,
 }
 
 impl RoleSet {
     /// One rule as all three roles.
     #[must_use]
-    pub fn uniform(rule: Rule) -> Self {
+    pub fn uniform(rule: StoredRule) -> Self {
         Self {
             primary: rule.clone(),
             recovery: rule.clone(),
@@ -61,7 +61,7 @@ impl RoleSet {
 
     /// The rule `role` selects.
     #[must_use]
-    pub const fn rule(&self, role: AuthRole) -> &Rule {
+    pub const fn rule(&self, role: AuthRole) -> &StoredRule {
         match role {
             AuthRole::Primary => &self.primary,
             AuthRole::Recovery => &self.recovery,
@@ -94,14 +94,15 @@ impl RoleSet {
 /// tree.
 ///
 /// The one thing in the cell that stays opaque, and for a reason the
-/// runtime fixes rather than a preference. A [`Rule`] is recursive, so
-/// its decoder is; the deterministic profile requires an acyclic call
-/// graph, because a static stack bound is what makes stack exhaustion
-/// unreachable in both engines rather than reachable at different depths
-/// in each ([crates/runtime/src/frames.rs]). A guest therefore cannot
-/// carry a rule's codec, and a package that stores authority moves these
-/// bytes without reading them. Whoever judges a rule decodes them, under
-/// the vocabulary's own caps, where the judging happens.
+/// runtime fixes rather than a preference. A [`StoredRule`] is
+/// recursive, so its decoder is; the deterministic profile requires an
+/// acyclic call graph, because a static stack bound is what makes stack
+/// exhaustion unreachable in both engines rather than reachable at
+/// different depths in each ([crates/runtime/src/frames.rs]). A guest
+/// therefore cannot carry a rule's codec, and a package that stores
+/// authority moves these bytes without reading them. Whoever judges a
+/// rule decodes them, under the vocabulary's own caps, where the judging
+/// happens.
 ///
 /// [crates/runtime/src/frames.rs]: https://docs.rs/
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
@@ -271,24 +272,34 @@ mod tests {
     };
     use crate::presented::Presented;
     use crate::rule::testing::{WideRule, chain, identity, principal, wide_chain};
-    use crate::rule::{MAX_RULE_DEPTH, Rule};
+    use crate::rule::{MAX_RULE_DEPTH, StoredRule};
 
     fn base(byte: u8, delay: u64) -> AuthBase {
-        AuthBase::new(delay, &RoleSet::uniform(Rule::Require(identity(byte)))).unwrap()
+        AuthBase::new(
+            delay,
+            &RoleSet::uniform(StoredRule::Require(identity(byte))),
+        )
+        .unwrap()
     }
 
     #[test]
     fn a_role_selects_its_rule() {
         let roles = RoleSet {
-            primary: Rule::Require(identity(1)),
-            recovery: Rule::Require(identity(2)),
-            confirmation: Rule::Require(identity(3)),
+            primary: StoredRule::Require(identity(1)),
+            recovery: StoredRule::Require(identity(2)),
+            confirmation: StoredRule::Require(identity(3)),
         };
-        assert_eq!(roles.rule(AuthRole::Primary), &Rule::Require(identity(1)));
-        assert_eq!(roles.rule(AuthRole::Recovery), &Rule::Require(identity(2)));
+        assert_eq!(
+            roles.rule(AuthRole::Primary),
+            &StoredRule::Require(identity(1))
+        );
+        assert_eq!(
+            roles.rule(AuthRole::Recovery),
+            &StoredRule::Require(identity(2))
+        );
         assert_eq!(
             roles.rule(AuthRole::Confirmation),
-            &Rule::Require(identity(3))
+            &StoredRule::Require(identity(3))
         );
     }
 
@@ -315,7 +326,7 @@ mod tests {
     /// with.
     #[test]
     fn the_cell_is_its_own_encoding() {
-        let roles = RoleSet::uniform(Rule::Require(identity(7)));
+        let roles = RoleSet::uniform(StoredRule::Require(identity(7)));
         let pending = AuthCell {
             base: AuthBase::new(5000, &roles).unwrap(),
             proposal: Some(Proposal {
@@ -367,7 +378,7 @@ mod tests {
         let whole = AuthCell::new(base(1, 0)).to_bytes().unwrap();
         assert!(AuthCell::from_slice(&whole[..whole.len() - 1]).is_err());
         // Bare rule bytes are not a cell.
-        let rule = Rule::Require(identity(1)).to_bytes().unwrap();
+        let rule = StoredRule::Require(identity(1)).to_bytes().unwrap();
         assert!(AuthCell::from_slice(&rule).is_err());
     }
 
@@ -505,9 +516,9 @@ mod tests {
             base: AuthBase {
                 recovery_delay_ms: 1_000,
                 roles: StoredRoles::try_from(&RoleSet {
-                    primary: Rule::Require(identity(2)),
-                    recovery: Rule::Require(identity(3)),
-                    confirmation: Rule::Require(identity(4)),
+                    primary: StoredRule::Require(identity(2)),
+                    recovery: StoredRule::Require(identity(3)),
+                    confirmation: StoredRule::Require(identity(4)),
                 })
                 .unwrap(),
             },

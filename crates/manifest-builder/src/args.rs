@@ -10,7 +10,7 @@
 
 use hyperscale_vm_effects::{
     Address, CallTarget, ComponentAddr, GraphArg, NativeAddr, PackageAddr, PrincipalAddr,
-    ResourceAddr, ResourceRef, RoleSet, Rule, Value,
+    ResourceAddr, ResourceRef, RoleSet, StoredRule, Value,
 };
 
 use crate::builder::{Bucket, GraphBuilder, Param};
@@ -129,7 +129,7 @@ macro_rules! canonical_bytes_arg {
     };
 }
 
-canonical_bytes_arg!(Rule, RoleSet);
+canonical_bytes_arg!(StoredRule, RoleSet);
 
 impl sealed::Sealed for Bucket {}
 impl Arg for Bucket {

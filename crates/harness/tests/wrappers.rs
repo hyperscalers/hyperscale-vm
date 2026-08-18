@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use hyperscale_vm_effects::{
     Address, ComponentAddr, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry,
     ManifestGraph, MetadataCache, PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr,
-    RoleSet, Rule, TestHasher, Value, admit, resource_address,
+    RoleSet, StoredRule, TestHasher, Value, admit, resource_address,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -113,11 +113,16 @@ fn the_account_wrappers_match_their_signatures() {
         let alice = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice, BASE, 100)?;
         account::deposit(b, BOB, funds)?;
-        account::securify_uniform(b, alice, Rule::Require(BOB.address().into()), 86_400_000)?;
+        account::securify_uniform(
+            b,
+            alice,
+            StoredRule::Require(BOB.address().into()),
+            86_400_000,
+        )?;
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(Rule::Require(BOB.address().into())),
+            RoleSet::uniform(StoredRule::Require(BOB.address().into())),
             86_400_000,
         )?;
         account::cancel(b, ALICE)?;
@@ -138,7 +143,7 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
     let refused = account::securify_uniform(
         &mut b,
         alice,
-        Rule::CountOf {
+        StoredRule::CountOf {
             count: 0,
             rules: vec![],
         },

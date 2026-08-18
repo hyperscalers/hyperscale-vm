@@ -85,7 +85,9 @@ pub use route::{
     FrameDeclaration, MAX_MANIFEST_NODES, MAX_STAGED_DEPTH, MethodRef, PrefixShardResolver, Role,
     RouteError, Routing, ShardResolver, Strategy, route,
 };
-pub use rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr};
+pub use rule::{
+    MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, StoredRule,
+};
 pub use types::{
     Address, AddressClass, CallTarget, CollectionId, ComponentAddr, EdgeContent, Effect,
     EffectConflict, EffectSet, EffectTarget, InvalidAddress, LocalKey, MAX_IDS_PER_EDGE,
