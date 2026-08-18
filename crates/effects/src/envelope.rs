@@ -35,7 +35,8 @@ use crate::manifest::ManifestHash;
 use crate::metadata::{InstanceMeta, InstanceRegistry, MetadataCache};
 use crate::route::{MAX_MANIFEST_NODES, RouteError, Routing, ShardResolver, route};
 use crate::types::{
-    Address, Effect, EffectTarget, Mode, PrincipalAddr, ResourceRef, RoleId, SubstateKey, child_key,
+    Address, Effect, EffectTarget, Mode, Presence, PrincipalAddr, ResourceRef, RoleId, SubstateKey,
+    child_key,
 };
 
 /// The kernel-reserved role of subintent nullifier substates under a
@@ -341,7 +342,9 @@ pub fn route_tree(
         let shard = shards.shard_of(record.signer.address());
         let effect = Effect {
             target: EffectTarget::Point(record.nullifier),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         };
         routing
             .per_shard

@@ -40,7 +40,7 @@ pub use execution::{
     AbortReason, Event, ISSUER_REP, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
     MAX_EVENTS_PER_TX, Outcome,
 };
-pub use mode::{Mode, ModeKind, compatible};
+pub use mode::{Mode, ModeKind, Presence, compatible};
 pub use scheme::{
     AccountSigner, MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId, SchemeSpec, SchemeVerifier,
 };

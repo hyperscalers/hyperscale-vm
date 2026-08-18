@@ -210,6 +210,15 @@ pub enum AbortReason {
     /// One transaction declaring an exclusive and a commutative mode on
     /// the same cell.
     SelfConflictingModes,
+    /// A write requiring an absent leaf, on a cell the store holds.
+    ///
+    /// The declaration's own precondition, judged against committed
+    /// state before the body runs — so a one-way door refuses with the
+    /// protocol's reason rather than a guest's trap.
+    CreateOnOccupied,
+    /// A write requiring a present leaf, on a cell the store does not
+    /// hold.
+    UpdateOfAbsent,
     /// An already-held reservation whose amount differs from the declared
     /// one.
     ReservationMismatch,

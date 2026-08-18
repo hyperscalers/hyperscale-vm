@@ -17,8 +17,8 @@ use crate::invoke::EdgeKind;
 use crate::resource::holdings_entry;
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule, RuleExpr};
 use crate::types::{
-    Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, RoleId, SubstateKey,
-    Value, child_key, component_address, config_hash,
+    Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Presence, RoleId,
+    SubstateKey, Value, child_key, component_address, config_hash,
 };
 use crate::vocabulary::VAULT;
 
@@ -500,7 +500,9 @@ impl MethodSignature {
                 })
                 .ok_or(AbiError::AuthorizingShape),
             Accessibility::RoleGated(role) => self
-                .rule_point(&ModeExpr::Write)
+                .rule_point(&ModeExpr::Write {
+                    requires: Presence::Either,
+                })
                 .map(|cell| GateShape::Rule { cell, role: *role })
                 .ok_or(AbiError::RoleGatedShape),
             Accessibility::Custodial(claim) => self.custody(claim).ok_or(AbiError::CustodialShape),
@@ -749,6 +751,14 @@ pub enum DeclarationError {
     /// A method claiming totality behind a gate that can turn it away.
     #[error("a total method admits every caller, and this one is gated")]
     GatedTotality,
+    /// Two writes on one target requiring opposite presences.
+    ///
+    /// Refused here as well as where the set is built, because metadata
+    /// can be authored rather than derived: the macro sees the body and
+    /// refuses at the second call site, and this sees only what was
+    /// published.
+    #[error("two write clauses on one target require opposite presences")]
+    PresenceConflict,
     /// A denomination list that does not line up with the parameters it
     /// indexes.
     #[error("{found} denominations against {expected} parameters")]
@@ -788,6 +798,20 @@ fn targets_own_prefix(target: &TargetExpr) -> bool {
     }
 }
 
+/// Every effect clause of a signature, `for-each` bodies counted in
+/// place — the same preorder the clause indices name.
+fn flat_clauses(clauses: &[Clause]) -> Vec<&Clause> {
+    let mut flat = Vec::new();
+    let mut stack: Vec<&Clause> = clauses.iter().rev().collect();
+    while let Some(clause) = stack.pop() {
+        flat.push(clause);
+        if let Clause::ForEach { body, .. } = clause {
+            stack.extend(body.iter().rev());
+        }
+    }
+    flat
+}
+
 /// Judge a signature's declared effects against the prefix they are the
 /// signature's to declare.
 ///
@@ -818,6 +842,34 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
             }
         }
         Ok(())
+    }
+    // Two clauses on one target are one access, and a presence
+    // requirement each way is a requirement nothing satisfies. Compared
+    // by target expression rather than by evaluated key, because this
+    // runs at publish where no arguments exist — which catches the
+    // contradiction an author wrote and leaves the one two different
+    // expressions happen to evaluate onto for the set to fold.
+    let mut required: Vec<(&TargetExpr, Presence)> = Vec::new();
+    for clause in flat_clauses(&signature.effects) {
+        let Clause::Effect {
+            target,
+            mode: ModeExpr::Write { requires },
+            ..
+        } = clause
+        else {
+            continue;
+        };
+        if let Some((_, prior)) = required.iter().find(|(seen, _)| *seen == target) {
+            let opposed = matches!(
+                (prior, requires),
+                (Presence::Absent, Presence::Present) | (Presence::Present, Presence::Absent)
+            );
+            if opposed {
+                return Err(DeclarationError::PresenceConflict);
+            }
+        } else {
+            required.push((target, *requires));
+        }
     }
     // A gate is an error arm the vocabulary can see. Trap freedom is what
     // the artifact scan establishes, and it says nothing about whether the
@@ -1010,7 +1062,7 @@ fn check_target_bounds(target: &TargetExpr) -> Result<(), MetadataBoundsError> {
 
 fn check_mode_bounds(mode: &ModeExpr) -> Result<(), MetadataBoundsError> {
     match mode {
-        ModeExpr::Read | ModeExpr::Delta | ModeExpr::Write | ModeExpr::Locked => Ok(()),
+        ModeExpr::Read | ModeExpr::Delta | ModeExpr::Write { .. } | ModeExpr::Locked => Ok(()),
         ModeExpr::Reserve(amount) => check_expr_bounds(amount, 0),
     }
 }
@@ -1338,7 +1390,9 @@ mod tests {
             totality: Totality::Fallible,
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(expr),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write {
+                    requires: Presence::Either,
+                },
                 denomination: None,
             }],
             ..MethodSignature::default()
@@ -1703,14 +1757,21 @@ mod tests {
         assert_eq!(
             check_abi(&shaped(
                 Accessibility::RoleGated(AuthRole::Recovery),
-                ModeExpr::Write
+                ModeExpr::Write {
+                    requires: Presence::Either
+                }
             )),
             Ok(())
         );
 
         // The right clause under the wrong mode, and no clause at all.
         assert_eq!(
-            check_abi(&shaped(Accessibility::Authorizing, ModeExpr::Write)),
+            check_abi(&shaped(
+                Accessibility::Authorizing,
+                ModeExpr::Write {
+                    requires: Presence::Either
+                }
+            )),
             Err(AbiError::AuthorizingShape)
         );
         assert_eq!(
@@ -1740,7 +1801,9 @@ mod tests {
         ));
         let confirm = shaped(
             Accessibility::RoleGated(AuthRole::Confirmation),
-            ModeExpr::Write,
+            ModeExpr::Write {
+                requires: Presence::Either,
+            },
         );
         assert!(matches!(
             confirm.gate(),
@@ -2029,6 +2092,66 @@ mod tests {
                 Err(DeclarationError::GatedTotality),
             );
         }
+    }
+
+    /// Metadata can be authored rather than derived, so the
+    /// contradiction the macro refuses at the second call site is
+    /// refused here too — against the target expressions, since publish
+    /// has no arguments to evaluate them with.
+    #[test]
+    fn opposite_presence_requirements_on_one_target_do_not_publish() {
+        let cell = |material| {
+            TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                role: VAULT,
+                material,
+            })
+        };
+        let write = |requires| Clause::Effect {
+            target: cell(vec![]),
+            mode: ModeExpr::Write { requires },
+            denomination: None,
+        };
+        let declared = |clauses: Vec<Clause>| {
+            check_declarations(&MethodSignature {
+                effects: clauses,
+                ..MethodSignature::default()
+            })
+        };
+
+        assert_eq!(
+            declared(vec![write(Presence::Absent), write(Presence::Present)]),
+            Err(DeclarationError::PresenceConflict)
+        );
+        assert_eq!(
+            declared(vec![write(Presence::Present), write(Presence::Absent)]),
+            Err(DeclarationError::PresenceConflict)
+        );
+
+        // What is not a contradiction: a named requirement beside the
+        // indifferent one, the same requirement twice, and two named
+        // requirements on targets that are not the same expression.
+        assert_eq!(
+            declared(vec![write(Presence::Either), write(Presence::Absent)]),
+            Ok(())
+        );
+        assert_eq!(
+            declared(vec![write(Presence::Absent), write(Presence::Absent)]),
+            Ok(())
+        );
+        assert_eq!(
+            declared(vec![
+                write(Presence::Absent),
+                Clause::Effect {
+                    target: cell(vec![Expr::Config(0)]),
+                    mode: ModeExpr::Write {
+                        requires: Presence::Present,
+                    },
+                    denomination: None,
+                },
+            ]),
+            Ok(())
+        );
     }
 
     /// A denomination list is read at the positions it indexes, so the

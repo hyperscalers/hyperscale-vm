@@ -13,8 +13,8 @@ use hyperscale_hbor::Hbor;
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::types::{
-    Address, CollectionId, EdgeContent, Effect, EffectSet, EffectTarget, LocalKey,
-    MAX_IDS_PER_EDGE, Mode, ReserveOverflow, RoleId, SubstateKey, Value, child_key, collection_id,
+    Address, CollectionId, EdgeContent, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey,
+    MAX_IDS_PER_EDGE, Mode, Presence, RoleId, SubstateKey, Value, child_key, collection_id,
     order_key, resource_address,
 };
 
@@ -223,8 +223,18 @@ pub enum ModeExpr {
     Delta,
     /// Conditional decrement of the evaluated amount.
     Reserve(Expr),
-    /// Exclusive read-modify-write.
-    Write,
+    /// Exclusive read-modify-write, and what it requires of the leaf.
+    ///
+    /// The requirement travels with the routed declaration, so every
+    /// layer reads it off the signature rather than off a body: a caller
+    /// routes on it, a wallet can say "this call creates your authority
+    /// cell, and fails if you already have one", and the shard holding
+    /// the cell judges it where it already judges a reservation.
+    Write {
+        /// What the leaf must be. `Either` is what a declaration saying
+        /// nothing means.
+        requires: Presence,
+    },
 }
 
 /// An access target expression.
@@ -367,11 +377,17 @@ pub enum EvalError {
     /// Folded reserve amounts overflowing `u128`.
     #[error("declared reserve amounts overflow")]
     ReserveOverflow,
+    /// Two writes on one cell requiring opposite presences.
+    #[error("two writes on one cell require opposite presences")]
+    PresenceConflict,
 }
 
-impl From<ReserveOverflow> for EvalError {
-    fn from(_overflow: ReserveOverflow) -> Self {
-        Self::ReserveOverflow
+impl From<EffectConflict> for EvalError {
+    fn from(conflict: EffectConflict) -> Self {
+        match conflict {
+            EffectConflict::ReserveOverflow => Self::ReserveOverflow,
+            EffectConflict::Presence => Self::PresenceConflict,
+        }
     }
 }
 
@@ -779,7 +795,9 @@ fn eval_mode(
             let amount = as_u128(eval_expr(expr, inputs, hasher, bindings, 0)?)?;
             Ok(Mode::Reserve { amount })
         }
-        ModeExpr::Write => Ok(Mode::Write),
+        ModeExpr::Write { requires } => Ok(Mode::Write {
+            requires: *requires,
+        }),
     }
 }
 
@@ -1067,8 +1085,8 @@ mod tests {
     use crate::hash::{Hash32, TestHasher};
     use crate::manifest::ManifestHash;
     use crate::types::{
-        Address, AddressClass, EdgeContent, Effect, EffectTarget, MAX_IDS_PER_EDGE, Mode, RoleId,
-        Value, child_key, collection_id, order_key,
+        Address, AddressClass, EdgeContent, Effect, EffectTarget, MAX_IDS_PER_EDGE, Mode, Presence,
+        RoleId, Value, child_key, collection_id, order_key,
     };
 
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
@@ -1098,19 +1116,25 @@ mod tests {
         let clauses = vec![
             Clause::Effect {
                 target: point(0xF0),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write {
+                    requires: Presence::Either,
+                },
                 denomination: None,
             },
             Clause::Effect {
                 target: point(0x0F),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write {
+                    requires: Presence::Either,
+                },
                 denomination: None,
             },
             // The same target as the first clause: a degenerate instance
             // configuration produces exactly this shape.
             Clause::Effect {
                 target: point(0xF0),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write {
+                    requires: Presence::Either,
+                },
                 denomination: None,
             },
         ];
@@ -1401,7 +1425,9 @@ mod tests {
                     hi: Expr::Arg(1),
                     cap: 16,
                 },
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write {
+                    requires: Presence::Either,
+                },
                 denomination: None,
             },
             Clause::Effect {
@@ -1423,7 +1449,9 @@ mod tests {
                 hi: 110,
                 cap: 16,
             },
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either
+            },
         }));
         assert!(set.contains(&Effect {
             target: EffectTarget::Point(child_key(&TestHasher, ins.self_addr, RoleId(9), &[])),
@@ -1439,7 +1467,9 @@ mod tests {
                 hi: Expr::Arg(0),
                 cap: 16,
             },
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write {
+                requires: Presence::Either,
+            },
             denomination: None,
         }];
         assert_eq!(
@@ -1464,7 +1494,9 @@ mod tests {
                 material: vec![Expr::Arg(slot)],
                 order: Expr::Literal(Value::U128(9)),
             },
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write {
+                requires: Presence::Either,
+            },
             denomination: None,
         };
         let set = evaluate_effects(&[entry_for(0), entry_for(1)], &ins, &TestHasher).unwrap();
@@ -1484,7 +1516,9 @@ mod tests {
                     collection: id_for(resource),
                     order: 9,
                 },
-                mode: Mode::Write,
+                mode: Mode::Write {
+                    requires: Presence::Either
+                },
             }));
         }
 
@@ -1519,7 +1553,9 @@ mod tests {
                     material: vec![Expr::Arg(slot)],
                 },
             },
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write {
+                requires: Presence::Either,
+            },
             denomination: None,
         };
         let set = evaluate_effects(&[entry_for(0), entry_for(1)], &ins, &TestHasher).unwrap();
@@ -1539,7 +1575,9 @@ mod tests {
                     collection: collection_id(&TestHasher, ins.self_addr, RoleId(2), &[]),
                     order: order_for(name),
                 },
-                mode: Mode::Write,
+                mode: Mode::Write {
+                    requires: Presence::Either
+                },
             }));
         }
 

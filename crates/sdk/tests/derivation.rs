@@ -16,7 +16,7 @@
 // the appearance is an artifact of a contract living inside a test binary.
 #![allow(dead_code)]
 
-use hyperscale_vm_effects::{Clause, ModeExpr, RuleExpr};
+use hyperscale_vm_effects::{Clause, ModeExpr, Presence, RuleExpr};
 use hyperscale_vm_sdk::blueprint;
 
 /// Control-flow spellings of one access set, each beside its straight-line
@@ -161,7 +161,9 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
         metadata.methods["bind"].effects,
         vec![Clause::Effect {
             target: hashed_entry(),
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write {
+                requires: Presence::Either,
+            },
             denomination: None,
         }],
     );
@@ -304,7 +306,12 @@ fn a_stored_rate_folds_to_an_exclusive_write_never_a_movement() {
     // A rate is not value: nothing moves into or out of the cell, so the
     // site folds to the exclusive read-modify-write and the commutative
     // movement semantics that read an amount cell are unreachable for it.
-    assert_eq!(modes, vec![ModeExpr::Write]);
+    assert_eq!(
+        modes,
+        vec![ModeExpr::Write {
+            requires: Presence::Either,
+        }]
+    );
 }
 
 #[test]

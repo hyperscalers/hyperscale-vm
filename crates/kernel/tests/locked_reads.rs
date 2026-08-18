@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, RoleId,
     SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
@@ -111,7 +111,15 @@ fn run(declared: EffectSet) -> Outcome {
 fn a_locked_read_of_a_locked_cell_reads_it() {
     let batch = vec![BatchTx::new(
         tx(0x01),
-        declare(&[(cell(LOCKED), Mode::Locked), (cell(LEDGER), Mode::Write)]),
+        declare(&[
+            (cell(LOCKED), Mode::Locked),
+            (
+                cell(LEDGER),
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+            ),
+        ]),
         1_000,
         [1; 32],
     )];
@@ -149,7 +157,12 @@ fn a_locked_read_of_a_locked_cell_reads_it() {
 fn a_locked_read_of_an_unlocked_cell_refuses() {
     let outcome = run(declare(&[
         (cell(MUTABLE), Mode::Locked),
-        (cell(LEDGER), Mode::Write),
+        (
+            cell(LEDGER),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        ),
     ]));
     assert!(
         matches!(
@@ -169,7 +182,12 @@ fn a_locked_read_of_an_unlocked_cell_refuses() {
 fn a_fresh_read_of_the_same_cell_is_admitted() {
     let outcome = run(declare(&[
         (cell(MUTABLE), Mode::Read),
-        (cell(LEDGER), Mode::Write),
+        (
+            cell(LEDGER),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        ),
     ]));
     assert!(
         matches!(outcome, Outcome::Completed { .. }),

@@ -40,7 +40,9 @@ PackageMetadata {
                             material: [],
                         },
                     ),
-                    mode: Write,
+                    mode: Write {
+                        requires: Either,
+                    },
                     denomination: None,
                 },
             ],
@@ -83,7 +85,9 @@ PackageMetadata {
                             ],
                         },
                     },
-                    mode: Write,
+                    mode: Write {
+                        requires: Either,
+                    },
                     denomination: None,
                 },
                 Effect {

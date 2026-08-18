@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
     AbortReason, Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, ISSUER_REP,
-    Mode, SubstateKey, cell_ids,
+    Mode, Presence, SubstateKey, cell_ids,
 };
 use hyperscale_vm_embed::math::{MathError, Rounding, U256, mul_div};
 
@@ -141,6 +141,17 @@ pub enum MaterializeError {
     /// sound only where no version of the target differs.
     #[error("declared locked read of unlocked substate {0:?}")]
     UnlockedTarget(SubstateKey),
+    /// A write requiring the leaf absent, on a key the store holds.
+    ///
+    /// The same class of verdict as an infeasible reservation, and at
+    /// the same seam: a precondition on committed state, judged by the
+    /// shard that holds the cell, before any body observes anything.
+    #[error("a write requiring an absent leaf lands on occupied {0:?}")]
+    Occupied(SubstateKey),
+    /// A write requiring the leaf there, on a key the store does not
+    /// hold.
+    #[error("a write requiring a present leaf lands on absent {0:?}")]
+    Absent(SubstateKey),
     /// A declared reservation the committed balance cannot cover.
     #[error("reservation of {amount} on {key:?} is infeasible")]
     Infeasible {
@@ -683,6 +694,23 @@ impl KernelSession {
         // cannot compose.
         if let Some(key) = declared.self_conflicting() {
             return Err(MaterializeError::SelfConflicting(key));
+        }
+
+        // What a write requires of the leaf it lands on, judged where a
+        // reservation's feasibility already is: over the committed
+        // store, before the body runs, so a create that cannot create
+        // aborts rather than trapping inside a guest.
+        for effect in declared.iter() {
+            let (EffectTarget::Point(key), Mode::Write { requires }) = (effect.target, effect.mode)
+            else {
+                continue;
+            };
+            let held = store.read(key)?.is_some();
+            match (requires, held) {
+                (Presence::Absent, true) => return Err(MaterializeError::Occupied(key)),
+                (Presence::Present, false) => return Err(MaterializeError::Absent(key)),
+                _ => {}
+            }
         }
 
         let verdicts = store.judge_and_hold(&reservations)?;
@@ -2011,7 +2039,9 @@ fn capability_for(store: &OverlayStore, effect: Effect) -> Result<Capability, Ma
                 Err(MaterializeError::UnlockedTarget(key))
             }
         }
-        (EffectTarget::Point(key), Mode::Write) => Ok(Capability::Write(locked_checked(key)?)),
+        (EffectTarget::Point(key), Mode::Write { .. }) => {
+            Ok(Capability::Write(locked_checked(key)?))
+        }
         (EffectTarget::Point(key), Mode::Delta) => Ok(Capability::Delta(locked_checked(key)?)),
         (EffectTarget::Point(key), Mode::Reserve { amount }) => Ok(Capability::Reserve {
             key: locked_checked(key)?,
@@ -2020,9 +2050,9 @@ fn capability_for(store: &OverlayStore, effect: Effect) -> Result<Capability, Ma
         // Point targets are spoken for above, so what is left is a
         // collection one — and the two spell the same interval, the mode
         // choosing only which capability carries it.
-        (target, mode @ (Mode::Read | Mode::Write)) => interval_of(target)
+        (target, mode @ (Mode::Read | Mode::Write { .. })) => interval_of(target)
             .map(|interval| match mode {
-                Mode::Write => Capability::RangeWrite(interval),
+                Mode::Write { .. } => Capability::RangeWrite(interval),
                 _ => Capability::RangeRead(interval),
             })
             .ok_or_else(|| MaterializeError::Unsupported(Box::new(effect))),
@@ -2067,9 +2097,10 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32,
-        Mode, RoleId, SubstateKey, TestHasher, child_key, ids_cell,
+        AbortReason, Address, AddressClass, CollectionId, Effect, EffectConflict, EffectSet,
+        EffectTarget, Hash32, Mode, RoleId, SubstateKey, TestHasher, child_key, ids_cell,
     };
+    use hyperscale_vm_types::Presence;
 
     use super::{
         Capability, EnvInputs, Event, Held, KernelSession, MAX_EVENT_PAYLOAD_BYTES,
@@ -2123,6 +2154,93 @@ mod tests {
         set.iter().collect()
     }
 
+    /// A write says what it requires of the leaf, and the shard holding
+    /// the cell judges it before the body runs — the same seam, and the
+    /// same class of verdict, as an infeasible reservation.
+    #[test]
+    fn a_write_requiring_a_presence_the_leaf_does_not_have_refuses() {
+        let key = key(0xC1);
+        let write = |requires| Effect {
+            target: EffectTarget::Point(key),
+            mode: Mode::Write { requires },
+        };
+        let materialize = |store: MemoryStore, requires| {
+            let set = declared(&[write(requires)]);
+            let ordered = ord(&set);
+            KernelSession::materialize(
+                OverlayStore::new(Arc::new(store)),
+                &set,
+                &ordered,
+                &[],
+                tx(1),
+                env(),
+                hash,
+            )
+            .map(|_| ())
+        };
+        let occupied = || {
+            let mut store = MemoryStore::new();
+            store.write(key, vec![7]).expect("seed");
+            store
+        };
+
+        // A create lands only where nothing is.
+        assert_eq!(materialize(MemoryStore::new(), Presence::Absent), Ok(()));
+        assert_eq!(
+            materialize(occupied(), Presence::Absent),
+            Err(MaterializeError::Occupied(key))
+        );
+
+        // And its dual.
+        assert_eq!(materialize(occupied(), Presence::Present), Ok(()));
+        assert_eq!(
+            materialize(MemoryStore::new(), Presence::Present),
+            Err(MaterializeError::Absent(key))
+        );
+
+        // An ordinary write is indifferent, which is what every
+        // declaration that says nothing means.
+        assert_eq!(materialize(MemoryStore::new(), Presence::Either), Ok(()));
+        assert_eq!(materialize(occupied(), Presence::Either), Ok(()));
+    }
+
+    /// Two clauses on one cell are one access, and what it requires is
+    /// what both require — unless they require opposite things, which is
+    /// a declaration nothing could satisfy.
+    #[test]
+    fn presence_requirements_on_one_cell_meet_or_refuse() {
+        let key = key(0xC2);
+        let write = |requires| Effect {
+            target: EffectTarget::Point(key),
+            mode: Mode::Write { requires },
+        };
+        let fold = |a, b| {
+            let mut set = EffectSet::new();
+            set.insert(write(a))?;
+            set.insert(write(b))?;
+            Ok::<_, EffectConflict>(set.iter().collect::<Vec<_>>())
+        };
+
+        // A named requirement wins over the indifferent one, in either
+        // order, and the set holds one access rather than two.
+        for named in [Presence::Absent, Presence::Present] {
+            for pair in [(Presence::Either, named), (named, Presence::Either)] {
+                assert_eq!(fold(pair.0, pair.1), Ok(vec![write(named)]));
+            }
+            assert_eq!(fold(named, named), Ok(vec![write(named)]));
+        }
+
+        // Opposite requirements are refused where the second is written.
+        assert_eq!(
+            fold(Presence::Absent, Presence::Present),
+            Err(EffectConflict::Presence)
+        );
+        assert_eq!(
+            fold(Presence::Present, Presence::Absent),
+            Err(EffectConflict::Presence)
+        );
+    }
+
     #[test]
     fn the_table_follows_the_clause_order_not_the_set_order() {
         // A handle's rep is its index here and a guest's parameters are
@@ -2131,7 +2249,9 @@ mod tests {
         let (first, second) = (key(0xA1), key(0xA2));
         let write = |k| Effect {
             target: EffectTarget::Point(k),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         };
         let set = declared(&[write(first), write(second)]);
 
@@ -2169,7 +2289,9 @@ mod tests {
         let cell = key(0xB4);
         let write = Effect {
             target: EffectTarget::Point(cell),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         };
         let set = declared(&[write, write]);
         assert_eq!(set.len(), 1, "the set folds them");
@@ -2452,7 +2574,9 @@ mod tests {
                 hi: 15,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         }]);
         let mut session = session_over(store, &set);
 
@@ -2491,7 +2615,9 @@ mod tests {
                 hi: u128::MAX,
                 cap: 2,
             },
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
@@ -2523,7 +2649,9 @@ mod tests {
                 hi: u128::MAX,
                 cap: 1,
             },
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
@@ -2562,7 +2690,9 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         }]);
         let mut session = session_over(store, &set);
 
@@ -2596,7 +2726,9 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         }]);
         let mut session = session_over(store, &set);
 
@@ -2624,7 +2756,9 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
         session.range_count(0).unwrap();
@@ -2652,7 +2786,9 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         }]);
         let mut session = session_over(store, &set);
 
@@ -2704,7 +2840,9 @@ mod tests {
         let set = declared(&[
             Effect {
                 target: EffectTarget::Point(cell),
-                mode: Mode::Write,
+                mode: Mode::Write {
+                    requires: Presence::Either,
+                },
             },
             Effect {
                 target: EffectTarget::Point(cell),
@@ -2894,7 +3032,9 @@ mod tests {
         store.clear_log();
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         }]);
         let mut session = session_over(store, &set);
 
@@ -2924,7 +3064,9 @@ mod tests {
         store.clear_log();
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         }]);
         let mut session = session_over(store, &set);
 
@@ -2961,7 +3103,9 @@ mod tests {
         store.clear_log();
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         }]);
         let mut session = session_over(store, &set);
 

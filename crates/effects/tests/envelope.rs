@@ -7,8 +7,8 @@ use hyperscale_vm_effects::{
     Effect, EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, IntentDecl, MAX_SUBINTENTS, MAX_VALUE_DEPTH, MAX_YIELD_PARAMS, ManifestGraph,
     ManifestHash, MetadataCache, Mode, NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver,
-    PrincipalAddr, ResourceAddr, ShardResolver, Subintent, TestHasher, Value, YieldBinding,
-    YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
+    Presence, PrincipalAddr, ResourceAddr, ShardResolver, Subintent, TestHasher, Value,
+    YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
 use hyperscale_vm_stdlib::account;
 use proptest::prelude::{any, proptest};
@@ -196,7 +196,9 @@ fn routing_carries_the_nullifier_creation_write() {
     assert_ne!(signer, root);
     assert!(routing.per_shard[&signer].contains(&Effect {
         target: EffectTarget::Point(record.nullifier),
-        mode: Mode::Write,
+        mode: Mode::Write {
+            requires: Presence::Either
+        },
     }));
     // The root's shard carries no nullifier write.
     assert!(!routing.per_shard[&root].iter().any(|effect| {

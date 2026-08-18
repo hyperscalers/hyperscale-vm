@@ -16,7 +16,7 @@ use std::sync::Arc;
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    RoleId, SubstateKey, TestHasher, Value, child_key, collection_id, order_key,
+    Presence, RoleId, SubstateKey, TestHasher, Value, child_key, collection_id, order_key,
 };
 use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
 #[cfg(target_os = "linux")]
@@ -453,7 +453,9 @@ fn lottery_session() -> KernelSession {
                 collection: ticket_collection(),
                 order: ticket_order(),
             },
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         },
         Effect {
             target: EffectTarget::Point(child_key(&TestHasher, LOTTERY, VAULT, &[])),
@@ -461,7 +463,9 @@ fn lottery_session() -> KernelSession {
         },
         Effect {
             target: EffectTarget::Point(draw_key()),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         },
         Effect {
             target: EffectTarget::Range {

@@ -8,17 +8,14 @@ use std::collections::BTreeSet;
 use hyperscale_vm_effects::{
     Clause, Effect, EffectTarget, Expr, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
     ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
-    PrefixShardResolver, PrincipalAddr, RoleId, ShardResolver, TargetExpr, TestHasher, Totality,
-    Value, admit, collection_id, fresh_id, route,
+    PrefixShardResolver, Presence, PrincipalAddr, RoleId, ShardResolver, TargetExpr, TestHasher,
+    Totality, Value, admit, collection_id, fresh_id, route,
 };
 use hyperscale_vm_kernel::{CreationContext, MemoryStore, WorkingStore};
 
-#[test]
-fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
-    // The composer of this one-intent graph; nothing it calls is guarded.
-    const COMPOSER: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
-    // A package whose method creates one object and inserts one collection
-    // entry at a fresh sequence.
+/// A package whose one method creates one object and inserts one
+/// collection entry at a fresh sequence.
+fn spawner() -> PackageMetadata {
     let mut package = PackageMetadata::default();
     package.methods.insert(
         "spawn".into(),
@@ -27,7 +24,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
             effects: vec![
                 Clause::Effect {
                     target: TargetExpr::Point(Expr::FreshKey { slot: 0 }),
-                    mode: ModeExpr::Write,
+                    mode: declared_write(),
                     denomination: None,
                 },
                 Clause::Effect {
@@ -40,13 +37,35 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
                             lo: Box::new(Expr::FreshId { slot: 1 }),
                         },
                     },
-                    mode: ModeExpr::Write,
+                    mode: declared_write(),
                     denomination: None,
                 },
             ],
             ..MethodSignature::default()
         },
     );
+    package
+}
+
+/// An ordinary declared write: on a leaf that may or may not be there.
+const fn declared_write() -> ModeExpr {
+    ModeExpr::Write {
+        requires: Presence::Either,
+    }
+}
+
+/// The same write, evaluated.
+const fn write() -> Mode {
+    Mode::Write {
+        requires: Presence::Either,
+    }
+}
+
+#[test]
+fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
+    // The composer of this one-intent graph; nothing it calls is guarded.
+    const COMPOSER: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
+    let package = spawner();
     let package_hash = PackageHash(Hash32([1; 32]));
     let mut cache = MetadataCache::new();
     cache.publish(package_hash, package);
@@ -99,7 +118,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     let created = ctx.create(&mut store, &TestHasher, vec![42]).unwrap();
     assert!(declared.contains(&Effect {
         target: EffectTarget::Point(created),
-        mode: Mode::Write,
+        mode: write(),
     }));
 
     // The entry's fresh sequence agrees the same way.
@@ -118,7 +137,9 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
             collection: collection_id(&TestHasher, creator.address(), RoleId(4), &[]),
             order: (u128::from(99u64) << 64) | u128::from(seq),
         },
-        mode: Mode::Write,
+        mode: Mode::Write {
+            requires: Presence::Either
+        },
     }));
 
     // Node 0's creation is a different key: the node index namespaces.
@@ -127,6 +148,8 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     assert_ne!(from_node_zero, created);
     assert!(declared.contains(&Effect {
         target: EffectTarget::Point(from_node_zero),
-        mode: Mode::Write,
+        mode: Mode::Write {
+            requires: Presence::Either
+        },
     }));
 }

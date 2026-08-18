@@ -6,8 +6,8 @@ pub use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Address, Clause, ComponentAddr, Effect, EffectSet, Expr, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr, PackageHash,
-    PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, ResourceAddr, RoleId, ShardId,
-    ShardResolver, SubstateKey, TargetExpr, TestHasher, Totality, Value, child_key,
+    PackageMetadata, ParamType, PrefixShardResolver, Presence, PrincipalAddr, ResourceAddr, RoleId,
+    ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Totality, Value, child_key,
 };
 pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
 pub use hyperscale_vm_fixtures::{amm, book, splitter};
@@ -162,7 +162,9 @@ pub fn wide_account_metadata() -> PackageMetadata {
     let mut effects = methods.methods["withdraw"].effects.clone();
     effects.push(Clause::Effect {
         target: TargetExpr::Point(self_child(RoleId(99), vec![])),
-        mode: ModeExpr::Write,
+        mode: ModeExpr::Write {
+            requires: Presence::Either,
+        },
         denomination: None,
     });
     methods.methods.insert(

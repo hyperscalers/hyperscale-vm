@@ -139,7 +139,7 @@ mod tests {
     use super::{EXCLUSIVITY_FLOOR, effect_units, footprint, mode_weight, order_bits};
     use crate::types::{
         Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode,
-        ModeKind, SubstateKey,
+        ModeKind, Presence, SubstateKey,
     };
 
     const OWNER: Address = Address::new([7; 31], AddressClass::Component);
@@ -185,30 +185,61 @@ mod tests {
 
     #[test]
     fn a_full_space_range_costs_more_than_a_narrow_one() {
-        let narrow = effect_units(effect(range(100, 200), Mode::Write));
-        let full = effect_units(effect(range(0, u128::MAX), Mode::Write));
+        let narrow = effect_units(effect(
+            range(100, 200),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        ));
+        let full = effect_units(effect(
+            range(0, u128::MAX),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        ));
         assert!(full > narrow, "{full} should exceed {narrow}");
     }
 
     #[test]
     fn a_degenerate_range_costs_what_its_point_costs() {
         assert_eq!(
-            effect_units(effect(range(42, 42), Mode::Write)),
-            effect_units(effect(point(1), Mode::Write)),
+            effect_units(effect(
+                range(42, 42),
+                Mode::Write {
+                    requires: Presence::Either
+                }
+            )),
+            effect_units(effect(
+                point(1),
+                Mode::Write {
+                    requires: Presence::Either
+                }
+            )),
         );
     }
 
     #[test]
     fn a_set_totals_its_effects() {
         let mut declared = EffectSet::new();
-        declared.insert(effect(point(1), Mode::Write)).unwrap();
+        declared
+            .insert(effect(
+                point(1),
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+            ))
+            .unwrap();
         declared
             .insert(effect(range(0, 1023), Mode::Locked))
             .unwrap();
         assert_eq!(
             footprint(&declared),
-            effect_units(effect(point(1), Mode::Write))
-                + effect_units(effect(range(0, 1023), Mode::Locked)),
+            effect_units(effect(
+                point(1),
+                Mode::Write {
+                    requires: Presence::Either
+                }
+            )) + effect_units(effect(range(0, 1023), Mode::Locked)),
         );
     }
 }

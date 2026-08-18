@@ -329,11 +329,11 @@ const fn expected_resource(clause: &Clause) -> Option<&'static str> {
     match (target, mode) {
         (TargetExpr::Point(_), ModeExpr::Read) => Some("read-cell"),
         (TargetExpr::Point(_), ModeExpr::Locked) => Some("locked-cell"),
-        (TargetExpr::Point(_), ModeExpr::Write) => Some("write-cell"),
+        (TargetExpr::Point(_), ModeExpr::Write { .. }) => Some("write-cell"),
         (TargetExpr::Point(_), ModeExpr::Delta) => Some("delta-cell"),
         (TargetExpr::Point(_), ModeExpr::Reserve(_)) => Some("reserve-cell"),
         (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Read) => Some("range-read"),
-        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write) => {
+        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write { .. }) => {
             Some("range-write")
         }
         _ => None,
@@ -342,12 +342,12 @@ const fn expected_resource(clause: &Clause) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-
     use hyperscale_vm_effects::{
         AbiParam, Accessibility, Expr, MethodSignature, PackageMetadata, RuleExpr,
     };
     use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, book, lottery};
     use hyperscale_vm_stdlib::{account, account_artifact, staking_artifact};
+    use hyperscale_vm_types::Presence;
     use wat::parse_str;
 
     use super::{admit_protocol_package, *};
@@ -707,7 +707,9 @@ mod tests {
                     role: RoleId(1),
                     material: vec![],
                 }),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write {
+                    requires: Presence::Either,
+                },
                 denomination: None,
             }];
             signature.abi = vec![AbiParam::Handle(0)];

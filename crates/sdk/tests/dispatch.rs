@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, RoleId,
     SubstateKey, TestHasher, Value, child_key,
 };
 use hyperscale_vm_kernel::{
@@ -149,7 +149,12 @@ fn an_edge_the_body_credits_lands_in_the_declared_cell() {
 
 #[test]
 fn an_edge_the_body_produces_comes_back_as_the_kernels_own() {
-    let session = session(Mode::Write, 100);
+    let session = session(
+        Mode::Write {
+            requires: Presence::Either,
+        },
+        100,
+    );
 
     let (mut session, invoked) = till::invoke(
         "withdraw",
@@ -172,7 +177,12 @@ fn an_edge_the_body_produces_comes_back_as_the_kernels_own() {
 
 #[test]
 fn the_error_arm_declines_rather_than_trapping() {
-    let session = session(Mode::Write, 10);
+    let session = session(
+        Mode::Write {
+            requires: Presence::Either,
+        },
+        10,
+    );
 
     let (_, invoked) = till::invoke(
         "withdraw",
@@ -196,7 +206,12 @@ fn a_body_that_panics_aborts_as_the_trap_it_would_be() {
 /// canonical ABI's mode escape, reached here by the same route.
 #[test]
 fn a_capability_at_the_wrong_mode_is_a_violation() {
-    let session = session(Mode::Write, 10);
+    let session = session(
+        Mode::Write {
+            requires: Presence::Either,
+        },
+        10,
+    );
 
     // `withdraw` reads and writes, so its clause materialized exclusive;
     // a rep arriving as a fresh read is a mode the export never declared.

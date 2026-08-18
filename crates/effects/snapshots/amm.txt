@@ -49,7 +49,9 @@ PackageMetadata {
                             ],
                         },
                     ),
-                    mode: Write,
+                    mode: Write {
+                        requires: Either,
+                    },
                     denomination: Some(
                         Config(
                             0,
@@ -70,7 +72,9 @@ PackageMetadata {
                             ],
                         },
                     ),
-                    mode: Write,
+                    mode: Write {
+                        requires: Either,
+                    },
                     denomination: Some(
                         Config(
                             1,

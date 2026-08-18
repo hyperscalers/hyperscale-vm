@@ -9,7 +9,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, RoleId,
     SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
@@ -114,7 +114,9 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
         declared
             .insert(Effect {
                 target: EffectTarget::Point(rmw_cell()),
-                mode: Mode::Write,
+                mode: Mode::Write {
+                    requires: Presence::Either,
+                },
             })
             .unwrap();
         batch.push(BatchTx::new(

@@ -31,7 +31,7 @@ use std::thread;
 
 use hyperscale_vm_effects::{
     AbortReason, Address, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Mode,
-    ModeKind, NodeCall, SubstateKey, compatible,
+    ModeKind, NodeCall, Presence, SubstateKey, compatible,
 };
 
 use crate::ledger::AmountLedger;
@@ -644,6 +644,12 @@ fn materialize_abort(defect: MaterializeError) -> Outcome {
         MaterializeError::SelfConflicting(_) => Outcome::UserError {
             reason: AbortReason::SelfConflictingModes,
         },
+        MaterializeError::Occupied(_) => Outcome::UserError {
+            reason: AbortReason::CreateOnOccupied,
+        },
+        MaterializeError::Absent(_) => Outcome::UserError {
+            reason: AbortReason::UpdateOfAbsent,
+        },
     }
 }
 
@@ -815,7 +821,9 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
         for key in &entry.nullifiers {
             if !entry.declared.contains(&Effect {
                 target: EffectTarget::Point(*key),
-                mode: Mode::Write,
+                mode: Mode::Write {
+                    requires: Presence::Either,
+                },
             }) {
                 return Err(BatchError::UndeclaredNullifier {
                     tx: entry.tx,
@@ -1079,8 +1087,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use hyperscale_vm_effects::{
-        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Mode, RoleId,
-        TestHasher, child_key,
+        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Mode,
+        Presence, RoleId, TestHasher, child_key,
     };
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
@@ -1100,7 +1108,9 @@ mod tests {
             1 => Mode::Locked,
             2 => Mode::Delta,
             3 => Mode::Reserve { amount: 1 },
-            _ => Mode::Write,
+            _ => Mode::Write {
+                requires: Presence::Either,
+            },
         }
     }
 

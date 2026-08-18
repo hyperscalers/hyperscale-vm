@@ -9,8 +9,8 @@
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, EvalInputs, Hash32,
-    MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature, Mode, ModeKind, ParamType, SubstateKey,
-    TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
+    MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature, Mode, ModeKind, ParamType, Presence,
+    SubstateKey, TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
 };
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym};
 use hyperscale_vm_sdk::{Blueprint, TargetShape, Trace};
@@ -98,7 +98,9 @@ fn a_for_each_declares_one_effect_per_configured_element() {
         assert!(
             set.contains(&Effect {
                 target: EffectTarget::Point(vault(BASKET, resource)),
-                mode: Mode::Write,
+                mode: Mode::Write {
+                    requires: Presence::Either
+                },
             }),
             "no write declared on the {resource:?} vault"
         );

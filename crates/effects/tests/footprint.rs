@@ -11,7 +11,7 @@
 
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind,
-    SubstateKey, compatible, effect_units, footprint, mode_weight,
+    Presence, SubstateKey, compatible, effect_units, footprint, mode_weight,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
@@ -36,7 +36,9 @@ fn arb_mode() -> impl Strategy<Value = Mode> {
     prop_oneof![
         Just(Mode::Read),
         Just(Mode::Delta),
-        Just(Mode::Write),
+        Just(Mode::Write {
+            requires: Presence::Either
+        }),
         any::<u128>().prop_map(|amount| Mode::Reserve { amount }),
         Just(Mode::Locked),
     ]
@@ -121,7 +123,13 @@ fn weight_respects_the_exclusion_ordering() {
 /// collection, so it must never price at what a narrow one prices at.
 #[test]
 fn the_whole_order_key_space_is_the_most_expensive_interval() {
-    for kind in [Mode::Read, Mode::Delta, Mode::Write] {
+    for kind in [
+        Mode::Read,
+        Mode::Delta,
+        Mode::Write {
+            requires: Presence::Either,
+        },
+    ] {
         let whole = effect_units(Effect {
             target: EffectTarget::Range {
                 owner: Address::new([1; 31], AddressClass::Component),

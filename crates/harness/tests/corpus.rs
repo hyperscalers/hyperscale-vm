@@ -17,9 +17,9 @@ use hyperscale_vm_effects::{
     Constraint, Effect, EffectSet, EffectTarget, EntryKey, EvidenceRef, Expr, Hash32, Hasher,
     InstanceMeta, InstanceRegistry, MAX_STAGED_DEPTH, ManifestGraph, MetadataCache,
     MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
-    Presented, PrincipalAddr, Proposal, ResourceAddr, Role, RoleId, RoleSet, Routing, Rule,
-    ShardId, ShardResolver, Strategy, SubstateKey, TargetExpr, TestHasher, Totality, Value, admit,
-    child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
+    Presence, Presented, PrincipalAddr, Proposal, ResourceAddr, Role, RoleId, RoleSet, Routing,
+    Rule, ShardId, ShardResolver, Strategy, SubstateKey, TargetExpr, TestHasher, Totality, Value,
+    admit, child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
     resource_address, route,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
@@ -1715,8 +1715,18 @@ fn swap_profile_and_provision_shape_are_exact() {
         *pool_set,
         set(&[
             point(config_leaf(pool()), Mode::Locked,),
-            point(vault(pool(), RES_X), Mode::Write),
-            point(vault(pool(), RES_Y), Mode::Write),
+            point(
+                vault(pool(), RES_X),
+                Mode::Write {
+                    requires: Presence::Either
+                }
+            ),
+            point(
+                vault(pool(), RES_Y),
+                Mode::Write {
+                    requires: Presence::Either
+                }
+            ),
         ])
     );
     // The pool-shard provision carries the two balance cells and nothing

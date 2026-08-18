@@ -25,8 +25,8 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, FOOTPRINT_WEIGHT, Hash32,
-    Hasher, Mode, RoleId, SubintentHash, SubstateKey, TestHasher, child_key, effect_units,
-    footprint, nullifier_key, work_units,
+    Hasher, Mode, Presence, RoleId, SubintentHash, SubstateKey, TestHasher, child_key,
+    effect_units, footprint, nullifier_key, work_units,
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality,
@@ -298,7 +298,9 @@ fn a_range_is_charged_its_declared_width_through_the_locality_filter() {
             hi: u128::MAX,
             cap: 8,
         },
-        mode: Mode::Write,
+        mode: Mode::Write {
+            requires: Presence::Either,
+        },
     };
     wide.insert(range).unwrap();
 
@@ -308,7 +310,9 @@ fn a_range_is_charged_its_declared_width_through_the_locality_filter() {
         recipient_side.footprint(&wide)
             > effect_units(Effect {
                 target: EffectTarget::Point(cell(RECIPIENT_BYTE)),
-                mode: Mode::Write,
+                mode: Mode::Write {
+                    requires: Presence::Either
+                },
             }),
         "a full-space range must cost more than a point"
     );
@@ -347,7 +351,9 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
     declared
         .insert(Effect {
             target: EffectTarget::Point(nullifier),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         })
         .unwrap();
     let mut store = MemoryStore::default();

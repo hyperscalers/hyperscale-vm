@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, RoleId,
     SubintentHash, SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
@@ -175,7 +175,9 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
     declared
         .insert(Effect {
             target: EffectTarget::Point(signed_nullifier()),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         })
         .unwrap();
     BatchTx {

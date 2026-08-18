@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Hash32, Hasher,
-    Mode, RoleId, SubstateKey, TestHasher, child_key,
+    Mode, Presence, RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality,
@@ -174,7 +174,9 @@ fn declared_of(spec: &TxSpec) -> EffectSet {
                 exclusive.insert(k);
                 Effect {
                     target: EffectTarget::Point(cell(k)),
-                    mode: Mode::Write,
+                    mode: Mode::Write {
+                        requires: Presence::Either,
+                    },
                 }
             }
             Claim::Interval { lo, hi, write } => Effect {
@@ -185,7 +187,13 @@ fn declared_of(spec: &TxSpec) -> EffectSet {
                     hi,
                     cap: 8,
                 },
-                mode: if write { Mode::Write } else { Mode::Read },
+                mode: if write {
+                    Mode::Write {
+                        requires: Presence::Either,
+                    }
+                } else {
+                    Mode::Read
+                },
             },
         };
         set.insert(effect)

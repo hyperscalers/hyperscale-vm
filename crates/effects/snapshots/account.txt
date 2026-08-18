@@ -44,7 +44,9 @@ PackageMetadata {
                             material: [],
                         },
                     ),
-                    mode: Write,
+                    mode: Write {
+                        requires: Either,
+                    },
                     denomination: None,
                 },
             ],
@@ -74,7 +76,9 @@ PackageMetadata {
                             material: [],
                         },
                     ),
-                    mode: Write,
+                    mode: Write {
+                        requires: Either,
+                    },
                     denomination: None,
                 },
             ],
@@ -189,7 +193,9 @@ PackageMetadata {
                         ),
                         cap: 64,
                     },
-                    mode: Write,
+                    mode: Write {
+                        requires: Either,
+                    },
                     denomination: Some(
                         ResourceOf(
                             Arg(
@@ -334,7 +340,9 @@ PackageMetadata {
                             material: [],
                         },
                     ),
-                    mode: Write,
+                    mode: Write {
+                        requires: Either,
+                    },
                     denomination: None,
                 },
             ],
@@ -379,7 +387,9 @@ PackageMetadata {
                             material: [],
                         },
                     ),
-                    mode: Write,
+                    mode: Write {
+                        requires: Either,
+                    },
                     denomination: None,
                 },
             ],
@@ -497,7 +507,9 @@ PackageMetadata {
                         ),
                         cap: 64,
                     },
-                    mode: Write,
+                    mode: Write {
+                        requires: Either,
+                    },
                     denomination: Some(
                         Arg(
                             0,

@@ -63,8 +63,8 @@ mod tests {
     use hyperscale_vm_effects::{
         Accessibility, Address, AddressClass, Clause, EdgeContent, Expr, LocalKey,
         MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_VALUE_DEPTH,
-        METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType, RoleId, RuleExpr, SubstateKey,
-        TargetExpr, Totality, Value,
+        METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType, Presence, RoleId, RuleExpr,
+        SubstateKey, TargetExpr, Totality, Value,
     };
     use hyperscale_vm_fixtures::{amm, book, splitter};
     use hyperscale_vm_stdlib::account;
@@ -86,7 +86,9 @@ mod tests {
         MethodSignature {
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(expr),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write {
+                    requires: Presence::Either,
+                },
                 denomination: None,
             }],
             ..MethodSignature::default()

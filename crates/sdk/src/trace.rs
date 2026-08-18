@@ -31,8 +31,8 @@
 
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, AuthRole, Clause, CustodyClaim, Expr, MAX_CLAUSE_DEPTH,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, ParamType, RoleId, RuleExpr, TargetExpr,
-    Totality, Value,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, ParamType, Presence, RoleId, RuleExpr,
+    TargetExpr, Totality, Value,
 };
 
 use crate::sym::{Addr, Amount, Key, Kind, Num, Opaque, Seq, Sym, expr_depth};
@@ -680,9 +680,27 @@ impl Access<'_> {
         self.declare(ModeExpr::Reserve(amount));
     }
 
-    /// An exclusive read-modify-write.
+    /// An exclusive read-modify-write, on a leaf that may or may not be
+    /// there.
     pub fn write(self) {
-        self.declare(ModeExpr::Write);
+        self.declare(ModeExpr::Write {
+            requires: Presence::Either,
+        });
+    }
+
+    /// The same write, feasible only where the leaf is absent: the
+    /// creation a one-way door is made of.
+    pub fn create(self) {
+        self.declare(ModeExpr::Write {
+            requires: Presence::Absent,
+        });
+    }
+
+    /// The same write, feasible only where the leaf is there.
+    pub fn existing(self) {
+        self.declare(ModeExpr::Write {
+            requires: Presence::Present,
+        });
     }
 }
 

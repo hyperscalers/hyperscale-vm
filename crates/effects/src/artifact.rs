@@ -264,6 +264,7 @@ mod tests {
     use crate::dsl::{Clause, Expr, MAX_EXPR_DEPTH, ModeExpr, TargetExpr};
     use crate::hash::TestHasher;
     use crate::metadata::{MethodSignature, PackageMetadata, Totality, package_hash};
+    use crate::types::Presence;
 
     fn empty_component() -> Vec<u8> {
         let mut artifact = b"\0asm".to_vec();
@@ -355,7 +356,9 @@ mod tests {
                 totality: Totality::Fallible,
                 effects: vec![Clause::Effect {
                     target: TargetExpr::Point(expr),
-                    mode: ModeExpr::Write,
+                    mode: ModeExpr::Write {
+                        requires: Presence::Either,
+                    },
                     denomination: None,
                 }],
                 ..MethodSignature::default()

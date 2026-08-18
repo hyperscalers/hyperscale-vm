@@ -13,8 +13,8 @@ use common::{
 };
 use hyperscale_vm_effects::{
     AdmissionError, EdgeRef, Effect, EffectTarget, EvidenceRef, GraphArg, GraphNode, Hash32,
-    InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, TestHasher, Value, admit,
-    collection_id, fresh_id, route,
+    InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, Presence, TestHasher,
+    Value, admit, collection_id, fresh_id, route,
 };
 
 /// One consumed output edge, unconstrained.
@@ -22,6 +22,13 @@ const fn edge(producer: u32, output: u32) -> GraphArg {
     GraphArg::Edge {
         edge: EdgeRef { producer, output },
         constraints: vec![],
+    }
+}
+
+/// An ordinary write: on a leaf that may or may not be there.
+const fn write() -> Mode {
+    Mode::Write {
+        requires: Presence::Either,
     }
 }
 
@@ -156,11 +163,11 @@ fn swap_writes_both_reserves_and_reads_the_locked_config() {
                 },
                 Effect {
                     target: EffectTarget::Point(vault(pool(), RES_X)),
-                    mode: Mode::Write,
+                    mode: write(),
                 },
                 Effect {
                     target: EffectTarget::Point(vault(pool(), RES_Y)),
-                    mode: Mode::Write,
+                    mode: write(),
                 },
             ]),
         ),
@@ -223,7 +230,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
                         collection: collection_id(&TestHasher, book(), ASKS, &[]),
                         order: (u128::from(105u64) << 64) | u128::from(seq),
                     },
-                    mode: Mode::Write,
+                    mode: write(),
                 },
                 Effect {
                     target: EffectTarget::Point(vault(book(), BASE)),
@@ -327,7 +334,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
                         hi: (u128::from(110u64) << 64) | u128::from(u64::MAX),
                         cap: FILL_CAP,
                     },
-                    mode: Mode::Write,
+                    mode: write(),
                 },
                 Effect {
                     target: EffectTarget::Point(vault(book(), BASE)),

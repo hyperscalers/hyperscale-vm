@@ -8,7 +8,7 @@
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, ComponentAddr, Expr, MethodSignature, PackageMetadata, ParamType,
-    RoleId, Totality, Value, package_role,
+    Presence, RoleId, Totality, Value, package_role,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 
@@ -59,7 +59,9 @@ pub fn metadata() -> PackageMetadata {
             ],
             effects: vec![Clause::Effect {
                 target,
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write {
+                    requires: Presence::Either,
+                },
                 denomination: None,
             }],
             ..MethodSignature::default()
@@ -99,7 +101,9 @@ pub fn metadata() -> PackageMetadata {
                     hi: Expr::Literal(Value::U128(u128::MAX)),
                     cap: DRAIN_CAP,
                 },
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write {
+                    requires: Presence::Either,
+                },
                 denomination: None,
             }],
             ..MethodSignature::default()

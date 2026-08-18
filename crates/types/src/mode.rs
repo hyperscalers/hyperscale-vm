@@ -8,6 +8,8 @@
 //! scheduler. It lives here because all three speak it and none of them
 //! owns it.
 
+use hyperscale_hbor::Hbor;
+
 /// An access mode with its statically evaluated parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Mode {
@@ -33,8 +35,38 @@ pub enum Mode {
         /// The statically evaluated amount feasibility is judged against.
         amount: u128,
     },
-    /// Exclusive read-modify-write.
-    Write,
+    /// Exclusive read-modify-write, feasible iff the leaf's presence is
+    /// what the write requires of it.
+    Write {
+        /// What the leaf must be for the write to be feasible.
+        requires: Presence,
+    },
+}
+
+/// What a write requires of the leaf it lands on.
+///
+/// Three places need "this write may only create" or "this write may
+/// only update", and a body's `assert` answers none of them where it
+/// matters: a declaration is what a caller routes on and what a wallet
+/// reads, and a trap inside the body is invisible to both.
+///
+/// A parameter rather than a mode of its own, because **contention does
+/// not change**: a create and a write on one cell exclude each other
+/// exactly as two writes do. What changes is feasibility, which is the
+/// same split [`Mode::Reserve`] already makes — its amount is a
+/// feasibility parameter while [`ModeKind::Reserve`] is parameter-free
+/// for scheduling.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+pub enum Presence {
+    /// The leaf may or may not be there. What every declaration that
+    /// says nothing means, which is why it is the default.
+    #[default]
+    Either,
+    /// Feasible iff the leaf is absent — a first write, and a one-way
+    /// door if nothing ever removes it.
+    Absent,
+    /// Feasible iff the leaf is there.
+    Present,
 }
 
 impl Mode {
@@ -46,7 +78,7 @@ impl Mode {
             Self::Locked => ModeKind::Locked,
             Self::Delta => ModeKind::Delta,
             Self::Reserve { .. } => ModeKind::Reserve,
-            Self::Write => ModeKind::Write,
+            Self::Write { .. } => ModeKind::Write,
         }
     }
 }
@@ -62,7 +94,7 @@ pub enum ModeKind {
     Delta,
     /// See [`Mode::Reserve`].
     Reserve,
-    /// See [`Mode::Write`].
+    /// See [`Mode::Write { requires: Presence::Either }`].
     Write,
 }
 

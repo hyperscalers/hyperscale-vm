@@ -8,7 +8,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, RoleId,
     SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
@@ -148,13 +148,23 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
         // canonical order.
         BatchTx::new(
             tx(0x03),
-            point(cell(0xE), Mode::Write),
+            point(
+                cell(0xE),
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+            ),
             env().clock_ms,
             env().randomness,
         ),
         BatchTx::new(
             tx(0x04),
-            point(cell(0xE), Mode::Write),
+            point(
+                cell(0xE),
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+            ),
             env().clock_ms,
             env().randomness,
         ),
@@ -168,7 +178,12 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
         // The doomed writer on its own cell.
         BatchTx::new(
             tx(0x66),
-            point(cell(0xF), Mode::Write),
+            point(
+                cell(0xF),
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+            ),
             env().clock_ms,
             env().randomness,
         ),
@@ -355,13 +370,23 @@ fn each_transaction_sees_its_own_clock() {
 
     let early = BatchTx::new(
         tx(0x01),
-        point(cell(0xE), Mode::Write),
+        point(
+            cell(0xE),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        ),
         1_000,
         env().randomness,
     );
     let late = BatchTx::new(
         tx(0x02),
-        point(cell(0xF), Mode::Write),
+        point(
+            cell(0xF),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        ),
         2_000,
         env().randomness,
     );
@@ -406,13 +431,23 @@ fn each_transaction_sees_its_own_draw() {
 
     let first = BatchTx::new(
         tx(0x01),
-        point(cell(0xE), Mode::Write),
+        point(
+            cell(0xE),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        ),
         env().clock_ms,
         [7; 32],
     );
     let second = BatchTx::new(
         tx(0x02),
-        point(cell(0xF), Mode::Write),
+        point(
+            cell(0xF),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        ),
         env().clock_ms,
         [9; 32],
     );

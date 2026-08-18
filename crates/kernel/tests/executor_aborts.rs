@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, RoleId,
     SubintentHash, SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
@@ -312,8 +312,20 @@ fn nullifier() -> SubstateKey {
 fn nullifier_tx(id: u8) -> BatchTx {
     BatchTx {
         tx: tx(id),
-        declared: point(nullifier(), Mode::Write),
-        ordered: point(nullifier(), Mode::Write).iter().collect(),
+        declared: point(
+            nullifier(),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        ),
+        ordered: point(
+            nullifier(),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        )
+        .iter()
+        .collect(),
         denominations: Vec::new(),
         calls: Vec::new(),
         nullifiers: vec![nullifier()],
@@ -495,10 +507,22 @@ fn declaration_views_that_disagree_refuse_the_batch() {
     };
     let mismatched = BatchTx {
         tx: tx(0x01),
-        declared: point(cell(0xA), Mode::Write),
+        declared: point(
+            cell(0xA),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        ),
         // A different cell entirely: folding this does not reproduce
         // `declared`.
-        ordered: point(cell(0xB), Mode::Write).iter().collect(),
+        ordered: point(
+            cell(0xB),
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        )
+        .iter()
+        .collect(),
         denominations: Vec::new(),
         calls: Vec::new(),
         nullifiers: vec![],
@@ -598,7 +622,12 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
         &[
             BatchTx::new(
                 tx(0x01),
-                point(poisoned, Mode::Write),
+                point(
+                    poisoned,
+                    Mode::Write {
+                        requires: Presence::Either,
+                    },
+                ),
                 env().clock_ms,
                 env().randomness,
             ),
@@ -667,7 +696,12 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
         &[
             BatchTx::new(
                 tx(0x01),
-                point(vault, Mode::Write),
+                point(
+                    vault,
+                    Mode::Write {
+                        requires: Presence::Either,
+                    },
+                ),
                 env().clock_ms,
                 env().randomness,
             ),

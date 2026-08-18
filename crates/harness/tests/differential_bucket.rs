@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    RoleId, SubstateKey, TestHasher, child_key, ids_cell,
+    Presence, RoleId, SubstateKey, TestHasher, child_key, ids_cell,
 };
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{
@@ -113,11 +113,15 @@ fn fixture() -> Fixture {
         },
         Effect {
             target: EffectTarget::Point(vault),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         },
         Effect {
             target: EffectTarget::Point(opaque),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         },
         Effect {
             target: EffectTarget::Point(ledger),
@@ -135,7 +139,9 @@ fn fixture() -> Fixture {
                 hi: 100,
                 cap: 8,
             },
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         },
     ] {
         declared.insert(effect).unwrap();
@@ -172,7 +178,12 @@ fn rep_of(host: &KernelSession, wanted: SubstateKey, mode: Mode) -> u32 {
         .iter()
         .position(|c| match (mode, c) {
             (Mode::Read, Capability::Read(key))
-            | (Mode::Write, Capability::Write(key))
+            | (
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+                Capability::Write(key),
+            )
             | (Mode::Delta, Capability::Delta(key))
             | (Mode::Reserve { .. }, Capability::Reserve { key, .. }) => *key == wanted,
             _ => false,
@@ -346,8 +357,18 @@ impl Take {
         match self {
             Self::Issue(_) | Self::IssueUngranted(_) => None,
             Self::Delta(_) => Some((fx.ledger, Mode::Delta)),
-            Self::Vault(_) => Some((fx.vault, Mode::Write)),
-            Self::Opaque(_) => Some((fx.opaque, Mode::Write)),
+            Self::Vault(_) => Some((
+                fx.vault,
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+            )),
+            Self::Opaque(_) => Some((
+                fx.opaque,
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+            )),
             Self::Reserve | Self::ReserveTwice => {
                 Some((fx.reserved, Mode::Reserve { amount: RESERVED }))
             }
@@ -413,7 +434,7 @@ fn take_blessed(fx: &Fixture, take: Take) -> Result<(Took, KernelSession, u64)> 
         (Some((rep, Mode::Delta)), Some(n)) => instance
             .get_typed_func::<(Resource<DeltaCell>, u64), (Resource<Bucket>,)>(&mut store, export)?
             .call(&mut store, (Resource::new_borrow(rep), n)),
-        (Some((rep, Mode::Write)), Some(n)) => instance
+        (Some((rep, Mode::Write { .. })), Some(n)) => instance
             .get_typed_func::<(Resource<WriteCell>, u64), (Resource<Bucket>,)>(&mut store, export)?
             .call(&mut store, (Resource::new_borrow(rep), n)),
         (Some((rep, _)), _) => instance
@@ -448,7 +469,7 @@ fn take_ref(fx: &Fixture, take: Take) -> Result<(Took, KernelSession, u64)> {
             rep_of(&host, key, mode),
             match mode {
                 Mode::Delta => ResourceKind::DeltaCell,
-                Mode::Write => ResourceKind::WriteCell,
+                Mode::Write { .. } => ResourceKind::WriteCell,
                 _ => ResourceKind::ReserveCell,
             },
         ),
@@ -584,7 +605,12 @@ fn put_blessed(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(C
     let (key, mode) = if delta {
         (fx.ledger, Mode::Delta)
     } else {
-        (fx.vault, Mode::Write)
+        (
+            fx.vault,
+            Mode::Write {
+                requires: Presence::Either,
+            },
+        )
     };
     let rep = rep_of(&host, key, mode);
     let mut store = Store::new(&engine, host);
@@ -627,7 +653,13 @@ fn put_ref(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(Credi
     let (key, mode, kind) = if delta {
         (fx.ledger, Mode::Delta, ResourceKind::DeltaCell)
     } else {
-        (fx.vault, Mode::Write, ResourceKind::WriteCell)
+        (
+            fx.vault,
+            Mode::Write {
+                requires: Presence::Either,
+            },
+            ResourceKind::WriteCell,
+        )
     };
     let args = vec![
         CVal::Borrow(rep_of(&host, key, mode), kind),
@@ -741,7 +773,13 @@ fn pair_blessed(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
     add_kernel_to_linker(&mut linker)?;
     let host = materialize(fx);
     let ledger = rep_of(&host, fx.ledger, Mode::Delta);
-    let vault = rep_of(&host, fx.vault, Mode::Write);
+    let vault = rep_of(
+        &host,
+        fx.vault,
+        Mode::Write {
+            requires: Presence::Either,
+        },
+    );
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
@@ -783,7 +821,13 @@ fn pair_ref(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
             ResourceKind::DeltaCell,
         ),
         CVal::Borrow(
-            rep_of(&host, fx.vault, Mode::Write),
+            rep_of(
+                &host,
+                fx.vault,
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+            ),
             ResourceKind::WriteCell,
         ),
         CVal::U64(a),

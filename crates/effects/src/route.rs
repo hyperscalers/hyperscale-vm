@@ -20,8 +20,8 @@ use crate::metadata::{
     PackageHash, Totality, check_abi,
 };
 use crate::types::{
-    Address, CallTarget, EdgeContent, Effect, EffectSet, MAX_IDS_PER_EDGE, ShardId, Value,
-    resource_address,
+    Address, CallTarget, EdgeContent, Effect, EffectConflict, EffectSet, MAX_IDS_PER_EDGE, ShardId,
+    Value, resource_address,
 };
 
 /// Resolves an owner prefix to the shard holding it.
@@ -166,8 +166,7 @@ impl Routing {
         });
         let kernel_effects = self.kernel_effects.iter().map(|effect| (effect, None));
         for (effect, held) in frame_effects.chain(kernel_effects) {
-            set.insert(*effect)
-                .map_err(|_| RouteError::ReserveOverflow)?;
+            set.insert(*effect).map_err(RouteError::from)?;
             ordered.push(*effect);
             denominations.push(held);
         }
@@ -184,6 +183,15 @@ impl Routing {
 
 /// The bound on manifest nodes admission or routing will address.
 pub const MAX_MANIFEST_NODES: usize = 4096;
+
+impl From<EffectConflict> for RouteError {
+    fn from(conflict: EffectConflict) -> Self {
+        match conflict {
+            EffectConflict::ReserveOverflow => Self::ReserveOverflow,
+            EffectConflict::Presence => Self::PresenceConflict,
+        }
+    }
+}
 
 /// Why routing rejected a transaction. Deterministic: every node reaches
 /// the identical verdict.
@@ -220,6 +228,12 @@ pub enum RouteError {
     /// Folding reserve amounts across shards overflowed.
     #[error("declared reserve amounts overflow")]
     ReserveOverflow,
+    /// Two writes on one cell requiring opposite presences: their fold
+    /// is a requirement nothing can satisfy, so the transaction is
+    /// refused where the set is built rather than at the shard that
+    /// would have to judge it.
+    #[error("two writes on one cell require opposite presences")]
+    PresenceConflict,
     /// A frame declaring an effect on somebody else's prefix.
     ///
     /// An object's cells are reachable by calling it, never by naming
@@ -1004,7 +1018,7 @@ impl Fold<'_> {
                 .entry(shard)
                 .or_default()
                 .insert(effect)
-                .map_err(|_| RouteError::ReserveOverflow)?;
+                .map_err(RouteError::from)?;
         }
         Ok(())
     }
@@ -1027,7 +1041,7 @@ mod tests {
     };
     use crate::types::{
         Address, AddressClass, ComponentAddr, EdgeContent, Effect, EffectSet, EffectTarget,
-        MAX_IDS_PER_EDGE, Mode, RoleId, ShardId, Value, child_key,
+        MAX_IDS_PER_EDGE, Mode, Presence, RoleId, ShardId, Value, child_key,
     };
 
     fn pkg(name: &str) -> PackageHash {
@@ -1114,7 +1128,12 @@ mod tests {
             "swap".into(),
             MethodSignature {
                 outputs: vec![Expr::SelfAddr],
-                effects: vec![self_point(RoleId(2), ModeExpr::Write)],
+                effects: vec![self_point(
+                    RoleId(2),
+                    ModeExpr::Write {
+                        requires: Presence::Either,
+                    },
+                )],
                 ..MethodSignature::default()
             },
         );
@@ -1927,7 +1946,12 @@ mod tests {
                             denomination: None,
                         }],
                     },
-                    self_point(RoleId(1), ModeExpr::Write),
+                    self_point(
+                        RoleId(1),
+                        ModeExpr::Write {
+                            requires: Presence::Either,
+                        },
+                    ),
                 ],
                 ..MethodSignature::default()
             },
@@ -1981,7 +2005,9 @@ mod tests {
             assert_eq!(u64::from(rep), width);
             assert_eq!(
                 declaration.ordered[usize::try_from(rep).unwrap()].mode,
-                Mode::Write,
+                Mode::Write {
+                    requires: Presence::Either
+                },
                 "the bound clause's own effect, whatever the spread's width"
             );
         }

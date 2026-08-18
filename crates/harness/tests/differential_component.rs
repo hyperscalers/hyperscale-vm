@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Hash32, Hasher,
-    Mode, RoleId, SubstateKey, TestHasher, child_key,
+    Mode, Presence, RoleId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
@@ -117,7 +117,9 @@ fn fixture() -> Fixture {
         },
         Effect {
             target: EffectTarget::Point(rmw),
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         },
         Effect {
             target: EffectTarget::Point(readable),
@@ -141,7 +143,9 @@ fn fixture() -> Fixture {
                 hi: 100,
                 cap: 8,
             },
-            mode: Mode::Write,
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
         },
     ] {
         declared.insert(effect).unwrap();

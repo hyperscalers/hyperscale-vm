@@ -166,7 +166,7 @@ pub fn multiply_held_ids(store: &dyn Substates, holdings: &[(Address, Collection
 mod tests {
     use hyperscale_vm_effects::{
         Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, ModeKind,
-        RoleId, TestHasher, child_key, collection_id,
+        Presence, RoleId, TestHasher, child_key, collection_id,
     };
 
     use super::{multiply_held_ids, undeclared_accesses};
@@ -187,7 +187,9 @@ mod tests {
         let set = declared(&[
             Effect {
                 target: EffectTarget::Point(cell),
-                mode: Mode::Write,
+                mode: Mode::Write {
+                    requires: Presence::Either,
+                },
             },
             Effect {
                 target: EffectTarget::Range {
@@ -197,7 +199,9 @@ mod tests {
                     hi: 20,
                     cap: 8,
                 },
-                mode: Mode::Write,
+                mode: Mode::Write {
+                    requires: Presence::Either,
+                },
             },
         ]);
 
@@ -260,7 +264,9 @@ mod tests {
         let set = declared(&[entry(Mode::Read)]);
         assert_eq!(undeclared_accesses(&[scan(15, 15, 1)], &set), Vec::new());
         // The write-implied read too.
-        let written = declared(&[entry(Mode::Write)]);
+        let written = declared(&[entry(Mode::Write {
+            requires: Presence::Either,
+        })]);
         assert_eq!(
             undeclared_accesses(&[scan(15, 15, 1)], &written),
             Vec::new()
@@ -292,7 +298,9 @@ mod tests {
                     hi: 20,
                     cap: 8,
                 },
-                mode: Mode::Write,
+                mode: Mode::Write {
+                    requires: Presence::Either,
+                },
             },
         ]);
 

@@ -272,7 +272,7 @@ const fn mode_kind(mode: &ModeExpr) -> ModeKind {
         ModeExpr::Locked => ModeKind::Locked,
         ModeExpr::Delta => ModeKind::Delta,
         ModeExpr::Reserve(_) => ModeKind::Reserve,
-        ModeExpr::Write => ModeKind::Write,
+        ModeExpr::Write { .. } => ModeKind::Write,
     }
 }
 
