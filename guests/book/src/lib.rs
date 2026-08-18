@@ -42,7 +42,6 @@ pub mod book {
 
     impl Book {
         /// Insert an ask at `price`, escrowing the maker's funds.
-        #[name("place-ask")]
         pub fn place_ask(&mut self, price: u64, funds: Bucket) -> Result<(), Error> {
             if price == 0 {
                 return Err(Error::UnpricedAsk);
@@ -60,7 +59,6 @@ pub mod book {
         /// zero is always the best ask still standing — which is what
         /// makes price-time priority a walk from the front rather than a
         /// search.
-        #[name("fill-asks")]
         pub fn fill_asks(&mut self, from: u64, to: u64, mut payment: Bucket) -> (Bucket, Bucket) {
             // The whole tiebreaker span at each end, so the interval covers
             // every sequence at the boundary prices.

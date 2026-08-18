@@ -469,7 +469,7 @@ fn a_denomination_from_one_arm_is_recorded_unconditionally() {
 
     let metadata = switch::blueprint().metadata();
     assert_eq!(
-        metadata.methods["credit_one_way"].denominations,
+        metadata.methods["credit-one-way"].denominations,
         vec![Some(Expr::Config(0)), None],
     );
 }
@@ -536,7 +536,7 @@ fn a_branch_the_declaration_cannot_read_declares_the_union() {
     use hyperscale_vm_effects::AbiParam;
 
     let metadata = switch::blueprint().metadata();
-    let opaque = &metadata.methods["bump_opaque"];
+    let opaque = &metadata.methods["bump-opaque"];
     assert_eq!(opaque.effects.len(), 2);
     assert!(
         opaque.effects.iter().all(|clause| clause.guard().is_none()),
@@ -580,6 +580,11 @@ mod board {
         }
 
         /// Two of the three, whichever two.
+        ///
+        /// Published under a name its Rust identifier does not derive:
+        /// what a package publishes outlives the identifier that
+        /// happened to name it, so the rename is stated once.
+        #[name("reset")]
         #[guarded(n_of(2, chair, deputy, third))]
         pub fn clear_fee(&mut self) {
             self.fee.set(Quantity::ZERO);
@@ -605,15 +610,16 @@ fn a_declared_gate_carries_the_whole_threshold_algebra() {
 
     // `||` is a count of one.
     assert_eq!(
-        metadata.methods["set_fee"].accessibility,
+        metadata.methods["set-fee"].accessibility,
         Accessibility::Guarded(RuleExpr::CountOf {
             count: 1,
             rules: vec![slot(0), slot(1)],
         }),
     );
-    // `n_of` is the threshold no operator expresses.
+    // `n_of` is the threshold no operator expresses, and this one is
+    // published under a name its identifier does not derive.
     assert_eq!(
-        metadata.methods["clear_fee"].accessibility,
+        metadata.methods["reset"].accessibility,
         Accessibility::Guarded(RuleExpr::CountOf {
             count: 2,
             rules: vec![slot(0), slot(1), slot(2)],

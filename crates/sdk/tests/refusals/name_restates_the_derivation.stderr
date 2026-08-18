@@ -1,0 +1,5 @@
+error: this is the name the method already publishes — a `#[name]` that restates the derivation says nothing, and one that stops agreeing with it silently renames the method
+  --> tests/refusals/name_restates_the_derivation.rs:16:9
+   |
+16 |         #[name("set-fee")]
+   |         ^^^^^^^^^^^^^^^^^^

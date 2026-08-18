@@ -93,7 +93,6 @@ pub mod account {
         ///
         /// The filing is the kernel's: each instance lands at the order
         /// it was taken under, so the body names no id at all.
-        #[name("deposit-nf")]
         pub fn deposit_nf(&mut self, funds: NfBucket) {
             self.holdings(funds.resource()).all(64).put(funds, &HELD);
         }
@@ -101,7 +100,6 @@ pub mod account {
         /// Take the named instances out of the holdings interval,
         /// trapping on one not held. The removal and the edge are one
         /// operation, so a body cannot hand on what it left where it was.
-        #[name("withdraw-nf")]
         #[guarded(self)]
         pub fn withdraw_nf(&mut self, resource: Address, ids: Ids) -> Bucket {
             self.holdings(resource).all(64).take(ids)
@@ -113,7 +111,6 @@ pub mod account {
         ///
         /// For a fungible badge, where holding any of it is the whole
         /// claim. One instance of a non-fungible one is `present-instance`.
-        #[name("present-badge")]
         #[custodial(auth, badge)]
         pub fn present_badge(&mut self, badge: Address) {}
 
@@ -127,7 +124,6 @@ pub mod account {
         /// the instance admits its holder alone. Which is what makes one
         /// badge resource with one instance per admin expressible:
         /// rotate by issuing, revoke by burning.
-        #[name("present-instance")]
         #[custodial(auth, badge, id)]
         pub fn present_instance(&mut self, badge: Address, id: u64) {}
 

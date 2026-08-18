@@ -359,16 +359,33 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
     Ok(quote!(::hyperscale_vm_sdk::ParamType::#variant))
 }
 
-/// The published name of a method: its Rust name unless `#[name("…")]`
-/// says otherwise.
+/// The published name of a method: its Rust name as the protocol spells
+/// names, unless `#[name("…")]` says otherwise.
+///
+/// Kebab by default because every other published name already is — the
+/// module's world, its events, its errors — so a method was the one
+/// place an author restated a rule the macro applies everywhere else.
+/// The attribute stays for the rename that is not a respelling: a
+/// published name outlives the Rust identifier that happened to derive
+/// it, and a package whose method reads better under another name says
+/// so once.
 fn method_name(method: &syn::ImplItemFn) -> syn::Result<String> {
     for attr in &method.attrs {
         if attr.path().is_ident("name") {
             let literal: syn::LitStr = attr.parse_args()?;
-            return Ok(literal.value());
+            let published = literal.value();
+            if published == kebab(&method.sig.ident.to_string()) {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "this is the name the method already publishes — a `#[name]` that \
+                     restates the derivation says nothing, and one that stops agreeing \
+                     with it silently renames the method",
+                ));
+            }
+            return Ok(published);
         }
     }
-    Ok(method.sig.ident.to_string())
+    Ok(kebab(&method.sig.ident.to_string()))
 }
 
 /// The macro's own attributes, which are read and then removed so what it

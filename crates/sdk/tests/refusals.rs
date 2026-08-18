@@ -65,6 +65,7 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
 fn the_lowering_refuses_a_mark_it_can_see_is_wrong() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/total_gated.rs");
+    refuse.compile_fail("tests/refusals/name_restates_the_derivation.rs");
 }
 
 /// A gate names an identity its target names, at every leaf.
