@@ -1,7 +1,7 @@
 error: `#[blueprint]` cannot see into this macro, so an access inside it would be silently dropped from the declaration — only the assert and panic family are admitted
-  --> tests/refusals/unknown_macro.rs:22:13
+  --> tests/refusals/unknown_macro.rs:20:13
    |
-22 |             credit!(self, a);
+20 |             credit!(self, a);
    |             ^^^^^^
 
 warning: unused macro definition: `credit`

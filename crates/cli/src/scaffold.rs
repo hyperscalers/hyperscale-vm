@@ -70,23 +70,23 @@ fn library(module: &str) -> String {
          #[blueprint]\n\
          pub mod {module} {{\n\
          \x20   use hyperscale_vm_sdk::Address;\n\
-         \x20   use hyperscale_vm_sdk::state::{{Bucket, Keyed, Quantity, Vault}};\n\
+         \x20   use hyperscale_vm_sdk::state::{{Bucket, Quantity}};\n\
          \n\
+         \x20   /// What this package stores of its own. The protocol's\n\
+         \x20   /// cells — balances, the delivery fallback, the stored\n\
+         \x20   /// authority — every owner has already.\n\
          \x20   #[state]\n\
-         \x20   struct State {{\n\
-         \x20       #[slot(1)]\n\
-         \x20       vaults: Keyed<Vault>,\n\
-         \x20   }}\n\
+         \x20   struct State {{}}\n\
          \n\
          \x20   impl State {{\n\
          \x20       /// Credit the vault the arriving edge belongs in.\n\
          \x20       pub fn deposit(&mut self, funds: Bucket) {{\n\
-         \x20           self.vaults.at(funds.resource()).put(funds);\n\
+         \x20           self.vault(funds.resource()).put(funds);\n\
          \x20       }}\n\
          \n\
          \x20       /// Reserve `amount` of `resource` from this instance.\n\
          \x20       pub fn withdraw(&mut self, resource: Address, amount: Quantity) -> Bucket {{\n\
-         \x20           self.vaults.at(resource).reserve(amount)\n\
+         \x20           self.vault(resource).reserve(amount)\n\
          \x20       }}\n\
          \x20   }}\n\
          }}\n"

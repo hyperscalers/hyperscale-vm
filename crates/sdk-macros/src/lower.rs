@@ -451,6 +451,9 @@ pub fn handle_variant(resource: &str) -> TokenStream {
 /// The lowering pass over one method body.
 pub struct Lowerer<'a> {
     fields: &'a BTreeMap<String, Field>,
+    /// The protocol's own cells, which exist under every owner and are
+    /// reached by accessor rather than declared as fields.
+    accessors: &'a BTreeMap<String, Field>,
     config_fields: &'a [(String, syn::Type)],
     params: &'a [(String, syn::Type)],
     /// Whether the method yields anything at all, read off its return
@@ -469,12 +472,14 @@ impl<'a> Lowerer<'a> {
     /// Start a pass over a method with these positional parameters.
     pub fn new(
         fields: &'a BTreeMap<String, Field>,
+        accessors: &'a BTreeMap<String, Field>,
         config_fields: &'a [(String, syn::Type)],
         params: &'a [(String, syn::Type)],
         returns: bool,
     ) -> Self {
         Self {
             fields,
+            accessors,
             config_fields,
             params,
             returns,
@@ -483,6 +488,18 @@ impl<'a> Lowerer<'a> {
             scopes: vec![Vec::new()],
             errors: Vec::new(),
         }
+    }
+
+    /// The state a name refers to: the package's own field, or the
+    /// protocol cell an accessor named.
+    ///
+    /// One lookup because a body cannot tell the two apart once it holds
+    /// a handle — what differs is only how the name was reached.
+    fn state(&self, name: &str) -> Option<Field> {
+        self.fields
+            .get(name)
+            .or_else(|| self.accessors.get(name))
+            .cloned()
     }
 
     /// Lower a body, or report every reason it could not be.
@@ -730,8 +747,7 @@ impl<'a> Lowerer<'a> {
                     return refuse(self);
                 };
                 let locked = base.path.get_ident().is_some_and(|ident| {
-                    self.fields
-                        .get(&ident.to_string())
+                    self.state(&ident.to_string())
                         .is_some_and(|f| f.kind == FieldKind::Locked)
                 });
                 let syn::Member::Named(name) = &access.member else {
@@ -1603,8 +1619,7 @@ impl<'a> Lowerer<'a> {
                 },
                 syn::Member::Named(name),
             ) if self
-                .fields
-                .get(field_name)
+                .state(field_name)
                 .is_some_and(|f| f.kind == FieldKind::Locked) =>
             {
                 self.config_slot(&name.to_string(), field)
@@ -1750,9 +1765,15 @@ impl<'a> Lowerer<'a> {
 
     #[allow(clippy::too_many_lines)] // one arm per receiver the vocabulary admits
     fn method_call(&mut self, call: &syn::ExprMethodCall) -> Eval {
-        // `self.other_method(…)` reaches state this body never names, so
-        // its accesses cannot land in this declaration.
+        // `self.<accessor>(…)` names one of the protocol's own cells,
+        // which exist under every owner and so are reached without being
+        // declared. Anything else on `self` is another method of the
+        // component, whose accesses cannot land in this declaration.
         if is_self(&call.receiver) {
+            let name = call.method.to_string();
+            if self.accessors.contains_key(&name) {
+                return self.accessor(&name, call);
+            }
             self.error(
                 call.span(),
                 "a contract method cannot call another method of the component — each \
@@ -1807,7 +1828,7 @@ impl<'a> Lowerer<'a> {
         match receiver.val.clone() {
             // ---- opening a handle on a state field ----------------------
             Val::Field { name, material } => {
-                let Some(field) = self.fields.get(&name).cloned() else {
+                let Some(field) = self.state(&name) else {
                     self.error(
                         call.receiver.span(),
                         "not a declared field of the component's state struct",
@@ -2073,6 +2094,58 @@ impl<'a> Lowerer<'a> {
         let name = &call.method;
         let turbofish = &call.turbofish;
         quote!(#receiver_code.#name #turbofish(#(#args),*))
+    }
+
+    /// One of the protocol's own cells, reached by accessor.
+    ///
+    /// Every case lands on the same clause its field spelling lowered to,
+    /// because it lands on the same call: a keyed accessor is that field
+    /// at the key it was handed, and a collection accessor is that field
+    /// narrowed to the sub-collection. What the accessor removes is the
+    /// author's chance to declare the cell wrongly, not a step in the
+    /// lowering.
+    fn accessor(&mut self, name: &str, call: &syn::ExprMethodCall) -> Eval {
+        let Some(field) = self.accessors.get(name).cloned() else {
+            return Eval::absent("an unknown protocol cell");
+        };
+        let evals: Vec<Eval> = call.args.iter().map(|arg| self.expr(arg)).collect();
+        let arity = usize::from(!matches!(field.kind, FieldKind::Cell | FieldKind::Locked));
+        if evals.len() != arity {
+            self.error(call.span(), &format!("`{name}` takes {arity} argument(s)"));
+            return Eval::absent("a protocol cell named with the wrong arity");
+        }
+        match field.kind {
+            // A leaf of the family, at the key the accessor was handed.
+            FieldKind::Keyed => self.on_field(&field, &[], "at", &evals, call),
+            // The sub-collection under the cell, which the body then
+            // opens an interval on.
+            FieldKind::Ordered => {
+                let Some(Val::Term(key)) = evals.first().map(|e| e.val.clone()) else {
+                    self.error(
+                        call.args.span(),
+                        "this collection key is not derivable from the method's arguments \
+                         or the component's configuration",
+                    );
+                    return Eval::absent("an underivable collection key");
+                };
+                Eval {
+                    val: Val::Field {
+                        name: name.to_owned(),
+                        material: vec![key],
+                    },
+                    code: Code::Absent("a collection in value position"),
+                }
+            }
+            // The cell itself, which the body then reads or writes.
+            FieldKind::Cell | FieldKind::Locked => Eval {
+                val: Val::Field {
+                    name: name.to_owned(),
+                    material: Vec::new(),
+                },
+                code: Code::Absent("a protocol cell in value position"),
+            },
+            FieldKind::Unordered => Eval::absent("an unordered protocol cell"),
+        }
     }
 
     #[allow(clippy::too_many_lines)] // single dispatch over (field kind, accessor) pairs

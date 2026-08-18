@@ -3,34 +3,30 @@ use hyperscale_vm_sdk::client::{TypedBuilder, TypedError};
 
 #[blueprint]
 mod pool {
-    use hyperscale_vm_sdk::state::{Bucket, Keyed, Vault};
+    use hyperscale_vm_sdk::state::Bucket;
 
     #[state]
     struct Pool {
-        #[slot(1)]
-        vaults: Keyed<Vault>,
     }
 
     impl Pool {
         pub fn deposit(&mut self, funds: Bucket) {
-            self.vaults.at(funds.resource()).put(funds);
+            self.vault(funds.resource()).put(funds);
         }
     }
 }
 
 #[blueprint]
 mod book {
-    use hyperscale_vm_sdk::state::{Bucket, Keyed, Vault};
+    use hyperscale_vm_sdk::state::Bucket;
 
     #[state]
     struct Book {
-        #[slot(1)]
-        vaults: Keyed<Vault>,
     }
 
     impl Book {
         pub fn offer(&mut self, funds: Bucket) {
-            self.vaults.at(funds.resource()).put(funds);
+            self.vault(funds.resource()).put(funds);
         }
     }
 }

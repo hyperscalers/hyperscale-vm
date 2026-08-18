@@ -6,7 +6,6 @@ mod contract {
 
     #[state]
     struct Contract {
-        #[slot(1)]
         pot: Cell<Vault>,
     }
 

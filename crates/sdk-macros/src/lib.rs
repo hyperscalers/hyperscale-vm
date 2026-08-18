@@ -272,7 +272,7 @@ fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
         }
         _ => {}
     }
-    if let Err(refusal) = protocol_band(slot, kind, vault) {
+    if let Err(refusal) = protocol_band(slot) {
         return Err(syn::Error::new(field.span(), refusal));
     }
     Ok((
@@ -286,50 +286,36 @@ fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
     ))
 }
 
-/// Whether a slot below [`PACKAGE_SLOT_BASE`] admits this field.
+/// Refuse a field in the protocol's own band.
 ///
-/// The protocol's cells are shaped as well as numbered: an engine derives
-/// keys for them without consulting any metadata, so a field that lands on
-/// one and is not it puts a package's private value where a protocol read
-/// will look for something else. Above the band nothing is claimed and
-/// nothing is checked — a package's slots are scoped by the owner they
-/// hash with.
-fn protocol_band(slot: u16, kind: FieldKind, vault: bool) -> Result<(), String> {
+/// The cells below the base exist under every owner and an engine derives
+/// their keys without consulting any metadata, so they are reached by
+/// accessor and declared by nobody. A field that lands on one is a
+/// package putting its own value where a protocol read will look for
+/// something else — and the shape is no defence, because `VAULT` and
+/// `CLAIMS` are both a keyed vault, so the band check could see nothing
+/// in a misnumbered pool side to disagree with. Refusing the band
+/// outright is what makes the claims cell unreachable except through
+/// `claims()`.
+fn protocol_band(slot: u16) -> Result<(), String> {
     if slot >= PACKAGE_SLOT_BASE {
         return Ok(());
     }
-    let (cell, admits) = match SlotId(slot) {
-        VAULT => ("a fungible balance cell", vault),
-        CLAIMS => ("the delivery fallback beside a vault", vault),
-        CONFIG => (
-            "the creation-fixed configuration leaf",
-            kind == FieldKind::Locked,
-        ),
-        AUTH => ("the stored authority cell", kind == FieldKind::Cell),
-        RESOURCE => (
-            "a resource's record under its issuer",
-            kind == FieldKind::Keyed,
-        ),
-        NF_VAULT => (
-            "a holder's non-fungible instances",
-            kind == FieldKind::Ordered,
-        ),
-        INSTANCE => ("a non-fungible instance's data", kind == FieldKind::Keyed),
-        _ => {
-            return Err(format!(
-                "slot {slot} is inside the protocol's own band and names nothing in it — a \
-                 package's own slots start at {PACKAGE_SLOT_BASE}"
-            ));
-        }
+    let cell = match SlotId(slot) {
+        VAULT => "a fungible balance cell, reached by `vault(resource)`",
+        CLAIMS => "the delivery fallback beside a vault, reached by `claims(resource)`",
+        CONFIG => "the creation-fixed configuration leaf, reached by `config()`",
+        AUTH => "the stored authority cell, reached by `auth()`",
+        RESOURCE => "a resource's record under its issuer",
+        NF_VAULT => "a holder's non-fungible instances, reached by `holdings(resource)`",
+        INSTANCE => "a non-fungible instance's data",
+        _ => "unassigned",
     };
-    if admits {
-        Ok(())
-    } else {
-        Err(format!(
-            "slot {slot} is {cell}, which this field is not — a package's own slots start at \
-             {PACKAGE_SLOT_BASE}"
-        ))
-    }
+    Err(format!(
+        "slot {slot} is the protocol's own — {cell} — and every owner has it already. A \
+         package's own slots start at {PACKAGE_SLOT_BASE} and are numbered by declaration \
+         order, so this field needs no slot at all"
+    ))
 }
 
 /// Whether a type's last path segment is `name`.
@@ -509,8 +495,24 @@ fn byte_literal(expr: &syn::Expr) -> Option<Vec<u8>> {
 fn parse_gate(
     method: &syn::ImplItemFn,
     fields: &BTreeMap<String, Field>,
+    accessors: &BTreeMap<String, Field>,
     params: &[(String, syn::Type)],
 ) -> syn::Result<Gate> {
+    // A gate names the cell its rule lives in the way a body would, and a
+    // body reaches the protocol's own cells by accessor.
+    let cell = |name: &syn::Ident| {
+        fields
+            .get(&name.to_string())
+            .or_else(|| accessors.get(&name.to_string()))
+            .map(|f| f.slot)
+            .ok_or_else(|| {
+                syn::Error::new(
+                    name.span(),
+                    "not a cell of the component's state — name a declared field or one of \
+                     the protocol's own cells",
+                )
+            })
+    };
     for attr in &method.attrs {
         if attr.path().is_ident("guarded") {
             let identity: syn::Expr = attr.parse_args()?;
@@ -519,16 +521,7 @@ fn parse_gate(
         }
         if attr.path().is_ident("authorizing") {
             let field: syn::Ident = attr.parse_args()?;
-            let slot = fields
-                .get(&field.to_string())
-                .map(|f| f.slot)
-                .ok_or_else(|| {
-                    syn::Error::new(
-                        field.span(),
-                        "not a declared field of the component's state",
-                    )
-                })?;
-            return Ok(Gate::Authorizing(slot));
+            return Ok(Gate::Authorizing(cell(&field)?));
         }
         if attr.path().is_ident("role_gated") {
             let role: syn::Ident = attr.parse_args()?;
@@ -565,15 +558,7 @@ fn parse_gate(
                     ));
                 }
             };
-            let rule = fields
-                .get(&field.to_string())
-                .map(|f| f.slot)
-                .ok_or_else(|| {
-                    syn::Error::new(
-                        field.span(),
-                        "not a declared field of the component's state",
-                    )
-                })?;
+            let rule = cell(field)?;
             let position = |named: &syn::Ident| {
                 params
                     .iter()
@@ -591,15 +576,87 @@ fn parse_gate(
     Ok(Gate::Public)
 }
 
+/// The protocol's own cells, as a body reaches them.
+///
+/// These exist under every owner and an engine derives their keys without
+/// consulting any metadata, so declaring them asks every package to
+/// re-declare the same universals correctly — and a package that gets one
+/// wrong puts its value where a protocol read will look for something
+/// else. They are accessors instead, and the shape each takes here is the
+/// field shape it replaces, so a body reaching one lands on the clause
+/// the field lowered to.
+fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
+    let vault = || Field {
+        slot: VAULT.0,
+        kind: FieldKind::Keyed,
+        element: Some(syn::parse_quote!(::hyperscale_vm_sdk::state::Vault)),
+        denomination: None,
+    };
+    let mut cells = BTreeMap::from([
+        ("vault".to_owned(), vault()),
+        (
+            "claims".to_owned(),
+            Field {
+                slot: CLAIMS.0,
+                ..vault()
+            },
+        ),
+        (
+            "holdings".to_owned(),
+            Field {
+                slot: NF_VAULT.0,
+                kind: FieldKind::Ordered,
+                element: Some(syn::parse_quote!(::std::vec::Vec<u8>)),
+                denomination: None,
+            },
+        ),
+        (
+            "auth".to_owned(),
+            Field {
+                slot: AUTH.0,
+                kind: FieldKind::Cell,
+                element: Some(syn::parse_quote!(::std::vec::Vec<u8>)),
+                denomination: None,
+            },
+        ),
+    ]);
+    // A package with no configuration struct has no configuration to
+    // read, and `config()` is a name it never gets rather than one that
+    // answers nothing.
+    if let Some(config) = config {
+        cells.insert(
+            "config".to_owned(),
+            Field {
+                slot: CONFIG.0,
+                kind: FieldKind::Locked,
+                element: Some(syn::parse_quote!(#config)),
+                denomination: None,
+            },
+        );
+    }
+    cells
+}
+
 /// The `#[state]` struct: its name, its fields by slot and shape, and the
 /// configuration struct its `Locked<_>` field names, if it has one.
 fn parse_state(
     items: &[syn::Item],
     span: proc_macro2::Span,
 ) -> syn::Result<(syn::Ident, BTreeMap<String, Field>, Option<syn::Ident>)> {
+    // Named before the state is read, so the refusal below can name every
+    // accessor a field would shadow — including `config`, which exists
+    // exactly when the package declares a configuration struct.
+    let reserved = accessors(None);
     let mut fields = BTreeMap::new();
     let mut state_name = None;
     let mut config_name = None;
+    for item in items {
+        if let syn::Item::Struct(item) = item
+            && item.attrs.iter().any(|a| a.path().is_ident("config"))
+        {
+            config_name = Some(item.ident.clone());
+        }
+    }
     // What a field would name a leaf by: its slot, and the material the
     // field itself fixes. Two fields agreeing on both are one leaf under
     // two names, which no accessor can tell apart afterwards.
@@ -619,6 +676,15 @@ fn parse_state(
         state_name = Some(item.ident.clone());
         for field in &item.fields {
             let (name, parsed) = parse_field(field, next)?;
+            if reserved.contains_key(&name) {
+                return Err(syn::Error::new(
+                    field.span(),
+                    format!(
+                        "`{name}` is the accessor for one of the protocol's own cells, which \
+                         exists under every owner — a field of that name would shadow it"
+                    ),
+                ));
+            }
             if parsed.slot >= PACKAGE_SLOT_BASE {
                 next = next.max(parsed.slot + 1);
             }
@@ -635,14 +701,6 @@ fn parse_state(
                         parsed.slot
                     ),
                 ));
-            }
-            if parsed.kind == FieldKind::Locked
-                && let syn::Type::Path(path) = &field.ty
-                && let Some(syn::PathArguments::AngleBracketed(args)) =
-                    path.path.segments.last().map(|s| &s.arguments)
-                && let Some(syn::GenericArgument::Type(syn::Type::Path(inner))) = args.args.first()
-            {
-                config_name = inner.path.get_ident().cloned();
             }
             fields.insert(name, parsed);
         }
@@ -760,6 +818,7 @@ struct Lowered {
 fn lower_method(
     method: &syn::ImplItemFn,
     fields: &BTreeMap<String, Field>,
+    accessors: &BTreeMap<String, Field>,
     config_fields: &[(String, syn::Type)],
     serves: client::Serves,
 ) -> syn::Result<Lowered> {
@@ -783,10 +842,10 @@ fn lower_method(
         kinds.push(param_type(&arg.ty)?);
     }
 
-    let gate = parse_gate(method, fields, &params)?;
+    let gate = parse_gate(method, fields, accessors, &params)?;
     client::check_names(&idents, client::Shape::of(&gate), serves)?;
     let returns = !matches!(method.sig.output, syn::ReturnType::Default);
-    let lowered = Lowerer::new(fields, config_fields, &params, returns)
+    let lowered = Lowerer::new(fields, accessors, config_fields, &params, returns)
         .run(&method.block)
         .map_err(|errors| {
             errors
@@ -992,6 +1051,7 @@ fn lower_methods(
     items: &[syn::Item],
     state_name: &syn::Ident,
     fields: &BTreeMap<String, Field>,
+    accessors: &BTreeMap<String, Field>,
     config_fields: &[(String, syn::Type)],
     serves: client::Serves,
 ) -> syn::Result<Vec<Lowered>> {
@@ -1008,7 +1068,13 @@ fn lower_methods(
                 continue;
             };
             if matches!(method.vis, syn::Visibility::Public(_)) {
-                lowered.push(lower_method(method, fields, config_fields, serves)?);
+                lowered.push(lower_method(
+                    method,
+                    fields,
+                    accessors,
+                    config_fields,
+                    serves,
+                )?);
             }
         }
     }
@@ -1054,6 +1120,61 @@ fn strip_macro_attrs(items: &mut [syn::Item], state_name: &syn::Ident) {
             _ => {}
         }
     }
+}
+
+/// The protocol cells as the authoring half sees them.
+///
+/// The `#[state]` struct's own inherent impl is compiled on the host and
+/// run nowhere: it is the text the executing halves are rewritten from,
+/// so it has to type-check even though nothing calls it. A field spelling
+/// type-checked because the field was there; an accessor needs the method
+/// to be, and these are it — the same off-host stubs the state vocabulary
+/// is made of, at the types each accessor's field spelling had.
+fn authoring_accessors(state: &syn::Ident, config: Option<&syn::Ident>) -> TokenStream2 {
+    let configured = config.map(|config| {
+        quote!(
+            /// The instance's creation-fixed configuration.
+            fn config(&self) -> &::hyperscale_vm_sdk::state::Locked<#config> {
+                ::core::unimplemented!("a contract body runs on the guest")
+            }
+        )
+    });
+    quote!(
+        #[cfg(not(target_arch = "wasm32"))]
+        #[allow(dead_code, clippy::unused_self)] // authoring stubs, run nowhere
+        impl #state {
+            #configured
+
+            /// The holder's fungible balance in `resource`.
+            fn vault<K>(&self, resource: K) -> ::hyperscale_vm_sdk::state::Slot<
+                ::hyperscale_vm_sdk::state::Vault,
+            > {
+                let _ = resource;
+                ::core::unimplemented!("a contract body runs on the guest")
+            }
+
+            /// The guaranteed-delivery cell beside that balance.
+            fn claims<K>(&self, resource: K) -> ::hyperscale_vm_sdk::state::Slot<
+                ::hyperscale_vm_sdk::state::Vault,
+            > {
+                let _ = resource;
+                ::core::unimplemented!("a contract body runs on the guest")
+            }
+
+            /// The holder's instances of `resource`.
+            fn holdings<K>(&self, resource: K) -> ::hyperscale_vm_sdk::state::Ordered<
+                ::std::vec::Vec<u8>,
+            > {
+                let _ = resource;
+                ::core::unimplemented!("a contract body runs on the guest")
+            }
+
+            /// The stored authority cell.
+            fn auth(&self) -> ::hyperscale_vm_sdk::state::Cell<::std::vec::Vec<u8>> {
+                ::core::unimplemented!("a contract body runs on the guest")
+            }
+        }
+    )
 }
 
 /// Open the configuration struct and its fields to whoever creates an
@@ -1123,7 +1244,15 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     let config_fields = config_slots(items, config_name.as_ref());
     let events = event_names(items);
     let errors = error_names(items);
-    let methods = lower_methods(items, &state_name, &fields, &config_fields, serves)?;
+    let accessors = accessors(config_name.as_ref());
+    let methods = lower_methods(
+        items,
+        &state_name,
+        &fields,
+        &accessors,
+        &config_fields,
+        serves,
+    )?;
     let calls: Vec<_> = methods.iter().map(|m| &m.client).collect();
     let slots: BTreeMap<String, u16> = fields
         .iter()
@@ -1208,6 +1337,10 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
                 .build()
         }
     ));
+    items.push(syn::Item::Verbatim(authoring_accessors(
+        &state_name,
+        config_name.as_ref(),
+    )));
     items.push(syn::Item::Verbatim(component));
     items.push(syn::Item::Verbatim(dispatch));
     items.push(syn::Item::Verbatim(client));

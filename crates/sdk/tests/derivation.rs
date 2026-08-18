@@ -25,13 +25,10 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod shapes {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Keyed, Quantity, Vault};
+    use hyperscale_vm_sdk::state::Quantity;
 
     #[state]
-    struct Shapes {
-        #[slot(1)]
-        vaults: Keyed<Vault>,
-    }
+    struct Shapes {}
 
     impl Shapes {
         /// A loop over a *computed* list declares what one pass declares:
@@ -41,7 +38,7 @@ mod shapes {
         /// point of reading the loop off what it ranges over.
         #[allow(clippy::needless_pass_by_value)] // a contract consumes its arguments
         pub fn looped(&mut self, a: Address, ids: Vec<u8>) {
-            let mut vault = self.vaults.at(a);
+            let mut vault = self.vault(a);
             // `ids` itself is a term, and ranging over it would be a
             // `for-each`; the length is not, so this is a plain loop.
             for _id in ids.len()..1 {
@@ -51,44 +48,44 @@ mod shapes {
 
         #[allow(clippy::needless_pass_by_value)] // a contract consumes its arguments
         pub fn once(&mut self, a: Address, _ids: Vec<u8>) {
-            let mut vault = self.vaults.at(a);
+            let mut vault = self.vault(a);
             vault.declared();
         }
 
         pub fn branched(&mut self, flag: u64, a: Address, other: Address) {
             match flag {
-                0 => self.vaults.at(a).declared(),
-                _ => self.vaults.at(other).declared(),
+                0 => self.vault(a).declared(),
+                _ => self.vault(other).declared(),
             }
         }
 
         pub fn straight(&mut self, _flag: u64, a: Address, other: Address) {
-            self.vaults.at(a).declared();
-            self.vaults.at(other).declared();
+            self.vault(a).declared();
+            self.vault(other).declared();
         }
 
         pub fn asserted(&mut self, a: Address) {
-            assert_eq!(self.vaults.at(a).balance(), Quantity::ZERO);
+            assert_eq!(self.vault(a).balance(), Quantity::ZERO);
         }
 
         #[allow(clippy::equatable_if_let)] // the spelling under test is the if-let itself
         pub fn scrutinised(&mut self, a: Address) {
-            if let Quantity::ZERO = self.vaults.at(a).balance() {}
+            if let Quantity::ZERO = self.vault(a).balance() {}
         }
 
         pub fn read(&mut self, a: Address) {
-            let _ = self.vaults.at(a).balance();
+            let _ = self.vault(a).balance();
         }
 
         pub fn guarded(&mut self, flag: u64, a: Address) {
             let 0 = flag else {
-                self.vaults.at(a).declared();
+                self.vault(a).declared();
                 return;
             };
         }
 
         pub fn plain(&mut self, _flag: u64, a: Address) {
-            self.vaults.at(a).declared();
+            self.vault(a).declared();
         }
     }
 }
@@ -203,12 +200,10 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
 #[blueprint]
 mod environment {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Cell, Keyed, Vault, clock_ms, hash, randomness};
+    use hyperscale_vm_sdk::state::{Cell, clock_ms, hash, randomness};
 
     #[state]
     struct Environment {
-        #[slot(1)]
-        vaults: Keyed<Vault>,
         #[slot(16)]
         seen: Cell<u64>,
     }
@@ -218,12 +213,12 @@ mod environment {
             let digest = hash(&randomness());
             let drawn = u128::from(digest[0]);
             let _ = drawn;
-            self.vaults.at(holder).declared();
+            self.vault(holder).declared();
             self.seen.set(clock_ms());
         }
 
         pub fn plain(&mut self, holder: Address) {
-            self.vaults.at(holder).declared();
+            self.vault(holder).declared();
             self.seen.set(0);
         }
     }
@@ -252,7 +247,7 @@ fn reading_the_environment_declares_nothing() {
 /// the other.
 #[blueprint]
 mod issuer {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Keyed, Quantity, Rounding, Vault, mint};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rounding, mint};
 
     #[state]
     struct Issuer {
@@ -262,8 +257,6 @@ mod issuer {
         /// value folds to.
         #[slot(17)]
         index: Cell<Fixed<(), ()>>,
-        #[slot(1)]
-        vaults: Keyed<Vault>,
     }
 
     impl Issuer {
@@ -279,7 +272,7 @@ mod issuer {
         pub fn stake(&mut self, funds: Bucket) -> Bucket {
             let staked = funds.quantity();
             self.staked.set(staked);
-            self.vaults.at(funds.resource()).put(funds);
+            self.vault(funds.resource()).put(funds);
             mint(b"", staked)
         }
 
@@ -340,26 +333,21 @@ fn an_instance_issues_resources_its_own_address_derives() {
 #[blueprint]
 mod counter {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Locked, Vault};
+    use hyperscale_vm_sdk::state::Bucket;
 
+    #[config]
     struct Settings {
         asset: Address,
     }
 
     #[state]
-    struct Counter {
-        #[slot(3)]
-        config: Locked<Settings>,
-        #[slot(1)]
-        #[denomination(config.asset)]
-        assets: Cell<Vault>,
-    }
+    struct Counter {}
 
     impl Counter {
         /// Bank both edges, merged.
         pub fn bank(&mut self, mut first: Bucket, second: Bucket) {
             first.put(second);
-            self.assets.vault().put(first);
+            self.vault(self.config().asset).put(first);
         }
     }
 }

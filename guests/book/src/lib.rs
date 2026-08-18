@@ -18,11 +18,10 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod book {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Locked, Ordered, Quantity, Ratio, Rounding, Vault, fresh_id, pack,
-    };
+    use hyperscale_vm_sdk::state::{Bucket, Ordered, Quantity, Ratio, Rounding, fresh_id, pack};
 
     /// The book's creation-fixed pair.
+    #[config]
     struct Pair {
         base: Address,
         quote: Address,
@@ -39,16 +38,6 @@ pub mod book {
         /// The standing ladder: a quantity of base per entry, which is a
         /// number the book records rather than value it holds.
         asks: Ordered<Quantity>,
-        /// What makers escrow and takers buy.
-        #[slot(1)]
-        #[denomination(config.base)]
-        base: Cell<Vault>,
-        /// What takers pay and makers are owed.
-        #[slot(1)]
-        #[denomination(config.quote)]
-        quote: Cell<Vault>,
-        #[slot(3)]
-        config: Locked<Pair>,
     }
 
     impl Book {
@@ -61,7 +50,7 @@ pub mod book {
             // Price over a fresh sequence id: unique without reading the
             // book, which is what lets the entry key be declared.
             self.asks.at(pack(price, fresh_id())).set(funds.quantity());
-            self.base.vault().put(funds);
+            self.vault(self.config().base).put(funds);
             Ok(())
         }
 
@@ -114,9 +103,9 @@ pub mod book {
             // the change comes off the payment before the rest of it goes
             // in — so what the vault keeps is what was spent, and neither
             // half is a number this body wrote down.
-            let sold = self.base.vault().take(bought);
+            let sold = self.vault(self.config().base).take(bought);
             let change = payment.take(budget);
-            self.quote.vault().put(payment);
+            self.vault(self.config().quote).put(payment);
             (sold, change)
         }
     }

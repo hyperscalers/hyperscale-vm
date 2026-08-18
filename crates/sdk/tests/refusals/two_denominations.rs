@@ -3,8 +3,9 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Keyed, Locked, Quantity, Vault};
+    use hyperscale_vm_sdk::state::{Bucket, Quantity};
 
+    #[config]
     struct Settings {
         base: Address,
         quote: Address,
@@ -12,18 +13,14 @@ mod contract {
 
     #[state]
     struct Contract {
-        #[slot(3)]
-        config: Locked<Settings>,
-        #[slot(1)]
-        vaults: Keyed<Vault>,
     }
 
     impl Contract {
         pub fn bank(&mut self, funds: Bucket) {
-            let settings = self.config.locked();
+            let settings = self.config().locked();
             let (half, rest) = funds.split(Quantity::ZERO.ratio_to(Quantity::ZERO).unwrap());
-            self.vaults.at(settings.base).put(half);
-            self.vaults.at(settings.quote).put(rest);
+            self.vault(settings.base).put(half);
+            self.vault(settings.quote).put(rest);
         }
     }
 }

@@ -1,5 +1,0 @@
-error: slot 2 is the delivery fallback beside a vault, which this field is not — a package's own slots start at 16
- --> tests/refusals/squatted_slot.rs:9:9
-  |
-9 |         #[slot(2)]
-  |         ^

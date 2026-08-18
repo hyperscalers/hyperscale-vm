@@ -1,5 +1,5 @@
 error: the component reference cannot be passed on — a callee's accesses would be invisible to this method's declaration
-  --> tests/refusals/self_escape.rs:20:20
+  --> tests/refusals/self_escape.rs:18:20
    |
-20 |             helper(self, a);
+18 |             helper(self, a);
    |                    ^^^^

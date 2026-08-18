@@ -19,9 +19,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint(principals)]
 pub mod account {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Ids, Keyed, NfBucket, Ordered, Quantity, RoleSet, Vault, clock_ms,
-    };
+    use hyperscale_vm_sdk::state::{Bucket, Ids, NfBucket, Quantity, RoleSet, clock_ms};
 
     /// Funds left the account.
     #[event]
@@ -35,21 +33,11 @@ pub mod account {
     /// instance it is, is the entry's own order key.
     const HELD: [u8; 1] = [1];
 
+    /// The account stores nothing of its own. Every cell it uses —
+    /// balances, the delivery fallback, the stored authority, the
+    /// instances held — is one the protocol gives every owner.
     #[state]
-    struct Account {
-        #[slot(1)]
-        vaults: Keyed<Vault>,
-        #[slot(2)]
-        claims: Keyed<Vault>,
-        /// The stored authority: the cell `authorize` reads and
-        /// `securify` creates. Absent for a virtual account.
-        #[slot(4)]
-        auth: Cell<Vec<u8>>,
-        /// One sub-collection per resource, its entries the instances
-        /// held at their own ids.
-        #[slot(6)]
-        holdings: Ordered<Vec<u8>>,
-    }
+    struct Account {}
 
     impl Account {
         /// Reserve `amount` on the caller's vault for `resource`.
@@ -60,7 +48,7 @@ pub mod account {
         /// against and no way for the two to differ.
         #[guarded(self)]
         pub fn withdraw(&mut self, resource: Address, amount: Quantity) -> Bucket {
-            let funds = self.vaults.at(resource).reserve(amount);
+            let funds = self.vault(resource).reserve(amount);
             Withdrawn::emit(&funds.quantity().subunits().to_le_bytes());
             funds
         }
@@ -81,8 +69,8 @@ pub mod account {
             // the event carries, the resource both cells are keyed by —
             // happens while there is still a bucket to read it from.
             let credited = funds.quantity();
-            self.claims.at(funds.resource()).declared();
-            self.vaults.at(funds.resource()).put(funds);
+            self.claims(funds.resource()).declared();
+            self.vault(funds.resource()).put(funds);
             Deposited::emit(&credited.subunits().to_le_bytes());
         }
 
@@ -99,7 +87,7 @@ pub mod account {
         /// it was taken under, so the body names no id at all.
         #[name("deposit-nf")]
         pub fn deposit_nf(&mut self, funds: NfBucket) {
-            self.holdings.of(funds.resource()).all(64).put(funds, &HELD);
+            self.holdings(funds.resource()).all(64).put(funds, &HELD);
         }
 
         /// Take the named instances out of the holdings interval,
@@ -108,7 +96,7 @@ pub mod account {
         #[name("withdraw-nf")]
         #[guarded(self)]
         pub fn withdraw_nf(&mut self, resource: Address, ids: Ids) -> Bucket {
-            self.holdings.of(resource).all(64).take(ids)
+            self.holdings(resource).all(64).take(ids)
         }
 
         /// Nothing but its own gate, like `authorize`: the kernel judges
@@ -148,9 +136,9 @@ pub mod account {
         pub fn securify(&mut self, roles: RoleSet, delay_ms: u64) {
             // The admission gate decoded the roles under the vocabulary
             // caps; what is left to judge here is the one-way door.
-            let stored = self.auth.get();
+            let stored = self.auth().get();
             assert!(stored.is_empty(), "the account is already securified");
-            self.auth.set(frame(&base(roles.bytes(), delay_ms), None));
+            self.auth().set(frame(&base(roles.bytes(), delay_ms), None));
         }
 
         /// Append a pending replacement for the whole cell, maturing
@@ -159,7 +147,7 @@ pub mod account {
         #[role_gated(recovery)]
         #[allow(clippy::needless_pass_by_value)] // the contract consumes the roles it stores
         pub fn propose(&mut self, roles: RoleSet, delay_ms: u64) {
-            let stored = self.auth.get();
+            let stored = self.auth().get();
             assert!(!stored.is_empty(), "the account is not securified");
             // The wait comes from the delay that governs now, never from
             // the proposer: the proposal's own delay only starts
@@ -168,7 +156,7 @@ pub mod account {
             let wait = u64::from_le_bytes(current[0..8].try_into().unwrap());
             let effective_at_ms = clock_ms().saturating_add(wait);
             let proposed = base(roles.bytes(), delay_ms);
-            self.auth
+            self.auth()
                 .set(frame(current, Some((effective_at_ms, &proposed))));
         }
 
@@ -177,20 +165,20 @@ pub mod account {
         /// cancel.
         #[role_gated(primary)]
         pub fn cancel(&mut self) {
-            let stored = self.auth.get();
+            let stored = self.auth().get();
             assert!(!stored.is_empty(), "the account is not securified");
-            self.auth.set(frame(governing(&stored), None));
+            self.auth().set(frame(governing(&stored), None));
         }
 
         /// Promote the pending proposal now, matured or not: early
         /// enactment and compaction are one operation.
         #[role_gated(confirmation)]
         pub fn confirm(&mut self) {
-            let stored = self.auth.get();
+            let stored = self.auth().get();
             assert!(!stored.is_empty(), "the account is not securified");
             let (_, proposal) = split(&stored);
             let (_, proposed) = proposal.expect("nothing is pending");
-            self.auth.set(frame(proposed, None));
+            self.auth().set(frame(proposed, None));
         }
     }
 

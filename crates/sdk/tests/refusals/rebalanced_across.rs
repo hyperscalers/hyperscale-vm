@@ -3,8 +3,9 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Cell, Locked, Quantity, Vault};
+    use hyperscale_vm_sdk::state::{Cell, Quantity, Vault};
 
+    #[config]
     struct Settings {
         x: Address,
         y: Address,
@@ -12,12 +13,8 @@ mod contract {
 
     #[state]
     struct Contract {
-        #[slot(3)]
-        config: Locked<Settings>,
-        #[slot(1)]
         #[denomination(config.x)]
         sold: Cell<Vault>,
-        #[slot(1)]
         #[denomination(config.y)]
         bought: Cell<Vault>,
     }

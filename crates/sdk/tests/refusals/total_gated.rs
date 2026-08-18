@@ -2,12 +2,10 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 mod contract {
-    use hyperscale_vm_sdk::state::{Bucket, Keyed, Quantity, Vault};
+    use hyperscale_vm_sdk::state::Bucket;
 
     #[state]
     struct Contract {
-        #[slot(1)]
-        vaults: Keyed<Vault>,
     }
 
     impl Contract {
@@ -16,7 +14,7 @@ mod contract {
         #[total]
         #[guarded(self)]
         pub fn deposit(&mut self, funds: Bucket) {
-            self.vaults.at(funds.resource()).put(funds);
+            self.vault(funds.resource()).put(funds);
         }
     }
 }

@@ -33,10 +33,11 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod staking {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Locked, Vault, burn, mint};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, burn, mint};
 
     /// The pool's creation-fixed configuration: what a delegation is
     /// denominated in.
+    #[config]
     struct Settings {
         staked_resource: Address,
     }
@@ -75,12 +76,6 @@ pub mod staking {
 
     #[state]
     struct Staking {
-        #[slot(3)]
-        config: Locked<Settings>,
-        /// The delegations under management.
-        #[slot(1)]
-        #[denomination(config.staked_resource)]
-        staked: Cell<Vault>,
         /// One leaf per validator the pool operates, so two operator
         /// actions on two validators commute.
         #[slot(17)]
@@ -98,7 +93,7 @@ pub mod staking {
             // the handle carries, so neither end reformats a number it
             // was handed.
             let staked = funds.quantity();
-            self.staked.vault().put(funds);
+            self.vault(self.config().staked_resource).put(funds);
             Staked::emit(&staked.subunits().to_le_bytes());
             mint(b"", staked)
         }

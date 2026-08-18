@@ -1,5 +1,5 @@
 error: this cell is keyed by one resource and the lowering cannot see what is going into it. Credit an edge the method was handed, one taken from a declared cell, or one it issued
-  --> tests/refusals/untyped_credit.rs:25:48
+  --> tests/refusals/untyped_credit.rs:22:44
    |
-25 |             self.vaults.at(settings.asset).put(parts.remove(0));
-   |                                                ^^^^^
+22 |             self.vault(settings.asset).put(parts.remove(0));
+   |                                            ^^^^^

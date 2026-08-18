@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `u128: BucketArg` is not satisfied
-  --> tests/refusals/client_wrong_param_type.rs:28:27
+  --> tests/refusals/client_wrong_param_type.rs:26:27
    |
-28 |     pool.deposit(builder, 100_u128)
+26 |     pool.deposit(builder, 100_u128)
    |          -------          ^^^^^^^^ the trait `BucketArg` is not implemented for `u128`
    |          |
    |          required by a bound introduced by this call
@@ -19,6 +19,6 @@ note: required by a bound in `contract::client::Contract::deposit`
  4 | #[blueprint]
    | ^^^^^^^^^^^^ required by this bound in `Contract::deposit`
 ...
-15 |         pub fn deposit(&mut self, funds: Bucket) {
+13 |         pub fn deposit(&mut self, funds: Bucket) {
    |                ------- required by a bound in this associated function
    = note: this error originates in the attribute macro `blueprint` (in Nightly builds, run with -Z macro-backtrace for more info)

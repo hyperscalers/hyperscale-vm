@@ -29,9 +29,7 @@ pub mod grammar {
 
     #[state]
     struct Grammar {
-        #[slot(1)]
-        vaults: Keyed<Vault>,
-        holdings: Ordered<Quantity>,
+        entries: Ordered<Quantity>,
     }
 
     impl Grammar {
@@ -40,7 +38,7 @@ pub mod grammar {
         /// over is not a term, and it is not a returned value because the
         /// method yields nothing however the tail is spelled.
         pub fn file(&mut self, ids: Vec<u8>) {
-            let mut held = self.holdings.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
+            let mut held = self.entries.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
             for id in cell_ids(&ids) {
                 held.insert(u128::from(id), Quantity::from_subunits(1));
             }
@@ -49,8 +47,8 @@ pub mod grammar {
         /// A `while` walking an interval by index, and a conditional in
         /// tail position — the other two ways a unit body ends.
         pub fn sweep(&mut self, holder: Address) {
-            let mut held = self.holdings.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
-            let vault = self.vaults.at(holder);
+            let mut held = self.entries.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
+            let vault = self.vault(holder);
             let mut index = 0;
             let mut total = vault.balance();
             while index < held.count() {
@@ -65,7 +63,7 @@ pub mod grammar {
         /// A produced edge out of a conditional body, so the value path
         /// is exercised beside the statement ones.
         pub fn take(&mut self, resource: Address, amount: Quantity) -> Bucket {
-            self.vaults.at(resource).reserve(amount)
+            self.vault(resource).reserve(amount)
         }
     }
 }

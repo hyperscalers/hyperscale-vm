@@ -49,9 +49,10 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod shares {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Locked, Quantity, Rounding, Vault, burn, mint};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity, Rounding, burn, mint};
 
     /// What the vault is denominated in.
+    #[config]
     struct Settings {
         asset: Address,
     }
@@ -67,12 +68,6 @@ pub mod shares {
 
     #[state]
     struct Shares {
-        #[slot(3)]
-        config: Locked<Settings>,
-        /// The assets under management.
-        #[slot(1)]
-        #[denomination(config.asset)]
-        assets: Cell<Vault>,
         /// Shares in circulation, which is what a redemption is priced
         /// against.
         supply: Cell<Quantity>,
@@ -84,7 +79,7 @@ pub mod shares {
         /// Down: the pool keeps the subunit, so assets per share does not
         /// fall.
         pub fn deposit(&mut self, funds: Bucket) -> Result<Bucket, Error> {
-            let mut vault = self.assets.vault();
+            let mut vault = self.vault(self.config().asset);
             let assets = vault.balance();
             let supply = self.supply.get();
             let paid = funds.quantity();
@@ -113,7 +108,7 @@ pub mod shares {
             want: Quantity,
             mut funds: Bucket,
         ) -> Result<(Bucket, Bucket), Error> {
-            let mut vault = self.assets.vault();
+            let mut vault = self.vault(self.config().asset);
             let assets = vault.balance();
             let supply = self.supply.get();
 
@@ -146,7 +141,7 @@ pub mod shares {
             want: Quantity,
             mut units: Bucket,
         ) -> Result<(Bucket, Bucket), Error> {
-            let mut vault = self.assets.vault();
+            let mut vault = self.vault(self.config().asset);
             let assets = vault.balance();
             let supply = self.supply.get();
 
@@ -168,7 +163,7 @@ pub mod shares {
         ///
         /// Down: the pool keeps the subunit.
         pub fn redeem(&mut self, units: Bucket) -> Result<Bucket, Error> {
-            let mut vault = self.assets.vault();
+            let mut vault = self.vault(self.config().asset);
             let assets = vault.balance();
             let supply = self.supply.get();
             let returned = units.quantity();

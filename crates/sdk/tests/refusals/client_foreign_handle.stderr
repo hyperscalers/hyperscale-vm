@@ -1,8 +1,8 @@
 error[E0599]: no method named `offer` found for struct `pool::client::Pool` in the current scope
-  --> tests/refusals/client_foreign_handle.rs:45:10
+  --> tests/refusals/client_foreign_handle.rs:41:10
    |
  4 | #[blueprint]
    | ------------ method `offer` not found for this struct
 ...
-45 |     here.offer(builder, funds)
+41 |     here.offer(builder, funds)
    |          ^^^^^ method not found in `pool::client::Pool`

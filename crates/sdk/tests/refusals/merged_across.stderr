@@ -1,5 +1,5 @@
 error: this merges `issued(b"")` into `config.asset`, and one edge carries one resource. A merge moves value without converting it, so the two have to be the same resource
-  --> tests/refusals/merged_across.rs:24:13
+  --> tests/refusals/merged_across.rs:22:13
    |
-24 |             taken.put(mint(b"", amount));
+22 |             taken.put(mint(b"", amount));
    |             ^^^^^

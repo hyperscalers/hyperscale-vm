@@ -1,5 +1,5 @@
 error: a total method admits every caller, and a gate turns some away before the body runs: drop the mark, or drop the gate
-  --> tests/refusals/total_gated.rs:16:9
+  --> tests/refusals/total_gated.rs:14:9
    |
-16 |         #[total]
+14 |         #[total]
    |         ^^^^^^^^

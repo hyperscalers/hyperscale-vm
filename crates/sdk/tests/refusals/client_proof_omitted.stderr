@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `u128: AddressArg` is not satisfied
-  --> tests/refusals/client_proof_omitted.rs:32:38
+  --> tests/refusals/client_proof_omitted.rs:30:38
    |
-32 |     pool.withdraw(builder, resource, 100_u128)
+30 |     pool.withdraw(builder, resource, 100_u128)
    |          --------                    ^^^^^^^^ the trait `AddressArg` is not implemented for `u128`
    |          |
    |          required by a bound introduced by this call
@@ -21,29 +21,29 @@ note: required by a bound in `contract::client::Contract::withdraw`
  4 | #[blueprint]
    | ^^^^^^^^^^^^ required by this bound in `Contract::withdraw`
 ...
-20 |         pub fn withdraw(&mut self, resource: hyperscale_vm_sdk::Address, amount: Quantity) -> Bucket {
+18 |         pub fn withdraw(&mut self, resource: hyperscale_vm_sdk::Address, amount: Quantity) -> Bucket {
    |                -------- required by a bound in this associated function
    = note: this error originates in the attribute macro `blueprint` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0061]: this method takes 4 arguments but 3 arguments were supplied
-  --> tests/refusals/client_proof_omitted.rs:32:10
+  --> tests/refusals/client_proof_omitted.rs:30:10
    |
-32 |     pool.withdraw(builder, resource, 100_u128)
+30 |     pool.withdraw(builder, resource, 100_u128)
    |          ^^^^^^^^-----------------------------
    |                  |         |
    |                  |         expected `Proof`, found `Address`
    |                  argument #4 of type `u128` is missing
    |
 note: method defined here
-  --> tests/refusals/client_proof_omitted.rs:20:16
+  --> tests/refusals/client_proof_omitted.rs:18:16
    |
  4 | #[blueprint]
    | ------------
 ...
-20 |         pub fn withdraw(&mut self, resource: hyperscale_vm_sdk::Address, amount: Quantity) -> Bucket {
+18 |         pub fn withdraw(&mut self, resource: hyperscale_vm_sdk::Address, amount: Quantity) -> Bucket {
    |                ^^^^^^^^
 help: provide the argument
    |
-32 -     pool.withdraw(builder, resource, 100_u128)
-32 +     pool.withdraw(builder, /* Proof */, 100_u128, /* u128 */)
+30 -     pool.withdraw(builder, resource, 100_u128)
+30 +     pool.withdraw(builder, /* Proof */, 100_u128, /* u128 */)
    |

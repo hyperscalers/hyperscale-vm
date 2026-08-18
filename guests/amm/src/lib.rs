@@ -17,7 +17,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod amm {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Locked, Quantity, Rounding, UnitFixed, Vault};
+    use hyperscale_vm_sdk::state::{Bucket, Quantity, Rounding, UnitFixed};
 
     /// The pool's creation-fixed configuration: the pair it trades and
     /// the fee it takes.
@@ -26,6 +26,7 @@ pub mod amm {
     /// it. A pool created with a fee above one is a pool that should not
     /// exist, and refusing every swap instead would leave it created,
     /// bricked, and holding funds.
+    #[config]
     struct Settings {
         x: Address,
         y: Address,
@@ -42,28 +43,19 @@ pub mod amm {
         EmptyPool,
     }
 
+    /// The pool stores nothing of its own: the pair it trades sits in
+    /// the protocol's own vault cells, which every owner has.
     #[state]
-    struct Amm {
-        #[slot(3)]
-        config: Locked<Settings>,
-        /// The side the pool buys.
-        #[slot(1)]
-        #[denomination(config.x)]
-        sold: Cell<Vault>,
-        /// The side it sells.
-        #[slot(1)]
-        #[denomination(config.y)]
-        bought: Cell<Vault>,
-    }
+    struct Amm {}
 
     impl Amm {
         /// Swap `input` against the pool, returning the bought side.
         pub fn swap(&mut self, input: Bucket, min_out: Quantity) -> Result<Bucket, Error> {
             // Pins the whole configuration record: the fee is read from
             // it, so the swap wants it stable, not merely consulted.
-            let settings = self.config.locked();
-            let mut sold = self.sold.vault();
-            let mut bought = self.bought.vault();
+            let settings = self.config().locked();
+            let mut sold = self.vault(settings.x);
+            let mut bought = self.vault(settings.y);
 
             let x = sold.balance();
             let y = bought.balance();

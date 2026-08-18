@@ -1,0 +1,5 @@
+error: slot 2 is the protocol's own — the delivery fallback beside a vault, reached by `claims(resource)` — and every owner has it already. A package's own slots start at 16 and are numbered by declaration order, so this field needs no slot at all
+  --> tests/refusals/claims_cell.rs:14:9
+   |
+14 |         #[slot(2)]
+   |         ^
