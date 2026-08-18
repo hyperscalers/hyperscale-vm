@@ -15,6 +15,7 @@
 
 use crate::manifest::{AuthorityGate, Bounds};
 use crate::metadata::PackageHash;
+use crate::presented::Presented;
 use crate::types::{Address, EdgeContent, MAX_IDS_PER_EDGE};
 
 /// What kind of value an edge carries.
@@ -195,9 +196,9 @@ pub struct NodeCall {
     /// grants the authority. Carrying the address rather than a bit is
     /// what lets an issued edge be stamped with what it holds.
     pub issues: Option<Address>,
-    /// The identities this call presents, resolved from the signed
-    /// evidence the manifest node names.
-    pub evidence: Vec<Address>,
+    /// The claims this call presents, resolved from the signed evidence
+    /// the manifest node names.
+    pub evidence: Vec<Presented>,
     /// The gate the presented identities are judged against. `None` for
     /// a method admitting anyone, and then the presented set is empty
     /// too.

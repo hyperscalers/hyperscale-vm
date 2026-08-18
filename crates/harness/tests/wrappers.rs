@@ -113,11 +113,11 @@ fn the_account_wrappers_match_their_signatures() {
         let alice = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice, BASE, 100)?;
         account::deposit(b, BOB, funds)?;
-        account::securify_uniform(b, alice, Rule::Require(BOB.address()), 86_400_000)?;
+        account::securify_uniform(b, alice, Rule::Require(BOB.address().into()), 86_400_000)?;
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(Rule::Require(BOB.address())),
+            RoleSet::uniform(Rule::Require(BOB.address().into())),
             86_400_000,
         )?;
         account::cancel(b, ALICE)?;

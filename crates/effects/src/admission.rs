@@ -24,6 +24,7 @@ use crate::metadata::{
     AbiError, Accessibility, GateShape, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
     ParamType,
 };
+use crate::presented::Presented;
 use crate::resource::holdings_collection;
 use crate::route::MAX_MANIFEST_NODES;
 use crate::types::{
@@ -678,10 +679,12 @@ pub(crate) fn admit_intents(
     let mut outputs: Vec<Vec<(Address, EdgeContent)>> = Vec::with_capacity(total);
     let mut consumed: Vec<Vec<u32>> = Vec::with_capacity(total);
     let mut lowered: Vec<Node> = Vec::with_capacity(total);
-    // The identity each node mints, indexed by flattened position:
-    // an authorizing method's target, a custodial method's badge, and
-    // `None` from anything else.
-    let mut minted: Vec<Option<Address>> = Vec::with_capacity(total);
+    // What each node mints, indexed by flattened position: an
+    // authorizing method's own identity, a custodial method's badge, and
+    // an empty set from anything else. A proof drawn from a node draws
+    // the whole set, so a gate that verifies more than one thing about
+    // its caller presents all of it.
+    let mut minted: Vec<Vec<Presented>> = Vec::with_capacity(total);
 
     for &(intent_index, local_index) in &order {
         let intent = &intents[intent_index];
@@ -899,13 +902,14 @@ pub(crate) fn admit_intents(
                     let signer = intent
                         .signer
                         .ok_or(AdmissionError::UnsignedEvidence { node: node_index })?;
-                    evidence.push(signer);
+                    evidence.push(Presented::Identity(signer));
                 }
                 EvidenceRef::Node(producer) => {
                     // An earlier node of the same intent, whose minted
-                    // identity — the target's own statement, resolved
-                    // when that node was judged — is what this proof
-                    // presents. A node that minted nothing has no entry.
+                    // claims — the target's own statement, resolved when
+                    // that node was judged — are what this proof
+                    // presents. A node that minted nothing mints an
+                    // empty set, which is nothing to present.
                     let flat = usize::try_from(*producer)
                         .ok()
                         .filter(|&earlier| earlier < local_index)
@@ -915,13 +919,13 @@ pub(crate) fn admit_intents(
                             node: node_index,
                             producer: *producer,
                         })?;
-                    let identity = minted.get(flat).copied().flatten().ok_or(
+                    let claims = minted.get(flat).filter(|claims| !claims.is_empty()).ok_or(
                         AdmissionError::UnmintingProof {
                             node: node_index,
                             producer: *producer,
                         },
                     )?;
-                    evidence.push(identity);
+                    evidence.extend_from_slice(claims);
                 }
             }
         }
@@ -1021,9 +1025,9 @@ pub(crate) fn admit_intents(
                         source,
                     }
                 })?;
-                match value {
-                    Value::Address(identity) => Some(AuthorityGate::Identity(identity)),
-                    _ => return Err(AdmissionError::AuthorityType { node: node_index }),
+                match Presented::of(&value) {
+                    Some(claim) => Some(AuthorityGate::Identity(claim)),
+                    None => return Err(AdmissionError::AuthorityType { node: node_index }),
                 }
             }
             GateShape::Rule { cell, role } => {
@@ -1062,12 +1066,17 @@ pub(crate) fn admit_intents(
                 }
             });
         }
-        // The identity this node mints: an authorizing method's target,
-        // a custodial method's badge, and nothing from anything else.
+        // What this node mints: an authorizing method's target acting as
+        // itself, a custodial method's badge, and nothing from anything
+        // else.
         minted.push(match &signature.accessibility {
-            Accessibility::Authorizing => Some(node.target.address()),
-            Accessibility::Custodial(_) => custody.map(|(badge, _)| badge),
-            Accessibility::Public | Accessibility::Guarded(_) | Accessibility::RoleGated(_) => None,
+            Accessibility::Authorizing => vec![Presented::Identity(node.target.address())],
+            Accessibility::Custodial(_) => custody
+                .map(|(badge, _)| vec![Presented::Resource(badge)])
+                .unwrap_or_default(),
+            Accessibility::Public | Accessibility::Guarded(_) | Accessibility::RoleGated(_) => {
+                Vec::new()
+            }
         });
         consumed.push(vec![0; node_outputs.len()]);
         outputs.push(node_outputs);

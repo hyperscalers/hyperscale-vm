@@ -13,9 +13,9 @@ use hyperscale_vm_effects::{
     AbiParam, Accessibility, Address, AddressClass, AdmissionError, AuthRole, AuthorityGate,
     Clause, ComponentAddr, Constraint, EdgeKind, EdgeRef, Effect, EffectTarget, EvidenceRef, Expr,
     GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph,
-    MetadataCache, MethodSignature, Mode, ModeExpr, PackageMetadata, ParamType, ResourceAddr,
-    TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_collection,
-    holdings_range, route,
+    MetadataCache, MethodSignature, Mode, ModeExpr, PackageMetadata, ParamType, Presented,
+    ResourceAddr, TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id,
+    holdings_collection, holdings_range, route,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -262,7 +262,10 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     // own declared read names; the guarded withdrawal keeps the pure
     // identity match.
     let authorize = &admitted.manifest().nodes[0];
-    assert_eq!(authorize.evidence, vec![ALICE.address()]);
+    assert_eq!(
+        authorize.evidence,
+        vec![Presented::Identity(ALICE.address())]
+    );
     assert_eq!(
         authorize.authority,
         Some(AuthorityGate::StoredRule {
@@ -272,10 +275,15 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     );
 
     let withdraw = &admitted.manifest().nodes[1];
-    assert_eq!(withdraw.evidence, vec![ALICE.address()]);
+    assert_eq!(
+        withdraw.evidence,
+        vec![Presented::Identity(ALICE.address())]
+    );
     assert_eq!(
         withdraw.authority,
-        Some(AuthorityGate::Identity(ALICE.address()))
+        Some(AuthorityGate::Identity(Presented::Identity(
+            ALICE.address()
+        )))
     );
 
     route(&admitted, &cache, &instances, &TestHasher, &resolver()).expect("routes");
@@ -404,10 +412,14 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     let operate = &admitted.manifest().nodes[1];
     assert_eq!(
         operate.evidence,
-        vec![badge],
+        vec![Presented::Resource(badge)],
         "the proof presents the badge, not the producer's address"
     );
-    assert_eq!(operate.authority, Some(AuthorityGate::Identity(badge)));
+    assert_eq!(
+        operate.authority,
+        Some(AuthorityGate::Identity(Presented::Resource(badge))),
+        "a gate naming a resource address wants the badge, by the class alone"
+    );
 
     // An authorizing sign-in mints the target itself: satisfying one's
     // own rule is no feat, so an identity it could name beyond itself
@@ -424,7 +436,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     .expect("admits");
     assert_eq!(
         admitted.manifest().nodes[1].evidence,
-        vec![custodian.address()]
+        vec![Presented::Identity(custodian.address())]
     );
     // A badge that is not a resource address has nothing possessable
     // behind it.

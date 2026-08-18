@@ -159,12 +159,20 @@ fn the_operator_surface_is_the_badge_holders_custody() {
     .unwrap();
 
     // A pool is owned by nobody, so its operator surface admits whoever
-    // presents the pool's own badge: custody at the presentation, and an
-    // identity no key derives at the surface — reachable only through
-    // that presentation, which is the point.
+    // presents the pool's own badge: custody at the presentation, and
+    // the badge itself at the surface — reachable only through that
+    // presentation, which is the point, and which the report says
+    // rather than calling the surface unreachable.
     assert_eq!(report.authority[0].authority, Authority::Custody);
-    assert_eq!(report.authority[1].authority, Authority::TargetHasNoKey);
+    assert_eq!(
+        report.authority[1].authority,
+        Authority::Badge {
+            resource: badge().address(),
+            instance: None,
+        }
+    );
     assert_eq!(report.signers(), std::iter::once(OPERATOR).collect());
+    assert_eq!(report.unsatisfiable().count(), 0);
 }
 
 #[test]

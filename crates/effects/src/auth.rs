@@ -22,6 +22,7 @@
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 
+use crate::presented::Presented;
 use crate::rule::{MAX_RULE_WIRE_DEPTH, Rule};
 use crate::types::Address;
 
@@ -239,8 +240,8 @@ impl AuthCell {
         }
     }
 
-    /// The stored-rule verdict, whole: whether the identities presented
-    /// to `target`'s cell satisfy the rule `role` selects at `clock_ms`.
+    /// The stored-rule verdict, whole: whether the claims presented to
+    /// `target`'s cell satisfy the rule `role` selects at `clock_ms`.
     ///
     /// This is the one judgment both readers share — the kernel's gate
     /// asks it with a call's evidence, the payer shard's binding verdict
@@ -256,11 +257,11 @@ impl AuthCell {
         stored: &[u8],
         target: Address,
         role: AuthRole,
-        evidence: &[Address],
+        evidence: &[Presented],
         clock_ms: u64,
     ) -> bool {
         if stored.is_empty() {
-            return evidence.contains(&target);
+            return evidence.contains(&Presented::Identity(target));
         }
         Self::from_slice(stored).is_ok_and(|cell| {
             cell.governing(clock_ms)
@@ -276,7 +277,8 @@ mod tests {
     use hyperscale_hbor::{Hbor, to_vec};
 
     use super::{AuthBase, AuthCell, AuthCellError, AuthRole, Proposal, RoleSet};
-    use crate::rule::testing::{WideRule, chain, identity, wide_chain};
+    use crate::presented::Presented;
+    use crate::rule::testing::{WideRule, chain, identity, principal, wide_chain};
     use crate::rule::{MAX_RULE_DEPTH, Rule};
 
     fn base(byte: u8, delay: u64) -> AuthBase {
@@ -433,7 +435,7 @@ mod tests {
     /// nobody.
     #[test]
     fn the_shared_verdict_dispatches_on_presence_role_and_clock() {
-        let target = identity(1);
+        let target = principal(1);
 
         // Absent: the identity the target's address derives, whichever
         // role asks, whatever the clock says.
@@ -441,14 +443,14 @@ mod tests {
             &[],
             target,
             AuthRole::Primary,
-            &[target],
+            &[Presented::Identity(target)],
             0
         ));
         assert!(AuthCell::admits(
             &[],
             target,
             AuthRole::Recovery,
-            &[target],
+            &[Presented::Identity(target)],
             u64::MAX
         ));
         assert!(!AuthCell::admits(
@@ -493,7 +495,7 @@ mod tests {
             &[0xFF, 0xFF],
             target,
             AuthRole::Primary,
-            &[target],
+            &[Presented::Identity(target)],
             0
         ));
     }

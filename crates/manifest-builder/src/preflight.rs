@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
     Address, AdmissionError, Admitted, AuthRole, AuthorityGate, EnvelopeTree, Hasher,
-    InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache, NetworkWord,
+    InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache, NetworkWord, Presented,
     PrincipalAddr, RouteError, Routing, SchemeId, ShardId, ShardResolver, SubintentRecord,
     TextError, admit, admit_tree, declared_work, footprint, route, route_tree, signature_work,
 };
@@ -65,6 +65,17 @@ pub enum Authority {
     /// configured slot holding one. Nothing signs for a hash of what an
     /// object is, so a method requiring one cannot be named by anyone.
     TargetHasNoKey,
+    /// A badge the caller must present: possession of the resource, or
+    /// of the one instance of it named here. No signature satisfies it
+    /// on its own — the holder presents it through a custodial call,
+    /// which the same report shows as a node of its own.
+    Badge {
+        /// The badge resource.
+        resource: Address,
+        /// The instance named, where the gate names one rather than the
+        /// resource at large.
+        instance: Option<u64>,
+    },
     /// The target's stored primary plus possession of the badge its
     /// method names — the custody gate; only state knows whether the
     /// badge is held.
@@ -167,7 +178,7 @@ impl Report {
                 Authority::StoredRule(_) | Authority::Custody => {
                     PrincipalAddr::try_from(required.target).ok()
                 }
-                Authority::Anyone | Authority::TargetHasNoKey => None,
+                Authority::Anyone | Authority::TargetHasNoKey | Authority::Badge { .. } => None,
             })
             .chain(self.subintents.iter().map(|record| record.signer))
             .collect()
@@ -253,8 +264,18 @@ fn report(
     for (index, node) in admitted.manifest().nodes.iter().enumerate() {
         let required = match &node.authority {
             None => Authority::Anyone,
-            Some(AuthorityGate::Identity(identity)) => PrincipalAddr::try_from(*identity)
-                .map_or(Authority::TargetHasNoKey, Authority::Signature),
+            Some(AuthorityGate::Identity(Presented::Identity(identity))) => {
+                PrincipalAddr::try_from(*identity)
+                    .map_or(Authority::TargetHasNoKey, Authority::Signature)
+            }
+            Some(AuthorityGate::Identity(Presented::Resource(resource))) => Authority::Badge {
+                resource: *resource,
+                instance: None,
+            },
+            Some(AuthorityGate::Identity(Presented::Instance(resource, id))) => Authority::Badge {
+                resource: *resource,
+                instance: Some(*id),
+            },
             Some(AuthorityGate::StoredRule { role, .. }) => Authority::StoredRule(*role),
             Some(AuthorityGate::Custody { .. }) => Authority::Custody,
         };

@@ -1,7 +1,7 @@
 //! The authority rule vocabulary.
 //!
-//! A rule names which identities may act as the object that stores it: a
-//! single identity, or a count over sub-rules. `CountOf(1, …)` is
+//! A rule names which claims may act as the object that stores it: a
+//! single claim, or a count over sub-rules. `CountOf(1, …)` is
 //! disjunction and a count requiring every branch is conjunction, so
 //! one constructor covers "this key", "any of these three", and "two of
 //! these five" without a second form.
@@ -16,7 +16,7 @@
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 
-use crate::types::Address;
+use crate::presented::Presented;
 
 /// The bound on a rule's nesting depth: a lone identity is one, a
 /// threshold one more than its deepest branch.
@@ -39,31 +39,32 @@ pub const MAX_RULE_BRANCHES: usize = 16;
 /// [`MAX_RULE_DEPTH`].
 ///
 /// One threshold level costs two decoder levels — the branch list field
-/// and its hoisted element body — and a terminal costs one more, its own
-/// field, so the deepest admissible rule sits one level under this cap
-/// and any deeper one costs at least one past it. The relation is pinned
-/// by test at both boundaries; [`Rule::from_slice`] decodes under this
-/// cap and gets the depth gate as a decode-time consequence rather than
-/// a pass afterwards.
-pub const MAX_RULE_WIRE_DEPTH: usize = 2 * MAX_RULE_DEPTH;
+/// and its hoisted element body — and a terminal costs two, its own
+/// field and the claim inside it, so the deepest admissible rule sits
+/// one level under this cap and any deeper one costs at least one past
+/// it. The relation is pinned by test at both boundaries;
+/// [`Rule::from_slice`] decodes under this cap and gets the depth gate
+/// as a decode-time consequence rather than a pass afterwards.
+pub const MAX_RULE_WIRE_DEPTH: usize = 2 * MAX_RULE_DEPTH + 1;
 
-/// An authority rule: a threshold over identities.
+/// An authority rule: a threshold over presented claims.
 ///
-/// Proof resources, amounts, and holder-presented custody are
-/// deliberately absent — a rule asks which identities are present, and
-/// nothing else.
+/// Amounts are deliberately absent — a rule asks which claims are
+/// present, and nothing else. Which claims those are is [`Presented`]'s:
+/// an identity acting as itself, a badge resource, or one instance of
+/// one.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 #[hbor(validate = well_formed)]
 pub enum Rule {
-    /// Satisfied when this identity is among those presented.
-    Require(Address),
+    /// Satisfied when this claim is among those presented.
+    Require(Presented),
     /// Satisfied when enough branches are.
     CountOf {
         /// How many of `rules` must be satisfied. At least one, at most
         /// the branch count — the decode gate refuses the rest.
         count: u8,
         /// The branches, each judged independently over the same
-        /// identity set.
+        /// presented set.
         #[hbor(max = MAX_RULE_BRANCHES)]
         rules: Vec<Self>,
     },
@@ -89,22 +90,22 @@ fn well_formed(rule: &Rule) -> Result<(), &'static str> {
 }
 
 impl Rule {
-    /// Whether the presented identities satisfy this rule.
+    /// Whether the presented claims satisfy this rule.
     ///
-    /// Total over any identity set, including degenerate thresholds
+    /// Total over any presented set, including degenerate thresholds
     /// built in memory: one requiring nothing is satisfied by anyone,
     /// and one requiring more than its branch count by no one — though
     /// neither survives decode, so no stored rule holds either form.
     /// Recursion is bounded by the decode gate: a rule this crate
     /// decoded nests at most [`MAX_RULE_DEPTH`] deep.
     #[must_use]
-    pub fn satisfied_by(&self, identities: &[Address]) -> bool {
+    pub fn satisfied_by(&self, presented: &[Presented]) -> bool {
         match self {
-            Self::Require(identity) => identities.contains(identity),
+            Self::Require(claim) => presented.contains(claim),
             Self::CountOf { count, rules } => {
                 let met = rules
                     .iter()
-                    .filter(|rule| rule.satisfied_by(identities))
+                    .filter(|rule| rule.satisfied_by(presented))
                     .count();
                 met >= usize::from(*count)
             }
@@ -146,18 +147,24 @@ pub(crate) mod testing {
     use hyperscale_hbor::Hbor;
 
     use super::Rule;
+    use crate::presented::Presented;
     use crate::types::{Address, AddressClass};
 
     /// The same wire form as [`Rule`], with no caps.
     #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
     pub enum WideRule {
-        Require(Address),
+        Require(Presented),
         CountOf { count: u8, rules: Vec<Self> },
     }
 
-    /// A test identity from one byte.
-    pub fn identity(byte: u8) -> Address {
+    /// A test principal from one byte.
+    pub fn principal(byte: u8) -> Address {
         Address::new([byte; 31], AddressClass::Principal)
+    }
+
+    /// The claim that principal makes acting as itself.
+    pub fn identity(byte: u8) -> Presented {
+        Presented::Identity(principal(byte))
     }
 
     /// `levels` thresholds over one identity: nests `levels + 1` deep.

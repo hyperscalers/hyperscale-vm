@@ -9,6 +9,7 @@
 
 use crate::auth::AuthRole;
 use crate::hash::Hash32;
+use crate::presented::Presented;
 use crate::types::{Address, CollectionId, EdgeContent, SubstateKey, Value};
 
 /// A consumer's signed amount bounds on an edge, folded to their
@@ -82,9 +83,9 @@ pub struct Node {
     pub method: String,
     /// The node's bound inputs, in the method's parameter order.
     pub inputs: Vec<NodeInput>,
-    /// The identities this call presents, resolved from the signed
-    /// evidence the node names. Empty for a call requiring none.
-    pub evidence: Vec<Address>,
+    /// The claims this call presents, resolved from the signed evidence
+    /// the node names. Empty for a call requiring none.
+    pub evidence: Vec<Presented>,
     /// The gate this call's presented evidence is judged against.
     /// `None` for a method admitting anyone.
     ///
@@ -97,9 +98,10 @@ pub struct Node {
 /// The gate a call's presented evidence is judged against at execution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthorityGate {
-    /// The presented set must carry this identity — what the target
-    /// itself named, evaluated at admission.
-    Identity(Address),
+    /// The presented set must carry this claim — what the target itself
+    /// named, evaluated at admission and read off the value's own class,
+    /// so a gate naming a configured resource address wants the badge.
+    Identity(Presented),
     /// The presented set must satisfy one of the target's stored rules
     /// at this cell — or, while the cell is absent, carry the identity
     /// the target's address derives. The cell is the method's own

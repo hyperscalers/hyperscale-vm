@@ -228,7 +228,8 @@ fn summarise(graph: &ManifestGraph, cache: &MetadataCache, instances: &InstanceR
             Authority::Anyone
             | Authority::Signature(_)
             | Authority::StoredRule(_)
-            | Authority::Custody => {
+            | Authority::Custody
+            | Authority::Badge { .. } => {
                 unreachable!("satisfiable")
             }
         };

@@ -17,8 +17,8 @@ use hyperscale_vm_effects::{
     Constraint, Effect, EffectSet, EffectTarget, EntryKey, EvidenceRef, Expr, Hash32, Hasher,
     InstanceMeta, InstanceRegistry, MAX_STAGED_DEPTH, ManifestGraph, MetadataCache,
     MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
-    PrincipalAddr, Proposal, ResourceAddr, Role, RoleId, RoleSet, Routing, Rule, ShardId,
-    ShardResolver, Strategy, SubstateKey, TargetExpr, TestHasher, Totality, Value, admit,
+    Presented, PrincipalAddr, Proposal, ResourceAddr, Role, RoleId, RoleSet, Routing, Rule,
+    ShardId, ShardResolver, Strategy, SubstateKey, TargetExpr, TestHasher, Totality, Value, admit,
     child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
     resource_address, route,
 };
@@ -102,7 +102,7 @@ fn auth(owner: impl Into<Address>) -> SubstateKey {
 fn uniform_base(identity: Address) -> AuthBase {
     AuthBase {
         recovery_delay_ms: DAY_MS,
-        roles: RoleSet::uniform(Rule::Require(identity)),
+        roles: RoleSet::uniform(Rule::Require(identity.into())),
     }
 }
 
@@ -1068,7 +1068,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
 
     // Alice's last act under the virtual rule: signing in for its
     // retirement. Everything she stores from here is governed by Bob.
-    let securify = securify_graph(Rule::Require(BOB.address()));
+    let securify = securify_graph(Rule::Require(Presented::of_address(BOB.address())));
     let (results, store) = run_both(
         &engines,
         &world,
@@ -1122,7 +1122,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
 
     // Nothing re-securifies: the guest's one-way door traps, whoever
     // holds the current rule.
-    let again = securify_graph(Rule::Require(BOB.address()));
+    let again = securify_graph(Rule::Require(Presented::of_address(BOB.address())));
     let (results, _) = run_both_signed(
         &engines,
         &world,
@@ -1263,9 +1263,9 @@ fn a_proof_opens_only_the_account_that_minted_it() -> Result<()> {
 /// separates a proposal from its maturity.
 const fn split_roles() -> RoleSet {
     RoleSet {
-        primary: Rule::Require(ALICE.address()),
-        recovery: Rule::Require(BOB.address()),
-        confirmation: Rule::Require(MAKER.address()),
+        primary: Rule::Require(Presented::of_address(ALICE.address())),
+        recovery: Rule::Require(Presented::of_address(BOB.address())),
+        confirmation: Rule::Require(Presented::of_address(MAKER.address())),
     }
 }
 
@@ -1295,7 +1295,7 @@ fn propose_graph() -> ManifestGraph {
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(Rule::Require(BOB.address())),
+            RoleSet::uniform(Rule::Require(Presented::of_address(BOB.address()))),
             DAY_MS,
         )
     })
@@ -1566,7 +1566,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() -> Result<()> {
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(Rule::Require(MAKER.address())),
+            RoleSet::uniform(Rule::Require(Presented::of_address(MAKER.address()))),
             DAY_MS,
         )
     });
@@ -1605,7 +1605,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() -> Result<()> {
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(Rule::Require(BOB.address())),
+            RoleSet::uniform(Rule::Require(Presented::of_address(BOB.address()))),
             DAY_MS,
         )
     });

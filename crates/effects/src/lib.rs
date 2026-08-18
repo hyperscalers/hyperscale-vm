@@ -27,6 +27,7 @@ pub mod hash;
 pub mod invoke;
 pub mod manifest;
 pub mod metadata;
+pub mod presented;
 pub mod resource;
 pub mod route;
 pub mod rule;
@@ -74,6 +75,7 @@ pub use metadata::{
     PackageMetadata, ParamType, Totality, check_abi, check_declarations, check_metadata,
     package_hash, package_key,
 };
+pub use presented::Presented;
 pub use resource::{
     Fungibility, ResourceRecord, holdings_collection, holdings_range, instance_data_key,
     resource_record_key,
