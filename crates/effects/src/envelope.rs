@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 
-use crate::PACKAGE_ROLE_BASE;
+use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{
     AdmissionError, Admitted, IntentView, MAX_YIELD_PARAMS, admit_intents, check_instance_values,
     check_value_depth,
@@ -35,7 +35,7 @@ use crate::manifest::ManifestHash;
 use crate::metadata::{InstanceMeta, InstanceRegistry, MetadataCache};
 use crate::route::{MAX_MANIFEST_NODES, RouteError, Routing, ShardResolver, route};
 use crate::types::{
-    Address, Effect, EffectTarget, Mode, Presence, PrincipalAddr, ResourceRef, RoleId, SubstateKey,
+    Address, Effect, EffectTarget, Mode, Presence, PrincipalAddr, ResourceRef, SlotId, SubstateKey,
     child_key,
 };
 
@@ -44,12 +44,12 @@ use crate::types::{
 ///
 /// The top of the role space is the kernel's, as the bottom is the
 /// protocol vocabulary's and the middle is where packages number from.
-pub const NULLIFIER_ROLE: RoleId = RoleId(0xFFFF);
+pub const NULLIFIER_SLOT: SlotId = SlotId(0xFFFF);
 
 // Held at compile time rather than by a test: both sides are constants,
 // so a nullifier colliding with a package's own cell is a thing the
 // build can refuse outright.
-const _: () = assert!(NULLIFIER_ROLE.0 > PACKAGE_ROLE_BASE);
+const _: () = assert!(NULLIFIER_SLOT.0 > PACKAGE_SLOT_BASE);
 
 /// A typed inbound yield edge an intent declares: the composition must
 /// bind an edge carrying exactly this resource, under the declaring
@@ -201,7 +201,7 @@ pub fn nullifier_key(
     signer: impl Into<Address>,
     subintent: SubintentHash,
 ) -> SubstateKey {
-    child_key(hasher, signer, NULLIFIER_ROLE, &[subintent.0.0.to_vec()])
+    child_key(hasher, signer, NULLIFIER_SLOT, &[subintent.0.0.to_vec()])
 }
 
 /// One admitted subintent: its signed identity, its signer, and the

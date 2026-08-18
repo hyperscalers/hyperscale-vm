@@ -37,17 +37,17 @@ pub mod account {
 
     #[state]
     struct Account {
-        #[role(1)]
+        #[slot(1)]
         vaults: Keyed<Vault>,
-        #[role(2)]
+        #[slot(2)]
         claims: Keyed<Vault>,
         /// The stored authority: the cell `authorize` reads and
         /// `securify` creates. Absent for a virtual account.
-        #[role(4)]
+        #[slot(4)]
         auth: Cell<Vec<u8>>,
         /// One sub-collection per resource, its entries the instances
         /// held at their own ids.
-        #[role(6)]
+        #[slot(6)]
         holdings: Ordered<Vec<u8>>,
     }
 

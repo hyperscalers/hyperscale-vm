@@ -30,57 +30,61 @@ use crate::metadata::PackageHash;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ShardId(pub u64);
 
-/// A role tag naming a kernel-addressed slot under an owner.
+/// A tag naming a kernel-addressed slot under an owner.
 ///
-/// The role says which child — a vault, a claims cell, a field group, an
-/// ordered collection — a canonical address refers to.
+/// The slot says which child — a vault, a claims cell, a field group, an
+/// ordered collection — a canonical address refers to. The word is a
+/// storage one and nothing else: authority is [`AuthRole`] and its role
+/// set, and the two share no vocabulary.
 ///
-/// A role is hashed with its owner, and an owner belongs to one package,
-/// so two packages naming one value never collide: a role is scoped by
+/// A slot is hashed with its owner, and an owner belongs to one package,
+/// so two packages naming one value never collide: a slot is scoped by
 /// the address it sits under, not by this space. What the space
 /// partitions is the three populations that *do* share an owner:
 ///
-/// - the kernel's own, at the top ([`NULLIFIER_ROLE`], [`PACKAGE_ROLE`]),
+/// - the kernel's own, at the top ([`NULLIFIER_SLOT`], [`PACKAGE_SLOT`]),
 ///   reached by the kernel and the publish path and by nothing else;
 /// - the protocol vocabulary, counting up from one — the cells an engine
 ///   derives keys for without consulting any metadata, so their values
 ///   are protocol facts rather than one package's business;
-/// - a package's own, from [`PACKAGE_ROLE_BASE`] up, declared beside the
+/// - a package's own, from [`PACKAGE_SLOT_BASE`] up, declared beside the
 ///   package that stores them.
 ///
 /// A package's instances hold protocol-vocabulary cells under the same
 /// address as their own, which is the whole reason the third band has to
 /// clear the second. It never has to clear another package's.
 ///
-/// [`NULLIFIER_ROLE`]: crate::NULLIFIER_ROLE
-/// [`PACKAGE_ROLE`]: crate::PACKAGE_ROLE
+/// [`AuthRole`]: crate::AuthRole
+/// [`NULLIFIER_SLOT`]: crate::NULLIFIER_SLOT
+/// [`PACKAGE_SLOT`]: crate::PACKAGE_SLOT
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
-pub struct RoleId(pub u16);
+pub struct SlotId(pub u16);
 
-/// The first role id a package may use for a slot of its own.
+/// The first slot a package may use for state of its own.
 ///
-/// Above the protocol vocabulary with room left over, so a role added to
+/// Above the protocol vocabulary with room left over, so a cell added to
 /// that vocabulary later is not a renumbering of every package that ever
 /// stored anything.
-pub const PACKAGE_ROLE_BASE: u16 = 16;
+pub const PACKAGE_SLOT_BASE: u16 = 16;
 
-/// A package's `n`th own role.
+/// A package's `n`th own slot.
 ///
 /// Packages number from zero independently, a value being scoped by the
 /// owner it is hashed with. A package authored through `#[blueprint]`
-/// writes the absolute role and the macro holds it to the band; this is
-/// the same arithmetic for a declaration written by hand.
+/// gets the absolute slot from the macro, which numbers its state in
+/// declaration order; this is the same arithmetic for a declaration
+/// written by hand.
 #[must_use]
-pub const fn package_role(n: u16) -> RoleId {
-    RoleId(PACKAGE_ROLE_BASE + n)
+pub const fn package_slot(n: u16) -> SlotId {
+    SlotId(PACKAGE_SLOT_BASE + n)
 }
 
 /// A protocol-defined role a native address names.
 ///
 /// The register is closed and fail-closed like the class tags: a value is
 /// assigned or it is not an address, and adding one is a protocol version
-/// change. Where a class tag is wire-visible and a role id is internal to
+/// change. Where a class tag is wire-visible and a slot is internal to
 /// a derivation, both are halves of one namespace policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
@@ -96,7 +100,7 @@ const DOMAIN_RESOURCE: &[u8] = b"hyperscale-vm/resource-address";
 const DOMAIN_NATIVE: &[u8] = b"hyperscale-vm/native-address";
 const DOMAIN_INSTANCE_CONFIG: &[u8] = b"hyperscale-vm/instance-config";
 
-/// The canonical child key for role-bound state under `owner`.
+/// The canonical child key for slot-bound state under `owner`.
 ///
 /// The local half is the hash of the owner, the role, and the material,
 /// truncated to 16 bytes — which is what makes level-one access ("the vault
@@ -113,12 +117,12 @@ const DOMAIN_INSTANCE_CONFIG: &[u8] = b"hyperscale-vm/instance-config";
 pub fn child_key(
     hasher: &dyn Hasher,
     owner: impl Into<Address>,
-    role: RoleId,
+    slot: SlotId,
     material: &[Vec<u8>],
 ) -> SubstateKey {
     let owner = owner.into();
     let owner_bytes = owner.to_bytes();
-    let role_bytes = role.0.to_le_bytes();
+    let role_bytes = slot.0.to_le_bytes();
     let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
     parts.push(&owner_bytes);
     parts.push(&role_bytes);
@@ -143,11 +147,11 @@ pub fn child_key(
 pub fn collection_id(
     hasher: &dyn Hasher,
     owner: impl Into<Address>,
-    role: RoleId,
+    slot: SlotId,
     material: &[Vec<u8>],
 ) -> CollectionId {
     let owner_bytes = owner.into().to_bytes();
-    let role_bytes = role.0.to_le_bytes();
+    let role_bytes = slot.0.to_le_bytes();
     let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
     parts.push(&owner_bytes);
     parts.push(&role_bytes);
@@ -171,11 +175,11 @@ pub fn collection_id(
 pub fn order_key(
     hasher: &dyn Hasher,
     owner: impl Into<Address>,
-    role: RoleId,
+    slot: SlotId,
     material: &[Vec<u8>],
 ) -> u128 {
     let owner_bytes = owner.into().to_bytes();
-    let role_bytes = role.0.to_le_bytes();
+    let role_bytes = slot.0.to_le_bytes();
     let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
     parts.push(&owner_bytes);
     parts.push(&role_bytes);
@@ -637,7 +641,7 @@ mod tests {
     use super::{
         Address, AddressClass, CollectionId, EdgeContent, Effect, EffectSet, EffectTarget,
         LocalKey, MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH, Mode, ModeKind, NativeRole, Presence,
-        RoleId, SchemeId, SubstateKey, Value, child_key, compatible, component_address,
+        SchemeId, SlotId, SubstateKey, Value, child_key, compatible, component_address,
         config_hash, native_address, package_address, principal_address, resource_address, to_vec,
     };
     use crate::hash::{Hash32, TestHasher};
@@ -674,7 +678,7 @@ mod tests {
         // leg provisions nothing at all.
         let owner = Address::new([1; 31], AddressClass::Component);
         let target =
-            |byte: u8| EffectTarget::Point(child_key(&TestHasher, owner, RoleId(byte.into()), &[]));
+            |byte: u8| EffectTarget::Point(child_key(&TestHasher, owner, SlotId(byte.into()), &[]));
         let mut set = EffectSet::new();
         for (byte, mode) in [
             (1, Mode::Read),
@@ -777,11 +781,11 @@ mod tests {
     #[test]
     fn child_keys_separate_by_role_and_material() {
         let owner = Address::new([1; 31], AddressClass::Component);
-        let a = child_key(&TestHasher, owner, RoleId(1), &[vec![9]]);
-        assert_eq!(a, child_key(&TestHasher, owner, RoleId(1), &[vec![9]]));
-        assert_ne!(a, child_key(&TestHasher, owner, RoleId(2), &[vec![9]]));
-        assert_ne!(a, child_key(&TestHasher, owner, RoleId(1), &[vec![8]]));
-        assert_ne!(a, child_key(&TestHasher, owner, RoleId(1), &[]));
+        let a = child_key(&TestHasher, owner, SlotId(1), &[vec![9]]);
+        assert_eq!(a, child_key(&TestHasher, owner, SlotId(1), &[vec![9]]));
+        assert_ne!(a, child_key(&TestHasher, owner, SlotId(2), &[vec![9]]));
+        assert_ne!(a, child_key(&TestHasher, owner, SlotId(1), &[vec![8]]));
+        assert_ne!(a, child_key(&TestHasher, owner, SlotId(1), &[]));
         assert_eq!(a.owner, owner);
     }
 
@@ -790,13 +794,13 @@ mod tests {
         let a = child_key(
             &TestHasher,
             Address::new([1; 31], AddressClass::Component),
-            RoleId(1),
+            SlotId(1),
             &[vec![9]],
         );
         let b = child_key(
             &TestHasher,
             Address::new([2; 31], AddressClass::Component),
-            RoleId(1),
+            SlotId(1),
             &[vec![9]],
         );
         assert_ne!(a.local, b.local);
@@ -887,7 +891,7 @@ mod tests {
         let key = child_key(
             &TestHasher,
             Address::new([1; 31], AddressClass::Component),
-            RoleId(1),
+            SlotId(1),
             &[],
         );
         let target = EffectTarget::Point(key);

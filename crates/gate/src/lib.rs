@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn a_binding_the_export_type_cannot_honour_refuses_at_publish() {
-        use hyperscale_vm_effects::{Clause, Expr, ModeExpr, RoleId, TargetExpr};
+        use hyperscale_vm_effects::{Clause, Expr, ModeExpr, SlotId, TargetExpr};
 
         // Arity: the binding builds nothing, the export takes one.
         let empty = declaring(&["m"]);
@@ -704,7 +704,7 @@ mod tests {
             signature.effects = vec![Clause::Effect {
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    role: RoleId(1),
+                    slot: SlotId(1),
                     material: vec![],
                 }),
                 mode: ModeExpr::Write {
@@ -738,7 +738,7 @@ mod tests {
             signature.effects = vec![Clause::Effect {
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    role: RoleId(1),
+                    slot: SlotId(1),
                     material: vec![],
                 }),
                 mode: ModeExpr::Reserve(Expr::Arg(0)),
@@ -758,7 +758,7 @@ mod tests {
             signature.effects = vec![Clause::Effect {
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    role: RoleId(1),
+                    slot: SlotId(1),
                     material: vec![],
                 }),
                 mode: ModeExpr::Delta,

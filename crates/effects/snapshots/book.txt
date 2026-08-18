@@ -32,7 +32,7 @@ PackageMetadata {
                 Effect {
                     target: Range {
                         owner: SelfAddr,
-                        collection: RoleId(
+                        collection: SlotId(
                             16,
                         ),
                         material: [],
@@ -67,7 +67,7 @@ PackageMetadata {
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
-                            role: RoleId(
+                            slot: SlotId(
                                 1,
                             ),
                             material: [
@@ -88,7 +88,7 @@ PackageMetadata {
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
-                            role: RoleId(
+                            slot: SlotId(
                                 1,
                             ),
                             material: [
@@ -142,7 +142,7 @@ PackageMetadata {
                 Effect {
                     target: Entry {
                         owner: SelfAddr,
-                        collection: RoleId(
+                        collection: SlotId(
                             16,
                         ),
                         material: [],
@@ -164,7 +164,7 @@ PackageMetadata {
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
-                            role: RoleId(
+                            slot: SlotId(
                                 1,
                             ),
                             material: [

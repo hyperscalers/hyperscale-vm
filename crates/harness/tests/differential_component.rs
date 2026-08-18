@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Hash32, Hasher,
-    Mode, Presence, RoleId, SubstateKey, TestHasher, child_key,
+    Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
@@ -61,31 +61,31 @@ fn fixture() -> Fixture {
     let sender = child_key(
         &TestHasher,
         Address::new([0x10; 31], AddressClass::Component),
-        RoleId(1),
+        SlotId(1),
         &[],
     );
     let recipient = child_key(
         &TestHasher,
         Address::new([0x20; 31], AddressClass::Component),
-        RoleId(1),
+        SlotId(1),
         &[],
     );
     let config = child_key(
         &TestHasher,
         Address::new([0x30; 31], AddressClass::Component),
-        RoleId(3),
+        SlotId(3),
         &[],
     );
     let rmw = child_key(
         &TestHasher,
         Address::new([0x30; 31], AddressClass::Component),
-        RoleId(5),
+        SlotId(5),
         &[],
     );
     let readable = child_key(
         &TestHasher,
         Address::new([0x30; 31], AddressClass::Component),
-        RoleId(6),
+        SlotId(6),
         &[],
     );
     let book = Address::new([0x40; 31], AddressClass::Component);

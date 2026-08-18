@@ -8,7 +8,7 @@
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, ComponentAddr, Expr, MethodSignature, PackageMetadata, ParamType,
-    Presence, RoleId, Totality, Value, package_role,
+    Presence, SlotId, Totality, Value, package_slot,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 
@@ -16,7 +16,7 @@ use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 pub const DRAIN_CAP: u32 = 8;
 
 /// The registry's bindings: an unordered collection keyed by hashed name.
-pub const NAMES: RoleId = package_role(0);
+pub const NAMES: SlotId = package_slot(0);
 
 /// The name registry: the unordered-collection surface end to end.
 ///
@@ -30,7 +30,7 @@ pub fn metadata() -> PackageMetadata {
     let binding = |name_slot: u32| {
         let order = Expr::OrderKey {
             owner: Box::new(Expr::SelfAddr),
-            role: NAMES,
+            slot: NAMES,
             material: vec![Expr::Arg(name_slot)],
         };
         (

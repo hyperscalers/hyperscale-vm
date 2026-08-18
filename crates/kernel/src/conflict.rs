@@ -111,7 +111,7 @@ pub fn conflicts(a: &Effect, b: &Effect) -> bool {
 mod tests {
     use hyperscale_vm_effects::{
         Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, ModeKind, Presence,
-        RoleId, TestHasher, child_key,
+        SlotId, TestHasher, child_key,
     };
 
     use super::{conflicts, targets_overlap};
@@ -121,7 +121,7 @@ mod tests {
     }
 
     fn point(byte: u8) -> EffectTarget {
-        EffectTarget::Point(child_key(&TestHasher, owner(byte), RoleId(1), &[]))
+        EffectTarget::Point(child_key(&TestHasher, owner(byte), SlotId(1), &[]))
     }
 
     fn entry(order: u128) -> EffectTarget {

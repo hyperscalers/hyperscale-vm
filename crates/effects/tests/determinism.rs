@@ -10,7 +10,7 @@ use common::{ALICE, account, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
     Address, AddressClass, ComponentAddr, EdgeContent, EdgeRef, Effect, EffectTarget, EvalInputs,
     EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph,
-    ManifestHash, MetadataCache, Mode, RoleId, TestHasher, Value, admit, evaluate_expr, route,
+    ManifestHash, MetadataCache, Mode, SlotId, TestHasher, Value, admit, evaluate_expr, route,
 };
 use proptest::collection::vec;
 use proptest::option;
@@ -84,14 +84,14 @@ fn arb_expr() -> impl Strategy<Value = Expr> {
             (inner.clone(), 0u16..4, vec(inner.clone(), 0..3)).prop_map(
                 |(owner, role, material)| Expr::ChildKey {
                     owner: Box::new(owner),
-                    role: RoleId(role),
+                    slot: SlotId(role),
                     material,
                 }
             ),
             (inner.clone(), 0u16..4, vec(inner.clone(), 0..3)).prop_map(
                 |(owner, role, material)| Expr::OrderKey {
                     owner: Box::new(owner),
-                    role: RoleId(role),
+                    slot: SlotId(role),
                     material,
                 }
             ),
@@ -250,7 +250,7 @@ mod golden {
 
     use hyperscale_vm_effects::{
         Address, AddressClass, ComponentAddr, EdgeRef, EvidenceRef, GraphArg, GraphNode,
-        ManifestGraph, RoleId, TestHasher, Value, child_key, fresh_id, fresh_local,
+        ManifestGraph, SlotId, TestHasher, Value, child_key, fresh_id, fresh_local,
     };
 
     fn hex(bytes: &[u8]) -> String {
@@ -265,14 +265,14 @@ mod golden {
     fn child_addresses_are_pinned() {
         let owner = Address::new([0x11; 31], AddressClass::Component);
         assert_eq!(
-            hex(&child_key(&TestHasher, owner, RoleId(1), &[]).local.0),
+            hex(&child_key(&TestHasher, owner, SlotId(1), &[]).local.0),
             "e199cd48f5bff4daeaed5bf184f8ee12"
         );
         assert_eq!(
             hex(&child_key(
                 &TestHasher,
                 owner,
-                RoleId(1),
+                SlotId(1),
                 &[
                     Value::Address(Address::new([0xE1; 31], AddressClass::Component))
                         .canonical_bytes()

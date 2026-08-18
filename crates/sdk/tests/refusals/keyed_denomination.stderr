@@ -1,5 +1,5 @@
 error: a keyed vault family is denominated by the key a body names it at, so it cannot also declare one
   --> tests/refusals/keyed_denomination.rs:16:9
    |
-16 |         #[role(1)]
+16 |         #[slot(1)]
    |         ^

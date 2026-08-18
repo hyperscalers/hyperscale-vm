@@ -18,7 +18,7 @@
 //! those tests without restating them.
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
-use hyperscale_vm_effects::{PackageMetadata, ParamType, RoleId};
+use hyperscale_vm_effects::{PackageMetadata, ParamType, SlotId};
 use hyperscale_vm_fixtures::{
     amm as amm_package, book as book_package, splitter as splitter_package,
 };
@@ -295,5 +295,5 @@ fn every_authored_role_is_reachable_from_the_sdk() {
         4,
         "a role was added to the stdlib without a traced declaration to match"
     );
-    assert!(named.iter().all(|r| *r != RoleId(0)));
+    assert!(named.iter().all(|r| *r != SlotId(0)));
 }

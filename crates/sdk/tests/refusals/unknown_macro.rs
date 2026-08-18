@@ -13,7 +13,7 @@ mod contract {
 
     #[state]
     struct Contract {
-        #[role(1)]
+        #[slot(1)]
         vaults: Keyed<Vault>,
     }
 

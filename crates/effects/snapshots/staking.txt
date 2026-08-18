@@ -40,7 +40,7 @@ PackageMetadata {
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
-                            role: RoleId(
+                            slot: SlotId(
                                 18,
                             ),
                             material: [],
@@ -109,7 +109,7 @@ PackageMetadata {
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
-                            role: RoleId(
+                            slot: SlotId(
                                 18,
                             ),
                             material: [],
@@ -165,7 +165,7 @@ PackageMetadata {
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
-                            role: RoleId(
+                            slot: SlotId(
                                 17,
                             ),
                             material: [
@@ -232,7 +232,7 @@ PackageMetadata {
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
-                            role: RoleId(
+                            slot: SlotId(
                                 17,
                             ),
                             material: [
@@ -295,7 +295,7 @@ PackageMetadata {
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
-                            role: RoleId(
+                            slot: SlotId(
                                 1,
                             ),
                             material: [
@@ -361,7 +361,7 @@ PackageMetadata {
                     target: Point(
                         ChildKey {
                             owner: SelfAddr,
-                            role: RoleId(
+                            slot: SlotId(
                                 17,
                             ),
                             material: [

@@ -9,7 +9,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, RoleId,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, SlotId,
     SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
@@ -47,7 +47,7 @@ fn vault(owner: u8) -> SubstateKey {
     child_key(
         &TestHasher,
         Address::new([owner; 31], AddressClass::Component),
-        RoleId(1),
+        SlotId(1),
         &[],
     )
 }
@@ -56,7 +56,7 @@ fn rmw_cell() -> SubstateKey {
     child_key(
         &TestHasher,
         Address::new([8; 31], AddressClass::Component),
-        RoleId(5),
+        SlotId(5),
         &[],
     )
 }

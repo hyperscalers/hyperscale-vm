@@ -2,13 +2,11 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 mod contract {
-    use hyperscale_vm_sdk::state::{Cell, Keyed};
+    use hyperscale_vm_sdk::state::Cell;
 
     #[state]
     struct Contract {
-        #[role(16)]
-        seen: Keyed<u64>,
-        #[role(16)]
+        #[slot(2)]
         stamped: Cell<u64>,
     }
 

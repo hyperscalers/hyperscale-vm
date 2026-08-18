@@ -21,7 +21,7 @@ use std::sync::Arc;
 use hyperscale_vm_effects::{
     Address, AddressClass, Clause, ComponentAddr, Expr, GraphArg, GraphNode, Hash32, Hasher,
     InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, ModeExpr,
-    PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, RoleId,
+    PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, SlotId,
     SubstateKey, TargetExpr, TestHasher, Totality, Value, admit, child_key, route,
 };
 use hyperscale_vm_kernel::{
@@ -30,7 +30,7 @@ use hyperscale_vm_kernel::{
 };
 
 /// The role the stdlib account keeps its balances under.
-const VAULT: RoleId = RoleId(1);
+const VAULT: SlotId = SlotId(1);
 
 const VICTIM: PrincipalAddr = PrincipalAddr::new([0x11; 31]);
 const ATTACKER: PrincipalAddr = PrincipalAddr::new([0x22; 31]);
@@ -69,7 +69,7 @@ fn predator() -> PackageMetadata {
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::Arg(0)),
-                    role: VAULT,
+                    slot: VAULT,
                     material: vec![Expr::Literal(Value::Address(XRD))],
                 }),
                 mode: ModeExpr::Delta,

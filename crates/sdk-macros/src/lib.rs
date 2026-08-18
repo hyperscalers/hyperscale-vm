@@ -11,8 +11,8 @@
 //! mod account {
 //!     #[state]
 //!     struct Account {
-//!         #[role(1)] vaults: Keyed<Vault>,
-//!         #[role(2)] claims: Keyed<Vault>,
+//!         #[slot(1)] vaults: Keyed<Vault>,
+//!         #[slot(2)] claims: Keyed<Vault>,
 //!     }
 //!
 //!     impl Account {
@@ -107,7 +107,7 @@ use std::collections::BTreeMap;
 use hyperscale_vm_effects::vocabulary::{
     AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT,
 };
-use hyperscale_vm_effects::{PACKAGE_ROLE_BASE, RoleId};
+use hyperscale_vm_effects::{PACKAGE_SLOT_BASE, SlotId};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -191,7 +191,7 @@ fn element_of(ty: &syn::Type) -> Option<syn::Type> {
     })
 }
 
-/// The state field's role and shape, read off its declaration.
+/// The state field's slot and shape, read off its declaration.
 fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
     let name = field
         .ident
@@ -199,12 +199,12 @@ fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
         .ok_or_else(|| syn::Error::new(field.span(), "a state field must be named"))?
         .to_string();
 
-    let mut role = None;
+    let mut slot = None;
     let mut denomination = None;
     for attr in &field.attrs {
-        if attr.path().is_ident("role") {
+        if attr.path().is_ident("slot") {
             let literal: syn::LitInt = attr.parse_args()?;
-            role = Some(literal.base10_parse::<u16>()?);
+            slot = Some(literal.base10_parse::<u16>()?);
         }
         if attr.path().is_ident("denomination") {
             denomination = Some(attr.parse_args::<syn::Expr>()?);
@@ -214,10 +214,10 @@ fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
     // under the same owner as the protocol's, so a number carries which of
     // the two a field means — and a system package, whose objects outlive
     // the version that wrote them, needs the number to hold across one.
-    let role = role.ok_or_else(|| {
+    let slot = slot.ok_or_else(|| {
         syn::Error::new(
             field.span(),
-            "a state field needs an explicit `#[role(n)]` — the role is hashed into every \
+            "a state field needs an explicit `#[slot(n)]` — the slot is hashed into every \
              key under this field, and it says whether the field is the package's own or \
              one of the protocol's cells under the same owner",
         )
@@ -277,13 +277,13 @@ fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
         }
         _ => {}
     }
-    if let Err(refusal) = protocol_band(role, kind, vault) {
+    if let Err(refusal) = protocol_band(slot, kind, vault) {
         return Err(syn::Error::new(field.span(), refusal));
     }
     Ok((
         name,
         Field {
-            role,
+            slot,
             kind,
             element: element_of(&field.ty),
             denomination,
@@ -291,19 +291,19 @@ fn parse_field(field: &syn::Field) -> syn::Result<(String, Field)> {
     ))
 }
 
-/// Whether a role below [`PACKAGE_ROLE_BASE`] admits this field.
+/// Whether a slot below [`PACKAGE_SLOT_BASE`] admits this field.
 ///
 /// The protocol's cells are shaped as well as numbered: an engine derives
 /// keys for them without consulting any metadata, so a field that lands on
 /// one and is not it puts a package's private value where a protocol read
 /// will look for something else. Above the band nothing is claimed and
-/// nothing is checked — a package's roles are scoped by the owner they
+/// nothing is checked — a package's slots are scoped by the owner they
 /// hash with.
-fn protocol_band(role: u16, kind: FieldKind, vault: bool) -> Result<(), String> {
-    if role >= PACKAGE_ROLE_BASE {
+fn protocol_band(slot: u16, kind: FieldKind, vault: bool) -> Result<(), String> {
+    if slot >= PACKAGE_SLOT_BASE {
         return Ok(());
     }
-    let (cell, admits) = match RoleId(role) {
+    let (cell, admits) = match SlotId(slot) {
         VAULT => ("a fungible balance cell", vault),
         CLAIMS => ("the delivery fallback beside a vault", vault),
         CONFIG => (
@@ -322,8 +322,8 @@ fn protocol_band(role: u16, kind: FieldKind, vault: bool) -> Result<(), String> 
         INSTANCE => ("a non-fungible instance's data", kind == FieldKind::Keyed),
         _ => {
             return Err(format!(
-                "role {role} is inside the protocol's own band and names nothing in it — a \
-                 package's own roles start at {PACKAGE_ROLE_BASE}"
+                "slot {slot} is inside the protocol's own band and names nothing in it — a \
+                 package's own slots start at {PACKAGE_SLOT_BASE}"
             ));
         }
     };
@@ -331,8 +331,8 @@ fn protocol_band(role: u16, kind: FieldKind, vault: bool) -> Result<(), String> 
         Ok(())
     } else {
         Err(format!(
-            "role {role} is {cell}, which this field is not — a package's own roles start at \
-             {PACKAGE_ROLE_BASE}"
+            "slot {slot} is {cell}, which this field is not — a package's own slots start at \
+             {PACKAGE_SLOT_BASE}"
         ))
     }
 }
@@ -393,7 +393,7 @@ fn method_name(method: &syn::ImplItemFn) -> syn::Result<String> {
 /// The macro's own attributes, which are read and then removed so what it
 /// emits is ordinary Rust.
 const OWN: &[&str] = &[
-    "role",
+    "slot",
     "denomination",
     "state",
     "config",
@@ -430,7 +430,7 @@ enum Gate {
     /// The target's rule and its possession of the badge a parameter
     /// names: the field the rule is stored at, and the parameter's index.
     Custodial {
-        /// The role of the state field holding the target's stored rule.
+        /// The slot of the state field holding the target's stored rule.
         rule: u16,
         /// The parameter naming the badge.
         badge: u32,
@@ -524,16 +524,16 @@ fn parse_gate(
         }
         if attr.path().is_ident("authorizing") {
             let field: syn::Ident = attr.parse_args()?;
-            let role = fields
+            let slot = fields
                 .get(&field.to_string())
-                .map(|f| f.role)
+                .map(|f| f.slot)
                 .ok_or_else(|| {
                     syn::Error::new(
                         field.span(),
                         "not a declared field of the component's state",
                     )
                 })?;
-            return Ok(Gate::Authorizing(role));
+            return Ok(Gate::Authorizing(slot));
         }
         if attr.path().is_ident("role_gated") {
             let role: syn::Ident = attr.parse_args()?;
@@ -572,7 +572,7 @@ fn parse_gate(
             };
             let rule = fields
                 .get(&field.to_string())
-                .map(|f| f.role)
+                .map(|f| f.slot)
                 .ok_or_else(|| {
                     syn::Error::new(
                         field.span(),
@@ -596,7 +596,7 @@ fn parse_gate(
     Ok(Gate::Public)
 }
 
-/// The `#[state]` struct: its name, its fields by role and shape, and the
+/// The `#[state]` struct: its name, its fields by slot and shape, and the
 /// configuration struct its `Locked<_>` field names, if it has one.
 fn parse_state(
     items: &[syn::Item],
@@ -605,7 +605,7 @@ fn parse_state(
     let mut fields = BTreeMap::new();
     let mut state_name = None;
     let mut config_name = None;
-    // What a field would name a leaf by: its role, and the material the
+    // What a field would name a leaf by: its slot, and the material the
     // field itself fixes. Two fields agreeing on both are one leaf under
     // two names, which no accessor can tell apart afterwards.
     let mut named: BTreeMap<(u16, String), String> = BTreeMap::new();
@@ -623,13 +623,13 @@ fn parse_state(
                 .denomination
                 .as_ref()
                 .map_or_else(String::new, |expr| quote!(#expr).to_string());
-            if let Some(held) = named.insert((parsed.role, material), name.clone()) {
+            if let Some(held) = named.insert((parsed.slot, material), name.clone()) {
                 return Err(syn::Error::new(
                     field.span(),
                     format!(
-                        "`{held}` already holds role {} under the same material, so both fields \
+                        "`{held}` already holds slot {} under the same material, so both fields \
                          name one leaf",
-                        parsed.role
+                        parsed.slot
                     ),
                 ));
             }
@@ -647,7 +647,7 @@ fn parse_state(
     let state_name = state_name.ok_or_else(|| {
         syn::Error::new(
             span,
-            "`#[blueprint]` needs one `#[state]` struct — it names the roles every key in \
+            "`#[blueprint]` needs one `#[state]` struct — it names the slots every key in \
              the package sits under",
         )
     })?;
@@ -876,9 +876,9 @@ fn gate_calls(gate: &Gate) -> TokenStream2 {
             let __identity = #identity;
             __t.guarded(&__identity);
         }),
-        Gate::Authorizing(role) => quote!({
+        Gate::Authorizing(slot) => quote!({
             let __owner = __t.self_addr();
-            let __key = __owner.child(::hyperscale_vm_sdk::RoleId(#role), &[]);
+            let __key = __owner.child(::hyperscale_vm_sdk::SlotId(#slot), &[]);
             __t.point(&__key).read();
             __t.authorizing();
         }),
@@ -887,7 +887,7 @@ fn gate_calls(gate: &Gate) -> TokenStream2 {
         // kernel judges the holder's stored rule and their possession of
         // the badge before the export runs, so what the clauses do is
         // provision the cells it reads. The possession read is pinned to
-        // the protocol's own role, keyed by exactly the expressions the
+        // the protocol's own slot, keyed by exactly the expressions the
         // mint names — which is what ties what is minted to what is
         // held.
         Gate::Custodial {
@@ -898,7 +898,7 @@ fn gate_calls(gate: &Gate) -> TokenStream2 {
             let __owner = __t.self_addr();
             let __badge = __t.arg::<::hyperscale_vm_sdk::Addr>(#badge);
             let __material = [__badge.clone().cast::<::hyperscale_vm_sdk::Opaque>()];
-            let __rule = __owner.child(::hyperscale_vm_sdk::RoleId(#rule), &[]);
+            let __rule = __owner.child(::hyperscale_vm_sdk::SlotId(#rule), &[]);
             __t.point(&__rule).read();
             let __vault = __owner.child(::hyperscale_vm_sdk::VAULT, &__material);
             __t.point(&__vault).read();
@@ -915,7 +915,7 @@ fn gate_calls(gate: &Gate) -> TokenStream2 {
                 .arg::<::hyperscale_vm_sdk::Num>(#id)
                 .cast::<::hyperscale_vm_sdk::Amount>();
             let __material = [__badge.clone().cast::<::hyperscale_vm_sdk::Opaque>()];
-            let __rule = __owner.child(::hyperscale_vm_sdk::RoleId(#rule), &[]);
+            let __rule = __owner.child(::hyperscale_vm_sdk::SlotId(#rule), &[]);
             __t.point(&__rule).read();
             // The entry at the instance's own id: holding that one, not
             // holding any.
@@ -1168,7 +1168,7 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
         publish_config(items, config);
     }
     // Nothing in a package constructs its own state: the struct names
-    // the roles the kernel materializes storage under, and the
+    // the slots the kernel materializes storage under, and the
     // configuration record is an instance's, not the code's. On a guest
     // build the authoring half is held back too, so the vocabulary those
     // are written against is read by nothing there either.

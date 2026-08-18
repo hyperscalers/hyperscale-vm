@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Hash32, RoleId, SubstateKey, TestHasher, child_key,
+    Address, AddressClass, CollectionId, Hash32, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     AmountLedger, DeltaOp, MemoryStore, OverlayStore, TxHash, WorkingStore, encode_amount,
@@ -36,7 +36,7 @@ fn cell(byte: u8) -> SubstateKey {
     child_key(
         &TestHasher,
         Address::new([byte; 31], AddressClass::Component),
-        RoleId(1),
+        SlotId(1),
         &[],
     )
 }

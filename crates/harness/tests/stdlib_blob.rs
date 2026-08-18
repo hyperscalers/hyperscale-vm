@@ -16,7 +16,7 @@ use std::sync::Arc;
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    Presence, RoleId, SubstateKey, TestHasher, Value, child_key, collection_id, order_key,
+    Presence, SlotId, SubstateKey, TestHasher, Value, child_key, collection_id, order_key,
 };
 use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
 #[cfg(target_os = "linux")]
@@ -51,8 +51,8 @@ const RECIPIENT: Address = Address::new([2; 31], AddressClass::Component);
 
 fn keys() -> (SubstateKey, SubstateKey) {
     (
-        child_key(&TestHasher, SENDER, RoleId(1), &[]),
-        child_key(&TestHasher, RECIPIENT, RoleId(1), &[]),
+        child_key(&TestHasher, SENDER, SlotId(1), &[]),
+        child_key(&TestHasher, RECIPIENT, SlotId(1), &[]),
     )
 }
 

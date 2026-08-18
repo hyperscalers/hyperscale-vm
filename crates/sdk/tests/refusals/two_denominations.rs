@@ -12,9 +12,9 @@ mod contract {
 
     #[state]
     struct Contract {
-        #[role(3)]
+        #[slot(3)]
         config: Locked<Settings>,
-        #[role(1)]
+        #[slot(1)]
         vaults: Keyed<Vault>,
     }
 

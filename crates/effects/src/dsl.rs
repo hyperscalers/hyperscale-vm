@@ -14,7 +14,7 @@ use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::types::{
     Address, CollectionId, EdgeContent, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey,
-    MAX_IDS_PER_EDGE, Mode, Presence, RoleId, SubstateKey, Value, child_key, collection_id,
+    MAX_IDS_PER_EDGE, Mode, Presence, SlotId, SubstateKey, Value, child_key, collection_id,
     order_key, resource_address,
 };
 
@@ -56,10 +56,10 @@ pub const MAX_RANGE_CAP: u32 = 1024;
 /// The shape every package's own storage takes: a package declares
 /// against itself, so `self` is the owner of everything it can reach.
 #[must_use]
-pub fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
+pub fn self_child(slot: SlotId, material: Vec<Expr>) -> Expr {
     Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        role,
+        slot,
         material,
     }
 }
@@ -130,12 +130,12 @@ pub enum Expr {
         /// others, canonically encoded into the derivation.
         material: Vec<Self>,
     },
-    /// The canonical child key `owner | H(role, material…)`.
+    /// The canonical child key `owner | H(slot, material…)`.
     ChildKey {
         /// The owning address.
         owner: Box<Self>,
-        /// The child's role under the owner.
-        role: RoleId,
+        /// The child's slot under the owner.
+        slot: SlotId,
         /// The address material, canonically encoded into the hash.
         material: Vec<Self>,
     },
@@ -163,13 +163,13 @@ pub enum Expr {
     },
     /// A 128-bit order key hashed from material: where a logical key lands
     /// in an unordered collection's order space. Salted by the owner and
-    /// the collection's role, like [`Expr::ChildKey`], so a ground
+    /// the collection's slot, like [`Expr::ChildKey`], so a ground
     /// collision is confined to the one collection it could hurt.
     OrderKey {
         /// The collection's owner.
         owner: Box<Self>,
-        /// The collection's role under the owner.
-        role: RoleId,
+        /// The collection's slot under the owner.
+        slot: SlotId,
         /// The logical key, canonically encoded into the hash.
         material: Vec<Self>,
     },
@@ -246,9 +246,9 @@ pub enum TargetExpr {
     Entry {
         /// The collection's owner.
         owner: Expr,
-        /// The collection's role under the owner.
-        collection: RoleId,
-        /// The material separating this collection from the role's others,
+        /// The collection's slot under the owner.
+        collection: SlotId,
+        /// The material separating this collection from the slot's others,
         /// canonically encoded into its identity.
         material: Vec<Expr>,
         /// The entry's order key.
@@ -258,9 +258,9 @@ pub enum TargetExpr {
     Range {
         /// The collection's owner.
         owner: Expr,
-        /// The collection's role under the owner.
-        collection: RoleId,
-        /// The material separating this collection from the role's others,
+        /// The collection's slot under the owner.
+        collection: SlotId,
+        /// The material separating this collection from the slot's others,
         /// canonically encoded into its identity.
         material: Vec<Expr>,
         /// Inclusive lower bound.
@@ -767,18 +767,18 @@ fn eval_target(
     }
 }
 
-/// Fold a target's role and evaluated material into the collection
+/// Fold a target's slot and evaluated material into the collection
 /// identity everything downstream compares.
 fn eval_collection(
     owner: Address,
-    role: RoleId,
+    slot: SlotId,
     material: &[Expr],
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
 ) -> Result<CollectionId, EvalError> {
     let encoded = eval_material(material, inputs, hasher, bindings, 0)?;
-    Ok(collection_id(hasher, owner, role, &encoded))
+    Ok(collection_id(hasher, owner, slot, &encoded))
 }
 
 fn eval_mode(
@@ -894,21 +894,21 @@ fn eval_expr(
         }
         Expr::ChildKey {
             owner,
-            role,
+            slot,
             material,
         } => {
             let owner = as_address(eval_expr(owner, inputs, hasher, bindings, deeper)?)?;
             let encoded = eval_material(material, inputs, hasher, bindings, deeper)?;
-            Ok(Value::Key(child_key(hasher, owner, *role, &encoded)))
+            Ok(Value::Key(child_key(hasher, owner, *slot, &encoded)))
         }
         Expr::OrderKey {
             owner,
-            role,
+            slot,
             material,
         } => {
             let owner = as_address(eval_expr(owner, inputs, hasher, bindings, deeper)?)?;
             let encoded = eval_material(material, inputs, hasher, bindings, deeper)?;
-            Ok(Value::U128(order_key(hasher, owner, *role, &encoded)))
+            Ok(Value::U128(order_key(hasher, owner, *slot, &encoded)))
         }
         Expr::FreshId { slot } => Ok(Value::U64(fresh_id(
             hasher,
@@ -1086,7 +1086,7 @@ mod tests {
     use crate::manifest::ManifestHash;
     use crate::types::{
         Address, AddressClass, EdgeContent, Effect, EffectTarget, MAX_IDS_PER_EDGE, Mode, Presence,
-        RoleId, Value, child_key, collection_id, order_key,
+        SlotId, Value, child_key, collection_id, order_key,
     };
 
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
@@ -1109,7 +1109,7 @@ mod tests {
             TargetExpr::Point(Expr::Literal(Value::Key(child_key(
                 &TestHasher,
                 Address::new([byte; 31], AddressClass::Component),
-                RoleId(1),
+                SlotId(1),
                 &[],
             ))))
         };
@@ -1246,7 +1246,7 @@ mod tests {
             body: vec![Clause::Effect {
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::Field(Box::new(Expr::Binding(0)), 0)),
-                    role: RoleId(1),
+                    slot: SlotId(1),
                     material: vec![Expr::Field(Box::new(Expr::Binding(0)), 1)],
                 }),
                 mode: ModeExpr::Delta,
@@ -1259,7 +1259,7 @@ mod tests {
             let key = child_key(
                 &TestHasher,
                 Address::new(owner, AddressClass::Component),
-                RoleId(1),
+                SlotId(1),
                 &[
                     Value::Address(Address::new(resource, AddressClass::Component))
                         .canonical_bytes(),
@@ -1311,7 +1311,7 @@ mod tests {
         let effect = Clause::Effect {
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                role: RoleId(1),
+                slot: SlotId(1),
                 material: vec![],
             }),
             mode: ModeExpr::Read,
@@ -1396,7 +1396,7 @@ mod tests {
         let mut clause = Clause::Effect {
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                role: RoleId(1),
+                slot: SlotId(1),
                 material: vec![],
             }),
             mode: ModeExpr::Read,
@@ -1419,7 +1419,7 @@ mod tests {
             Clause::Effect {
                 target: TargetExpr::Range {
                     owner: Expr::SelfAddr,
-                    collection: RoleId(4),
+                    collection: SlotId(4),
                     material: vec![],
                     lo: Expr::Arg(0),
                     hi: Expr::Arg(1),
@@ -1433,7 +1433,7 @@ mod tests {
             Clause::Effect {
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    role: RoleId(9),
+                    slot: SlotId(9),
                     material: vec![],
                 }),
                 mode: ModeExpr::Locked,
@@ -1444,7 +1444,7 @@ mod tests {
         assert!(set.contains(&Effect {
             target: EffectTarget::Range {
                 owner: ins.self_addr,
-                collection: collection_id(&TestHasher, ins.self_addr, RoleId(4), &[]),
+                collection: collection_id(&TestHasher, ins.self_addr, SlotId(4), &[]),
                 lo: 100,
                 hi: 110,
                 cap: 16,
@@ -1454,14 +1454,14 @@ mod tests {
             },
         }));
         assert!(set.contains(&Effect {
-            target: EffectTarget::Point(child_key(&TestHasher, ins.self_addr, RoleId(9), &[])),
+            target: EffectTarget::Point(child_key(&TestHasher, ins.self_addr, SlotId(9), &[])),
             mode: Mode::Locked,
         }));
 
         let inverted = [Clause::Effect {
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
-                collection: RoleId(4),
+                collection: SlotId(4),
                 material: vec![],
                 lo: Expr::Arg(1),
                 hi: Expr::Arg(0),
@@ -1480,8 +1480,8 @@ mod tests {
 
     #[test]
     fn material_separates_collections_under_one_role() {
-        // One role, two materials: two collections. The identity folds the
-        // owner, the role, and the evaluated material, so an entry target
+        // One slot, two materials: two collections. The identity folds the
+        // owner, the slot, and the evaluated material, so an entry target
         // parameterized by an argument lands in the argument's collection.
         let resource_a = Value::Address(Address::new([0xAA; 31], AddressClass::Resource));
         let resource_b = Value::Address(Address::new([0xBB; 31], AddressClass::Resource));
@@ -1490,7 +1490,7 @@ mod tests {
         let entry_for = |slot: u32| Clause::Effect {
             target: TargetExpr::Entry {
                 owner: Expr::SelfAddr,
-                collection: RoleId(4),
+                collection: SlotId(4),
                 material: vec![Expr::Arg(slot)],
                 order: Expr::Literal(Value::U128(9)),
             },
@@ -1504,7 +1504,7 @@ mod tests {
             collection_id(
                 &TestHasher,
                 ins.self_addr,
-                RoleId(4),
+                SlotId(4),
                 &[resource.canonical_bytes()],
             )
         };
@@ -1522,17 +1522,17 @@ mod tests {
             }));
         }
 
-        // Same derivation, different role: a third collection. The salt
+        // Same derivation, different slot: a third collection. The salt
         // arms are each load-bearing.
         assert_ne!(id_for(&resource_a), id_for(&resource_b));
         assert_ne!(
-            collection_id(&TestHasher, ins.self_addr, RoleId(4), &[]),
-            collection_id(&TestHasher, ins.self_addr, RoleId(5), &[]),
+            collection_id(&TestHasher, ins.self_addr, SlotId(4), &[]),
+            collection_id(&TestHasher, ins.self_addr, SlotId(5), &[]),
         );
         let other = Address::new([8; 31], AddressClass::Component);
         assert_ne!(
-            collection_id(&TestHasher, ins.self_addr, RoleId(4), &[]),
-            collection_id(&TestHasher, other, RoleId(4), &[]),
+            collection_id(&TestHasher, ins.self_addr, SlotId(4), &[]),
+            collection_id(&TestHasher, other, SlotId(4), &[]),
         );
     }
 
@@ -1545,11 +1545,11 @@ mod tests {
         let entry_for = |slot: u32| Clause::Effect {
             target: TargetExpr::Entry {
                 owner: Expr::SelfAddr,
-                collection: RoleId(2),
+                collection: SlotId(2),
                 material: vec![],
                 order: Expr::OrderKey {
                     owner: Box::new(Expr::SelfAddr),
-                    role: RoleId(2),
+                    slot: SlotId(2),
                     material: vec![Expr::Arg(slot)],
                 },
             },
@@ -1563,7 +1563,7 @@ mod tests {
             order_key(
                 &TestHasher,
                 ins.self_addr,
-                RoleId(2),
+                SlotId(2),
                 &[name.canonical_bytes()],
             )
         };
@@ -1572,7 +1572,7 @@ mod tests {
             assert!(set.contains(&Effect {
                 target: EffectTarget::Entry {
                     owner: ins.self_addr,
-                    collection: collection_id(&TestHasher, ins.self_addr, RoleId(2), &[]),
+                    collection: collection_id(&TestHasher, ins.self_addr, SlotId(2), &[]),
                     order: order_for(name),
                 },
                 mode: Mode::Write {
@@ -1585,17 +1585,17 @@ mod tests {
         // ever reading as a collection identity.
         assert_ne!(order_for(&name_a), order_for(&name_b));
         assert_ne!(
-            order_key(&TestHasher, ins.self_addr, RoleId(2), &[]),
-            order_key(&TestHasher, ins.self_addr, RoleId(3), &[]),
+            order_key(&TestHasher, ins.self_addr, SlotId(2), &[]),
+            order_key(&TestHasher, ins.self_addr, SlotId(3), &[]),
         );
         let other = Address::new([8; 31], AddressClass::Component);
         assert_ne!(
-            order_key(&TestHasher, ins.self_addr, RoleId(2), &[]),
-            order_key(&TestHasher, other, RoleId(2), &[]),
+            order_key(&TestHasher, ins.self_addr, SlotId(2), &[]),
+            order_key(&TestHasher, other, SlotId(2), &[]),
         );
         assert_ne!(
-            order_key(&TestHasher, ins.self_addr, RoleId(2), &[]).to_be_bytes(),
-            collection_id(&TestHasher, ins.self_addr, RoleId(2), &[]).0,
+            order_key(&TestHasher, ins.self_addr, SlotId(2), &[]).to_be_bytes(),
+            collection_id(&TestHasher, ins.self_addr, SlotId(2), &[]).0,
         );
     }
 
@@ -1708,7 +1708,7 @@ mod tests {
         let clauses = [Clause::Effect {
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                role: RoleId(1),
+                slot: SlotId(1),
                 material: vec![Expr::Arg(0)],
             }),
             mode: ModeExpr::Reserve(Expr::Arg(1)),
@@ -1718,7 +1718,7 @@ mod tests {
         let expected = child_key(
             &TestHasher,
             ins.self_addr,
-            RoleId(1),
+            SlotId(1),
             &[args[0].canonical_bytes()],
         );
         assert!(set.contains(&Effect {

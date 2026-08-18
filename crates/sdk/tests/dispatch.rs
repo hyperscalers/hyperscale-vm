@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, RoleId,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, SlotId,
     SubstateKey, TestHasher, Value, child_key,
 };
 use hyperscale_vm_kernel::{
@@ -34,7 +34,7 @@ mod till {
 
     #[state]
     struct Till {
-        #[role(1)]
+        #[slot(1)]
         vaults: Keyed<Vault>,
     }
 
@@ -72,7 +72,7 @@ fn vault() -> SubstateKey {
     child_key(
         &TestHasher,
         OWNER,
-        RoleId(1),
+        SlotId(1),
         &[Value::Address(RESOURCE).canonical_bytes()],
     )
 }

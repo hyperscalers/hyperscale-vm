@@ -29,7 +29,7 @@ mod shapes {
 
     #[state]
     struct Shapes {
-        #[role(1)]
+        #[slot(1)]
         vaults: Keyed<Vault>,
     }
 
@@ -118,7 +118,7 @@ mod registry {
 
     #[state]
     struct Registry {
-        #[role(16)]
+        #[slot(16)]
         names: Unordered<u128>,
     }
 
@@ -144,16 +144,16 @@ mod registry {
 
 #[test]
 fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
-    use hyperscale_vm_effects::{Clause, Expr, ModeExpr, RoleId, TargetExpr, Value};
+    use hyperscale_vm_effects::{Clause, Expr, ModeExpr, SlotId, TargetExpr, Value};
 
     let metadata = registry::blueprint().metadata();
     let hashed_entry = || TargetExpr::Entry {
         owner: Expr::SelfAddr,
-        collection: RoleId(16),
+        collection: SlotId(16),
         material: vec![],
         order: Expr::OrderKey {
             owner: Box::new(Expr::SelfAddr),
-            role: RoleId(16),
+            slot: SlotId(16),
             material: vec![Expr::Arg(0)],
         },
     };
@@ -180,7 +180,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
         vec![Clause::Effect {
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
-                collection: RoleId(16),
+                collection: SlotId(16),
                 material: vec![],
                 lo: Expr::Arg(0),
                 hi: Expr::Literal(Value::U128(u128::MAX)),
@@ -207,9 +207,9 @@ mod environment {
 
     #[state]
     struct Environment {
-        #[role(1)]
+        #[slot(1)]
         vaults: Keyed<Vault>,
-        #[role(16)]
+        #[slot(16)]
         seen: Cell<u64>,
     }
 
@@ -256,13 +256,13 @@ mod issuer {
 
     #[state]
     struct Issuer {
-        #[role(16)]
+        #[slot(16)]
         staked: Cell<Quantity>,
         /// A stored rate, to pin the mode a value-shaped cell that is not
         /// value folds to.
-        #[role(17)]
+        #[slot(17)]
         index: Cell<Fixed<(), ()>>,
-        #[role(1)]
+        #[slot(1)]
         vaults: Keyed<Vault>,
     }
 
@@ -348,9 +348,9 @@ mod counter {
 
     #[state]
     struct Counter {
-        #[role(3)]
+        #[slot(3)]
         config: Locked<Settings>,
-        #[role(1)]
+        #[slot(1)]
         #[denomination(config.asset)]
         assets: Cell<Vault>,
     }

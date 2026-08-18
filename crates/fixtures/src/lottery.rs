@@ -18,7 +18,7 @@
 //! draw is the transaction's randomness, and no signer chooses it, so
 //! there is nothing an operator would be trusted with.
 
-use hyperscale_vm_effects::{PackageMetadata, RoleId, package_role};
+use hyperscale_vm_effects::{PackageMetadata, SlotId, package_slot};
 
 // The package, read from the crate the artifact is built from rather
 // than copied into this one: a second copy is the drift the derivation
@@ -33,9 +33,9 @@ pub const ROUND_CAP: u32 = 64;
 
 /// A lottery's entrants: one entry per entrant, at the entrant's hashed
 /// order, so a second entry from one address lands on its own ticket.
-pub const TICKETS: RoleId = package_role(0);
+pub const TICKETS: SlotId = package_slot(0);
 /// A lottery's settled round: the draw, and the entrant it selected.
-pub const DRAW: RoleId = package_role(1);
+pub const DRAW: SlotId = package_slot(1);
 
 /// The package's declaration, traced from its own module.
 #[must_use]

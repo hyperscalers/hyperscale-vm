@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    Presence, RoleId, SubstateKey, TestHasher, child_key, ids_cell,
+    Presence, SlotId, SubstateKey, TestHasher, child_key, ids_cell,
 };
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{
@@ -77,11 +77,11 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let key = |role: u16| {
+    let key = |slot: u16| {
         child_key(
             &TestHasher,
             Address::new([0x60; 31], AddressClass::Component),
-            RoleId(role),
+            SlotId(slot),
             &[],
         )
     };

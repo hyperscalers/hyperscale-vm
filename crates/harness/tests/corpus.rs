@@ -17,8 +17,8 @@ use hyperscale_vm_effects::{
     Constraint, Effect, EffectSet, EffectTarget, EntryKey, EvidenceRef, Expr, Hash32, Hasher,
     InstanceMeta, InstanceRegistry, MAX_STAGED_DEPTH, ManifestGraph, MetadataCache,
     MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
-    Presence, Presented, PrincipalAddr, Proposal, ResourceAddr, Role, RoleId, RoleSet, Routing,
-    Rule, ShardId, ShardResolver, Strategy, SubstateKey, TargetExpr, TestHasher, Totality, Value,
+    Presence, Presented, PrincipalAddr, Proposal, ResourceAddr, Role, RoleSet, Routing, Rule,
+    ShardId, ShardResolver, SlotId, Strategy, SubstateKey, TargetExpr, TestHasher, Totality, Value,
     admit, child_key, collection_id, fresh_id, holdings_collection, instance_data_key, order_key,
     resource_address, route,
 };
@@ -705,9 +705,9 @@ fn transfer_graph() -> ManifestGraph {
 /// its first handle: if either were true the credit would land on the
 /// claims cell instead of the vault.
 fn mirror_metadata() -> PackageMetadata {
-    let self_child = |role: RoleId, material: Vec<Expr>| Expr::ChildKey {
+    let self_child = |slot: SlotId, material: Vec<Expr>| Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        role,
+        slot,
         material,
     };
     let resource_of_arg0 = || Expr::ResourceOf(Box::new(Expr::Arg(0)));
@@ -2044,7 +2044,7 @@ fn named_instances_inside_a_core_still_decompose() {
         "the fixture has to cross, or the verdict below proves nothing",
     );
     assert!(
-        routing.roles.iter().all(|role| *role == Role::Core),
+        routing.roles.iter().all(|slot| *slot == Role::Core),
         "neither end is a leg: {:?}",
         routing.roles,
     );
@@ -2916,7 +2916,7 @@ fn shares_store() -> MemoryStore {
 
 /// The vault's circulating-supply leaf.
 fn supply_leaf(owner: impl Into<Address>) -> SubstateKey {
-    child_key(&TestHasher, owner, RoleId(17), &[])
+    child_key(&TestHasher, owner, SlotId(17), &[])
 }
 
 /// A deposit and a redemption of what it bought, on both runtimes, over a

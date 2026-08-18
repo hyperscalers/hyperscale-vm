@@ -1,0 +1,5 @@
+error: `seen` already holds slot 16 under the same material, so both fields name one leaf
+  --> tests/refusals/aliased_slot.rs:11:9
+   |
+11 |         #[slot(16)]
+   |         ^

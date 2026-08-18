@@ -1,7 +1,7 @@
-//! The protocol's own names: the roles an engine derives keys for, and
+//! The protocol's own names: the slots an engine derives keys for, and
 //! the native roles an address can carry.
 //!
-//! Nothing here belongs to a package. A package's roles, its caps and
+//! Nothing here belongs to a package. A package's slots, its caps and
 //! the signatures its guest executes travel with the package; what is
 //! left is the vocabulary every package is written in.
 //!
@@ -9,11 +9,11 @@
 //! a fee burn finds a payer's vault, an auth gate finds a stored rule,
 //! the resource surface finds a record and a holder's instances. That is
 //! what makes their values protocol facts, and what makes them the band
-//! a package's own roles clear
-//! ([`PACKAGE_ROLE_BASE`](crate::PACKAGE_ROLE_BASE)) rather than a table
+//! a package's own slots clear
+//! ([`PACKAGE_SLOT_BASE`](crate::PACKAGE_SLOT_BASE)) rather than a table
 //! every package adds a line to.
 
-use crate::types::{NativeRole, RoleId};
+use crate::types::{NativeRole, SlotId};
 
 /// The native fee and transfer resource.
 pub const XRD: NativeRole = NativeRole(1);
@@ -21,24 +21,24 @@ pub const XRD: NativeRole = NativeRole(1);
 pub const GENESIS_PUBLISHER: NativeRole = NativeRole(2);
 
 /// A fungible balance cell under its holder.
-pub const VAULT: RoleId = RoleId(1);
+pub const VAULT: SlotId = SlotId(1);
 /// The guaranteed-delivery fallback cell beside a vault.
-pub const CLAIMS: RoleId = RoleId(2);
+pub const CLAIMS: SlotId = SlotId(2);
 /// A creation-fixed configuration leaf.
-pub const CONFIG: RoleId = RoleId(3);
+pub const CONFIG: SlotId = SlotId(3);
 /// An account's stored authority: the cell `authorize` reads and
 /// `securify` creates. Absent for a virtual account.
-pub const AUTH: RoleId = RoleId(4);
+pub const AUTH: SlotId = SlotId(4);
 /// A resource's record cell under its issuer: kind and display
 /// quantization, keyed by the resource's own address.
-pub const RESOURCE: RoleId = RoleId(5);
+pub const RESOURCE: SlotId = SlotId(5);
 /// A holder's non-fungible instances: per resource, the entries of the
 /// holder's `(NF_VAULT, resource)` sub-collection at the instance's id —
 /// created at deposit, removed at withdrawal.
-pub const NF_VAULT: RoleId = RoleId(6);
+pub const NF_VAULT: SlotId = SlotId(6);
 /// A non-fungible instance's data cell under its issuer, keyed by the
 /// resource and the instance's id: written at mint, immutable after.
-pub const INSTANCE: RoleId = RoleId(7);
+pub const INSTANCE: SlotId = SlotId(7);
 
 /// The entry cap a holdings interval declares: enough for every id one
 /// edge can carry, since [`MAX_IDS_PER_EDGE`](crate::types::MAX_IDS_PER_EDGE)
@@ -48,22 +48,22 @@ pub const NF_MOVE_CAP: u32 = 64;
 #[cfg(test)]
 mod tests {
     use super::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
-    use crate::types::PACKAGE_ROLE_BASE;
+    use crate::types::PACKAGE_SLOT_BASE;
 
     /// The band, held from the one side that can drift.
     ///
-    /// The other two bands hold themselves: a package's roles are built
-    /// by [`package_role`](crate::types::package_role) and cannot land
+    /// The other two bands hold themselves: a package's slots are built
+    /// by [`package_slot`](crate::types::package_slot) and cannot land
     /// below the base by construction, and the kernel's are held by a
     /// `const` assertion at each definition. The vocabulary is written
     /// out by hand, so it is the one a careless value could widen into
     /// the band every package numbers from.
     #[test]
     fn the_protocol_vocabulary_stays_under_the_package_band() {
-        for role in [VAULT, CLAIMS, CONFIG, AUTH, RESOURCE, NF_VAULT, INSTANCE] {
+        for slot in [VAULT, CLAIMS, CONFIG, AUTH, RESOURCE, NF_VAULT, INSTANCE] {
             assert!(
-                role.0 < PACKAGE_ROLE_BASE,
-                "{role:?} reaches into the band packages number from"
+                slot.0 < PACKAGE_SLOT_BASE,
+                "{slot:?} reaches into the band packages number from"
             );
         }
     }

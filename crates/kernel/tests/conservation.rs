@@ -3,14 +3,14 @@
 //! only on mint and cross-shard legs.
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Hash32, RoleId, SubstateKey, TestHasher, Value, child_key,
+    Address, AddressClass, Hash32, SlotId, SubstateKey, TestHasher, Value, child_key,
 };
 use hyperscale_vm_kernel::{
     AmountLedger, DeltaOp, MemoryStore, SupplyLedger, TxHash, WorkingStore, decode_amount,
     encode_amount,
 };
 
-const VAULT: RoleId = RoleId(1);
+const VAULT: SlotId = SlotId(1);
 
 fn vault(owner: u8, resource: Address) -> SubstateKey {
     child_key(

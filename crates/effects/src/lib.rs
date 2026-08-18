@@ -49,7 +49,7 @@ pub use dsl::{
     evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local, self_child,
 };
 pub use envelope::{
-    AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_ROLE, Subintent,
+    AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_SLOT, Subintent,
     SubintentHash, SubintentRecord, YieldBinding, YieldParam, admit_tree, encode_tree,
     nullifier_key, route_tree,
 };
@@ -71,7 +71,7 @@ pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, cell_ids, ids_cell};
 pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};
 pub use metadata::{
     AbiError, AbiParam, Accessibility, CustodyClaim, DeclarationError, GateShape, InstanceMeta,
-    InstanceRegistry, MetadataBoundsError, MetadataCache, MethodSignature, PACKAGE_ROLE,
+    InstanceRegistry, MetadataBoundsError, MetadataCache, MethodSignature, PACKAGE_SLOT,
     PackageHash, PackageMetadata, ParamType, Totality, check_abi, check_declarations,
     check_metadata, package_hash, package_key,
 };
@@ -89,8 +89,8 @@ pub use types::{
     Address, AddressClass, CallTarget, CollectionId, ComponentAddr, EdgeContent, Effect,
     EffectConflict, EffectSet, EffectTarget, InvalidAddress, LocalKey, MAX_IDS_PER_EDGE,
     MAX_VALUE_DEPTH, Mode, ModeKind, NativeAddr, NativeRole, NetworkWord, NotAResource,
-    NotCallable, PACKAGE_ROLE_BASE, PackageAddr, Presence, PrincipalAddr, ResourceAddr,
-    ResourceRef, RoleId, SchemeId, ShardId, SubstateKey, TextError, Value, WrongClass, child_key,
+    NotCallable, PACKAGE_SLOT_BASE, PackageAddr, Presence, PrincipalAddr, ResourceAddr,
+    ResourceRef, SchemeId, ShardId, SlotId, SubstateKey, TextError, Value, WrongClass, child_key,
     collection_id, compatible, component_address, config_hash, native_address, order_key,
-    package_address, package_role, principal_address, resource_address,
+    package_address, package_slot, principal_address, resource_address,
 };

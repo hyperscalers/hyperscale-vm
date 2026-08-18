@@ -299,7 +299,7 @@ fn custodian_world(
     let rule = Clause::Effect {
         target: TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
-            role: AUTH,
+            slot: AUTH,
             material: vec![],
         }),
         mode: ModeExpr::Read,
@@ -315,7 +315,7 @@ fn custodian_world(
             rule,
             possession(TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                role: VAULT,
+                slot: VAULT,
                 material: vec![Expr::Config(0)],
             })),
         ],

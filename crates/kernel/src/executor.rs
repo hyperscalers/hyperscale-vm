@@ -1088,7 +1088,7 @@ mod tests {
 
     use hyperscale_vm_effects::{
         Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Mode,
-        Presence, RoleId, TestHasher, child_key,
+        Presence, SlotId, TestHasher, child_key,
     };
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
@@ -1122,7 +1122,7 @@ mod tests {
                 target: EffectTarget::Point(child_key(
                     &TestHasher,
                     Address::new([0xC0 + key; 31], AddressClass::Component),
-                    RoleId(1),
+                    SlotId(1),
                     &[],
                 )),
                 mode: nth_mode(mode),
@@ -1240,7 +1240,7 @@ mod tests {
         let key = child_key(
             &TestHasher,
             Address::new([1; 31], AddressClass::Component),
-            RoleId(1),
+            SlotId(1),
             &[],
         );
 

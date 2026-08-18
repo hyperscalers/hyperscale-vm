@@ -63,7 +63,7 @@ mod tests {
     use hyperscale_vm_effects::{
         Accessibility, Address, AddressClass, Clause, EdgeContent, Expr, LocalKey,
         MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_VALUE_DEPTH,
-        METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType, Presence, RoleId, RuleExpr,
+        METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType, Presence, RuleExpr, SlotId,
         SubstateKey, TargetExpr, Totality, Value,
     };
     use hyperscale_vm_fixtures::{amm, book, splitter};
@@ -204,7 +204,7 @@ mod tests {
                 Clause::Effect {
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
-                        role: VAULT,
+                        slot: VAULT,
                         material: vec![Expr::Arg(3), Expr::FreshKey { slot: 1 }],
                     }),
                     mode: ModeExpr::Reserve(Expr::Arg(1)),
@@ -213,7 +213,7 @@ mod tests {
                 Clause::Effect {
                     target: TargetExpr::Entry {
                         owner: Expr::Field(Box::new(Expr::Config(0)), 2),
-                        collection: RoleId(9),
+                        collection: SlotId(9),
                         material: vec![],
                         order: Expr::Pack {
                             hi: Box::new(Expr::Arg(0)),
@@ -226,7 +226,7 @@ mod tests {
                 Clause::Effect {
                     target: TargetExpr::Range {
                         owner: Expr::SelfAddr,
-                        collection: RoleId(4),
+                        collection: SlotId(4),
                         material: vec![],
                         lo: Expr::Literal(Value::U128(0)),
                         hi: Expr::Literal(Value::U128(u128::MAX)),
@@ -361,14 +361,14 @@ mod tests {
         for _ in 0..MAX_EXPR_DEPTH {
             deepest = Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                role: VAULT,
+                slot: VAULT,
                 material: vec![deepest],
             };
         }
         let mut clause = Clause::Effect {
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
-                collection: RoleId(4),
+                collection: SlotId(4),
                 material: vec![],
                 lo: deepest.clone(),
                 hi: deepest,

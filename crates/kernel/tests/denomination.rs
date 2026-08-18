@@ -17,14 +17,14 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, SlotId,
     SubstateKey, TestHasher, Value, child_key,
 };
 use hyperscale_vm_kernel::{
     AbortReason, EnvInputs, ISSUER_REP, KernelSession, MemoryStore, OverlayStore, TxHash,
 };
 
-const VAULT: RoleId = RoleId(1);
+const VAULT: SlotId = SlotId(1);
 const POOL: Address = Address::new([0x70; 31], AddressClass::Component);
 const X: Address = Address::new([0xE1; 31], AddressClass::Component);
 const Y: Address = Address::new([0xE2; 31], AddressClass::Component);

@@ -21,8 +21,8 @@ fn the_lowering_refuses_what_it_cannot_see_into() {
 #[test]
 fn the_lowering_refuses_what_it_would_declare_wrongly() {
     let refuse = TestCases::new();
-    refuse.compile_fail("tests/refusals/aliased_role.rs");
-    refuse.compile_fail("tests/refusals/squatted_role.rs");
+    refuse.compile_fail("tests/refusals/aliased_slot.rs");
+    refuse.compile_fail("tests/refusals/squatted_slot.rs");
     refuse.compile_fail("tests/refusals/mode_mix.rs");
     refuse.compile_fail("tests/refusals/reassigned_key.rs");
     refuse.compile_fail("tests/refusals/early_return_output.rs");

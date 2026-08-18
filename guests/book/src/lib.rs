@@ -38,17 +38,17 @@ pub mod book {
     struct Book {
         /// The standing ladder: a quantity of base per entry, which is a
         /// number the book records rather than value it holds.
-        #[role(16)]
+        #[slot(16)]
         asks: Ordered<Quantity>,
         /// What makers escrow and takers buy.
-        #[role(1)]
+        #[slot(1)]
         #[denomination(config.base)]
         base: Cell<Vault>,
         /// What takers pay and makers are owed.
-        #[role(1)]
+        #[slot(1)]
         #[denomination(config.quote)]
         quote: Cell<Vault>,
-        #[role(3)]
+        #[slot(3)]
         config: Locked<Pair>,
     }
 

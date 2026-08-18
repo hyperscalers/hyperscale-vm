@@ -64,7 +64,7 @@ impl ResourceRecord {
 }
 
 /// The record cell for `resource` under `issuer`: the canonical child at
-/// the `RESOURCE` role, keyed by the resource's own address.
+/// the `RESOURCE` slot, keyed by the resource's own address.
 ///
 /// Computable by anyone who knows the issuer — which the resource's
 /// derivation names — so reaching a record is level-one access like

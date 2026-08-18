@@ -2098,7 +2098,7 @@ mod tests {
 
     use hyperscale_vm_effects::{
         AbortReason, Address, AddressClass, CollectionId, Effect, EffectConflict, EffectSet,
-        EffectTarget, Hash32, Mode, RoleId, SubstateKey, TestHasher, child_key, ids_cell,
+        EffectTarget, Hash32, Mode, SlotId, SubstateKey, TestHasher, child_key, ids_cell,
     };
     use hyperscale_vm_types::Presence;
 
@@ -2116,7 +2116,7 @@ mod tests {
         child_key(
             &TestHasher,
             Address::new([byte; 31], AddressClass::Component),
-            RoleId(1),
+            SlotId(1),
             &[],
         )
     }

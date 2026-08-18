@@ -14,10 +14,10 @@
 //! # The shape
 //!
 //! ```
-//! use hyperscale_vm_effects::{ParamType, RoleId};
+//! use hyperscale_vm_effects::{ParamType, SlotId};
 //! use hyperscale_vm_sdk::{Blueprint, sym::{Addr, Amount, Bucket, Seq, Sym}};
 //!
-//! const VAULT: RoleId = RoleId(1);
+//! const VAULT: SlotId = SlotId(1);
 //!
 //! let pool = Blueprint::builder()
 //!     .method("swap", &[ParamType::Bucket, ParamType::U128], |t| {
@@ -28,7 +28,7 @@
 //!         let bought = pairing.lookup(&sold).cast::<Addr>();
 //!         let pool = t.self_addr();
 //!
-//!         let config: Sym<_> = pool.child(RoleId(0), &[]);
+//!         let config: Sym<_> = pool.child(SlotId(0), &[]);
 //!         t.point(&config).locked();
 //!         t.point(&pool.child(VAULT, &[sold.clone().cast()])).write();
 //!         t.point(&pool.child(VAULT, &[bought.clone().cast()])).write();
@@ -76,8 +76,8 @@
 //!
 //!     #[state]
 //!     struct Bad {
-//!         #[role(1)] vaults: Keyed<Vault>,
-//!         #[role(16)] pointer: Cell<Address>,
+//!         #[slot(1)] vaults: Keyed<Vault>,
+//!         #[slot(16)] pointer: Cell<Address>,
 //!     }
 //!
 //!     impl Bad {
@@ -102,7 +102,7 @@
 //!
 //!     #[state]
 //!     struct Bad {
-//!         #[role(16)] asks: Ordered<u128>,
+//!         #[slot(16)] asks: Ordered<u128>,
 //!     }
 //!
 //!     impl Bad {
@@ -114,7 +114,7 @@
 //! }
 //! ```
 //!
-//! A state field with no role, which would let a field reorder silently
+//! A state field with no slot, which would let a field reorder silently
 //! move an instance's whole state:
 //!
 //! ```compile_fail
@@ -159,7 +159,7 @@ pub use blueprint::{Blueprint, Builder, HandlePlan, HandleShape, Method, TargetS
 // Re-exported so `#[blueprint]` output names one crate, and so a contract
 // never has to depend on `vm-effects` directly.
 pub use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
-pub use hyperscale_vm_effects::{Address, AuthRole, ParamType, RoleId, encode_metadata};
+pub use hyperscale_vm_effects::{Address, AuthRole, ParamType, SlotId, encode_metadata};
 #[cfg(feature = "macros")]
 pub use hyperscale_vm_sdk_macros::blueprint;
 pub use sym::{Addr, Amount, Blob, Bucket, Key, Kind, Num, Opaque, Seq, Sym};

@@ -6,7 +6,7 @@ use hyperscale_vm_effects::{
     Address, AdmissionError, AdmittedTree, Bounds, CallTarget, Constraint, EdgeContent, EdgeRef,
     Effect, EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, IntentDecl, MAX_SUBINTENTS, MAX_VALUE_DEPTH, MAX_YIELD_PARAMS, ManifestGraph,
-    ManifestHash, MetadataCache, Mode, NULLIFIER_ROLE, NodeInput, PackageHash, PrefixShardResolver,
+    ManifestHash, MetadataCache, Mode, NULLIFIER_SLOT, NodeInput, PackageHash, PrefixShardResolver,
     Presence, PrincipalAddr, ResourceAddr, ShardResolver, Subintent, TestHasher, Value,
     YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
@@ -224,7 +224,7 @@ fn identities_differ_while_subintent_hashes_agree() {
     // The nullifier is an ordinary child key under the reserved role.
     assert_eq!(
         nullifier_key(&TestHasher, BOB, hash),
-        child_key(&TestHasher, BOB, NULLIFIER_ROLE, &[hash.0.0.to_vec()])
+        child_key(&TestHasher, BOB, NULLIFIER_SLOT, &[hash.0.0.to_vec()])
     );
 }
 

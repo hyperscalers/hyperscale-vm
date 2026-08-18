@@ -166,7 +166,7 @@ pub fn multiply_held_ids(store: &dyn Substates, holdings: &[(Address, Collection
 mod tests {
     use hyperscale_vm_effects::{
         Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, ModeKind,
-        Presence, RoleId, TestHasher, child_key, collection_id,
+        Presence, SlotId, TestHasher, child_key, collection_id,
     };
 
     use super::{multiply_held_ids, undeclared_accesses};
@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn coverage_spans_write_implied_reads_and_range_membership() {
         let owner = Address::new([1; 31], AddressClass::Component);
-        let cell = child_key(&TestHasher, owner, RoleId(1), &[]);
+        let cell = child_key(&TestHasher, owner, SlotId(1), &[]);
         let set = declared(&[
             Effect {
                 target: EffectTarget::Point(cell),
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn undeclared_key_mode_and_interval_escapes_are_caught() {
         let owner = Address::new([1; 31], AddressClass::Component);
-        let cell = child_key(&TestHasher, owner, RoleId(1), &[]);
+        let cell = child_key(&TestHasher, owner, SlotId(1), &[]);
         let set = declared(&[
             Effect {
                 target: EffectTarget::Point(cell),
@@ -307,7 +307,7 @@ mod tests {
         let escapes = [
             // An undeclared key.
             Access {
-                target: EffectTarget::Point(child_key(&TestHasher, owner, RoleId(2), &[])),
+                target: EffectTarget::Point(child_key(&TestHasher, owner, SlotId(2), &[])),
                 kind: ModeKind::Read,
             },
             // A declared read does not permit a write.
@@ -374,7 +374,7 @@ mod tests {
                 let collection = collection_id(
                     &TestHasher,
                     holder,
-                    RoleId(12),
+                    SlotId(12),
                     &[resource_material.to_vec()],
                 );
                 (holder, collection)

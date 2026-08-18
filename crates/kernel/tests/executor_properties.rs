@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Hash32, Hasher,
-    Mode, Presence, RoleId, SubstateKey, TestHasher, child_key,
+    Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality,
@@ -60,7 +60,7 @@ fn cell(index: u8) -> SubstateKey {
     child_key(
         &TestHasher,
         Address::new([CELL_BASE + index; 31], AddressClass::Component),
-        RoleId(1),
+        SlotId(1),
         &[],
     )
 }
@@ -72,7 +72,7 @@ fn locked_cell(index: u8) -> SubstateKey {
             [LOCKED_BASE + (index % LOCKED_CELLS); 31],
             AddressClass::Component,
         ),
-        RoleId(1),
+        SlotId(1),
         &[],
     )
 }

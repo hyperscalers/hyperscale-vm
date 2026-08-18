@@ -78,19 +78,19 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
 
 fn target(target: &Target) -> TokenStream {
     match target {
-        Target::Point { role, material } => {
+        Target::Point { slot, material } => {
             let material = material.iter().map(Term::emit);
             quote!(
                 let __owner = __t.self_addr();
                 let __key = __owner.child(
-                    ::hyperscale_vm_sdk::RoleId(#role),
+                    ::hyperscale_vm_sdk::SlotId(#slot),
                     &[#(#material),*],
                 );
                 let __access = __t.point(&__key);
             )
         }
         Target::Entry {
-            role,
+            slot,
             material,
             order,
         } => {
@@ -102,39 +102,39 @@ fn target(target: &Target) -> TokenStream {
                 let __order = #order.cast::<::hyperscale_vm_sdk::Amount>();
                 let __access = __t.entry(
                     &__owner,
-                    ::hyperscale_vm_sdk::RoleId(#role),
+                    ::hyperscale_vm_sdk::SlotId(#slot),
                     &__material,
                     &__order,
                 );
             )
         }
-        Target::KeyedEntry { role, key } => {
+        Target::KeyedEntry { slot, key } => {
             let key = key.emit();
             quote!(
                 let __owner = __t.self_addr();
                 let __key = #key;
                 let __access = __t.keyed_entry(
                     &__owner,
-                    ::hyperscale_vm_sdk::RoleId(#role),
+                    ::hyperscale_vm_sdk::SlotId(#slot),
                     &__key,
                 );
             )
         }
-        Target::Sweep { role, cursor, cap } => {
+        Target::Sweep { slot, cursor, cap } => {
             let cursor = cursor.emit();
             quote!(
                 let __owner = __t.self_addr();
                 let __cursor = #cursor.cast::<::hyperscale_vm_sdk::Amount>();
                 let __access = __t.sweep(
                     &__owner,
-                    ::hyperscale_vm_sdk::RoleId(#role),
+                    ::hyperscale_vm_sdk::SlotId(#slot),
                     &__cursor,
                     #cap,
                 );
             )
         }
         Target::Range {
-            role,
+            slot,
             material,
             lo,
             hi,
@@ -150,7 +150,7 @@ fn target(target: &Target) -> TokenStream {
                 let __hi = #hi.cast::<::hyperscale_vm_sdk::Amount>();
                 let __access = __t.range(
                     &__owner,
-                    ::hyperscale_vm_sdk::RoleId(#role),
+                    ::hyperscale_vm_sdk::SlotId(#slot),
                     &__material,
                     &__lo,
                     &__hi,

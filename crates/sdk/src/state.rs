@@ -462,7 +462,7 @@ impl<T> core::ops::Deref for Locked<T> {
     }
 }
 
-/// One substate leaf under a role.
+/// One substate leaf under a slot.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Cell<T>(core::marker::PhantomData<fn() -> T>);
 
@@ -498,7 +498,7 @@ impl Cell<Vault> {
     }
 }
 
-/// A family of leaves under one role, keyed by an address.
+/// A family of leaves under one slot, keyed by an address.
 ///
 /// The canonical case is a vault family keyed by resource: `self.vaults.at(
 /// funds.resource())` is the vault the arriving bucket belongs in, and the
@@ -511,7 +511,7 @@ impl<T> Keyed<T> {
     /// The leaf at `key`.
     ///
     /// The key is whatever material the declaration hashes under the
-    /// field's role — an address is the commonest case and not the only
+    /// field's slot — an address is the commonest case and not the only
     /// one, and what makes any of them declarable is being derivable
     /// from the call's own inputs.
     #[must_use]
@@ -663,14 +663,14 @@ impl Slot<Vault> {
     }
 }
 
-/// An ordered collection under one role.
+/// An ordered collection under one slot.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Ordered<T>(core::marker::PhantomData<fn() -> T>);
 
 impl<T> Ordered<T> {
-    /// The sub-collection this role holds at `key`.
+    /// The sub-collection this slot holds at `key`.
     ///
-    /// A collection is named by its owner, its role and the material
+    /// A collection is named by its owner, its slot and the material
     /// folded into it, exactly as a keyed leaf is — so a family of
     /// collections is one collection per key rather than a shape of its
     /// own, and everything below reads the same under a key as without
@@ -711,7 +711,7 @@ impl<T> Ordered<T> {
     }
 }
 
-/// An unordered collection under one role: entries keyed by hash.
+/// An unordered collection under one slot: entries keyed by hash.
 ///
 /// The same kernel kind as [`Ordered`], with the order key derived by
 /// hashing the logical key — arbitrary-but-canonical placement, which is

@@ -7,7 +7,7 @@ mod pool {
 
     #[state]
     struct Pool {
-        #[role(1)]
+        #[slot(1)]
         vaults: Keyed<Vault>,
     }
 
@@ -24,7 +24,7 @@ mod book {
 
     #[state]
     struct Book {
-        #[role(1)]
+        #[slot(1)]
         vaults: Keyed<Vault>,
     }
 

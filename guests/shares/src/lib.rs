@@ -67,15 +67,15 @@ pub mod shares {
 
     #[state]
     struct Shares {
-        #[role(3)]
+        #[slot(3)]
         config: Locked<Settings>,
         /// The assets under management.
-        #[role(1)]
+        #[slot(1)]
         #[denomination(config.asset)]
         assets: Cell<Vault>,
         /// Shares in circulation, which is what a redemption is priced
         /// against.
-        #[role(17)]
+        #[slot(17)]
         supply: Cell<Quantity>,
     }
 

@@ -540,7 +540,7 @@ impl WorkingStore for MemoryStore {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        Address, AddressClass, CollectionId, EffectTarget, Hash32, ModeKind, RoleId, SubstateKey,
+        Address, AddressClass, CollectionId, EffectTarget, Hash32, ModeKind, SlotId, SubstateKey,
         TestHasher, child_key,
     };
 
@@ -552,7 +552,7 @@ mod tests {
         child_key(
             &TestHasher,
             Address::new([byte; 31], AddressClass::Component),
-            RoleId(1),
+            SlotId(1),
             &[],
         )
     }

@@ -55,7 +55,7 @@ pub fn metadata() -> PackageMetadata {
             effects: vec![Clause::Effect {
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    role: INSTANCE,
+                    slot: INSTANCE,
                     material: vec![minted_resource, minted_id],
                 }),
                 mode: ModeExpr::Write {

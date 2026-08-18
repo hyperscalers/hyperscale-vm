@@ -6,8 +6,9 @@ pub use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Address, Clause, ComponentAddr, Effect, EffectSet, Expr, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr, PackageHash,
-    PackageMetadata, ParamType, PrefixShardResolver, Presence, PrincipalAddr, ResourceAddr, RoleId,
-    ShardId, ShardResolver, SubstateKey, TargetExpr, TestHasher, Totality, Value, child_key,
+    PackageMetadata, ParamType, PrefixShardResolver, Presence, PrincipalAddr, ResourceAddr,
+    ShardId, ShardResolver, SlotId, SubstateKey, TargetExpr, TestHasher, Totality, Value,
+    child_key,
 };
 pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
 pub use hyperscale_vm_fixtures::{amm, book, splitter};
@@ -23,10 +24,10 @@ pub const RES_Y: ResourceAddr = ResourceAddr::new([0xE2; 31]);
 pub const BASE: ResourceAddr = ResourceAddr::new([0xE3; 31]);
 pub const QUOTE: ResourceAddr = ResourceAddr::new([0xE4; 31]);
 
-fn self_child(role: RoleId, material: Vec<Expr>) -> Expr {
+fn self_child(slot: SlotId, material: Vec<Expr>) -> Expr {
     Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        role,
+        slot,
         material,
     }
 }
@@ -161,7 +162,7 @@ pub fn wide_account_metadata() -> PackageMetadata {
     let mut methods = account::metadata();
     let mut effects = methods.methods["withdraw"].effects.clone();
     effects.push(Clause::Effect {
-        target: TargetExpr::Point(self_child(RoleId(99), vec![])),
+        target: TargetExpr::Point(self_child(SlotId(99), vec![])),
         mode: ModeExpr::Write {
             requires: Presence::Either,
         },

@@ -47,7 +47,7 @@ use syn::spanned::Spanned;
 use crate::is_named;
 use crate::term::{Op, Slot, Term};
 
-/// What kind of state a component field holds, and under which role.
+/// What kind of state a component field holds, and under which slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldKind {
     /// A permanently locked configuration leaf; its fields are the
@@ -66,8 +66,8 @@ pub enum FieldKind {
 /// One declared field of the component's state.
 #[derive(Clone, Debug)]
 pub struct Field {
-    /// The role the field's children sit under.
-    pub role: u16,
+    /// The slot the field's children sit under.
+    pub slot: u16,
     /// What shape of state it is.
     pub kind: FieldKind,
     /// The value each leaf holds, which is what a guest accessor decodes
@@ -84,18 +84,18 @@ pub struct Field {
 /// One target a body opened a handle on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
-    /// A single substate leaf under a role.
+    /// A single substate leaf under a slot.
     Point {
-        /// The role.
-        role: u16,
+        /// The slot.
+        slot: u16,
         /// The child-key material.
         material: Vec<Term>,
     },
     /// One ordered-collection entry.
     Entry {
-        /// The collection's role.
-        role: u16,
-        /// The sub-collection under that role, empty where the role holds
+        /// The collection's slot.
+        slot: u16,
+        /// The sub-collection under that slot, empty where the slot holds
         /// one collection outright.
         material: Vec<Term>,
         /// The entry's order key.
@@ -103,9 +103,9 @@ pub enum Target {
     },
     /// An interval of a collection's order-key space.
     Range {
-        /// The collection's role.
-        role: u16,
-        /// The sub-collection under that role, empty where the role holds
+        /// The collection's slot.
+        slot: u16,
+        /// The sub-collection under that slot, empty where the slot holds
         /// one collection outright.
         material: Vec<Term>,
         /// Inclusive lower bound.
@@ -117,15 +117,15 @@ pub enum Target {
     },
     /// One unordered-collection entry, at the hash of a logical key.
     KeyedEntry {
-        /// The collection's role.
-        role: u16,
+        /// The collection's slot.
+        slot: u16,
         /// The logical key, hashed into the entry's order.
         key: Term,
     },
     /// An unordered collection's tail from a cursor.
     Sweep {
-        /// The collection's role.
-        role: u16,
+        /// The collection's slot.
+        slot: u16,
         /// The inclusive lower bound.
         cursor: Term,
         /// The entry cap.
@@ -322,7 +322,7 @@ enum Val {
     Field {
         /// The state field's name.
         name: String,
-        /// The sub-collection under the field's role.
+        /// The sub-collection under the field's slot.
         material: Vec<Term>,
     },
     /// The value a locked configuration read returns; its fields are
@@ -1815,7 +1815,7 @@ impl<'a> Lowerer<'a> {
                     return Eval::absent("an undeclared state field");
                 };
                 // Narrowing to a sub-collection is not an access: it names
-                // which collection under the role, and every accessor
+                // which collection under the slot, and every accessor
                 // below reads the same with the material as without it.
                 if method == "of" && field.kind == FieldKind::Ordered {
                     let Some(Val::Term(key)) = args.first() else {
@@ -2084,7 +2084,7 @@ impl<'a> Lowerer<'a> {
         args: &[Eval],
         call: &syn::ExprMethodCall,
     ) -> Eval {
-        let role = field.role;
+        let slot = field.slot;
         let declared = self.field_denomination(field);
         let vals: Vec<Val> = args.iter().map(|e| e.val.clone()).collect();
         match (field.kind, method) {
@@ -2093,7 +2093,7 @@ impl<'a> Lowerer<'a> {
             (FieldKind::Locked, "locked") => {
                 let site = self.open(
                     Target::Point {
-                        role,
+                        slot,
                         material: vec![],
                     },
                     field.element.clone(),
@@ -2114,7 +2114,7 @@ impl<'a> Lowerer<'a> {
                 if let Some(Val::Term(key)) = vals.first() {
                     let site = self.open(
                         Target::Point {
-                            role,
+                            slot,
                             material: vec![key.clone()],
                         },
                         field.element.clone(),
@@ -2139,7 +2139,7 @@ impl<'a> Lowerer<'a> {
                     let order = order.clone();
                     let site = self.open(
                         Target::Entry {
-                            role,
+                            slot,
                             material: material.to_vec(),
                             order: order.clone(),
                         },
@@ -2162,17 +2162,17 @@ impl<'a> Lowerer<'a> {
                 if let Some(Val::Term(key)) = vals.first() {
                     let site = self.open(
                         Target::KeyedEntry {
-                            role,
+                            slot,
                             key: key.clone(),
                         },
                         field.element.clone(),
                         declared,
                     );
-                    // The order is the kernel's hash over owner, role and
+                    // The order is the kernel's hash over owner, slot and
                     // key. A guest cannot rebuild it, so it is handed one:
                     // the same evaluation admission runs, bound as a value.
                     let order = Term::OrderKey {
-                        role,
+                        slot,
                         key: Box::new(key.clone()),
                     };
                     self.entry(site, &order, call.span())
@@ -2195,7 +2195,7 @@ impl<'a> Lowerer<'a> {
                 {
                     let site = self.open(
                         Target::Sweep {
-                            role,
+                            slot,
                             cursor: cursor.clone(),
                             cap: u32::try_from(*cap).unwrap_or(u32::MAX),
                         },
@@ -2224,7 +2224,7 @@ impl<'a> Lowerer<'a> {
                 {
                     let site = self.open(
                         Target::Range {
-                            role,
+                            slot,
                             material: material.to_vec(),
                             lo: lo.clone(),
                             hi: hi.clone(),
@@ -2250,7 +2250,7 @@ impl<'a> Lowerer<'a> {
                 if let Some(Val::Term(Term::LitU64(cap))) = vals.first() {
                     let site = self.open(
                         Target::Range {
-                            role,
+                            slot,
                             material: material.to_vec(),
                             lo: Term::LitU128(0),
                             hi: Term::LitU128(u128::MAX),
@@ -2283,7 +2283,7 @@ impl<'a> Lowerer<'a> {
             (FieldKind::Cell, "vault") => {
                 let site = self.open(
                     Target::Point {
-                        role,
+                        slot,
                         material: declared.clone().into_iter().collect(),
                     },
                     field.element.clone(),
@@ -2296,7 +2296,7 @@ impl<'a> Lowerer<'a> {
                 if let Some(op) = Op::from_method(method) {
                     let site = self.open(
                         Target::Point {
-                            role,
+                            slot,
                             material: vec![],
                         },
                         field.element.clone(),

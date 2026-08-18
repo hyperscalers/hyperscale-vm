@@ -75,19 +75,19 @@ pub mod staking {
 
     #[state]
     struct Staking {
-        #[role(3)]
+        #[slot(3)]
         config: Locked<Settings>,
         /// The delegations under management.
-        #[role(1)]
+        #[slot(1)]
         #[denomination(config.staked_resource)]
         staked: Cell<Vault>,
         /// One leaf per validator the pool operates, so two operator
         /// actions on two validators commute.
-        #[role(17)]
+        #[slot(17)]
         validators: Keyed<Vec<u8>>,
         /// The pool's one governance vote: a pool holds one, the network
         /// counts it once, so one leaf is what its position *is*.
-        #[role(18)]
+        #[slot(18)]
         vote: Cell<Vec<u8>>,
     }
 

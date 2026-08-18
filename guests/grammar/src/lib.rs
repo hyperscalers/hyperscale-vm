@@ -29,9 +29,9 @@ pub mod grammar {
 
     #[state]
     struct Grammar {
-        #[role(1)]
+        #[slot(1)]
         vaults: Keyed<Vault>,
-        #[role(16)]
+        #[slot(16)]
         holdings: Ordered<Quantity>,
     }
 

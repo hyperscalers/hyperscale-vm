@@ -24,7 +24,7 @@
 
 use core::marker::PhantomData;
 
-use hyperscale_vm_effects::{Address, Expr, ParamType, RoleId, Value};
+use hyperscale_vm_effects::{Address, Expr, ParamType, SlotId, Value};
 
 /// A symbolic value's static kind.
 pub trait Kind {
@@ -193,15 +193,15 @@ impl Sym<Seq> {
 }
 
 impl Sym<Addr> {
-    /// The canonical child key `owner | H(role, material…)`.
+    /// The canonical child key `owner | H(slot, material…)`.
     ///
     /// Pure computation over the owner and the material, which is what lets
     /// a shard name another shard's key without reading it.
     #[must_use]
-    pub fn child(&self, role: RoleId, material: &[Sym<Opaque>]) -> Sym<Key> {
+    pub fn child(&self, slot: SlotId, material: &[Sym<Opaque>]) -> Sym<Key> {
         Sym::new(Expr::ChildKey {
             owner: Box::new(self.expr.clone()),
-            role,
+            slot,
             material: material.iter().map(|m| m.expr.clone()).collect(),
         })
     }
@@ -296,7 +296,7 @@ pub fn expr_depth(expr: &Expr) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{Expr, RoleId};
+    use hyperscale_vm_effects::{Expr, SlotId};
 
     use super::{Addr, Bucket, Sym, expr_depth, lit_u64};
 
@@ -311,7 +311,7 @@ mod tests {
         let owner: Sym<Addr> = Sym::new(Expr::SelfAddr);
         let bucket: Sym<Bucket> = Sym::new(Expr::Arg(0));
         // `child(self, [resource(arg0)])` — material is deeper than owner.
-        let key = owner.child(RoleId(1), &[bucket.resource().cast()]);
+        let key = owner.child(SlotId(1), &[bucket.resource().cast()]);
         assert_eq!(expr_depth(key.expr()), 3);
     }
 }

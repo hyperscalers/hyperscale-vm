@@ -6,7 +6,7 @@ use hyperscale_hbor::{EncodeError, Hbor, to_vec};
 use hyperscale_vm_types::{MAX_ERROR_CODES, MAX_EVENT_TYPES};
 use thiserror::Error;
 
-use crate::PACKAGE_ROLE_BASE;
+use crate::PACKAGE_SLOT_BASE;
 use crate::auth::{AuthRole, RoleSet};
 use crate::dsl::{
     Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_RANGE_CAP,
@@ -17,7 +17,7 @@ use crate::invoke::EdgeKind;
 use crate::resource::holdings_entry;
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule, RuleExpr};
 use crate::types::{
-    Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Presence, RoleId,
+    Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Presence, SlotId,
     SubstateKey, Value, child_key, component_address, config_hash,
 };
 use crate::vocabulary::VAULT;
@@ -42,9 +42,9 @@ pub fn package_hash(hasher: &dyn Hasher, artifact: &[u8]) -> PackageHash {
 /// In the kernel's own band at the top of the role space, above anything
 /// the protocol vocabulary or a package numbers into, so the cell is
 /// reachable by the publish path and by nothing else.
-pub const PACKAGE_ROLE: RoleId = RoleId(0xFFFE);
+pub const PACKAGE_SLOT: SlotId = SlotId(0xFFFE);
 
-const _: () = assert!(PACKAGE_ROLE.0 > PACKAGE_ROLE_BASE);
+const _: () = assert!(PACKAGE_SLOT.0 > PACKAGE_SLOT_BASE);
 
 /// Where `publisher`'s copy of the package addressed by `package` lives.
 ///
@@ -57,7 +57,7 @@ pub fn package_key(
     publisher: impl Into<Address>,
     package: PackageHash,
 ) -> SubstateKey {
-    child_key(hasher, publisher, PACKAGE_ROLE, &[package.0.0.to_vec()])
+    child_key(hasher, publisher, PACKAGE_SLOT, &[package.0.0.to_vec()])
 }
 
 /// A method parameter's admitted kind. Bucket parameters consume a value
@@ -546,7 +546,7 @@ impl MethodSignature {
         let pinned = match claim {
             CustodyClaim::Fungible(badge) => TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                role: VAULT,
+                slot: VAULT,
                 material: vec![badge.clone()],
             }),
             CustodyClaim::Instance { badge, id } => holdings_entry(badge.clone(), id.clone()),
@@ -1489,7 +1489,7 @@ mod tests {
                 effects: vec![Clause::Effect {
                     target: TargetExpr::Range {
                         owner: Expr::SelfAddr,
-                        collection: RoleId(PACKAGE_ROLE_BASE),
+                        collection: SlotId(PACKAGE_SLOT_BASE),
                         material: vec![],
                         lo: Expr::Literal(Value::U128(0)),
                         hi: Expr::Literal(Value::U128(u128::MAX)),
@@ -1938,7 +1938,7 @@ mod tests {
         let vault = |key: Expr| {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                role: VAULT,
+                slot: VAULT,
                 material: vec![key],
             })
         };
@@ -2103,7 +2103,7 @@ mod tests {
         let cell = |material| {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                role: VAULT,
+                slot: VAULT,
                 material,
             })
         };
@@ -2230,7 +2230,7 @@ mod tests {
         let child_of = |owner: Expr| {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(owner),
-                role: RoleId(1),
+                slot: SlotId(1),
                 material: vec![],
             })
         };
@@ -2247,7 +2247,7 @@ mod tests {
         assert_eq!(
             check_declarations(&declaring(TargetExpr::Entry {
                 owner: Expr::SelfAddr,
-                collection: RoleId(2),
+                collection: SlotId(2),
                 material: vec![],
                 order: Expr::Literal(Value::U128(0)),
             })),

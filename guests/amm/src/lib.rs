@@ -44,14 +44,14 @@ pub mod amm {
 
     #[state]
     struct Amm {
-        #[role(3)]
+        #[slot(3)]
         config: Locked<Settings>,
         /// The side the pool buys.
-        #[role(1)]
+        #[slot(1)]
         #[denomination(config.x)]
         sold: Cell<Vault>,
         /// The side it sells.
-        #[role(1)]
+        #[slot(1)]
         #[denomination(config.y)]
         bought: Cell<Vault>,
     }

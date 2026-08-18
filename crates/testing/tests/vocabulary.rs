@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Hash32, Hasher,
-    Mode, Presence, RoleId, SubstateKey, TestHasher, child_key, collection_id,
+    Mode, Presence, SlotId, SubstateKey, TestHasher, child_key, collection_id,
 };
 use hyperscale_vm_kernel::{
     EnvInputs, KernelSession, MemoryStore, Outcome, OverlayStore, TxHash, WorkingStore,
@@ -28,11 +28,11 @@ fn hash(data: &[u8]) -> [u8; 32] {
 }
 
 fn key(tag: u8) -> SubstateKey {
-    child_key(&TestHasher, OWNER, RoleId(u16::from(tag)), &[])
+    child_key(&TestHasher, OWNER, SlotId(u16::from(tag)), &[])
 }
 
 fn collection() -> CollectionId {
-    collection_id(&TestHasher, OWNER, RoleId(9), &[])
+    collection_id(&TestHasher, OWNER, SlotId(9), &[])
 }
 
 /// A session holding one cell per mode the vocabulary can name, and one

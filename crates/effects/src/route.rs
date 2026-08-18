@@ -1041,7 +1041,7 @@ mod tests {
     };
     use crate::types::{
         Address, AddressClass, ComponentAddr, EdgeContent, Effect, EffectSet, EffectTarget,
-        MAX_IDS_PER_EDGE, Mode, Presence, RoleId, ShardId, Value, child_key,
+        MAX_IDS_PER_EDGE, Mode, Presence, ShardId, SlotId, Value, child_key,
     };
 
     fn pkg(name: &str) -> PackageHash {
@@ -1078,15 +1078,15 @@ mod tests {
         meta_of(package).address(&TestHasher)
     }
 
-    fn point(owner: impl Into<Address>, role: RoleId) -> EffectTarget {
-        EffectTarget::Point(child_key(&TestHasher, owner, role, &[]))
+    fn point(owner: impl Into<Address>, slot: SlotId) -> EffectTarget {
+        EffectTarget::Point(child_key(&TestHasher, owner, slot, &[]))
     }
 
-    fn self_point(role: RoleId, mode: ModeExpr) -> Clause {
+    fn self_point(slot: SlotId, mode: ModeExpr) -> Clause {
         Clause::Effect {
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                role,
+                slot,
                 material: vec![],
             }),
             mode,
@@ -1119,7 +1119,7 @@ mod tests {
             "withdraw".into(),
             MethodSignature {
                 outputs: vec![Expr::SelfAddr],
-                effects: vec![self_point(RoleId(1), ModeExpr::Reserve(Expr::Arg(0)))],
+                effects: vec![self_point(SlotId(1), ModeExpr::Reserve(Expr::Arg(0)))],
                 ..MethodSignature::default()
             },
         );
@@ -1129,7 +1129,7 @@ mod tests {
             MethodSignature {
                 outputs: vec![Expr::SelfAddr],
                 effects: vec![self_point(
-                    RoleId(2),
+                    SlotId(2),
                     ModeExpr::Write {
                         requires: Presence::Either,
                     },
@@ -1142,7 +1142,7 @@ mod tests {
             "deposit".into(),
             MethodSignature {
                 totality: sink,
-                effects: vec![self_point(RoleId(3), ModeExpr::Delta)],
+                effects: vec![self_point(SlotId(3), ModeExpr::Delta)],
                 ..MethodSignature::default()
             },
         );
@@ -1200,7 +1200,7 @@ mod tests {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Address, ParamType::U128],
                 outputs: vec![Expr::Literal(Value::Address(addr(0xE1)))],
-                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
                 ..MethodSignature::default()
             },
         );
@@ -1213,7 +1213,7 @@ mod tests {
                 effects: vec![Clause::Effect {
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
-                        role: RoleId(2),
+                        slot: SlotId(2),
                         material: vec![],
                     }),
                     mode: ModeExpr::Delta,
@@ -1265,7 +1265,7 @@ mod tests {
         let mut solo = PackageMetadata::default();
         solo.methods.insert(
             "act".into(),
-            method(vec![self_point(RoleId(1), ModeExpr::Delta)]),
+            method(vec![self_point(SlotId(1), ModeExpr::Delta)]),
         );
         cache.publish(pkg("solo"), solo);
         let mut instances = InstanceRegistry::new();
@@ -1327,14 +1327,14 @@ mod tests {
             MethodSignature {
                 totality: Totality::Fallible,
                 outputs: vec![Expr::SelfAddr],
-                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
                 ..MethodSignature::default()
             },
         );
         let mut consuming = PackageMetadata::default();
         consuming.methods.insert(
             "take".into(),
-            method(vec![self_point(RoleId(2), ModeExpr::Delta)]),
+            method(vec![self_point(SlotId(2), ModeExpr::Delta)]),
         );
         cache.publish(pkg("producer"), producing);
         cache.publish(pkg("consumer"), consuming);
@@ -1490,7 +1490,7 @@ mod tests {
         let mut solo = PackageMetadata::default();
         solo.methods.insert(
             "act".into(),
-            method(vec![self_point(RoleId(1), ModeExpr::Delta)]),
+            method(vec![self_point(SlotId(1), ModeExpr::Delta)]),
         );
         cache.publish(pkg("solo"), solo);
         let mut instances = InstanceRegistry::new();
@@ -1637,11 +1637,11 @@ mod tests {
             declaration.ordered,
             vec![
                 Effect {
-                    target: point(instance_of("payer"), RoleId(1)),
+                    target: point(instance_of("payer"), SlotId(1)),
                     mode: Mode::Delta,
                 },
                 Effect {
-                    target: point(instance_of("payee"), RoleId(2)),
+                    target: point(instance_of("payee"), SlotId(2)),
                     mode: Mode::Delta,
                 },
             ],
@@ -1743,8 +1743,8 @@ mod tests {
         meta.methods.insert(
             "peek".into(),
             method(vec![
-                self_point(RoleId(1), ModeExpr::Locked),
-                self_point(RoleId(2), ModeExpr::Locked),
+                self_point(SlotId(1), ModeExpr::Locked),
+                self_point(SlotId(2), ModeExpr::Locked),
             ]),
         );
         cache.publish(pkg("oracle"), meta);
@@ -1772,9 +1772,9 @@ mod tests {
         // the store knows.
         let declared = routing.per_shard.values().next().unwrap();
         assert_eq!(declared.iter().count(), 2);
-        for role in [RoleId(1), RoleId(2)] {
+        for slot in [SlotId(1), SlotId(2)] {
             assert!(declared.contains(&Effect {
-                target: point(instance_of("oracle"), role),
+                target: point(instance_of("oracle"), slot),
                 mode: Mode::Locked,
             }));
         }
@@ -1835,7 +1835,7 @@ mod tests {
             method(vec![Clause::Effect {
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    role: RoleId(1),
+                    slot: SlotId(1),
                     material: vec![],
                 }),
                 mode: ModeExpr::Reserve(Expr::Arg(0)),
@@ -1939,7 +1939,7 @@ mod tests {
                         body: vec![Clause::Effect {
                             target: TargetExpr::Point(Expr::ChildKey {
                                 owner: Box::new(Expr::SelfAddr),
-                                role: RoleId(9),
+                                slot: SlotId(9),
                                 material: vec![Expr::Binding(0)],
                             }),
                             mode: ModeExpr::Delta,
@@ -1947,7 +1947,7 @@ mod tests {
                         }],
                     },
                     self_point(
-                        RoleId(1),
+                        SlotId(1),
                         ModeExpr::Write {
                             requires: Presence::Either,
                         },
@@ -2072,7 +2072,7 @@ mod tests {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(0)],
-                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
                 ..MethodSignature::default()
             },
         );
@@ -2136,7 +2136,7 @@ mod tests {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(0)],
-                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
                 ..MethodSignature::default()
             },
         );
@@ -2222,7 +2222,7 @@ mod tests {
                 // Nothing in the ABI carries the bucket: the method
                 // consumes the edge without reading what crossed.
                 abi: vec![AbiParam::Handle(0)],
-                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
                 ..MethodSignature::default()
             },
         );
@@ -2321,7 +2321,7 @@ mod tests {
                     effects: vec![Clause::Effect {
                         target: TargetExpr::Point(Expr::ChildKey {
                             owner: Box::new(owner),
-                            role: RoleId(1),
+                            slot: SlotId(1),
                             material: vec![],
                         }),
                         mode: ModeExpr::Delta,
@@ -2383,7 +2383,7 @@ mod tests {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(0), AbiParam::Bucket(0)],
-                effects: vec![self_point(RoleId(1), ModeExpr::Delta)],
+                effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
                 ..MethodSignature::default()
             },
         );

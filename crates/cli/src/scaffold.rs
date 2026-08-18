@@ -74,7 +74,7 @@ fn library(module: &str) -> String {
          \n\
          \x20   #[state]\n\
          \x20   struct State {{\n\
-         \x20       #[role(1)]\n\
+         \x20       #[slot(1)]\n\
          \x20       vaults: Keyed<Vault>,\n\
          \x20   }}\n\
          \n\

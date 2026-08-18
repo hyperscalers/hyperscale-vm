@@ -31,7 +31,7 @@
 
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, AuthRole, Clause, CustodyClaim, Expr, MAX_CLAUSE_DEPTH,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, ParamType, Presence, RoleId, RuleExpr,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, ParamType, Presence, RuleExpr, SlotId,
     TargetExpr, Totality, Value,
 };
 
@@ -240,14 +240,14 @@ impl Trace {
 
     /// Declare accesses to one ordered-collection entry.
     ///
-    /// `material` names the sub-collection under the role, empty where
-    /// the role holds one collection outright: a collection is its owner,
-    /// its role and what is folded into it, exactly as a keyed leaf is.
+    /// `material` names the sub-collection under the slot, empty where
+    /// the slot holds one collection outright: a collection is its owner,
+    /// its slot and what is folded into it, exactly as a keyed leaf is.
     #[must_use]
     pub fn entry(
         &mut self,
         owner: &Sym<Addr>,
-        collection: RoleId,
+        collection: SlotId,
         material: &[Sym<Opaque>],
         order: &Sym<Amount>,
     ) -> Access<'_> {
@@ -265,27 +265,27 @@ impl Trace {
     }
 
     /// The order an unordered collection places `key` at: the hash of
-    /// the key salted by the collection's owner and role.
+    /// the key salted by the collection's owner and slot.
     ///
     /// The derivation is the kernel's, so a guest that has to name the
     /// entry is handed the answer rather than asked to rebuild it — which
     /// is what lets an unordered collection have an executing body at all.
     #[must_use]
-    pub fn order_key<K: Kind>(&self, collection: RoleId, key: &Sym<K>) -> Sym<Amount> {
+    pub fn order_key<K: Kind>(&self, collection: SlotId, key: &Sym<K>) -> Sym<Amount> {
         Sym::new(Expr::OrderKey {
             owner: Box::new(Expr::SelfAddr),
-            role: collection,
+            slot: collection,
             material: vec![self.lower(key.expr().clone())],
         })
     }
 
     /// Declare accesses to one unordered-collection entry: the entry at
-    /// the hash of `key`, salted by the collection's owner and role.
+    /// the hash of `key`, salted by the collection's owner and slot.
     #[must_use]
     pub fn keyed_entry(
         &mut self,
         owner: &Sym<Addr>,
-        collection: RoleId,
+        collection: SlotId,
         key: &Sym<Opaque>,
     ) -> Access<'_> {
         let owner_expr = self.lower(owner.expr().clone());
@@ -295,7 +295,7 @@ impl Trace {
             material: vec![],
             order: Expr::OrderKey {
                 owner: Box::new(owner_expr),
-                role: collection,
+                slot: collection,
                 material: vec![self.lower(key.expr().clone())],
             },
         };
@@ -317,7 +317,7 @@ impl Trace {
     pub fn sweep(
         &mut self,
         owner: &Sym<Addr>,
-        collection: RoleId,
+        collection: SlotId,
         cursor: &Sym<Amount>,
         cap: u32,
     ) -> Access<'_> {
@@ -345,7 +345,7 @@ impl Trace {
     pub fn range(
         &mut self,
         owner: &Sym<Addr>,
-        collection: RoleId,
+        collection: SlotId,
         material: &[Sym<Opaque>],
         lo: &Sym<Amount>,
         hi: &Sym<Amount>,
@@ -770,20 +770,20 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
         },
         Expr::ChildKey {
             owner,
-            role,
+            slot,
             material,
         } => Expr::ChildKey {
             owner: Box::new(rebind(*owner, depth)),
-            role,
+            slot,
             material: material.into_iter().map(|m| rebind(m, depth)).collect(),
         },
         Expr::OrderKey {
             owner,
-            role,
+            slot,
             material,
         } => Expr::OrderKey {
             owner: Box::new(rebind(*owner, depth)),
-            role,
+            slot,
             material: material.into_iter().map(|m| rebind(m, depth)).collect(),
         },
         leaf @ (Expr::Literal(_)
@@ -797,7 +797,7 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{Clause, Expr, ParamType, RoleId, TargetExpr};
+    use hyperscale_vm_effects::{Clause, Expr, ParamType, SlotId, TargetExpr};
 
     use super::{MAX_FOREACH_ELEMENTS, Trace, absolute, rebind};
     use crate::sym::{Addr, Amount, Key, Opaque, Seq, Sym};
@@ -845,7 +845,7 @@ mod tests {
             t.for_each(&inner, |t, item| {
                 // `group` is the outer binder, `item` the inner one.
                 let owner = t.self_addr();
-                let key: Sym<Key> = owner.child(RoleId(1), &[item, group.clone()]);
+                let key: Sym<Key> = owner.child(SlotId(1), &[item, group.clone()]);
                 t.point(&key).write();
             });
         });
@@ -889,7 +889,7 @@ mod tests {
         let owner = trace.self_addr();
         let lo: Sym<Amount> = trace.arg(0);
         let hi: Sym<Amount> = trace.config(0);
-        trace.range(&owner, RoleId(4), &[], &lo, &hi, 32).write();
+        trace.range(&owner, SlotId(4), &[], &lo, &hi, 32).write();
         let recorded = trace.finish();
         assert!(matches!(
             &recorded.clauses[0],

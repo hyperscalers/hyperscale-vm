@@ -54,10 +54,10 @@ pub enum Term {
     /// names the site rather than re-drawing at every use.
     FreshId(usize),
     /// The order an unordered collection places a key at: the kernel's
-    /// hash over the collection's owner, role and the key.
+    /// hash over the collection's owner, slot and the key.
     OrderKey {
-        /// The collection's role.
-        role: u16,
+        /// The collection's slot.
+        slot: u16,
         /// The logical key.
         key: Box<Self>,
     },
@@ -123,10 +123,10 @@ impl Term {
                 let ident = fresh_ident(*site);
                 quote!(#ident.clone().cast::<::hyperscale_vm_sdk::Opaque>())
             }
-            Self::OrderKey { role, key } => {
+            Self::OrderKey { slot, key } => {
                 let key = key.emit();
                 quote!(
-                    __t.order_key(::hyperscale_vm_sdk::RoleId(#role), &#key)
+                    __t.order_key(::hyperscale_vm_sdk::SlotId(#slot), &#key)
                         .cast::<::hyperscale_vm_sdk::Opaque>()
                 )
             }

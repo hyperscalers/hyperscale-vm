@@ -7,7 +7,7 @@
 //! through, are all read off one text. What stays here is the roles a
 //! consumer keys by, which a signature does not supply.
 
-use hyperscale_vm_effects::{PackageMetadata, RoleId, package_role};
+use hyperscale_vm_effects::{PackageMetadata, SlotId, package_slot};
 
 // The package, read from the crate the artifact is built from rather
 // than copied into this one: a second copy is the drift the derivation
@@ -24,9 +24,9 @@ pub use package::staking::client::*;
 pub use package::staking::invoke;
 
 /// A stake pool's record of one validator it operates.
-pub const VALIDATORS: RoleId = package_role(1);
+pub const VALIDATORS: SlotId = package_slot(1);
 /// A stake pool's one active network-parameter vote.
-pub const VOTE: RoleId = package_role(2);
+pub const VOTE: SlotId = package_slot(2);
 
 /// The material separating a pool's owner badge from the unit it issues.
 pub const OWNER_BADGE: &[u8] = b"owner-badge";
