@@ -546,19 +546,15 @@ impl EffectSet {
             }
         }
         // Two writes on one cell are one write, and what it requires is
-        // what both require: `Either` concedes to a named requirement,
-        // and two opposite names concede to nothing.
+        // what both require — [`Presence::meet`], the same lattice the
+        // publish check folds target expressions over.
         if let Mode::Write { requires } = effect.mode {
             let prior = modes.iter().find_map(|mode| match mode {
                 Mode::Write { requires } => Some(*requires),
                 _ => None,
             });
             if let Some(prior) = prior {
-                let met = match (prior, requires) {
-                    (Presence::Either, other) | (other, Presence::Either) => other,
-                    (a, b) if a == b => a,
-                    _ => return Err(EffectConflict::Presence),
-                };
+                let met = prior.meet(requires).ok_or(EffectConflict::Presence)?;
                 modes.remove(&Mode::Write { requires: prior });
                 modes.insert(Mode::Write { requires: met });
                 return Ok(());

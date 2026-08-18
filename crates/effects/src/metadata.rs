@@ -848,12 +848,17 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
         }
         Ok(())
     }
-    // Two clauses on one target are one access, and a presence
-    // requirement each way is a requirement nothing satisfies. Compared
-    // by target expression rather than by evaluated key, because this
-    // runs at publish where no arguments exist — which catches the
-    // contradiction an author wrote and leaves the one two different
-    // expressions happen to evaluate onto for the set to fold.
+    // Clauses on one target are one access, and a presence requirement
+    // each way is a requirement nothing satisfies. Folded down the
+    // clause list by [`Presence::meet`] rather than compared pairwise,
+    // so a named requirement survives an indifferent clause written
+    // between it and its opposite — which is the whole of what the set
+    // will do to the evaluated keys later.
+    //
+    // Compared by target expression rather than by evaluated key,
+    // because this runs at publish where no arguments exist — which
+    // catches the contradiction an author wrote and leaves the one two
+    // different expressions happen to evaluate onto for the set to fold.
     let mut required: Vec<(&TargetExpr, Presence)> = Vec::new();
     for clause in flat_clauses(&signature.effects) {
         let Clause::Effect {
@@ -864,16 +869,13 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
         else {
             continue;
         };
-        if let Some((_, prior)) = required.iter().find(|(seen, _)| *seen == target) {
-            let opposed = matches!(
-                (prior, requires),
-                (Presence::Absent, Presence::Present) | (Presence::Present, Presence::Absent)
-            );
-            if opposed {
-                return Err(DeclarationError::PresenceConflict);
+        match required.iter_mut().find(|(seen, _)| *seen == target) {
+            Some((_, prior)) => {
+                *prior = prior
+                    .meet(*requires)
+                    .ok_or(DeclarationError::PresenceConflict)?;
             }
-        } else {
-            required.push((target, *requires));
+            None => required.push((target, *requires)),
         }
     }
     // A gate is an error arm the vocabulary can see. Trap freedom is what
@@ -2207,11 +2209,43 @@ mod tests {
             Err(DeclarationError::PresenceConflict)
         );
 
+        // The indifferent clause concedes rather than absorbing, so a
+        // requirement still meets its opposite across one written
+        // between them — in either order, and whichever side it sits.
+        for opposed in [
+            vec![
+                write(Presence::Either),
+                write(Presence::Absent),
+                write(Presence::Present),
+            ],
+            vec![
+                write(Presence::Present),
+                write(Presence::Either),
+                write(Presence::Absent),
+            ],
+            vec![
+                write(Presence::Absent),
+                write(Presence::Either),
+                write(Presence::Either),
+                write(Presence::Present),
+            ],
+        ] {
+            assert_eq!(declared(opposed), Err(DeclarationError::PresenceConflict));
+        }
+
         // What is not a contradiction: a named requirement beside the
         // indifferent one, the same requirement twice, and two named
         // requirements on targets that are not the same expression.
         assert_eq!(
             declared(vec![write(Presence::Either), write(Presence::Absent)]),
+            Ok(())
+        );
+        assert_eq!(
+            declared(vec![
+                write(Presence::Either),
+                write(Presence::Absent),
+                write(Presence::Absent),
+            ]),
             Ok(())
         );
         assert_eq!(

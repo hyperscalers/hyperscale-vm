@@ -69,6 +69,27 @@ pub enum Presence {
     Present,
 }
 
+impl Presence {
+    /// What two requirements on one leaf mean together, or `None` where
+    /// they mean nothing.
+    ///
+    /// Two writes on one cell are one write: `Either` concedes to a
+    /// named requirement, and two opposite names concede to nothing.
+    /// The lattice lives here alone because a declaration meets it
+    /// twice — at publish over target expressions, and where the effect
+    /// set is built over evaluated keys — and two copies would be two
+    /// answers to one question.
+    #[must_use]
+    pub const fn meet(self, other: Self) -> Option<Self> {
+        match (self, other) {
+            (Self::Either, met) | (met, Self::Either) => Some(met),
+            (Self::Absent, Self::Absent) => Some(Self::Absent),
+            (Self::Present, Self::Present) => Some(Self::Present),
+            (Self::Absent, Self::Present) | (Self::Present, Self::Absent) => None,
+        }
+    }
+}
+
 impl Mode {
     /// The mode's kind, for scheduling compatibility.
     #[must_use]
@@ -118,4 +139,27 @@ pub const fn compatible(a: ModeKind, b: ModeKind) -> bool {
                 ModeKind::Delta | ModeKind::Reserve
             )
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Presence;
+
+    /// The lattice both judges fold over: symmetric, idempotent, and
+    /// with the indifferent requirement as its unit.
+    #[test]
+    fn presence_meets_symmetrically_around_the_indifferent_unit() {
+        let all = [Presence::Either, Presence::Absent, Presence::Present];
+        for left in all {
+            assert_eq!(left.meet(left), Some(left), "idempotent");
+            assert_eq!(left.meet(Presence::Either), Some(left), "unit");
+            assert_eq!(Presence::Either.meet(left), Some(left), "unit");
+            for right in all {
+                assert_eq!(left.meet(right), right.meet(left), "symmetric");
+            }
+        }
+        // The one pair with no answer.
+        assert_eq!(Presence::Absent.meet(Presence::Present), None);
+        assert_eq!(Presence::Present.meet(Presence::Absent), None);
+    }
 }
