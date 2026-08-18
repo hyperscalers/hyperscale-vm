@@ -1038,6 +1038,50 @@ impl<T> Interval<T> {
         return host::entry_count(self.handle);
     }
 
+    /// The index `draw` selects over the entries currently here, or
+    /// `None` where there are none.
+    ///
+    /// Uniform over the entries *in the interval*, which is not the same
+    /// as uniform over everything the collection holds: a sweep sees at
+    /// most its declared cap, so a selection over a collection larger
+    /// than one page is uniform over that page and the rest cannot be
+    /// picked. A package that means the whole set cranks — sweeping
+    /// pages across transactions and reducing as it goes — because the
+    /// cap is fixed at publish and no declaration sizes itself by
+    /// reading state.
+    ///
+    /// The selection reasoning, once, because it is the protocol's
+    /// rather than a package's. The draw is the kernel's 32-byte word
+    /// and an index needs far fewer, so the low 128 bits are taken and
+    /// reduced: the modulo's bias is over a space no entry count
+    /// approaches, and the remainder is below a count that is a `u32` to
+    /// begin with, so the narrowing cannot fail. A package reasoning
+    /// about either would be reasoning about widths it was never told.
+    ///
+    /// **Rejected: rejection sampling.** Removing the bias entirely
+    /// costs an unbounded retry, and a declaration prices the work it
+    /// declares — a body that might loop is a body whose cost is not a
+    /// function of its signature. The bias is bounded, computable and
+    /// stated here rather than argued again in every package that picks.
+    ///
+    /// # Panics
+    ///
+    /// On a draw narrower than the sixteen bytes it reduces, which is
+    /// the kernel handing out a word narrower than the one it fixes.
+    #[must_use]
+    #[inline(always)]
+    pub fn picked(&self, draw: &[u8]) -> Option<u32> {
+        let entries = self.count();
+        if entries == 0 {
+            return None;
+        }
+        let word: [u8; 16] = draw[..16]
+            .try_into()
+            .expect("the draw is the kernel's own word");
+        let index = u128::from_le_bytes(word) % u128::from(entries);
+        Some(u32::try_from(index).expect("a remainder below a `u32` count is one"))
+    }
+
     /// The order key of the entry at `index`, ascending.
     #[must_use]
     #[inline(always)]
@@ -1061,6 +1105,16 @@ impl<T: Cellular> Interval<T> {
         return T::from_cell(&crate::guest::entry_get(self.handle, index));
         #[cfg(not(target_arch = "wasm32"))]
         return T::from_cell(&host::entry_get(self.handle, index));
+    }
+
+    /// The entry `draw` selects, or `None` over an empty interval.
+    ///
+    /// [`Interval::picked`] carries the reasoning; this is it beside the
+    /// read, because a body that picks wants what was picked.
+    #[must_use]
+    #[inline(always)]
+    pub fn pick(&self, draw: &[u8]) -> Option<T> {
+        self.picked(draw).map(|index| self.entry(index))
     }
 
     /// Replace the value at `index`.

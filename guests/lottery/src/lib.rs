@@ -56,7 +56,7 @@ pub mod lottery {
     struct Lottery {
         /// One entry per entrant, at the entrant's hashed order, so a
         /// second entry from one address lands on its own ticket.
-        tickets: Unordered<Vec<u8>>,
+        tickets: Unordered<Address>,
         /// The settled round.
         outcome: Cell<Option<Outcome>>,
     }
@@ -67,7 +67,7 @@ pub mod lottery {
             // The ticket holds the entrant, because the order key is a
             // hash and a hash names no winner: the draw has to be able to
             // say who it picked, not merely which slot.
-            self.tickets.at(who).set(who.to_bytes().to_vec());
+            self.tickets.at(who).set(who);
             self.vault(funds.resource()).put(funds);
             Entered { who }.emit();
         }
@@ -75,24 +75,15 @@ pub mod lottery {
         /// Settle the round on the transaction's own randomness.
         pub fn draw(&mut self) {
             let draw = randomness();
-            let tickets = self.tickets.sweep(0, 64);
-            let entrants = tickets.count();
             // A round nobody entered still drew: the draw is recorded, no
             // winner follows it, and the pot stands for the next round.
             // Refusing here would let an empty round wedge the lottery.
-            let winner = if entrants > 0 {
-                // The draw is 32 bytes and an index needs far fewer; the
-                // modulo's bias is over the top 128 bits of a space the
-                // entrant count never approaches.
-                let seed = u128::from_le_bytes(draw[..16].try_into().unwrap());
-                // The remainder is below the entrant count, which is a
-                // `u32` to begin with.
-                #[allow(clippy::cast_possible_truncation)]
-                let picked = (seed % u128::from(entrants)) as u32;
-                Address::from_bytes(tickets.entry(picked).try_into().unwrap()).ok()
-            } else {
-                None
-            };
+            //
+            // One page, so a round past the cap draws among the tickets
+            // the sweep saw. A lottery that meant the whole set would
+            // crank across transactions; this one is a fixture and says
+            // which it is.
+            let winner = self.tickets.sweep(0, 64).pick(&draw);
             // The width is the environment's, and the record states it:
             // a draw that is not thirty-two bytes is a defect in the
             // kernel rather than in this round.
