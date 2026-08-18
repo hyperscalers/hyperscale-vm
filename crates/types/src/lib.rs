@@ -27,9 +27,9 @@ pub mod writes;
 
 pub use address::text::{NetworkWord, TextError};
 pub use address::{
-    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, InvalidAddress, LEAF_KEY_BYTES,
-    LocalKey, NativeAddr, NotAResource, NotCallable, PackageAddr, PrincipalAddr, ResourceAddr,
-    ResourceRef, SubstateKey, WrongClass,
+    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, EffectTarget, InvalidAddress,
+    LEAF_KEY_BYTES, LocalKey, NativeAddr, NotAResource, NotCallable, PackageAddr, PrincipalAddr,
+    ResourceAddr, ResourceRef, SubstateKey, WrongClass,
 };
 pub use amount::{AMOUNT_CELL_BYTES, amount_cell, encode_amount, read_amount};
 pub use envelope::{

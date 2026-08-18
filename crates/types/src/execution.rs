@@ -15,7 +15,8 @@ pub const ISSUER_REP: u32 = 0;
 
 use hyperscale_hbor::Hbor;
 
-use crate::address::{Address, SubstateKey};
+use crate::address::{Address, EffectTarget, SubstateKey};
+use crate::mode::Presence;
 
 /// The events one transaction may emit.
 pub const MAX_EVENTS_PER_TX: usize = 256;
@@ -210,15 +211,6 @@ pub enum AbortReason {
     /// One transaction declaring an exclusive and a commutative mode on
     /// the same cell.
     SelfConflictingModes,
-    /// A write requiring an absent leaf, on a cell the store holds.
-    ///
-    /// The declaration's own precondition, judged against committed
-    /// state before the body runs — so a one-way door refuses with the
-    /// protocol's reason rather than a guest's trap.
-    CreateOnOccupied,
-    /// A write requiring a present leaf, on a cell the store does not
-    /// hold.
-    UpdateOfAbsent,
     /// An already-held reservation whose amount differs from the declared
     /// one.
     ReservationMismatch,
@@ -314,6 +306,26 @@ pub enum Outcome {
     Unauthorized {
         /// The calling node.
         node: u32,
+    },
+    /// A write whose declared presence requirement the committed leaf
+    /// does not meet.
+    ///
+    /// Priced with [`Outcome::Infeasible`] rather than as a defect, and
+    /// for the reason the taxonomy already gives twice: the sender
+    /// declared a precondition on committed state and the world moved
+    /// between signing and execution. A leaf created or removed by
+    /// somebody else is the same event a stored rule changing is, and
+    /// the protocol cannot tell that apart from a sender who declared
+    /// wrongly — the two leave identical state. Pricing the ambiguity as
+    /// a defect would charge every honest loser of the race to reach the
+    /// careless caller, and would make any leaf a third party can create
+    /// a lever for charging somebody else their whole declared ceiling.
+    PresenceUnmet {
+        /// The target whose leaf did not meet it.
+        target: EffectTarget,
+        /// What the write required of it. Never [`Presence::Either`],
+        /// which requires nothing and so cannot go unmet.
+        required: Presence,
     },
     /// A subintent this transaction commits was already spent.
     ///

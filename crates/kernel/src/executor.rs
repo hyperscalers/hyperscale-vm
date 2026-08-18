@@ -620,9 +620,10 @@ fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
 /// mode on a target that cannot carry it. A held reservation that does not
 /// match, or a store refusal, is the crate's own bookkeeping by its own
 /// taxonomy — charging the sender for it would price our defect to them.
-/// A reservation the committed balance cannot cover is neither: it is the
-/// lost race the taxonomy names, and it carries the cell and the amount
-/// rather than a class.
+/// Two are neither, and are the lost race the taxonomy names: a
+/// reservation the committed balance cannot cover, and a write whose
+/// presence requirement the committed leaf does not meet. Each carries
+/// what it was judged against rather than a class.
 impl From<MaterializeError> for Outcome {
     fn from(defect: MaterializeError) -> Self {
         materialize_abort(defect)
@@ -650,11 +651,13 @@ fn materialize_abort(defect: MaterializeError) -> Outcome {
         MaterializeError::SelfConflicting(_) => Outcome::UserError {
             reason: AbortReason::SelfConflictingModes,
         },
-        MaterializeError::Occupied(_) => Outcome::UserError {
-            reason: AbortReason::CreateOnOccupied,
+        MaterializeError::Occupied(target) => Outcome::PresenceUnmet {
+            target,
+            required: Presence::Absent,
         },
-        MaterializeError::Absent(_) => Outcome::UserError {
-            reason: AbortReason::UpdateOfAbsent,
+        MaterializeError::Absent(target) => Outcome::PresenceUnmet {
+            target,
+            required: Presence::Present,
         },
     }
 }

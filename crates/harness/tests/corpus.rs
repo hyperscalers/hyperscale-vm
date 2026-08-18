@@ -1155,8 +1155,12 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
     );
     assert_eq!(
         results,
-        vec![TxResult::Trapped(AbortReason::CreateOnOccupied)],
-        "a one-way door is a declared precondition, not a guest panic"
+        vec![TxResult::Refused(Outcome::PresenceUnmet {
+            target: EffectTarget::Point(auth(ALICE)),
+            required: Presence::Absent,
+        })],
+        "a one-way door is a declared precondition, not a guest panic — and \
+         losing the race to it is priced as one"
     );
     Ok(())
 }
@@ -1640,7 +1644,10 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() -> Result<()> {
     );
     assert_eq!(
         results,
-        vec![TxResult::Trapped(AbortReason::UpdateOfAbsent)]
+        vec![TxResult::Refused(Outcome::PresenceUnmet {
+            target: EffectTarget::Point(auth(ALICE)),
+            required: Presence::Present,
+        })]
     );
     Ok(())
 }

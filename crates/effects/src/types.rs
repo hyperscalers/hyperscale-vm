@@ -5,10 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::{
-    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, InvalidAddress, LocalKey, Mode,
-    ModeKind, NativeAddr, NetworkWord, NotAResource, NotCallable, PackageAddr, Presence,
-    PrincipalAddr, ResourceAddr, ResourceRef, SchemeId, SubstateKey, TextError, WrongClass,
-    compatible,
+    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, EffectTarget, InvalidAddress,
+    LocalKey, Mode, ModeKind, NativeAddr, NetworkWord, NotAResource, NotCallable, PackageAddr,
+    Presence, PrincipalAddr, ResourceAddr, ResourceRef, SchemeId, SubstateKey, TextError,
+    WrongClass, compatible,
 };
 
 use crate::hash::{Hash32, Hasher};
@@ -434,51 +434,6 @@ pub enum EdgeContent {
         #[hbor(max = MAX_IDS_PER_EDGE)]
         ids: Vec<u64>,
     },
-}
-
-/// One declared access target.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum EffectTarget {
-    /// A single substate leaf.
-    Point(SubstateKey),
-    /// One entry of an ordered collection, at a declared order key.
-    Entry {
-        /// The collection's owner.
-        owner: Address,
-        /// The collection's identity under the owner.
-        collection: CollectionId,
-        /// The entry's position in the collection's order-key space.
-        order: u128,
-    },
-    /// A declared interval of an ordered collection's order-key space.
-    ///
-    /// The interval is access-stable: it stays valid whatever entries enter
-    /// or leave it between signing and execution. Conflict against points
-    /// and other ranges is interval overlap.
-    Range {
-        /// The collection's owner.
-        owner: Address,
-        /// The collection's identity under the owner.
-        collection: CollectionId,
-        /// Inclusive lower order-key bound.
-        lo: u128,
-        /// Inclusive upper order-key bound.
-        hi: u128,
-        /// The maximum entries execution may touch within the interval.
-        cap: u32,
-    },
-}
-
-impl EffectTarget {
-    /// The owner whose prefix the target lives under — and therefore the
-    /// target's shard.
-    #[must_use]
-    pub const fn owner(&self) -> Address {
-        match self {
-            Self::Point(key) => key.owner,
-            Self::Entry { owner, .. } | Self::Range { owner, .. } => *owner,
-        }
-    }
 }
 
 /// A declared access: target plus mode.
