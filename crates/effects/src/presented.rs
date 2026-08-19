@@ -13,81 +13,82 @@
 //! about who may say it.
 
 use hyperscale_hbor::Hbor;
-use hyperscale_vm_types::{Address, AddressClass};
+use hyperscale_vm_types::{Address, CallTarget, ResourceAddr};
 
 use crate::types::Value;
 
 /// A claim a proof carries and a rule names.
+///
+/// Each case carries the narrowed address its meaning requires — an
+/// identity is something callable, a badge is a resource — so a claim
+/// pairing a case with the wrong class is unrepresentable, and a decoder
+/// meeting one fails closed rather than admitting a comparison no gate
+/// could ever mint one side of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 pub enum Presented {
     /// An account or component acting as itself.
-    Identity(Address),
+    Identity(CallTarget),
     /// A fungible badge the holder holds some of.
-    Resource(Address),
+    Resource(ResourceAddr),
     /// One named instance of a non-fungible badge.
-    Instance(Address, u64),
+    Instance(ResourceAddr, u64),
 }
 
 impl Presented {
     /// The claim a declared expression's value makes, or `None` for a
     /// value that names no claim at all.
     ///
-    /// Total and unambiguous on the address cases because a resource is
-    /// never an acting identity: [`CallTarget`] refuses a resource, so
-    /// the only thing minting a target's own address mints a component
-    /// or a principal. Which case an expression yields is therefore a
+    /// Unambiguous on the address cases because a resource is never an
+    /// acting identity: [`CallTarget`] refuses a resource, so the only
+    /// thing minting a target's own address mints a component or a
+    /// principal. Which case an expression yields is therefore a
     /// property of the address it evaluates to, not of the site that
     /// evaluated it — a gate naming a configured resource address wants
-    /// the badge, and says so by naming it.
+    /// the badge, and says so by naming it. An address that is neither
+    /// callable nor a resource — a package, a protocol role — names no
+    /// claim: no gate mints one, so a rule naming one could never be
+    /// satisfied anyway, and refusing it at the naming is the honest
+    /// spelling of that.
     ///
-    /// [`CallTarget`]: crate::graph::CallTarget
+    /// [`CallTarget`]: hyperscale_vm_types::CallTarget
     #[must_use]
     pub fn of(value: &Value) -> Option<Self> {
         match value {
-            Value::Address(address) => Some(Self::of_address(*address)),
+            Value::Address(address) => Self::of_address(*address),
             Value::Tuple(fields) => match fields.as_slice() {
-                [Value::Address(resource), Value::U64(id)]
-                    if resource.class() == AddressClass::Resource =>
-                {
-                    Some(Self::Instance(*resource, *id))
-                }
+                [Value::Address(resource), Value::U64(id)] => ResourceAddr::try_from(*resource)
+                    .ok()
+                    .map(|resource| Self::Instance(resource, *id)),
                 _ => None,
             },
             _ => None,
         }
     }
 
-    /// The claim one address makes: a resource is a badge, and every
-    /// other class is something acting as itself.
+    /// The claim one address makes: a resource is a badge, a callable
+    /// address is something acting as itself, and any other class names
+    /// no claim.
     #[must_use]
-    pub const fn of_address(address: Address) -> Self {
-        if matches!(address.class(), AddressClass::Resource) {
-            Self::Resource(address)
-        } else {
-            Self::Identity(address)
+    pub fn of_address(address: Address) -> Option<Self> {
+        if let Ok(resource) = ResourceAddr::try_from(address) {
+            return Some(Self::Resource(resource));
         }
+        CallTarget::try_from(address).ok().map(Self::Identity)
     }
 
     /// The resource or identity the claim is about, whichever it is.
     #[must_use]
     pub const fn address(&self) -> Address {
         match self {
-            Self::Identity(address) | Self::Resource(address) | Self::Instance(address, _) => {
-                *address
-            }
+            Self::Identity(target) => target.address(),
+            Self::Resource(resource) | Self::Instance(resource, _) => resource.address(),
         }
-    }
-}
-
-impl From<Address> for Presented {
-    fn from(address: Address) -> Self {
-        Self::of_address(address)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_types::{Address, AddressClass};
+    use hyperscale_vm_types::{Address, AddressClass, CallTarget, ResourceAddr};
 
     use super::Presented;
     use crate::types::{EdgeContent, Value};
@@ -106,20 +107,27 @@ mod tests {
         let badge = address(0xB0, AddressClass::Resource);
         assert_eq!(
             Presented::of(&Value::Address(badge)),
-            Some(Presented::Resource(badge))
+            Some(Presented::Resource(
+                ResourceAddr::try_from(badge).expect("a resource address"),
+            ))
         );
 
-        for class in [
-            AddressClass::Principal,
-            AddressClass::Component,
-            AddressClass::Package,
-            AddressClass::Native,
-        ] {
+        for class in [AddressClass::Principal, AddressClass::Component] {
             let who = address(0x11, class);
             assert_eq!(
                 Presented::of(&Value::Address(who)),
-                Some(Presented::Identity(who))
+                Some(Presented::Identity(
+                    CallTarget::try_from(who).expect("a callable address"),
+                ))
             );
+        }
+
+        // An address that is neither callable nor a resource names no
+        // claim: no gate can mint one, so a rule naming one could never
+        // be satisfied — refused at the naming instead.
+        for class in [AddressClass::Package, AddressClass::Native] {
+            let who = address(0x11, class);
+            assert_eq!(Presented::of(&Value::Address(who)), None);
         }
     }
 
@@ -131,7 +139,10 @@ mod tests {
         let badge = address(0xB0, AddressClass::Resource);
         assert_eq!(
             Presented::of(&Value::Tuple(vec![Value::Address(badge), Value::U64(7)])),
-            Some(Presented::Instance(badge, 7))
+            Some(Presented::Instance(
+                ResourceAddr::try_from(badge).expect("a resource address"),
+                7,
+            ))
         );
 
         // A non-resource with an id names nothing: only a resource has

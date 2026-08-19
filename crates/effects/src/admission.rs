@@ -14,7 +14,7 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
-use hyperscale_vm_types::{Address, AddressClass, EffectConflict, PrincipalAddr};
+use hyperscale_vm_types::{Address, EffectConflict, PrincipalAddr, ResourceAddr};
 
 use crate::dsl::{
     Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr, materialized_kind,
@@ -526,7 +526,7 @@ pub fn admit(
             graph,
             params: &[],
             bindings: &[],
-            signer: Some(composer.address()),
+            signer: Some(composer),
         }],
         identity,
         cache,
@@ -643,7 +643,7 @@ pub(crate) struct IntentView<'a> {
     pub bindings: &'a [YieldBinding],
     /// Whose signature this intent carries, and so whose identity its
     /// proof names. A bare graph is unsigned and produces none.
-    pub signer: Option<Address>,
+    pub signer: Option<PrincipalAddr>,
 }
 
 /// Check every intent's bindings and parameter consumption, interleave
@@ -1141,7 +1141,7 @@ impl Lower<'_> {
                     let signer = intent
                         .signer
                         .ok_or(AdmissionError::UnsignedEvidence { node: node_index })?;
-                    evidence.push(Presented::Identity(signer));
+                    evidence.push(Presented::Identity(signer.into()));
                 }
                 EvidenceRef::Node(producer) => {
                     // An earlier node of the same intent, whose minted
@@ -1246,7 +1246,8 @@ fn judge_gate(
         // holdings entry are the badge's own derivations.
         GateShape::Custody { cell: rule, claim } => {
             let badge = match eval(claim.badge())? {
-                Value::Address(badge) if badge.class() == AddressClass::Resource => badge,
+                Value::Address(badge) => ResourceAddr::try_from(badge)
+                    .map_err(|_| AdmissionError::MintType { node: node_index })?,
                 _ => return Err(AdmissionError::MintType { node: node_index }),
             };
             let Value::Key(cell) = eval(rule)? else {
@@ -1266,7 +1267,7 @@ fn judge_gate(
                         hasher,
                         holder,
                         VAULT,
-                        &[Value::Address(badge).canonical_bytes()],
+                        &[Value::Address(badge.address()).canonical_bytes()],
                     )),
                 ),
                 CustodyClaim::Instance { id, .. } => {
@@ -1280,7 +1281,7 @@ fn judge_gate(
                         vec![Presented::Instance(badge, id), Presented::Resource(badge)],
                         Possession::Instance {
                             owner: holder,
-                            holdings: holdings_collection(hasher, holder, badge),
+                            holdings: holdings_collection(hasher, holder, badge.address()),
                             id,
                         },
                     )
@@ -1310,7 +1311,7 @@ fn judge_gate(
             // An authorizing method's target acts as itself; a role-gated
             // one is judged and mints nothing.
             let claims = if matches!(signature.accessibility, Accessibility::Authorizing) {
-                vec![Presented::Identity(node.target.address())]
+                vec![Presented::Identity(node.target)]
             } else {
                 Vec::new()
             };

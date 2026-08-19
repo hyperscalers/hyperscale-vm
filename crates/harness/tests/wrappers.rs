@@ -15,7 +15,8 @@ use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
     EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
-    PackageHash, PackageMetadata, RoleSet, StoredRule, TestHasher, Value, admit, resource_address,
+    PackageHash, PackageMetadata, Presented, RoleSet, StoredRule, TestHasher, Value, admit,
+    resource_address,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -130,13 +131,13 @@ fn the_account_wrappers_match_their_signatures() {
         account::securify_uniform(
             b,
             carol,
-            StoredRule::Require(BOB.address().into()),
+            StoredRule::Require(Presented::Identity(BOB.into())),
             86_400_000,
         )?;
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(StoredRule::Require(BOB.address().into())),
+            RoleSet::uniform(StoredRule::Require(Presented::Identity(BOB.into()))),
             86_400_000,
         )?;
         account::cancel(b, ALICE)?;

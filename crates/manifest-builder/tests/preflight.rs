@@ -168,7 +168,7 @@ fn the_operator_surface_is_the_badge_holders_custody() {
     assert_eq!(
         report.authority[1].authority,
         Authority::Badge {
-            resource: badge().address(),
+            resource: badge(),
             instance: None,
         }
     );

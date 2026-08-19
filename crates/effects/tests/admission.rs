@@ -264,10 +264,7 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     // own declared read names; the guarded withdrawal keeps the pure
     // identity match.
     let authorize = &admitted.manifest().nodes[0];
-    assert_eq!(
-        authorize.evidence,
-        vec![Presented::Identity(ALICE.address())]
-    );
+    assert_eq!(authorize.evidence, vec![Presented::Identity(ALICE.into())]);
     assert_eq!(
         authorize.authority,
         Some(AuthorityGate::StoredRule {
@@ -277,14 +274,11 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     );
 
     let withdraw = &admitted.manifest().nodes[1];
-    assert_eq!(
-        withdraw.evidence,
-        vec![Presented::Identity(ALICE.address())]
-    );
+    assert_eq!(withdraw.evidence, vec![Presented::Identity(ALICE.into())]);
     assert_eq!(
         withdraw.authority,
         Some(AuthorityGate::Presented(StoredRule::Require(
-            Presented::Identity(ALICE.address())
+            Presented::Identity(ALICE.into())
         )))
     );
 
@@ -382,11 +376,11 @@ fn custodian_graph(custodian: ComponentAddr) -> ManifestGraph {
 /// accessibility mints at all.
 #[test]
 fn a_custodial_method_mints_the_badge_its_gate_verifies() {
-    let badge = Address::new([0xB0; 31], AddressClass::Resource);
+    let badge = ResourceAddr::new([0xB0; 31]);
 
     let (cache, instances, custodian) = custodian_world(
         Accessibility::Custodial(CustodyClaim::Fungible(Expr::Config(0))),
-        vec![Value::Address(badge)],
+        vec![Value::Address(badge.address())],
     );
     let admitted = admit(
         &custodian_graph(custodian),
@@ -405,7 +399,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
                 &TestHasher,
                 custodian,
                 VAULT,
-                &[Value::Address(badge).canonical_bytes()],
+                &[Value::Address(badge.address()).canonical_bytes()],
             )),
         }),
         "the gate is the holder's rule plus the badge-keyed vault"
@@ -427,8 +421,10 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     // An authorizing sign-in mints the target itself: satisfying one's
     // own rule is no feat, so an identity it could name beyond itself
     // would be forgeable — which is why the accessibility names none.
-    let (cache, instances, custodian) =
-        custodian_world(Accessibility::Authorizing, vec![Value::Address(badge)]);
+    let (cache, instances, custodian) = custodian_world(
+        Accessibility::Authorizing,
+        vec![Value::Address(badge.address())],
+    );
     let admitted = admit(
         &custodian_graph(custodian),
         ALICE,
@@ -439,7 +435,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     .expect("admits");
     assert_eq!(
         admitted.manifest().nodes[1].evidence,
-        vec![Presented::Identity(custodian.address())]
+        vec![Presented::Identity(custodian.into())]
     );
     // A badge that is not a resource address has nothing possessable
     // behind it.

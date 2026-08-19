@@ -28,7 +28,8 @@ use hyperscale_vm_effects::{
     ShardResolver, StoredRule, SubintentRecord, admit, admit_tree, footprint, route, route_tree,
 };
 use hyperscale_vm_types::{
-    Address, NetworkWord, PrincipalAddr, SchemeId, TextError, declared_work, signature_work,
+    Address, CallTarget, NetworkWord, PrincipalAddr, ResourceAddr, SchemeId, TextError,
+    declared_work, signature_work,
 };
 
 /// Why a transaction could not be preflighted.
@@ -70,7 +71,7 @@ pub enum Authority {
     /// which the same report shows as a node of its own.
     Badge {
         /// The badge resource.
-        resource: Address,
+        resource: ResourceAddr,
         /// The instance named, where the gate names one rather than the
         /// resource at large.
         instance: Option<u64>,
@@ -271,8 +272,10 @@ fn report(
     // other class derives from a hash of what it is, and nothing signs
     // for that.
     let claimed = |claim: &Presented| match claim {
-        Presented::Identity(identity) => PrincipalAddr::try_from(*identity)
-            .map_or(Authority::TargetHasNoKey, Authority::Signature),
+        Presented::Identity(identity) => match identity {
+            CallTarget::Principal(principal) => Authority::Signature(*principal),
+            CallTarget::Component(_) => Authority::TargetHasNoKey,
+        },
         Presented::Resource(resource) => Authority::Badge {
             resource: *resource,
             instance: None,

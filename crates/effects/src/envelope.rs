@@ -299,14 +299,14 @@ pub fn admit_tree(
         graph: &tree.root.graph,
         params: &tree.root.params,
         bindings: &tree.root_bindings,
-        signer: Some(composer.address()),
+        signer: Some(composer),
     });
     for subintent in &tree.subintents {
         views.push(IntentView {
             graph: &subintent.decl.graph,
             params: &subintent.decl.params,
             bindings: &subintent.bindings,
-            signer: Some(subintent.signer.address()),
+            signer: Some(subintent.signer),
         });
     }
     let admitted = admit_intents(&views, identity, cache, instances, hasher)?;

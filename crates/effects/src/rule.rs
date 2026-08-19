@@ -260,7 +260,7 @@ impl RuleExpr {
 #[cfg(test)]
 pub(crate) mod testing {
     use hyperscale_hbor::Hbor;
-    use hyperscale_vm_types::{Address, AddressClass};
+    use hyperscale_vm_types::{Address, AddressClass, CallTarget};
 
     use super::StoredRule;
     use crate::presented::Presented;
@@ -281,9 +281,15 @@ pub(crate) mod testing {
         Address::new([byte; 31], AddressClass::Principal)
     }
 
+    /// The same principal, narrowed to the position an identity claim
+    /// carries.
+    pub fn target(byte: u8) -> CallTarget {
+        CallTarget::try_from(principal(byte)).expect("a principal is callable")
+    }
+
     /// The claim that principal makes acting as itself.
     pub fn identity(byte: u8) -> Presented {
-        Presented::Identity(principal(byte))
+        Presented::Identity(target(byte))
     }
 
     /// `levels` thresholds over one identity: nests `levels + 1` deep.

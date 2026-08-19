@@ -41,11 +41,17 @@ pub const MAX_SUBINTENTS: usize = 32;
 /// success may burn.
 const ABORT_FLOOR_DIVISOR: u128 = 10;
 
-/// A transaction's identity: the hash of its envelope's canonical bytes.
+/// A transaction's identity: the protocol hash of its envelope's signing
+/// bytes.
 ///
-/// One value with two jobs that must never diverge: the kernel's canonical
-/// ordering key for every commutative-mode decision, and the name every
-/// consensus artifact — receipt, certificate, provision — attaches to.
+/// One value with three jobs that must never diverge: the kernel's
+/// canonical ordering key for every commutative-mode decision, the name
+/// every consensus artifact — receipt, certificate, provision — attaches
+/// to, and the root every fresh derivation and nullifier grows from. It
+/// covers exactly what the composer signed — the key and signature sit
+/// outside it — so a re-rolled signature over the same content is the
+/// same transaction, and two distinct transactions minting the same
+/// fresh key is unrepresentable rather than assumed away.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
 pub struct TxHash(pub Hash32);
@@ -214,8 +220,13 @@ impl TransactionEnvelope {
 
     /// The digest a signature over this envelope covers.
     ///
-    /// Also the identity fresh derivations root at: distinct signed
-    /// envelopes never mint the same fresh key.
+    /// Also the transaction's identity — [`TxHash`] is this digest under
+    /// the protocol hasher — and the root fresh derivations grow from,
+    /// which is what makes "distinct transactions never mint the same
+    /// fresh key" structural: an envelope differing only in its unsigned
+    /// key and signature fields is the same digest, the same identity,
+    /// and the same fresh keys, collapsed by dedup rather than admitted
+    /// twice.
     ///
     /// The domain is the preimage's, applied once. The hasher is asked for
     /// an undomained digest of it rather than for a second domain around

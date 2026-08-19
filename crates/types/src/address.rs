@@ -392,6 +392,14 @@ macro_rules! class_addr {
             const MIN_ENCODED_LEN: usize = 32;
         }
 
+        // Thirty-two bytes, always, exactly as the bare `Address`: the
+        // narrowing is a fact about construction, not about the wire, so
+        // the no-alloc total path is as open to the typed form as to the
+        // untyped one.
+        impl HborInfallible for $name {
+            const MAX_ENCODED_LEN: usize = 32;
+        }
+
         impl HborEncode for $name {
             fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
                 self.0.encode(encoder)
@@ -543,6 +551,12 @@ macro_rules! position_addr {
 
         impl HborWidth for $name {
             const MIN_ENCODED_LEN: usize = 32;
+        }
+
+        // As the class newtypes: the position is construction, the wire
+        // is thirty-two bytes, and the no-alloc total path stays open.
+        impl HborInfallible for $name {
+            const MAX_ENCODED_LEN: usize = 32;
         }
 
         impl HborEncode for $name {

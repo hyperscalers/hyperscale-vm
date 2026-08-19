@@ -80,10 +80,10 @@ pub fn auth(owner: impl Into<Address>) -> SubstateKey {
 }
 
 /// One identity as all three roles, under the corpus delay.
-pub fn uniform_base(identity: Address) -> AuthBase {
+pub fn uniform_base(identity: PrincipalAddr) -> AuthBase {
     AuthBase::new(
         DAY_MS,
-        &RoleSet::uniform(StoredRule::Require(identity.into())),
+        &RoleSet::uniform(StoredRule::Require(Presented::Identity(identity.into()))),
     )
     .expect("a rule within the vocabulary caps")
 }
@@ -587,7 +587,7 @@ pub fn propose_graph() -> ManifestGraph {
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(StoredRule::Require(Presented::of_address(BOB.address()))),
+            RoleSet::uniform(StoredRule::Require(Presented::Identity(BOB.into()))),
             DAY_MS,
         )
     })

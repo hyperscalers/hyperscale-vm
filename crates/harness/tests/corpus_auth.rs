@@ -70,14 +70,12 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
 
     // Alice's last act under the virtual rule: signing in for its
     // retirement. Everything she stores from here is governed by Bob.
-    let securify = securify_graph(StoredRule::Require(Presented::of_address(BOB.address())));
+    let securify = securify_graph(StoredRule::Require(Presented::Identity(BOB.into())));
     let (results, store) = run_both(&world, &store, &[(&securify, TxHash(Hash32([0x51; 32])))]);
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("securify must complete; got {:?}", results[0]);
     };
-    let cell_bytes = AuthCell::new(uniform_base(BOB.address()))
-        .to_bytes()
-        .unwrap();
+    let cell_bytes = AuthCell::new(uniform_base(BOB)).to_bytes().unwrap();
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
         Some(&Some(cell_bytes)),
@@ -115,7 +113,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     // than the guest's: `securify` declares a write requiring the cell
     // to be absent, so the shard holding it judges the door against
     // committed state and the body never runs.
-    let again = securify_graph(StoredRule::Require(Presented::of_address(BOB.address())));
+    let again = securify_graph(StoredRule::Require(Presented::Identity(BOB.into())));
     let (results, _) = run_both_signed(
         &world,
         &store,
@@ -145,17 +143,13 @@ fn chained_store() -> MemoryStore {
     store
         .write(
             auth(ALICE),
-            AuthCell::new(uniform_base(BOB.address()))
-                .to_bytes()
-                .unwrap(),
+            AuthCell::new(uniform_base(BOB)).to_bytes().unwrap(),
         )
         .unwrap();
     store
         .write(
             auth(MAKER),
-            AuthCell::new(uniform_base(ALICE.address()))
-                .to_bytes()
-                .unwrap(),
+            AuthCell::new(uniform_base(ALICE)).to_bytes().unwrap(),
         )
         .unwrap();
     store
@@ -247,11 +241,11 @@ fn a_proof_opens_only_the_account_that_minted_it() {
 /// The split-role setup every recovery test starts from: Alice holds
 /// primary, Bob recovery, the maker confirmation, and the corpus delay
 /// separates a proposal from its maturity.
-const fn split_roles() -> RoleSet {
+fn split_roles() -> RoleSet {
     RoleSet {
-        primary: StoredRule::Require(Presented::of_address(ALICE.address())),
-        recovery: StoredRule::Require(Presented::of_address(BOB.address())),
-        confirmation: StoredRule::Require(Presented::of_address(MAKER.address())),
+        primary: StoredRule::Require(Presented::Identity(ALICE.into())),
+        recovery: StoredRule::Require(Presented::Identity(BOB.into())),
+        confirmation: StoredRule::Require(Presented::Identity(MAKER.into())),
     }
 }
 
@@ -351,7 +345,7 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
         base: split_base(),
         proposal: Some(Proposal {
             effective_at_ms: t0 + DAY_MS,
-            base: uniform_base(BOB.address()),
+            base: uniform_base(BOB),
         }),
     };
     assert_eq!(
@@ -385,11 +379,7 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(
-            AuthCell::new(uniform_base(BOB.address()))
-                .to_bytes()
-                .unwrap()
-        )),
+        Some(&Some(AuthCell::new(uniform_base(BOB)).to_bytes().unwrap())),
         "cancelling a matured proposal is compaction, not reversal"
     );
     assert_acts(&world, &store, ALICE, at, false, 0x67);
@@ -482,11 +472,7 @@ fn confirmation_enacts_a_proposal_early() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(
-            AuthCell::new(uniform_base(BOB.address()))
-                .to_bytes()
-                .unwrap()
-        )),
+        Some(&Some(AuthCell::new(uniform_base(BOB)).to_bytes().unwrap())),
         "confirm promotes the proposal whole"
     );
 
@@ -518,7 +504,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(StoredRule::Require(Presented::of_address(MAKER.address()))),
+            RoleSet::uniform(StoredRule::Require(Presented::Identity(MAKER.into()))),
             DAY_MS,
         )
     });
@@ -536,7 +522,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         base: split_base(),
         proposal: Some(Proposal {
             effective_at_ms: later + DAY_MS,
-            base: uniform_base(MAKER.address()),
+            base: uniform_base(MAKER),
         }),
     };
     assert_eq!(
@@ -557,7 +543,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(StoredRule::Require(Presented::of_address(BOB.address()))),
+            RoleSet::uniform(StoredRule::Require(Presented::Identity(BOB.into()))),
             DAY_MS,
         )
     });

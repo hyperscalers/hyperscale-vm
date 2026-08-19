@@ -13,7 +13,7 @@
 //! compaction of what reads already answer, never a change of verdict.
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
-use hyperscale_vm_types::Address;
+use hyperscale_vm_types::{Address, CallTarget};
 
 use crate::presented::Presented;
 use crate::rule::{MAX_RULE_WIRE_DEPTH, StoredRule};
@@ -252,7 +252,10 @@ impl AuthCell {
         clock_ms: u64,
     ) -> bool {
         if stored.is_empty() {
-            return evidence.contains(&Presented::Identity(target));
+            // A target is callable by construction; anything else has no
+            // virtual rule to satisfy and fails closed.
+            return CallTarget::try_from(target)
+                .is_ok_and(|target| evidence.contains(&Presented::Identity(target)));
         }
         Self::from_slice(stored).is_ok_and(|cell| {
             cell.governing(clock_ms)
@@ -270,7 +273,6 @@ mod tests {
     use super::{
         AuthBase, AuthCell, AuthRole, MAX_AUTH_CELL_WIRE_DEPTH, Proposal, RoleSet, StoredRoles,
     };
-    use crate::presented::Presented;
     use crate::rule::testing::{WideRule, chain, identity, principal, wide_chain};
     use crate::rule::{MAX_RULE_DEPTH, StoredRule};
 
@@ -491,14 +493,14 @@ mod tests {
             &[],
             target,
             AuthRole::Primary,
-            &[Presented::Identity(target)],
+            &[identity(1)],
             0
         ));
         assert!(AuthCell::admits(
             &[],
             target,
             AuthRole::Recovery,
-            &[Presented::Identity(target)],
+            &[identity(1)],
             u64::MAX
         ));
         assert!(!AuthCell::admits(
@@ -544,7 +546,7 @@ mod tests {
             &[0xFF, 0xFF],
             target,
             AuthRole::Primary,
-            &[Presented::Identity(target)],
+            &[identity(1)],
             0
         ));
     }

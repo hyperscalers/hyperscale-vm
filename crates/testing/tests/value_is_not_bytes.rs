@@ -275,7 +275,7 @@ fn impostor_body(
             let cell = AuthCell::new(
                 AuthBase::new(
                     0,
-                    &RoleSet::uniform(StoredRule::Require(Presented::Identity(ATTACKER.address()))),
+                    &RoleSet::uniform(StoredRule::Require(Presented::Identity(ATTACKER.into()))),
                 )
                 .expect("a rule within the caps"),
             );
