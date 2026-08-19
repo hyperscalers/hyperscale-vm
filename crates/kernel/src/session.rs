@@ -2316,7 +2316,7 @@ mod tests {
     use super::{
         Capability, EnvInputs, Event, Held, Holds, KernelSession, MAX_EVENT_PAYLOAD_BYTES,
         MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, MathError, Outcome, SCAN_SEEK_BYTES,
-        SessionTrap, U256, holds_of,
+        SessionTrap, U256, capability_for, holds_of,
     };
     use crate::ledger::AmountLedger;
     use crate::modes::{AMOUNT_CELL_BYTES, TxHash, decode_amount, encode_amount};
@@ -2871,6 +2871,107 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &set);
         assert_eq!(session.read_cell(7), Err(SessionTrap::UnknownHandle(7)));
         assert_eq!(session.range_count(7), Err(SessionTrap::UnknownHandle(7)));
+    }
+
+    /// Publish refuses exactly the pairings materialization cannot build.
+    ///
+    /// The two answers are written apart and read different things — one
+    /// the target expressions a signature carries, one the evaluated
+    /// effect — so a pairing the first admitted and the second could not
+    /// build would be a package published and unusable, aborting every
+    /// call at a clause its author was told nothing about. Held here over
+    /// every shape and mode the vocabulary has, because the boundary is
+    /// one boundary however many places read it.
+    #[test]
+    fn the_pairings_publish_refuses_are_the_ones_no_capability_is_built_for() {
+        use hyperscale_vm_effects::{
+            Clause, Expr, ModeExpr, TargetExpr, Value, materialized_kind, package_slot,
+        };
+
+        let store = OverlayStore::new(Arc::new(MemoryStore::new()));
+        let owner = Address::new([3; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let resource = || Expr::Literal(Value::Address(RESOURCE));
+        let targets = [
+            (
+                TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot: package_slot(0),
+                    material: vec![resource()],
+                }),
+                EffectTarget::Point(key(1)),
+            ),
+            (
+                TargetExpr::Entry {
+                    owner: Expr::SelfAddr,
+                    collection: package_slot(1),
+                    material: vec![resource()],
+                    order: Expr::Literal(Value::U128(1)),
+                },
+                EffectTarget::Entry {
+                    owner,
+                    collection,
+                    order: 1,
+                },
+            ),
+            (
+                TargetExpr::Range {
+                    owner: Expr::SelfAddr,
+                    collection: package_slot(2),
+                    material: vec![resource()],
+                    lo: Expr::Literal(Value::U128(0)),
+                    hi: Expr::Literal(Value::U128(u128::MAX)),
+                    cap: 4,
+                },
+                EffectTarget::Range {
+                    owner,
+                    collection,
+                    lo: 0,
+                    hi: u128::MAX,
+                    cap: 4,
+                },
+            ),
+        ];
+        let modes = [
+            (ModeExpr::Read, Mode::Read),
+            (ModeExpr::Locked, Mode::Locked),
+            (
+                ModeExpr::Write {
+                    requires: Presence::Either,
+                },
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+            ),
+            (ModeExpr::Delta, Mode::Delta),
+            (ModeExpr::Reserve(Expr::Arg(0)), Mode::Reserve { amount: 1 }),
+        ];
+
+        // Denominated throughout, so a movement refused for saying
+        // nothing cannot stand in for one refused for its shape.
+        for (declared, target) in &targets {
+            for (spelled, mode) in &modes {
+                let clause = Clause::Effect {
+                    guard: None,
+                    target: declared.clone(),
+                    mode: spelled.clone(),
+                    denomination: Some(Box::new(resource())),
+                };
+                let built = capability_for(
+                    &store,
+                    Effect {
+                        target: *target,
+                        mode: *mode,
+                    },
+                    true,
+                );
+                assert_eq!(
+                    materialized_kind(&clause).is_none(),
+                    matches!(built, Err(MaterializeError::Unsupported(_))),
+                    "{declared:?} {spelled:?} materialised {built:?}"
+                );
+            }
+        }
     }
 
     /// One cell holds one thing, judged where two expressions that

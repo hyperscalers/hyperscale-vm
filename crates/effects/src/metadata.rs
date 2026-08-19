@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::auth::{AuthRole, RoleSet};
 use crate::dsl::{
     Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_RANGE_CAP,
-    ModeExpr, TargetExpr,
+    ModeExpr, TargetExpr, materialized_kind,
 };
 use crate::hash::{Hash32, Hasher};
 use crate::invoke::EdgeKind;
@@ -914,6 +914,22 @@ pub enum DeclarationError {
         /// The slot named.
         slot: u16,
     },
+    /// A mode and target pairing the world hands out no handle for.
+    ///
+    /// Every declared access is a capability a body borrows, and which
+    /// one is a function of the target's shape and the mode: a leaf is
+    /// read, locked, rewritten or moved through, and an interval is read
+    /// or rewritten. A pairing outside that materializes nothing, so it
+    /// is a clause every call aborts at — and a declaration stating an
+    /// access no execution can hold is worse than one that never
+    /// published. Refused again at materialization, which is where the
+    /// abort would have come from.
+    #[error("effect clause {clause} pairs a mode and a target no handle is built for")]
+    UnsupportedAccess {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+    },
     /// Two clauses reaching one cell and disagreeing about what it holds.
     ///
     /// A denomination chooses which handle the clause materializes, so a
@@ -1211,22 +1227,35 @@ fn complementary(left: Option<&Expr>, right: Option<&Expr>) -> bool {
 }
 
 /// Judge one access clause: whose prefix it names, which cell under that
-/// prefix, what that cell holds, and what it requires of the leaf.
+/// prefix, whether the world hands out a handle for reaching it that way,
+/// what that cell holds, and what it requires of the leaf.
 ///
 /// Ordered as an author would want to hear it. A clause reaching a
 /// stranger's leaf is wrong about more than its shape, and a clause
 /// naming a protocol cell hears that cell's own sentence before the
 /// general rules the sentence is a special case of.
-fn judge_access(
-    clause: u32,
-    target: &TargetExpr,
-    mode: &ModeExpr,
-    denomination: Option<&Expr>,
-) -> Result<(), DeclarationError> {
+fn judge_access(clause: u32, access: &Clause) -> Result<(), DeclarationError> {
+    let Clause::Effect {
+        target,
+        mode,
+        denomination,
+        ..
+    } = access
+    else {
+        return Ok(());
+    };
+    let denomination = denomination.as_deref();
     if !targets_own_prefix(target) {
         return Err(DeclarationError::ForeignPrefix { clause });
     }
     protocol_shape(clause, target, mode, denomination)?;
+    // And whether the world hands out anything for this pairing at all.
+    // Asked of the clause through the same function an engine reads a
+    // handle's type off, so publish refuses exactly what materialization
+    // could not have built.
+    if materialized_kind(access).is_none() {
+        return Err(DeclarationError::UnsupportedAccess { clause });
+    }
     // What a cell holds is part of the key it is reached by, so the two
     // are one expression written twice. A fresh key carries no material
     // and so holds no value: nothing could find it again to take any
@@ -1279,23 +1308,14 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
             let clause_index = *next;
             *next = next.saturating_add(1);
             match clause {
-                Clause::Effect {
-                    target,
-                    mode,
-                    denomination,
-                    ..
-                } => judge_access(clause_index, target, mode, denomination.as_deref())?,
+                Clause::Effect { .. } => judge_access(clause_index, clause)?,
                 Clause::ForEach { body, .. } => walk(body, next)?,
             }
         }
         Ok(())
     }
-    // Clauses on one target are one access, and a presence requirement
-    // each way is a requirement nothing satisfies. Folded down the
-    // clause list by [`Presence::meet`] rather than compared pairwise,
-    // so a named requirement survives an indifferent clause written
-    // between it and its opposite — which is the whole of what the set
-    // will do to the evaluated keys later.
+    // Two writes on one target that can both fire are one write, and a
+    // presence requirement each way is a requirement nothing satisfies.
     //
     // Compared by target expression rather than by evaluated key,
     // because this runs at publish where no arguments exist — which
@@ -1304,34 +1324,40 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     //
     // Two clauses that cannot both fire are not a contradiction, and
     // "create it if absent, otherwise update it" is exactly the shape
-    // that takes. So the fold compares guards beside targets and lets
+    // that takes. So the comparison reads guards beside targets and lets
     // complementary ones through — syntactically complementary, one the
     // `Not` of the other, which is what an `if`/`else` emits and the
     // same standard the target comparison beside it already holds to.
     // The evaluated conflict in `EffectSet::insert` is untouched: two
     // clauses that cannot both fire never both land.
-    let mut required: Vec<(&TargetExpr, Option<&Expr>, Presence)> = Vec::new();
-    for clause in flat_clauses(&signature.effects) {
-        let Clause::Effect {
-            guard,
-            target,
-            mode: ModeExpr::Write { requires },
-            ..
-        } = clause
-        else {
-            continue;
-        };
-        let guard = guard.as_deref();
-        let met = required
-            .iter_mut()
-            .find(|(seen, seen_guard, _)| *seen == target && !complementary(*seen_guard, guard));
-        match met {
-            Some((_, _, prior)) => {
-                *prior = prior
+    //
+    // Every pair rather than a fold into one requirement per target,
+    // because co-firing is a relation between two clauses and not a
+    // property of the target they share: a clause complementary to one
+    // of the others still meets all the rest, and a fold that stopped at
+    // the first meeting would never ask about them. Nothing is lost by
+    // comparing originals — `Either` meets everything, so an accumulated
+    // requirement is only ever one of the two it came from, and a
+    // contradiction a fold could reach is one some pair already has.
+    let writes: Vec<(&TargetExpr, Option<&Expr>, Presence)> = flat_clauses(&signature.effects)
+        .into_iter()
+        .filter_map(|clause| match clause {
+            Clause::Effect {
+                guard,
+                target,
+                mode: ModeExpr::Write { requires },
+                ..
+            } => Some((target, guard.as_deref(), *requires)),
+            _ => None,
+        })
+        .collect();
+    for (index, (target, guard, requires)) in writes.iter().enumerate() {
+        for (seen, seen_guard, prior) in &writes[..index] {
+            if seen == target && !complementary(*seen_guard, *guard) {
+                prior
                     .meet(*requires)
                     .ok_or(DeclarationError::PresenceConflict)?;
             }
-            None => required.push((target, guard, *requires)),
         }
     }
     // What a cell holds is a fact about the cell rather than about the
@@ -2818,6 +2844,125 @@ mod tests {
         );
     }
 
+    /// Every pair of writes that can both fire is compared, not just the
+    /// first that meets.
+    ///
+    /// Complementarity is a relation between two clauses rather than a
+    /// property of the target they share, so a clause complementary to
+    /// one of the others still meets all the rest — and a fold that
+    /// stopped at the first meeting would carry a contradiction past the
+    /// gate for the evaluated set to find later, where an author cannot
+    /// hear it.
+    #[test]
+    fn a_write_meets_every_other_write_it_can_fire_beside() {
+        let cond = || Expr::Eq(Box::new(Expr::Arg(0)), Box::new(Expr::Config(0)));
+        let write = |guard: Option<Expr>, requires| Clause::Effect {
+            guard: guard.map(Box::new),
+            target: own_point(package_slot(0), vec![]),
+            mode: ModeExpr::Write { requires },
+            denomination: None,
+        };
+        let declared = |clauses: Vec<Clause>| {
+            check_declarations(&MethodSignature {
+                effects: clauses,
+                ..MethodSignature::default()
+            })
+        };
+
+        // The arms of one branch, and a third clause that fires always.
+        // It meets the first, which agrees with it — and contradicts the
+        // second, which is the pair the fold would never have asked
+        // about.
+        assert_eq!(
+            declared(vec![
+                write(Some(cond()), Presence::Absent),
+                write(Some(Expr::Not(Box::new(cond()))), Presence::Present),
+                write(None, Presence::Absent),
+            ]),
+            Err(DeclarationError::PresenceConflict)
+        );
+        // The same three in the order that hides it best: the always-
+        // firing clause is written first, so the arm that agrees with it
+        // is met before the arm that does not.
+        assert_eq!(
+            declared(vec![
+                write(None, Presence::Absent),
+                write(Some(cond()), Presence::Absent),
+                write(Some(Expr::Not(Box::new(cond()))), Presence::Present),
+            ]),
+            Err(DeclarationError::PresenceConflict)
+        );
+        // And the shape that is not a contradiction still stands beside
+        // a third clause nothing disagrees with.
+        assert_eq!(
+            declared(vec![
+                write(Some(cond()), Presence::Absent),
+                write(Some(Expr::Not(Box::new(cond()))), Presence::Present),
+                write(None, Presence::Either),
+            ]),
+            Ok(())
+        );
+    }
+
+    /// A declaration states an access some execution can hold, or it does
+    /// not publish.
+    ///
+    /// The world hands out one handle per declared access and reads its
+    /// type off the target's shape and the mode. A pairing it has no
+    /// handle for is a clause every call aborts at — and the gate that
+    /// exists to answer an author is the place to say so, rather than
+    /// leaving a package published and unusable.
+    #[test]
+    fn a_pairing_no_handle_is_built_for_does_not_publish() {
+        let declared = |target, mode, denomination: Option<Expr>| {
+            check_declarations(&MethodSignature {
+                effects: vec![Clause::Effect {
+                    guard: None,
+                    target,
+                    mode,
+                    denomination: denomination.map(Box::new),
+                }],
+                ..MethodSignature::default()
+            })
+        };
+        let entry = || TargetExpr::Entry {
+            owner: Expr::SelfAddr,
+            collection: package_slot(0),
+            material: vec![a_resource()],
+            order: Expr::Literal(Value::U128(1)),
+        };
+        let interval = || own_interval(package_slot(1), vec![a_resource()]);
+        let refused = Err(DeclarationError::UnsupportedAccess { clause: 0 });
+
+        // Value moves through a leaf, never through an interval: a
+        // collection's entries move by being named, which is what a
+        // rewrite of the interval is.
+        for target in [entry(), interval()] {
+            for mode in [ModeExpr::Delta, ModeExpr::Reserve(Expr::Arg(0))] {
+                assert_eq!(
+                    declared(target.clone(), mode.clone(), Some(a_resource())),
+                    refused,
+                    "{target:?} {mode:?}"
+                );
+            }
+            // Nor is a collection something a locked read names: what a
+            // lock pins is one leaf's value.
+            assert_eq!(declared(target.clone(), ModeExpr::Locked, None), refused);
+            // The two it does have.
+            assert_eq!(declared(target.clone(), ModeExpr::Read, None), Ok(()));
+            assert_eq!(
+                declared(
+                    target,
+                    ModeExpr::Write {
+                        requires: Presence::Either
+                    },
+                    Some(a_resource()),
+                ),
+                Ok(())
+            );
+        }
+    }
+
     /// Trap freedom for a total leg rests on every declared handle being
     /// materialized, and a guarded-out clause materializes none. The
     /// mark and the precision are the trade.
@@ -3528,12 +3673,14 @@ mod tests {
     /// where its author can see it.
     #[test]
     fn a_signature_reaching_another_prefix_is_refused() {
-        let declaring = |target: TargetExpr| MethodSignature {
+        // Each target in a mode it has a handle for: value moves through
+        // a leaf, and an entry of a collection is rewritten.
+        let declaring = |target: TargetExpr, mode: ModeExpr| MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Effect {
                 guard: None,
                 target,
-                mode: ModeExpr::Delta,
+                mode,
                 denomination: Some(Box::new(a_resource())),
             }],
             ..MethodSignature::default()
@@ -3545,28 +3692,27 @@ mod tests {
                 material: vec![a_resource()],
             })
         };
+        let entry_of = |slot: u16, order: u128| TargetExpr::Entry {
+            owner: Expr::SelfAddr,
+            collection: SlotId(slot),
+            material: vec![a_resource()],
+            order: Expr::Literal(Value::U128(order)),
+        };
+        let write = || ModeExpr::Write {
+            requires: Presence::Either,
+        };
 
         // Its own prefix, however the key under it is derived.
         assert_eq!(
-            check_declarations(&declaring(child_of(Expr::SelfAddr))),
+            check_declarations(&declaring(child_of(Expr::SelfAddr), ModeExpr::Delta)),
             Ok(())
         );
         assert_eq!(
-            check_declarations(&declaring(TargetExpr::Entry {
-                owner: Expr::SelfAddr,
-                collection: SlotId(PACKAGE_SLOT_BASE + 2),
-                material: vec![a_resource()],
-                order: Expr::Literal(Value::U128(1)),
-            })),
+            check_declarations(&declaring(entry_of(PACKAGE_SLOT_BASE + 2, 1), write())),
             Ok(())
         );
         assert_eq!(
-            check_declarations(&declaring(TargetExpr::Entry {
-                owner: Expr::SelfAddr,
-                collection: SlotId(PACKAGE_SLOT_BASE + 1),
-                material: vec![a_resource()],
-                order: Expr::Literal(Value::U128(0)),
-            })),
+            check_declarations(&declaring(entry_of(PACKAGE_SLOT_BASE + 1, 0), write())),
             Ok(())
         );
 
@@ -3581,7 +3727,7 @@ mod tests {
             ))),
         ] {
             assert_eq!(
-                check_declarations(&declaring(child_of(owner))),
+                check_declarations(&declaring(child_of(owner), ModeExpr::Delta)),
                 Err(DeclarationError::ForeignPrefix { clause: 0 })
             );
         }
