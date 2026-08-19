@@ -36,6 +36,7 @@ fn the_tracer_offers_a_presence_only_where_a_leaf_is_named() {
 fn the_lowering_refuses_what_it_would_declare_wrongly() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/aliased_slot.rs");
+    refuse.compile_fail("tests/refusals/mixed_pinning.rs");
     refuse.compile_fail("tests/refusals/claims_cell.rs");
     refuse.compile_fail("tests/refusals/mode_mix.rs");
     refuse.compile_fail("tests/refusals/presence_mix.rs");

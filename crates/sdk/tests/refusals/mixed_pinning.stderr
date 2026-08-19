@@ -1,0 +1,5 @@
+error: a `#[state]` struct pins every slot or none: `seen` and `stamped` disagree, and a mix lets an insertion renumber the unpinned fields under an in-place upgrade
+  --> tests/refusals/mixed_pinning.rs:11:9
+   |
+11 |         stamped: Cell<u64>,
+   |         ^^^^^^^

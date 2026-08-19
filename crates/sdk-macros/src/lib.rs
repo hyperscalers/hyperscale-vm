@@ -214,7 +214,8 @@ fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
     // instance addresses commit to its hash: reordering fields produces a
     // different package at a different address rather than relocating
     // anything live. A system package upgrades in place under one address
-    // and pins every slot, which is what `#[slot(n)]` is left for.
+    // and pins every slot, which is what `#[slot(n)]` is left for — and
+    // the field walk holds each struct to one discipline or the other.
     let slot = pinned.unwrap_or(next);
 
     let syn::Type::Path(path) = &field.ty else {
@@ -917,8 +918,29 @@ fn parse_state(
             continue;
         }
         state_name = Some(item.ident.clone());
+        // Whether this struct pins its slots, decided by its first field
+        // and held to by the rest. Declaration order numbers the
+        // unpinned, so a mix would let an insertion renumber the fields
+        // below it — under an in-place upgrade, that is a read of the
+        // wrong leaf.
+        let mut pinning: Option<(bool, String)> = None;
         for field in &item.fields {
             let (name, parsed) = parse_field(field, next)?;
+            let pins = field.attrs.iter().any(|a| a.path().is_ident("slot"));
+            match &pinning {
+                None => pinning = Some((pins, name.clone())),
+                Some((discipline, holder)) if *discipline != pins => {
+                    return Err(syn::Error::new(
+                        field.span(),
+                        format!(
+                            "a `#[state]` struct pins every slot or none: `{holder}` and \
+                             `{name}` disagree, and a mix lets an insertion renumber the \
+                             unpinned fields under an in-place upgrade"
+                        ),
+                    ));
+                }
+                Some(_) => {}
+            }
             if reserved.contains_key(&name) {
                 return Err(syn::Error::new(
                     field.span(),
