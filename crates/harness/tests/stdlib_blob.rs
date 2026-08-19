@@ -30,8 +30,8 @@ use hyperscale_vm_runtime::validate_component;
 use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Movement,
-    Presence, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, CollectionId, Denomination, Effect, EffectSet, EffectTarget, Event,
+    Mode, Movement, Presence, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::Context;
@@ -88,7 +88,10 @@ fn session() -> KernelSession {
     // Both cells the transfer moves between hold the same resource,
     // which is what makes the credit a transfer rather than a
     // conversion.
-    let denominations: Vec<_> = declared.iter().map(|_| Some(RESOURCE)).collect();
+    let denominations: Vec<_> = declared
+        .iter()
+        .map(|_| Some(Denomination::try_from(RESOURCE).expect("a resource-class address")))
+        .collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &Declaration {
@@ -414,7 +417,10 @@ fn lottery_session() -> KernelSession {
     // and the settled draw are records the round writes.
     let denominations: Vec<_> = declared
         .iter()
-        .map(|effect| matches!(effect.mode, Mode::Delta).then_some(RESOURCE))
+        .map(|effect| {
+            matches!(effect.mode, Mode::Delta)
+                .then(|| Denomination::try_from(RESOURCE).expect("a resource-class address"))
+        })
         .collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(MemoryStore::new())),

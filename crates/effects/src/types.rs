@@ -3,8 +3,8 @@
 
 use hyperscale_hbor::{Hbor, to_vec};
 use hyperscale_vm_types::{
-    Address, CollectionId, ComponentAddr, LocalKey, NativeAddr, PackageAddr, PrincipalAddr,
-    ResourceAddr, SchemeId, SubstateKey,
+    Address, CollectionId, ComponentAddr, Denomination, LocalKey, NativeAddr, PackageAddr,
+    PrincipalAddr, ResourceAddr, SchemeId, SubstateKey,
 };
 
 use crate::hash::{Hash32, Hasher};
@@ -350,7 +350,7 @@ pub enum Value {
     /// and what it carries besides.
     Bucket {
         /// The resource the edge carries.
-        resource: Address,
+        resource: Denomination,
         /// What crosses the edge: a dynamic amount, or named instances.
         content: EdgeContent,
     },
@@ -451,7 +451,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_hbor::{assert_canonical, from_slice_with_depth};
-    use hyperscale_vm_types::AddressClass;
+    use hyperscale_vm_types::{AddressClass, ResourceAddr};
 
     use super::{
         Address, EdgeContent, LocalKey, MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH, NativeRole,
@@ -480,11 +480,11 @@ mod tests {
         assert_eq!(value.canonical_bytes(), to_vec(&value).unwrap());
         assert_canonical(&value);
         assert_canonical(&Value::Bucket {
-            resource: Address::new([7; 31], AddressClass::Component),
+            resource: ResourceAddr::new([7; 31]).into(),
             content: EdgeContent::Fungible,
         });
         assert_canonical(&Value::Bucket {
-            resource: Address::new([7; 31], AddressClass::Component),
+            resource: ResourceAddr::new([7; 31]).into(),
             content: EdgeContent::NonFungible { ids: vec![3, 9] },
         });
     }

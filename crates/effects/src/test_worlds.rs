@@ -1,7 +1,7 @@
 //! Shared test worlds: small published packages, their instances, and
 //! the manifests that call them.
 
-use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, Presence};
+use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, Denomination, Presence};
 
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::hash::{Hash32, Hasher, TestHasher};
@@ -10,7 +10,7 @@ use crate::manifest::{Bounds, Manifest, Node, NodeInput};
 use crate::metadata::{MetadataCache, PackageHash, PackageMetadata};
 use crate::route::PrefixShardResolver;
 use crate::signature::{MethodSignature, ParamType, Totality};
-use crate::types::{EdgeContent, SlotId, Value};
+use crate::types::{EdgeContent, SlotId, Value, resource_address};
 
 pub fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
@@ -33,6 +33,17 @@ pub fn meta_of(package: &str) -> InstanceMeta {
 /// what the registry resolves back to the record.
 pub fn instance_of(package: &str) -> ComponentAddr {
     meta_of(package).address(&TestHasher)
+}
+
+/// The resource an instance of `package` issues from empty material —
+/// what a fixture producer's `SelfResource` output evaluates to.
+pub fn issued_by(package: &str) -> Denomination {
+    resource_address(&TestHasher, instance_of(package), &[]).into()
+}
+
+/// A resource-class literal, for a fixture that names one directly.
+pub fn resource(byte: u8) -> Address {
+    Address::new([byte; 31], AddressClass::Resource)
 }
 
 pub fn self_point(slot: SlotId, mode: ModeExpr) -> Clause {
@@ -72,7 +83,7 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
     vault_pkg.methods.insert(
         "withdraw".into(),
         MethodSignature {
-            outputs: vec![Expr::SelfAddr],
+            outputs: vec![Expr::SelfResource { material: vec![] }],
             effects: vec![self_point(SlotId(1), ModeExpr::Reserve(Expr::Arg(0)))],
             ..MethodSignature::default()
         },
@@ -81,7 +92,7 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
     venue_pkg.methods.insert(
         "swap".into(),
         MethodSignature {
-            outputs: vec![Expr::SelfAddr],
+            outputs: vec![Expr::SelfResource { material: vec![] }],
             effects: vec![self_point(
                 SlotId(2),
                 ModeExpr::Write {
@@ -108,10 +119,10 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
         instances.create(&TestHasher, meta_of(name));
     }
 
-    let edge = |source: u32, resource: ComponentAddr| NodeInput::Edge {
+    let edge = |source: u32, resource: Denomination| NodeInput::Edge {
         source,
         output: 0,
-        resource: resource.into(),
+        resource,
         content: EdgeContent::Fungible,
         bounds: Bounds::default(),
     };
@@ -127,14 +138,14 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
             Node {
                 target: instance_of("venue").into(),
                 method: "swap".into(),
-                inputs: vec![edge(0, instance_of("vault"))],
+                inputs: vec![edge(0, issued_by("vault"))],
                 evidence: Vec::new(),
                 authority: None,
             },
             Node {
                 target: instance_of("sink").into(),
                 method: "deposit".into(),
-                inputs: vec![edge(1, instance_of("venue"))],
+                inputs: vec![edge(1, issued_by("venue"))],
                 evidence: Vec::new(),
                 authority: None,
             },
@@ -153,7 +164,7 @@ pub fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Address, ParamType::U128],
-            outputs: vec![Expr::Literal(Value::Address(addr(0xE1)))],
+            outputs: vec![Expr::Literal(Value::Address(resource(0xE1)))],
             effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
             ..MethodSignature::default()
         },
@@ -200,7 +211,7 @@ pub fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
                 inputs: vec![NodeInput::Edge {
                     source: 0,
                     output: 0,
-                    resource: addr(0xE1),
+                    resource: Denomination::try_from(resource(0xE1)).expect("resource class"),
                     content: EdgeContent::Fungible,
                     bounds: Bounds::default(),
                 }],

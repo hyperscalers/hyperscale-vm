@@ -178,8 +178,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_types::{
-        Address, AddressClass, CallTarget, CellKind, Effect, EffectConflict, EffectSet,
-        EffectTarget, Mode, Presence, PrincipalAddr,
+        Address, AddressClass, CallTarget, CellKind, Denomination, Effect, EffectConflict,
+        EffectSet, EffectTarget, Mode, Presence, PrincipalAddr,
     };
 
     use super::{PrefixShardResolver, Routing, ShardResolver, route};
@@ -195,7 +195,7 @@ mod tests {
     use crate::route::MAX_MANIFEST_NODES;
     use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
     use crate::test_worlds::{
-        addr, instance_of, meta_of, method, payer_payee_world, pkg, resolver, self_point,
+        addr, instance_of, meta_of, method, payer_payee_world, pkg, resolver, resource, self_point,
     };
     use crate::types::{EdgeContent, ShardId, SlotId, Value, child_key, package_slot};
 
@@ -831,7 +831,7 @@ mod tests {
             MethodSignature {
                 totality: Totality::Fallible,
                 outputs: vec![Expr::Literal(Value::Bucket {
-                    resource: addr(0xE1),
+                    resource: Denomination::try_from(resource(0xE1)).expect("resource class"),
                     content: EdgeContent::NonFungible { ids },
                 })],
                 ..MethodSignature::default()
@@ -870,8 +870,8 @@ mod tests {
             MethodSignature {
                 totality: Totality::Fallible,
                 outputs: vec![
-                    Expr::Literal(Value::Address(addr(0xE1))),
-                    Expr::Literal(Value::Address(addr(0xE1))),
+                    Expr::Literal(Value::Address(resource(0xE1))),
+                    Expr::Literal(Value::Address(resource(0xE1))),
                 ],
                 ..MethodSignature::default()
             },
@@ -938,7 +938,7 @@ mod tests {
             "make".into(),
             MethodSignature {
                 totality: Totality::Fallible,
-                outputs: vec![Expr::Literal(Value::Address(addr(0xE1)))],
+                outputs: vec![Expr::Literal(Value::Address(resource(0xE1)))],
                 ..MethodSignature::default()
             },
         );

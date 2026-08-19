@@ -25,8 +25,8 @@ use hyperscale_vm_runtime::{
     validate_component,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Presence,
-    SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, CollectionId, Denomination, Effect, EffectSet, EffectTarget, Mode,
+    Presence, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
 use wasmtime::{Result, Store};
@@ -36,7 +36,7 @@ const FUEL: u64 = 1_000_000_000;
 const OWNER: Address = Address::new([0x80; 31], AddressClass::Component);
 const HOLDINGS: CollectionId = CollectionId([9; 16]);
 /// What the instances in the fixture's collection are instances of.
-const RESOURCE: Address = OWNER;
+const RESOURCE: Address = Address::new([0x80; 31], AddressClass::Resource);
 /// The orders the fixture holds, and the balance behind the amount cell.
 const INSTANCES: [u128; 3] = [10, 20, 30];
 const BALANCE: u128 = 42;
@@ -103,7 +103,9 @@ fn session() -> KernelSession {
                 .iter()
                 .map(|effect| DeclaredAccess {
                     effect: *effect,
-                    holds: Some(RESOURCE),
+                    holds: Some(
+                        Denomination::try_from(RESOURCE).expect("a resource-class address"),
+                    ),
                 })
                 .collect(),
             ..Declaration::default()

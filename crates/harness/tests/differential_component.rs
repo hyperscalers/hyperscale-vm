@@ -17,8 +17,8 @@ use hyperscale_vm_runtime::{
     add_kernel_to_linker, blessed_engine, validate_component,
 };
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget,
-    EntryKey, Mode, Movement, Presence, SubstateKey, TxHash, encode_amount,
+    ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Denomination, Effect, EffectSet,
+    EffectTarget, EntryKey, Mode, Movement, Presence, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
 use wasmtime::error::{Context, format_err};
@@ -158,17 +158,22 @@ fn fixture() -> Fixture {
     }
 }
 
+/// The declared denomination, from the resource-class fixture.
+fn held() -> Denomination {
+    Denomination::try_from(RESOURCE).expect("a resource-class address")
+}
+
 /// What each declared cell holds, aligned with the order the capability
 /// table is built in.
 ///
 /// The two the transfer moves between, and nothing else: the
 /// read-modify-write cell and the ask ladder are written as bytes and as
 /// entries, which is what a cell denominating nothing is for.
-fn denominations(fx: &Fixture) -> Vec<Option<Address>> {
+fn denominations(fx: &Fixture) -> Vec<Option<Denomination>> {
     fx.declared
         .iter()
         .map(|effect| match effect.target {
-            EffectTarget::Point(key) if key == fx.sender || key == fx.recipient => Some(RESOURCE),
+            EffectTarget::Point(key) if key == fx.sender || key == fx.recipient => Some(held()),
             _ => None,
         })
         .collect()

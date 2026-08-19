@@ -246,7 +246,9 @@ impl Printer<'_> {
             // Never a manifest literal — a bucket arrives as an edge — so
             // this is only reachable through the escape hatch that lets a
             // caller write any value.
-            Value::Bucket { resource, .. } => format!("bucket(@{})", self.address(*resource)?),
+            Value::Bucket { resource, .. } => {
+                format!("bucket(@{})", self.address((*resource).into())?)
+            }
             Value::Tuple(fields) => {
                 let mut written = Vec::with_capacity(fields.len());
                 for field in fields {
@@ -315,7 +317,7 @@ fn edge_types(
                     .copied()
                     .flatten()
                     .map(|resource| Value::Bucket {
-                        resource: resource.address(),
+                        resource,
                         // The stand-in types what the callee declared —
                         // the rule the typed pass applies — since an
                         // edge's own ids are the producing node's and

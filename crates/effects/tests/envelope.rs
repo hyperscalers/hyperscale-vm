@@ -144,7 +144,7 @@ fn a_composed_tree_flattens_deterministically() {
         vec![NodeInput::Edge {
             source: 3,
             output: 0,
-            resource: RES_Y.address(),
+            resource: RES_Y.into(),
             content: EdgeContent::Fungible,
             bounds: Bounds {
                 min: Some(10),
@@ -157,7 +157,7 @@ fn a_composed_tree_flattens_deterministically() {
         vec![NodeInput::Edge {
             source: 1,
             output: 0,
-            resource: RES_X.address(),
+            resource: RES_X.into(),
             content: EdgeContent::Fungible,
             bounds: Bounds {
                 min: Some(100),

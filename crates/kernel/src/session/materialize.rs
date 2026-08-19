@@ -311,7 +311,10 @@ impl KernelSession {
             invocation: None,
             events: Vec::new(),
             supply: SupplyDelta::default(),
-            cell_resources: ordered.iter().map(|access| access.holds).collect(),
+            cell_resources: ordered
+                .iter()
+                .map(|access| access.holds.map(Address::from))
+                .collect(),
             buckets: Buckets::default(),
             issuance: None,
             taken: BTreeSet::new(),
@@ -524,11 +527,11 @@ mod tests {
 
     use hyperscale_vm_effects::{Declaration, DeclaredAccess};
     use hyperscale_vm_types::{
-        Address, AddressClass, CollectionId, Effect, EffectConflict, EffectSet, EffectTarget, Mode,
-        Presence, encode_amount,
+        Address, AddressClass, CollectionId, Denomination, Effect, EffectConflict, EffectSet,
+        EffectTarget, Mode, Presence, encode_amount,
     };
 
-    use super::super::fixtures::{RESOURCE, declared, env, hash, holding, key, ord, tx};
+    use super::super::fixtures::{RESOURCE, declared, env, hash, held, holding, key, ord, tx};
     use super::{Capability, KernelSession, MaterializeError, capability_for};
     use crate::ledger::AmountLedger;
     use crate::overlay::OverlayStore;
@@ -972,7 +975,7 @@ mod tests {
                 requires: Presence::Either,
             },
         };
-        let materialise = |holds: Vec<Option<Address>>| {
+        let materialise = |holds: Vec<Option<Denomination>>| {
             KernelSession::materialize(
                 OverlayStore::new(Arc::new(MemoryStore::new())),
                 &Declaration {
@@ -999,16 +1002,16 @@ mod tests {
         // Two clauses on one leaf, one saying it holds value and one
         // saying nothing: the pair no handle is built for.
         assert_eq!(
-            materialise(vec![Some(RESOURCE), None]),
+            materialise(vec![Some(held()), None]),
             Err(MaterializeError::MixedContents(write.target))
         );
         assert_eq!(
-            materialise(vec![None, Some(RESOURCE)]),
+            materialise(vec![None, Some(held())]),
             Err(MaterializeError::MixedContents(write.target))
         );
         // Agreeing clauses are what a body that reads and writes one cell
         // declares, and both directions stand.
-        assert!(materialise(vec![Some(RESOURCE), Some(RESOURCE)]).is_ok());
+        assert!(materialise(vec![Some(held()), Some(held())]).is_ok());
         assert!(materialise(vec![None, None]).is_ok());
 
         // A collection is the same statement over its entries: two
@@ -1037,7 +1040,7 @@ mod tests {
                     ordered: vec![
                         DeclaredAccess {
                             effect: wide,
-                            holds: Some(RESOURCE),
+                            holds: Some(held()),
                         },
                         DeclaredAccess {
                             effect: narrow,

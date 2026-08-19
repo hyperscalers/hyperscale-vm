@@ -622,7 +622,7 @@ fn type_args(
                     });
                 }
                 edge_resource(constraints).map(|resource| Value::Bucket {
-                    resource: resource.address(),
+                    resource,
                     // The builder types what it can see: an edge's own
                     // ids are the producing node's, which this pass does
                     // not resolve. What it does know is which kind the
@@ -684,7 +684,7 @@ pub(crate) fn output_resources(
             }
             match evaluate_expr(expr, &inputs, hasher) {
                 Ok(Value::Address(address)) => Denomination::try_from(address).ok(),
-                Ok(Value::Bucket { resource, .. }) => Denomination::try_from(resource).ok(),
+                Ok(Value::Bucket { resource, .. }) => Some(resource),
                 _ => None,
             }
         })

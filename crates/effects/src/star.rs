@@ -301,7 +301,8 @@ mod tests {
     use crate::route::ShardResolver;
     use crate::signature::{MethodSignature, Totality};
     use crate::test_worlds::{
-        instance_of, meta_of, method, payer_payee_world, pkg, resolver, self_point, star_world,
+        instance_of, issued_by, meta_of, method, payer_payee_world, pkg, resolver, self_point,
+        star_world,
     };
     use crate::types::{EdgeContent, SlotId, Value};
 
@@ -400,7 +401,7 @@ mod tests {
                     inputs: vec![NodeInput::Edge {
                         source: 0,
                         output: 0,
-                        resource: instance_of("producer").into(),
+                        resource: issued_by("producer"),
                         content: EdgeContent::Fungible,
                         bounds: Bounds::default(),
                     }],
@@ -473,7 +474,7 @@ mod tests {
                         NodeInput::Edge {
                             source: 0,
                             output: 0,
-                            resource: instance_of("venue").into(),
+                            resource: issued_by("venue"),
                             content: EdgeContent::Fungible,
                             bounds: Bounds::default(),
                         },
@@ -553,7 +554,7 @@ mod tests {
         named.nodes[1].inputs = vec![NodeInput::Edge {
             source: 0,
             output: 0,
-            resource: instance_of("vault").into(),
+            resource: issued_by("vault"),
             content: EdgeContent::NonFungible { ids: vec![7] },
             bounds: Bounds::default(),
         }];

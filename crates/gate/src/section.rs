@@ -67,7 +67,8 @@ mod tests {
     use hyperscale_vm_fixtures::{amm, book, splitter};
     use hyperscale_vm_stdlib::account;
     use hyperscale_vm_types::{
-        Address, AddressClass, LocalKey, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence, SubstateKey,
+        Address, AddressClass, LocalKey, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence, ResourceAddr,
+        SubstateKey,
     };
 
     use super::*;
@@ -195,7 +196,7 @@ mod tests {
                     }),
                     Value::Bucket {
                         content: EdgeContent::Fungible,
-                        resource: Address::new([5; 31], AddressClass::Component),
+                        resource: ResourceAddr::new([5; 31]).into(),
                     },
                     Value::U128(u128::MAX),
                     Value::Address(Address::new([6; 31], AddressClass::Component)),

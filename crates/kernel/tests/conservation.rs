@@ -90,14 +90,14 @@ mod through_the_session {
     use hyperscale_vm_effects::{Declaration, Hasher};
     use hyperscale_vm_kernel::{EnvInputs, KernelSession, OverlayStore, SupplyDelta, SupplyLedger};
     use hyperscale_vm_types::{
-        AbortReason, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome,
+        AbortReason, Denomination, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome,
     };
 
     use super::{
         Address, AddressClass, Hash32, MemoryStore, TestHasher, TxHash, encode_amount, vault,
     };
 
-    const UNIT: Address = Address::new([0xA1; 31], AddressClass::Component);
+    const UNIT: Address = Address::new([0xA1; 31], AddressClass::Resource);
 
     fn hash(data: &[u8]) -> [u8; 32] {
         TestHasher.hash(b"crypto", &[data]).0
@@ -116,7 +116,8 @@ mod through_the_session {
         };
         let mut set = EffectSet::new();
         set.insert(moving).expect("one cell");
-        let declaration = Declaration::from_set(set).denominated(|_| Some(UNIT));
+        let declaration = Declaration::from_set(set)
+            .denominated(|_| Some(Denomination::try_from(UNIT).expect("a resource-class address")));
         let mut session = KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
             &declaration,

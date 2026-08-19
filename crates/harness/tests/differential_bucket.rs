@@ -17,8 +17,8 @@ use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore};
 use hyperscale_vm_ref::{CVal, ResourceKind};
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, ISSUER_REP,
-    Mode, Outcome, Presence, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, CollectionId, Denomination, Effect, EffectSet,
+    EffectTarget, ISSUER_REP, Mode, Outcome, Presence, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::{bail, format_err};
@@ -55,7 +55,12 @@ const ISSUER: Address = Address::new([0x80; 31], AddressClass::Component);
 /// One resource across the fixture, because what this lane is about is
 /// ownership and numbering rather than denomination: a second would make
 /// every credit a resource comparison as well as a transfer.
-const RESOURCE: Address = ISSUER;
+const RESOURCE: Address = Address::new([0x80; 31], AddressClass::Resource);
+/// The declared denomination, from the resource-class fixture.
+fn held() -> Denomination {
+    Denomination::try_from(RESOURCE).expect("a resource-class address")
+}
+
 /// The collection whose entries the instance lane moves.
 const HOLDINGS: CollectionId = CollectionId([9; 16]);
 /// The orders the fixture files instances at.
@@ -164,12 +169,12 @@ fn fixture() -> Fixture {
 /// Everything but the read cell: a cell that denominates nothing is one
 /// no value moves through, and every cell here but that one is moved
 /// through.
-fn denominations(fx: &Fixture) -> Vec<Option<Address>> {
+fn denominations(fx: &Fixture) -> Vec<Option<Denomination>> {
     fx.declared
         .iter()
         .map(|effect| match effect.target {
             EffectTarget::Point(key) if key == fx.readable => None,
-            _ => Some(RESOURCE),
+            _ => Some(held()),
         })
         .collect()
 }
@@ -1024,7 +1029,7 @@ fn peeking() -> KernelSession {
     };
     let mut declared = EffectSet::default();
     declared.insert(read).expect("the set takes it");
-    materialize(&store, &declared, &[Some(RESOURCE)], tx(), env())
+    materialize(&store, &declared, &[Some(held())], tx(), env())
 }
 
 /// Asking a balance is the one thing a body does with value that moves

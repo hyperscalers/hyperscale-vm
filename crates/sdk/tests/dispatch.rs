@@ -12,8 +12,8 @@ use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemorySto
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_sdk::host::{CellKind, GuestArg, Invoked};
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode,
-    Presence, SubstateKey, TxHash, encode_amount,
+    ABSENT_REP, AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget,
+    Mode, Presence, SubstateKey, TxHash, encode_amount,
 };
 
 const OWNER: Address = Address::new([0x21; 31], AddressClass::Component);
@@ -95,7 +95,8 @@ fn session(mode: Mode, funded: u128) -> KernelSession {
         .expect("the effect set takes it");
     // The one cell these bodies move value through, so it says what it
     // holds — a cell that said nothing would grant no movement.
-    let declaration = Declaration::from_set(declared).denominated(|_| Some(RESOURCE));
+    let declaration = Declaration::from_set(declared)
+        .denominated(|_| Some(Denomination::try_from(RESOURCE).expect("a resource-class address")));
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &declaration,

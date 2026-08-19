@@ -20,8 +20,8 @@ use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, WriteCell, add_kernel_to_linker, blessed_engine,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome, Presence,
-    SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget, Mode,
+    Outcome, Presence, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Engine, Result, Store};
@@ -107,7 +107,9 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
             tx(id),
             // Both ends of a transfer hold the one resource this batch
             // moves; a cell that said nothing would move nothing.
-            Declaration::from_set(declared).denominated(|_| Some(RESOURCE)),
+            Declaration::from_set(declared).denominated(|_| {
+                Some(Denomination::try_from(RESOURCE).expect("a resource-class address"))
+            }),
             env(),
         ));
         shapes.insert(tx(id), Shape::Transfer { sender, recipient });

@@ -12,7 +12,9 @@ use hyperscale_vm_effects::{
     InstanceRegistry, ManifestGraph, ManifestHash, MetadataCache, SlotId, TestHasher, Value, admit,
     evaluate_expr, route,
 };
-use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode};
+use hyperscale_vm_types::{
+    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, ResourceAddr,
+};
 use proptest::collection::vec;
 use proptest::option;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
@@ -47,7 +49,7 @@ fn arb_value() -> impl Strategy<Value = Value> {
             .prop_map(|byte| Value::Address(Address::new([byte; 31], AddressClass::Component))),
         (any::<u8>(), option::of(vec(any::<u64>(), 0..4))).prop_map(|(byte, ids)| {
             Value::Bucket {
-                resource: Address::new([byte; 31], AddressClass::Component),
+                resource: ResourceAddr::new([byte; 31]).into(),
                 content: ids.map_or(EdgeContent::Fungible, |ids| EdgeContent::NonFungible {
                     ids,
                 }),
@@ -133,7 +135,7 @@ proptest! {
         recipient_byte in any::<u8>(),
         resource_byte in any::<u8>(),
     ) {
-        let resource = Address::new([resource_byte; 31], AddressClass::Component);
+        let resource = Address::new([resource_byte; 31], AddressClass::Resource);
         let mut cache = MetadataCache::new();
         cache.publish_unchecked(pkg("account"), account::metadata());
         let mut instances = InstanceRegistry::new();
@@ -189,7 +191,7 @@ proptest! {
         recipient_byte in any::<u8>(),
         resource_byte in any::<u8>(),
     ) {
-        let resource = Address::new([resource_byte; 31], AddressClass::Component);
+        let resource = Address::new([resource_byte; 31], AddressClass::Resource);
         let mut cache = MetadataCache::new();
         cache.publish_unchecked(pkg("account"), account::metadata());
         // Each instance sits at the address its own record derives, so

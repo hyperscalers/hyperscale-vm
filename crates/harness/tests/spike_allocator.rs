@@ -27,7 +27,8 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_stdlib::{account_artifact, staking_artifact};
 use hyperscale_vm_types::{
-    Address, AddressClass, CellKind, Effect, EffectSet, EffectTarget, Mode, TxHash, encode_amount,
+    Address, AddressClass, CellKind, Denomination, Effect, EffectSet, EffectTarget, Mode, TxHash,
+    encode_amount,
 };
 use wasmtime::component::{Component, InstancePre, Linker};
 use wasmtime::{Engine, InstanceAllocationStrategy, PoolingAllocationConfig, Result, Store};
@@ -126,7 +127,10 @@ fn transfer_session() -> KernelSession {
     let mut session = materialize(
         &store,
         &declared,
-        &[Some(RESOURCE), Some(RESOURCE)],
+        &[
+            Some(Denomination::try_from(RESOURCE).expect("a resource-class address")),
+            Some(Denomination::try_from(RESOURCE).expect("a resource-class address")),
+        ],
         TxHash(Hash32([0x77; 32])),
         EnvInputs {
             clock_ms: 77,

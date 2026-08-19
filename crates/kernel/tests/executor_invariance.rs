@@ -13,8 +13,8 @@ use hyperscale_vm_kernel::{
     MemoryStore, RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Movement, Outcome,
-    Presence, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget, Mode,
+    Movement, Outcome, Presence, SubstateKey, TxHash, encode_amount,
 };
 
 /// What every cell these fixtures move value through holds.
@@ -28,7 +28,8 @@ const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
 /// body runs.
 fn moving(set: EffectSet) -> Declaration {
     Declaration::from_set(set).denominated(|effect| {
-        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
+        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. })
+            .then(|| Denomination::try_from(RESOURCE).expect("a resource-class address"))
     })
 }
 

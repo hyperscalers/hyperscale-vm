@@ -11,9 +11,9 @@ use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world}
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, AdmissionError, AuthRole, AuthorityGate, Clause, Constraint,
-    CustodyClaim, EdgeKind, EdgeRef, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta,
-    InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature, ModeExpr,
-    PackageMetadata, ParamType, Possession, Presented, RuleExpr, StoredRule, TargetExpr,
+    CustodyClaim, EdgeKind, EdgeRef, EvalError, EvidenceRef, Expr, GraphArg, GraphNode, Hash32,
+    InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature,
+    ModeExpr, PackageMetadata, ParamType, Possession, Presented, RuleExpr, StoredRule, TargetExpr,
     TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
 };
 use hyperscale_vm_types::{
@@ -808,6 +808,44 @@ fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
             param: 0,
             ..
         })
+    ));
+}
+
+/// A denomination names a resource, and an address of any other class is
+/// refused at admission, naming the class the caller wrote.
+#[test]
+fn a_component_address_where_a_resource_belongs_is_refused() {
+    let (mut cache, mut instances) = setup();
+    cache.publish_unchecked(pkg("sorter"), sorter_metadata());
+    instances.create(&TestHasher, sorter_meta());
+    let component = Address::new([0x44; 31], AddressClass::Component);
+    let graph = ManifestGraph {
+        nodes: vec![
+            valid_graph().nodes[0].clone(),
+            valid_graph().nodes[1].clone(),
+            GraphNode {
+                target: sorter().into(),
+                method: "sort".into(),
+                args: vec![
+                    GraphArg::Edge {
+                        edge: EdgeRef {
+                            producer: 1,
+                            output: 0,
+                        },
+                        constraints: vec![],
+                    },
+                    GraphArg::Literal(Value::Address(component)),
+                ],
+                evidence: BTreeSet::new(),
+            },
+        ],
+    };
+    assert!(matches!(
+        admit(&graph, ALICE, &cache, &instances, &TestHasher),
+        Err(AdmissionError::Eval {
+            node: 2,
+            source: EvalError::NotAResource(err),
+        }) if err.found == AddressClass::Component
     ));
 }
 

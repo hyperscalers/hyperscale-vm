@@ -10,8 +10,8 @@
 
 use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{
-    Address, CellKind, CollectionId, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey,
-    Mode, Presence, SubstateKey,
+    Address, CellKind, CollectionId, Denomination, Effect, EffectConflict, EffectSet, EffectTarget,
+    LocalKey, Mode, NotAResource, Presence, SubstateKey,
 };
 
 use crate::hash::{Hash32, Hasher};
@@ -525,6 +525,10 @@ pub enum EvalError {
         /// The kind the value had.
         found: &'static str,
     },
+    /// A denomination that evaluated to an address whose class names no
+    /// resource.
+    #[error(transparent)]
+    NotAResource(#[from] NotAResource),
     /// A tuple projection past the tuple's arity.
     #[error("tuple field {index} out of range (arity {arity})")]
     FieldOutOfRange {
@@ -680,7 +684,7 @@ pub struct DeclaredAccess {
     /// would split them. Riding the ordered entry is what lets a
     /// capability's rep — its index here — answer what the cell it is
     /// moving into holds.
-    pub holds: Option<Address>,
+    pub holds: Option<Denomination>,
 }
 
 /// A signature evaluation's two views of the same declaration.
@@ -788,7 +792,7 @@ impl Declaration {
     /// not.
     #[must_use]
     #[cfg(any(test, feature = "testing"))]
-    pub fn denominated(mut self, holds: impl Fn(&Effect) -> Option<Address>) -> Self {
+    pub fn denominated(mut self, holds: impl Fn(&Effect) -> Option<Denomination>) -> Self {
         for entry in &mut self.ordered {
             entry.holds = holds(&entry.effect);
         }
@@ -915,7 +919,7 @@ fn eval_clauses(
                 // there — the same alignment the guest's handles ride.
                 let held = match denomination {
                     Some(expr) => match eval_expr(expr, inputs, hasher, bindings, 0)? {
-                        Value::Address(resource) => Some(resource),
+                        Value::Address(address) => Some(Denomination::try_from(address)?),
                         found => {
                             return Err(EvalError::TypeMismatch {
                                 expected: "resource",
@@ -1059,7 +1063,7 @@ fn edge_ids(content: EdgeContent) -> Result<Value, EvalError> {
 
 /// A bucket projection's parts, or the type mismatch every edge
 /// projection refuses alike.
-fn bucket_parts(value: Value) -> Result<(Address, EdgeContent), EvalError> {
+fn bucket_parts(value: Value) -> Result<(Denomination, EdgeContent), EvalError> {
     match value {
         Value::Bucket { resource, content } => Ok((resource, content)),
         other => Err(EvalError::TypeMismatch {
@@ -1115,7 +1119,7 @@ fn eval_expr(
             .ok_or(EvalError::BindingOutOfRange(*index)),
         Expr::SelfAddr => Ok(Value::Address(inputs.self_addr)),
         Expr::Field(tuple, index) => field(&as_tuple(sub(tuple)?)?, *index),
-        Expr::ResourceOf(bucket) => Ok(Value::Address(bucket_parts(sub(bucket)?)?.0)),
+        Expr::ResourceOf(bucket) => Ok(Value::Address(bucket_parts(sub(bucket)?)?.0.into())),
         Expr::IdsOf(bucket) => edge_ids(bucket_parts(sub(bucket)?)?.1),
         Expr::Lookup { map, key } => lookup(as_list(sub(map)?)?, &sub(key)?),
         Expr::SelfResource { material: parts } => Ok(Value::Address(
@@ -1151,7 +1155,7 @@ fn eval_expr(
         Expr::List(elements) => Ok(Value::List(all(elements)?)),
         Expr::Tuple(fields) => Ok(Value::Tuple(all(fields)?)),
         Expr::NfBucket { resource, ids } => Ok(Value::Bucket {
-            resource: as_address(sub(resource)?)?,
+            resource: Denomination::try_from(as_address(sub(resource)?)?)?,
             content: EdgeContent::NonFungible {
                 ids: id_set(as_list(sub(ids)?)?)?,
             },
@@ -1387,7 +1391,10 @@ fn as_list(value: Value) -> Result<Vec<Value>, EvalError> {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_types::{Address, AddressClass, Effect, EffectTarget, Mode, Presence};
+    use hyperscale_vm_types::{
+        Address, AddressClass, Denomination, Effect, EffectTarget, Mode, NotAResource, Presence,
+        ResourceAddr,
+    };
 
     use super::{
         Clause, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
@@ -2045,11 +2052,11 @@ mod tests {
     #[test]
     fn ids_of_projects_a_non_fungible_edge() {
         let bucket = Value::Bucket {
-            resource: Address::new([0xE1; 31], AddressClass::Resource),
+            resource: ResourceAddr::new([0xE1; 31]).into(),
             content: EdgeContent::NonFungible { ids: vec![7, 9] },
         };
         let fungible = Value::Bucket {
-            resource: Address::new([0xE1; 31], AddressClass::Resource),
+            resource: ResourceAddr::new([0xE1; 31]).into(),
             content: EdgeContent::Fungible,
         };
         let args = [bucket, fungible];
@@ -2082,7 +2089,7 @@ mod tests {
         assert_eq!(
             evaluate_expr(&minted, &ins, &TestHasher),
             Ok(Value::Bucket {
-                resource,
+                resource: Denomination::try_from(resource).expect("resource class"),
                 content: EdgeContent::NonFungible { ids: expected },
             }),
         );
@@ -2171,6 +2178,32 @@ mod tests {
         }));
     }
 
+    /// A denomination evaluates to a resource, whoever authored the
+    /// declaration: an address of any other class is refused where the
+    /// clause is evaluated, naming the class it found.
+    #[test]
+    fn a_denomination_that_names_no_resource_is_refused() {
+        let component = Address::new([0xCC; 31], AddressClass::Component);
+        let args = [Value::Address(component)];
+        let ins = inputs(&args, &[]);
+        let clauses = [Clause::Effect {
+            guard: None,
+            target: TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: SlotId(1),
+                material: vec![Expr::Arg(0)],
+            }),
+            mode: ModeExpr::Delta,
+            denomination: Some(Box::new(Expr::Arg(0))),
+        }];
+        assert_eq!(
+            evaluate_declaration(&clauses, &ins, &TestHasher),
+            Err(EvalError::NotAResource(NotAResource {
+                found: AddressClass::Component,
+            })),
+        );
+    }
+
     /// The judgment vocabulary, over one set of inputs: arg 0 is a `u64`,
     /// arg 1 the same `u64` widened, arg 2 an address, arg 3 a bucket of
     /// it, and config 0 a two-row table.
@@ -2181,7 +2214,7 @@ mod tests {
             Value::U128(7),
             Value::Address(resource),
             Value::Bucket {
-                resource,
+                resource: Denomination::try_from(resource).expect("resource class"),
                 content: EdgeContent::Fungible,
             },
         ]
