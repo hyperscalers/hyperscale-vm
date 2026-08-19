@@ -69,6 +69,8 @@ pub use hyperscale_vm_stdlib::account;
 pub use native::{Dispatch, Native};
 pub use outcome::Outcome;
 pub use package::Package;
+#[cfg(feature = "wasm")]
+pub use wasm::{Blessed, FUEL_CEILING};
 
 /// An address the chain holds no instance of the wanted package at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -114,7 +116,7 @@ pub struct Chain {
 enum Engine {
     /// The artifact a network would run, under the blessed engine.
     #[cfg(feature = "wasm")]
-    Blessed(wasm::Blessed),
+    Blessed(Blessed),
     /// The bodies themselves, called directly.
     Native(Native),
 }
@@ -142,7 +144,7 @@ impl Chain {
     #[cfg(feature = "wasm")]
     #[must_use]
     pub fn wasm() -> Self {
-        let mut blessed = wasm::Blessed::new();
+        let mut blessed = Blessed::new();
         blessed.seed(account_package(), ACCOUNT_COMPONENT);
         Self::new(Engine::Blessed(blessed))
     }

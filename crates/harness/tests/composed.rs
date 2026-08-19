@@ -3,45 +3,26 @@
 //! routed, and executed through the batch executor on both runtimes,
 //! with the nullifier making the subintent once-only.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::LazyLock;
 
-use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     AdmittedTree, Constraint, EnvelopeTree, Hasher, InstanceRegistry, MetadataCache, PackageHash,
-    PrefixShardResolver, TestHasher, Value, admit_tree, child_key, route_tree,
+    PrefixShardResolver, TestHasher, admit_tree, route_tree,
 };
+use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_harness::fixtures::build_guest;
-use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult,
-    KernelSession, Locality, ManifestWalk, MemoryStore, Receipt, decode_amount, execute_batch,
-};
+use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
-use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance};
-use hyperscale_vm_runtime::{
-    InstantiationCharges, add_kernel_to_linker, blessed_engine, instantiate_charged,
-    instantiation_charges, invoke_export, validate_component,
-};
 use hyperscale_vm_stdlib::account;
-use hyperscale_vm_testing::Native;
-use hyperscale_vm_types::{
-    AbortReason, Address, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
-};
-use wasmtime::component::{Component, Linker};
+use hyperscale_vm_types::{AbortReason, Outcome, PrincipalAddr, ResourceAddr, TxHash};
+use wasmtime::Result;
 use wasmtime::error::{Context, ensure};
-use wasmtime::{Engine, Result, Store};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
 const CAROL: PrincipalAddr = PrincipalAddr::new([0x30; 31]);
 const RES_X: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const RES_Y: ResourceAddr = ResourceAddr::new([0xE2; 31]);
-
-const FUEL: u64 = 1_000_000_000;
-
-fn test_hash(data: &[u8]) -> [u8; 32] {
-    TestHasher.hash(b"crypto", &[data]).0
-}
 
 const fn env() -> EnvInputs {
     EnvInputs {
@@ -60,15 +41,6 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg());
     (cache, instances)
-}
-
-fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
-    child_key(
-        &TestHasher,
-        owner,
-        VAULT,
-        &[Value::Address(resource.into()).canonical_bytes()],
-    )
 }
 
 /// The composition: the composer pays `pay` of X for the subintent's 10
@@ -142,187 +114,26 @@ fn batch_entry(
     Ok((entry, admitted))
 }
 
-/// The blessed engine behind the walk: one instantiation per call, the
-/// export invoked from the arguments the kernel assembled.
-struct BlessedComposed {
-    engine: Engine,
-    component: Component,
-    charges: InstantiationCharges,
-}
+/// The lanes, seeded once per binary: the account guest compiled and
+/// decoded, plus its native body.
+static LANES: LazyLock<Lanes> = LazyLock::new(|| {
+    let bytes = build_guest("account").expect("the account guest builds");
+    let mut lanes = Lanes::new();
+    lanes.seed(pkg(), &bytes);
+    lanes.seed_native(pkg(), account::invoke);
+    lanes
+});
 
-impl GuestBackend for BlessedComposed {
-    fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
-        let mut linker = Linker::<KernelSession>::new(&self.engine);
-        add_kernel_to_linker(&mut linker).expect("wiring");
-        let mut store = Store::new(&self.engine, session);
-        let instance =
-            instantiate_charged(&mut store, call.fuel_budget.min(FUEL), &self.charges, |s| {
-                linker.instantiate(s, &self.component)
-            })
-            .expect("instantiate");
-        let end = invoke_export(
-            &mut store,
-            &instance,
-            call.export,
-            call.args,
-            call.fuel_budget.min(FUEL),
-        );
-        InvokeResult {
-            session: store.into_data(),
-            fuel: end.fuel,
-            result: end.result,
-            exhausted: end.exhausted,
-        }
-    }
-}
-
-/// The reference interpreter behind the same walk.
-struct RefComposed {
-    component: RefComponent,
-}
-
-impl GuestBackend for RefComposed {
-    fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
-        let args: Vec<CVal> = call.args.iter().map(CVal::from).collect();
-        let mut instance =
-            RefComponentInstance::instantiate(&self.component, session, call.fuel_budget.min(FUEL))
-                .map_err(|(_, error)| error)
-                .expect("instantiate");
-        let end = instance.invoke_kernel(call.export, &args);
-        InvokeResult {
-            session: instance.into_host(),
-            fuel: end.fuel,
-            result: end.result,
-            exhausted: end.exhausted,
-        }
-    }
+fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> (BatchOutcome, MemoryStore) {
+    run_lanes(&LANES, store, batch)
 }
 
 fn seeded_store() -> MemoryStore {
     let mut store = MemoryStore::new();
+    seed_vault(&mut store, ALICE, RES_X, 150);
+    seed_vault(&mut store, CAROL, RES_X, 150);
+    seed_vault(&mut store, BOB, RES_Y, 30);
     store
-        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
-        .unwrap();
-    store
-        .write(vault(CAROL, RES_X), encode_amount(150).to_vec())
-        .unwrap();
-    store
-        .write(vault(BOB, RES_Y), encode_amount(30).to_vec())
-        .unwrap();
-    store
-}
-
-fn cells(end: &MemoryStore) -> BTreeMap<SubstateKey, Vec<u8>> {
-    end.cells()
-        .map(|(key, value)| (key, value.to_vec()))
-        .collect()
-}
-
-fn amount_of(end: &MemoryStore, key: SubstateKey) -> u128 {
-    cells(end)
-        .get(&key)
-        .map_or(0, |cell| decode_amount(cell).unwrap())
-}
-
-/// Whether the engines ended on the one verdict the native lane cannot
-/// reach: a transaction that spent its signed ceiling.
-///
-/// Nothing meters that lane, so a body the engines cut off runs to
-/// completion there. It is the lane's stated boundary rather than a
-/// divergence — a test about the ceiling is a test about the engines —
-/// and reading it off the outcome is what keeps the exception from being
-/// a flag a caller could forget to pass.
-fn metered_out(outcome: &BatchOutcome) -> bool {
-    outcome.receipts.values().any(|receipt| {
-        matches!(
-            receipt.outcome,
-            Outcome::UserError {
-                reason: AbortReason::OutOfGas
-            }
-        )
-    })
-}
-
-/// What a lane is held to when it cannot report the one figure an engine
-/// produces: everything a contract is about.
-fn comparable(outcome: &BatchOutcome) -> Vec<Receipt> {
-    outcome
-        .receipts
-        .values()
-        .map(|receipt| Receipt {
-            fuel: 0,
-            ..receipt.clone()
-        })
-        .collect()
-}
-
-/// Execute the batch three ways and assert they agree; returns the
-/// blessed outcome and its collapsed end state.
-///
-/// The two engines are held to byte-identical receipts, fuel included.
-/// The native lane runs the package's own module with nothing metering
-/// it, so it is held to everything but that figure.
-fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<(BatchOutcome, MemoryStore)> {
-    let bytes = build_guest("account")?;
-    validate_component(&bytes).context("profile validation")?;
-    let engine = blessed_engine()?;
-    let blessed = BlessedComposed {
-        component: Component::new(&engine, &bytes)?,
-        charges: instantiation_charges(&bytes)?,
-        engine,
-    };
-    let reference = RefComposed {
-        component: RefComponent::decode(&bytes)?,
-    };
-    let mut native = Native::default();
-    native.seed(pkg(), account::invoke);
-    let blessed_outcome = execute_batch(
-        Arc::new(store.clone()),
-        batch,
-        &ManifestWalk { backend: &blessed },
-        test_hash,
-        ExecutionMode::Parallel,
-        &Locality::All,
-    )
-    .unwrap();
-    let ref_outcome = execute_batch(
-        Arc::new(store.clone()),
-        batch,
-        &ManifestWalk {
-            backend: &reference,
-        },
-        test_hash,
-        ExecutionMode::Serial,
-        &Locality::All,
-    )
-    .unwrap();
-    let native_outcome = execute_batch(
-        Arc::new(store.clone()),
-        batch,
-        &ManifestWalk { backend: &native },
-        test_hash,
-        ExecutionMode::Serial,
-        &Locality::All,
-    )
-    .unwrap();
-    assert_eq!(
-        blessed_outcome.receipts, ref_outcome.receipts,
-        "lanes diverged"
-    );
-    if !metered_out(&blessed_outcome) {
-        assert_eq!(
-            comparable(&blessed_outcome),
-            comparable(&native_outcome),
-            "the package's own module diverged from its component"
-        );
-    }
-    let end = blessed_outcome.store.collapse_onto(store.clone());
-    assert_eq!(
-        cells(&end),
-        cells(&ref_outcome.store.collapse_onto(store.clone())),
-        "state diverged"
-    );
-    Ok((blessed_outcome, end))
 }
 
 #[test]
@@ -332,7 +143,7 @@ fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     let (entry, admitted) = batch_entry(&world, &tree)?;
     let nullifier = admitted.subintents[0].nullifier;
 
-    let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&entry));
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
         Outcome::Completed { .. }
@@ -364,7 +175,7 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     );
     let alice_wins = alice_entry.tx < carol_entry.tx;
     let batch = vec![alice_entry.clone(), carol_entry.clone()];
-    let (outcome, end) = run_both(&seeded_store(), &batch)?;
+    let (outcome, end) = run_both(&seeded_store(), &batch);
 
     let (winner, loser, pay) = if alice_wins {
         (&alice_entry, &carol_entry, 100)
@@ -410,9 +221,9 @@ fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
     let (carol_entry, _) = batch_entry(&world, &composed_tree(CAROL, 120))?;
     let nullifier = alice_admitted.subintents[0].nullifier;
 
-    let (_, committed) = run_both(&seeded_store(), std::slice::from_ref(&alice_entry))?;
+    let (_, committed) = run_both(&seeded_store(), std::slice::from_ref(&alice_entry));
 
-    let (second, second_end) = run_both(&committed, std::slice::from_ref(&carol_entry))?;
+    let (second, second_end) = run_both(&committed, std::slice::from_ref(&carol_entry));
     assert_eq!(
         second.receipts[&carol_entry.tx].outcome,
         Outcome::NullifierSpent { key: nullifier }
@@ -440,7 +251,7 @@ fn a_transaction_that_spends_its_gas_limit_aborts_on_both_runtimes() -> Result<(
     // is between the two and moves with the code: below it the walk
     // refuses before the invocation, above it the whole tree settles.
     let starved = entry.with_gas_limit(1000);
-    let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&starved))?;
+    let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&starved));
 
     match &outcome.receipts[&starved.tx].outcome {
         Outcome::UserError { reason } => assert_eq!(*reason, AbortReason::OutOfGas),

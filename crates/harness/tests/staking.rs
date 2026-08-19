@@ -15,35 +15,24 @@
 //! so this is also the stake pool's conformance lane: what a consumer
 //! embeds is what these assertions hold for.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::LazyLock;
 
-use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     AdmissionError, EnvelopeTree, Fungibility, Hash32, Hasher, InstanceMeta, InstanceRegistry,
     IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, ResourceRecord,
     TestHasher, Value, admit_tree, child_key, holdings_collection, resource_address,
     resource_record_key, route_tree,
 };
-use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult,
-    KernelSession, Locality, ManifestWalk, MemoryStore, Receipt, decode_amount, execute_batch,
-};
+use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
+use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
-use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance};
-use hyperscale_vm_runtime::{
-    InstantiationCharges, add_kernel_to_linker, blessed_engine, instantiate_charged,
-    instantiation_charges, invoke_export, validate_component,
-};
 use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, staking};
-use hyperscale_vm_testing::Native;
 use hyperscale_vm_types::{
-    AbortReason, Address, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
-use wasmtime::component::{Component, Linker};
+use wasmtime::Result;
 use wasmtime::error::{Context, ensure};
-use wasmtime::{Engine, Result, Store};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 /// The resource a delegation is denominated in.
@@ -83,17 +72,12 @@ fn operator_store() -> MemoryStore {
 /// The account holding the pool's owner badge: the operator surface
 /// admits whoever presents it, and these tests seed it here.
 const OPERATOR: PrincipalAddr = PrincipalAddr::new([0x0B; 31]);
-const FUEL: u64 = 1_000_000_000;
 
 /// A validator the pool operates, and the consensus material a
 /// registration carries for it.
 const VALIDATOR: u64 = 42;
 const PUBKEY: [u8; 48] = [0xC1; 48];
 const POSSESSION_PROOF: [u8; 96] = [0xC2; 96];
-
-fn test_hash(data: &[u8]) -> [u8; 32] {
-    TestHasher.hash(b"crypto", &[data]).0
-}
 
 const fn env() -> EnvInputs {
     EnvInputs {
@@ -139,15 +123,6 @@ fn pool_meta() -> InstanceMeta {
 /// The pool instance, at the address its record derives.
 fn pool() -> staking::Staking {
     staking::Staking::at(pool_meta().address(&TestHasher))
-}
-
-fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
-    child_key(
-        &TestHasher,
-        owner,
-        VAULT,
-        &[Value::Address(resource.into()).canonical_bytes()],
-    )
 }
 
 /// Build against this world's metadata, so every call is typed by the
@@ -284,68 +259,6 @@ fn batch_entry(
     Ok(BatchTx::new(TxHash(identity.0), declaration, env()).with_calls(routing.calls))
 }
 
-/// A backend over more than one package: each call names its own code by
-/// content address, so resolution is a lookup rather than an assumption.
-struct BlessedPackages {
-    engine: Engine,
-    components: BTreeMap<PackageHash, (Component, InstantiationCharges)>,
-}
-
-impl GuestBackend for BlessedPackages {
-    fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
-        let (component, charges) = self
-            .components
-            .get(&call.package)
-            .expect("the call names a published package");
-        let mut linker = Linker::<KernelSession>::new(&self.engine);
-        add_kernel_to_linker(&mut linker).expect("wiring");
-        let mut store = Store::new(&self.engine, session);
-        let instance = instantiate_charged(&mut store, call.fuel_budget.min(FUEL), charges, |s| {
-            linker.instantiate(s, component)
-        })
-        .expect("instantiate");
-        let end = invoke_export(
-            &mut store,
-            &instance,
-            call.export,
-            call.args,
-            call.fuel_budget.min(FUEL),
-        );
-        InvokeResult {
-            session: store.into_data(),
-            fuel: end.fuel,
-            result: end.result,
-            exhausted: end.exhausted,
-        }
-    }
-}
-
-/// The reference interpreter over the same package set.
-struct RefPackages {
-    components: BTreeMap<PackageHash, RefComponent>,
-}
-
-impl GuestBackend for RefPackages {
-    fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
-        let component = self
-            .components
-            .get(&call.package)
-            .expect("the call names a published package");
-        let args: Vec<CVal> = call.args.iter().map(CVal::from).collect();
-        let mut instance =
-            RefComponentInstance::instantiate(component, session, call.fuel_budget.min(FUEL))
-                .map_err(|(_, error)| error)
-                .expect("instantiate");
-        let end = instance.invoke_kernel(call.export, &args);
-        InvokeResult {
-            session: instance.into_host(),
-            fuel: end.fuel,
-            result: end.result,
-            exhausted: end.exhausted,
-        }
-    }
-}
-
 /// The record the pool's instantiation writes for the unit it issues.
 const UNIT_RECORD: ResourceRecord = ResourceRecord {
     kind: Fungibility::Fungible { divisibility: 18 },
@@ -359,148 +272,26 @@ fn seeded_store(xrd: u128, units: u128) -> MemoryStore {
             UNIT_RECORD.to_cell().unwrap(),
         )
         .unwrap();
-    store
-        .write(vault(ALICE, XRD), encode_amount(xrd).to_vec())
-        .unwrap();
+    seed_vault(&mut store, ALICE, XRD, xrd);
     if units > 0 {
-        store
-            .write(vault(ALICE, unit()), encode_amount(units).to_vec())
-            .unwrap();
+        seed_vault(&mut store, ALICE, unit(), units);
     }
     store
 }
 
-fn cells(end: &MemoryStore) -> BTreeMap<SubstateKey, Vec<u8>> {
-    end.cells()
-        .map(|(key, value)| (key, value.to_vec()))
-        .collect()
-}
+/// The lanes, seeded once per binary from the committed blobs, plus the
+/// packages' own native bodies.
+static LANES: LazyLock<Lanes> = LazyLock::new(|| {
+    let mut lanes = Lanes::new();
+    lanes.seed(account_pkg(), ACCOUNT_COMPONENT);
+    lanes.seed(staking_pkg(), STAKING_COMPONENT);
+    lanes.seed_native(account_pkg(), account::invoke);
+    lanes.seed_native(staking_pkg(), staking::invoke);
+    lanes
+});
 
-fn amount_of(end: &MemoryStore, key: SubstateKey) -> u128 {
-    cells(end)
-        .get(&key)
-        .map_or(0, |cell| decode_amount(cell).unwrap())
-}
-
-/// Whether the engines ended on the one verdict the native lane cannot
-/// reach: a transaction that spent its signed ceiling.
-///
-/// Nothing meters that lane, so a body the engines cut off runs to
-/// completion there. It is the lane's stated boundary rather than a
-/// divergence — a test about the ceiling is a test about the engines —
-/// and reading it off the outcome is what keeps the exception from being
-/// a flag a caller could forget to pass.
-fn metered_out(outcome: &BatchOutcome) -> bool {
-    outcome.receipts.values().any(|receipt| {
-        matches!(
-            receipt.outcome,
-            Outcome::UserError {
-                reason: AbortReason::OutOfGas
-            }
-        )
-    })
-}
-
-/// What a lane is held to when it cannot report the one figure an engine
-/// produces: everything a contract is about.
-fn comparable(outcome: &BatchOutcome) -> Vec<Receipt> {
-    outcome
-        .receipts
-        .values()
-        .map(|receipt| Receipt {
-            fuel: 0,
-            ..receipt.clone()
-        })
-        .collect()
-}
-
-/// Execute the batch three ways and assert they agree; returns the
-/// blessed outcome and its collapsed end state.
-///
-/// The two engines are held to byte-identical receipts, fuel included —
-/// that figure is consensus content and agreeing on it is the point of
-/// having two. The native lane is held to everything else: it runs the
-/// packages' own modules with nothing metering them, so it is what says
-/// the committed blobs still do what their source says.
-fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<(BatchOutcome, MemoryStore)> {
-    let engine = blessed_engine()?;
-    let mut blessed = BlessedPackages {
-        components: BTreeMap::new(),
-        engine,
-    };
-    let mut reference = RefPackages {
-        components: BTreeMap::new(),
-    };
-    let mut native = Native::default();
-    native.seed(account_pkg(), account::invoke);
-    native.seed(staking_pkg(), staking::invoke);
-    for (package, bytes) in [
-        (account_pkg(), ACCOUNT_COMPONENT),
-        (staking_pkg(), STAKING_COMPONENT),
-    ] {
-        validate_component(bytes).context("profile validation")?;
-        blessed.components.insert(
-            package,
-            (
-                Component::new(&blessed.engine, bytes)?,
-                instantiation_charges(bytes)?,
-            ),
-        );
-        reference
-            .components
-            .insert(package, RefComponent::decode(bytes)?);
-    }
-
-    let blessed_outcome = execute_batch(
-        Arc::new(store.clone()),
-        batch,
-        &ManifestWalk { backend: &blessed },
-        test_hash,
-        ExecutionMode::Parallel,
-        &Locality::All,
-    )
-    .unwrap();
-    let ref_outcome = execute_batch(
-        Arc::new(store.clone()),
-        batch,
-        &ManifestWalk {
-            backend: &reference,
-        },
-        test_hash,
-        ExecutionMode::Serial,
-        &Locality::All,
-    )
-    .unwrap();
-    let native_outcome = execute_batch(
-        Arc::new(store.clone()),
-        batch,
-        &ManifestWalk { backend: &native },
-        test_hash,
-        ExecutionMode::Serial,
-        &Locality::All,
-    )
-    .unwrap();
-    // Whole receipts, abort classes included: the vocabulary is closed,
-    // so a failure path the two runtimes classify differently is a
-    // divergence rather than a wording difference to look past.
-    assert_eq!(
-        blessed_outcome.receipts, ref_outcome.receipts,
-        "lanes diverged"
-    );
-    if !metered_out(&blessed_outcome) {
-        assert_eq!(
-            comparable(&blessed_outcome),
-            comparable(&native_outcome),
-            "the packages' own modules diverged from their committed blobs"
-        );
-    }
-    let end = blessed_outcome.store.collapse_onto(store.clone());
-    assert_eq!(
-        cells(&end),
-        cells(&ref_outcome.store.collapse_onto(store.clone())),
-        "state diverged"
-    );
-    Ok((blessed_outcome, end))
+fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> (BatchOutcome, MemoryStore) {
+    run_lanes(&LANES, store, batch)
 }
 
 #[test]
@@ -508,7 +299,7 @@ fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(stake_graph(100)), ALICE)?;
 
-    let (outcome, end) = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry));
     let receipt = &outcome.receipts[&entry.tx];
     assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
 
@@ -535,7 +326,7 @@ fn returned_units_are_destroyed_and_the_pool_says_what_it_owes() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(unstake_graph(40)), ALICE)?;
 
-    let (outcome, end) = run_both(&seeded_store(0, 100), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&seeded_store(0, 100), std::slice::from_ref(&entry));
     let receipt = &outcome.receipts[&entry.tx];
     assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
 
@@ -567,7 +358,7 @@ fn the_emitter_names_the_pool_and_the_guest_cannot() -> Result<()> {
     // about itself and can never emit one about this pool.
     let world = world();
     let entry = batch_entry(&world, &single_intent(stake_graph(10)), ALICE)?;
-    let (outcome, _) = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry))?;
+    let (outcome, _) = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry));
 
     let events = &outcome.receipts[&entry.tx].events;
     let from_pool: Vec<_> = events
@@ -628,7 +419,7 @@ fn registered_bytes() -> Vec<u8> {
 fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
-    let (outcome, end) = run_both(&operator_store(), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&operator_store(), std::slice::from_ref(&entry));
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
         Outcome::Completed { .. }
@@ -659,7 +450,7 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
     let mut store = operator_store();
     store.write(validator_leaf(pool(), VALIDATOR), registered_bytes())?;
 
-    let (outcome, _) = run_both(&store, std::slice::from_ref(&entry))?;
+    let (outcome, _) = run_both(&store, std::slice::from_ref(&entry));
     assert!(
         !matches!(
             outcome.receipts[&entry.tx].outcome,
@@ -679,7 +470,7 @@ fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
     for method in ["deactivate-validator", "unjail"] {
         let graph = operator_graph(method, VALIDATOR);
         let entry = batch_entry(&world, &single_intent(graph), OPERATOR)?;
-        let (outcome, _) = run_both(&operator_store(), std::slice::from_ref(&entry))?;
+        let (outcome, _) = run_both(&operator_store(), std::slice::from_ref(&entry));
         assert!(
             !matches!(
                 outcome.receipts[&entry.tx].outcome,
@@ -700,7 +491,7 @@ fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
     for (method, event_type) in [("deactivate-validator", 3), ("unjail", 4)] {
         let graph = operator_graph(method, VALIDATOR);
         let entry = batch_entry(&world, &single_intent(graph), OPERATOR)?;
-        let (outcome, end) = run_both(&store, std::slice::from_ref(&entry))?;
+        let (outcome, end) = run_both(&store, std::slice::from_ref(&entry));
         assert!(matches!(
             outcome.receipts[&entry.tx].outcome,
             Outcome::Completed { .. }
@@ -733,7 +524,7 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
         &single_intent(register_graph(VALIDATOR + 1)),
         OPERATOR,
     )?;
-    let (outcome, end) = run_both(&operator_store(), &[first.clone(), second.clone()])?;
+    let (outcome, end) = run_both(&operator_store(), &[first.clone(), second.clone()]);
 
     for entry in [&first, &second] {
         assert!(matches!(
@@ -776,7 +567,7 @@ fn cast_graph() -> ManifestGraph {
 fn a_cast_vote_is_held_on_the_pools_own_leaf_and_reported() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(cast_graph()), OPERATOR)?;
-    let (outcome, end) = run_both(&operator_store(), std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&operator_store(), std::slice::from_ref(&entry));
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
         Outcome::Completed { .. }
@@ -800,7 +591,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
         pool().clear_param_vote(b, operator)
     });
     let entry = batch_entry(&world, &single_intent(cleared), OPERATOR)?;
-    let (outcome, end) = run_both(&store, std::slice::from_ref(&entry))?;
+    let (outcome, end) = run_both(&store, std::slice::from_ref(&entry));
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
         Outcome::Completed { .. }
@@ -825,7 +616,7 @@ fn a_second_cast_replaces_the_first() -> Result<()> {
     store.write(vote_leaf(pool()), vec![0xAA; 24])?;
 
     let entry = batch_entry(&world, &single_intent(cast_graph()), OPERATOR)?;
-    let (_, end) = run_both(&store, std::slice::from_ref(&entry))?;
+    let (_, end) = run_both(&store, std::slice::from_ref(&entry));
     assert_eq!(cells(&end).get(&vote_leaf(pool())), Some(&cast_payload()));
     Ok(())
 }

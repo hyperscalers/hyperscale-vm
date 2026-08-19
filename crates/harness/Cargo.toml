@@ -14,6 +14,9 @@ hyperscale-vm-kernel.workspace = true
 hyperscale-vm-types.workspace = true
 hyperscale-vm-ref.workspace = true
 hyperscale-vm-runtime = { workspace = true, features = ["engine"] }
+# The driver's blessed lane and native dispatch: one home for "a
+# GuestBackend over a component set", shared with every consumer.
+hyperscale-vm-testing = { workspace = true, features = ["wasm"] }
 wasmtime.workspace = true
 wit-component.workspace = true
 
@@ -24,7 +27,6 @@ hyperscale-vm-manifest-builder.workspace = true
 # The numeric vocabulary a configuration struct's fields are typed in.
 hyperscale-vm-sdk.workspace = true
 hyperscale-vm-stdlib.workspace = true
-hyperscale-vm-testing = { workspace = true, features = ["wasm"] }
 wasm-smith.workspace = true
 wat.workspace = true
 
