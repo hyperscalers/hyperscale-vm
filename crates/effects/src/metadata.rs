@@ -878,6 +878,32 @@ pub enum DeclarationError {
         /// The shape that slot does have.
         wanted: &'static str,
     },
+    /// A denomination that is not the key the cell is reached by.
+    ///
+    /// A value cell is keyed by what it holds, so a declaration naming a
+    /// resource names the key again — which is what makes two clauses
+    /// reaching one leaf agree about its contents by construction rather
+    /// than by comparison. Disagreeing about what a cell holds is naming
+    /// a different cell.
+    #[error("effect clause {clause} denominates a cell in something its key does not name")]
+    DenominationNotKeyed {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+    },
+    /// A commutative movement that does not say what it moves.
+    ///
+    /// `Delta` and `Reserve` move value and do nothing else, so the cell
+    /// they name holds value and the declaration owes an answer about
+    /// what. Refused again at materialization, which has the evaluated
+    /// key to name it by; this is the same verdict where an author can
+    /// hear it.
+    #[error("effect clause {clause} moves value without saying what it moves")]
+    UndenominatedMovement {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+    },
     /// A clause naming a slot no cell is assigned: unassigned below
     /// [`PACKAGE_SLOT_BASE`], or the kernel's own band at the top.
     #[error("effect clause {clause} names slot {slot}, which no cell is assigned")]
@@ -1132,6 +1158,53 @@ fn complementary(left: Option<&Expr>, right: Option<&Expr>) -> bool {
         || matches!(right, Expr::Not(inner) if inner.as_ref() == left)
 }
 
+/// Judge one access clause: whose prefix it names, which cell under that
+/// prefix, what that cell holds, and what it requires of the leaf.
+///
+/// Ordered as an author would want to hear it. A clause reaching a
+/// stranger's leaf is wrong about more than its shape, and a clause
+/// naming a protocol cell hears that cell's own sentence before the
+/// general rules the sentence is a special case of.
+fn judge_access(
+    clause: u32,
+    target: &TargetExpr,
+    mode: &ModeExpr,
+    denomination: Option<&Expr>,
+) -> Result<(), DeclarationError> {
+    if !targets_own_prefix(target) {
+        return Err(DeclarationError::ForeignPrefix { clause });
+    }
+    protocol_shape(clause, target, mode, denomination)?;
+    // What a cell holds is part of the key it is reached by, so the two
+    // are one expression written twice. A fresh key carries no material
+    // and so holds no value: nothing could find it again to take any
+    // out.
+    if let Some(held) = denomination
+        && slot_of(target).is_none_or(|(_, material)| material.first() != Some(held))
+    {
+        return Err(DeclarationError::DenominationNotKeyed { clause });
+    }
+    if denomination.is_none() && matches!(mode, ModeExpr::Delta | ModeExpr::Reserve(_)) {
+        return Err(DeclarationError::UndenominatedMovement { clause });
+    }
+    // A presence requirement is about the leaf a write lands on, and an
+    // interval has none. Refused here so an author hears about it, and
+    // again at materialization, which honours the requirement rather
+    // than reading past it.
+    if matches!(
+        (target, mode),
+        (
+            TargetExpr::Range { .. },
+            ModeExpr::Write {
+                requires: Presence::Absent | Presence::Present,
+            },
+        )
+    ) {
+        return Err(DeclarationError::PresenceOnInterval { clause });
+    }
+    Ok(())
+}
+
 /// Judge a signature's declared effects against the prefix and the cells
 /// they are the signature's to declare.
 ///
@@ -1159,36 +1232,7 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
                     mode,
                     denomination,
                     ..
-                } => {
-                    if !targets_own_prefix(target) {
-                        return Err(DeclarationError::ForeignPrefix {
-                            clause: clause_index,
-                        });
-                    }
-                    // Whose prefix, then which cell under it. The order
-                    // is the useful one for an author: a clause reaching
-                    // a stranger's leaf is wrong about more than its
-                    // shape.
-                    protocol_shape(clause_index, target, mode, denomination.as_deref())?;
-                    // A presence requirement is about the leaf a write
-                    // lands on, and an interval has none. Refused here
-                    // so an author hears about it, and again at
-                    // materialization, which honours the requirement
-                    // rather than reading past it.
-                    if matches!(
-                        (target, mode),
-                        (
-                            TargetExpr::Range { .. },
-                            ModeExpr::Write {
-                                requires: Presence::Absent | Presence::Present,
-                            },
-                        )
-                    ) {
-                        return Err(DeclarationError::PresenceOnInterval {
-                            clause: clause_index,
-                        });
-                    }
-                }
+                } => judge_access(clause_index, target, mode, denomination.as_deref())?,
                 Clause::ForEach { body, .. } => walk(body, next)?,
             }
         }
@@ -3085,6 +3129,131 @@ mod tests {
         )));
     }
 
+    /// A value cell is keyed by what it holds, so no leaf holds two
+    /// resources.
+    ///
+    /// The property this buys is not the comparison itself but what
+    /// follows from it: the denomination is in the material, the
+    /// material is in the key, so two clauses reaching one leaf name one
+    /// resource however differently they spell it. A cell that could be
+    /// filled under one name and emptied under another would convert
+    /// value by holding it.
+    #[test]
+    fn a_value_cell_is_reached_by_the_name_of_what_it_holds() {
+        let other = || {
+            Expr::Literal(Value::Address(Address::new(
+                [8; 31],
+                AddressClass::Resource,
+            )))
+        };
+        let own = |material: Vec<Expr>| own_point(package_slot(0), material);
+
+        // Keyed by what it holds, in the modes that move it.
+        for mode in [
+            ModeExpr::Delta,
+            ModeExpr::Reserve(Expr::Arg(0)),
+            ModeExpr::Write {
+                requires: Presence::Either,
+            },
+        ] {
+            assert_eq!(
+                check_declarations(&one_clause(
+                    own(vec![a_resource()]),
+                    mode.clone(),
+                    Some(a_resource())
+                )),
+                Ok(()),
+                "{mode:?}"
+            );
+            // Named as something the key does not.
+            assert_eq!(
+                check_declarations(&one_clause(
+                    own(vec![a_resource()]),
+                    mode.clone(),
+                    Some(other())
+                )),
+                Err(DeclarationError::DenominationNotKeyed { clause: 0 }),
+                "{mode:?}"
+            );
+            // Or keyed by nothing at all, which names no cell to hold it.
+            assert_eq!(
+                check_declarations(&one_clause(own(vec![]), mode, Some(a_resource()))),
+                Err(DeclarationError::DenominationNotKeyed { clause: 0 })
+            );
+        }
+
+        // A collection is the same statement: the resource is the term
+        // its entries hang under.
+        let interval = |material| own_interval(package_slot(1), material);
+        assert_eq!(
+            check_declarations(&one_clause(
+                interval(vec![a_resource()]),
+                ModeExpr::Write {
+                    requires: Presence::Either
+                },
+                Some(a_resource())
+            )),
+            Ok(())
+        );
+        assert_eq!(
+            check_declarations(&one_clause(
+                interval(vec![other()]),
+                ModeExpr::Write {
+                    requires: Presence::Either
+                },
+                Some(a_resource())
+            )),
+            Err(DeclarationError::DenominationNotKeyed { clause: 0 })
+        );
+
+        // A fresh key carries no material, so nothing could find it
+        // again to take value out of it.
+        assert_eq!(
+            check_declarations(&one_clause(
+                TargetExpr::Point(Expr::FreshKey { slot: 0 }),
+                ModeExpr::Write {
+                    requires: Presence::Either
+                },
+                Some(a_resource())
+            )),
+            Err(DeclarationError::DenominationNotKeyed { clause: 0 })
+        );
+    }
+
+    /// A commutative movement says what it moves.
+    ///
+    /// `Delta` and `Reserve` move value and do nothing else, so the cell
+    /// is one that holds value whether or not the declaration says which.
+    /// Refused at materialization too, which has the evaluated key to
+    /// name; this is the same verdict where an author hears it.
+    #[test]
+    fn a_movement_that_names_no_resource_does_not_publish() {
+        let own = |material: Vec<Expr>| own_point(package_slot(0), material);
+        for mode in [ModeExpr::Delta, ModeExpr::Reserve(Expr::Arg(0))] {
+            assert_eq!(
+                check_declarations(&one_clause(own(vec![a_resource()]), mode.clone(), None)),
+                Err(DeclarationError::UndenominatedMovement { clause: 0 }),
+                "{mode:?}"
+            );
+        }
+        // A write is the mode a byte cell takes too, so it says nothing
+        // by saying nothing — which is what makes it a byte cell.
+        assert_eq!(
+            check_declarations(&one_clause(
+                own(vec![]),
+                ModeExpr::Write {
+                    requires: Presence::Either
+                },
+                None
+            )),
+            Ok(())
+        );
+        assert_eq!(
+            check_declarations(&one_clause(own(vec![]), ModeExpr::Read, None)),
+            Ok(())
+        );
+    }
+
     /// A slot naming no cell has no shape to be held to, so it is not a
     /// slot a signature may name at all: the unassigned part of the
     /// vocabulary's band, and the kernel's own at the top.
@@ -3150,7 +3319,7 @@ mod tests {
                 guard: None,
                 target,
                 mode: ModeExpr::Delta,
-                denomination: None,
+                denomination: Some(Box::new(a_resource())),
             }],
             ..MethodSignature::default()
         };
@@ -3158,7 +3327,7 @@ mod tests {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(owner),
                 slot: SlotId(PACKAGE_SLOT_BASE),
-                material: vec![],
+                material: vec![a_resource()],
             })
         };
 
@@ -3168,14 +3337,19 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            check_declarations(&declaring(TargetExpr::Point(Expr::FreshKey { slot: 0 }))),
+            check_declarations(&declaring(TargetExpr::Entry {
+                owner: Expr::SelfAddr,
+                collection: SlotId(PACKAGE_SLOT_BASE + 2),
+                material: vec![a_resource()],
+                order: Expr::Literal(Value::U128(1)),
+            })),
             Ok(())
         );
         assert_eq!(
             check_declarations(&declaring(TargetExpr::Entry {
                 owner: Expr::SelfAddr,
                 collection: SlotId(PACKAGE_SLOT_BASE + 1),
-                material: vec![],
+                material: vec![a_resource()],
                 order: Expr::Literal(Value::U128(0)),
             })),
             Ok(())
@@ -3207,7 +3381,7 @@ mod tests {
                     guard: None,
                     target: child_of(Expr::Binding(0)),
                     mode: ModeExpr::Delta,
-                    denomination: None,
+                    denomination: Some(Box::new(a_resource())),
                 }],
             }],
             ..MethodSignature::default()

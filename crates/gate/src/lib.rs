@@ -674,7 +674,18 @@ mod tests {
 
     #[test]
     fn a_binding_the_export_type_cannot_honour_refuses_at_publish() {
-        use hyperscale_vm_effects::{Clause, Expr, ModeExpr, TargetExpr, package_slot};
+        use hyperscale_vm_effects::{
+            Address, AddressClass, Clause, Expr, ModeExpr, TargetExpr, Value, package_slot,
+        };
+
+        // A value cell is keyed by what it holds, so the two clauses
+        // below that move value say so twice.
+        let held = || {
+            Expr::Literal(Value::Address(Address::new(
+                [0xE1; 31],
+                AddressClass::Resource,
+            )))
+        };
 
         // Arity: the binding builds nothing, the export takes one.
         let empty = declaring(&["m"]);
@@ -726,10 +737,10 @@ mod tests {
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
                     slot: package_slot(0),
-                    material: vec![],
+                    material: vec![held()],
                 }),
                 mode: ModeExpr::Reserve(Expr::Arg(0)),
-                denomination: None,
+                denomination: Some(Box::new(held())),
             }];
             signature.abi = vec![AbiParam::Handle(0)];
         }
@@ -747,10 +758,10 @@ mod tests {
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
                     slot: package_slot(0),
-                    material: vec![],
+                    material: vec![held()],
                 }),
                 mode: ModeExpr::Delta,
-                denomination: None,
+                denomination: Some(Box::new(held())),
             }];
             signature.abi = vec![AbiParam::Handle(0)];
         }
