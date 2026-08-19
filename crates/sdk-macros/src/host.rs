@@ -17,23 +17,6 @@ use crate::bind::{Binding, Carries, bindings};
 use crate::lower::Lowered;
 use crate::wit::Shape;
 
-/// The kernel resource a mode's handle arrives as, as the kind the
-/// kernel names it by.
-fn cell_kind(resource: &str) -> TokenStream {
-    match resource {
-        "locked-cell" => quote!(Locked),
-        "write-cell" => quote!(Write),
-        "amount-cell" => quote!(Amount),
-        "amount-read" => quote!(AmountRead),
-        "delta-cell" => quote!(Delta),
-        "reserve-cell" => quote!(Reserve),
-        "range-read" => quote!(RangeRead),
-        "range-write" => quote!(RangeWrite),
-        "instance-range" => quote!(InstanceRange),
-        _ => quote!(Read),
-    }
-}
-
 /// One method's arm of the package's dispatch.
 ///
 /// The prologue reads each parameter out of the assembled arguments at
@@ -62,7 +45,7 @@ pub fn arm(
                 let #ident = ::hyperscale_vm_sdk::host::flag(__args, #position);
             ),
             Carries::Handle(resource) => {
-                let kind = cell_kind(resource);
+                let kind = resource.cell_kind();
                 quote!(
                     let #ident = ::hyperscale_vm_sdk::host::handle(
                         __args,

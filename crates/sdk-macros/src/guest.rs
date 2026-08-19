@@ -16,7 +16,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use crate::bind::{Binding, Carries, bindings};
-use crate::lower::{Lowered, handle_variant};
+use crate::lower::Lowered;
 use crate::wit::{Export, Shape};
 
 /// One method's generated export, and the `impl Guest` body behind it.
@@ -30,20 +30,6 @@ pub struct Method {
 /// The Rust name wit-bindgen gives a kebab-cased export.
 fn rust_name(published: &str) -> syn::Ident {
     syn::Ident::new(&published.replace('-', "_"), proc_macro2::Span::call_site())
-}
-
-/// The generated Rust type of a borrowed kernel resource.
-fn resource_type(resource: &str) -> syn::Ident {
-    let camel: String = resource
-        .split('-')
-        .map(|word| {
-            let mut chars = word.chars();
-            chars.next().map_or_else(String::new, |first| {
-                first.to_uppercase().collect::<String>() + chars.as_str()
-            })
-        })
-        .collect();
-    syn::Ident::new(&camel, proc_macro2::Span::call_site())
 }
 
 /// One method's export and its executing body.
@@ -87,8 +73,8 @@ pub fn method(
             // two cannot disagree.
             Carries::Flag => signature.push(quote!(#ident: bool)),
             Carries::Handle(resource) => {
-                let ty = resource_type(resource);
-                let variant = handle_variant(resource);
+                let ty = resource.guest_type();
+                let variant = resource.handle_variant();
                 signature.push(quote!(#ident: &#ty));
                 prologue.push(quote!(
                     let #ident = ::hyperscale_vm_sdk::guest::Handle::#variant(#ident.handle());

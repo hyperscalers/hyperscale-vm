@@ -9,13 +9,14 @@
 //! for did something else.
 
 use crate::lower::{Lowered, Need, flag_ident, handle_ident, value_ident};
+use crate::mode::HandleMode;
 use crate::term::Term;
 use crate::wit::{Param, Shape};
 
 /// What one export parameter carries.
 pub enum Carries {
     /// A materialized capability, at the resource its clause declares.
-    Handle(&'static str),
+    Handle(HandleMode),
     /// A value edge, under the author's own name for it.
     Edge {
         /// The name the method's signature gave the parameter.
@@ -117,7 +118,7 @@ pub fn bindings(
             .sites
             .get(site)
             .and_then(crate::lower::Site::resource)
-            .unwrap_or("read-cell");
+            .unwrap_or(HandleMode::ReadCell);
         bindings.push(Binding {
             param: Param {
                 name: format!("handle-{position}"),

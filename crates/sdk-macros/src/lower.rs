@@ -45,6 +45,7 @@ use quote::quote;
 use syn::spanned::Spanned;
 
 use crate::is_named;
+use crate::mode::HandleMode;
 use crate::term::{Op, Slot, Term};
 
 /// What kind of state a component field holds, and under which slot.
@@ -182,7 +183,7 @@ impl Site {
     ///
     /// `None` for a site the body opened and never used: it declares
     /// nothing, so there is no handle for the export to take.
-    pub fn resource(&self) -> Option<&'static str> {
+    pub fn resource(&self) -> Option<HandleMode> {
         let has = |op: Op| self.ops.iter().any(|(o, _)| *o == op);
         let holds_value = self.denomination.is_some();
         let interval = matches!(
@@ -198,23 +199,23 @@ impl Site {
             has(Op::Get),
         );
         Some(match (interval, writes || moves, reads) {
-            (true, true, _) if holds_value => "instance-range",
-            (true, true, _) => "range-write",
-            (true, false, true) => "range-read",
+            (true, true, _) if holds_value => HandleMode::InstanceRange,
+            (true, true, _) => HandleMode::RangeWrite,
+            (true, false, true) => HandleMode::RangeRead,
             // A body that only moves value declares a commutative
             // movement; one that also reads the balance, or assigns it,
             // needs the exclusivity a read-modify-write has. The mode is
             // what the body needs rather than which word it typed.
-            (false, true, _) if moves && !writes && !reads => "delta-cell",
-            (false, true, _) if holds_value => "amount-cell",
-            (false, true, _) => "write-cell",
-            (false, false, true) if holds_value => "amount-read",
-            (false, false, true) => "read-cell",
+            (false, true, _) if moves && !writes && !reads => HandleMode::DeltaCell,
+            (false, true, _) if holds_value => HandleMode::AmountCell,
+            (false, true, _) => HandleMode::WriteCell,
+            (false, false, true) if holds_value => HandleMode::AmountRead,
+            (false, false, true) => HandleMode::ReadCell,
             (_, false, false) => {
                 if has(Op::Reserve) {
-                    "reserve-cell"
+                    HandleMode::ReserveCell
                 } else if has(Op::Locked) {
-                    "locked-cell"
+                    HandleMode::LockedCell
                 } else {
                     return None;
                 }
@@ -583,22 +584,6 @@ pub fn flag_ident(index: usize) -> syn::Ident {
 /// The generated name of the handle materialized for `site`.
 pub fn handle_ident(site: usize) -> syn::Ident {
     syn::Ident::new(&format!("__capability_{site}"), Span::call_site())
-}
-
-/// The `Handle` variant a borrowed resource arrives as.
-pub fn handle_variant(resource: &str) -> TokenStream {
-    match resource {
-        "read-cell" => quote!(Read),
-        "locked-cell" => quote!(Locked),
-        "write-cell" => quote!(Write),
-        "amount-cell" => quote!(Amount),
-        "amount-read" => quote!(AmountRead),
-        "delta-cell" => quote!(Delta),
-        "reserve-cell" => quote!(Reserve),
-        "range-read" => quote!(RangeRead),
-        "instance-range" => quote!(InstanceRange),
-        _ => quote!(RangeWrite),
-    }
 }
 
 /// The lowering pass over one method body.

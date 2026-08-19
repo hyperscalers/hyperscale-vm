@@ -90,6 +90,8 @@
 // "the macro's model of it".
 #![allow(clippy::absolute_paths)]
 
+mod mode;
+use crate::mode::HandleMode;
 mod bind;
 mod client;
 mod emit;
@@ -1274,7 +1276,7 @@ fn check_gate_shape(
         Gate::RoleGated(_) => match lowered.sites.as_slice() {
             [site]
                 if matches!(site.target, Target::Point { .. })
-                    && site.resource() == Some("write-cell") =>
+                    && site.resource() == Some(HandleMode::WriteCell) =>
             {
                 Ok(())
             }
