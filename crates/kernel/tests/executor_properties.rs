@@ -259,6 +259,10 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 Capability::Amount(_) => {
                     let _ = session.write_take(rep, seed % 11);
                 }
+                // And a read of one answers a quantity, not bytes.
+                Capability::AmountRead(_) => {
+                    let _ = session.amount_cell_balance(rep);
+                }
                 Capability::InstanceRange(..) => {
                     let _ = session.range_count(rep);
                 }

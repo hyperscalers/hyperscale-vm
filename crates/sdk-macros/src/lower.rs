@@ -208,6 +208,7 @@ impl Site {
             (false, true, _) if moves && !writes && !reads => "delta-cell",
             (false, true, _) if holds_value => "amount-cell",
             (false, true, _) => "write-cell",
+            (false, false, true) if holds_value => "amount-read",
             (false, false, true) => "read-cell",
             (_, false, false) => {
                 if has(Op::Reserve) {
@@ -591,6 +592,7 @@ pub fn handle_variant(resource: &str) -> TokenStream {
         "locked-cell" => quote!(Locked),
         "write-cell" => quote!(Write),
         "amount-cell" => quote!(Amount),
+        "amount-read" => quote!(AmountRead),
         "delta-cell" => quote!(Delta),
         "reserve-cell" => quote!(Reserve),
         "range-read" => quote!(RangeRead),

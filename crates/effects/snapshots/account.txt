@@ -266,7 +266,11 @@ PackageMetadata {
                         },
                     ),
                     mode: Read,
-                    denomination: None,
+                    denomination: Some(
+                        Arg(
+                            0,
+                        ),
+                    ),
                 },
             ],
             abi: [],
@@ -322,7 +326,11 @@ PackageMetadata {
                         ),
                     },
                     mode: Read,
-                    denomination: None,
+                    denomination: Some(
+                        Arg(
+                            0,
+                        ),
+                    ),
                 },
             ],
             abi: [],

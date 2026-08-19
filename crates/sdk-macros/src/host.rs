@@ -24,6 +24,7 @@ fn cell_kind(resource: &str) -> TokenStream {
         "locked-cell" => quote!(Locked),
         "write-cell" => quote!(Write),
         "amount-cell" => quote!(Amount),
+        "amount-read" => quote!(AmountRead),
         "delta-cell" => quote!(Delta),
         "reserve-cell" => quote!(Reserve),
         "range-read" => quote!(RangeRead),

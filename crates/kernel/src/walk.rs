@@ -27,6 +27,7 @@ const fn cell_kind(capability: &Capability) -> CellKind {
         Capability::Locked(_) => CellKind::Locked,
         Capability::Write(_) => CellKind::Write,
         Capability::Amount(_) => CellKind::Amount,
+        Capability::AmountRead(_) => CellKind::AmountRead,
         Capability::Delta(_) => CellKind::Delta,
         Capability::Reserve { .. } => CellKind::Reserve,
         Capability::RangeRead(..) => CellKind::RangeRead,

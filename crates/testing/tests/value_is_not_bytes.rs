@@ -64,12 +64,12 @@ const fn write(target: TargetExpr, denomination: Option<Box<Expr>>) -> Clause {
     }
 }
 
-const fn read(target: TargetExpr) -> Clause {
+const fn read(target: TargetExpr, denomination: Option<Box<Expr>>) -> Clause {
     Clause::Effect {
         guard: None,
         target,
         mode: ModeExpr::Read,
-        denomination: None,
+        denomination,
     }
 }
 
@@ -243,8 +243,10 @@ fn impostor() -> PackageMetadata {
             params: vec![ParamType::Address],
             abi: vec![],
             effects: vec![
-                read(own(AUTH, vec![])),
-                read(own(VAULT, vec![Expr::Arg(0)])),
+                read(own(AUTH, vec![]), None),
+                // A vault is a value cell in every mode it is reached in,
+                // so even the possession read says what it holds.
+                read(own(VAULT, vec![Expr::Arg(0)]), Some(Box::new(Expr::Arg(0)))),
             ],
             ..MethodSignature::default()
         },

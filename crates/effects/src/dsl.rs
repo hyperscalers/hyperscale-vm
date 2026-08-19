@@ -363,7 +363,11 @@ pub const fn materialized_kind(clause: &Clause) -> Option<CellKind> {
     };
     let holds_value = denomination.is_some();
     match (target, mode) {
-        (TargetExpr::Point(_), ModeExpr::Read) => Some(CellKind::Read),
+        (TargetExpr::Point(_), ModeExpr::Read) => Some(if holds_value {
+            CellKind::AmountRead
+        } else {
+            CellKind::Read
+        }),
         (TargetExpr::Point(_), ModeExpr::Locked) => Some(CellKind::Locked),
         (TargetExpr::Point(_), ModeExpr::Write { .. }) => Some(if holds_value {
             CellKind::Amount

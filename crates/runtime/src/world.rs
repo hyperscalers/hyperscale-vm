@@ -175,6 +175,8 @@ pub struct LockedCell;
 pub struct WriteCell;
 /// Host-side marker for the `amount-cell` resource.
 pub struct AmountCell;
+/// Host-side marker for the `amount-read` resource.
+pub struct AmountRead;
 /// Host-side marker for the `delta-cell` resource.
 pub struct DeltaCell;
 /// Host-side marker for the `reserve-cell` resource.
@@ -243,6 +245,9 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         Ok(())
     })?;
     state.resource("amount-cell", ResourceType::host::<AmountCell>(), |_, _| {
+        Ok(())
+    })?;
+    state.resource("amount-read", ResourceType::host::<AmountRead>(), |_, _| {
         Ok(())
     })?;
     state.resource("delta-cell", ResourceType::host::<DeltaCell>(), |_, _| {
@@ -319,6 +324,14 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "amount-cell-balance",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<AmountCell>,)| {
+            let held = store.data_mut().amount_cell_balance(r.rep());
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            Ok((Amount::from(held.map_err(host_trap)?),))
+        },
+    )?;
+    state.func_wrap(
+        "amount-read-balance",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<AmountRead>,)| {
             let held = store.data_mut().amount_cell_balance(r.rep());
             charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
             Ok((Amount::from(held.map_err(host_trap)?),))

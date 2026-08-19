@@ -1201,7 +1201,9 @@ fn gate_calls(gate: &Gate) -> TokenStream2 {
         // provision the cells it reads. The possession read is pinned to
         // the protocol's own slot, keyed by exactly the expressions the
         // mint names — which is what ties what is minted to what is
-        // held.
+        // held. It says what it holds too: a vault is a value cell in
+        // every mode it is reached in, and a read that said nothing
+        // would be a read of bytes.
         Gate::Custodial {
             rule,
             badge,
@@ -1213,7 +1215,7 @@ fn gate_calls(gate: &Gate) -> TokenStream2 {
             let __rule = __owner.child(::hyperscale_vm_sdk::SlotId(#rule), &[]);
             __t.point(&__rule).read();
             let __vault = __owner.child(::hyperscale_vm_sdk::VAULT, &__material);
-            __t.point(&__vault).read();
+            __t.point(&__vault).holding(&__badge).read();
             __t.custodial(&__badge);
         }),
         Gate::Custodial {
@@ -1237,6 +1239,7 @@ fn gate_calls(gate: &Gate) -> TokenStream2 {
                 &__material,
                 &__id,
             )
+            .holding(&__badge)
             .read();
             __t.custodial_instance(&__badge, &__id);
         }),

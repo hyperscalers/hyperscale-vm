@@ -67,6 +67,14 @@ pub enum CellKind {
     /// operation, and a package that named the wrong one is answered by
     /// the publish gate rather than by a trap at the call.
     Amount,
+    /// `amount-read`: the same read of a cell holding value.
+    ///
+    /// Its own type for the reason [`CellKind::Amount`] is: a balance is
+    /// a quantity and the cell holding it has no byte surface, so a read
+    /// of one answers an amount and a read of the other answers bytes.
+    /// One resource per question, rather than one that answers whichever
+    /// the caller guessed.
+    AmountRead,
     /// `delta-cell`.
     Delta,
     /// `reserve-cell`.
@@ -96,6 +104,7 @@ impl CellKind {
             Self::Locked => "locked-cell",
             Self::Write => "write-cell",
             Self::Amount => "amount-cell",
+            Self::AmountRead => "amount-read",
             Self::Delta => "delta-cell",
             Self::Reserve => "reserve-cell",
             Self::RangeRead => "range-read",

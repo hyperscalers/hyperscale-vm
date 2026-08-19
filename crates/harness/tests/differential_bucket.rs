@@ -24,8 +24,8 @@ use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
 };
 use hyperscale_vm_runtime::{
-    AmountCell, Bucket, DeltaCell, HostRefusal, InstanceRange, Issuer, ReadCell, ReserveCell,
-    add_kernel_to_linker, blessed_engine, classify, validate_component,
+    AmountCell, AmountRead, Bucket, DeltaCell, HostRefusal, InstanceRange, Issuer, ReadCell,
+    ReserveCell, add_kernel_to_linker, blessed_engine, classify, validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::error::format_err;
@@ -1308,4 +1308,117 @@ fn discard_ref(fx: &Fixture, held: u128) -> Result<(Option<AbortReason>, u64)> {
         Err(ExecError::Canon(CanonError::Host(reason))) => Ok((Some(reason), fuel)),
         Err(other) => Err(format_err!("ref discard failed: {other:?}")),
     }
+}
+
+// ─── and the read that moves none of it ────────────────────────────────
+
+/// A component whose one export asks a balance and hands back the figure.
+///
+/// Its own component rather than a fixture export, because what it needs
+/// is a capability the fixture does not carry: a fresh read of a cell
+/// that holds value, which excludes no other reader.
+const PEEK_WAT: &str = r#"
+(component
+  (import "hyperscale:kernel/state" (instance $state
+    (export "amount-read" (type $ar (sub resource)))
+    (type $amt_decl (record (field "low" u64) (field "high" u64)))
+    (export "amount" (type $amt (eq $amt_decl)))
+    (export "amount-read-balance" (func (param "c" (borrow $ar)) (result $amt)))))
+  (alias export $state "amount-read" (type $aread))
+  (alias export $state "amount-read-balance" (func $balance))
+
+  (core module $alloc
+    (memory (export "mem") 1 1)
+    (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 1024))
+  (core instance $a (instantiate $alloc))
+  (core func $balance_l (canon lower (func $balance) (memory $a "mem")))
+  (core func $drop_r (canon resource.drop $aread))
+
+  (core module $m
+    (import "env" "mem" (memory 1 1))
+    (import "k" "balance" (func $balance (param i32 i32)))
+    (import "k" "drop" (func $drop (param i32)))
+    (func (export "peek") (param i32) (result i64)
+      (local $held i64)
+      local.get 0
+      i32.const 96
+      call $balance
+      i32.const 96
+      i64.load
+      local.set $held
+      local.get 0
+      call $drop
+      local.get $held))
+
+  (core instance $i (instantiate $m
+    (with "env" (instance (export "mem" (memory $a "mem"))))
+    (with "k" (instance (export "balance" (func $balance_l)) (export "drop" (func $drop_r))))))
+
+  (func (export "peek")
+    (param "c" (borrow $aread)) (result u64)
+    (canon lift (core func $i "peek"))))
+"#;
+
+/// A session over one vault, declared read and denominated — the shape a
+/// method that only asks what a pool holds declares.
+fn peeking() -> KernelSession {
+    let key = child_key(&TestHasher, ISSUER, SlotId(1), &[]);
+    let mut store = MemoryStore::new();
+    store
+        .write(key, encode_amount(BALANCE).to_vec())
+        .expect("the fixture seeds");
+    let read = Effect {
+        target: EffectTarget::Point(key),
+        mode: Mode::Read,
+    };
+    let mut declared = EffectSet::default();
+    declared.insert(read).expect("the set takes it");
+    KernelSession::materialize(
+        OverlayStore::new(Arc::new(store)),
+        &declared,
+        &[read],
+        &[Some(RESOURCE)],
+        tx(),
+        env(),
+        test_hash,
+    )
+    .expect("the declaration materializes")
+}
+
+/// Asking a balance is the one thing a body does with value that moves
+/// none of it, and the two engines answer the same figure through the
+/// same handle.
+#[test]
+fn a_balance_read_agrees_between_the_engines() -> Result<()> {
+    let bytes = parse_str(PEEK_WAT)?;
+    validate_component(&bytes)?;
+
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<KernelSession>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let mut store = Store::new(&engine, peeking());
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+    let (blessed,) = instance
+        .get_typed_func::<(Resource<AmountRead>,), (u64,)>(&mut store, "peek")?
+        .call(&mut store, (Resource::new_borrow(0),))?;
+
+    let comp = RefComponent::decode(&bytes)?;
+    let mut interpreted =
+        RefComponentInstance::instantiate(&comp, peeking()).map_err(|(_, error)| error)?;
+    let reference = match invoke(
+        &mut interpreted,
+        "peek",
+        &[CVal::Borrow(0, ResourceKind::AmountRead)],
+    )?
+    .as_slice()
+    {
+        [CVal::U64(held)] => *held,
+        other => return Err(format_err!("peek returned {other:?}")),
+    };
+
+    assert_eq!(blessed, reference, "the balance read diverged");
+    assert_eq!(u128::from(blessed), BALANCE);
+    Ok(())
 }

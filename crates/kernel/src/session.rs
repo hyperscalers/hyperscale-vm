@@ -76,6 +76,13 @@ pub enum Capability {
     /// debited, and a handle that offered both would be one the kernel
     /// had to refuse half of at every call.
     Amount(SubstateKey),
+    /// A read of one cell holding value.
+    ///
+    /// Its own variant beside [`Capability::Read`] for the reason
+    /// [`Capability::Amount`] is one beside [`Capability::Write`]: what a
+    /// value cell answers is a quantity, and it has no byte surface for a
+    /// body to read one through.
+    AmountRead(SubstateKey),
     /// Commutative movement on one amount cell.
     Delta(SubstateKey),
     /// A held reservation on one amount cell, at this clause's own
@@ -1293,7 +1300,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn amount_cell_balance(&mut self, rep: u32) -> Result<u128, SessionTrap> {
-        let Capability::Amount(key) = self.capability(rep)? else {
+        let (Capability::Amount(key) | Capability::AmountRead(key)) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
         self.amount_cell(key)
@@ -2209,7 +2216,11 @@ fn capability_for(
         }
     };
     match (effect.target, effect.mode) {
-        (EffectTarget::Point(key), Mode::Read) => Ok(Capability::Read(key)),
+        (EffectTarget::Point(key), Mode::Read) => Ok(if denominated {
+            Capability::AmountRead(key)
+        } else {
+            Capability::Read(key)
+        }),
         // The mirror of `locked_checked`, and the reason a locked read needs
         // no proof: an unlocked target could differ between the shard that
         // owns it and one that only reads it, and a locked read makes no

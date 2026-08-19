@@ -73,6 +73,14 @@ interface state {
     resource delta-cell;
     /// A declared reservation, already judged feasible and held.
     resource reserve-cell;
+    /// The same read, over a cell that holds value.
+    ///
+    /// Which of the two a clause materializes is what its declaration
+    /// said the cell holds, exactly as it is for `write-cell` and
+    /// `amount-cell` — so a read of a vault answers a quantity and a
+    /// read of a byte cell answers bytes, and neither export can borrow
+    /// the other's.
+    resource amount-read;
     /// A declared read interval of an ordered collection.
     resource range-read;
     /// A declared read-modify-write interval of an ordered collection.
@@ -82,6 +90,17 @@ interface state {
 
     /// The substate's current bytes; empty if absent.
     read-cell-get: func(c: borrow<read-cell>) -> list<u8>;
+
+    /// What the cell holds, without the exclusivity moving it needs.
+    ///
+    /// A curve is a function of its reserves, so asking is the one thing
+    /// a body does with a balance that changes nothing — and a method
+    /// that only asks should contend with nobody. An `amount` rather
+    /// than the bytes it is stored as, on the same terms as
+    /// `amount-cell-balance`: a cell that holds value has no byte
+    /// surface for a body to read one through, whichever handle reaches
+    /// it.
+    amount-read-balance: func(c: borrow<amount-read>) -> amount;
 
     /// The substate's pinned bytes; empty if absent.
     locked-cell-get: func(c: borrow<locked-cell>) -> list<u8>;

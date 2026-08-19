@@ -56,6 +56,8 @@ pub enum ResourceKind {
     WriteCell,
     /// `amount-cell`.
     AmountCell,
+    /// `amount-read`.
+    AmountRead,
     /// `delta-cell`.
     DeltaCell,
     /// `reserve-cell`.
@@ -76,6 +78,7 @@ impl ResourceKind {
             CellKind::Locked => Self::LockedCell,
             CellKind::Write => Self::WriteCell,
             CellKind::Amount => Self::AmountCell,
+            CellKind::AmountRead => Self::AmountRead,
             CellKind::Delta => Self::DeltaCell,
             CellKind::Reserve => Self::ReserveCell,
             CellKind::RangeRead => Self::RangeRead,
@@ -92,6 +95,7 @@ impl ResourceKind {
             "locked-cell" => Some(Self::LockedCell),
             "write-cell" => Some(Self::WriteCell),
             "amount-cell" => Some(Self::AmountCell),
+            "amount-read" => Some(Self::AmountRead),
             "delta-cell" => Some(Self::DeltaCell),
             "reserve-cell" => Some(Self::ReserveCell),
             "range-read" => Some(Self::RangeRead),
@@ -160,6 +164,7 @@ enum HostFn {
     WriteCellGet,
     WriteCellSet,
     AmountBalance,
+    AmountReadBalance,
     InstanceCount,
     InstanceOrder,
     InstanceEntry,
@@ -676,6 +681,7 @@ impl RefComponent {
             ("state", "write-cell-get") => Ok(HostFn::WriteCellGet),
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
             ("state", "amount-cell-balance") => Ok(HostFn::AmountBalance),
+            ("state", "amount-read-balance") => Ok(HostFn::AmountReadBalance),
             ("state", "amount-cell-take") => Ok(HostFn::AmountTake),
             ("state", "amount-cell-put") => Ok(HostFn::AmountPut),
             ("state", "mint-instances") => Ok(HostFn::IssuerMint),
@@ -1701,6 +1707,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::LockedCellGet
                     | HostFn::WriteCellGet
                     | HostFn::AmountBalance
+                    | HostFn::AmountReadBalance
                     | HostFn::RangeWriteRemove
                     | HostFn::AmountPut
                     | HostFn::DeltaPut
@@ -1811,8 +1818,13 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         self.lower_list(modules, store, mem, realloc, &bytes, args[1])?;
                         Ok(Vec::new())
                     }
-                    HostFn::AmountBalance => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::AmountCell)?;
+                    HostFn::AmountBalance | HostFn::AmountReadBalance => {
+                        let expected = if host_fn == HostFn::AmountBalance {
+                            ResourceKind::AmountCell
+                        } else {
+                            ResourceKind::AmountRead
+                        };
+                        let rep = self.resolve_handle(args[0], expected)?;
                         let held = self
                             .host
                             .amount_cell_balance(rep)

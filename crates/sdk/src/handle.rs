@@ -26,6 +26,8 @@ pub enum Handle {
     Write(u32),
     /// The same, of a cell holding value.
     Amount(u32),
+    /// A read of a cell holding value.
+    AmountRead(u32),
     /// A declared commutative movement on an amount cell.
     Delta(u32),
     /// A declared reservation, already judged and held.

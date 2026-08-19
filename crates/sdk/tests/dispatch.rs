@@ -12,8 +12,8 @@ use hyperscale_vm_effects::{
     Presence, SlotId, SubstateKey, TestHasher, Value, child_key,
 };
 use hyperscale_vm_kernel::{
-    AbortReason, EnvInputs, Held, KernelSession, MemoryStore, Outcome, OverlayStore, TxHash,
-    WorkingStore, encode_amount,
+    AbortReason, Capability, EnvInputs, Held, KernelSession, MemoryStore, Outcome, OverlayStore,
+    TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_sdk::host::{CellKind, GuestArg, Invoked};
@@ -48,6 +48,11 @@ mod till {
                 return Err(Error::Short);
             }
             Ok(vault.take(amount))
+        }
+
+        /// Read the vault and do nothing with the figure but check it.
+        pub fn weigh(&mut self, resource: Address) {
+            assert!(self.vault(resource).balance() >= Quantity::ZERO);
         }
 
         /// Read the vault and insist on something it will not be.
@@ -326,9 +331,39 @@ fn the_error_arm_declines_rather_than_trapping() {
 fn a_body_that_panics_aborts_as_the_trap_it_would_be() {
     let session = session(Mode::Read, 10);
 
-    let (_, invoked) = till::invoke("insist", session, &[cell(CellKind::Read)]);
+    // A read of a vault is a read of a balance, so the handle is the one
+    // value comes through rather than the one bytes do — and what fails
+    // is the body's own assertion about the figure it read.
+    let (_, invoked) = till::invoke("insist", session, &[cell(CellKind::AmountRead)]);
 
     assert_eq!(invoked, Invoked::Aborted(AbortReason::Unreachable));
+}
+
+/// Reading a balance takes no exclusivity, and gives back no bytes.
+///
+/// A curve is a function of its reserves, so asking is the one thing a
+/// body does with a balance that changes nothing — and a method that
+/// only asks should contend with nobody. What it must not get is the
+/// byte handle: a vault is sixteen bytes, and a body that could read
+/// them would be reading a balance as bytes, which is what the two
+/// value types exist to stop.
+#[test]
+fn a_read_of_a_vault_answers_a_quantity_and_not_bytes() {
+    // A fresh read, which excludes no other reader.
+    let held = session(Mode::Read, 10);
+    assert!(matches!(
+        held.capabilities().first(),
+        Some(Capability::AmountRead(_))
+    ));
+
+    // The body reads the balance through it and gets the figure.
+    let (_, invoked) = till::invoke("weigh", held, &[cell(CellKind::AmountRead)]);
+    assert_eq!(invoked, Invoked::Produced(vec![]));
+
+    // And the byte handle is not what a vault read materialises, so an
+    // export borrowing one is handed a mode it never declared.
+    let (_, invoked) = till::invoke("weigh", session(Mode::Read, 10), &[cell(CellKind::Read)]);
+    assert_eq!(invoked, Invoked::Aborted(AbortReason::AbiViolation));
 }
 
 /// A handle materialized at one mode cannot be read as another: the

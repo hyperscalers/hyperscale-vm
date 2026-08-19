@@ -1105,20 +1105,14 @@ fn vocabulary_shape(
     // leaf hold one resource; a second answer beside it would be the
     // leaf and the declaration disagreeing about what came out of it.
     //
-    // Named wherever value can move, and optional on a read: a read
-    // opens no bucket and credits no cell, so nothing consults what the
-    // leaf holds, and the custody gate's possession read is exactly that
-    // — the balance is a yes or no rather than a quantity going
-    // anywhere.
-    let moves_value = matches!(
-        mode,
-        ModeExpr::Write { .. } | ModeExpr::Delta | ModeExpr::Reserve(_)
-    );
-    let keyed_by_what_it_holds = match (material, denomination) {
-        ([held], Some(named)) => named == held,
-        ([_], None) => !moves_value,
-        _ => false,
-    };
+    // Named in every mode the cell is reached in, a read included. Which
+    // handle a clause materializes turns on the denomination, and a
+    // clause that says nothing gets the one bytes come through — so a
+    // silent read of a vault would be the one place a balance is still
+    // read as bytes, which is the whole of what these types exist to
+    // stop.
+    let keyed_by_what_it_holds =
+        matches!((material, denomination), ([held], Some(named)) if named == held);
     let bare = material.is_empty() && denomination.is_none();
     let keyed = |terms: usize| material.len() == terms && denomination.is_none();
     let creates = matches!(
@@ -1141,7 +1135,7 @@ fn vocabulary_shape(
                         | ModeExpr::Reserve(_)
                 ),
             "holds a fungible balance: one leaf, keyed by the resource it holds, \
-             denominated in that resource wherever value moves, and never locked",
+             denominated in that resource, and never locked",
         ),
         CLAIMS => (
             point
@@ -1154,8 +1148,7 @@ fn vocabulary_shape(
                         | ModeExpr::Reserve(_)
                 ),
             "is the delivery fallback beside a vault, and holds value on the same \
-             terms: one leaf, keyed by the resource it holds and denominated in that \
-             resource wherever value moves",
+             terms: one leaf, keyed by the resource it holds and denominated in it",
         ),
         // Instances are a quantity too, and the interval they sit in is
         // the holdings of exactly one resource.
@@ -1164,7 +1157,7 @@ fn vocabulary_shape(
                 && keyed_by_what_it_holds
                 && matches!(mode, ModeExpr::Read | ModeExpr::Write { .. }),
             "holds a resource's instances: an interval or one of its entries, keyed by \
-             that resource and denominated in it wherever instances move",
+             that resource and denominated in it",
         ),
         CONFIG => (
             point && bare && matches!(mode, ModeExpr::Locked | ModeExpr::Read),
@@ -3232,9 +3225,10 @@ mod tests {
             ModeExpr::Reserve(Expr::Arg(0)),
         ];
         // A vault and the delivery cell beside it are keyed by the
-        // resource they hold and say so wherever any of it can move. A
-        // read moves none, and the custody gate's possession read is
-        // exactly that.
+        // resource they hold and say so in every mode they are reached
+        // in — a read included, because a read of a cell that says
+        // nothing is a read of bytes, and a vault has no byte surface
+        // for one to come through.
         for slot in [VAULT, CLAIMS] {
             for mode in moves.clone() {
                 let keyed = || own_point(slot, vec![a_resource()]);
@@ -3250,23 +3244,33 @@ mod tests {
                     mode.clone(),
                     Some(Expr::Arg(0))
                 )));
-                // And no answer at all, where value moves.
+                // And no answer at all.
                 assert!(misshapen(&one_clause(keyed(), mode, None)));
             }
-            let read = |target| one_clause(target, ModeExpr::Read, None);
+            // A read says it too: which handle a clause materializes
+            // turns on the denomination, so a read that said nothing
+            // would come back as bytes.
+            let read = |target, denomination| one_clause(target, ModeExpr::Read, denomination);
             assert_eq!(
-                check_declarations(&read(own_point(slot, vec![a_resource()]))),
+                check_declarations(&read(
+                    own_point(slot, vec![a_resource()]),
+                    Some(a_resource())
+                )),
                 Ok(())
             );
+            assert!(misshapen(&read(own_point(slot, vec![a_resource()]), None)));
             // Value is never locked, never keyed by nothing, and never a
             // collection.
             assert!(misshapen(&one_clause(
                 own_point(slot, vec![a_resource()]),
                 ModeExpr::Locked,
-                None
+                Some(a_resource())
             )));
-            assert!(misshapen(&read(own_point(slot, vec![]))));
-            assert!(misshapen(&read(own_interval(slot, vec![a_resource()]))));
+            assert!(misshapen(&read(own_point(slot, vec![]), None)));
+            assert!(misshapen(&read(
+                own_interval(slot, vec![a_resource()]),
+                Some(a_resource())
+            )));
         }
 
         // Holdings are the same statement in collection form: one

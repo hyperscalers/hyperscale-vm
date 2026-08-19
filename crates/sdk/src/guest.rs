@@ -49,8 +49,8 @@ use core::mem::ManuallyDrop;
 
 pub use bindings::hyperscale::kernel;
 use kernel::state::{
-    AmountCell, DeltaCell, InstanceRange, Issuer, LockedCell, RangeRead, RangeWrite, ReadCell,
-    ReserveCell, WriteCell,
+    AmountCell, AmountRead, DeltaCell, InstanceRange, Issuer, LockedCell, RangeRead, RangeWrite,
+    ReadCell, ReserveCell, WriteCell,
 };
 
 use crate::Address;
@@ -219,6 +219,7 @@ borrows! {
     locked_cell -> LockedCell,
     write_cell -> WriteCell,
     amount_cell -> AmountCell,
+    amount_read -> AmountRead,
     delta_cell -> DeltaCell,
     reserve_cell -> ReserveCell,
     range_read -> RangeRead,
@@ -257,10 +258,8 @@ pub fn cell_get(handle: Handle) -> Vec<u8> {
 #[inline(always)]
 pub fn cell_balance(handle: Handle) -> u128 {
     match handle {
-        Handle::Amount(rep) => {
-            let held = kernel::state::amount_cell_balance(&amount_cell(rep));
-            u128::from(held.high) << 64 | u128::from(held.low)
-        }
+        Handle::Amount(rep) => whole(kernel::state::amount_cell_balance(&amount_cell(rep))),
+        Handle::AmountRead(rep) => whole(kernel::state::amount_read_balance(&amount_read(rep))),
         other => unreachable!("{other:?} holds no balance"),
     }
 }

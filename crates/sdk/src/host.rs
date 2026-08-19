@@ -197,7 +197,7 @@ pub fn cell_get(handle: Handle) -> Vec<u8> {
 #[must_use]
 pub fn cell_balance(handle: Handle) -> u128 {
     settled(kernel(|k| match handle {
-        Handle::Amount(rep) => k.amount_cell_balance(rep),
+        Handle::Amount(rep) | Handle::AmountRead(rep) => k.amount_cell_balance(rep),
         other => unreachable!("{other:?} holds no balance"),
     }))
 }
@@ -562,6 +562,7 @@ pub fn handle(args: &[GuestArg<'_>], at: usize, declared: CellKind) -> Handle {
         CellKind::Locked => Handle::Locked(rep),
         CellKind::Write => Handle::Write(rep),
         CellKind::Amount => Handle::Amount(rep),
+        CellKind::AmountRead => Handle::AmountRead(rep),
         CellKind::Delta => Handle::Delta(rep),
         CellKind::Reserve => Handle::Reserve(rep),
         CellKind::RangeRead => Handle::RangeRead(rep),

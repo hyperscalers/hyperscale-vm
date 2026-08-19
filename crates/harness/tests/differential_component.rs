@@ -329,6 +329,7 @@ fn run_blessed(
             ResourceKind::Bucket
             | ResourceKind::Issuer
             | ResourceKind::AmountCell
+            | ResourceKind::AmountRead
             | ResourceKind::InstanceRange => {
                 return Err(format_err!("{export} takes no value handle"));
             }
