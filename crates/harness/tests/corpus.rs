@@ -618,6 +618,57 @@ fn sharded_routing(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGr
     first
 }
 
+/// A stable rendering of everything a routing carries, digested so the
+/// pin below is one line per pattern rather than pages of debug output.
+fn routing_fingerprint(routing: &Routing) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    for (shard, set) in &routing.per_shard {
+        let effects: Vec<_> = set.iter().collect();
+        let _ = writeln!(out, "shard {shard:?}: {effects:?}");
+    }
+    let _ = writeln!(out, "calls: {:?}", routing.calls);
+    let _ = writeln!(out, "frames: {:?}", routing.frames);
+    let declaration = routing.declaration();
+    let folded: Vec<_> = declaration.set.iter().collect();
+    let _ = writeln!(out, "set: {folded:?}");
+    let _ = writeln!(out, "ordered: {:?}", declaration.ordered);
+    let digest = TestHasher.hash(b"routing-vector", &[out.as_bytes()]);
+    digest.0.iter().fold(String::new(), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    })
+}
+
+/// INV-VM-2: the routed form is consensus content — every node derives
+/// the identical routing from the identical signed form, and it must not
+/// drift as the fold is reshaped. The pins were generated from the fold
+/// as it stands; a change to any of them is a change to what routing
+/// says, and needs a protocol answer rather than a regenerated literal.
+#[test]
+fn the_catalogue_routes_to_pinned_vectors() {
+    let world = world();
+    let pinned = [
+        ("transfer", transfer_graph(), PIN_TRANSFER),
+        ("swap", swap_graph(300), PIN_SWAP),
+        ("fill", fill_graph(), PIN_FILL),
+        ("propose", propose_graph(), PIN_PROPOSE),
+    ];
+    for (name, graph, pin) in pinned {
+        let routing = sharded_routing(&world, &graph);
+        assert_eq!(
+            routing_fingerprint(&routing),
+            pin,
+            "{name}: routing drifted"
+        );
+    }
+}
+
+const PIN_TRANSFER: &str = "3a3e86a6f2c72fec3e306807c0e924df883855d01bb0b41f4d0211706c382db1";
+const PIN_SWAP: &str = "c2660131b6bc3899d5ddd4f43b313ba4d0ed0397dce43d2cd0e70bd2900bfc2a";
+const PIN_FILL: &str = "0979f2f99d855790bfdaa942700489ced180a88d13a55575558871c395411146";
+const PIN_PROPOSE: &str = "e7d577a944200b9117ba843aa345b48d3001f53ceb6405960a8cfc4acb7225db";
+
 /// The star the classifier reads off a graph's admitted form.
 fn star_of(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> StarShape {
     let (cache, instances) = world;
