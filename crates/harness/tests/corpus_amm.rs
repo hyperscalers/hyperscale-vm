@@ -310,7 +310,7 @@ fn the_share_vault_rounds_toward_the_pool_on_both_runtimes() {
         panic!("the deposit must complete: {:?}", results[0]);
     };
     assert_eq!(
-        receipt.supply.minted(shares_unit().address()),
+        receipt.supply.minted(shares_unit()),
         77,
         "the shares are minted rather than moved, so supply says so"
     );
@@ -329,7 +329,7 @@ fn the_share_vault_rounds_toward_the_pool_on_both_runtimes() {
         panic!("the redemption must complete: {:?}", results[0]);
     };
     assert_eq!(
-        receipt.supply.burned(shares_unit().address()),
+        receipt.supply.burned(shares_unit()),
         77,
         "the shares are destroyed rather than parked"
     );

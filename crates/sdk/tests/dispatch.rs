@@ -254,7 +254,10 @@ const fn wide(value: u128) -> [u8; 16] {
 #[test]
 fn an_edge_the_body_credits_lands_in_the_declared_cell() {
     let mut session = session(Mode::Delta, 0);
-    let funds = session.open_bucket(Held::Amount(70), RESOURCE);
+    let funds = session.open_bucket(
+        Held::Amount(70),
+        Denomination::try_from(RESOURCE).expect("a resource-class address"),
+    );
 
     let (session, invoked) = till::invoke(
         "deposit",

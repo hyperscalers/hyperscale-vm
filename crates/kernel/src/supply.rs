@@ -36,7 +36,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_types::Address;
+use hyperscale_vm_types::{Denomination, ResourceAddr};
 
 use crate::modes::ModeError;
 
@@ -55,8 +55,8 @@ use crate::modes::ModeError;
 /// nothing.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SupplyDelta {
-    minted: BTreeMap<Address, u128>,
-    burned: BTreeMap<Address, u128>,
+    minted: BTreeMap<ResourceAddr, u128>,
+    burned: BTreeMap<ResourceAddr, u128>,
 }
 
 impl SupplyDelta {
@@ -71,18 +71,18 @@ impl SupplyDelta {
 
     /// What this transaction minted of a resource.
     #[must_use]
-    pub fn minted(&self, resource: Address) -> u128 {
+    pub fn minted(&self, resource: ResourceAddr) -> u128 {
         self.minted.get(&resource).copied().unwrap_or(0)
     }
 
     /// What this transaction burned of a resource.
     #[must_use]
-    pub fn burned(&self, resource: Address) -> u128 {
+    pub fn burned(&self, resource: ResourceAddr) -> u128 {
         self.burned.get(&resource).copied().unwrap_or(0)
     }
 
     /// Every resource this transaction moved, ascending.
-    pub fn resources(&self) -> impl Iterator<Item = Address> + '_ {
+    pub fn resources(&self) -> impl Iterator<Item = ResourceAddr> + '_ {
         self.minted.keys().chain(self.burned.keys()).copied()
     }
 
@@ -91,7 +91,7 @@ impl SupplyDelta {
     /// # Errors
     ///
     /// [`ModeError::SupplyOutOfBounds`] on overflow.
-    pub fn mint(&mut self, resource: Address, amount: u128) -> Result<(), ModeError> {
+    pub fn mint(&mut self, resource: ResourceAddr, amount: u128) -> Result<(), ModeError> {
         Self::add(&mut self.minted, resource, amount)
     }
 
@@ -100,13 +100,13 @@ impl SupplyDelta {
     /// # Errors
     ///
     /// [`ModeError::SupplyOutOfBounds`] on overflow.
-    pub fn burn(&mut self, resource: Address, amount: u128) -> Result<(), ModeError> {
+    pub fn burn(&mut self, resource: ResourceAddr, amount: u128) -> Result<(), ModeError> {
         Self::add(&mut self.burned, resource, amount)
     }
 
     fn add(
-        into: &mut BTreeMap<Address, u128>,
-        resource: Address,
+        into: &mut BTreeMap<ResourceAddr, u128>,
+        resource: ResourceAddr,
         amount: u128,
     ) -> Result<(), ModeError> {
         if amount == 0 {
@@ -128,10 +128,10 @@ impl SupplyDelta {
     /// never held, and so a defect rather than a business condition.
     pub fn apply(&self, ledger: &mut SupplyLedger) -> Result<(), ModeError> {
         for (resource, amount) in &self.minted {
-            ledger.credit(*resource, *amount)?;
+            ledger.credit((*resource).into(), *amount)?;
         }
         for (resource, amount) in &self.burned {
-            ledger.debit(*resource, *amount)?;
+            ledger.debit((*resource).into(), *amount)?;
         }
         Ok(())
     }
@@ -140,7 +140,7 @@ impl SupplyDelta {
 /// A shard's per-resource supply accumulator.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SupplyLedger {
-    by_resource: BTreeMap<Address, u128>,
+    by_resource: BTreeMap<Denomination, u128>,
 }
 
 impl SupplyLedger {
@@ -154,7 +154,7 @@ impl SupplyLedger {
 
     /// The accumulated amount for a resource; zero when untracked.
     #[must_use]
-    pub fn amount(&self, resource: Address) -> u128 {
+    pub fn amount(&self, resource: Denomination) -> u128 {
         self.by_resource.get(&resource).copied().unwrap_or(0)
     }
 
@@ -163,7 +163,7 @@ impl SupplyLedger {
     /// # Errors
     ///
     /// [`ModeError::SupplyOutOfBounds`] on overflow.
-    pub fn credit(&mut self, resource: Address, amount: u128) -> Result<(), ModeError> {
+    pub fn credit(&mut self, resource: Denomination, amount: u128) -> Result<(), ModeError> {
         let total = self
             .amount(resource)
             .checked_add(amount)
@@ -178,7 +178,7 @@ impl SupplyLedger {
     ///
     /// [`ModeError::SupplyOutOfBounds`] if the debit exceeds the
     /// accumulated amount.
-    pub fn debit(&mut self, resource: Address, amount: u128) -> Result<(), ModeError> {
+    pub fn debit(&mut self, resource: Denomination, amount: u128) -> Result<(), ModeError> {
         let total = self
             .amount(resource)
             .checked_sub(amount)
@@ -192,7 +192,7 @@ impl SupplyLedger {
     /// map, and it is the reshape-clean property — two shards holding the
     /// same supply must compare equal however they arrived there, including
     /// through a zero-amount cross-shard leg.
-    fn set(&mut self, resource: Address, total: u128) {
+    fn set(&mut self, resource: Denomination, total: u128) {
         if total == 0 {
             self.by_resource.remove(&resource);
         } else {
@@ -217,13 +217,13 @@ impl SupplyLedger {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_types::{Address, AddressClass};
+    use hyperscale_vm_types::{Denomination, ResourceAddr};
 
     use super::SupplyLedger;
     use crate::modes::ModeError;
 
-    fn resource(byte: u8) -> Address {
-        Address::new([byte; 31], AddressClass::Resource)
+    fn resource(byte: u8) -> Denomination {
+        Denomination::Resource(ResourceAddr::new([byte; 31]))
     }
 
     #[test]

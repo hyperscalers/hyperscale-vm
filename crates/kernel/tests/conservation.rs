@@ -9,7 +9,9 @@ use hyperscale_vm_kernel::{
     AmountLedger, Baseline, DeltaOp, MemoryStore, OverlayStore, Substates, SupplyLedger,
     WorkingStore, decode_amount,
 };
-use hyperscale_vm_types::{Address, AddressClass, SubstateKey, TxHash, encode_amount};
+use hyperscale_vm_types::{
+    Address, AddressClass, Denomination, ResourceAddr, SubstateKey, TxHash, encode_amount,
+};
 
 const VAULT: SlotId = SlotId(1);
 
@@ -39,9 +41,9 @@ fn cell_total(store: &impl Substates, cells: &[SubstateKey]) -> u128 {
 
 #[test]
 fn supply_tracks_cells_through_transfers_and_cross_shard_legs() {
-    let resource = Address::new([0xEE; 31], AddressClass::Component);
-    let alice = vault(1, resource);
-    let bob = vault(2, resource);
+    let resource = Denomination::Resource(ResourceAddr::new([0xEE; 31]));
+    let alice = vault(1, resource.into());
+    let bob = vault(2, resource.into());
     let cells = [alice, bob];
 
     let mut store = OverlayStore::new(Arc::new(MemoryStore::new()) as Arc<dyn Baseline>);
@@ -90,7 +92,7 @@ mod through_the_session {
     use hyperscale_vm_effects::{Declaration, Hasher};
     use hyperscale_vm_kernel::{EnvInputs, KernelSession, OverlayStore, SupplyDelta, SupplyLedger};
     use hyperscale_vm_types::{
-        AbortReason, Denomination, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome,
+        AbortReason, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome, ResourceAddr,
     };
 
     use super::{
@@ -98,6 +100,11 @@ mod through_the_session {
     };
 
     const UNIT: Address = Address::new([0xA1; 31], AddressClass::Resource);
+
+    /// The grant's own view of the fixture: what has a minter.
+    fn unit() -> ResourceAddr {
+        ResourceAddr::try_from(UNIT).expect("a resource-class address")
+    }
 
     fn hash(data: &[u8]) -> [u8; 32] {
         TestHasher.hash(b"crypto", &[data]).0
@@ -116,8 +123,7 @@ mod through_the_session {
         };
         let mut set = EffectSet::new();
         set.insert(moving).expect("one cell");
-        let declaration = Declaration::from_set(set)
-            .denominated(|_| Some(Denomination::try_from(UNIT).expect("a resource-class address")));
+        let declaration = Declaration::from_set(set).denominated(|_| Some(unit().into()));
         let mut session = KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
             &declaration,
@@ -129,7 +135,7 @@ mod through_the_session {
             hash,
         )
         .expect("one unheld delta cell materializes");
-        session.grant_issuance(UNIT);
+        session.grant_issuance(unit());
         session
     }
 
@@ -146,12 +152,12 @@ mod through_the_session {
         session.delta_put(0, minted).expect("into its own vault");
 
         let supply = completed(session);
-        assert_eq!(supply.minted(UNIT), 500);
-        assert_eq!(supply.burned(UNIT), 0);
+        assert_eq!(supply.minted(unit()), 500);
+        assert_eq!(supply.burned(unit()), 0);
 
         let mut ledger = SupplyLedger::new();
         supply.apply(&mut ledger).expect("the shard takes it");
-        assert_eq!(ledger.amount(UNIT), 500);
+        assert_eq!(ledger.amount(unit().into()), 500);
     }
 
     /// A burn debits it by what it destroyed, and the round trip leaves
@@ -175,10 +181,10 @@ mod through_the_session {
         let taken = burning.delta_take(0, 500).expect("the debit is queued");
         burning.burn(ISSUER_REP, taken).expect("the grant burns");
         let supply = completed(burning);
-        assert_eq!(supply.burned(UNIT), 500);
+        assert_eq!(supply.burned(unit()), 500);
         supply.apply(&mut ledger).expect("debited");
 
-        assert_eq!(ledger.amount(UNIT), 0);
+        assert_eq!(ledger.amount(unit().into()), 0);
     }
 
     /// Both halves are reported, because they are two facts.
@@ -193,12 +199,12 @@ mod through_the_session {
         session.burn(ISSUER_REP, minted).expect("the grant burns");
 
         let supply = completed(session);
-        assert_eq!((supply.minted(UNIT), supply.burned(UNIT)), (500, 500));
+        assert_eq!((supply.minted(unit()), supply.burned(unit())), (500, 500));
         assert!(!supply.is_empty(), "two movements, not a net of nothing");
 
         let mut ledger = SupplyLedger::new();
         supply.apply(&mut ledger).expect("both applied");
-        assert_eq!(ledger.amount(UNIT), 0);
+        assert_eq!(ledger.amount(unit().into()), 0);
     }
 
     /// An abort brings nothing into existence, whatever it ran: a body
@@ -235,6 +241,6 @@ mod through_the_session {
 
         // The mint is the only movement; the two cell operations cancel.
         let supply = completed(session);
-        assert_eq!((supply.minted(UNIT), supply.burned(UNIT)), (500, 0));
+        assert_eq!((supply.minted(unit()), supply.burned(unit())), (500, 0));
     }
 }

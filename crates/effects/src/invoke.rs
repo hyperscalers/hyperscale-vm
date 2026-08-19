@@ -13,7 +13,7 @@
 //! actually returned. So a lowered argument is either a settled value, a
 //! table position, or an edge to read once its producer has run.
 
-use hyperscale_vm_types::{Address, CellKind};
+use hyperscale_vm_types::{Address, CellKind, ResourceAddr};
 
 use crate::manifest::{AuthorityGate, Bounds};
 use crate::metadata::PackageHash;
@@ -178,7 +178,7 @@ pub struct NodeCall {
     /// address derives and nothing else, which is the whole of what
     /// grants the authority. Carrying the address rather than a bit is
     /// what lets an issued edge be stamped with what it holds.
-    pub issues: Option<Address>,
+    pub issues: Option<ResourceAddr>,
     /// The claims this call presents, resolved from the signed evidence
     /// the manifest node names.
     pub evidence: Vec<Presented>,

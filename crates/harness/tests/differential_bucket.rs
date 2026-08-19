@@ -18,7 +18,8 @@ use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemorySto
 use hyperscale_vm_ref::{CVal, ResourceKind};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, CollectionId, Denomination, Effect, EffectSet,
-    EffectTarget, ISSUER_REP, Mode, Outcome, Presence, SubstateKey, TxHash, encode_amount,
+    EffectTarget, ISSUER_REP, Mode, Outcome, Presence, ResourceAddr, SubstateKey, TxHash,
+    encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::{bail, format_err};
@@ -55,11 +56,9 @@ const ISSUER: Address = Address::new([0x80; 31], AddressClass::Component);
 /// One resource across the fixture, because what this lane is about is
 /// ownership and numbering rather than denomination: a second would make
 /// every credit a resource comparison as well as a transfer.
-const RESOURCE: Address = Address::new([0x80; 31], AddressClass::Resource);
-/// The declared denomination, from the resource-class fixture.
-fn held() -> Denomination {
-    Denomination::try_from(RESOURCE).expect("a resource-class address")
-}
+/// What the issuer's grant names: the one resource the lane moves.
+const ISSUED: ResourceAddr = ResourceAddr::new([0x80; 31]);
+const RESOURCE: Denomination = Denomination::Resource(ISSUED);
 
 /// The collection whose entries the instance lane moves.
 const HOLDINGS: CollectionId = CollectionId([9; 16]);
@@ -174,7 +173,7 @@ fn denominations(fx: &Fixture) -> Vec<Option<Denomination>> {
         .iter()
         .map(|effect| match effect.target {
             EffectTarget::Point(key) if key == fx.readable => None,
-            _ => Some(held()),
+            _ => Some(RESOURCE),
         })
         .collect()
 }
@@ -358,7 +357,7 @@ fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
         let mut host = session_of(fx);
         host.enter_invocation(ISSUER);
         if take.granted() {
-            host.grant_issuance(ISSUER);
+            host.grant_issuance(ISSUED);
         }
         host
     };
@@ -1029,7 +1028,7 @@ fn peeking() -> KernelSession {
     };
     let mut declared = EffectSet::default();
     declared.insert(read).expect("the set takes it");
-    materialize(&store, &declared, &[Some(held())], tx(), env())
+    materialize(&store, &declared, &[Some(RESOURCE)], tx(), env())
 }
 
 /// Asking a balance is the one thing a body does with value that moves

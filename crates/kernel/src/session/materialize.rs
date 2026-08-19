@@ -311,10 +311,7 @@ impl KernelSession {
             invocation: None,
             events: Vec::new(),
             supply: SupplyDelta::default(),
-            cell_resources: ordered
-                .iter()
-                .map(|access| access.holds.map(Address::from))
-                .collect(),
+            cell_resources: ordered.iter().map(|access| access.holds).collect(),
             buckets: Buckets::default(),
             issuance: None,
             taken: BTreeSet::new(),

@@ -31,7 +31,7 @@ use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Denomination, Effect, EffectSet, EffectTarget, Event,
-    Mode, Movement, Presence, SubstateKey, TxHash, encode_amount,
+    Mode, Movement, Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::Context;
@@ -41,7 +41,7 @@ const RANDOMNESS: [u8; 32] = [3; 32];
 const FUEL: u64 = 10_000_000;
 const AMOUNT: u128 = 100;
 /// What the vaults in these fixtures hold.
-const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
@@ -88,10 +88,7 @@ fn session() -> KernelSession {
     // Both cells the transfer moves between hold the same resource,
     // which is what makes the credit a transfer rather than a
     // conversion.
-    let denominations: Vec<_> = declared
-        .iter()
-        .map(|_| Some(Denomination::try_from(RESOURCE).expect("a resource-class address")))
-        .collect();
+    let denominations: Vec<_> = declared.iter().map(|_| Some(RESOURCE)).collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &Declaration {
@@ -417,10 +414,7 @@ fn lottery_session() -> KernelSession {
     // and the settled draw are records the round writes.
     let denominations: Vec<_> = declared
         .iter()
-        .map(|effect| {
-            matches!(effect.mode, Mode::Delta)
-                .then(|| Denomination::try_from(RESOURCE).expect("a resource-class address"))
-        })
+        .map(|effect| matches!(effect.mode, Mode::Delta).then_some(RESOURCE))
         .collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(MemoryStore::new())),

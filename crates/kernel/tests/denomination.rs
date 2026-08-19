@@ -27,7 +27,7 @@ use hyperscale_vm_kernel::{EnvInputs, KernelSession, MaterializeError, MemorySto
 use hyperscale_vm_types::math::U256;
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget, ISSUER_REP,
-    Mode, Presence, SubstateKey, TxHash, encode_amount,
+    Mode, Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 const VAULT: SlotId = SlotId(1);
@@ -47,6 +47,11 @@ fn vault(resource: Address) -> SubstateKey {
 /// A declared denomination, from the resource-class fixture that fills it.
 fn d(resource: Address) -> Denomination {
     Denomination::try_from(resource).expect("a resource-class address")
+}
+
+/// The same fixture as a grant names it: what has a minter.
+fn issuer(resource: Address) -> ResourceAddr {
+    ResourceAddr::try_from(resource).expect("a resource-class address")
 }
 
 fn hash(data: &[u8]) -> [u8; 32] {
@@ -260,7 +265,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
     .expect("two denominated intervals materialize");
 
     let taken = session.range_take(0, &[10]).expect("the holder has it");
-    session.grant_issuance(X);
+    session.grant_issuance(issuer(X));
     let minted = session
         .mint_instances(ISSUER_REP, &[99])
         .expect("the grant mints");
@@ -351,7 +356,7 @@ fn a_cell_that_denominates_nothing_moves_nothing() {
 fn a_grant_burns_only_what_it_issues() {
     let mut session = session(&[Some(d(X)), Some(d(Y))]);
     let foreign = session.delta_take(0, 100).expect("the debit is queued");
-    session.grant_issuance(Y);
+    session.grant_issuance(issuer(Y));
 
     let issued = session.mint(ISSUER_REP, 5).expect("the grant mints");
     assert_eq!(session.burn(ISSUER_REP, issued), Ok(()));
@@ -366,7 +371,7 @@ fn a_grant_burns_only_what_it_issues() {
 #[test]
 fn minted_value_lands_only_in_its_own_cell() {
     let mut session = session(&[Some(d(X)), Some(d(Y))]);
-    session.grant_issuance(Y);
+    session.grant_issuance(issuer(Y));
     let minted = session.mint(ISSUER_REP, 5).expect("the grant mints");
 
     assert_eq!(

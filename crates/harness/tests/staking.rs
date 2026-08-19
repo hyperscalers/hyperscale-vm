@@ -333,7 +333,7 @@ fn returned_units_are_destroyed_and_the_pool_says_what_it_owes() -> Result<()> {
     assert_eq!(amount_of(&end, vault(ALICE, unit())), 60);
     // The returned units are destroyed rather than parked, so the pool
     // holds no leaf of them and the shard's supply of them fell.
-    assert_eq!(receipt.supply.burned(unit().address()), 40);
+    assert_eq!(receipt.supply.burned(unit()), 40);
     // Nothing came back either: the release leg is a later method, so the
     // delegator holds no claim on the pool's vault yet.
     assert_eq!(amount_of(&end, vault(ALICE, XRD)), 0);

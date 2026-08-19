@@ -34,8 +34,8 @@ pub use buckets::Held;
 use hyperscale_vm_effects::distinct_ids;
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, CollectionId, EffectSet, ISSUER_REP, SubstateKey, TxHash,
-    encode_amount,
+    ABSENT_REP, AbortReason, Address, CollectionId, Denomination, EffectSet, ISSUER_REP,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 pub use materialize::{Capability, Interval, MaterializeError};
 use ranges::Ranges;
@@ -76,9 +76,9 @@ pub enum SessionTrap {
     #[error("a cell holding {cell:?} was credited with {carried:?}")]
     WrongResource {
         /// What the cell is denominated in.
-        cell: Address,
+        cell: Denomination,
         /// What the value going into it carries.
-        carried: Address,
+        carried: Denomination,
     },
     /// Value moved through a handle on a cell that denominates nothing.
     ///
@@ -268,7 +268,7 @@ pub struct KernelSession {
     /// trusting anything the transaction said about which parameter went
     /// where — so a package whose metadata was authored rather than
     /// derived is held to the same rule as one the tracer wrote.
-    cell_resources: Vec<Option<Address>>,
+    cell_resources: Vec<Option<Denomination>>,
     /// The linearity ledger for value in flight; see [`buckets`].
     buckets: Buckets,
     /// What this transaction brought into and out of existence, by
@@ -287,7 +287,7 @@ pub struct KernelSession {
     /// asked. The bit reaches the guest as a handle all the same, so it
     /// is visible in the export's own type and a body that was granted
     /// nothing has nothing to name.
-    issuance: Option<Address>,
+    issuance: Option<ResourceAddr>,
     /// Reservations already taken, by capability rep.
     ///
     /// A grant answers once. The read this replaces answered every time
@@ -312,7 +312,7 @@ impl KernelSession {
     }
 
     /// What the cell behind a capability holds, where it holds value.
-    fn cell_resource(&self, rep: u32) -> Option<Address> {
+    fn cell_resource(&self, rep: u32) -> Option<Denomination> {
         usize::try_from(rep)
             .ok()
             .and_then(|index| self.cell_resources.get(index))
@@ -326,7 +326,7 @@ impl KernelSession {
     /// The check and the answer are one lookup: a movement needs the
     /// resource, and a cell that does not name one is a cell no value
     /// moves through.
-    fn value_of(&self, rep: u32) -> Result<Address, SessionTrap> {
+    fn value_of(&self, rep: u32) -> Result<Denomination, SessionTrap> {
         self.cell_resource(rep)
             .ok_or(SessionTrap::BytesAsValue(rep))
     }
@@ -620,7 +620,7 @@ impl KernelSession {
             return Err(SessionTrap::IssuanceUngranted);
         };
         self.supply.mint(resource, amount)?;
-        Ok(self.open_bucket(Held::Amount(amount), resource))
+        Ok(self.open_bucket(Held::Amount(amount), resource.into()))
     }
 
     /// Create the named instances of what this invocation issues.
@@ -641,7 +641,7 @@ impl KernelSession {
         // An instance's supply is its existence: what a non-fungible
         // mints is a count, which is what its holdings are measured in.
         self.supply.mint(resource, instances.len() as u128)?;
-        Ok(self.open_bucket(Held::Instances(instances), resource))
+        Ok(self.open_bucket(Held::Instances(instances), resource.into()))
     }
 
     /// Destroy what this invocation issues, consuming the bucket.
@@ -661,9 +661,9 @@ impl KernelSession {
         // burning through another instance's grant would be destroying
         // value this invocation has no authority over.
         let carried = self.buckets.resource_of(funds)?;
-        if carried != resource {
+        if carried != Denomination::from(resource) {
             return Err(SessionTrap::WrongResource {
-                cell: resource,
+                cell: resource.into(),
                 carried,
             });
         }
@@ -680,7 +680,7 @@ impl KernelSession {
     /// grant's whole content — what a body may bring into or out of
     /// existence is fixed before it runs, and there is no second one it
     /// could name.
-    pub const fn grant_issuance(&mut self, resource: Address) {
+    pub const fn grant_issuance(&mut self, resource: ResourceAddr) {
         self.issuance = Some(resource);
     }
 

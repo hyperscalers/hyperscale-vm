@@ -1536,7 +1536,7 @@ fn lower_call(
         issues: signature
             .issues
             .as_deref()
-            .map(|mark| issued_resource(hasher, target, mark).address()),
+            .map(|mark| issued_resource(hasher, target, mark)),
         evidence: evidence.to_vec(),
         authority: authority.cloned(),
     })
