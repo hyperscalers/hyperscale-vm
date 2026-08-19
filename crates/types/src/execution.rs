@@ -85,28 +85,37 @@ pub struct Event {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum AbortReason {
     /// `unreachable` executed — what an `assert!` or a `panic!` becomes.
+    #[hbor(discriminant = 0)]
     Unreachable,
     /// Integer division or remainder by zero.
+    #[hbor(discriminant = 1)]
     IntegerDivideByZero,
     /// `INT_MIN / -1` style overflow.
+    #[hbor(discriminant = 2)]
     IntegerOverflow,
     /// Out-of-bounds linear memory access.
+    #[hbor(discriminant = 3)]
     MemoryOutOfBounds,
     /// Out-of-bounds table access.
+    #[hbor(discriminant = 4)]
     TableOutOfBounds,
     /// `call_indirect` through a null table entry.
+    #[hbor(discriminant = 5)]
     IndirectCallToNull,
     /// `call_indirect` signature mismatch.
+    #[hbor(discriminant = 6)]
     IndirectCallSignature,
     /// The call-depth bound: the blessed engine's stack limit, the
     /// interpreter's frame counter. Unreachable for an artifact the
     /// deploy-time frame bound admits.
+    #[hbor(discriminant = 7)]
     StackExhausted,
     /// The transaction spent its signed ceiling.
     ///
     /// Charged as the declared limit rather than as the counter standing
     /// at the trap — that figure is engine-defined and no consensus
     /// reader may see it.
+    #[hbor(discriminant = 8)]
     OutOfGas,
     /// A trap the profile does not model.
     ///
@@ -115,6 +124,7 @@ pub enum AbortReason {
     /// occurrence is a defect in the profile rather than a guest's. The
     /// arm exists to keep the classification total without reopening a
     /// free-form one.
+    #[hbor(discriminant = 9)]
     TrapOutsideProfile,
     /// A canonical-ABI violation: an unknown or wrongly typed handle,
     /// borrows still live at return, a call that would re-enter.
@@ -123,45 +133,61 @@ pub enum AbortReason {
     /// most of these as an error that does not resolve to a trap kind. A
     /// finer vocabulary would be one the two runtimes could not populate
     /// identically, which is the divergence this type exists to exclude.
+    #[hbor(discriminant = 10)]
     AbiViolation,
     /// A handle rep with no entry in the capability table.
+    #[hbor(discriminant = 11)]
     HandleUnknown,
     /// A handle whose capability does not grant the operation.
+    #[hbor(discriminant = 12)]
     HandleWrongMode,
     /// A handle whose clause was guarded out, reached anyway: a body
     /// whose control flow disagrees with the verdict it was handed.
+    #[hbor(discriminant = 13)]
     UndeclaredBranch,
     /// A stored cell that is not a well-formed amount.
     ///
     /// A defect in state rather than in a call: amounts reach the kernel
     /// from a guest as a typed value, so the only way to meet one that is
     /// not an amount is to read a cell that was never written as one.
+    #[hbor(discriminant = 14)]
     MalformedAmountCell,
     /// An entry index past the interval's current entries.
+    #[hbor(discriminant = 15)]
     EntryIndexOutOfBounds,
     /// An insert whose order key falls outside the declared interval.
+    #[hbor(discriminant = 16)]
     OrderOutsideInterval,
     /// More distinct entries written through one interval than the cap it
     /// declared.
+    #[hbor(discriminant = 17)]
     IntervalWriteCapExceeded,
     /// A reservation the capability table promises but the store does not
     /// hold.
+    #[hbor(discriminant = 18)]
     ReservationMissing,
     /// A second take of one reservation: the grant leaves the kernel
     /// once, so asking again is asking for value no hold covers.
+    #[hbor(discriminant = 19)]
     ReservationAlreadyTaken,
     /// An issue by an invocation whose declaration granted it none.
+    #[hbor(discriminant = 20)]
     IssuanceUngranted,
     /// A split past what a bucket holds.
+    #[hbor(discriminant = 21)]
     BucketUnderflow,
     /// A merge whose total is past the width an amount has.
+    #[hbor(discriminant = 22)]
     BucketOverflow,
     /// An operation reaching for the other kind of edge than the bucket
     /// carries.
+    #[hbor(discriminant = 23)]
     WrongEdgeKind,
     /// One instance reaching two places at once.
+    #[hbor(discriminant = 24)]
     InstanceHeldTwice,
     /// An instance a body named and the collection does not hold.
+    #[hbor(discriminant = 25)]
     InstanceNotHeld,
     /// Value the transaction did not put down. A bucket is credited to a
     /// cell or handed back, and one still carrying anything when the
@@ -172,42 +198,58 @@ pub enum AbortReason {
     /// and the kernel refuses it there; a body that simply keeps one
     /// delivers nothing, and the kernel finds it holding value when the
     /// transaction closes.
+    #[hbor(discriminant = 26)]
     ValueDropped,
     /// An emission outside any invocation, so the kernel has no address
     /// to stamp.
+    #[hbor(discriminant = 27)]
     EmissionOutsideInvocation,
     /// An event type past the per-package ceiling.
+    #[hbor(discriminant = 28)]
     EventTypeOutOfRange,
     /// A declined code past the per-package ceiling.
+    #[hbor(discriminant = 29)]
     ErrorCodeOutOfRange,
     /// More events than one transaction may emit.
+    #[hbor(discriminant = 30)]
     EventCountExceeded,
     /// An event payload past the per-event byte cap.
+    #[hbor(discriminant = 31)]
     EventPayloadTooLarge,
     /// A mutation of a permanently locked substate.
+    #[hbor(discriminant = 32)]
     SubstateLocked,
     /// One judging batch carrying the same transaction and cell twice.
+    #[hbor(discriminant = 33)]
     DuplicateReservationRequest,
     /// Held reservations exceeding the committed cell.
+    #[hbor(discriminant = 34)]
     LedgerInvariant,
     /// Summing a fold's increments or decrements overflowed.
+    #[hbor(discriminant = 35)]
     DeltaTotalOverflow,
     /// A fold that would push a cell above its maximum.
+    #[hbor(discriminant = 36)]
     CellOverflow,
     /// A fold whose decrements exceed the cell's credited total.
+    #[hbor(discriminant = 37)]
     CellUnderflow,
     /// A supply accumulator update past its bounds.
+    #[hbor(discriminant = 38)]
     SupplyOutOfBounds,
     /// A wide operation asked to divide by zero, or handed a fraction
     /// with a zero denominator.
     ///
     /// Range-checked by the host regardless of what a guest's own types
     /// proved, because the ABI is not trusted.
+    #[hbor(discriminant = 39)]
     MathDivideByZero,
     /// A wide result past 256 bits.
+    #[hbor(discriminant = 40)]
     MathOverflow,
     /// A proportional split by a share above one, which would leave a
     /// negative remainder.
+    #[hbor(discriminant = 41)]
     ShareAboveOne,
     /// Value moved into a cell denominated in some other resource, or
     /// merged into an edge carrying one.
@@ -215,51 +257,68 @@ pub enum AbortReason {
     /// A package's declaration says what each cell it names holds; this
     /// is execution holding the code to it, so the property survives a
     /// metadata section nobody derived.
+    #[hbor(discriminant = 42)]
     WrongResource,
     /// Value moved through a cell whose declaration denominates it in
     /// nothing, which would hand out an edge no destination could
     /// disagree with.
+    #[hbor(discriminant = 43)]
     BytesAsValue,
     /// A commutative movement declared on a cell that denominates
     /// nothing. `Delta` and `Reserve` move value and do nothing else, so
     /// the cell they name is one whose contents the declaration owes an
     /// answer about.
+    #[hbor(discriminant = 44)]
     UndenominatedMovement,
     /// Two clauses reaching one cell and disagreeing about what it
     /// holds, which would hand a body both the handle value moves
     /// through and the handle bytes are written to, over one leaf.
+    #[hbor(discriminant = 45)]
     MixedContents,
     /// A declared mode and target combination the world cannot hand out.
+    #[hbor(discriminant = 46)]
     EffectUnsupported,
     /// A mutation declared on a permanently locked substate.
+    #[hbor(discriminant = 47)]
     MutationOfLocked,
     /// A locked read declared on a substate that is not locked.
+    #[hbor(discriminant = 48)]
     LockedReadOfUnlocked,
     /// One transaction declaring an exclusive and a commutative mode on
     /// the same cell.
+    #[hbor(discriminant = 49)]
     SelfConflictingModes,
     /// An already-held reservation whose amount differs from the declared
     /// one.
+    #[hbor(discriminant = 50)]
     ReservationMismatch,
     /// A lowered call naming a capability past the materialized table.
+    #[hbor(discriminant = 51)]
     CapabilityOutOfRange,
     /// A lowered call consuming an output edge no producer left.
+    #[hbor(discriminant = 52)]
     MissingProducerEdge,
     /// A cell on a bounded edge that does not decode.
+    #[hbor(discriminant = 53)]
     MalformedEdgeCell,
     /// An authority gate whose declared cell could not be read.
+    #[hbor(discriminant = 54)]
     AuthorityCellUnreadable,
     /// An export whose returned blob does not split into the edges its
     /// signature declared.
+    #[hbor(discriminant = 55)]
     BadReturnShape,
     /// A component that exports no function of the invoked name.
+    #[hbor(discriminant = 56)]
     ExportMissing,
     /// The component would not instantiate.
+    #[hbor(discriminant = 57)]
     InstantiationFailed,
     /// No compiled code for the called package.
     ///
     /// An embedder failing to resolve a package admission already
     /// accepted, so never the sender's defect and priced to nobody.
+    #[hbor(discriminant = 58)]
     CodeUnavailable,
 }
 
@@ -267,6 +326,7 @@ pub enum AbortReason {
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum Outcome {
     /// The export returned; its scalar result if it had one.
+    #[hbor(discriminant = 0)]
     Completed {
         /// The export's return value, when the signature has one.
         value: Option<u64>,
@@ -274,6 +334,7 @@ pub enum Outcome {
     /// A guest defect: a trap, a panic, a kernel refusal of bad guest
     /// arguments, a declaration defect. The sender's fault; priced at the
     /// sender.
+    #[hbor(discriminant = 1)]
     UserError {
         /// The deterministic reason class.
         reason: AbortReason,
@@ -282,6 +343,7 @@ pub enum Outcome {
     /// balance could not cover — aborted before any execution — or an
     /// unconditional debit past the floor of committed minus outstanding
     /// reservations, aborted at commit with its fuel charged.
+    #[hbor(discriminant = 2)]
     Infeasible {
         /// The cell that could not cover it.
         key: SubstateKey,
@@ -296,6 +358,7 @@ pub enum Outcome {
     /// [`Outcome::Infeasible`] rather than as a defect — the sender
     /// declared a bound and the world moved between signing and
     /// execution, which is a lost race.
+    #[hbor(discriminant = 3)]
     ConstraintUnmet {
         /// The consuming node.
         node: u32,
@@ -314,6 +377,7 @@ pub enum Outcome {
     /// class a refundable execution charge can settle against once
     /// host-side fee settlement lands. Until then it pays the floor, the
     /// same class a lost race pays.
+    #[hbor(discriminant = 4)]
     Declined {
         /// The declining node.
         node: u32,
@@ -330,6 +394,7 @@ pub enum Outcome {
     /// reason. Whether the gate still admits the presentation is the
     /// target's state, which is why the verdict is reached here rather
     /// than at admission.
+    #[hbor(discriminant = 5)]
     Unauthorized {
         /// The calling node.
         node: u32,
@@ -347,6 +412,7 @@ pub enum Outcome {
     /// a defect would charge every honest loser of the race to reach the
     /// careless caller, and would make any leaf a third party can create
     /// a lever for charging somebody else their whole declared ceiling.
+    #[hbor(discriminant = 6)]
     PresenceUnmet {
         /// The target whose leaf did not meet it.
         target: EffectTarget,
@@ -363,12 +429,14 @@ pub enum Outcome {
     /// composer at signing time, so this is priced with
     /// [`Outcome::Infeasible`] — a conflict tiebreak and a stale
     /// declaration are the two cases the taxonomy names.
+    #[hbor(discriminant = 7)]
     NullifierSpent {
         /// The nullifier cell an earlier committer wrote.
         key: SubstateKey,
     },
     /// A kernel or store invariant failure — never the sender's fault, and
     /// never expected to occur.
+    #[hbor(discriminant = 8)]
     ProtocolError {
         /// The deterministic reason class.
         reason: AbortReason,
@@ -380,7 +448,136 @@ mod tests {
     use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
 
     use super::{AbortReason, Address, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome, SubstateKey};
-    use crate::address::{AddressClass, LocalKey};
+    use crate::address::{AddressClass, EffectTarget, LocalKey};
+    use crate::mode::Presence;
+
+    /// Every abort class's wire byte, pinned one by one.
+    ///
+    /// The receipts a network commits carry these discriminants, so the
+    /// pin is the upgrade discipline the type's doc promises: a mid-list
+    /// insert that silently renamed every class after it fails here, and
+    /// a new class joins by taking the next byte and a new line below.
+    #[test]
+    fn every_abort_class_keeps_its_wire_byte() {
+        let classes = [
+            (0, AbortReason::Unreachable),
+            (1, AbortReason::IntegerDivideByZero),
+            (2, AbortReason::IntegerOverflow),
+            (3, AbortReason::MemoryOutOfBounds),
+            (4, AbortReason::TableOutOfBounds),
+            (5, AbortReason::IndirectCallToNull),
+            (6, AbortReason::IndirectCallSignature),
+            (7, AbortReason::StackExhausted),
+            (8, AbortReason::OutOfGas),
+            (9, AbortReason::TrapOutsideProfile),
+            (10, AbortReason::AbiViolation),
+            (11, AbortReason::HandleUnknown),
+            (12, AbortReason::HandleWrongMode),
+            (13, AbortReason::UndeclaredBranch),
+            (14, AbortReason::MalformedAmountCell),
+            (15, AbortReason::EntryIndexOutOfBounds),
+            (16, AbortReason::OrderOutsideInterval),
+            (17, AbortReason::IntervalWriteCapExceeded),
+            (18, AbortReason::ReservationMissing),
+            (19, AbortReason::ReservationAlreadyTaken),
+            (20, AbortReason::IssuanceUngranted),
+            (21, AbortReason::BucketUnderflow),
+            (22, AbortReason::BucketOverflow),
+            (23, AbortReason::WrongEdgeKind),
+            (24, AbortReason::InstanceHeldTwice),
+            (25, AbortReason::InstanceNotHeld),
+            (26, AbortReason::ValueDropped),
+            (27, AbortReason::EmissionOutsideInvocation),
+            (28, AbortReason::EventTypeOutOfRange),
+            (29, AbortReason::ErrorCodeOutOfRange),
+            (30, AbortReason::EventCountExceeded),
+            (31, AbortReason::EventPayloadTooLarge),
+            (32, AbortReason::SubstateLocked),
+            (33, AbortReason::DuplicateReservationRequest),
+            (34, AbortReason::LedgerInvariant),
+            (35, AbortReason::DeltaTotalOverflow),
+            (36, AbortReason::CellOverflow),
+            (37, AbortReason::CellUnderflow),
+            (38, AbortReason::SupplyOutOfBounds),
+            (39, AbortReason::MathDivideByZero),
+            (40, AbortReason::MathOverflow),
+            (41, AbortReason::ShareAboveOne),
+            (42, AbortReason::WrongResource),
+            (43, AbortReason::BytesAsValue),
+            (44, AbortReason::UndenominatedMovement),
+            (45, AbortReason::MixedContents),
+            (46, AbortReason::EffectUnsupported),
+            (47, AbortReason::MutationOfLocked),
+            (48, AbortReason::LockedReadOfUnlocked),
+            (49, AbortReason::SelfConflictingModes),
+            (50, AbortReason::ReservationMismatch),
+            (51, AbortReason::CapabilityOutOfRange),
+            (52, AbortReason::MissingProducerEdge),
+            (53, AbortReason::MalformedEdgeCell),
+            (54, AbortReason::AuthorityCellUnreadable),
+            (55, AbortReason::BadReturnShape),
+            (56, AbortReason::ExportMissing),
+            (57, AbortReason::InstantiationFailed),
+            (58, AbortReason::CodeUnavailable),
+        ];
+        for (byte, reason) in classes {
+            assert_eq!(
+                to_vec(&reason).expect("an abort class encodes"),
+                vec![byte],
+                "{reason:?} moved off wire byte {byte}",
+            );
+        }
+    }
+
+    /// Every outcome's wire discriminant, pinned with the same discipline.
+    #[test]
+    fn every_outcome_keeps_its_wire_discriminant() {
+        let key = SubstateKey {
+            owner: Address::new([2; 31], AddressClass::Component),
+            local: LocalKey([3; 16]),
+        };
+        let outcomes = [
+            (0, Outcome::Completed { value: None }),
+            (
+                1,
+                Outcome::UserError {
+                    reason: AbortReason::Unreachable,
+                },
+            ),
+            (2, Outcome::Infeasible { key, amount: 0 }),
+            (
+                3,
+                Outcome::ConstraintUnmet {
+                    node: 0,
+                    param: 0,
+                    amount: 0,
+                },
+            ),
+            (4, Outcome::Declined { node: 0, code: 0 }),
+            (5, Outcome::Unauthorized { node: 0 }),
+            (
+                6,
+                Outcome::PresenceUnmet {
+                    target: EffectTarget::Point(key),
+                    required: Presence::Present,
+                },
+            ),
+            (7, Outcome::NullifierSpent { key }),
+            (
+                8,
+                Outcome::ProtocolError {
+                    reason: AbortReason::Unreachable,
+                },
+            ),
+        ];
+        for (byte, outcome) in outcomes {
+            assert_eq!(
+                to_vec(&outcome).expect("an outcome encodes")[0],
+                byte,
+                "{outcome:?} moved off wire discriminant {byte}",
+            );
+        }
+    }
 
     #[test]
     fn the_execution_record_is_canonical() {
