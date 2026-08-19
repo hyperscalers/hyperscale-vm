@@ -52,18 +52,11 @@ pub const FIXED_SCALE: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000;
 /// The largest value a [`UnitFixed`] may hold: one, at its own scale.
 pub const UNIT_SCALE: u128 = 1_000_000_000_000_000_000;
 
-/// Which way a lossy operation resolves a non-zero remainder.
-///
-/// Required wherever one happens. §"Dust" in the design notes states
-/// which direction is correct where; the type only insists that a body
-/// say which it took.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Rounding {
-    /// Toward zero.
-    Down,
-    /// Away from zero.
-    Up,
-}
+/// Which way a lossy operation resolves a non-zero remainder — the
+/// arithmetic's own type, required wherever a lossy operation happens.
+/// §"Dust" in the design notes states which direction is correct where;
+/// the type only insists that a body say which it took.
+pub use hyperscale_vm_types::math::Rounding;
 
 /// Why a construction refused its inputs.
 ///

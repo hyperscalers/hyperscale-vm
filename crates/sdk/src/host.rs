@@ -280,14 +280,6 @@ const fn narrowed(value: math::U256) -> Wide {
     Wide::from_limbs(value.limbs())
 }
 
-/// The rounding direction as the arithmetic names it.
-const fn direction(rounding: Rounding) -> math::Rounding {
-    match rounding {
-        Rounding::Down => math::Rounding::Down,
-        Rounding::Up => math::Rounding::Up,
-    }
-}
-
 /// `a * b / c`, the product held whole and rounded once.
 ///
 /// The native lane reaches the same functions the two engines do, rather
@@ -302,7 +294,7 @@ const fn direction(rounding: Rounding) -> math::Rounding {
 #[must_use]
 pub fn mul_div(a: Wide, b: Wide, c: Wide, rounding: Rounding) -> Wide {
     narrowed(
-        math::mul_div(widened(a), widened(b), widened(c), direction(rounding))
+        math::mul_div(widened(a), widened(b), widened(c), rounding)
             .expect("a well-formed wide multiplication"),
     )
 }
@@ -343,10 +335,7 @@ pub fn fraction_cmp(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> core::cmp::Orderi
 /// Where any intermediate leaves the wide width.
 #[must_use]
 pub fn fixed_pow(base: Wide, exp: u32, rounding: Rounding) -> Wide {
-    narrowed(
-        math::fixed_pow(widened(base), exp, direction(rounding))
-            .expect("a well-formed exponentiation"),
-    )
+    narrowed(math::fixed_pow(widened(base), exp, rounding).expect("a well-formed exponentiation"))
 }
 
 /// Split `value` off a bucket, as a bucket.
