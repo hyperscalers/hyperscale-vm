@@ -65,7 +65,7 @@ pub trait GuestBackend: Sync {
 
 /// The kernel's [`GuestRunner`]: walk a transaction's lowered
 /// invocations, node by node, over any backend.
-pub struct ManifestWalk<'a, B> {
+pub struct ManifestWalk<'a, B: ?Sized> {
     /// The engine behind every invocation.
     pub backend: &'a B,
 }
@@ -113,7 +113,7 @@ fn composition_defect(session: KernelSession, reason: AbortReason) -> NodeFailur
     fail(session, Outcome::ProtocolError { reason }, 0)
 }
 
-impl<B: GuestBackend> ManifestWalk<'_, B> {
+impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
     fn invoke_node(
         &self,
         node: u32,
@@ -368,7 +368,7 @@ fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, Sess
     }
 }
 
-impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
+impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
     fn run(&self, entry: &BatchTx, mut session: KernelSession) -> Result<RunResult, Unavailable> {
         let mut outputs: Vec<Vec<u32>> = Vec::with_capacity(entry.calls.len());
         let mut fuel = 0u64;

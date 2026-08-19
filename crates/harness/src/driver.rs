@@ -106,6 +106,13 @@ impl Lanes {
         self.native.seed(package, dispatch);
         self.native_seeded = true;
     }
+
+    /// The two engine lanes, for a fixture that drives the kernel's walk
+    /// itself rather than through [`run_lanes`].
+    #[must_use]
+    pub fn engine_backends(&self) -> [&dyn GuestBackend; 2] {
+        [&self.blessed, &self.reference]
+    }
 }
 
 impl Default for Lanes {
