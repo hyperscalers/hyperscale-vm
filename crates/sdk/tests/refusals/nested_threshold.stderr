@@ -1,0 +1,5 @@
+error: a gate nests past the 4 levels the vocabulary admits
+  --> tests/refusals/nested_threshold.rs:24:43
+   |
+24 |         #[guarded(n_of(1, n_of(1, n_of(1, n_of(1, chair)))))]
+   |                                           ^^^^

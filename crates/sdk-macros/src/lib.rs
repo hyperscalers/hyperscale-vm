@@ -104,9 +104,9 @@ use std::collections::BTreeMap;
 use hyperscale_vm_effects::vocabulary::{
     AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT,
 };
-use hyperscale_vm_effects::{PACKAGE_SLOT_BASE, SlotId};
+use hyperscale_vm_effects::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, PACKAGE_SLOT_BASE, SlotId};
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::spanned::Spanned;
 
@@ -463,13 +463,16 @@ fn guarded_rule(
     config_fields: &[(String, syn::Type)],
     resources: &[(String, Vec<u8>)],
     params: &[(String, syn::Type)],
+    depth: usize,
 ) -> syn::Result<(TokenStream2, bool, bool)> {
     match expr {
-        syn::Expr::Paren(inner) => guarded_rule(&inner.expr, config_fields, resources, params),
+        syn::Expr::Paren(inner) => {
+            guarded_rule(&inner.expr, config_fields, resources, params, depth)
+        }
         syn::Expr::Binary(binary) => {
-            let count = match binary.op {
-                syn::BinOp::Or(_) => None,
-                syn::BinOp::And(_) => Some(()),
+            let all = match binary.op {
+                syn::BinOp::Or(_) => false,
+                syn::BinOp::And(_) => true,
                 _ => {
                     return Err(syn::Error::new(
                         binary.op.span(),
@@ -478,15 +481,19 @@ fn guarded_rule(
                 }
             };
             let branches = flatten(expr, &binary.op);
-            let lowered = branches
-                .iter()
-                .map(|branch| {
-                    guarded_rule(branch, config_fields, resources, params).map(|(rule, _, _)| rule)
-                })
-                .collect::<syn::Result<Vec<_>>>()?;
-            let width = lowered.len();
-            let count = if count.is_some() {
-                u8::try_from(width).unwrap_or(u8::MAX)
+            let lowered = threshold(
+                expr.span(),
+                &branches,
+                config_fields,
+                resources,
+                params,
+                depth,
+            )?;
+            // `||` is a count of one and `&&` a count of every branch, so
+            // neither can be a threshold nobody meant: a chain has at
+            // least two branches, and both counts sit inside them.
+            let count = if all {
+                u8::try_from(lowered.len()).unwrap_or(u8::MAX)
             } else {
                 1
             };
@@ -505,11 +512,33 @@ fn guarded_rule(
                     "`n_of` takes a literal count and then the claims it counts",
                 )
             })?;
-            let lowered = args
-                .map(|branch| {
-                    guarded_rule(branch, config_fields, resources, params).map(|(rule, _, _)| rule)
-                })
-                .collect::<syn::Result<Vec<_>>>()?;
+            let branches: Vec<_> = args.collect();
+            let lowered = threshold(
+                call.span(),
+                &branches,
+                config_fields,
+                resources,
+                params,
+                depth,
+            )?;
+            // The counts the vocabulary has no rule for: one nobody has
+            // to meet, and one nobody can. Refused on the line that wrote
+            // it rather than where the shape is all that is left.
+            if count == 0 {
+                return Err(syn::Error::new(
+                    call.span(),
+                    "a threshold requiring nothing would admit anyone",
+                ));
+            }
+            if usize::from(count) > lowered.len() {
+                return Err(syn::Error::new(
+                    call.span(),
+                    format!(
+                        "a threshold requiring {count} of {} claims would admit no one",
+                        lowered.len()
+                    ),
+                ));
+            }
             Ok((
                 quote!(__t.n_of(#count, ::std::vec![#(#lowered),*])),
                 false,
@@ -521,6 +550,46 @@ fn guarded_rule(
             Ok((quote!(__t.claim(&#identity)), on_self, false))
         }
     }
+}
+
+/// The branches of one threshold, lowered, held to the depth and width
+/// the vocabulary admits.
+///
+/// The caps are read from the vocabulary rather than restated, and they
+/// are checked here rather than at the tracer's own assertions: both
+/// refuse the same trees, but only this one can point at the line that
+/// wrote it. Depth and width are properties of the shape alone, so a
+/// gate whose leaves nobody has evaluated is still answerable for them.
+fn threshold(
+    span: Span,
+    branches: &[&syn::Expr],
+    config_fields: &[(String, syn::Type)],
+    resources: &[(String, Vec<u8>)],
+    params: &[(String, syn::Type)],
+    depth: usize,
+) -> syn::Result<Vec<TokenStream2>> {
+    if depth + 1 >= MAX_RULE_DEPTH {
+        return Err(syn::Error::new(
+            span,
+            format!("a gate nests past the {MAX_RULE_DEPTH} levels the vocabulary admits"),
+        ));
+    }
+    if branches.len() > MAX_RULE_BRANCHES {
+        return Err(syn::Error::new(
+            span,
+            format!(
+                "a threshold over {} claims is past the {MAX_RULE_BRANCHES} the vocabulary admits",
+                branches.len()
+            ),
+        ));
+    }
+    branches
+        .iter()
+        .map(|branch| {
+            guarded_rule(branch, config_fields, resources, params, depth + 1)
+                .map(|(rule, _, _)| rule)
+        })
+        .collect()
 }
 
 /// One operator's whole chain as a flat branch list.
@@ -679,7 +748,7 @@ fn parse_gate(
         if attr.path().is_ident("guarded") {
             let written: syn::Expr = attr.parse_args()?;
             let (rule, on_self, threshold) =
-                guarded_rule(&written, config_fields, resources, params)?;
+                guarded_rule(&written, config_fields, resources, params, 0)?;
             return Ok(Gate::Guarded {
                 rule,
                 on_self,
@@ -813,7 +882,7 @@ fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
 /// configuration struct its `Locked<_>` field names, if it has one.
 fn parse_state(
     items: &[syn::Item],
-    span: proc_macro2::Span,
+    span: Span,
 ) -> syn::Result<(syn::Ident, BTreeMap<String, Field>, Option<syn::Ident>)> {
     // Named before the state is read, so the refusal below can name every
     // accessor a field would shadow — including `config`, which exists
@@ -1488,8 +1557,8 @@ fn resource_marks(declared: &[(String, Vec<u8>)]) -> Vec<syn::Item> {
     declared
         .iter()
         .map(|(name, mark)| {
-            let ident = syn::Ident::new(&screaming(name), proc_macro2::Span::call_site());
-            let bytes = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
+            let ident = syn::Ident::new(&screaming(name), Span::call_site());
+            let bytes = syn::LitByteStr::new(mark, Span::call_site());
             let doc = format!("The mark separating `{name}` from this package's other resources.");
             syn::parse_quote!(
                 #[doc = #doc]
@@ -1505,7 +1574,7 @@ fn screaming(name: &str) -> String {
     kebab(name).replace('-', "_").to_uppercase()
 }
 
-/// The codec every declared record and event carries./// The codec every declared record and event carries.
+/// The codec every declared record and event carries.
 ///
 /// Pushed onto the author's own struct rather than asked for, on the same
 /// terms as every other fact this macro derives: the encoding is the

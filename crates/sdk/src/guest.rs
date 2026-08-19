@@ -57,8 +57,6 @@ use crate::Address;
 pub use crate::handle::Handle;
 use crate::num::{Rounding, Wide};
 
-/// The kernel's amount-cell width: a little-endian `u128`.
-///
 /// A `u128` as the kernel's world names it.
 #[allow(clippy::cast_possible_truncation)] // taking a half is the truncation
 fn amount(value: u128) -> kernel::state::Amount {

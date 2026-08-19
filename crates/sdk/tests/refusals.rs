@@ -81,6 +81,21 @@ fn the_lowering_refuses_authority_a_caller_names() {
     refuse.compile_fail("tests/refusals/caller_named_threshold.rs");
 }
 
+/// A threshold the vocabulary holds no rule for, refused where it was
+/// written.
+///
+/// A count of nothing admits everyone and a count past the claims it
+/// counts admits no one, and neither is a gate an author meant. The
+/// tracer refuses both as well — it has to, because a declaration can be
+/// hand-written — but only the macro can point at the line.
+#[test]
+fn the_lowering_refuses_a_threshold_nobody_could_have_meant() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/degenerate_threshold.rs");
+    refuse.compile_fail("tests/refusals/vacuous_threshold.rs");
+    refuse.compile_fail("tests/refusals/nested_threshold.rs");
+}
+
 /// What the generated calling surface refuses.
 ///
 /// Each of these is a fact the wrapper's own signature carries — the

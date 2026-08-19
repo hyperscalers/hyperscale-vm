@@ -1,0 +1,5 @@
+error: a threshold requiring nothing would admit anyone
+  --> tests/refusals/vacuous_threshold.rs:22:19
+   |
+22 |         #[guarded(n_of(0, chair, deputy))]
+   |                   ^^^^
