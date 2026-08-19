@@ -27,6 +27,8 @@ How any of the above moves — the epoch-gated upgrade process and the determini
 
 **The reference interpreter is the executable spec.** A slow, obviously-correct interpreter of the profile (`crates/ref`) lives beside the blessed engine and is differentially tested against it under seeded harnesses. Divergence between the two is a release blocker, whichever is wrong. It is independently written — never derived from the engine's own interpreter tier — because same-vendor implementations share bug correlations, and the interpreter's whole value is being an uncorrelated witness.
 
+The canonical ABI is the half of that agreement least visible from the bytecode. A guest hands over pointers — the list it names, the area a spilled result is written back to, what its own allocator answered with — and each carries an alignment and a length the ABI checks before reading through it, while no wasm instruction has executed. So an interpreter lenient about either would not be lenient, it would be a second opinion about what a transaction did; both refusals are the ABI declining rather than the guest faulting, and both engines abort under the one name.
+
 **Tiered language support.** Rust is the audited toolchain. Every other wit-bindgen target — C first among the candidates — is admitted per-toolchain once its emitted code and embedded runtime pass the determinism audit ([../upgrades.md](../upgrades.md)); a garbage collector or embedded JS engine inside a module is an unaudited determinism surface, not a policy preference.
 
 ## 4. The host surface

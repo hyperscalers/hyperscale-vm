@@ -29,7 +29,7 @@ The recurring design move: wherever a property the host protocol already enforce
 The register ([09-invariants.md](09-invariants.md)) enumerates the full property set; the critical core is small:
 
 1. **Access truth** (INV-VM-1/2): execution cannot leave the declared set, and every honest node derives the same set.
-2. **Value conservation** (INV-VM-6/7/17): per-resource supply and storage-bond accounting balance in every reachable state, including across shard splits and merges (with INV-VM-5), and no transaction duplicates or loses value in flight between them.
+2. **Value conservation** (INV-VM-6/7/17/18): per-resource supply and storage-bond accounting balance in every reachable state, including across shard splits and merges (with INV-VM-5), and no transaction duplicates or loses value — neither in flight between them, nor in the cells it rests in, which are reached only through handles that move it.
 3. **Fee assurance** (INV-VM-9/10/11): no shard works for a payer that cannot pay, and every engaged reservation resolves exactly once.
 4. **Schedule invariance** (INV-VM-14): receipts are functions of committed content, never of execution timing.
 
