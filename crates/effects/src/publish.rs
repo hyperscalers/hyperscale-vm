@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_types::{MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
+use hyperscale_vm_types::{AddressClass, Denomination, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
 
 use crate::dsl::{
     Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_RANGE_CAP,
@@ -18,7 +18,7 @@ use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr};
 use crate::signature::{
     AbiParam, Accessibility, CustodyClaim, GateError, GateShape, MethodSignature,
 };
-use crate::types::{MAX_VALUE_DEPTH, SlotId};
+use crate::types::{MAX_VALUE_DEPTH, SlotId, Value};
 use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
 
@@ -444,6 +444,21 @@ pub enum DeclarationError {
         /// effects.
         clause: u32,
     },
+    /// A denomination written down as an address of a class that names
+    /// no resource.
+    ///
+    /// Routing refuses every such denomination when it evaluates one;
+    /// this is the same verdict at publish, for the one case decidable
+    /// there — a literal — so an author hears it about their package
+    /// rather than a caller about their manifest.
+    #[error("effect clause {clause} denominates in a {found} address, which names no resource")]
+    NotAResource {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+        /// The class the literal carries.
+        found: AddressClass,
+    },
     /// A clause naming a slot no cell is assigned: unassigned below
     /// [`PACKAGE_SLOT_BASE`], or the kernel's own band at the top.
     #[error("effect clause {clause} names slot {slot}, which no cell is assigned")]
@@ -786,6 +801,17 @@ fn judge_access(clause: u32, access: &Clause) -> Result<(), DeclarationError> {
     }
     if denomination.is_none() && matches!(mode, ModeExpr::Delta | ModeExpr::Reserve(_)) {
         return Err(DeclarationError::UndenominatedMovement { clause });
+    }
+    // The class is decidable at publish only where the denomination is
+    // written down; an expression over inputs meets the same refusal at
+    // routing, where it is evaluated.
+    if let Some(Expr::Literal(Value::Address(address))) = denomination
+        && let Err(err) = Denomination::try_from(*address)
+    {
+        return Err(DeclarationError::NotAResource {
+            clause,
+            found: err.found,
+        });
     }
     // A presence requirement is about the leaf a write lands on, and an
     // interval has none. Refused here so an author hears about it, and
@@ -2541,6 +2567,40 @@ mod tests {
         );
         assert_eq!(
             check_declarations(&one_clause(own(vec![]), ModeExpr::Read, None)),
+            Ok(())
+        );
+    }
+
+    /// A denomination written down is a resource, judged at publish.
+    ///
+    /// The class check runs wherever a denomination is evaluated; a
+    /// literal is the case an author can hear about their own package,
+    /// before any manifest names it.
+    #[test]
+    fn a_literal_denomination_of_another_class_does_not_publish() {
+        let component = Expr::Literal(Value::Address(Address::new(
+            [7; 31],
+            AddressClass::Component,
+        )));
+        assert_eq!(
+            check_declarations(&one_clause(
+                own_point(package_slot(0), vec![component.clone()]),
+                ModeExpr::Delta,
+                Some(component)
+            )),
+            Err(DeclarationError::NotAResource {
+                clause: 0,
+                found: AddressClass::Component
+            })
+        );
+        // An expression over inputs is not decidable here; routing
+        // evaluates it and applies the same refusal there.
+        assert_eq!(
+            check_declarations(&one_clause(
+                own_point(package_slot(0), vec![Expr::Arg(0)]),
+                ModeExpr::Delta,
+                Some(Expr::Arg(0))
+            )),
             Ok(())
         );
     }
