@@ -18,7 +18,10 @@
 
 use std::collections::HashMap;
 
-use hyperscale_vm_embed::math::{self, Rounding, U256};
+use hyperscale_vm_embed::math::{Rounding, U256};
+use hyperscale_vm_embed::meter::{
+    self, AMOUNT_BOUNDARY_BYTES, Exhausted, FuelSink, HostAccess, MeterError, WIDE_BOUNDARY_BYTES,
+};
 use hyperscale_vm_embed::{CellKind, GuestArg, KernelHost};
 use hyperscale_vm_types::ISSUER_REP;
 use wasmparser::{
@@ -259,13 +262,6 @@ pub(crate) struct CType {
 /// Where a `result`'s payload sits in its memory representation: one
 /// discriminant byte, padded to the four-byte alignment both arms carry.
 const RESULT_PAYLOAD: usize = 4;
-
-/// What an amount costs at the boundary, and how wide it is in the return
-/// area. The blessed engine charges the same figure.
-const AMOUNT_BOUNDARY_BYTES: usize = 16;
-
-/// What a wide word costs at the boundary: the width it has.
-const WIDE_BOUNDARY_BYTES: usize = 32;
 
 /// A handle's width in a spilled result: the core `i32` it is.
 const HANDLE_BYTES: usize = 4;
@@ -920,27 +916,38 @@ struct KernelCanon<'c, H> {
     host: H,
 }
 
-/// Fuel charged per boundary byte; must equal the runtime's rate (asserted by
-/// the differential fuel lane).
-pub const FUEL_PER_BOUNDARY_BYTE: u64 = 1;
+/// The interpreter's side of the metering seam: the canon's host and the
+/// store's counter as the meter's two capabilities. With boundary debt in
+/// the one counter, the interpreter's own exhaustion checks see it at the
+/// next function entry or loop header, exactly as the engine's do.
+struct MeterPort<'a, H> {
+    host: &'a mut H,
+    store: &'a mut Store,
+}
 
-/// Charges the canonical-ABI boundary supplement into the same counter the
-/// instruction schedule draws on, mirroring the runtime's
-/// `charge_boundary_bytes`: argument bytes before the host operation, result
-/// bytes after it succeeds. With the debt in the one counter, the
-/// interpreter's own exhaustion checks see it at the next function entry or
-/// loop header, exactly as the engine's do.
-///
-/// The overrun check here is strict, like the runtime's `checked_sub`: an
-/// exact-fit charge passes with nothing left, and it is the next instruction
-/// check that exhausts — on both engines.
-const fn charge_boundary(store: &mut Store, bytes: usize) -> Result<(), ExecError> {
-    store.fuel_consumed = store
-        .fuel_consumed
-        .saturating_add((bytes as u64).saturating_mul(FUEL_PER_BOUNDARY_BYTE));
-    match store.fuel_limit {
-        Some(limit) if store.fuel_consumed > limit => Err(ExecError::Trap(Trap::OutOfFuel)),
-        _ => Ok(()),
+impl<H: KernelHost> HostAccess for MeterPort<'_, H> {
+    type Host = H;
+
+    fn host(&mut self) -> &mut H {
+        self.host
+    }
+}
+
+impl<H> FuelSink for MeterPort<'_, H> {
+    fn consume(&mut self, fuel: u64) -> Result<(), Exhausted> {
+        self.store.fuel_consumed = self.store.fuel_consumed.saturating_add(fuel);
+        match self.store.fuel_limit {
+            Some(limit) if self.store.fuel_consumed > limit => Err(Exhausted),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// A metered failure as an interpreter error.
+const fn meter_fault(error: MeterError) -> ExecError {
+    match error {
+        MeterError::Exhausted => ExecError::Trap(Trap::OutOfFuel),
+        MeterError::Refused(reason) => ExecError::Canon(CanonError::Host(reason)),
     }
 }
 
@@ -1486,15 +1493,6 @@ impl<H: KernelHost> KernelCanon<'_, H> {
             .ok_or(ExecError::Canon(CanonError::Internal("realloc option")))
     }
 
-    /// Charges what the host call just made lifted out of the store by
-    /// scanning, mirroring the runtime's `charge_scan` — asked before the
-    /// call's own refusal propagates, on the same terms and in the same
-    /// order, so the two engines meter one figure.
-    fn charge_scan(&mut self, store: &mut Store) -> Result<(), ExecError> {
-        let lifted = self.host.take_scan_debt();
-        charge_boundary(store, lifted)
-    }
-
     /// Seats a handle, reusing the most recently freed slot.
     ///
     /// The numbering is guest-observable — a handle value is a core `i32`
@@ -1810,13 +1808,16 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             _ => ResourceKind::WriteCell,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
-                        let result = match host_fn {
-                            HostFn::ReadCellGet => self.host.read_cell(rep),
-                            HostFn::LockedCellGet => self.host.locked_cell(rep),
-                            _ => self.host.write_cell_get(rep),
+                        let mut port = MeterPort {
+                            host: &mut self.host,
+                            store,
                         };
-                        let bytes = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        charge_boundary(store, bytes.len())?;
+                        let bytes = match host_fn {
+                            HostFn::ReadCellGet => meter::read_cell_get(&mut port, rep),
+                            HostFn::LockedCellGet => meter::locked_cell_get(&mut port, rep),
+                            _ => meter::write_cell_get(&mut port, rep),
+                        }
+                        .map_err(meter_fault)?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[1])?;
                         Ok(Vec::new())
@@ -1828,11 +1829,14 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             ResourceKind::AmountRead
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
-                        let held = self
-                            .host
-                            .amount_cell_balance(rep)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        let held = meter::amount_balance(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                        )
+                        .map_err(meter_fault)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_amount(store, mem, args[1], held)?;
                         Ok(Vec::new())
@@ -1841,10 +1845,15 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let rep = self.resolve_handle(args[0], ResourceKind::WriteCell)?;
                         let mem = self.mem_opt(id)?;
                         let bytes = Self::read_guest_bytes(store, mem, args[1], args[2])?;
-                        charge_boundary(store, bytes.len())?;
-                        self.host
-                            .write_cell_set(rep, bytes)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        meter::write_cell_set(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            bytes,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
                     // A take seats the bucket the host opened as an owned
@@ -1860,42 +1869,60 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let amount = flat_amount(args[1], args[2]);
-                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
-                        let result = if host_fn == HostFn::AmountTake {
-                            self.host.write_take(rep, amount)
-                        } else {
-                            self.host.delta_take(rep, amount)
+                        let mut port = MeterPort {
+                            host: &mut self.host,
+                            store,
                         };
-                        let bucket = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let bucket = if host_fn == HostFn::AmountTake {
+                            meter::amount_cell_take(&mut port, rep, amount)
+                        } else {
+                            meter::delta_cell_take(&mut port, rep, amount)
+                        }
+                        .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
                     HostFn::IssuerPut => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
                         let funds = self.consume_bucket(args[1])?;
-                        self.host
-                            .burn(rep, funds)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        meter::burn(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            funds,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
                     HostFn::IssuerMint => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_ids(store, mem, args[1], args[2])?;
-                        charge_boundary(store, ids.len() * 8)?;
-                        let minted = self
-                            .host
-                            .mint_instances(rep, &ids)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let minted = meter::mint_instances(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            &ids,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(minted).cast_signed())])
                     }
                     HostFn::InstanceTake => {
                         let rep = self.resolve_handle(args[0], ResourceKind::InstanceRange)?;
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_ids(store, mem, args[1], args[2])?;
-                        charge_boundary(store, ids.len() * 8)?;
-                        let taken = self.host.range_take(rep, &ids);
-                        self.charge_scan(store)?;
-                        let taken = taken.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let taken = meter::instance_range_take(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            &ids,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(taken).cast_signed())])
                     }
                     HostFn::InstancePut => {
@@ -1903,78 +1930,113 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let funds = self.consume_bucket(args[1])?;
                         let mem = self.mem_opt(id)?;
                         let value = Self::read_guest_bytes(store, mem, args[2], args[3])?;
-                        charge_boundary(store, value.len())?;
-                        self.host
-                            .range_put(rep, funds, value)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        meter::instance_range_put(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            funds,
+                            value,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
                     HostFn::BucketTake => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
                         let amount = flat_amount(args[1], args[2]);
-                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
-                        let split = self
-                            .host
-                            .bucket_take(rep, amount)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let split = meter::bucket_take(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            amount,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(split).cast_signed())])
                     }
                     HostFn::BucketPut => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
                         let other = self.consume_bucket(args[1])?;
-                        self.host
-                            .bucket_put(rep, other)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        meter::bucket_put(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            other,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    // Wide arithmetic reaches no state, so these call the
-                    // shared functions rather than the host trait. What
-                    // the interpreter contributes is the same charge the
-                    // blessed engine makes and the lowering of a result
-                    // wider than one flat value.
+                    // Wide arithmetic reaches no state: the meter calls
+                    // the shared functions and prices the crossing, and
+                    // what the interpreter contributes is the lift — the
+                    // rounding discriminant judged before any charge, as
+                    // the engine's argument lift runs before its host
+                    // body — and the lowering of a result wider than one
+                    // flat value.
                     HostFn::MulDiv => {
-                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 4)?;
-                        let answer = math::mul_div(
+                        let rounding = flat_rounding(args[12])?;
+                        let answer = meter::mul_div(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
                             flat_wide(&args, 0),
                             flat_wide(&args, 4),
                             flat_wide(&args, 8),
-                            flat_rounding(args[12])?,
+                            rounding,
                         )
-                        .map_err(|e| ExecError::Canon(CanonError::Host(e.into())))?;
+                        .map_err(meter_fault)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_wide(store, mem, args[13], 0, answer)?;
                         Ok(Vec::new())
                     }
                     HostFn::GeometricMean => {
-                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 3)?;
-                        let answer = math::geometric_mean(flat_wide(&args, 0), flat_wide(&args, 4));
+                        let answer = meter::geometric_mean(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            flat_wide(&args, 0),
+                            flat_wide(&args, 4),
+                        )
+                        .map_err(meter_fault)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_wide(store, mem, args[8], 0, answer)?;
                         Ok(Vec::new())
                     }
                     HostFn::FractionCompose => {
-                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 6)?;
-                        let (num, den) = math::fraction_compose(
+                        let (num, den) = meter::fraction_compose(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
                             flat_wide(&args, 0),
                             flat_wide(&args, 4),
                             flat_wide(&args, 8),
                             flat_wide(&args, 12),
                         )
-                        .map_err(|e| ExecError::Canon(CanonError::Host(e.into())))?;
+                        .map_err(meter_fault)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_wide(store, mem, args[16], 0, num)?;
                         Self::write_wide(store, mem, args[16], WIDE_BOUNDARY_BYTES, den)?;
                         Ok(Vec::new())
                     }
                     HostFn::FractionCmp => {
-                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 4)?;
-                        let order = math::fraction_cmp(
+                        let order = meter::fraction_cmp(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
                             flat_wide(&args, 0),
                             flat_wide(&args, 4),
                             flat_wide(&args, 8),
                             flat_wide(&args, 12),
                         )
-                        .map_err(|e| ExecError::Canon(CanonError::Host(e.into())))?;
+                        .map_err(meter_fault)?;
                         Ok(vec![Value::I32(match order {
                             std::cmp::Ordering::Less => 0,
                             std::cmp::Ordering::Equal => 1,
@@ -1982,33 +2044,45 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         })])
                     }
                     HostFn::FixedPow => {
-                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 2)?;
-                        let answer = math::fixed_pow(
+                        let rounding = flat_rounding(args[5])?;
+                        let answer = meter::fixed_pow(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
                             flat_wide(&args, 0),
                             args[4].as_i32().cast_unsigned(),
-                            flat_rounding(args[5])?,
+                            rounding,
                         )
-                        .map_err(|e| ExecError::Canon(CanonError::Host(e.into())))?;
+                        .map_err(meter_fault)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_wide(store, mem, args[6], 0, answer)?;
                         Ok(Vec::new())
                     }
                     HostFn::BucketSplit => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
-                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 2)?;
-                        let split = self
-                            .host
-                            .bucket_split(rep, flat_wide(&args, 1), flat_wide(&args, 5))
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let split = meter::bucket_split(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            flat_wide(&args, 1),
+                            flat_wide(&args, 5),
+                        )
+                        .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(split).cast_signed())])
                     }
                     HostFn::BucketAmount => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
-                        let amount = self
-                            .host
-                            .bucket_amount(rep)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        let amount = meter::bucket_amount(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                        )
+                        .map_err(meter_fault)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_amount(store, mem, args[1], amount)?;
                         Ok(Vec::new())
@@ -2021,30 +2095,42 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let funds = self.consume_bucket(args[1])?;
-                        let result = if host_fn == HostFn::AmountPut {
-                            self.host.write_put(rep, funds)
-                        } else {
-                            self.host.delta_put(rep, funds)
+                        let mut port = MeterPort {
+                            host: &mut self.host,
+                            store,
                         };
-                        result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        if host_fn == HostFn::AmountPut {
+                            meter::amount_cell_put(&mut port, rep, funds)
+                        } else {
+                            meter::delta_cell_put(&mut port, rep, funds)
+                        }
+                        .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
                     HostFn::IssuerTake => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
                         let amount = flat_amount(args[1], args[2]);
-                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
-                        let bucket = self
-                            .host
-                            .mint(rep, amount)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let bucket = meter::mint(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            amount,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
                     HostFn::ReserveTake => {
                         let rep = self.resolve_handle(args[0], ResourceKind::ReserveCell)?;
-                        let bucket = self
-                            .host
-                            .reserve_take(rep)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let bucket = meter::reserve_cell_take(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
                     HostFn::RangeReadCount | HostFn::RangeWriteCount | HostFn::InstanceCount => {
@@ -2054,9 +2140,14 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             _ => ResourceKind::RangeWrite,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
-                        let count = self.host.range_count(rep);
-                        self.charge_scan(store)?;
-                        let count = count.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        let count = meter::range_count(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(vec![Value::I32(count.cast_signed())])
                     }
                     HostFn::RangeReadOrder | HostFn::RangeWriteOrder | HostFn::InstanceOrder => {
@@ -2067,10 +2158,15 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let index = args[1].as_i32().cast_unsigned();
-                        let order = self.host.range_order(rep, index);
-                        self.charge_scan(store)?;
-                        let order = order.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        let order = meter::range_order(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            index,
+                        )
+                        .map_err(meter_fault)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_amount(store, mem, args[2], order)?;
                         Ok(Vec::new())
@@ -2083,10 +2179,15 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let index = args[1].as_i32().cast_unsigned();
-                        let bytes = self.host.range_entry(rep, index);
-                        self.charge_scan(store)?;
-                        let bytes = bytes.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        charge_boundary(store, bytes.len())?;
+                        let bytes = meter::range_entry(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            index,
+                        )
+                        .map_err(meter_fault)?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[2])?;
                         Ok(Vec::new())
@@ -2096,10 +2197,16 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let index = args[1].as_i32().cast_unsigned();
                         let mem = self.mem_opt(id)?;
                         let value = Self::read_guest_bytes(store, mem, args[2], args[3])?;
-                        charge_boundary(store, value.len())?;
-                        let set = self.host.range_set(rep, index, value);
-                        self.charge_scan(store)?;
-                        set.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        meter::range_set(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            index,
+                            value,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
                     HostFn::RangeWriteInsert => {
@@ -2107,23 +2214,38 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let mem = self.mem_opt(id)?;
                         let order = flat_amount(args[1], args[2]);
                         let value = Self::read_guest_bytes(store, mem, args[3], args[4])?;
-                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES + value.len())?;
-                        let inserted = self.host.range_insert(rep, order, value);
-                        self.charge_scan(store)?;
-                        inserted.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        meter::range_insert(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            order,
+                            value,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
                     HostFn::RangeWriteRemove => {
                         let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
                         let index = args[1].as_i32().cast_unsigned();
-                        let removed = self.host.range_remove(rep, index);
-                        self.charge_scan(store)?;
-                        removed.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        meter::range_remove(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            index,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
                     HostFn::Randomness => {
-                        let draw = self.host.randomness();
-                        charge_boundary(store, draw.len())?;
+                        let draw = meter::randomness(&mut MeterPort {
+                            host: &mut self.host,
+                            store,
+                        })
+                        .map_err(meter_fault)?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &draw, args[0])?;
                         Ok(Vec::new())
@@ -2131,8 +2253,14 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::Hash => {
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         let data = Self::read_guest_bytes(store, mem, args[0], args[1])?;
-                        let digest = self.host.hash(&data);
-                        charge_boundary(store, data.len() + digest.len())?;
+                        let digest = meter::hash(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            &data,
+                        )
+                        .map_err(meter_fault)?;
                         self.lower_list(modules, store, mem, realloc, &digest, args[2])?;
                         Ok(Vec::new())
                     }
@@ -2140,10 +2268,15 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let mem = self.mem_opt(id)?;
                         let event_type = args[0].as_i32().cast_unsigned();
                         let payload = Self::read_guest_bytes(store, mem, args[1], args[2])?;
-                        charge_boundary(store, payload.len())?;
-                        self.host
-                            .emit(event_type, payload)
-                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        meter::emit(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            event_type,
+                            payload,
+                        )
+                        .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
                 }
