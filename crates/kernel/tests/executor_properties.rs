@@ -316,7 +316,8 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
 fn own_movements(entry: &BatchTx) -> BTreeMap<SubstateKey, Movement> {
     let seed = u128::from(entry.tx.0.0[0]);
     entry
-        .declared
+        .declaration
+        .set
         .iter()
         .filter_map(|effect| match effect {
             Effect {

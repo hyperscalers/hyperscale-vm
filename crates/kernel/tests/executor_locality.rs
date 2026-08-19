@@ -195,12 +195,9 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
             },
         })
         .unwrap();
-    let declaration = moving(declared);
     BatchTx {
         tx: TxHash(Hash32([id; 32])),
-        ordered: declaration.ordered,
-        denominations: declaration.denominations,
-        declared: declaration.set,
+        declaration: moving(declared),
         calls: Vec::new(),
         nullifiers: vec![signed_nullifier()],
         clock_ms: env().clock_ms,

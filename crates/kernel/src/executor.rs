@@ -50,43 +50,37 @@ use crate::work::Work;
 pub struct BatchTx {
     /// The transaction's identity: the canonical ordering key.
     pub tx: TxHash,
-    /// The transaction's declared effect set on this shard: folded,
-    /// canonically ordered, reserve amounts on one target summed.
+    /// What this transaction declared on this shard, in all three views
+    /// one evaluation produced.
     ///
-    /// What scheduling reads. [`conflict_groups`] groups on it,
-    /// reservation judging judges against it, and the folding is
-    /// load-bearing for both.
-    pub declared: EffectSet,
-    /// The same declaration in clause-evaluation order, one entry per
-    /// clause the signature reached.
+    /// `set` is the folded, canonically ordered one scheduling reads:
+    /// [`conflict_groups`] groups on it, reservation judging judges
+    /// against it, and the folding is load-bearing for both. `ordered` is
+    /// the same declaration in clause-evaluation order, one entry per
+    /// clause the signature reached, which is what capability
+    /// materialization reads — a handle's rep is its index there and a
+    /// guest's parameters are positional, so the set cannot serve: its
+    /// order is a comparison over hash-derived keys, and its *length*
+    /// shrinks whenever two clauses evaluate to one target, which would
+    /// make a guest's parameter list depend on instance configuration
+    /// rather than on its own signature. `denominations` says what each
+    /// of those cells holds, and is where a movement asks what it is
+    /// moving into — the one question a hashed key cannot answer.
     ///
-    /// What capability materialization reads, because a handle's rep is
-    /// its index into the materialized table and a guest's parameters are
-    /// positional. [`BatchTx::declared`] cannot serve: its order is a
-    /// comparison over hash-derived keys, and its *length* shrinks
-    /// whenever two clauses evaluate to one target — which would make a
-    /// guest's parameter list depend on instance configuration rather
-    /// than on its own signature.
-    ///
-    /// Must fold to [`BatchTx::declared`]; [`execute_batch`] checks it.
-    pub ordered: Vec<Effect>,
-    /// What each entry of [`BatchTx::ordered`] holds, where it holds
-    /// value, aligned index for index with it.
-    ///
-    /// A capability's rep is its index here, so this is where a movement
-    /// asks what the cell it is moving into is denominated in — the one
-    /// question a hashed key cannot answer.
-    pub denominations: Vec<Option<Address>>,
+    /// Held whole rather than as three fields, because the three are
+    /// read index for index and only ever come from one evaluation. The
+    /// ordered view must fold to the set; [`execute_batch`] checks it.
+    pub declaration: Declaration,
     /// The transaction's lowered invocations, in manifest node order:
     /// what [`crate::walk::ManifestWalk`] performs.
     ///
-    /// Shard-invariant, exactly like [`BatchTx::ordered`] and for the
+    /// Shard-invariant, exactly like the declaration and for the
     /// same reason — every participant of a cross-shard transaction runs
     /// the identical calls against the identical table, and locality
     /// scopes what is applied rather than what is invoked.
     pub calls: Vec<NodeCall>,
     /// The nullifier keys of every subintent the transaction commits.
-    /// Each must also be declared as an exclusive write in `declared`,
+    /// Each must also be declared as an exclusive write,
     /// which [`execute_batch`] enforces: the declaration is what puts
     /// racing committers of one subintent in a single conflict group,
     /// where the spent check sees the winner's write. An existing cell
@@ -128,12 +122,9 @@ impl BatchTx {
         clock_ms: u64,
         randomness: [u8; 32],
     ) -> Self {
-        let declaration = declaration.into();
         Self {
             tx,
-            declared: declaration.set,
-            ordered: declaration.ordered,
-            denominations: declaration.denominations,
+            declaration: declaration.into(),
             calls: Vec::new(),
             nullifiers: Vec::new(),
             clock_ms,
@@ -300,7 +291,7 @@ fn attest_work(
 ) -> BTreeMap<TxHash, Work> {
     let declared: BTreeMap<TxHash, &EffectSet> = batch
         .iter()
-        .map(|entry| (entry.tx, &entry.declared))
+        .map(|entry| (entry.tx, &entry.declaration.set))
         .collect();
     receipts
         .iter()
@@ -566,7 +557,7 @@ fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
     let mut collections: BTreeMap<(Address, CollectionId), CollectionClaims> = BTreeMap::new();
 
     for (index, entry) in batch.iter().enumerate() {
-        for effect in entry.declared.iter() {
+        for effect in entry.declaration.set.iter() {
             let kind = effect.mode.kind();
             match effect.target {
                 EffectTarget::Point(key) => points.entry(key).or_default().push(index, kind),
@@ -652,6 +643,12 @@ impl From<MaterializeError> for Outcome {
             MaterializeError::MixedContents(_) => Self::UserError {
                 reason: AbortReason::MixedContents,
             },
+            // Not the sender's defect, and not reachable from routing —
+            // but aborting is the safe direction for a declaration
+            // nothing can be materialized against.
+            MaterializeError::MalformedDeclaration { .. } => Self::UserError {
+                reason: AbortReason::AbiViolation,
+            },
             MaterializeError::Occupied(target) => Self::PresenceUnmet {
                 target,
                 required: Presence::Absent,
@@ -711,27 +708,20 @@ fn run_group<R: GuestRunner>(
             clock_ms: entry.clock_ms,
             randomness: entry.randomness,
         };
-        let session = match KernelSession::materialize(
-            store,
-            &entry.declared,
-            &entry.ordered,
-            &entry.denominations,
-            entry.tx,
-            env,
-            hash_fn,
-        ) {
-            Ok(session) => {
-                // The rollback clone must drop here: it keeps the threaded
-                // layer's Arc unshared, so finish merges it in place.
-                drop(before);
-                session.with_locality(locality.clone())
-            }
-            Err(defect) => {
-                receipts.push((entry.tx, abort_receipt(defect.into(), 0)));
-                store = before;
-                continue;
-            }
-        };
+        let session =
+            match KernelSession::materialize(store, &entry.declaration, entry.tx, env, hash_fn) {
+                Ok(session) => {
+                    // The rollback clone must drop here: it keeps the threaded
+                    // layer's Arc unshared, so finish merges it in place.
+                    drop(before);
+                    session.with_locality(locality.clone())
+                }
+                Err(defect) => {
+                    receipts.push((entry.tx, abort_receipt(defect.into(), 0)));
+                    store = before;
+                    continue;
+                }
+            };
         let result = runner.run(entry, session);
         match result.outcome {
             Outcome::Completed { .. } => {
@@ -782,7 +772,7 @@ fn screen_reserve_targets<'batch>(
 ) -> Vec<&'batch BatchTx> {
     let mut sound: Vec<&BatchTx> = Vec::with_capacity(ordered.len());
     for entry in ordered {
-        let defect = declared_reservations(&entry.declared)
+        let defect = declared_reservations(&entry.declaration.set)
             .into_iter()
             .filter(|(key, _)| locality.is_local(key.owner))
             .find_map(|(key, _)| judged.check_reserve_target(key).err());
@@ -820,17 +810,17 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
         // consequence would be a transaction routed against one
         // declaration and handed capabilities for another.
         let mut folded = EffectSet::new();
-        for effect in &entry.ordered {
+        for effect in &entry.declaration.ordered {
             folded
                 .insert(*effect)
                 .map_err(|_| BatchError::InconsistentDeclaration { tx: entry.tx })?;
         }
-        if folded != entry.declared {
+        if folded != entry.declaration.set {
             return Err(BatchError::InconsistentDeclaration { tx: entry.tx });
         }
 
         for key in &entry.nullifiers {
-            if !entry.declared.contains(&Effect {
+            if !entry.declaration.set.contains(&Effect {
                 target: EffectTarget::Point(*key),
                 mode: Mode::Write {
                     requires: Presence::Either,
@@ -898,7 +888,7 @@ pub fn execute_batch<R: GuestRunner>(
     // their declared amounts without judging — the owning shard judges.
     let mut requests = Vec::new();
     for entry in &sound {
-        for (key, amount) in declared_reservations(&entry.declared) {
+        for (key, amount) in declared_reservations(&entry.declaration.set) {
             if locality.is_local(key.owner) {
                 requests.push((entry.tx, key, amount));
             } else {
@@ -909,7 +899,7 @@ pub fn execute_batch<R: GuestRunner>(
     let verdicts = judged.judge_and_hold(&requests)?;
     let mut runnable: Vec<&BatchTx> = Vec::with_capacity(batch.len());
     for entry in sound {
-        let refused = declared_reservations(&entry.declared)
+        let refused = declared_reservations(&entry.declaration.set)
             .into_iter()
             .find(|(key, _)| {
                 verdicts
@@ -1016,7 +1006,7 @@ fn apply_receipts(
         // anything else releases every hold it still stands on.
         let settled_locally = completed && refusal.is_none();
         if let Some(entry) = entries.get(&tx) {
-            for (key, _) in declared_reservations(&entry.declared) {
+            for (key, _) in declared_reservations(&entry.declaration.set) {
                 if (!settled_locally || !locality.is_local(key.owner))
                     && store.held_reservation(key, tx).is_some()
                 {
@@ -1181,9 +1171,10 @@ mod tests {
         for (left, first) in batch.iter().enumerate() {
             for (right, second) in batch.iter().enumerate().skip(left + 1) {
                 let clashes = first
-                    .declared
+                    .declaration
+                    .set
                     .iter()
-                    .any(|a| second.declared.iter().any(|b| conflicts(&a, &b)));
+                    .any(|a| second.declaration.set.iter().any(|b| conflicts(&a, &b)));
                 if clashes {
                     merge(&mut component, left, right);
                 }

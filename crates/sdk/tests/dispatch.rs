@@ -8,8 +8,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    ABSENT_REP, Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    Presence, SlotId, SubstateKey, TestHasher, Value, child_key,
+    ABSENT_REP, Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32,
+    Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, Value, child_key,
 };
 use hyperscale_vm_kernel::{
     AbortReason, Capability, EnvInputs, Held, KernelSession, MemoryStore, Outcome, OverlayStore,
@@ -96,15 +96,12 @@ fn session(mode: Mode, funded: u128) -> KernelSession {
             mode,
         })
         .expect("the effect set takes it");
-    let ordered: Vec<_> = declared.iter().collect();
     // The one cell these bodies move value through, so it says what it
     // holds — a cell that said nothing would grant no movement.
-    let holds: Vec<_> = ordered.iter().map(|_| Some(RESOURCE)).collect();
+    let declaration = Declaration::from_set(declared).denominated(|_| Some(RESOURCE));
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
-        &declared,
-        &ordered,
-        &holds,
+        &declaration,
         TxHash(Hash32([4; 32])),
         EnvInputs {
             clock_ms: 1_000,
@@ -152,14 +149,12 @@ fn two_cells() -> KernelSession {
             })
             .expect("the effect set takes it");
     }
-    let ordered: Vec<_> = declared.iter().collect();
     // Nothing here holds value: these are the cells a body writes as
-    // bytes, which is what a declaration saying nothing means.
+    // bytes, which is what a declaration saying nothing means — one
+    // answer per clause, all of them silent.
     KernelSession::materialize(
         OverlayStore::new(Arc::new(MemoryStore::new())),
-        &declared,
-        &ordered,
-        &[],
+        &Declaration::from_set(declared),
         TxHash(Hash32([4; 32])),
         EnvInputs {
             clock_ms: 1_000,

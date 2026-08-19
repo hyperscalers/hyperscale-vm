@@ -265,16 +265,9 @@ fn main() -> Result<()> {
         let mut store = OverlayStore::new(Arc::new(funded_store(senders)));
         let start = Instant::now();
         for entry in &entries {
-            let session = KernelSession::materialize(
-                store,
-                &entry.declared,
-                &entry.ordered,
-                &entry.denominations,
-                entry.tx,
-                env(),
-                test_hash,
-            )
-            .expect("feasible");
+            let session =
+                KernelSession::materialize(store, &entry.declaration, entry.tx, env(), test_hash)
+                    .expect("feasible");
             let run = walk.run(entry, session);
             let (_receipt, threaded) = run.session.finish(run.outcome, run.fuel).expect("oracle");
             store = threaded;
@@ -331,9 +324,7 @@ fn main() -> Result<()> {
             .map(|entry| {
                 KernelSession::materialize(
                     OverlayStore::new(Arc::clone(&base) as Arc<dyn Baseline>),
-                    &entry.declared,
-                    &entry.ordered,
-                    &entry.denominations,
+                    &entry.declaration,
                     entry.tx,
                     env(),
                     test_hash,
@@ -355,9 +346,7 @@ fn main() -> Result<()> {
         let entry = entry_for(0, &routed(&world(1), sender(0))?);
         let session = KernelSession::materialize(
             OverlayStore::new(Arc::new(funded_store(1))),
-            &entry.declared,
-            &entry.ordered,
-            &entry.denominations,
+            &entry.declaration,
             entry.tx,
             env(),
             test_hash,

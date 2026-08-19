@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    ABSENT_REP, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey,
-    Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
+    ABSENT_REP, Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget,
+    EntryKey, Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
@@ -184,9 +184,12 @@ fn denominations(fx: &Fixture) -> Vec<Option<Address>> {
 fn session(fx: &Fixture) -> KernelSession {
     KernelSession::materialize(
         OverlayStore::new(Arc::new(fx.store.clone())),
-        &fx.declared,
-        &fx.declared.iter().collect::<Vec<_>>(),
-        &denominations(fx),
+        &Declaration {
+            set: fx.declared.clone(),
+            ordered: fx.declared.iter().collect::<Vec<_>>(),
+            denominations: denominations(fx),
+            ..Declaration::default()
+        },
         tx(),
         env(),
         test_hash,

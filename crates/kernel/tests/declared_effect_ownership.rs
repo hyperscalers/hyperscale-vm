@@ -19,9 +19,9 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Clause, ComponentAddr, Expr, GraphArg, GraphNode, Hash32, Hasher,
-    InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature, ModeExpr,
-    PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, SlotId,
+    Address, AddressClass, Clause, ComponentAddr, Declaration, Expr, GraphArg, GraphNode, Hash32,
+    Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature,
+    ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, SlotId,
     SubstateKey, TargetExpr, TestHasher, Totality, Value, admit, child_key, route,
 };
 use hyperscale_vm_kernel::{
@@ -138,12 +138,13 @@ fn a_package_cannot_declare_an_effect_on_a_cell_it_does_not_own() {
     base.clear_log();
     let store = OverlayStore::new(Arc::new(base));
 
-    let ordered: Vec<_> = declaration.ordered.clone();
+    let _ordered: Vec<_> = declaration.ordered.clone();
     let Ok(session) = KernelSession::materialize(
         store,
-        &declaration.set,
-        &ordered,
-        &declaration.denominations,
+        &Declaration {
+            denominations: declaration.denominations,
+            ..Declaration::from_set(declaration.set)
+        },
         TxHash(Hash32([0x01; 32])),
         EnvInputs {
             clock_ms: 0,
@@ -195,12 +196,13 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
     base.clear_log();
     let store = OverlayStore::new(Arc::new(base));
 
-    let ordered: Vec<_> = declaration.ordered.clone();
+    let _ordered: Vec<_> = declaration.ordered.clone();
     let Ok(mut session) = KernelSession::materialize(
         store,
-        &declaration.set,
-        &ordered,
-        &declaration.denominations,
+        &Declaration {
+            denominations: declaration.denominations,
+            ..Declaration::from_set(declaration.set)
+        },
         TxHash(Hash32([0x01; 32])),
         EnvInputs {
             clock_ms: 0,

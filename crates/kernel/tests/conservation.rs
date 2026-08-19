@@ -87,7 +87,7 @@ fn supply_tracks_cells_through_transfers_and_cross_shard_legs() {
 mod through_the_session {
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{Effect, EffectSet, EffectTarget, Hasher, Mode};
+    use hyperscale_vm_effects::{Declaration, Effect, EffectSet, EffectTarget, Hasher, Mode};
     use hyperscale_vm_kernel::{
         AbortReason, EnvInputs, ISSUER_REP, KernelSession, Outcome, OverlayStore, SupplyDelta,
         SupplyLedger, WorkingStore,
@@ -110,17 +110,16 @@ mod through_the_session {
 
     /// The same, over a store that already holds something.
     fn session_over(store: MemoryStore) -> KernelSession {
-        let ordered = vec![Effect {
+        let moving = Effect {
             target: EffectTarget::Point(vault(1, UNIT)),
             mode: Mode::Delta,
-        }];
+        };
         let mut set = EffectSet::new();
-        set.insert(ordered[0]).expect("one cell");
+        set.insert(moving).expect("one cell");
+        let declaration = Declaration::from_set(set).denominated(|_| Some(UNIT));
         let mut session = KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
-            &set,
-            &ordered,
-            &[Some(UNIT)],
+            &declaration,
             TxHash(Hash32([9; 32])),
             EnvInputs {
                 clock_ms: 0,

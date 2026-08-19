@@ -172,7 +172,7 @@ impl<L> Rule<L> {
     }
 }
 
-impl<L: PartialEq> Rule<L> {
+impl StoredRule {
     /// Whether the presented claims satisfy this rule.
     ///
     /// Total over any presented set, including degenerate thresholds
@@ -181,8 +181,14 @@ impl<L: PartialEq> Rule<L> {
     /// neither survives decode, so no stored rule holds either form.
     /// Recursion is bounded by the decode gate: a rule this crate
     /// decoded nests at most [`MAX_RULE_DEPTH`] deep.
+    ///
+    /// The stored instantiation alone. A declared rule's leaves are
+    /// expressions, and asking whether an expression is among those
+    /// presented compares two spellings rather than two claims — a
+    /// question with an answer and no meaning. What turns one into the
+    /// other is [`Rule::map_leaves`], and there is no way round it.
     #[must_use]
-    pub fn satisfied_by(&self, presented: &[L]) -> bool {
+    pub fn satisfied_by(&self, presented: &[Presented]) -> bool {
         match self {
             Self::Require(claim) => presented.contains(claim),
             Self::CountOf { count, rules } => {
@@ -194,9 +200,7 @@ impl<L: PartialEq> Rule<L> {
             }
         }
     }
-}
 
-impl StoredRule {
     /// The rule's canonical wire bytes.
     ///
     /// Encoded under the same caps the decoder enforces, so a writer

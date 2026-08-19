@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{EffectSet, Hash32, Hasher, TestHasher};
+use hyperscale_vm_effects::{Declaration, EffectSet, Hash32, Hasher, TestHasher};
 use hyperscale_vm_harness::fixtures::{REENTRANT_DROP_WAT, REENTRANT_REALLOC_WAT};
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash};
 use hyperscale_vm_ref::{CanonError, ExecError, RefComponent, RefComponentInstance};
@@ -27,9 +27,7 @@ fn test_hash(data: &[u8]) -> [u8; 32] {
 fn session() -> KernelSession {
     KernelSession::materialize(
         OverlayStore::new(Arc::new(MemoryStore::new())),
-        &EffectSet::new(),
-        &EffectSet::new().iter().collect::<Vec<_>>(),
-        &[],
+        &Declaration::from_set(EffectSet::new()),
         TxHash(Hash32([0x44; 32])),
         EnvInputs {
             clock_ms: 7,

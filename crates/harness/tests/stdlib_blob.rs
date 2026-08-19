@@ -15,8 +15,9 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    Presence, SlotId, SubstateKey, TestHasher, Value, child_key, collection_id, order_key,
+    Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Hash32,
+    Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, Value, child_key, collection_id,
+    order_key,
 };
 use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
 #[cfg(target_os = "linux")]
@@ -92,9 +93,12 @@ fn session() -> KernelSession {
     let denominations: Vec<_> = declared.iter().map(|_| Some(RESOURCE)).collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
-        &declared,
-        &declared.iter().collect::<Vec<_>>(),
-        &denominations,
+        &Declaration {
+            set: declared.clone(),
+            ordered: declared.iter().collect::<Vec<_>>(),
+            denominations,
+            ..Declaration::default()
+        },
         TxHash(Hash32([0x77; 32])),
         EnvInputs {
             clock_ms: CLOCK_MS,
@@ -495,9 +499,12 @@ fn lottery_session() -> KernelSession {
         .collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(MemoryStore::new())),
-        &declared,
-        &declared.iter().collect::<Vec<_>>(),
-        &denominations,
+        &Declaration {
+            set: declared.clone(),
+            ordered: declared.iter().collect::<Vec<_>>(),
+            denominations,
+            ..Declaration::default()
+        },
         TxHash(Hash32([0x78; 32])),
         EnvInputs {
             clock_ms: CLOCK_MS,

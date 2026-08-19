@@ -17,8 +17,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    ABSENT_REP, AbortReason, Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey,
-    ISSUER_REP, Mode, Presence, SubstateKey, distinct_ids,
+    ABSENT_REP, AbortReason, Address, CollectionId, Declaration, Effect, EffectSet, EffectTarget,
+    EntryKey, ISSUER_REP, Mode, Presence, SubstateKey, distinct_ids,
 };
 use hyperscale_vm_embed::math::{MathError, Rounding, U256, mul_div};
 
@@ -186,6 +186,23 @@ pub enum MaterializeError {
     /// within one receipt.
     #[error("write and delta/reserve declared on the same cell {0:?}")]
     SelfConflicting(SubstateKey),
+    /// A declaration whose two ordered views are different lengths.
+    ///
+    /// The clause order and what each of those cells holds are one
+    /// evaluation read index for index, so a pair that disagrees is a
+    /// caller that did not build one — unreachable from routing, which
+    /// fills both in step. Surfaced rather than absorbed: reading the
+    /// shorter of the two would either shorten the capability table,
+    /// moving every rep after the gap, or read a cell that says nothing
+    /// as one holding no value. Both are quiet, and one of them hands a
+    /// guest the wrong handle.
+    #[error("a declaration of {ordered} clauses says what {denominations} of them hold")]
+    MalformedDeclaration {
+        /// How many clauses the declaration ordered.
+        ordered: usize,
+        /// How many of them it answered for.
+        denominations: usize,
+    },
     /// A commutative movement declared on a cell that denominates
     /// nothing.
     ///
@@ -711,18 +728,35 @@ impl KernelSession {
     /// so reps are deterministic; the caller passes handles to the guest
     /// in table order.
     ///
+    /// The whole [`Declaration`] rather than the three views of it a
+    /// table is built from. They are one evaluation and they are read
+    /// index for index — the folded set, the clause order a rep is an
+    /// index into, and what each of those cells holds — so a caller able
+    /// to hand over three that disagreed would be able to hand over a
+    /// clause list whose denominations belonged to a different one.
+    ///
     /// # Errors
     ///
     /// Any [`MaterializeError`]; all are pre-execution aborts.
     pub fn materialize(
         mut store: OverlayStore,
-        declared: &EffectSet,
-        ordered: &[Effect],
-        denominations: &[Option<Address>],
+        declaration: &Declaration,
         tx: TxHash,
         env: EnvInputs,
         hash_fn: fn(&[u8]) -> [u8; 32],
     ) -> Result<Self, MaterializeError> {
+        let Declaration {
+            set: declared,
+            ordered,
+            denominations,
+            ..
+        } = declaration;
+        if ordered.len() != denominations.len() {
+            return Err(MaterializeError::MalformedDeclaration {
+                ordered: ordered.len(),
+                denominations: denominations.len(),
+            });
+        }
         store.clear_log();
 
         // Reservations are judged off the *set*, where `EffectSet::insert`
@@ -763,8 +797,8 @@ impl KernelSession {
         // intervals of one collection are one answer about its entries.
         let mut table = Vec::with_capacity(ordered.len());
         let mut holds: BTreeMap<Holds, bool> = BTreeMap::new();
-        for (index, effect) in ordered.iter().enumerate() {
-            let denominated = denominations.get(index).is_some_and(Option::is_some);
+        for (effect, held) in ordered.iter().zip(denominations) {
+            let denominated = held.is_some();
             if holds
                 .insert(holds_of(effect.target), denominated)
                 .is_some_and(|held| held != denominated)
@@ -781,49 +815,7 @@ impl KernelSession {
             return Err(MaterializeError::SelfConflicting(key));
         }
 
-        // What a write requires of the leaf it lands on, judged where a
-        // reservation's feasibility already is: over the committed
-        // store, before the body runs, so a create that cannot create
-        // aborts rather than trapping inside a guest.
-        //
-        // Exhaustive over the target shapes, never skipping one it does
-        // not read: a requirement this cannot honour is refused, because
-        // a declaration that states a precondition nothing enforces is
-        // worse than one that never published.
-        for effect in declared.iter() {
-            let Mode::Write { requires } = effect.mode else {
-                continue;
-            };
-            if requires == Presence::Either {
-                continue;
-            }
-            let held = match effect.target {
-                // The two shapes that name one leaf. An entry's presence
-                // is the same question a custody gate's possession read
-                // asks, over the same width-one interval.
-                EffectTarget::Point(key) => store.read(key)?.is_some(),
-                EffectTarget::Entry {
-                    owner,
-                    collection,
-                    order,
-                } => !store
-                    .entries_in_range(owner, collection, order, order, 1)?
-                    .is_empty(),
-                // An interval names no leaf for a requirement to be
-                // about — it stays valid whatever enters or leaves it,
-                // which is the property that makes it declarable at all.
-                // Refused at publish, and again here, because metadata
-                // can be authored rather than derived.
-                EffectTarget::Range { .. } => {
-                    return Err(MaterializeError::Unsupported(Box::new(effect)));
-                }
-            };
-            match (requires, held) {
-                (Presence::Absent, true) => return Err(MaterializeError::Occupied(effect.target)),
-                (Presence::Present, false) => return Err(MaterializeError::Absent(effect.target)),
-                _ => {}
-            }
-        }
+        judge_presence(&mut store, declared)?;
 
         let verdicts = store.judge_and_hold(&reservations)?;
         for ((verdict_tx, key), feasibility) in verdicts {
@@ -852,7 +844,7 @@ impl KernelSession {
             invocation: None,
             events: Vec::new(),
             supply: SupplyDelta::default(),
-            cell_resources: denominations.to_vec(),
+            cell_resources: denominations.clone(),
             bucket_resources: Vec::new(),
             buckets: Vec::new(),
             issuance: None,
@@ -2137,6 +2129,61 @@ fn declaration_defect(defect: &StoreError) -> Option<Outcome> {
     }
 }
 
+/// Judge what every declared write requires of the leaf it lands on.
+///
+/// Over the committed store and before the body runs, where a
+/// reservation's feasibility is already judged — so a create that cannot
+/// create aborts rather than trapping inside a guest.
+///
+/// # Errors
+///
+/// [`MaterializeError::Occupied`] or [`MaterializeError::Absent`] for a
+/// requirement the leaf does not meet, and
+/// [`MaterializeError::Unsupported`] for a target that names no leaf for
+/// a requirement to be about.
+fn judge_presence(store: &mut OverlayStore, declared: &EffectSet) -> Result<(), MaterializeError> {
+    // Exhaustive over the target shapes, never skipping one it does not
+    // read: a requirement this cannot honour is refused, because a
+    // declaration that states a precondition nothing enforces is worse
+    // than one that never published.
+    for effect in declared.iter() {
+        let Mode::Write { requires } = effect.mode else {
+            continue;
+        };
+        if requires == Presence::Either {
+            continue;
+        }
+        let held = match effect.target {
+            // The two shapes that name one leaf. An entry's presence
+            // is the same question a custody gate's possession read
+            // asks, over the same width-one interval.
+            EffectTarget::Point(key) => store.read(key)?.is_some(),
+            EffectTarget::Entry {
+                owner,
+                collection,
+                order,
+            } => !store
+                .entries_in_range(owner, collection, order, order, 1)?
+                .is_empty(),
+            // An interval names no leaf for a requirement to be
+            // about — it stays valid whatever enters or leaves it,
+            // which is the property that makes it declarable at all.
+            // Refused at publish, and again here, because metadata
+            // can be authored rather than derived.
+            EffectTarget::Range { .. } => {
+                return Err(MaterializeError::Unsupported(Box::new(effect)));
+            }
+        };
+        match (requires, held) {
+            (Presence::Absent, true) => return Err(MaterializeError::Occupied(effect.target)),
+            (Presence::Present, false) => return Err(MaterializeError::Absent(effect.target)),
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
 /// What a target names as the thing whose contents are one fact: the
 /// leaf a point names, or the collection an entry or an interval sits in.
 ///
@@ -2319,8 +2366,9 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Effect, EffectConflict,
-        EffectSet, EffectTarget, Hash32, Mode, SlotId, SubstateKey, TestHasher, child_key,
+        ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Declaration, Effect,
+        EffectConflict, EffectSet, EffectTarget, Hash32, Mode, SlotId, SubstateKey, TestHasher,
+        child_key,
     };
     use hyperscale_vm_types::Presence;
 
@@ -2389,9 +2437,12 @@ mod tests {
         let ordered = ord(&set);
         KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
-            &set,
-            &ordered,
-            &holding(&ordered),
+            &Declaration {
+                set,
+                ordered: ordered.clone(),
+                denominations: holding(&ordered),
+                ..Declaration::default()
+            },
             tx(1),
             env(),
             hash,
@@ -2560,9 +2611,12 @@ mod tests {
         reversed.reverse();
         let session = KernelSession::materialize(
             OverlayStore::new(Arc::new(MemoryStore::new())),
-            &set,
-            &reversed,
-            &holding(&reversed),
+            &Declaration {
+                set,
+                ordered: reversed.clone(),
+                denominations: holding(&reversed),
+                ..Declaration::default()
+            },
             tx(1),
             env(),
             hash,
@@ -2597,9 +2651,12 @@ mod tests {
 
         let session = KernelSession::materialize(
             OverlayStore::new(Arc::new(MemoryStore::new())),
-            &set,
-            &[write, write],
-            &holding(&[write, write]),
+            &Declaration {
+                set,
+                ordered: [write, write].to_vec(),
+                denominations: holding(&[write, write]),
+                ..Declaration::default()
+            },
             tx(1),
             env(),
             hash,
@@ -2631,9 +2688,12 @@ mod tests {
 
         let refused = KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
-            &set,
-            &[reserve, reserve],
-            &holding(&[reserve, reserve]),
+            &Declaration {
+                set,
+                ordered: [reserve, reserve].to_vec(),
+                denominations: holding(&[reserve, reserve]),
+                ..Declaration::default()
+            },
             tx(1),
             env(),
             hash,
@@ -2667,9 +2727,12 @@ mod tests {
         };
         let mut session = KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
-            &declared(&[reserve(5), reserve(6)]),
-            &[reserve(5), reserve(6)],
-            &holding(&[reserve(5), reserve(6)]),
+            &Declaration {
+                set: declared(&[reserve(5), reserve(6)]),
+                ordered: [reserve(5), reserve(6)].to_vec(),
+                denominations: holding(&[reserve(5), reserve(6)]),
+                ..Declaration::default()
+            },
             tx(1),
             env(),
             hash,
@@ -2709,13 +2772,10 @@ mod tests {
     /// A session over cells that all hold value — what a fixture wants
     /// when the write it declares is a debit rather than a byte write.
     fn session_holding(store: MemoryStore, set: &EffectSet) -> KernelSession {
-        let ordered = ord(set);
-        let holds: Vec<_> = ordered.iter().map(|_| Some(RESOURCE)).collect();
+        let declaration = Declaration::from_set(set.clone()).denominated(|_| Some(RESOURCE));
         KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
-            set,
-            &ordered,
-            &holds,
+            &declaration,
             tx(1),
             env(),
             hash,
@@ -2724,11 +2784,14 @@ mod tests {
     }
 
     fn session_over(store: MemoryStore, set: &EffectSet) -> KernelSession {
+        let holds = holding(&ord(set));
+        let declaration = Declaration {
+            denominations: holds,
+            ..Declaration::from_set(set.clone())
+        };
         KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
-            set,
-            &ord(set),
-            &holding(&ord(set)),
+            &declaration,
             tx(1),
             env(),
             hash,
@@ -2985,6 +3048,61 @@ mod tests {
         }
     }
 
+    /// A declaration whose two ordered views disagree is not one.
+    ///
+    /// Routing fills both in step, so this is a caller that assembled a
+    /// declaration rather than evaluating one. Surfaced rather than
+    /// absorbed: reading the shorter of the two would either shorten the
+    /// capability table — moving every rep after the gap, and handing the
+    /// guest a handle on the wrong cell — or read a cell that says
+    /// nothing as one holding no value. Both are quiet.
+    #[test]
+    fn a_declaration_that_answers_for_fewer_clauses_than_it_orders_is_not_one() {
+        let write = Effect {
+            target: EffectTarget::Point(key(1)),
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
+        };
+        let materialise = |denominations: Vec<Option<Address>>| {
+            KernelSession::materialize(
+                OverlayStore::new(Arc::new(MemoryStore::new())),
+                &Declaration {
+                    set: declared(&[write]),
+                    ordered: vec![write, write],
+                    denominations,
+                    ..Declaration::default()
+                },
+                tx(1),
+                env(),
+                hash,
+            )
+            .map(|session| session.capabilities().len())
+        };
+
+        for short in [vec![], vec![None]] {
+            assert_eq!(
+                materialise(short.clone()),
+                Err(MaterializeError::MalformedDeclaration {
+                    ordered: 2,
+                    denominations: short.len(),
+                })
+            );
+        }
+        // One answer too many is the same disagreement from the other
+        // side, and a table built off it would say what a clause nobody
+        // declared holds.
+        assert_eq!(
+            materialise(vec![None, None, None]),
+            Err(MaterializeError::MalformedDeclaration {
+                ordered: 2,
+                denominations: 3,
+            })
+        );
+        // Answered clause for clause, it materialises both.
+        assert_eq!(materialise(vec![None, None]), Ok(2));
+    }
+
     /// One cell holds one thing, judged where two expressions that
     /// evaluate onto it can no longer hide behind being different
     /// expressions.
@@ -3002,12 +3120,15 @@ mod tests {
                 requires: Presence::Either,
             },
         };
-        let materialise = |holds: &[Option<Address>]| {
+        let materialise = |holds: Vec<Option<Address>>| {
             KernelSession::materialize(
                 OverlayStore::new(Arc::new(MemoryStore::new())),
-                &declared(&[write]),
-                &[write, write],
-                holds,
+                &Declaration {
+                    set: declared(&[write]),
+                    ordered: vec![write, write],
+                    denominations: holds,
+                    ..Declaration::default()
+                },
                 tx(1),
                 env(),
                 hash,
@@ -3018,17 +3139,17 @@ mod tests {
         // Two clauses on one leaf, one saying it holds value and one
         // saying nothing: the pair no handle is built for.
         assert_eq!(
-            materialise(&[Some(RESOURCE), None]),
+            materialise(vec![Some(RESOURCE), None]),
             Err(MaterializeError::MixedContents(write.target))
         );
         assert_eq!(
-            materialise(&[None, Some(RESOURCE)]),
+            materialise(vec![None, Some(RESOURCE)]),
             Err(MaterializeError::MixedContents(write.target))
         );
         // Agreeing clauses are what a body that reads and writes one cell
         // declares, and both directions stand.
-        assert!(materialise(&[Some(RESOURCE), Some(RESOURCE)]).is_ok());
-        assert!(materialise(&[None, None]).is_ok());
+        assert!(materialise(vec![Some(RESOURCE), Some(RESOURCE)]).is_ok());
+        assert!(materialise(vec![None, None]).is_ok());
 
         // A collection is the same statement over its entries: two
         // intervals of one collection are two targets, so the
@@ -3051,9 +3172,12 @@ mod tests {
         assert_eq!(
             KernelSession::materialize(
                 OverlayStore::new(Arc::new(MemoryStore::new())),
-                &declared(&[wide, narrow]),
-                &[wide, narrow],
-                &[Some(RESOURCE), None],
+                &Declaration {
+                    set: declared(&[wide, narrow]),
+                    ordered: [wide, narrow].to_vec(),
+                    denominations: [Some(RESOURCE), None].to_vec(),
+                    ..Declaration::default()
+                },
                 tx(1),
                 env(),
                 hash,
@@ -3405,9 +3529,12 @@ mod tests {
         assert_eq!(
             KernelSession::materialize(
                 OverlayStore::new(Arc::new(MemoryStore::new())),
-                &set,
-                &ord(&set),
-                &holding(&ord(&set)),
+                &Declaration {
+                    set: set.clone(),
+                    ordered: ord(&set),
+                    denominations: holding(&ord(&set)),
+                    ..Declaration::default()
+                },
                 tx(1),
                 env(),
                 hash,
@@ -3433,9 +3560,12 @@ mod tests {
         assert_eq!(
             KernelSession::materialize(
                 OverlayStore::new(Arc::new(store)),
-                &set,
-                &ord(&set),
-                &holding(&ord(&set)),
+                &Declaration {
+                    set: set.clone(),
+                    ordered: ord(&set),
+                    denominations: holding(&ord(&set)),
+                    ..Declaration::default()
+                },
                 tx(1),
                 env(),
                 hash,
@@ -3461,9 +3591,12 @@ mod tests {
         assert!(matches!(
             KernelSession::materialize(
                 OverlayStore::new(Arc::new(MemoryStore::new())),
-                &set,
-                &ord(&set),
-                &holding(&ord(&set)),
+                &Declaration {
+                    set: set.clone(),
+                    ordered: ord(&set),
+                    denominations: holding(&ord(&set)),
+                    ..Declaration::default()
+                },
                 tx(1),
                 env(),
                 hash,

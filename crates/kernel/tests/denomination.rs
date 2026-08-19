@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::NF_VAULT;
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, SlotId,
-    SubstateKey, TestHasher, Value, child_key, collection_id,
+    Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
+    Presence, SlotId, SubstateKey, TestHasher, Value, child_key, collection_id,
 };
 use hyperscale_vm_embed::math::U256;
 use hyperscale_vm_kernel::{
@@ -84,9 +84,12 @@ fn try_session(denominations: &[Option<Address>]) -> Result<KernelSession, Mater
     }
     KernelSession::materialize(
         OverlayStore::new(Arc::new(MemoryStore::new())),
-        &set,
-        &ordered,
-        denominations,
+        &Declaration {
+            set,
+            ordered,
+            denominations: denominations.to_vec(),
+            ..Declaration::default()
+        },
         TxHash(Hash32([1; 32])),
         env(),
         hash,
@@ -141,9 +144,12 @@ fn every_producer_stamps_what_its_source_held() {
 
     let mut session = KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
-        &set,
-        &ordered,
-        &[Some(X), Some(X), Some(X), Some(Y)],
+        &Declaration {
+            set: set.clone(),
+            ordered,
+            denominations: [Some(X), Some(X), Some(X), Some(Y)].to_vec(),
+            ..Declaration::default()
+        },
         TxHash(Hash32([2; 32])),
         env(),
         hash,
@@ -219,9 +225,12 @@ fn every_instance_producer_stamps_what_its_source_held() {
 
     let mut session = KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
-        &set,
-        &ordered,
-        &[Some(X), Some(Y)],
+        &Declaration {
+            set: set.clone(),
+            ordered,
+            denominations: [Some(X), Some(Y)].to_vec(),
+            ..Declaration::default()
+        },
         TxHash(Hash32([3; 32])),
         env(),
         hash,

@@ -520,9 +520,7 @@ fn execute_manifest(
     // block would record.
     let session = match KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
-        &entry.declared,
-        &entry.ordered,
-        &entry.denominations,
+        &entry.declaration,
         tx,
         EnvInputs {
             clock_ms,

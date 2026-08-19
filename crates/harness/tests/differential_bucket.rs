@@ -12,8 +12,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    Presence, SlotId, SubstateKey, TestHasher, child_key,
+    Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Hash32,
+    Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{
@@ -184,9 +184,12 @@ fn denominations(fx: &Fixture) -> Vec<Option<Address>> {
 fn materialize(fx: &Fixture) -> KernelSession {
     KernelSession::materialize(
         OverlayStore::new(Arc::new(fx.store.clone())),
-        &fx.declared,
-        &fx.declared.iter().collect::<Vec<_>>(),
-        &denominations(fx),
+        &Declaration {
+            set: fx.declared.clone(),
+            ordered: fx.declared.iter().collect::<Vec<_>>(),
+            denominations: denominations(fx),
+            ..Declaration::default()
+        },
         tx(),
         env(),
         test_hash,
@@ -1375,9 +1378,12 @@ fn peeking() -> KernelSession {
     declared.insert(read).expect("the set takes it");
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
-        &declared,
-        &[read],
-        &[Some(RESOURCE)],
+        &Declaration {
+            set: declared.clone(),
+            ordered: [read].to_vec(),
+            denominations: [Some(RESOURCE)].to_vec(),
+            ..Declaration::default()
+        },
         tx(),
         env(),
         test_hash,

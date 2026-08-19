@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Hash32, Hasher,
-    Mode, Presence, SlotId, SubstateKey, TestHasher, child_key, collection_id,
+    Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget, EntryKey,
+    Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key, collection_id,
 };
 use hyperscale_vm_kernel::{
     EnvInputs, KernelSession, MemoryStore, Outcome, OverlayStore, TxHash, WorkingStore,
@@ -44,12 +44,9 @@ fn session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
     for effect in effects {
         declared.insert(effect).expect("the effect set takes it");
     }
-    let ordered: Vec<_> = declared.iter().collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
-        &declared,
-        &ordered,
-        &[],
+        &Declaration::from_set(declared.clone()),
         TxHash(Hash32([9; 32])),
         EnvInputs {
             clock_ms: CLOCK_MS,
@@ -70,13 +67,10 @@ fn value_session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
     for effect in effects {
         declared.insert(effect).expect("the effect set takes it");
     }
-    let ordered: Vec<_> = declared.iter().collect();
-    let holds: Vec<_> = ordered.iter().map(|_| Some(RESOURCE)).collect();
+    let declaration = Declaration::from_set(declared).denominated(|_| Some(RESOURCE));
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
-        &declared,
-        &ordered,
-        &holds,
+        &declaration,
         TxHash(Hash32([9; 32])),
         EnvInputs {
             clock_ms: CLOCK_MS,

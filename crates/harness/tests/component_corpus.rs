@@ -16,7 +16,7 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{EffectSet, Hash32, Hasher, TestHasher};
+use hyperscale_vm_effects::{Declaration, EffectSet, Hash32, Hasher, TestHasher};
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash};
 use hyperscale_vm_ref::{CVal, CanonError, ExecError, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{add_kernel_to_linker, blessed_engine, validate_component};
@@ -384,9 +384,7 @@ fn test_hash(data: &[u8]) -> [u8; 32] {
 fn session() -> KernelSession {
     KernelSession::materialize(
         OverlayStore::new(Arc::new(MemoryStore::new())),
-        &EffectSet::new(),
-        &EffectSet::new().iter().collect::<Vec<_>>(),
-        &[],
+        &Declaration::from_set(EffectSet::new()),
         TxHash(Hash32([0x55; 32])),
         EnvInputs {
             clock_ms: 424_242,
