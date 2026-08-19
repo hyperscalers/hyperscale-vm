@@ -2,6 +2,7 @@
 //! address derives, and the registry a routing pass reads targets from.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 
 use hyperscale_hbor::{EncodeError, Hbor, to_vec};
 use hyperscale_vm_types::{Address, CallTarget, ComponentAddr};
@@ -10,6 +11,30 @@ use thiserror::Error;
 use crate::hash::{Hash32, Hasher};
 use crate::metadata::PackageHash;
 use crate::types::{Value, component_address, config_hash};
+
+/// Why a call target does not resolve to a method: the chain from an
+/// address through its record and package to the named signature, broken
+/// at the first absent link.
+///
+/// One vocabulary for every resolver — admission and routing walk the
+/// same chain and refuse it identically.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum ResolveError {
+    /// A call target with no registered instance.
+    #[error("no instance at {0:?}")]
+    UnknownInstance(Address),
+    /// An instance whose package is not in the metadata cache.
+    #[error("no package {0:?} in the metadata cache")]
+    UnknownPackage(PackageHash),
+    /// A method the target package does not declare.
+    #[error("package {package:?} has no method `{method}`")]
+    UnknownMethod {
+        /// The package consulted.
+        package: PackageHash,
+        /// The method requested.
+        method: String,
+    },
+}
 
 /// An instance's creation-fixed record: the package it runs, the
 /// configuration it was created under, and the salt separating it from
@@ -151,7 +176,16 @@ impl InstanceRegistry {
         if !meta.derives(hasher, address) {
             return Err(CertificateMismatch);
         }
-        self.instances.entry(address).or_insert(meta);
+        match self.instances.entry(address) {
+            Entry::Vacant(slot) => {
+                slot.insert(meta);
+            }
+            // Two records deriving one address is a hash collision; the
+            // first stands either way.
+            Entry::Occupied(stored) => {
+                debug_assert_eq!(*stored.get(), meta, "one address, two records");
+            }
+        }
         Ok(())
     }
 
@@ -166,7 +200,14 @@ impl InstanceRegistry {
     /// If the configuration is past the vocabulary's own caps.
     pub fn create(&mut self, hasher: &dyn Hasher, meta: InstanceMeta) -> ComponentAddr {
         let address = meta.address(hasher);
-        self.instances.entry(address.address()).or_insert(meta);
+        match self.instances.entry(address.address()) {
+            Entry::Vacant(slot) => {
+                slot.insert(meta);
+            }
+            Entry::Occupied(stored) => {
+                debug_assert_eq!(*stored.get(), meta, "one address, two records");
+            }
+        }
         address
     }
 

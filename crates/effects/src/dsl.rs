@@ -572,21 +572,9 @@ pub enum EvalError {
         /// The repeated id.
         id: u64,
     },
-    /// Folded reserve amounts overflowing `u128`.
-    #[error("declared reserve amounts overflow")]
-    ReserveOverflow,
-    /// Two writes on one cell requiring opposite presences.
-    #[error("two writes on one cell require opposite presences")]
-    PresenceConflict,
-}
-
-impl From<EffectConflict> for EvalError {
-    fn from(conflict: EffectConflict) -> Self {
-        match conflict {
-            EffectConflict::ReserveOverflow => Self::ReserveOverflow,
-            EffectConflict::Presence => Self::PresenceConflict,
-        }
-    }
+    /// A conflict met while folding declared effects into the set.
+    #[error(transparent)]
+    Conflict(#[from] EffectConflict),
 }
 
 /// Everything a signature evaluates over. Note what is absent: state.
@@ -1427,6 +1415,7 @@ mod tests {
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::manifest::ManifestHash;
+    use crate::resource::issued_resource;
     use crate::types::{
         EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
     };
@@ -1537,6 +1526,28 @@ mod tests {
             node_index: 3,
             frame: 0,
             identity: ManifestHash(Hash32([9; 32])),
+        }
+    }
+
+    /// The routed grant is lowered through `issued_resource`, and a
+    /// body's `issued(mark)` evaluates `SelfResource` over the mark as a
+    /// byte literal — one address either way, because the mark's
+    /// encoding into derivation material is spelled once.
+    #[test]
+    fn a_self_resource_over_a_mark_literal_is_the_issued_resource() {
+        let context = inputs(&[], &[]);
+        for mark in [&b""[..], b"unit"] {
+            let material = if mark.is_empty() {
+                Vec::new()
+            } else {
+                vec![Expr::Literal(Value::Bytes(mark.to_vec()))]
+            };
+            assert_eq!(
+                evaluate_expr(&Expr::SelfResource { material }, &context, &TestHasher),
+                Ok(Value::Address(
+                    issued_resource(&TestHasher, context.self_addr, mark).into()
+                )),
+            );
         }
     }
 

@@ -1,6 +1,7 @@
 //! Package identity and the content-addressed metadata cache.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 
 use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{Address, SubstateKey};
@@ -91,7 +92,17 @@ impl MetadataCache {
 
     /// Add a package's metadata under its content address.
     pub fn publish(&mut self, hash: PackageHash, metadata: PackageMetadata) {
-        self.packages.entry(hash).or_insert(metadata);
+        match self.packages.entry(hash) {
+            Entry::Vacant(slot) => {
+                slot.insert(metadata);
+            }
+            // The hash is the content address, so a divergent re-publish
+            // is a collision or a caller defect; the first record stands
+            // either way.
+            Entry::Occupied(stored) => {
+                debug_assert_eq!(*stored.get(), metadata, "one package hash, two records");
+            }
+        }
     }
 
     /// Look up a package's metadata.
@@ -106,13 +117,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn publish_is_first_write_wins() {
+    fn publish_is_idempotent() {
         let hash = PackageHash(Hash32([1; 32]));
         let mut cache = MetadataCache::new();
-        let mut first = PackageMetadata::default();
-        first.methods.insert("m".into(), MethodSignature::default());
-        cache.publish(hash, first.clone());
-        cache.publish(hash, PackageMetadata::default());
-        assert_eq!(cache.get(hash), Some(&first));
+        let mut record = PackageMetadata::default();
+        record
+            .methods
+            .insert("m".into(), MethodSignature::default());
+        cache.publish(hash, record.clone());
+        cache.publish(hash, record.clone());
+        assert_eq!(cache.get(hash), Some(&record));
     }
 }

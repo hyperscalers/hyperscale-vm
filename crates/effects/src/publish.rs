@@ -15,7 +15,7 @@ use crate::dsl::{
 };
 use crate::metadata::PackageMetadata;
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr};
-use crate::signature::{AbiParam, Accessibility, CustodyClaim, MethodSignature};
+use crate::signature::{AbiParam, Accessibility, CustodyClaim, GateError, MethodSignature};
 use crate::types::{MAX_VALUE_DEPTH, SlotId};
 use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
@@ -140,6 +140,18 @@ pub enum AbiError {
     },
 }
 
+// Publish speaks the wider ABI vocabulary; a gate-shape refusal is one
+// of its verdicts.
+impl From<GateError> for AbiError {
+    fn from(error: GateError) -> Self {
+        match error {
+            GateError::AuthorizingShape => Self::AuthorizingShape,
+            GateError::RoleGatedShape => Self::RoleGatedShape,
+            GateError::CustodialShape => Self::CustodialShape,
+        }
+    }
+}
+
 /// Judge a signature's ABI binding against the declaration it is a
 /// binding for.
 ///
@@ -163,7 +175,7 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
     }
     // A gated method's whole declaration is what its gate judges at, in
     // the shape its accessibility pins.
-    signature.gate()?;
+    signature.gate().map_err(AbiError::from)?;
     let bound = |count: usize| u32::try_from(count).unwrap_or(u32::MAX);
     let mut carried = vec![0u32; signature.params.len()];
     for (index, binding) in signature.abi.iter().enumerate() {
@@ -871,8 +883,49 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
 
 /// Why metadata is past a bound the vocabulary fixes.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{0}")]
-pub struct MetadataBoundsError(pub String);
+pub enum MetadataBoundsError {
+    /// An event table longer than the index an emitted event can carry.
+    #[error("event table names {0} types, past the {MAX_EVENT_TYPES} an event index can reach")]
+    EventTable(usize),
+    /// An error table longer than the index a declined code can carry.
+    #[error("error table names {0} codes, past the {MAX_ERROR_CODES} a declined code can reach")]
+    ErrorTable(usize),
+    /// A method whose signature is past a bound.
+    #[error("method {name:?}: {source}")]
+    Method {
+        /// The method whose signature is refused.
+        name: String,
+        /// What is past its bound.
+        #[source]
+        source: SignatureBoundsError,
+    },
+}
+
+/// Why one signature is past a bound the vocabulary fixes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum SignatureBoundsError {
+    /// A declared rule past the caps a stored one is decoded under.
+    #[error(
+        "a declared rule nests past {MAX_RULE_DEPTH}, branches past {MAX_RULE_BRANCHES}, or \
+         holds a threshold nobody meant"
+    )]
+    RuleCaps,
+    /// An expression nested past the evaluator's own recursion bound.
+    #[error("expression nests deeper than {MAX_EXPR_DEPTH}")]
+    ExprDepth,
+    /// A literal nested past the value depth admission bounds.
+    #[error("literal nests deeper than {MAX_VALUE_DEPTH}")]
+    LiteralDepth,
+    /// `for-each` clauses nested past the evaluator's bound.
+    #[error("for-each clauses nest deeper than {MAX_CLAUSE_DEPTH}")]
+    ClauseDepth,
+    /// More effect clauses than one signature may declare.
+    #[error("signature declares more than {MAX_EFFECTS_PER_SIGNATURE} effects")]
+    TooManyEffects,
+    /// A range cap past what one scan may lift.
+    #[error("range clause caps {0} entries, past the {MAX_RANGE_CAP} a scan may lift")]
+    RangeCap(u32),
+}
 
 /// Reject metadata past a bound the vocabulary fixes.
 ///
@@ -887,32 +940,25 @@ pub struct MetadataBoundsError(pub String);
 /// every node.
 pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsError> {
     if metadata.events.len() > MAX_EVENT_TYPES as usize {
-        return Err(MetadataBoundsError(format!(
-            "event table names {} types, past the {MAX_EVENT_TYPES} an event index can reach",
-            metadata.events.len()
-        )));
+        return Err(MetadataBoundsError::EventTable(metadata.events.len()));
     }
     if metadata.errors.len() > MAX_ERROR_CODES as usize {
-        return Err(MetadataBoundsError(format!(
-            "error table names {} codes, past the {MAX_ERROR_CODES} a declined code can reach",
-            metadata.errors.len()
-        )));
+        return Err(MetadataBoundsError::ErrorTable(metadata.errors.len()));
     }
     for (name, signature) in &metadata.methods {
-        check_signature_bounds(signature)
-            .map_err(|error| MetadataBoundsError(format!("method {name:?}: {}", error.0)))?;
+        check_signature_bounds(signature).map_err(|source| MetadataBoundsError::Method {
+            name: name.clone(),
+            source,
+        })?;
     }
     Ok(())
 }
 
 /// A declared rule under the caps a stored one is decoded under, and
 /// every leaf under the expression caps.
-fn check_rule_bounds(rule: &RuleExpr) -> Result<(), MetadataBoundsError> {
+fn check_rule_bounds(rule: &RuleExpr) -> Result<(), SignatureBoundsError> {
     if !rule.within_caps(0) {
-        return Err(MetadataBoundsError(format!(
-            "a declared rule nests past {MAX_RULE_DEPTH}, branches past \
-             {MAX_RULE_BRANCHES}, or holds a threshold nobody meant"
-        )));
+        return Err(SignatureBoundsError::RuleCaps);
     }
     match rule {
         RuleExpr::Require(claim) => check_expr_bounds(claim, 0),
@@ -920,7 +966,7 @@ fn check_rule_bounds(rule: &RuleExpr) -> Result<(), MetadataBoundsError> {
     }
 }
 
-fn check_signature_bounds(signature: &MethodSignature) -> Result<(), MetadataBoundsError> {
+fn check_signature_bounds(signature: &MethodSignature) -> Result<(), SignatureBoundsError> {
     match &signature.accessibility {
         Accessibility::Guarded(rule) => check_rule_bounds(rule)?,
         Accessibility::Custodial(CustodyClaim::Fungible(badge)) => check_expr_bounds(badge, 0)?,
@@ -949,11 +995,9 @@ fn check_clause_bounds(
     clauses: &[Clause],
     depth: usize,
     declared: &mut usize,
-) -> Result<(), MetadataBoundsError> {
+) -> Result<(), SignatureBoundsError> {
     if depth > MAX_CLAUSE_DEPTH {
-        return Err(MetadataBoundsError(format!(
-            "for-each clauses nest deeper than {MAX_CLAUSE_DEPTH}"
-        )));
+        return Err(SignatureBoundsError::ClauseDepth);
     }
     for clause in clauses {
         match clause {
@@ -968,9 +1012,7 @@ fn check_clause_bounds(
                 }
                 *declared += 1;
                 if *declared > MAX_EFFECTS_PER_SIGNATURE {
-                    return Err(MetadataBoundsError(format!(
-                        "signature declares more than {MAX_EFFECTS_PER_SIGNATURE} effects"
-                    )));
+                    return Err(SignatureBoundsError::TooManyEffects);
                 }
                 check_target_bounds(target)?;
                 check_mode_bounds(mode)?;
@@ -990,7 +1032,7 @@ fn check_clause_bounds(
     Ok(())
 }
 
-fn check_target_bounds(target: &TargetExpr) -> Result<(), MetadataBoundsError> {
+fn check_target_bounds(target: &TargetExpr) -> Result<(), SignatureBoundsError> {
     match target {
         TargetExpr::Point(key) => check_expr_bounds(key, 0),
         TargetExpr::Entry {
@@ -1014,9 +1056,7 @@ fn check_target_bounds(target: &TargetExpr) -> Result<(), MetadataBoundsError> {
             ..
         } => {
             if *cap > MAX_RANGE_CAP {
-                return Err(MetadataBoundsError(format!(
-                    "range clause caps {cap} entries, past the {MAX_RANGE_CAP} a scan may lift"
-                )));
+                return Err(SignatureBoundsError::RangeCap(*cap));
             }
             check_expr_bounds(owner, 0)?;
             for part in material {
@@ -1028,25 +1068,21 @@ fn check_target_bounds(target: &TargetExpr) -> Result<(), MetadataBoundsError> {
     }
 }
 
-fn check_mode_bounds(mode: &ModeExpr) -> Result<(), MetadataBoundsError> {
+fn check_mode_bounds(mode: &ModeExpr) -> Result<(), SignatureBoundsError> {
     match mode {
         ModeExpr::Read | ModeExpr::Delta | ModeExpr::Write { .. } | ModeExpr::Locked => Ok(()),
         ModeExpr::Reserve(amount) => check_expr_bounds(amount, 0),
     }
 }
 
-fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), MetadataBoundsError> {
+fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), SignatureBoundsError> {
     if depth > MAX_EXPR_DEPTH {
-        return Err(MetadataBoundsError(format!(
-            "expression nests deeper than {MAX_EXPR_DEPTH}"
-        )));
+        return Err(SignatureBoundsError::ExprDepth);
     }
     if let Expr::Literal(literal) = expr
         && literal.depth() > MAX_VALUE_DEPTH
     {
-        return Err(MetadataBoundsError(format!(
-            "literal nests deeper than {MAX_VALUE_DEPTH}"
-        )));
+        return Err(SignatureBoundsError::LiteralDepth);
     }
     expr.children()
         .try_for_each(|child| check_expr_bounds(child, depth + 1))

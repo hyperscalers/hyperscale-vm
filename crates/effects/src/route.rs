@@ -16,13 +16,14 @@ use crate::dsl::{
     materialized_kind,
 };
 use crate::hash::Hasher;
-use crate::instance::{InstanceMeta, InstanceRegistry};
+use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
 use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall};
 use crate::manifest::{ManifestHash, Node, NodeInput};
 use crate::metadata::{MetadataCache, PackageHash};
 use crate::publish::{AbiError, check_abi};
+use crate::resource::issued_resource;
 use crate::signature::{AbiParam, MethodSignature};
-use crate::types::{MAX_IDS_PER_EDGE, ShardId, Value, resource_address};
+use crate::types::{MAX_IDS_PER_EDGE, ShardId, Value};
 
 /// Resolves an owner prefix to the shard holding it.
 pub trait ShardResolver {
@@ -133,7 +134,7 @@ impl Routing {
     ///
     /// # Errors
     ///
-    /// [`RouteError::ReserveOverflow`] if folding two reservations on one
+    /// [`RouteError::Conflict`] if folding two reservations on one
     /// target exceeds `u128`.
     pub fn declaration(&self) -> Result<Declaration, RouteError> {
         let mut set = EffectSet::new();
@@ -169,14 +170,6 @@ impl Routing {
 /// The bound on manifest nodes admission or routing will address.
 pub const MAX_MANIFEST_NODES: usize = 4096;
 
-impl From<EffectConflict> for RouteError {
-    fn from(conflict: EffectConflict) -> Self {
-        match conflict {
-            EffectConflict::ReserveOverflow => Self::ReserveOverflow,
-            EffectConflict::Presence => Self::PresenceConflict,
-        }
-    }
-}
 /// Why routing rejected a transaction. Deterministic: every node reaches
 /// the identical verdict.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -192,32 +185,17 @@ pub enum RouteError {
         /// The claimed producing node.
         producer: u32,
     },
-    /// A call target with no registered instance.
-    #[error("no instance at {0:?}")]
-    UnknownInstance(Address),
-    /// An instance whose package is not in the metadata cache.
-    #[error("no package {0:?} in the metadata cache")]
-    UnknownPackage(PackageHash),
-    /// A method the target package does not declare.
-    #[error("package {package:?} has no method `{method}`")]
-    UnknownMethod {
-        /// The package consulted.
-        package: PackageHash,
-        /// The method requested.
-        method: String,
-    },
+    /// A call target that does not resolve to a method.
+    #[error(transparent)]
+    Resolve(#[from] ResolveError),
     /// The capability table outgrew the index a handle is named by.
     #[error("the capability table exceeds the addressable handle space")]
     TableOverflow,
-    /// Folding reserve amounts across shards overflowed.
-    #[error("declared reserve amounts overflow")]
-    ReserveOverflow,
-    /// Two writes on one cell requiring opposite presences: their fold
-    /// is a requirement nothing can satisfy, so the transaction is
+    /// A conflict met while folding declared effects into the set —
     /// refused where the set is built rather than at the shard that
     /// would have to judge it.
-    #[error("two writes on one cell require opposite presences")]
-    PresenceConflict,
+    #[error(transparent)]
+    Conflict(#[from] EffectConflict),
     /// A frame declaring an effect on somebody else's prefix.
     ///
     /// An object's cells are reachable by calling it, never by naming
@@ -517,17 +495,10 @@ fn lower_call(
         args,
         edges: edge_bounds(&node.inputs),
         outputs: output_kinds(signature, lowering, node_index, method)?,
-        // The same derivation the declaration's own `SelfResource` runs,
-        // over the same material: an empty mark separates nothing and
-        // names the instance's primary issue.
-        issues: signature.issues.as_ref().map(|mark| {
-            let material = if mark.is_empty() {
-                Vec::new()
-            } else {
-                vec![Value::Bytes(mark.clone()).canonical_bytes()]
-            };
-            resource_address(lowering.hasher, instance, &material).address()
-        }),
+        issues: signature
+            .issues
+            .as_deref()
+            .map(|mark| issued_resource(lowering.hasher, instance, mark).address()),
         evidence: node.evidence.clone(),
         authority: node.authority.clone(),
     })
@@ -653,10 +624,11 @@ impl Fold<'_> {
         instance: Address,
     ) -> Result<&InstanceMeta, RouteError> {
         let target =
-            CallTarget::try_from(instance).map_err(|_| RouteError::UnknownInstance(instance))?;
+            CallTarget::try_from(instance).map_err(|_| ResolveError::UnknownInstance(instance))?;
         instances
             .get(target)
-            .ok_or(RouteError::UnknownInstance(instance))
+            .ok_or(ResolveError::UnknownInstance(instance))
+            .map_err(RouteError::from)
     }
 
     fn frame(&mut self, node_index: u32, node: &Node, args: &[Value]) -> Result<(), RouteError> {
@@ -666,11 +638,11 @@ impl Fold<'_> {
         let package = self
             .cache
             .get(meta.package)
-            .ok_or(RouteError::UnknownPackage(meta.package))?;
+            .ok_or(ResolveError::UnknownPackage(meta.package))?;
         let signature = package
             .methods
             .get(method)
-            .ok_or_else(|| RouteError::UnknownMethod {
+            .ok_or_else(|| ResolveError::UnknownMethod {
                 package: meta.package,
                 method: method.to_owned(),
             })?;
@@ -732,7 +704,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_types::{
-        Address, AddressClass, CellKind, Effect, EffectSet, EffectTarget, Mode, Presence,
+        Address, AddressClass, CellKind, Effect, EffectConflict, EffectSet, EffectTarget, Mode,
+        Presence,
     };
 
     use super::{
@@ -741,7 +714,7 @@ mod tests {
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::hash::{Hash32, TestHasher};
-    use crate::instance::{InstanceMeta, InstanceRegistry};
+    use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
     use crate::manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
     use crate::metadata::{MetadataCache, PackageMetadata};
     use crate::publish::AbiError;
@@ -878,7 +851,12 @@ mod tests {
             &TestHasher,
             &resolver(),
         );
-        assert_eq!(empty, Err(RouteError::UnknownInstance(a_1_4.into())));
+        assert_eq!(
+            empty,
+            Err(RouteError::Resolve(ResolveError::UnknownInstance(
+                a_1_4.into()
+            )))
+        );
 
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, ghost_meta);
@@ -889,7 +867,12 @@ mod tests {
             &TestHasher,
             &resolver(),
         );
-        assert_eq!(missing_pkg, Err(RouteError::UnknownPackage(pkg("ghost"))));
+        assert_eq!(
+            missing_pkg,
+            Err(RouteError::Resolve(ResolveError::UnknownPackage(pkg(
+                "ghost"
+            ))))
+        );
 
         let mut cache = MetadataCache::new();
         cache.publish(pkg("ghost"), PackageMetadata::default());
@@ -902,10 +885,10 @@ mod tests {
         );
         assert_eq!(
             missing_method,
-            Err(RouteError::UnknownMethod {
+            Err(RouteError::Resolve(ResolveError::UnknownMethod {
                 package: pkg("ghost"),
                 method: "m".into(),
-            })
+            }))
         );
     }
 
@@ -1036,7 +1019,7 @@ mod tests {
                 &TestHasher,
                 &resolver()
             ),
-            Err(RouteError::ReserveOverflow)
+            Err(RouteError::Conflict(EffectConflict::ReserveOverflow))
         );
     }
 

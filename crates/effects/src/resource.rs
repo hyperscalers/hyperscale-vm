@@ -7,12 +7,34 @@
 //! the record says what they issue, never how much of it exists.
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
-use hyperscale_vm_types::{Address, CollectionId, SubstateKey};
+use hyperscale_vm_types::{Address, CollectionId, ResourceAddr, SubstateKey};
 
 use crate::dsl::{Expr, TargetExpr};
 use crate::hash::Hasher;
-use crate::types::{Value, child_key, collection_id};
+use crate::types::{Value, child_key, collection_id, resource_address};
 pub use crate::vocabulary::{INSTANCE, NF_VAULT, RESOURCE};
+
+/// The resource `instance` issues under `mark` — the mark separating it
+/// from the instance's other issues, an empty one naming the primary.
+///
+/// The one spelling of how a mark becomes derivation material. The
+/// authoring surface reaches the same address by evaluating
+/// `SelfResource` over the mark as a byte literal, and the routed grant
+/// is lowered through this, so the two agree because they are one code
+/// path pinned by one test.
+#[must_use]
+pub fn issued_resource(
+    hasher: &dyn Hasher,
+    instance: impl Into<Address>,
+    mark: &[u8],
+) -> ResourceAddr {
+    let material = if mark.is_empty() {
+        Vec::new()
+    } else {
+        vec![Value::Bytes(mark.to_vec()).canonical_bytes()]
+    };
+    resource_address(hasher, instance, &material)
+}
 
 /// The decoder cap for a record cell: a flat two-field struct, one level
 /// of body over the frame.

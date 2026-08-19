@@ -13,8 +13,8 @@ use common::{
 };
 use hyperscale_vm_effects::{
     AdmissionError, EdgeRef, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
-    InstanceRegistry, ManifestGraph, MetadataCache, TestHasher, Value, admit, collection_id,
-    fresh_id, route,
+    InstanceRegistry, ManifestGraph, MetadataCache, ResolveError, TestHasher, Value, admit,
+    collection_id, fresh_id, route,
 };
 use hyperscale_vm_types::{Effect, EffectTarget, Mode, Presence};
 
@@ -440,14 +440,14 @@ fn a_presented_record_is_the_whole_of_instantiation() {
     // Unregistered and uncertified: the target is unresolvable.
     assert!(matches!(
         admit(&graph, ALICE, &cache, &bare, &TestHasher),
-        Err(AdmissionError::UnknownInstance(_))
+        Err(AdmissionError::Resolve(ResolveError::UnknownInstance(_)))
     ));
 
     // A record for some other instance enables nothing at the pool.
     let elsewhere = bare.with_instances(&[common::book_meta()], &TestHasher);
     assert!(matches!(
         admit(&graph, ALICE, &cache, &elsewhere, &TestHasher),
-        Err(AdmissionError::UnknownInstance(_))
+        Err(AdmissionError::Resolve(ResolveError::UnknownInstance(_)))
     ));
 
     // The pool's own record resolves the call — to exactly the

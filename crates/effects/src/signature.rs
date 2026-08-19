@@ -6,7 +6,6 @@ use hyperscale_hbor::Hbor;
 use crate::auth::{AuthRole, RoleSet};
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::invoke::EdgeKind;
-use crate::publish::AbiError;
 use crate::resource::holdings_entry;
 use crate::rule::{RuleExpr, StoredRule};
 use crate::types::{MAX_IDS_PER_EDGE, Value};
@@ -398,6 +397,29 @@ pub struct MethodSignature {
     pub abi: Vec<AbiParam>,
 }
 
+/// Why a signature's accessibility names no gate: the declaration is
+/// not the shape that accessibility pins.
+///
+/// Its own vocabulary rather than a slice of
+/// [`AbiError`](crate::publish::AbiError), so the one consumer that
+/// classifies these refusals matches them exhaustively — a new refusal
+/// here is a compile error there, never a silent fall-through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum GateError {
+    /// An authorizing method whose declaration is not exactly one point
+    /// read — the cell its stored rule lives in.
+    #[error("an authorizing method declares exactly one point read: its rule cell")]
+    AuthorizingShape,
+    /// A role-gated method whose declaration is not exactly one point
+    /// write — the same cell, rewritten whole.
+    #[error("a role-gated method declares exactly one point write: its rule cell")]
+    RoleGatedShape,
+    /// A custodial method whose declaration is not the pinned custody
+    /// shape.
+    #[error("a custodial method declares the custody shape: its rule cell and one possession read")]
+    CustodialShape,
+}
+
 /// The whole shape of a method's gate: what a caller presents, and what
 /// the declaration reads to judge it.
 ///
@@ -453,7 +475,7 @@ impl MethodSignature {
     /// # Errors
     ///
     /// The shape refusal named for the accessibility that was declared.
-    pub fn gate(&self) -> Result<GateShape<'_>, AbiError> {
+    pub fn gate(&self) -> Result<GateShape<'_>, GateError> {
         match &self.accessibility {
             Accessibility::Public => Ok(GateShape::Open),
             Accessibility::Guarded(rule) => Ok(GateShape::Guarded(rule)),
@@ -463,12 +485,12 @@ impl MethodSignature {
                     cell,
                     role: AuthRole::Primary,
                 })
-                .ok_or(AbiError::AuthorizingShape),
+                .ok_or(GateError::AuthorizingShape),
             Accessibility::RoleGated(role) => self
                 .rule_point(&|mode| matches!(mode, ModeExpr::Write { .. }))
                 .map(|cell| GateShape::Rule { cell, role: *role })
-                .ok_or(AbiError::RoleGatedShape),
-            Accessibility::Custodial(claim) => self.custody(claim).ok_or(AbiError::CustodialShape),
+                .ok_or(GateError::RoleGatedShape),
+            Accessibility::Custodial(claim) => self.custody(claim).ok_or(GateError::CustodialShape),
         }
     }
 

@@ -75,7 +75,7 @@ pub use hyperscale_vm_types::{
     MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, SettledWrites, StateWrites, TX_UNITS, TxHash,
     VERIFY_WEIGHT, declared_work, entry_leaf_key, signature_work, work_units,
 };
-pub use instance::{InstanceMeta, InstanceRegistry};
+pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, distinct_ids};
 pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};
 pub use metadata::{
@@ -83,11 +83,12 @@ pub use metadata::{
 };
 pub use presented::Presented;
 pub use publish::{
-    AbiError, DeclarationError, MetadataBoundsError, check_abi, check_declarations, check_metadata,
+    AbiError, DeclarationError, MetadataBoundsError, SignatureBoundsError, check_abi,
+    check_declarations, check_metadata,
 };
 pub use resource::{
     Fungibility, ResourceRecord, holdings_collection, holdings_entry, holdings_range,
-    instance_data_key, resource_record_key,
+    instance_data_key, issued_resource, resource_record_key,
 };
 pub use route::{
     FrameDeclaration, MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver, RouteError, Routing,
@@ -97,7 +98,8 @@ pub use rule::{
     MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, StoredRule,
 };
 pub use signature::{
-    AbiParam, Accessibility, CustodyClaim, GateShape, MethodSignature, ParamType, Totality,
+    AbiParam, Accessibility, CustodyClaim, GateError, GateShape, MethodSignature, ParamType,
+    Totality,
 };
 pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};
 pub use types::{

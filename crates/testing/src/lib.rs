@@ -44,7 +44,7 @@ use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
     PrefixShardResolver, TestHasher, Value, admit, check_abi, check_declarations, child_key,
-    declaration_hash, resource_address, route,
+    declaration_hash, issued_resource, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
@@ -324,12 +324,7 @@ impl Chain {
     /// the address the body does.
     #[must_use]
     pub fn issued(instance: impl Into<ComponentAddr>, mark: &[u8]) -> ResourceAddr {
-        let material: Vec<Vec<u8>> = if mark.is_empty() {
-            Vec::new()
-        } else {
-            vec![mark.to_vec()]
-        };
-        resource_address(&TestHasher, instance.into(), &material)
+        issued_resource(&TestHasher, instance.into(), mark)
     }
 
     /// Put `amount` of `resource` in `owner`'s vault, as though it had

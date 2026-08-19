@@ -20,15 +20,14 @@ use crate::dsl::{EvalError, EvalInputs, evaluate_expr};
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
 use crate::hash::Hasher;
-use crate::instance::{InstanceMeta, InstanceRegistry};
+use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
 use crate::invoke::EdgeKind;
 use crate::manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};
-use crate::metadata::{MetadataCache, PackageHash};
+use crate::metadata::MetadataCache;
 use crate::presented::Presented;
-use crate::publish::AbiError;
 use crate::resource::holdings_collection;
 use crate::route::MAX_MANIFEST_NODES;
-use crate::signature::{Accessibility, CustodyClaim, GateShape, ParamType};
+use crate::signature::{Accessibility, CustodyClaim, GateError, GateShape, ParamType};
 use crate::types::{EdgeContent, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::VAULT;
 
@@ -160,6 +159,14 @@ pub enum AdmissionError {
         /// The offending node.
         node: u32,
     },
+    /// A gate's rule cell expression that does not evaluate to a key —
+    /// a declaration whose shape passed and whose expression answers the
+    /// wrong kind of value.
+    #[error("node {node}: the rule cell expression does not evaluate to a key")]
+    RuleCellType {
+        /// The offending node.
+        node: u32,
+    },
     /// A proof drawn from an intent signature in an unsigned graph.
     #[error("node {node} presents a signature proof, and its intent is unsigned")]
     UnsignedEvidence {
@@ -197,20 +204,9 @@ pub enum AdmissionError {
         /// The producer named, in the intent's own node order.
         producer: u32,
     },
-    /// A call target with no registered instance.
-    #[error("no instance at {0:?}")]
-    UnknownInstance(Address),
-    /// An instance whose package is not in the metadata cache.
-    #[error("no package {0:?} in the metadata cache")]
-    UnknownPackage(PackageHash),
-    /// A method the target package does not declare.
-    #[error("package {package:?} has no method `{method}`")]
-    UnknownMethod {
-        /// The package consulted.
-        package: PackageHash,
-        /// The method requested.
-        method: String,
-    },
+    /// A call target that does not resolve to a method.
+    #[error(transparent)]
+    Resolve(#[from] ResolveError),
     /// An argument count differing from the declared parameters.
     #[error("node {node} passes {found} arguments, method takes {expected}")]
     ArityMismatch {
@@ -754,15 +750,15 @@ pub(crate) fn admit_intents(
         let local = u32::try_from(local_index).map_err(|_| AdmissionError::TooManyNodes)?;
         let meta = instances
             .get(node.target)
-            .ok_or_else(|| AdmissionError::UnknownInstance(node.target.address()))?;
+            .ok_or_else(|| ResolveError::UnknownInstance(node.target.address()))?;
         let package = cache
             .get(meta.package)
-            .ok_or(AdmissionError::UnknownPackage(meta.package))?;
+            .ok_or(ResolveError::UnknownPackage(meta.package))?;
         let signature =
             package
                 .methods
                 .get(&node.method)
-                .ok_or_else(|| AdmissionError::UnknownMethod {
+                .ok_or_else(|| ResolveError::UnknownMethod {
                     package: meta.package,
                     method: node.method.clone(),
                 })?;
@@ -891,8 +887,10 @@ pub(crate) fn admit_intents(
         // ungated node. The accessor returns shape refusals alone, and
         // both rule shapes are one verdict here.
         let gate = signature.gate().map_err(|error| match error {
-            AbiError::CustodialShape => AdmissionError::CustodyShape { node: node_index },
-            _ => AdmissionError::RuleCell { node: node_index },
+            GateError::CustodialShape => AdmissionError::CustodyShape { node: node_index },
+            GateError::AuthorizingShape | GateError::RoleGatedShape => {
+                AdmissionError::RuleCell { node: node_index }
+            }
         })?;
         // A proof is scoped to the intent that produced it — a signature
         // proof to the intent whose signature, a node proof to the intent
@@ -1003,7 +1001,7 @@ pub(crate) fn admit_intents(
                     _ => return Err(AdmissionError::MintType { node: node_index }),
                 };
                 let Value::Key(cell) = eval(rule)? else {
-                    return Err(AdmissionError::RuleCell { node: node_index });
+                    return Err(AdmissionError::RuleCellType { node: node_index });
                 };
                 let holder = node.target.address();
                 // An instance holder holds the badge, so presenting one
@@ -1073,7 +1071,7 @@ pub(crate) fn admit_intents(
                 })?;
                 match value {
                     Value::Key(cell) => Some(AuthorityGate::StoredRule { cell, role }),
-                    _ => return Err(AdmissionError::RuleCell { node: node_index }),
+                    _ => return Err(AdmissionError::RuleCellType { node: node_index }),
                 }
             }
         };

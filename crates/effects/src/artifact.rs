@@ -84,7 +84,7 @@ pub enum ArtifactError {
 /// [`ArtifactError`] if the metadata is past a bound decode enforces, so
 /// that whatever this returns decodes back to an equal value.
 pub fn encode_metadata(metadata: &PackageMetadata) -> Result<Vec<u8>, ArtifactError> {
-    check_metadata(metadata).map_err(|error| ArtifactError::Bounds(error.0))?;
+    check_metadata(metadata).map_err(|error| ArtifactError::Bounds(error.to_string()))?;
     to_vec_with_depth(metadata, METADATA_WIRE_DEPTH)
         .map_err(|error| ArtifactError::Payload(error.to_string()))
 }
@@ -122,7 +122,7 @@ pub fn declaration_hash(
 pub fn decode_metadata(bytes: &[u8]) -> Result<PackageMetadata, ArtifactError> {
     let metadata: PackageMetadata = from_slice_with_depth(bytes, METADATA_WIRE_DEPTH)
         .map_err(|error| ArtifactError::Payload(error.to_string()))?;
-    check_metadata(&metadata).map_err(|error| ArtifactError::Bounds(error.0))?;
+    check_metadata(&metadata).map_err(|error| ArtifactError::Bounds(error.to_string()))?;
     Ok(metadata)
 }
 
