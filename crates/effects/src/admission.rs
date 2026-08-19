@@ -18,7 +18,7 @@ use hyperscale_vm_types::{Address, AddressClass, PrincipalAddr};
 
 use crate::dsl::{EvalError, EvalInputs, evaluate_expr};
 use crate::envelope::{YieldBinding, YieldParam};
-use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
+use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
 use crate::invoke::EdgeKind;
@@ -27,7 +27,7 @@ use crate::metadata::MetadataCache;
 use crate::presented::Presented;
 use crate::resource::holdings_collection;
 use crate::route::MAX_MANIFEST_NODES;
-use crate::signature::{Accessibility, CustodyClaim, GateShape, ParamType};
+use crate::signature::{Accessibility, CustodyClaim, GateShape, MethodSignature, ParamType};
 use crate::types::{EdgeContent, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::VAULT;
 
@@ -590,7 +590,6 @@ pub(crate) struct IntentView<'a> {
 /// Check every intent's bindings and parameter consumption, interleave
 /// the intents into one flattened node order along the yield edges, and
 /// run the node-by-node admission check over that order.
-#[allow(clippy::too_many_lines)] // one pass over nodes, one check per rule
 pub(crate) fn admit_intents(
     intents: &[IntentView<'_>],
     identity: ManifestHash,
@@ -603,9 +602,48 @@ pub(crate) fn admit_intents(
         return Err(AdmissionError::TooManyNodes);
     }
 
-    // Bindings and parameter consumption, intent by intent: one binding
-    // per declared parameter, every binding naming a real source, every
-    // parameter consumed by exactly one node argument.
+    check_bindings(intents)?;
+
+    let (flat_of, order) = interleave(intents, total)?;
+
+    let mut lower = Lower {
+        intents,
+        identity,
+        cache,
+        instances,
+        hasher,
+        flat_of: &flat_of,
+        outputs: Vec::with_capacity(total),
+        consumed: Vec::with_capacity(total),
+        minted: Vec::with_capacity(total),
+        lowered: Vec::with_capacity(total),
+    };
+    for &(intent_index, local_index) in &order {
+        lower.lower_node(intent_index, local_index)?;
+    }
+    let Lower {
+        consumed, lowered, ..
+    } = lower;
+
+    // Linearity: nothing dangles, yields included.
+    for (producer, counts) in consumed.iter().enumerate() {
+        for (output, count) in counts.iter().enumerate() {
+            if *count == 0 {
+                return Err(AdmissionError::UnconsumedOutput {
+                    producer: u32::try_from(producer).unwrap_or(u32::MAX),
+                    output: u32::try_from(output).unwrap_or(u32::MAX),
+                });
+            }
+        }
+    }
+
+    Ok(Manifest { nodes: lowered })
+}
+
+/// Bindings and parameter consumption, intent by intent: one binding
+/// per declared parameter, every binding naming a real source, every
+/// parameter consumed by exactly one node argument.
+fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
     for (index, intent) in intents.iter().enumerate() {
         if intent.params.len() > MAX_YIELD_PARAMS {
             return Err(AdmissionError::TooManyYieldParams {
@@ -665,10 +703,21 @@ pub(crate) fn admit_intents(
         }
     }
 
-    // Deterministic interleave: repeatedly emit the lowest-indexed
-    // intent whose next node has every yield dependency satisfied.
-    // Intents keep their author order, so acyclicity is judged at yield
-    // granularity; a stall is a cycle.
+    Ok(())
+}
+
+/// Deterministic interleave: repeatedly emit the lowest-indexed intent
+/// whose next node has every yield dependency satisfied. Intents keep
+/// their author order, so acyclicity is judged at yield granularity; a
+/// stall is a cycle.
+///
+/// Returns the flattened position per (intent, local node) and the
+/// emission order.
+#[allow(clippy::type_complexity)] // the two halves of one interleave
+fn interleave(
+    intents: &[IntentView<'_>],
+    total: usize,
+) -> Result<(Vec<Vec<u32>>, Vec<(usize, usize)>), AdmissionError> {
     let mut cursor = vec![0usize; intents.len()];
     let mut flat_of: Vec<Vec<u32>> = intents
         .iter()
@@ -715,37 +764,59 @@ pub(crate) fn admit_intents(
         }
     }
 
-    // Per emitted node: evaluated output projections and a consumption
-    // count per output slot, indexed by flattened position.
-    let mut outputs: Vec<Vec<(Address, EdgeContent)>> = Vec::with_capacity(total);
-    let mut consumed: Vec<Vec<u32>> = Vec::with_capacity(total);
-    let mut lowered: Vec<Node> = Vec::with_capacity(total);
-    // What each node mints, indexed by flattened position: an
-    // authorizing method's own identity, a custodial method's badge, and
-    // an empty set from anything else. A proof drawn from a node draws
-    // the whole set, so a gate that verifies more than one thing about
-    // its caller presents all of it.
-    let mut minted: Vec<Vec<Presented>> = Vec::with_capacity(total);
+    Ok((flat_of, order))
+}
 
-    for &(intent_index, local_index) in &order {
-        let intent = &intents[intent_index];
+/// The per-node lowering: everything [`admit_intents`] does with one
+/// emitted node, over the accumulators the flattened order threads.
+struct Lower<'a> {
+    intents: &'a [IntentView<'a>],
+    identity: ManifestHash,
+    cache: &'a MetadataCache,
+    instances: &'a InstanceRegistry,
+    hasher: &'a dyn Hasher,
+    /// Flattened position per (intent, local node).
+    flat_of: &'a [Vec<u32>],
+    /// Evaluated output projections per flattened node.
+    outputs: Vec<Vec<(Address, EdgeContent)>>,
+    /// Consumption count per output slot, per flattened node.
+    consumed: Vec<Vec<u32>>,
+    /// What each flattened node mints: an authorizing method's own
+    /// identity, a custodial method's badge, and an empty set from
+    /// anything else. A proof drawn from a node draws the whole set, so
+    /// a gate that verifies more than one thing about its caller
+    /// presents all of it.
+    minted: Vec<Vec<Presented>>,
+    lowered: Vec<Node>,
+}
+
+impl Lower<'_> {
+    fn lower_node(
+        &mut self,
+        intent_index: usize,
+        local_index: usize,
+    ) -> Result<(), AdmissionError> {
+        let intent = &self.intents[intent_index];
         let node = &intent.graph.nodes[local_index];
-        let node_index = u32::try_from(lowered.len()).map_err(|_| AdmissionError::TooManyNodes)?;
+        let node_index =
+            u32::try_from(self.lowered.len()).map_err(|_| AdmissionError::TooManyNodes)?;
         let local = u32::try_from(local_index).map_err(|_| AdmissionError::TooManyNodes)?;
-        let meta = instances
+        let meta = self
+            .instances
             .get(node.target)
             .ok_or_else(|| ResolveError::UnknownInstance(node.target.address()))?;
-        cache
+        self.cache
             .get(meta.package)
             .ok_or(ResolveError::UnknownPackage(meta.package))?;
         // The witness, not the record: everything behind the cache door
         // passed the composed signature check, so nothing below re-asks.
-        let checked = cache.method(meta.package, &node.method).ok_or_else(|| {
-            ResolveError::UnknownMethod {
+        let checked = self
+            .cache
+            .method(meta.package, &node.method)
+            .ok_or_else(|| ResolveError::UnknownMethod {
                 package: meta.package,
                 method: node.method.clone(),
-            }
-        })?;
+            })?;
         let gate = checked.gate();
         let signature = checked.signature();
         if signature.params.len() != node.args.len() {
@@ -756,6 +827,49 @@ pub(crate) fn admit_intents(
             });
         }
 
+        let (bound, inputs) = self.bind_args(intent_index, local, node, signature, node_index)?;
+        let evidence =
+            self.resolve_evidence(intent_index, local_index, node, signature, node_index)?;
+
+        // Evaluate this node's projections over its bound inputs.
+        let eval_inputs = EvalInputs {
+            self_addr: node.target.address(),
+            args: &bound,
+            config: &meta.config,
+            node_index,
+            frame: 0,
+            identity: self.identity,
+        };
+        check_denominations(signature, &bound, &eval_inputs, self.hasher, node_index)?;
+        let (claims, authority) =
+            judge_gate(gate, signature, node, &eval_inputs, self.hasher, node_index)?;
+        let node_outputs = project_outputs(signature, &eval_inputs, self.hasher, node_index)?;
+
+        self.minted.push(claims);
+        self.consumed.push(vec![0; node_outputs.len()]);
+        self.outputs.push(node_outputs);
+        self.lowered.push(Node {
+            target: node.target.address(),
+            method: node.method.clone(),
+            inputs,
+            evidence,
+            authority,
+        });
+        Ok(())
+    }
+
+    /// Bind the node's arguments against its declared parameters: a
+    /// literal for a value parameter, an edge or a yield binding for a
+    /// bucket one.
+    fn bind_args(
+        &mut self,
+        intent_index: usize,
+        local: u32,
+        node: &GraphNode,
+        signature: &MethodSignature,
+        node_index: u32,
+    ) -> Result<(Vec<Value>, Vec<NodeInput>), AdmissionError> {
+        let intent = &self.intents[intent_index];
         let mut bound = Vec::with_capacity(node.args.len());
         let mut inputs = Vec::with_capacity(node.args.len());
         for (position, (arg, param)) in node.args.iter().zip(&signature.params).enumerate() {
@@ -794,10 +908,10 @@ pub(crate) fn admit_intents(
                     }
                     let producer =
                         usize::try_from(edge.producer).map_err(|_| AdmissionError::TooManyNodes)?;
-                    let source = flat_of[intent_index][producer];
+                    let source = self.flat_of[intent_index][producer];
                     let (value, input) = bind_edge(
-                        &outputs,
-                        &mut consumed,
+                        &self.outputs,
+                        &mut self.consumed,
                         (source, edge.output),
                         constraints,
                         *param,
@@ -828,12 +942,12 @@ pub(crate) fn admit_intents(
                         .map_err(|_| AdmissionError::TooManyNodes)?;
                     let producer = usize::try_from(binding.edge.producer)
                         .map_err(|_| AdmissionError::TooManyNodes)?;
-                    let source = flat_of[source_intent][producer];
+                    let source = self.flat_of[source_intent][producer];
                     let intent_at =
                         u32::try_from(intent_index).expect("intents are bounded by MAX_SUBINTENTS");
                     let (value, input) = bind_edge(
-                        &outputs,
-                        &mut consumed,
+                        &self.outputs,
+                        &mut self.consumed,
                         (source, binding.edge.output),
                         &decl.constraints,
                         *param,
@@ -854,7 +968,24 @@ pub(crate) fn admit_intents(
                 }
             }
         }
+        Ok((bound, inputs))
+    }
 
+    /// Resolve the node's presented evidence against its own intent.
+    ///
+    /// A proof is scoped to the intent that produced it — a signature
+    /// proof to the intent whose signature, a node proof to the intent
+    /// whose node — so the identities resolve against this node's own
+    /// intent and no other.
+    fn resolve_evidence(
+        &self,
+        intent_index: usize,
+        local_index: usize,
+        node: &GraphNode,
+        signature: &MethodSignature,
+        node_index: u32,
+    ) -> Result<Vec<Presented>, AdmissionError> {
+        let intent = &self.intents[intent_index];
         // Evidence presence is a property of the signed form: a guarded
         // or authorizing call presents something, a public one presents
         // nothing. Whether what it presents satisfies the target's rule
@@ -867,10 +998,6 @@ pub(crate) fn admit_intents(
         } else if !node.evidence.is_empty() {
             return Err(AdmissionError::UnexpectedEvidence { node: node_index });
         }
-        // A proof is scoped to the intent that produced it — a signature
-        // proof to the intent whose signature, a node proof to the intent
-        // whose node — so the identities resolve against this node's own
-        // intent and no other.
         let mut evidence = Vec::with_capacity(node.evidence.len());
         for reference in &node.evidence {
             match reference {
@@ -897,214 +1024,201 @@ pub(crate) fn admit_intents(
                     let flat = usize::try_from(*producer)
                         .ok()
                         .filter(|&earlier| earlier < local_index)
-                        .map(|earlier| flat_of[intent_index][earlier])
+                        .map(|earlier| self.flat_of[intent_index][earlier])
                         .and_then(|flat| usize::try_from(flat).ok())
                         .ok_or(AdmissionError::ForwardProof {
                             node: node_index,
                             producer: *producer,
                         })?;
-                    let claims = minted.get(flat).filter(|claims| !claims.is_empty()).ok_or(
-                        AdmissionError::UnmintingProof {
+                    let claims = self
+                        .minted
+                        .get(flat)
+                        .filter(|claims| !claims.is_empty())
+                        .ok_or(AdmissionError::UnmintingProof {
                             node: node_index,
                             producer: *producer,
-                        },
-                    )?;
+                        })?;
                     evidence.extend_from_slice(claims);
                 }
             }
         }
+        Ok(evidence)
+    }
+}
 
-        // Evaluate this node's output resource types over its bound
-        // inputs.
-        let eval_inputs = EvalInputs {
-            self_addr: node.target.address(),
-            args: &bound,
-            config: &meta.config,
-            node_index,
-            frame: 0,
-            identity,
-        };
-        // Judged here rather than inside the binding loop above, because a
-        // denomination is an expression over the *bound* arguments: one
-        // naming a later position would evaluate against a parameter that
-        // loop has not reached.
-        for (position, denomination) in signature.denominations.iter().enumerate() {
-            let Some(expr) = denomination else { continue };
-            let param = u32::try_from(position).map_err(|_| AdmissionError::TooManyNodes)?;
-            let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
-                AdmissionError::Eval {
-                    node: node_index,
-                    source,
-                }
+/// Judge the denominations against the bound arguments.
+///
+/// Judged here rather than inside the binding loop, because a
+/// denomination is an expression over the *bound* arguments: one naming
+/// a later position would evaluate against a parameter that loop has not
+/// reached.
+fn check_denominations(
+    signature: &MethodSignature,
+    bound: &[Value],
+    eval_inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    node_index: u32,
+) -> Result<(), AdmissionError> {
+    for (position, denomination) in signature.denominations.iter().enumerate() {
+        let Some(expr) = denomination else { continue };
+        let param = u32::try_from(position).map_err(|_| AdmissionError::TooManyNodes)?;
+        let value =
+            evaluate_expr(expr, eval_inputs, hasher).map_err(|source| AdmissionError::Eval {
+                node: node_index,
+                source,
             })?;
-            let Value::Address(expected) = value else {
-                return Err(AdmissionError::DenominationType {
-                    node: node_index,
-                    param,
-                });
-            };
-            // A position the signature denominates and the call filled
-            // with something other than an edge is already refused by the
-            // kind check above, so what is left here is an edge.
-            if let Some(Value::Bucket { resource, .. }) = bound.get(position)
-                && *resource != expected
-            {
-                return Err(AdmissionError::Denomination {
-                    node: node_index,
-                    param,
-                    expected,
-                    found: *resource,
-                });
-            }
+        let Value::Address(expected) = value else {
+            return Err(AdmissionError::DenominationType {
+                node: node_index,
+                param,
+            });
+        };
+        // A position the signature denominates and the call filled
+        // with something other than an edge is already refused by the
+        // kind check above, so what is left here is an edge.
+        if let Some(Value::Bucket { resource, .. }) = bound.get(position)
+            && *resource != expected
+        {
+            return Err(AdmissionError::Denomination {
+                node: node_index,
+                param,
+                expected,
+                found: *resource,
+            });
         }
+    }
+    Ok(())
+}
+
+/// Discriminate the gate: what this node mints, and the authority gate
+/// the call is judged against — one match, so the claims and the gate
+/// cannot come from two readings of the shape.
+///
+/// Everything evaluates over the same inputs the output types evaluate
+/// against: what the target itself names, never what the caller claims.
+fn judge_gate(
+    gate: GateShape<'_>,
+    signature: &MethodSignature,
+    node: &GraphNode,
+    eval_inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    node_index: u32,
+) -> Result<(Vec<Presented>, Option<AuthorityGate>), AdmissionError> {
+    let eval = |expr| {
+        evaluate_expr(expr, eval_inputs, hasher).map_err(|source| AdmissionError::Eval {
+            node: node_index,
+            source,
+        })
+    };
+    Ok(match gate {
+        GateShape::Open => (Vec::new(), None),
         // A custodial gate: the holder's stored primary plus possession
         // of what it mints. The pinned shape keys the possession read by
         // exactly the claim's own expressions, so the vault key and the
         // holdings entry are the badge's own derivations.
-        let custody = match gate {
-            GateShape::Custody { cell: rule, claim } => {
-                let eval = |expr| {
-                    evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
-                        AdmissionError::Eval {
-                            node: node_index,
-                            source,
-                        }
-                    })
-                };
-                let badge = match eval(claim.badge())? {
-                    Value::Address(badge) if badge.class() == AddressClass::Resource => badge,
-                    _ => return Err(AdmissionError::MintType { node: node_index }),
-                };
-                let Value::Key(cell) = eval(rule)? else {
-                    return Err(AdmissionError::RuleCellType { node: node_index });
-                };
-                let holder = node.target.address();
-                // An instance holder holds the badge, so presenting one
-                // satisfies a rule naming the resource as well as a rule
-                // naming the instance. The widening happens here, where
-                // possession was verified, which is what keeps the judge
-                // an equality walk rather than a subsumption rule every
-                // reader of a stored rule would have to share.
-                let (minted, possession) = match claim {
-                    CustodyClaim::Fungible(_) => (
-                        vec![Presented::Resource(badge)],
-                        Possession::Vault(child_key(
-                            hasher,
-                            holder,
-                            VAULT,
-                            &[Value::Address(badge).canonical_bytes()],
-                        )),
-                    ),
-                    CustodyClaim::Instance { id, .. } => {
-                        let id = match eval(id)? {
-                            Value::U64(id) => id,
-                            Value::U128(id) => u64::try_from(id)
-                                .map_err(|_| AdmissionError::MintType { node: node_index })?,
-                            _ => return Err(AdmissionError::MintType { node: node_index }),
-                        };
-                        (
-                            vec![Presented::Instance(badge, id), Presented::Resource(badge)],
-                            Possession::Instance {
-                                owner: holder,
-                                holdings: holdings_collection(hasher, holder, badge),
-                                id,
-                            },
-                        )
-                    }
-                };
-                Some((minted, AuthorityGate::Custody { cell, possession }))
-            }
-            GateShape::Open | GateShape::Guarded(_) | GateShape::Rule { .. } => None,
-        };
-        // The gate this call is judged against, over the same inputs the
-        // output types evaluate against: what the target itself names,
-        // never what the caller claims.
-        let authority = match gate {
-            GateShape::Open => None,
-            GateShape::Custody { .. } => custody.as_ref().map(|(_, gate)| gate.clone()),
-            GateShape::Guarded(rule) => {
-                // Every leaf, over the same inputs the output types
-                // evaluate against — the shape is the declaration's and
-                // only the claims are computed.
-                let rule = rule.map_leaves(&mut |expr| {
-                    let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
-                        AdmissionError::Eval {
-                            node: node_index,
-                            source,
-                        }
-                    })?;
-                    Presented::of(&value).ok_or(AdmissionError::AuthorityType { node: node_index })
-                })?;
-                Some(AuthorityGate::Presented(rule))
-            }
-            GateShape::Rule { cell, role } => {
-                let value = evaluate_expr(cell, &eval_inputs, hasher).map_err(|source| {
+        GateShape::Custody { cell: rule, claim } => {
+            let badge = match eval(claim.badge())? {
+                Value::Address(badge) if badge.class() == AddressClass::Resource => badge,
+                _ => return Err(AdmissionError::MintType { node: node_index }),
+            };
+            let Value::Key(cell) = eval(rule)? else {
+                return Err(AdmissionError::RuleCellType { node: node_index });
+            };
+            let holder = node.target.address();
+            // An instance holder holds the badge, so presenting one
+            // satisfies a rule naming the resource as well as a rule
+            // naming the instance. The widening happens here, where
+            // possession was verified, which is what keeps the judge
+            // an equality walk rather than a subsumption rule every
+            // reader of a stored rule would have to share.
+            let (claims, possession) = match claim {
+                CustodyClaim::Fungible(_) => (
+                    vec![Presented::Resource(badge)],
+                    Possession::Vault(child_key(
+                        hasher,
+                        holder,
+                        VAULT,
+                        &[Value::Address(badge).canonical_bytes()],
+                    )),
+                ),
+                CustodyClaim::Instance { id, .. } => {
+                    let id = match eval(id)? {
+                        Value::U64(id) => id,
+                        Value::U128(id) => u64::try_from(id)
+                            .map_err(|_| AdmissionError::MintType { node: node_index })?,
+                        _ => return Err(AdmissionError::MintType { node: node_index }),
+                    };
+                    (
+                        vec![Presented::Instance(badge, id), Presented::Resource(badge)],
+                        Possession::Instance {
+                            owner: holder,
+                            holdings: holdings_collection(hasher, holder, badge),
+                            id,
+                        },
+                    )
+                }
+            };
+            (claims, Some(AuthorityGate::Custody { cell, possession }))
+        }
+        GateShape::Guarded(rule) => {
+            // Every leaf, over the same inputs the output types
+            // evaluate against — the shape is the declaration's and
+            // only the claims are computed.
+            let rule = rule.map_leaves(&mut |expr| {
+                let value = evaluate_expr(expr, eval_inputs, hasher).map_err(|source| {
                     AdmissionError::Eval {
                         node: node_index,
                         source,
                     }
                 })?;
-                match value {
-                    Value::Key(cell) => Some(AuthorityGate::StoredRule { cell, role }),
-                    _ => return Err(AdmissionError::RuleCellType { node: node_index }),
-                }
-            }
-        };
-
-        let mut node_outputs = Vec::with_capacity(signature.outputs.len());
-        for (slot, expr) in signature.outputs.iter().enumerate() {
-            let slot_index = u32::try_from(slot).map_err(|_| AdmissionError::TooManyNodes)?;
-            let value = evaluate_expr(expr, &eval_inputs, hasher).map_err(|source| {
-                AdmissionError::Eval {
-                    node: node_index,
-                    source,
-                }
+                Presented::of(&value).ok_or(AdmissionError::AuthorityType { node: node_index })
             })?;
-            // A bare resource address is the fungible projection; a
-            // bucket states its content. Nothing else names an edge.
-            node_outputs.push(match value {
-                Value::Address(resource) => (resource, EdgeContent::Fungible),
-                Value::Bucket { resource, content } => (resource, content),
-                _ => {
-                    return Err(AdmissionError::OutputType {
-                        node: node_index,
-                        output: slot_index,
-                    });
-                }
-            });
+            (Vec::new(), Some(AuthorityGate::Presented(rule)))
         }
-        // What this node mints: an authorizing method's target acting as
-        // itself, a custodial method's badge, and nothing from anything
-        // else.
-        minted.push(match &signature.accessibility {
-            Accessibility::Authorizing => vec![Presented::Identity(node.target.address())],
-            Accessibility::Custodial(_) => custody.map(|(claims, _)| claims).unwrap_or_default(),
-            Accessibility::Public | Accessibility::Guarded(_) | Accessibility::RoleGated(_) => {
+        GateShape::Rule { cell, role } => {
+            let Value::Key(cell) = eval(cell)? else {
+                return Err(AdmissionError::RuleCellType { node: node_index });
+            };
+            // An authorizing method's target acts as itself; a role-gated
+            // one is judged and mints nothing.
+            let claims = if matches!(signature.accessibility, Accessibility::Authorizing) {
+                vec![Presented::Identity(node.target.address())]
+            } else {
                 Vec::new()
-            }
-        });
-        consumed.push(vec![0; node_outputs.len()]);
-        outputs.push(node_outputs);
-        lowered.push(Node {
-            target: node.target.address(),
-            method: node.method.clone(),
-            inputs,
-            evidence,
-            authority,
-        });
-    }
+            };
+            (claims, Some(AuthorityGate::StoredRule { cell, role }))
+        }
+    })
+}
 
-    // Linearity: nothing dangles, yields included.
-    for (producer, counts) in consumed.iter().enumerate() {
-        for (output, count) in counts.iter().enumerate() {
-            if *count == 0 {
-                return Err(AdmissionError::UnconsumedOutput {
-                    producer: u32::try_from(producer).unwrap_or(u32::MAX),
-                    output: u32::try_from(output).unwrap_or(u32::MAX),
+/// Evaluate the node's declared output projections: the resource and
+/// content of each edge it produces.
+fn project_outputs(
+    signature: &MethodSignature,
+    eval_inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    node_index: u32,
+) -> Result<Vec<(Address, EdgeContent)>, AdmissionError> {
+    let mut node_outputs = Vec::with_capacity(signature.outputs.len());
+    for (slot, expr) in signature.outputs.iter().enumerate() {
+        let slot_index = u32::try_from(slot).map_err(|_| AdmissionError::TooManyNodes)?;
+        let value =
+            evaluate_expr(expr, eval_inputs, hasher).map_err(|source| AdmissionError::Eval {
+                node: node_index,
+                source,
+            })?;
+        // A bare resource address is the fungible projection; a
+        // bucket states its content. Nothing else names an edge.
+        node_outputs.push(match value {
+            Value::Address(resource) => (resource, EdgeContent::Fungible),
+            Value::Bucket { resource, content } => (resource, content),
+            _ => {
+                return Err(AdmissionError::OutputType {
+                    node: node_index,
+                    output: slot_index,
                 });
             }
-        }
+        });
     }
-
-    Ok(Manifest { nodes: lowered })
+    Ok(node_outputs)
 }
