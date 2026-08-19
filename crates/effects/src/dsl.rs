@@ -68,7 +68,7 @@ pub fn self_child(slot: SlotId, material: Vec<Expr>) -> Expr {
 }
 
 /// An expression over a method's inputs.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum Expr {
     /// A literal value.
     Literal(Value),
@@ -222,6 +222,82 @@ pub enum Expr {
 }
 
 impl Expr {
+    /// Every direct subexpression, left to right.
+    ///
+    /// The one statement of the tree's structure. Every structural walk —
+    /// a bounds check, an input scan — folds over this, so a new variant
+    /// costs exactly one arm here and cannot bury a subterm from one walk
+    /// while showing it to another. Only evaluation keeps its own full
+    /// match, because what it does with each position is semantic.
+    pub fn children(&self) -> impl Iterator<Item = &Self> {
+        let mut children: Vec<&Self> = Vec::new();
+        match self {
+            Self::Literal(_)
+            | Self::Arg(_)
+            | Self::Config(_)
+            | Self::Binding(_)
+            | Self::SelfAddr
+            | Self::FreshId { .. }
+            | Self::FreshKey { .. } => {}
+            Self::Field(inner, _)
+            | Self::ResourceOf(inner)
+            | Self::IdsOf(inner)
+            | Self::Not(inner) => children.push(inner),
+            Self::Lookup {
+                map: first,
+                key: second,
+            }
+            | Self::Contains {
+                map: first,
+                key: second,
+            }
+            | Self::Pack {
+                hi: first,
+                lo: second,
+            }
+            | Self::NfBucket {
+                resource: first,
+                ids: second,
+            }
+            | Self::And(first, second)
+            | Self::Or(first, second)
+            | Self::Eq(first, second)
+            | Self::Lt(first, second) => {
+                children.push(first);
+                children.push(second);
+            }
+            Self::If {
+                cond,
+                then,
+                otherwise,
+            } => {
+                children.push(cond);
+                children.push(then);
+                children.push(otherwise);
+            }
+            Self::List(elements)
+            | Self::Tuple(elements)
+            | Self::SelfResource { material: elements } => children.extend(elements),
+            Self::ChildKey {
+                owner, material, ..
+            }
+            | Self::OrderKey {
+                owner, material, ..
+            } => {
+                children.push(owner);
+                children.extend(material);
+            }
+        }
+        children.into_iter()
+    }
+
+    /// Whether this node itself is a caller-supplied input, before any
+    /// subterm is asked.
+    #[must_use]
+    pub const fn is_input_leaf(&self) -> bool {
+        matches!(self, Self::Arg(_) | Self::Binding(_))
+    }
+
     /// Whether evaluating this reads anything the caller supplies.
     ///
     /// An authority expression must not: an identity a caller names is an
@@ -229,48 +305,7 @@ impl Expr {
     /// reads as guarded and admits everyone.
     #[must_use]
     pub fn reads_call_inputs(&self) -> bool {
-        match self {
-            Self::Arg(_) | Self::Binding(_) => true,
-            Self::Literal(_)
-            | Self::Config(_)
-            | Self::SelfAddr
-            | Self::FreshId { .. }
-            | Self::FreshKey { .. } => false,
-            Self::Field(inner, _) | Self::ResourceOf(inner) | Self::IdsOf(inner) => {
-                inner.reads_call_inputs()
-            }
-            Self::Lookup { map, key } | Self::Contains { map, key } => {
-                map.reads_call_inputs() || key.reads_call_inputs()
-            }
-            Self::Pack { hi, lo } => hi.reads_call_inputs() || lo.reads_call_inputs(),
-            Self::NfBucket { resource, ids } => {
-                resource.reads_call_inputs() || ids.reads_call_inputs()
-            }
-            Self::List(elements) | Self::Tuple(elements) => {
-                elements.iter().any(Self::reads_call_inputs)
-            }
-            Self::SelfResource { material } => material.iter().any(Self::reads_call_inputs),
-            Self::ChildKey {
-                owner, material, ..
-            }
-            | Self::OrderKey {
-                owner, material, ..
-            } => owner.reads_call_inputs() || material.iter().any(Self::reads_call_inputs),
-            Self::Not(inner) => inner.reads_call_inputs(),
-            Self::And(left, right)
-            | Self::Or(left, right)
-            | Self::Eq(left, right)
-            | Self::Lt(left, right) => left.reads_call_inputs() || right.reads_call_inputs(),
-            Self::If {
-                cond,
-                then,
-                otherwise,
-            } => {
-                cond.reads_call_inputs()
-                    || then.reads_call_inputs()
-                    || otherwise.reads_call_inputs()
-            }
-        }
+        self.is_input_leaf() || self.children().any(Self::reads_call_inputs)
     }
 }
 
@@ -300,7 +335,7 @@ pub enum ModeExpr {
 }
 
 /// An access target expression.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum TargetExpr {
     /// A single substate leaf; the expression must evaluate to a key.
     Point(Expr),
@@ -449,6 +484,23 @@ impl Clause {
                 None => None,
             },
         }
+    }
+
+    /// This clause and every clause beneath it, `for-each` bodies in
+    /// place — the preorder the clause indices name.
+    ///
+    /// Loops are yielded like accesses, because an index names either
+    /// kind: the walk that numbers clauses and the walk that judges them
+    /// have to agree on what counts.
+    pub fn effects(&self) -> impl Iterator<Item = &Self> {
+        let mut stack = vec![self];
+        std::iter::from_fn(move || {
+            let clause = stack.pop()?;
+            if let Self::ForEach { body, .. } = clause {
+                stack.extend(body.iter().rev());
+            }
+            Some(clause)
+        })
     }
 }
 
@@ -1378,6 +1430,104 @@ mod tests {
     use crate::types::{
         EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
     };
+
+    /// Every constructor, each subterm a distinct marker: the walk
+    /// answers exactly the markers, in order. A new variant fails the
+    /// `children` match before it reaches here; what this pins is that no
+    /// arm quietly drops one of its variant's fields — the miss every
+    /// structural walk would then share.
+    #[test]
+    fn children_reach_every_subterm() {
+        let leaf = |marker: u32| Expr::Arg(marker);
+        let boxed = |marker: u32| Box::new(leaf(marker));
+        let cases: Vec<(Expr, Vec<u32>)> = vec![
+            (Expr::Literal(Value::U64(0)), vec![]),
+            (Expr::Arg(0), vec![]),
+            (Expr::Config(0), vec![]),
+            (Expr::Binding(0), vec![]),
+            (Expr::SelfAddr, vec![]),
+            (Expr::FreshId { slot: 0 }, vec![]),
+            (Expr::FreshKey { slot: 0 }, vec![]),
+            (Expr::Field(boxed(1), 0), vec![1]),
+            (Expr::ResourceOf(boxed(1)), vec![1]),
+            (Expr::IdsOf(boxed(1)), vec![1]),
+            (Expr::Not(boxed(1)), vec![1]),
+            (Expr::List(vec![leaf(1), leaf(2)]), vec![1, 2]),
+            (Expr::Tuple(vec![leaf(1), leaf(2)]), vec![1, 2]),
+            (
+                Expr::SelfResource {
+                    material: vec![leaf(1), leaf(2)],
+                },
+                vec![1, 2],
+            ),
+            (
+                Expr::NfBucket {
+                    resource: boxed(1),
+                    ids: boxed(2),
+                },
+                vec![1, 2],
+            ),
+            (
+                Expr::Lookup {
+                    map: boxed(1),
+                    key: boxed(2),
+                },
+                vec![1, 2],
+            ),
+            (
+                Expr::Contains {
+                    map: boxed(1),
+                    key: boxed(2),
+                },
+                vec![1, 2],
+            ),
+            (
+                Expr::ChildKey {
+                    owner: boxed(1),
+                    slot: SlotId(0),
+                    material: vec![leaf(2), leaf(3)],
+                },
+                vec![1, 2, 3],
+            ),
+            (
+                Expr::OrderKey {
+                    owner: boxed(1),
+                    slot: SlotId(0),
+                    material: vec![leaf(2), leaf(3)],
+                },
+                vec![1, 2, 3],
+            ),
+            (
+                Expr::Pack {
+                    hi: boxed(1),
+                    lo: boxed(2),
+                },
+                vec![1, 2],
+            ),
+            (Expr::And(boxed(1), boxed(2)), vec![1, 2]),
+            (Expr::Or(boxed(1), boxed(2)), vec![1, 2]),
+            (Expr::Eq(boxed(1), boxed(2)), vec![1, 2]),
+            (Expr::Lt(boxed(1), boxed(2)), vec![1, 2]),
+            (
+                Expr::If {
+                    cond: boxed(1),
+                    then: boxed(2),
+                    otherwise: boxed(3),
+                },
+                vec![1, 2, 3],
+            ),
+        ];
+        for (expr, want) in cases {
+            let got: Vec<u32> = expr
+                .children()
+                .map(|child| match child {
+                    Expr::Arg(marker) => *marker,
+                    other => panic!("{other:?} is not a marker"),
+                })
+                .collect();
+            assert_eq!(got, want, "{expr:?}");
+        }
+    }
 
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
         EvalInputs {

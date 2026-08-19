@@ -5,6 +5,8 @@
 //! node: refused at publish, and refused again at routing for a package
 //! that reached the cache without one.
 
+use std::collections::BTreeMap;
+
 use hyperscale_vm_types::{MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
 
 use crate::dsl::{
@@ -421,7 +423,7 @@ fn targets_own_prefix(target: &TargetExpr) -> bool {
 /// are instances and an overlapping one saying they are bytes are two
 /// answers about the same entries, and comparing targets would let them
 /// both through.
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Contents<'a> {
     /// One leaf, as the expression naming it.
     Leaf(&'a Expr),
@@ -635,20 +637,6 @@ fn vocabulary_shape(
     Some((shaped, wanted))
 }
 
-/// Every effect clause of a signature, `for-each` bodies counted in
-/// place — the same preorder the clause indices name.
-fn flat_clauses(clauses: &[Clause]) -> Vec<&Clause> {
-    let mut flat = Vec::new();
-    let mut stack: Vec<&Clause> = clauses.iter().rev().collect();
-    while let Some(clause) = stack.pop() {
-        flat.push(clause);
-        if let Clause::ForEach { body, .. } = clause {
-            stack.extend(body.iter().rev());
-        }
-    }
-    flat
-}
-
 /// Whether two clauses' guards are each other's negation, so no
 /// evaluation declares both.
 ///
@@ -741,17 +729,9 @@ fn judge_access(clause: u32, access: &Clause) -> Result<(), DeclarationError> {
 /// [`DeclarationError`]; verdicts are deterministic and identical on every
 /// node.
 pub fn check_declarations(signature: &MethodSignature) -> Result<(), DeclarationError> {
-    fn walk(clauses: &[Clause], next: &mut u32) -> Result<(), DeclarationError> {
-        for clause in clauses {
-            let clause_index = *next;
-            *next = next.saturating_add(1);
-            match clause {
-                Clause::Effect { .. } => judge_access(clause_index, clause)?,
-                Clause::ForEach { body, .. } => walk(body, next)?,
-            }
-        }
-        Ok(())
-    }
+    // The tree is walked once; every judgment below reads this preorder,
+    // which is the numbering a clause index names.
+    let flat: Vec<&Clause> = signature.effects.iter().flat_map(Clause::effects).collect();
     // Two writes on one target that can both fire are one write, and a
     // presence requirement each way is a requirement nothing satisfies.
     //
@@ -769,32 +749,38 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // The evaluated conflict in `EffectSet::insert` is untouched: two
     // clauses that cannot both fire never both land.
     //
-    // Every pair rather than a fold into one requirement per target,
-    // because co-firing is a relation between two clauses and not a
-    // property of the target they share: a clause complementary to one
-    // of the others still meets all the rest, and a fold that stopped at
-    // the first meeting would never ask about them. Nothing is lost by
-    // comparing originals — `Either` meets everything, so an accumulated
-    // requirement is only ever one of the two it came from, and a
-    // contradiction a fold could reach is one some pair already has.
-    let writes: Vec<(&TargetExpr, Option<&Expr>, Presence)> = flat_clauses(&signature.effects)
-        .into_iter()
-        .filter_map(|clause| match clause {
-            Clause::Effect {
-                guard,
-                target,
-                mode: ModeExpr::Write { requires },
-                ..
-            } => Some((target, guard.as_deref(), *requires)),
-            _ => None,
-        })
-        .collect();
-    for (index, (target, guard, requires)) in writes.iter().enumerate() {
-        for (seen, seen_guard, prior) in &writes[..index] {
-            if seen == target && !complementary(*seen_guard, *guard) {
-                prior
-                    .meet(*requires)
-                    .ok_or(DeclarationError::PresenceConflict)?;
+    // Grouped by target, and every pair within a group rather than a
+    // fold into one requirement per target, because co-firing is a
+    // relation between two clauses and not a property of the target they
+    // share: a clause complementary to one of the others still meets all
+    // the rest, and a fold that stopped at the first meeting would never
+    // ask about them. Nothing is lost by comparing originals — `Either`
+    // meets everything, so an accumulated requirement is only ever one
+    // of the two it came from, and a contradiction a fold could reach is
+    // one some pair already has.
+    let mut writes: BTreeMap<&TargetExpr, Vec<(Option<&Expr>, Presence)>> = BTreeMap::new();
+    for clause in &flat {
+        if let Clause::Effect {
+            guard,
+            target,
+            mode: ModeExpr::Write { requires },
+            ..
+        } = clause
+        {
+            writes
+                .entry(target)
+                .or_default()
+                .push((guard.as_deref(), *requires));
+        }
+    }
+    for shared in writes.values() {
+        for (index, (guard, requires)) in shared.iter().enumerate() {
+            for (seen_guard, prior) in &shared[..index] {
+                if !complementary(*seen_guard, *guard) {
+                    prior
+                        .meet(*requires)
+                        .ok_or(DeclarationError::PresenceConflict)?;
+                }
             }
         }
     }
@@ -813,8 +799,8 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // a question one execution answers, and complementary arms answer it
     // differently on purpose; what a cell holds is not a question an
     // execution answers at all.
-    let mut holds: Vec<(Contents<'_>, bool)> = Vec::new();
-    for (index, clause) in flat_clauses(&signature.effects).iter().enumerate() {
+    let mut holds: BTreeMap<Contents<'_>, bool> = BTreeMap::new();
+    for (index, clause) in flat.iter().enumerate() {
         let Clause::Effect {
             target,
             denomination,
@@ -824,14 +810,9 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
             continue;
         };
         let clause = u32::try_from(index).unwrap_or(u32::MAX);
-        let cell = contents(target);
         let value = denomination.is_some();
-        match holds.iter().find(|(seen, _)| *seen == cell) {
-            Some((_, held)) if *held != value => {
-                return Err(DeclarationError::MixedContents { clause });
-            }
-            Some(_) => {}
-            None => holds.push((cell, value)),
+        if *holds.entry(contents(target)).or_insert(value) != value {
+            return Err(DeclarationError::MixedContents { clause });
         }
     }
     // A gate is an error arm the vocabulary can see. Trap freedom is what
@@ -848,9 +829,7 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // total method trades for the mark, and it trades it in the one
     // direction that keeps both properties true.
     if signature.totality.is_total()
-        && (flat_clauses(&signature.effects)
-            .iter()
-            .any(|clause| clause.guard().is_some())
+        && (flat.iter().any(|clause| clause.guard().is_some())
             || signature
                 .abi
                 .iter()
@@ -884,7 +863,10 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
             });
         }
     }
-    walk(&signature.effects, &mut 0)
+    for (index, clause) in flat.iter().enumerate() {
+        judge_access(u32::try_from(index).unwrap_or(u32::MAX), clause)?;
+    }
+    Ok(())
 }
 
 /// Why metadata is past a bound the vocabulary fixes.
@@ -1059,82 +1041,15 @@ fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), MetadataBoundsErro
             "expression nests deeper than {MAX_EXPR_DEPTH}"
         )));
     }
-    let deeper = depth + 1;
-    match expr {
-        Expr::Literal(literal) => {
-            if literal.depth() > MAX_VALUE_DEPTH {
-                return Err(MetadataBoundsError(format!(
-                    "literal nests deeper than {MAX_VALUE_DEPTH}"
-                )));
-            }
-            Ok(())
-        }
-        Expr::Arg(_)
-        | Expr::Config(_)
-        | Expr::Binding(_)
-        | Expr::SelfAddr
-        | Expr::FreshId { .. }
-        | Expr::FreshKey { .. } => Ok(()),
-        Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) | Expr::Not(inner) => {
-            check_expr_bounds(inner, deeper)
-        }
-        Expr::If {
-            cond,
-            then,
-            otherwise,
-        } => {
-            check_expr_bounds(cond, deeper)?;
-            check_expr_bounds(then, deeper)?;
-            check_expr_bounds(otherwise, deeper)
-        }
-        Expr::Lookup {
-            map: first,
-            key: second,
-        }
-        | Expr::Contains {
-            map: first,
-            key: second,
-        }
-        | Expr::Pack {
-            hi: first,
-            lo: second,
-        }
-        | Expr::NfBucket {
-            resource: first,
-            ids: second,
-        }
-        | Expr::And(first, second)
-        | Expr::Or(first, second)
-        | Expr::Eq(first, second)
-        | Expr::Lt(first, second) => {
-            check_expr_bounds(first, deeper)?;
-            check_expr_bounds(second, deeper)
-        }
-        Expr::List(elements) | Expr::Tuple(elements) => {
-            for element in elements {
-                check_expr_bounds(element, deeper)?;
-            }
-            Ok(())
-        }
-        Expr::SelfResource { material } => {
-            for part in material {
-                check_expr_bounds(part, deeper)?;
-            }
-            Ok(())
-        }
-        Expr::ChildKey {
-            owner, material, ..
-        }
-        | Expr::OrderKey {
-            owner, material, ..
-        } => {
-            check_expr_bounds(owner, deeper)?;
-            for part in material {
-                check_expr_bounds(part, deeper)?;
-            }
-            Ok(())
-        }
+    if let Expr::Literal(literal) = expr
+        && literal.depth() > MAX_VALUE_DEPTH
+    {
+        return Err(MetadataBoundsError(format!(
+            "literal nests deeper than {MAX_VALUE_DEPTH}"
+        )));
     }
+    expr.children()
+        .try_for_each(|child| check_expr_bounds(child, depth + 1))
 }
 
 #[cfg(test)]
@@ -1294,63 +1209,6 @@ mod tests {
             &with(MAX_EFFECTS_PER_SIGNATURE),
             &with(MAX_EFFECTS_PER_SIGNATURE + 1),
         );
-    }
-
-    #[test]
-    fn every_judgment_walks_its_subterms_at_publish() {
-        // What a new variant costs is one recursive case, and a missing
-        // one is silent: the subterm slips past publish and the package
-        // is already immutable when routing refuses every call over it.
-        // So the deep term is buried in each position in turn.
-        let wrapped = |inner: &Expr| {
-            let inner = || Box::new(inner.clone());
-            let shallow = || Box::new(Expr::SelfAddr);
-            vec![
-                Expr::Not(inner()),
-                Expr::And(inner(), shallow()),
-                Expr::And(shallow(), inner()),
-                Expr::Or(inner(), shallow()),
-                Expr::Or(shallow(), inner()),
-                Expr::Eq(inner(), shallow()),
-                Expr::Eq(shallow(), inner()),
-                Expr::Lt(inner(), shallow()),
-                Expr::Lt(shallow(), inner()),
-                Expr::Contains {
-                    map: inner(),
-                    key: shallow(),
-                },
-                Expr::Contains {
-                    map: shallow(),
-                    key: inner(),
-                },
-                Expr::If {
-                    cond: inner(),
-                    then: shallow(),
-                    otherwise: shallow(),
-                },
-                Expr::If {
-                    cond: shallow(),
-                    then: inner(),
-                    otherwise: shallow(),
-                },
-                Expr::If {
-                    cond: shallow(),
-                    then: shallow(),
-                    otherwise: inner(),
-                },
-            ]
-        };
-        // One level down, so the chain that fits exactly still fits and
-        // the one at the bound no longer does.
-        for (admitted, refused) in wrapped(&nested_projection(MAX_EXPR_DEPTH - 1))
-            .into_iter()
-            .zip(wrapped(&nested_projection(MAX_EXPR_DEPTH)))
-        {
-            assert_bounded(
-                &one_method(signature_over(admitted)),
-                &one_method(signature_over(refused)),
-            );
-        }
     }
 
     #[test]

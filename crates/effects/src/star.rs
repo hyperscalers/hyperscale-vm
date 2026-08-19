@@ -178,13 +178,20 @@ fn classify_roles(
 /// aborting the core — and the single output is what makes the value it
 /// yields nameable as one escrow certificate.
 fn is_reservation_shaped(signature: &MethodSignature) -> bool {
-    fn declares_reserve(clauses: &[Clause]) -> bool {
-        clauses.iter().any(|clause| match clause {
-            Clause::Effect { mode, .. } => matches!(mode, ModeExpr::Reserve(_)),
-            Clause::ForEach { body, .. } => declares_reserve(body),
-        })
-    }
-    signature.outputs.len() == 1 && declares_reserve(&signature.effects)
+    signature.outputs.len() == 1
+        && signature
+            .effects
+            .iter()
+            .flat_map(Clause::effects)
+            .any(|clause| {
+                matches!(
+                    clause,
+                    Clause::Effect {
+                        mode: ModeExpr::Reserve(_),
+                        ..
+                    }
+                )
+            })
 }
 
 /// Decide how this transaction's participants divide its execution.
