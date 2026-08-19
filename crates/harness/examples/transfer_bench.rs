@@ -24,8 +24,8 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_runtime::{
-    Returned, add_kernel_to_linker, blessed_engine, call_export, classify, exhausted,
-    validate_component,
+    InstantiationCharges, Returned, add_kernel_to_linker, blessed_engine, call_export, classify,
+    exhausted, instantiate_charged, instantiation_charges, validate_component,
 };
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
@@ -137,6 +137,7 @@ fn funded_store(senders: u32) -> MemoryStore {
 struct Bench {
     engine: Engine,
     pre: InstancePre<KernelSession>,
+    charges: InstantiationCharges,
 }
 
 impl Bench {
@@ -148,15 +149,23 @@ impl Bench {
         let mut linker = Linker::<KernelSession>::new(&engine);
         add_kernel_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
-        Ok(Self { engine, pre })
+        let charges = instantiation_charges(&bytes)?;
+        Ok(Self {
+            engine,
+            pre,
+            charges,
+        })
     }
 }
 
 impl GuestBackend for Bench {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
+        let budget = call.fuel_budget.min(FUEL);
         let mut store = Store::new(&self.engine, session);
-        store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
-        let instance = self.pre.instantiate(&mut store).expect("instantiate");
+        let instance = instantiate_charged(&mut store, budget, &self.charges, |s| {
+            self.pre.instantiate(s)
+        })
+        .expect("instantiate");
         let outcome = call_export(&mut store, &instance, call.export, call.args);
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);
         let result = match outcome {
@@ -164,7 +173,7 @@ impl GuestBackend for Bench {
             Ok(Returned::Declined(code)) => Invoked::Declined(code),
             Err(error) => Invoked::Aborted(classify(&error)),
         };
-        let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
+        let fuel = budget - store.get_fuel().expect("fuel");
         InvokeResult {
             session: store.into_data(),
             fuel,

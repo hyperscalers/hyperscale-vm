@@ -8,7 +8,10 @@
 
 use wasmtime::{Config, Engine, Result, Strategy};
 
-use crate::profile::MAX_WASM_STACK_BYTES;
+use crate::profile::{MAX_MEMORY_PAGES, MAX_WASM_STACK_BYTES};
+
+/// One wasm page: the unit [`MAX_MEMORY_PAGES`] counts.
+const WASM_PAGE_BYTES: u64 = 64 * 1024;
 
 /// The locked engine configuration.
 #[must_use]
@@ -35,6 +38,17 @@ pub fn blessed_config() -> Config {
     // Disabling them makes active-data-segment initialization cost one fuel
     // per byte plus one per segment, identical on every host.
     config.memory_init_cow(false);
+    // Map linear memories at the profile's own ceiling instead of
+    // wasmtime's 4 GiB span: every invocation maps and unmaps a fresh
+    // memory, and the mapped span is that path's cost — page-table work
+    // scales with it, and concurrent invocations serialize on the
+    // address-space lock. The profile caps every memory at
+    // MAX_MEMORY_PAGES, so this reservation admits every grow; the
+    // one-page guard trades elided bounds checks for explicit ones, which
+    // the smaller mapping repays (measured in the harness allocation
+    // spike, which also pins receipt identity across mapping strategies).
+    config.memory_reservation(MAX_MEMORY_PAGES * WASM_PAGE_BYTES);
+    config.memory_guard_size(WASM_PAGE_BYTES);
     config
 }
 
