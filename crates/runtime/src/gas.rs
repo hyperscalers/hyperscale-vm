@@ -1,31 +1,40 @@
-//! The metering layer: engine fuel plus the canonical-ABI copy supplement.
+//! The engine's side of the metering seam.
 //!
-//! Engine fuel meters guest instructions but is blind to boundary copies — a
-//! value crossing the canonical ABI moves bytes with host memcpys the fuel
-//! schedule never sees. Every kernel-world host function therefore charges
-//! [`charge_boundary_bytes`] for the bytes it lifts and lowers, deducted from
-//! the same fuel budget so one number governs the transaction.
+//! The cost model — constants, per-function byte formulas, and the order
+//! charges interleave with host operations — lives in
+//! [`hyperscale_vm_embed::meter`], shared with the reference interpreter.
+//! What this module contributes is the adapter: the wasmtime store as the
+//! meter's two capabilities, its data the host and its fuel the sink, so
+//! boundary debt lands in the same counter the engine's own instruction
+//! checks read.
 
-use wasmtime::{Result, StoreContextMut, Trap};
+use hyperscale_vm_embed::KernelHost;
+use hyperscale_vm_embed::meter::{Exhausted, FuelSink, HostAccess};
+use wasmtime::StoreContextMut;
 
-/// Fuel units charged per byte crossing the canonical ABI boundary.
-pub const FUEL_PER_BOUNDARY_BYTE: u64 = 1;
+/// The store, seen as what the meter needs.
+pub struct Port<'a, 'b, T: 'static>(pub &'a mut StoreContextMut<'b, T>);
 
-/// Deducts the boundary charge for `bytes` from the store's fuel.
-///
-/// # Errors
-///
-/// Fails with [`Trap::OutOfFuel`] when the budget cannot cover the charge —
-/// fuel is set to zero first, matching the engine's own exhaustion behavior —
-/// or if the store has fuel metering disabled.
-pub fn charge_boundary_bytes<T>(store: &mut StoreContextMut<'_, T>, bytes: usize) -> Result<()> {
-    let cost = (bytes as u64).saturating_mul(FUEL_PER_BOUNDARY_BYTE);
-    let fuel = store.get_fuel()?;
-    if let Some(remaining) = fuel.checked_sub(cost) {
-        store.set_fuel(remaining)?;
-        Ok(())
-    } else {
-        store.set_fuel(0)?;
-        Err(Trap::OutOfFuel.into())
+impl<T: KernelHost + 'static> HostAccess for Port<'_, '_, T> {
+    type Host = T;
+
+    fn host(&mut self) -> &mut T {
+        self.0.data_mut()
+    }
+}
+
+impl<T: 'static> FuelSink for Port<'_, '_, T> {
+    fn consume(&mut self, fuel: u64) -> Result<(), Exhausted> {
+        let current = self.0.get_fuel().expect("fuel metering is enabled");
+        if let Some(remaining) = current.checked_sub(fuel) {
+            self.0
+                .set_fuel(remaining)
+                .expect("fuel metering is enabled");
+            Ok(())
+        } else {
+            // Zeroed first, matching the engine's own exhaustion behavior.
+            self.0.set_fuel(0).expect("fuel metering is enabled");
+            Err(Exhausted)
+        }
     }
 }

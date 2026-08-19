@@ -9,34 +9,24 @@
 //! *mode* is as inexpressible as an undeclared key — the canonical ABI
 //! rejects a wrong-typed handle before any host code runs.
 //!
-//! Every function crossing bytes charges the [`crate::gas`] boundary
-//! supplement against the store's fuel: argument bytes before the host
-//! operation, result bytes after it succeeds. A host operation's refusal
-//! (a bad amount cell, an out-of-bounds entry index) is a deterministic
-//! trap carrying the host's own abort class.
-//!
-//! The range functions charge a second supplement, for what materializing
-//! an interval lifted out of the store — bytes that never cross the ABI
-//! and so are invisible to the first. Charged whether the call then
-//! succeeds or refuses, because the page was read either way.
+//! Every function crossing bytes charges the boundary supplement against
+//! the store's fuel. The cost model — prices, per-function byte counts,
+//! and the order charges interleave with host operations — lives once in
+//! [`hyperscale_vm_embed::meter`], shared with the reference interpreter;
+//! [`crate::gas::Port`] adapts the store to it. A host operation's
+//! refusal (a bad amount cell, an out-of-bounds entry index) is a
+//! deterministic trap carrying the host's own abort class.
 
 use core::cmp::Ordering;
 
 use hyperscale_vm_embed::KernelHost;
-use hyperscale_vm_embed::math::{self, Rounding, U256};
+use hyperscale_vm_embed::math::{Rounding, U256};
+use hyperscale_vm_embed::meter::{self, MeterError};
 use hyperscale_vm_types::AbortReason;
 use wasmtime::component::{ComponentType, Lift, Linker, Lower, Resource, ResourceType};
-use wasmtime::{Error, Result, StoreContextMut};
+use wasmtime::{Error, Result, StoreContextMut, Trap};
 
-use crate::gas::charge_boundary_bytes;
-
-/// What an amount costs at the boundary.
-///
-/// The width it has, not the width it travels in: a flat record copies
-/// nothing through linear memory, and pricing it at zero would make a
-/// movement's fee turn on the encoding rather than on the value crossing.
-/// Both engines charge this, which is what keeps the figure agreed.
-const AMOUNT_BOUNDARY_BYTES: usize = 16;
+use crate::gas::Port;
 
 /// The world's `amount`: a `u128` as the two halves the component model
 /// can name.
@@ -70,9 +60,6 @@ impl From<Amount> for u128 {
         Self::from(value.low) | (Self::from(value.high) << 64)
     }
 }
-
-/// What a wide word costs at the boundary: the width it has.
-const WIDE_BOUNDARY_BYTES: usize = 32;
 
 /// The `math` interface's `wide`: a 256-bit word as four limbs, least
 /// significant first.
@@ -202,18 +189,13 @@ fn host_trap(reason: AbortReason) -> Error {
 #[error("kernel refusal: {0:?}")]
 pub struct HostRefusal(pub AbortReason);
 
-/// Charges what the call just made lifted out of the store by scanning.
-///
-/// Every range function asks, because every one of them can reach a
-/// scan — and the session refuses to finish still owing, so one that
-/// stopped asking fails rather than executing for free.
-///
-/// Asked before the call's own refusal propagates, because the page was
-/// read either way: an index the scan does not contain is a refusal the
-/// scan had to happen to reach.
-fn charge_scan<T: KernelHost>(store: &mut StoreContextMut<'_, T>) -> Result<()> {
-    let lifted = store.data_mut().take_scan_debt();
-    charge_boundary_bytes(store, lifted)
+/// A metered failure as an engine error: exhaustion as the engine's own
+/// trap, a kernel refusal with its class recoverable.
+fn fault(error: MeterError) -> Error {
+    match error {
+        MeterError::Exhausted => Trap::OutOfFuel.into(),
+        MeterError::Refused(reason) => host_trap(reason),
+    }
 }
 
 /// Adds the `hyperscale:kernel` interfaces to a component linker.
@@ -273,84 +255,56 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "read-cell-get",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<ReadCell>,)| {
-            let value = store.data_mut().read_cell(r.rep()).map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, value.len())?;
+            let value = meter::read_cell_get(&mut Port(&mut store), r.rep()).map_err(fault)?;
             Ok((value,))
         },
     )?;
     state.func_wrap(
         "locked-cell-get",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<LockedCell>,)| {
-            let value = store.data_mut().locked_cell(r.rep()).map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, value.len())?;
+            let value = meter::locked_cell_get(&mut Port(&mut store), r.rep()).map_err(fault)?;
             Ok((value,))
         },
     )?;
     state.func_wrap(
         "write-cell-get",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<WriteCell>,)| {
-            let value = store
-                .data_mut()
-                .write_cell_get(r.rep())
-                .map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, value.len())?;
+            let value = meter::write_cell_get(&mut Port(&mut store), r.rep()).map_err(fault)?;
             Ok((value,))
         },
     )?;
     state.func_wrap(
         "write-cell-set",
         |mut store: StoreContextMut<'_, T>, (r, value): (Resource<WriteCell>, Vec<u8>)| {
-            charge_boundary_bytes(&mut store, value.len())?;
-            store
-                .data_mut()
-                .write_cell_set(r.rep(), value)
-                .map_err(host_trap)
+            meter::write_cell_set(&mut Port(&mut store), r.rep(), value).map_err(fault)
         },
     )?;
-    // A take charges its amount argument and nothing for the handle it
-    // yields: a bucket crosses as a table index, where the amount it
-    // carries never crosses at all.
     state.func_wrap(
         "mint",
         |mut store: StoreContextMut<'_, T>, (i, amount): (Resource<Issuer>, Amount)| {
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
-            let rep = store
-                .data_mut()
-                .mint(i.rep(), amount.into())
-                .map_err(host_trap)?;
+            let rep = meter::mint(&mut Port(&mut store), i.rep(), amount.into()).map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
     state.func_wrap(
         "amount-cell-balance",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<AmountCell>,)| {
-            let held = store
-                .data_mut()
-                .amount_cell_balance(r.rep())
-                .map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            let held = meter::amount_balance(&mut Port(&mut store), r.rep()).map_err(fault)?;
             Ok((Amount::from(held),))
         },
     )?;
     state.func_wrap(
         "amount-read-balance",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<AmountRead>,)| {
-            let held = store
-                .data_mut()
-                .amount_cell_balance(r.rep())
-                .map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            let held = meter::amount_balance(&mut Port(&mut store), r.rep()).map_err(fault)?;
             Ok((Amount::from(held),))
         },
     )?;
     state.func_wrap(
         "amount-cell-take",
         |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<AmountCell>, Amount)| {
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
-            let rep = store
-                .data_mut()
-                .write_take(r.rep(), amount.into())
-                .map_err(host_trap)?;
+            let rep = meter::amount_cell_take(&mut Port(&mut store), r.rep(), amount.into())
+                .map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
@@ -360,79 +314,58 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "burn",
         |mut store: StoreContextMut<'_, T>, (i, funds): (Resource<Issuer>, Resource<Bucket>)| {
-            store
-                .data_mut()
-                .burn(i.rep(), funds.rep())
-                .map_err(host_trap)
+            meter::burn(&mut Port(&mut store), i.rep(), funds.rep()).map_err(fault)
         },
     )?;
     state.func_wrap(
         "mint-instances",
         |mut store: StoreContextMut<'_, T>, (i, ids): (Resource<Issuer>, Vec<u64>)| {
-            charge_boundary_bytes(&mut store, ids.len() * 8)?;
-            let rep = store
-                .data_mut()
-                .mint_instances(i.rep(), &ids)
-                .map_err(host_trap)?;
+            let rep = meter::mint_instances(&mut Port(&mut store), i.rep(), &ids).map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
     state.func_wrap(
         "instance-range-take",
         |mut store: StoreContextMut<'_, T>, (r, ids): (Resource<InstanceRange>, Vec<u64>)| {
-            charge_boundary_bytes(&mut store, ids.len() * 8)?;
-            let taken = store.data_mut().range_take(r.rep(), &ids);
-            charge_scan(&mut store)?;
-            Ok((Resource::<Bucket>::new_own(taken.map_err(host_trap)?),))
+            let taken =
+                meter::instance_range_take(&mut Port(&mut store), r.rep(), &ids).map_err(fault)?;
+            Ok((Resource::<Bucket>::new_own(taken),))
         },
     )?;
     state.func_wrap(
         "instance-range-put",
         |mut store: StoreContextMut<'_, T>,
          (r, funds, value): (Resource<InstanceRange>, Resource<Bucket>, Vec<u8>)| {
-            charge_boundary_bytes(&mut store, value.len())?;
-            store
-                .data_mut()
-                .range_put(r.rep(), funds.rep(), value)
-                .map_err(host_trap)
+            meter::instance_range_put(&mut Port(&mut store), r.rep(), funds.rep(), value)
+                .map_err(fault)
         },
     )?;
     state.func_wrap(
         "bucket-take",
         |mut store: StoreContextMut<'_, T>, (b, amount): (Resource<Bucket>, Amount)| {
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
-            let rep = store
-                .data_mut()
-                .bucket_take(b.rep(), amount.into())
-                .map_err(host_trap)?;
+            let rep =
+                meter::bucket_take(&mut Port(&mut store), b.rep(), amount.into()).map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
     state.func_wrap(
         "bucket-split",
         |mut store: StoreContextMut<'_, T>, (b, num, den): (Resource<Bucket>, Wide, Wide)| {
-            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 2)?;
-            let rep = store
-                .data_mut()
-                .bucket_split(b.rep(), num.into(), den.into())
-                .map_err(host_trap)?;
+            let rep = meter::bucket_split(&mut Port(&mut store), b.rep(), num.into(), den.into())
+                .map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
     state.func_wrap(
         "bucket-put",
         |mut store: StoreContextMut<'_, T>, (b, other): (Resource<Bucket>, Resource<Bucket>)| {
-            store
-                .data_mut()
-                .bucket_put(b.rep(), other.rep())
-                .map_err(host_trap)
+            meter::bucket_put(&mut Port(&mut store), b.rep(), other.rep()).map_err(fault)
         },
     )?;
     state.func_wrap(
         "bucket-amount",
         |mut store: StoreContextMut<'_, T>, (b,): (Resource<Bucket>,)| {
-            let amount = store.data_mut().bucket_amount(b.rep()).map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            let amount = meter::bucket_amount(&mut Port(&mut store), b.rep()).map_err(fault)?;
             Ok((Amount::from(amount),))
         },
     )?;
@@ -440,36 +373,27 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         "amount-cell-put",
         |mut store: StoreContextMut<'_, T>,
          (r, funds): (Resource<AmountCell>, Resource<Bucket>)| {
-            store
-                .data_mut()
-                .write_put(r.rep(), funds.rep())
-                .map_err(host_trap)
+            meter::amount_cell_put(&mut Port(&mut store), r.rep(), funds.rep()).map_err(fault)
         },
     )?;
     state.func_wrap(
         "delta-cell-put",
         |mut store: StoreContextMut<'_, T>, (r, funds): (Resource<DeltaCell>, Resource<Bucket>)| {
-            store
-                .data_mut()
-                .delta_put(r.rep(), funds.rep())
-                .map_err(host_trap)
+            meter::delta_cell_put(&mut Port(&mut store), r.rep(), funds.rep()).map_err(fault)
         },
     )?;
     state.func_wrap(
         "delta-cell-take",
         |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<DeltaCell>, Amount)| {
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
-            let rep = store
-                .data_mut()
-                .delta_take(r.rep(), amount.into())
-                .map_err(host_trap)?;
+            let rep = meter::delta_cell_take(&mut Port(&mut store), r.rep(), amount.into())
+                .map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
     state.func_wrap(
         "reserve-cell-take",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<ReserveCell>,)| {
-            let rep = store.data_mut().reserve_take(r.rep()).map_err(host_trap)?;
+            let rep = meter::reserve_cell_take(&mut Port(&mut store), r.rep()).map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
@@ -477,84 +401,60 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "range-read-count",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeRead>,)| {
-            let count = store.data_mut().range_count(r.rep());
-            charge_scan(&mut store)?;
-            Ok((count.map_err(host_trap)?,))
+            Ok((meter::range_count(&mut Port(&mut store), r.rep()).map_err(fault)?,))
         },
     )?;
     state.func_wrap(
         "range-read-order",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeRead>, u32)| {
-            let order = store.data_mut().range_order(r.rep(), index);
-            charge_scan(&mut store)?;
-            let order = order.map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            let order = meter::range_order(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
             Ok((Amount::from(order),))
         },
     )?;
     state.func_wrap(
         "range-read-entry",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeRead>, u32)| {
-            let value = store.data_mut().range_entry(r.rep(), index);
-            charge_scan(&mut store)?;
-            let value = value.map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, value.len())?;
+            let value = meter::range_entry(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
             Ok((value,))
         },
     )?;
     state.func_wrap(
         "range-write-count",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeWrite>,)| {
-            let count = store.data_mut().range_count(r.rep());
-            charge_scan(&mut store)?;
-            Ok((count.map_err(host_trap)?,))
+            Ok((meter::range_count(&mut Port(&mut store), r.rep()).map_err(fault)?,))
         },
     )?;
     state.func_wrap(
         "range-write-order",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWrite>, u32)| {
-            let order = store.data_mut().range_order(r.rep(), index);
-            charge_scan(&mut store)?;
-            let order = order.map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            let order = meter::range_order(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
             Ok((Amount::from(order),))
         },
     )?;
     state.func_wrap(
         "range-write-entry",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWrite>, u32)| {
-            let value = store.data_mut().range_entry(r.rep(), index);
-            charge_scan(&mut store)?;
-            let value = value.map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, value.len())?;
+            let value = meter::range_entry(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
             Ok((value,))
         },
     )?;
     state.func_wrap(
         "instance-range-count",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<InstanceRange>,)| {
-            let count = store.data_mut().range_count(r.rep());
-            charge_scan(&mut store)?;
-            Ok((count.map_err(host_trap)?,))
+            Ok((meter::range_count(&mut Port(&mut store), r.rep()).map_err(fault)?,))
         },
     )?;
     state.func_wrap(
         "instance-range-order",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<InstanceRange>, u32)| {
-            let order = store.data_mut().range_order(r.rep(), index);
-            charge_scan(&mut store)?;
-            let order = order.map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            let order = meter::range_order(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
             Ok((Amount::from(order),))
         },
     )?;
     state.func_wrap(
         "instance-range-entry",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<InstanceRange>, u32)| {
-            let value = store.data_mut().range_entry(r.rep(), index);
-            charge_scan(&mut store)?;
-            let value = value.map_err(host_trap)?;
-            charge_boundary_bytes(&mut store, value.len())?;
+            let value = meter::range_entry(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
             Ok((value,))
         },
     )?;
@@ -562,77 +462,82 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         "range-write-set",
         |mut store: StoreContextMut<'_, T>,
          (r, index, value): (Resource<RangeWrite>, u32, Vec<u8>)| {
-            charge_boundary_bytes(&mut store, value.len())?;
-            let set = store.data_mut().range_set(r.rep(), index, value);
-            charge_scan(&mut store)?;
-            set.map_err(host_trap)
+            meter::range_set(&mut Port(&mut store), r.rep(), index, value).map_err(fault)
         },
     )?;
     state.func_wrap(
         "range-write-insert",
         |mut store: StoreContextMut<'_, T>,
          (r, order, value): (Resource<RangeWrite>, Amount, Vec<u8>)| {
-            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES + value.len())?;
-            let inserted = store.data_mut().range_insert(r.rep(), order.into(), value);
-            charge_scan(&mut store)?;
-            inserted.map_err(host_trap)
+            meter::range_insert(&mut Port(&mut store), r.rep(), order.into(), value).map_err(fault)
         },
     )?;
     state.func_wrap(
         "range-write-remove",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWrite>, u32)| {
-            let removed = store.data_mut().range_remove(r.rep(), index);
-            charge_scan(&mut store)?;
-            removed.map_err(host_trap)
+            meter::range_remove(&mut Port(&mut store), r.rep(), index).map_err(fault)
         },
     )?;
 
-    // Wide arithmetic reaches no state and asks the host nothing, so
-    // these call the shared functions rather than a trait the embedder
-    // could answer differently. What the engine contributes is the
-    // charge: the operands and the result cross, and both engines price
-    // them at the width they have.
+    // Wide arithmetic reaches no state and asks the host nothing: the
+    // meter calls the shared functions and prices the crossing, so the
+    // engine contributes only the lift and the lower.
     let mut wide_math = linker.instance("hyperscale:kernel/math")?;
     wide_math.func_wrap(
         "mul-div",
         |mut store: StoreContextMut<'_, T>, (a, b, c, r): (Wide, Wide, Wide, WitRounding)| {
-            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 4)?;
-            let product = math::mul_div(a.into(), b.into(), c.into(), r.into())
-                .map_err(|error| host_trap(error.into()))?;
+            let product = meter::mul_div(
+                &mut Port(&mut store),
+                a.into(),
+                b.into(),
+                c.into(),
+                r.into(),
+            )
+            .map_err(fault)?;
             Ok((Wide::from(product),))
         },
     )?;
     wide_math.func_wrap(
         "geometric-mean",
         |mut store: StoreContextMut<'_, T>, (a, b): (Wide, Wide)| {
-            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 3)?;
-            Ok((Wide::from(math::geometric_mean(a.into(), b.into())),))
+            let mean =
+                meter::geometric_mean(&mut Port(&mut store), a.into(), b.into()).map_err(fault)?;
+            Ok((Wide::from(mean),))
         },
     )?;
     wide_math.func_wrap(
         "fraction-compose",
         |mut store: StoreContextMut<'_, T>, (an, ad, bn, bd): (Wide, Wide, Wide, Wide)| {
-            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 6)?;
-            let (num, den) = math::fraction_compose(an.into(), ad.into(), bn.into(), bd.into())
-                .map_err(|error| host_trap(error.into()))?;
+            let (num, den) = meter::fraction_compose(
+                &mut Port(&mut store),
+                an.into(),
+                ad.into(),
+                bn.into(),
+                bd.into(),
+            )
+            .map_err(fault)?;
             Ok(((Wide::from(num), Wide::from(den)),))
         },
     )?;
     wide_math.func_wrap(
         "fraction-cmp",
         |mut store: StoreContextMut<'_, T>, (an, ad, bn, bd): (Wide, Wide, Wide, Wide)| {
-            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 4)?;
-            let order = math::fraction_cmp(an.into(), ad.into(), bn.into(), bd.into())
-                .map_err(|error| host_trap(error.into()))?;
+            let order = meter::fraction_cmp(
+                &mut Port(&mut store),
+                an.into(),
+                ad.into(),
+                bn.into(),
+                bd.into(),
+            )
+            .map_err(fault)?;
             Ok((WitOrdering::from(order),))
         },
     )?;
     wide_math.func_wrap(
         "fixed-pow",
         |mut store: StoreContextMut<'_, T>, (base, exp, r): (Wide, u32, WitRounding)| {
-            charge_boundary_bytes(&mut store, WIDE_BOUNDARY_BYTES * 2)?;
-            let raised = math::fixed_pow(base.into(), exp, r.into())
-                .map_err(|error| host_trap(error.into()))?;
+            let raised = meter::fixed_pow(&mut Port(&mut store), base.into(), exp, r.into())
+                .map_err(fault)?;
             Ok((Wide::from(raised),))
         },
     )?;
@@ -642,8 +547,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         Ok((store.data().clock_ms(),))
     })?;
     env.func_wrap("randomness", |mut store: StoreContextMut<'_, T>, (): ()| {
-        let draw = store.data().randomness();
-        charge_boundary_bytes(&mut store, draw.len())?;
+        let draw = meter::randomness(&mut Port(&mut store)).map_err(fault)?;
         Ok((draw.to_vec(),))
     })?;
 
@@ -651,8 +555,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     crypto.func_wrap(
         "hash",
         |mut store: StoreContextMut<'_, T>, (data,): (Vec<u8>,)| {
-            let digest = store.data().hash(&data);
-            charge_boundary_bytes(&mut store, data.len() + digest.len())?;
+            let digest = meter::hash(&mut Port(&mut store), &data).map_err(fault)?;
             Ok((digest.to_vec(),))
         },
     )?;
@@ -661,11 +564,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     events.func_wrap(
         "emit",
         |mut store: StoreContextMut<'_, T>, (event_type, payload): (u32, Vec<u8>)| {
-            charge_boundary_bytes(&mut store, payload.len())?;
-            store
-                .data_mut()
-                .emit(event_type, payload)
-                .map_err(host_trap)
+            meter::emit(&mut Port(&mut store), event_type, payload).map_err(fault)
         },
     )?;
 
