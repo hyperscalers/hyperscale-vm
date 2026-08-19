@@ -892,9 +892,6 @@ struct KernelCanon<'c, H> {
     /// both the persistence and the reuse order have to match the blessed
     /// engine's table exactly.
     free: Vec<u32>,
-    /// Bytes crossing the canonical ABI boundary, mirroring the runtime's
-    /// per-byte fuel supplement.
-    boundary_bytes: u64,
     /// Whether guest code may currently leave the component instance.
     ///
     /// The canonical ABI runs two pieces of guest code as its own
@@ -925,6 +922,26 @@ struct KernelCanon<'c, H> {
 /// Fuel charged per boundary byte; must equal the runtime's rate (asserted by
 /// the differential fuel lane).
 pub const FUEL_PER_BOUNDARY_BYTE: u64 = 1;
+
+/// Charges the canonical-ABI boundary supplement into the same counter the
+/// instruction schedule draws on, mirroring the runtime's
+/// `charge_boundary_bytes`: argument bytes before the host operation, result
+/// bytes after it succeeds. With the debt in the one counter, the
+/// interpreter's own exhaustion checks see it at the next function entry or
+/// loop header, exactly as the engine's do.
+///
+/// The overrun check here is strict, like the runtime's `checked_sub`: an
+/// exact-fit charge passes with nothing left, and it is the next instruction
+/// check that exhausts — on both engines.
+const fn charge_boundary(store: &mut Store, bytes: usize) -> Result<(), ExecError> {
+    store.fuel_consumed = store
+        .fuel_consumed
+        .saturating_add((bytes as u64).saturating_mul(FUEL_PER_BOUNDARY_BYTE));
+    match store.fuel_limit {
+        Some(limit) if store.fuel_consumed > limit => Err(ExecError::Trap(Trap::OutOfFuel)),
+        _ => Ok(()),
+    }
+}
 
 /// An instantiated component.
 pub struct RefComponentInstance<'c, H> {
@@ -961,7 +978,6 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
                 resolved_memories,
                 handles: vec![RESERVED_HANDLE],
                 free: Vec::new(),
-                boundary_bytes: 0,
                 may_leave: true,
                 lent: Vec::new(),
                 host,
@@ -1432,10 +1448,11 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
     }
 
     /// Total fuel consumed: the spec instruction schedule plus the boundary
-    /// byte supplement, matching the blessed runtime's accounting.
+    /// byte supplement, one counter, matching the blessed runtime's
+    /// accounting.
     #[must_use]
     pub const fn fuel_consumed(&self) -> u64 {
-        self.store.fuel_consumed + self.canon.boundary_bytes * FUEL_PER_BOUNDARY_BYTE
+        self.store.fuel_consumed
     }
 
     /// Consumes the instance, returning the host.
@@ -1468,28 +1485,13 @@ impl<H: KernelHost> KernelCanon<'_, H> {
             .ok_or(ExecError::Canon(CanonError::Internal("realloc option")))
     }
 
-    /// Charges the canonical-ABI boundary supplement against the same
-    /// budget the instruction schedule draws on, mirroring the runtime's
-    /// `charge_boundary_bytes`: argument bytes before the host operation,
-    /// result bytes after it succeeds.
-    const fn charge_boundary(&mut self, store: &Store, bytes: usize) -> Result<(), ExecError> {
-        self.boundary_bytes += bytes as u64;
-        let total = store
-            .fuel_consumed
-            .saturating_add(self.boundary_bytes * FUEL_PER_BOUNDARY_BYTE);
-        match store.fuel_limit {
-            Some(limit) if total > limit => Err(ExecError::Trap(Trap::OutOfFuel)),
-            _ => Ok(()),
-        }
-    }
-
     /// Charges what the host call just made lifted out of the store by
     /// scanning, mirroring the runtime's `charge_scan` — asked before the
     /// call's own refusal propagates, on the same terms and in the same
     /// order, so the two engines meter one figure.
-    fn charge_scan(&mut self, store: &Store) -> Result<(), ExecError> {
+    fn charge_scan(&mut self, store: &mut Store) -> Result<(), ExecError> {
         let lifted = self.host.take_scan_debt();
-        self.charge_boundary(store, lifted)
+        charge_boundary(store, lifted)
     }
 
     /// Seats a handle, reusing the most recently freed slot.
@@ -1813,7 +1815,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             _ => self.host.write_cell_get(rep),
                         };
                         let bytes = result.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        self.charge_boundary(store, bytes.len())?;
+                        charge_boundary(store, bytes.len())?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[1])?;
                         Ok(Vec::new())
@@ -1829,7 +1831,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             .host
                             .amount_cell_balance(rep)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_amount(store, mem, args[1], held)?;
                         Ok(Vec::new())
@@ -1838,7 +1840,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let rep = self.resolve_handle(args[0], ResourceKind::WriteCell)?;
                         let mem = self.mem_opt(id)?;
                         let bytes = Self::read_guest_bytes(store, mem, args[1], args[2])?;
-                        self.charge_boundary(store, bytes.len())?;
+                        charge_boundary(store, bytes.len())?;
                         self.host
                             .write_cell_set(rep, bytes)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
@@ -1857,7 +1859,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let amount = flat_amount(args[1], args[2]);
-                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
                         let result = if host_fn == HostFn::AmountTake {
                             self.host.write_take(rep, amount)
                         } else {
@@ -1878,7 +1880,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_ids(store, mem, args[1], args[2])?;
-                        self.charge_boundary(store, ids.len() * 8)?;
+                        charge_boundary(store, ids.len() * 8)?;
                         let minted = self
                             .host
                             .mint_instances(rep, &ids)
@@ -1889,7 +1891,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let rep = self.resolve_handle(args[0], ResourceKind::InstanceRange)?;
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_ids(store, mem, args[1], args[2])?;
-                        self.charge_boundary(store, ids.len() * 8)?;
+                        charge_boundary(store, ids.len() * 8)?;
                         let taken = self.host.range_take(rep, &ids);
                         self.charge_scan(store)?;
                         let taken = taken.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
@@ -1900,7 +1902,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let funds = self.consume_bucket(args[1])?;
                         let mem = self.mem_opt(id)?;
                         let value = Self::read_guest_bytes(store, mem, args[2], args[3])?;
-                        self.charge_boundary(store, value.len())?;
+                        charge_boundary(store, value.len())?;
                         self.host
                             .range_put(rep, funds, value)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
@@ -1909,7 +1911,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::BucketTake => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
                         let amount = flat_amount(args[1], args[2]);
-                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
                         let split = self
                             .host
                             .bucket_take(rep, amount)
@@ -1930,7 +1932,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     // blessed engine makes and the lowering of a result
                     // wider than one flat value.
                     HostFn::MulDiv => {
-                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 4)?;
+                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 4)?;
                         let answer = math::mul_div(
                             flat_wide(&args, 0),
                             flat_wide(&args, 4),
@@ -1943,14 +1945,14 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::GeometricMean => {
-                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 3)?;
+                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 3)?;
                         let answer = math::geometric_mean(flat_wide(&args, 0), flat_wide(&args, 4));
                         let mem = self.mem_opt(id)?;
                         Self::write_wide(store, mem, args[8], 0, answer)?;
                         Ok(Vec::new())
                     }
                     HostFn::FractionCompose => {
-                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 6)?;
+                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 6)?;
                         let (num, den) = math::fraction_compose(
                             flat_wide(&args, 0),
                             flat_wide(&args, 4),
@@ -1964,7 +1966,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::FractionCmp => {
-                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 4)?;
+                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 4)?;
                         let order = math::fraction_cmp(
                             flat_wide(&args, 0),
                             flat_wide(&args, 4),
@@ -1979,7 +1981,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         })])
                     }
                     HostFn::FixedPow => {
-                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 2)?;
+                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 2)?;
                         let answer = math::fixed_pow(
                             flat_wide(&args, 0),
                             args[4].as_i32().cast_unsigned(),
@@ -1992,7 +1994,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::BucketSplit => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
-                        self.charge_boundary(store, WIDE_BOUNDARY_BYTES * 2)?;
+                        charge_boundary(store, WIDE_BOUNDARY_BYTES * 2)?;
                         let split = self
                             .host
                             .bucket_split(rep, flat_wide(&args, 1), flat_wide(&args, 5))
@@ -2005,7 +2007,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             .host
                             .bucket_amount(rep)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_amount(store, mem, args[1], amount)?;
                         Ok(Vec::new())
@@ -2029,7 +2031,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::IssuerTake => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
                         let amount = flat_amount(args[1], args[2]);
-                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
                         let bucket = self
                             .host
                             .mint(rep, amount)
@@ -2067,7 +2069,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let order = self.host.range_order(rep, index);
                         self.charge_scan(store)?;
                         let order = order.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_amount(store, mem, args[2], order)?;
                         Ok(Vec::new())
@@ -2083,7 +2085,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let bytes = self.host.range_entry(rep, index);
                         self.charge_scan(store)?;
                         let bytes = bytes.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
-                        self.charge_boundary(store, bytes.len())?;
+                        charge_boundary(store, bytes.len())?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[2])?;
                         Ok(Vec::new())
@@ -2093,7 +2095,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let index = args[1].as_i32().cast_unsigned();
                         let mem = self.mem_opt(id)?;
                         let value = Self::read_guest_bytes(store, mem, args[2], args[3])?;
-                        self.charge_boundary(store, value.len())?;
+                        charge_boundary(store, value.len())?;
                         let set = self.host.range_set(rep, index, value);
                         self.charge_scan(store)?;
                         set.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
@@ -2104,7 +2106,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let mem = self.mem_opt(id)?;
                         let order = flat_amount(args[1], args[2]);
                         let value = Self::read_guest_bytes(store, mem, args[3], args[4])?;
-                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES + value.len())?;
+                        charge_boundary(store, AMOUNT_BOUNDARY_BYTES + value.len())?;
                         let inserted = self.host.range_insert(rep, order, value);
                         self.charge_scan(store)?;
                         inserted.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
@@ -2120,7 +2122,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::Randomness => {
                         let draw = self.host.randomness();
-                        self.charge_boundary(store, draw.len())?;
+                        charge_boundary(store, draw.len())?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &draw, args[0])?;
                         Ok(Vec::new())
@@ -2129,7 +2131,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         let data = Self::read_guest_bytes(store, mem, args[0], args[1])?;
                         let digest = self.host.hash(&data);
-                        self.charge_boundary(store, data.len() + digest.len())?;
+                        charge_boundary(store, data.len() + digest.len())?;
                         self.lower_list(modules, store, mem, realloc, &digest, args[2])?;
                         Ok(Vec::new())
                     }
@@ -2137,7 +2139,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let mem = self.mem_opt(id)?;
                         let event_type = args[0].as_i32().cast_unsigned();
                         let payload = Self::read_guest_bytes(store, mem, args[1], args[2])?;
-                        self.charge_boundary(store, payload.len())?;
+                        charge_boundary(store, payload.len())?;
                         self.host
                             .emit(event_type, payload)
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
