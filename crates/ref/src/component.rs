@@ -265,6 +265,49 @@ const WIDE_BOUNDARY_BYTES: usize = 32;
 /// A handle's width in a spilled result: the core `i32` it is.
 const HANDLE_BYTES: usize = 4;
 
+/// One instance id's width, which is also what a `list<u64>` is aligned
+/// to.
+const ID_BYTES: usize = 8;
+
+/// What a byte list is aligned to, which is nothing.
+const BYTE_ALIGN: usize = 1;
+
+/// What a record of `u64`s is aligned to — an `amount` and a wide word
+/// alike, since a flat record takes the alignment of its widest field.
+const AMOUNT_ALIGN: usize = 8;
+
+/// What a list's `(pointer, length)` pair is aligned to: two `i32`s.
+const PAIR_ALIGN: usize = 4;
+
+/// The byte range a guest pointer names, refused unless it is aligned for
+/// what sits there and lies within memory.
+///
+/// Every pointer this interpreter takes from a guest comes through here:
+/// a lifted list, the area a spilled result is written to, and what
+/// `realloc` hands back. The blessed engine checks both at every one of
+/// them, so an interpreter lenient about either would run an artifact the
+/// engine turns away — which is a divergence rather than a leniency.
+///
+/// Both refusals are the ABI declining to read or write through the
+/// pointer it was handed, and neither is the guest executing a bad load:
+/// no wasm memory instruction ran. So both are a [`CanonError`] and abort
+/// as an ABI violation, which is what the blessed engine calls them too.
+fn guest_span(
+    memory: &[u8],
+    ptr: Value,
+    size: usize,
+    align: usize,
+) -> Result<std::ops::Range<usize>, ExecError> {
+    let start = usize::try_from(ptr.as_i32().cast_unsigned()).expect("32-bit");
+    if start % align != 0 {
+        return Err(ExecError::Canon(CanonError::Misaligned));
+    }
+    match start.checked_add(size) {
+        Some(end) if end <= memory.len() => Ok(start..end),
+        _ => Err(ExecError::Canon(CanonError::PointerOutOfBounds)),
+    }
+}
+
 /// The amount a flattened `record { low: u64, high: u64 }` carries.
 fn flat_amount(low: Value, high: Value) -> u128 {
     u128::from(low.as_i64().cast_unsigned()) | (u128::from(high.as_i64().cast_unsigned()) << 64)
@@ -1143,20 +1186,32 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
                         flat.push(Value::I64(u64::from_le_bytes(*word).cast_signed()));
                     }
                 }
-                (CVal::Ids(ids), CTy::List64) => {
-                    // The byte list's path at the element width an id
-                    // has: eight-aligned, eight bytes each, the same
-                    // realloc and the same flat (ptr, len) pair.
+                // Lower through the lift options: the guest's realloc
+                // allocates, the elements copy in, the (ptr, len) pair
+                // joins the flat arguments — exactly the blessed engine's
+                // argument path, realloc metered as guest code on both.
+                // One arm for both element widths, because the width is
+                // the only thing they differ by and a second copy of this
+                // is a second place to forget what realloc handed back.
+                (CVal::Bytes(_) | CVal::Ids(_), CTy::List8 | CTy::List64) => {
+                    let (elements, width) = match arg {
+                        CVal::Bytes(bytes) => (bytes.clone(), BYTE_ALIGN),
+                        CVal::Ids(ids) => (
+                            ids.iter().flat_map(|id| id.to_le_bytes()).collect(),
+                            ID_BYTES,
+                        ),
+                        _ => unreachable!("the arm matched one of the two"),
+                    };
+                    let count = elements.len() / width;
                     let (Some(mem), Some(realloc)) = (mem_idx, realloc) else {
                         return Err(DecodeError::Unsupported(
                             "list argument without lift options".to_string(),
                         ));
                     };
-                    let count =
-                        i32::try_from(ids.len()).map_err(|_| DecodeError::ArgumentMismatch)?;
-                    let bytes: Vec<u8> = ids.iter().flat_map(|id| id.to_le_bytes()).collect();
                     let size =
-                        i32::try_from(bytes.len()).map_err(|_| DecodeError::ArgumentMismatch)?;
+                        i32::try_from(elements.len()).map_err(|_| DecodeError::ArgumentMismatch)?;
+                    let count = i32::try_from(count).map_err(|_| DecodeError::ArgumentMismatch)?;
+                    let align = i32::try_from(width).expect("an element width is small");
                     self.canon.may_leave = false;
                     let allocated = call(
                         &modules,
@@ -1166,7 +1221,7 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
                         vec![
                             Value::I32(0),
                             Value::I32(0),
-                            Value::I32(8),
+                            Value::I32(align),
                             Value::I32(size),
                         ],
                     );
@@ -1176,54 +1231,14 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
                         Err(e) => return Ok(Err(e)),
                     };
                     let memory = &mut self.store.memories[mem as usize];
-                    let start = usize::try_from(ptr.cast_unsigned()).expect("32-bit");
-                    let Some(end) = start.checked_add(bytes.len()) else {
-                        return Ok(Err(ExecError::Trap(Trap::MemoryOutOfBounds)));
-                    };
-                    if end > memory.data.len() {
-                        return Ok(Err(ExecError::Trap(Trap::MemoryOutOfBounds)));
-                    }
-                    memory.data[start..end].copy_from_slice(&bytes);
+                    let span =
+                        match guest_span(&memory.data, Value::I32(ptr), elements.len(), width) {
+                            Ok(span) => span,
+                            Err(e) => return Ok(Err(e)),
+                        };
+                    memory.data[span].copy_from_slice(&elements);
                     flat.push(Value::I32(ptr));
                     flat.push(Value::I32(count));
-                }
-                (CVal::Bytes(bytes), CTy::List8) => {
-                    // Lower through the lift options: the guest's realloc
-                    // allocates, the bytes copy in, the (ptr, len) pair
-                    // joins the flat arguments — exactly the blessed
-                    // engine's argument path, realloc metered as guest
-                    // code on both.
-                    let (Some(mem), Some(realloc)) = (mem_idx, realloc) else {
-                        return Err(DecodeError::Unsupported(
-                            "list argument without lift options".to_string(),
-                        ));
-                    };
-                    let len =
-                        i32::try_from(bytes.len()).map_err(|_| DecodeError::ArgumentMismatch)?;
-                    self.canon.may_leave = false;
-                    let allocated = call(
-                        &modules,
-                        &mut self.canon,
-                        &mut self.store,
-                        realloc,
-                        vec![Value::I32(0), Value::I32(0), Value::I32(1), Value::I32(len)],
-                    );
-                    self.canon.may_leave = true;
-                    let ptr = match allocated {
-                        Ok(values) => values.first().copied().unwrap_or(Value::I32(0)).as_i32(),
-                        Err(e) => return Ok(Err(e)),
-                    };
-                    let memory = &mut self.store.memories[mem as usize];
-                    let start = usize::try_from(ptr.cast_unsigned()).expect("32-bit");
-                    let Some(end) = start.checked_add(bytes.len()) else {
-                        return Ok(Err(ExecError::Trap(Trap::MemoryOutOfBounds)));
-                    };
-                    if end > memory.data.len() {
-                        return Ok(Err(ExecError::Trap(Trap::MemoryOutOfBounds)));
-                    }
-                    memory.data[start..end].copy_from_slice(bytes);
-                    flat.push(Value::I32(ptr));
-                    flat.push(Value::I32(len));
                 }
                 _ => return Err(DecodeError::ArgumentMismatch),
             }
@@ -1574,20 +1589,15 @@ impl<H: KernelHost> KernelCanon<'_, H> {
         let results = results?;
         let ptr = results.first().copied().unwrap_or(Value::I32(0)).as_i32();
         let mem = &mut store.memories[mem_idx as usize];
-        let start = usize::try_from(ptr.cast_unsigned()).expect("32-bit");
-        let end = start
-            .checked_add(bytes.len())
-            .ok_or(ExecError::Trap(Trap::MemoryOutOfBounds))?;
-        if end > mem.data.len() {
-            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
-        }
-        mem.data[start..end].copy_from_slice(bytes);
-        let ret = usize::try_from(retptr.as_i32().cast_unsigned()).expect("32-bit");
-        if ret + 8 > mem.data.len() {
-            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
-        }
-        mem.data[ret..ret + 4].copy_from_slice(&ptr.to_le_bytes());
-        mem.data[ret + 4..ret + 8].copy_from_slice(&len.to_le_bytes());
+        // What realloc handed back is a guest pointer like any other.
+        let span = guest_span(&mem.data, Value::I32(ptr), bytes.len(), BYTE_ALIGN)?;
+        mem.data[span].copy_from_slice(bytes);
+        // The area the (pointer, length) pair lands in is two `i32`s, so
+        // it is four-aligned.
+        let ret = guest_span(&mem.data, retptr, 8, PAIR_ALIGN)?;
+        let at = ret.start;
+        mem.data[at..at + 4].copy_from_slice(&ptr.to_le_bytes());
+        mem.data[at + 4..at + 8].copy_from_slice(&len.to_le_bytes());
         Ok(())
     }
 
@@ -1603,14 +1613,8 @@ impl<H: KernelHost> KernelCanon<'_, H> {
         amount: u128,
     ) -> Result<(), ExecError> {
         let mem = &mut store.memories[mem_idx as usize];
-        let at = usize::try_from(retptr.as_i32().cast_unsigned()).expect("32-bit");
-        let end = at
-            .checked_add(AMOUNT_BOUNDARY_BYTES)
-            .ok_or(ExecError::Trap(Trap::MemoryOutOfBounds))?;
-        if end > mem.data.len() {
-            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
-        }
-        mem.data[at..end].copy_from_slice(&amount.to_le_bytes());
+        let at = guest_span(&mem.data, retptr, AMOUNT_BOUNDARY_BYTES, AMOUNT_ALIGN)?;
+        mem.data[at].copy_from_slice(&amount.to_le_bytes());
         Ok(())
     }
 
@@ -1626,18 +1630,17 @@ impl<H: KernelHost> KernelCanon<'_, H> {
         value: U256,
     ) -> Result<(), ExecError> {
         let mem = &mut store.memories[mem_idx as usize];
-        let at = usize::try_from(retptr.as_i32().cast_unsigned()).expect("32-bit") + at_offset;
-        let end = at
-            .checked_add(WIDE_BOUNDARY_BYTES)
-            .ok_or(ExecError::Trap(Trap::MemoryOutOfBounds))?;
-        if end > mem.data.len() {
-            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
-        }
-        for (limb, chunk) in value
-            .limbs()
-            .iter()
-            .zip(mem.data[at..end].chunks_exact_mut(8))
-        {
+        // The offset is a field within the area, and every field of a
+        // flat record of `u64`s sits at a multiple of the record's own
+        // alignment — so the base is what has to be aligned.
+        let base = guest_span(
+            &mem.data,
+            retptr,
+            at_offset + WIDE_BOUNDARY_BYTES,
+            AMOUNT_ALIGN,
+        )?;
+        let at = base.start + at_offset..base.end;
+        for (limb, chunk) in value.limbs().iter().zip(mem.data[at].chunks_exact_mut(8)) {
             chunk.copy_from_slice(&limb.to_le_bytes());
         }
         Ok(())
@@ -1651,16 +1654,12 @@ impl<H: KernelHost> KernelCanon<'_, H> {
         len: Value,
     ) -> Result<Vec<u64>, ExecError> {
         let mem = &store.memories[mem_idx as usize];
-        let start = usize::try_from(ptr.as_i32().cast_unsigned()).expect("32-bit");
         let count = usize::try_from(len.as_i32().cast_unsigned()).expect("32-bit");
-        let end = count
-            .checked_mul(8)
-            .and_then(|width| start.checked_add(width))
-            .ok_or(ExecError::Trap(Trap::MemoryOutOfBounds))?;
-        if end > mem.data.len() {
-            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
-        }
-        Ok(mem.data[start..end]
+        let size = count
+            .checked_mul(ID_BYTES)
+            .ok_or(ExecError::Canon(CanonError::PointerOutOfBounds))?;
+        let span = guest_span(&mem.data, ptr, size, ID_BYTES)?;
+        Ok(mem.data[span]
             .as_chunks::<8>()
             .0
             .iter()
@@ -1675,15 +1674,9 @@ impl<H: KernelHost> KernelCanon<'_, H> {
         len: Value,
     ) -> Result<Vec<u8>, ExecError> {
         let mem = &store.memories[mem_idx as usize];
-        let start = usize::try_from(ptr.as_i32().cast_unsigned()).expect("32-bit");
         let n = usize::try_from(len.as_i32().cast_unsigned()).expect("32-bit");
-        let end = start
-            .checked_add(n)
-            .ok_or(ExecError::Trap(Trap::MemoryOutOfBounds))?;
-        if end > mem.data.len() {
-            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
-        }
-        Ok(mem.data[start..end].to_vec())
+        let span = guest_span(&mem.data, ptr, n, BYTE_ALIGN)?;
+        Ok(mem.data[span].to_vec())
     }
 }
 

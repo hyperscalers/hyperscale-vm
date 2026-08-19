@@ -60,6 +60,16 @@ pub enum CanonError {
     /// the ABI runs while it is mid-lowering, where the component instance
     /// is not free to be left.
     CannotLeave,
+    /// A guest pointer at an offset the canonical ABI does not admit for
+    /// what sits there.
+    Misaligned,
+    /// A guest pointer naming memory that is not there, or a length that
+    /// runs past the end of it.
+    ///
+    /// Not a memory trap: the guest executed no load, and what refused is
+    /// the ABI declining to read through the pointer it was handed. The
+    /// blessed engine says the same, so the two abort under one name.
+    PointerOutOfBounds,
     /// A deterministic kernel refusal, carrying the host's own class.
     Host(AbortReason),
     /// An unresolved canon definition — a decoder or instantiation defect,
