@@ -36,12 +36,12 @@ use hyperscale_vm_effects::{
 
 use crate::ledger::AmountLedger;
 use crate::locality::Locality;
-use crate::modes::{ModeError, TxHash};
+use crate::modes::TxHash;
 use crate::overlay::OverlayStore;
 use crate::session::{
     EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt, StateDelta,
 };
-use crate::store::{Baseline, StoreError, Substates, WorkingStore};
+use crate::store::{Baseline, Fault, StoreError, Substates, WorkingStore};
 use crate::supply::SupplyDelta;
 use crate::work::Work;
 
@@ -1091,11 +1091,14 @@ fn apply_completed(
     for (key, movement) in owned.movements() {
         match store.apply_movement(key, movement.credit, movement.debit) {
             Ok(_) => {}
-            Err(
-                StoreError::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)
-                | StoreError::HeldExceedsCommitted(_),
-            ) => return Ok(Some((key, movement.debit))),
-            Err(defect) => return Err(defect.into()),
+            Err(defect) => match defect.fault() {
+                Fault::Floor => return Ok(Some((key, movement.debit))),
+                // Cross-group interaction is commutative by construction,
+                // so bytes that stopped being an amount cannot appear
+                // between judging and applying — a declaration fault
+                // here, like any other refusal, is the kernel's own.
+                Fault::Declaration(_) | Fault::Defect => return Err(defect.into()),
+            },
         }
     }
     for (key, _) in owned.settles() {
@@ -1103,11 +1106,13 @@ fn apply_completed(
             Ok(_) => {}
             // The refusal left the hold standing, so the amount the
             // transaction lost is still readable.
-            Err(StoreError::HeldExceedsCommitted(_)) => {
-                let amount = store.held_reservation(key, tx).unwrap_or_default();
-                return Ok(Some((key, amount)));
-            }
-            Err(defect) => return Err(defect.into()),
+            Err(defect) => match defect.fault() {
+                Fault::Floor => {
+                    let amount = store.held_reservation(key, tx).unwrap_or_default();
+                    return Ok(Some((key, amount)));
+                }
+                Fault::Declaration(_) | Fault::Defect => return Err(defect.into()),
+            },
         }
     }
     Ok(None)

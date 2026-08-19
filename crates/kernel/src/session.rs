@@ -27,7 +27,7 @@ use crate::locality::Locality;
 use crate::modes::{AMOUNT_CELL_BYTES, DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
 use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
-use crate::store::{Access, StoreError, WorkingStore};
+use crate::store::{Access, Fault, StoreError, WorkingStore};
 use crate::supply::SupplyDelta;
 
 /// The ordered-collection interval a range handle names.
@@ -1851,12 +1851,9 @@ impl KernelSession {
     /// settles once, whole — a second settle of the same hold would find
     /// it already gone.
     ///
-    /// The outer error is a kernel defect; the inner `Err` is the
-    /// refusal the caller aborts the transaction with.
-    #[allow(clippy::type_complexity)] // verdict-or-defect, both fallible
-    fn settle_reservations(
-        &mut self,
-    ) -> Result<Result<BTreeMap<SubstateKey, u128>, Outcome>, FinishError> {
+    /// The error is a kernel defect; a refusal the caller aborts the
+    /// transaction with comes back as [`Settlement::Aborted`].
+    fn settle_reservations(&mut self) -> Result<Settlement, FinishError> {
         let mut settles = BTreeMap::new();
         for index in 0..self.table.len() {
             if let Capability::Reserve { key, .. } = self.table[index] {
@@ -1879,21 +1876,25 @@ impl KernelSession {
                     // cell below the reservation it still covers. The
                     // reserver lost that race, and the refusal left its
                     // hold standing, so the amount is still readable.
-                    Err(StoreError::HeldExceedsCommitted(_)) => {
-                        let amount = self
-                            .store
-                            .held_reservation(key, self.tx)
-                            .unwrap_or_default();
-                        return Ok(Err(Outcome::Infeasible { key, amount }));
-                    }
-                    Err(defect) => match declaration_defect(&defect) {
-                        Some(outcome) => return Ok(Err(outcome)),
-                        None => return Err(defect.into()),
+                    Err(defect) => match defect.fault() {
+                        Fault::Floor => {
+                            let amount = self
+                                .store
+                                .held_reservation(key, self.tx)
+                                .unwrap_or_default();
+                            return Ok(Settlement::Aborted(Outcome::Infeasible { key, amount }));
+                        }
+                        Fault::Declaration(error) => {
+                            return Ok(Settlement::Aborted(Outcome::UserError {
+                                reason: error.into(),
+                            }));
+                        }
+                        Fault::Defect => return Err(defect.into()),
                     },
                 }
             }
         }
-        Ok(Ok(settles))
+        Ok(Settlement::Settled(settles))
     }
 
     /// Close the session: fold queued deltas, settle this transaction's
@@ -1983,16 +1984,15 @@ impl KernelSession {
                 // same deterministic loss: the floor this movement needed
                 // is not there, and the transaction that declared the
                 // movement is the one that loses.
-                Err(
-                    StoreError::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)
-                    | StoreError::HeldExceedsCommitted(_),
-                ) => Outcome::Infeasible {
-                    key: *key,
-                    amount: movement.debit,
-                },
-                Err(defect) => match declaration_defect(&defect) {
-                    Some(outcome) => outcome,
-                    None => return Err(defect.into()),
+                Err(defect) => match defect.fault() {
+                    Fault::Floor => Outcome::Infeasible {
+                        key: *key,
+                        amount: movement.debit,
+                    },
+                    Fault::Declaration(error) => Outcome::UserError {
+                        reason: error.into(),
+                    },
+                    Fault::Defect => return Err(defect.into()),
                 },
             };
             return Ok(abort_with(self.store, refusal, fuel));
@@ -2006,16 +2006,23 @@ impl KernelSession {
             .retain_pending_deltas(&|key: SubstateKey| locality.is_local(key.owner));
         if let Err(defect) = self.store.commit_deltas() {
             // Every remaining fold is on an owned cell the movement judge
-            // just cleared, so anything but a declaration defect here is
-            // the kernel's.
-            return match declaration_defect(&defect) {
-                Some(outcome) => Ok(abort_with(self.store, outcome, fuel)),
-                None => Err(defect.into()),
+            // just cleared, so a floor here — like anything else that is
+            // not a declaration defect — is the kernel disagreeing with
+            // itself.
+            return match defect.fault() {
+                Fault::Declaration(error) => Ok(abort_with(
+                    self.store,
+                    Outcome::UserError {
+                        reason: error.into(),
+                    },
+                    fuel,
+                )),
+                Fault::Floor | Fault::Defect => Err(defect.into()),
             };
         }
         let settles = match self.settle_reservations()? {
-            Ok(settles) => settles,
-            Err(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
+            Settlement::Settled(settles) => settles,
+            Settlement::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
         };
         let escaped = undeclared_accesses(self.store.access_log(), &self.declared);
         if !escaped.is_empty() {
@@ -2093,6 +2100,13 @@ fn total_movement(ops: &[DeltaOp]) -> Result<Movement, ModeError> {
     Ok(movement)
 }
 
+/// How a session's reservations settled: the per-cell amounts, or the
+/// outcome the transaction aborts with instead.
+enum Settlement {
+    Settled(BTreeMap<SubstateKey, u128>),
+    Aborted(Outcome),
+}
+
 /// Abandon everything this transaction did and report the failure as its
 /// own rather than the batch's.
 fn abort_with(mut store: OverlayStore, outcome: Outcome, fuel: u64) -> (Receipt, OverlayStore) {
@@ -2110,23 +2124,6 @@ fn abort_with(mut store: OverlayStore, outcome: Outcome, fuel: u64) -> (Receipt,
         },
         store,
     )
-}
-
-/// Whether a store refusal belongs to the transaction that provoked it.
-///
-/// A cell that is not an amount cell is the one such refusal: something
-/// holding an exclusive write put other bytes there, and a commutative
-/// mode declared over it cannot fold. That is the declaring transaction's
-/// defect — the same verdict an unusable reserve target gets — and the
-/// batch carries on without it. Every other store refusal is a kernel
-/// defect and stops the batch.
-fn declaration_defect(defect: &StoreError) -> Option<Outcome> {
-    match defect {
-        StoreError::Mode(error @ ModeError::BadAmountCell(_)) => Some(Outcome::UserError {
-            reason: (*error).into(),
-        }),
-        _ => None,
-    }
 }
 
 /// Judge what every declared write requires of the leaf it lands on.

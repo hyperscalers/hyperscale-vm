@@ -59,6 +59,41 @@ pub enum StoreError {
     Mode(#[from] ModeError),
 }
 
+/// Whose fault a store refusal is.
+///
+/// Decided beside the error, so every consumer — settling a group's
+/// reservations, judging movements at finish, replaying them at apply —
+/// reads one classification instead of restating the match. What each
+/// site *does* with a class stays the site's policy: a floor loss at
+/// finish aborts the transaction, while the same class after the judge
+/// has cleared every fold is the kernel disagreeing with itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fault {
+    /// The transaction's own deterministic loss: the floor its movement
+    /// or reservation needed is not there. An uncovered debit, and a
+    /// cell an exclusive write left below the reservations still
+    /// outstanding on it, are the same loss.
+    Floor,
+    /// The declaring transaction's defect, priced as one: a commutative
+    /// mode declared over bytes that are not an amount cell.
+    Declaration(ModeError),
+    /// The kernel's own defect; stops the batch.
+    Defect,
+}
+
+impl StoreError {
+    /// This refusal, classified.
+    #[must_use]
+    pub const fn fault(&self) -> Fault {
+        match self {
+            Self::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)
+            | Self::HeldExceedsCommitted(_) => Fault::Floor,
+            Self::Mode(error @ ModeError::BadAmountCell(_)) => Fault::Declaration(*error),
+            _ => Fault::Defect,
+        }
+    }
+}
+
 impl From<StoreError> for AbortReason {
     fn from(error: StoreError) -> Self {
         match error {

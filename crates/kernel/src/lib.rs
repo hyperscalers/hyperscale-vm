@@ -53,7 +53,9 @@ pub use session::{
     MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, Movement,
     Outcome, Receipt, SessionTrap, StateDelta,
 };
-pub use store::{Access, AppliedDelta, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
+pub use store::{
+    Access, AppliedDelta, Baseline, Fault, MemoryStore, StoreError, Substates, WorkingStore,
+};
 pub use supply::{SupplyDelta, SupplyLedger};
 pub use walk::{GuestBackend, GuestCall, InvokeResult, ManifestWalk};
 pub use work::Work;
