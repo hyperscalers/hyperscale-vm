@@ -21,7 +21,17 @@
 //!   only: an enum's variants would each cover different content under one
 //!   domain. The domain must not be empty, and no two message types may
 //!   share one.
-//!
+//! - `#[hbor(signing_context = Ty)]` — the signing preimage mixes a value
+//!   of `Ty` in ahead of the fields, and `signing_bytes` takes one: how a
+//!   message binds to the session it is for — a network id — without
+//!   carrying it as a field. Only beside `signing_domain`.
+//! - `#[hbor(infallible)]` — also emit `HborInfallible`, with
+//!   `MAX_ENCODED_LEN` summed from the fields' own bounds. The type must
+//!   hold only infallible fields; the no-alloc encoding path is what it
+//!   buys.
+//! - `#[hbor(crate = path)]` — the path generated code names the hbor
+//!   crate by, for a caller that reaches it through a re-export rather
+//!   than as a direct dependency.
 //!
 //! On a variant:
 //!
@@ -43,6 +53,9 @@
 //!   transmitted, they just cannot be part of what they cover. A field added
 //!   later is signed unless it says otherwise, so widening a message cannot
 //!   quietly leave the new content unauthenticated.
+//! - `#[hbor(skip)]` — not on the wire at all: encoded as nothing, rebuilt
+//!   as `Default::default()` at decode. What a locally-derived cache rides
+//!   a wire type as, so a peer can never supply it.
 //!
 //! A cap is a protocol bound, not a safety one — decoding already refuses a
 //! length the remaining input cannot satisfy, whether or not a field declares

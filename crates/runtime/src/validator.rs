@@ -8,6 +8,7 @@
 //! component-level import allowlist.
 
 use thiserror::Error;
+use wasmparser::types::Types;
 use wasmparser::{
     ComponentAlias, ComponentDefinedType, ComponentExternalKind, ComponentImportSectionReader,
     ComponentType, ComponentTypeRef, ComponentValType, CompositeInnerType, ConstExpr, DataKind,
@@ -83,6 +84,17 @@ pub(crate) fn profile_features() -> WasmFeatures {
 /// Returns the first [`ProfileError`] encountered; verdicts are deterministic
 /// functions of the bytes.
 pub fn validate_component(bytes: &[u8]) -> Result<(), ProfileError> {
+    validated_component(bytes).map(|_| ())
+}
+
+/// As [`validate_component`], handing back the validation's own type
+/// information — what lets a caller that goes on to read the exports do
+/// so without validating the same bytes twice.
+///
+/// # Errors
+///
+/// As [`validate_component`].
+pub fn validated_component(bytes: &[u8]) -> Result<Types, ProfileError> {
     if bytes.len() > profile::MAX_COMPONENT_BYTES {
         return Err(ProfileError::ComponentTooLarge {
             actual: bytes.len(),
@@ -93,7 +105,7 @@ pub fn validate_component(bytes: &[u8]) -> Result<(), ProfileError> {
         return Err(ProfileError::NotAComponent);
     }
 
-    Validator::new_with_features(profile_features())
+    let types = Validator::new_with_features(profile_features())
         .validate_all(bytes)
         .map_err(|e| ProfileError::Feature(e.to_string()))?;
 
@@ -101,7 +113,8 @@ pub fn validate_component(bytes: &[u8]) -> Result<(), ProfileError> {
     // The stack bound runs once over the whole component: a core module's
     // imports are wired to other modules' exports, and judging each module
     // alone would weigh those edges at zero.
-    check_component_stack_bounds(bytes)
+    check_component_stack_bounds(bytes)?;
+    Ok(types)
 }
 
 /// A value type the profile models, as a type-index slot records it.

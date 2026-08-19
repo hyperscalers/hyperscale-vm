@@ -96,15 +96,13 @@ impl RoleSet {
 /// The one thing in the cell that stays opaque, and for a reason the
 /// runtime fixes rather than a preference. A [`StoredRule`] is
 /// recursive, so its decoder is; the deterministic profile requires an
-/// acyclic call graph, because a static stack bound is what makes stack
-/// exhaustion unreachable in both engines rather than reachable at
-/// different depths in each ([crates/runtime/src/frames.rs]). A guest
+/// acyclic call graph — the runtime's frame-bound check — because a
+/// static stack bound is what makes stack exhaustion unreachable in both
+/// engines rather than reachable at different depths in each. A guest
 /// therefore cannot carry a rule's codec, and a package that stores
 /// authority moves these bytes without reading them. Whoever judges a
 /// rule decodes them, under the vocabulary's own caps, where the judging
 /// happens.
-///
-/// [crates/runtime/src/frames.rs]: https://docs.rs/
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 #[hbor(transparent)]
 pub struct StoredRoles(pub Vec<u8>);

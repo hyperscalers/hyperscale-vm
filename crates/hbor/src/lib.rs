@@ -191,15 +191,6 @@ pub fn to_slice_infallible<'b, T: HborInfallible + ?Sized>(
     written.and_then(|len| out.get(..len)).unwrap_or_default()
 }
 
-/// Encode `value`, which cannot fail.
-///
-/// The heap twin of [`to_slice_infallible`], for a caller with an
-/// allocator it may use.
-#[must_use]
-pub fn to_vec_infallible<T: HborInfallible + ?Sized>(value: &T) -> Vec<u8> {
-    to_vec(value).unwrap_or_default()
-}
-
 /// Encode `value` at [`DEFAULT_MAX_DEPTH`].
 ///
 /// # Errors

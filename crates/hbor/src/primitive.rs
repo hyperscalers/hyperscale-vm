@@ -156,6 +156,10 @@ impl<T: HborWidth + ?Sized> HborWidth for std::sync::Arc<T> {
     const MIN_ENCODED_LEN: usize = T::MIN_ENCODED_LEN;
 }
 
+impl<T: HborInfallible + ?Sized> HborInfallible for std::sync::Arc<T> {
+    const MAX_ENCODED_LEN: usize = T::MAX_ENCODED_LEN;
+}
+
 impl<T: HborEncode + ?Sized> HborEncode for std::sync::Arc<T> {
     fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         (**self).encode(encoder)

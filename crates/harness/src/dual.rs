@@ -26,7 +26,7 @@ use hyperscale_vm_runtime::{
     add_kernel_to_linker, blessed_engine, classify, instantiate_charged, instantiation_charges,
     validate_component,
 };
-use hyperscale_vm_types::{AbortReason, Address, EffectSet, TxHash};
+use hyperscale_vm_types::{ADDRESS_WORDS, AbortReason, Address, EffectSet, TxHash};
 use wasmtime::component::{Component, Instance, Linker, Resource, ResourceAny, Val};
 use wasmtime::error::{bail, ensure, format_err};
 use wasmtime::{Engine, Result, Store};
@@ -273,12 +273,13 @@ fn lower(store: &mut Store<KernelSession>, arg: &CVal) -> Result<Val> {
                     bytes[at..at + 8].try_into().expect("eight bytes"),
                 ))
             };
-            Val::Record(vec![
-                ("a".to_owned(), word(0)),
-                ("b".to_owned(), word(8)),
-                ("c".to_owned(), word(16)),
-                ("d".to_owned(), word(24)),
-            ])
+            Val::Record(
+                ADDRESS_WORDS
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| ((*name).to_owned(), word(index * 8)))
+                    .collect(),
+            )
         }
         CVal::Bytes(bytes) => Val::List(bytes.iter().copied().map(Val::U8).collect()),
         CVal::Ids(ids) => Val::List(ids.iter().copied().map(Val::U64).collect()),

@@ -18,8 +18,8 @@
 //!   different index at each use site. The tracer records binders by
 //!   absolute depth and converts at the point of use, so an author never
 //!   writes an index at all.
-//! - **Fresh slots.** [`Expr::FreshId`] and [`Expr::FreshKey`] slots must
-//!   be unique within a signature. A counter cannot get that wrong.
+//! - **Fresh slots.** [`Expr::FreshId`] slots must be unique within a
+//!   signature. A counter cannot get that wrong.
 //! - **The structural bounds.** [`MAX_EXPR_DEPTH`] and
 //!   [`MAX_CLAUSE_DEPTH`] are checked here, at build time, rather than at
 //!   routing time — where the package is already published and every call
@@ -252,13 +252,6 @@ impl Trace {
     pub const fn fresh_id(&mut self) -> Sym<Num> {
         let slot = self.take_slot();
         Sym::new(Expr::FreshId { slot })
-    }
-
-    /// The key of an object this call creates, in the next unused slot.
-    #[must_use]
-    pub const fn fresh_key(&mut self) -> Sym<Key> {
-        let slot = self.take_slot();
-        Sym::new(Expr::FreshKey { slot })
     }
 
     const fn take_slot(&mut self) -> u32 {
@@ -1065,12 +1058,12 @@ mod tests {
     #[test]
     fn fresh_slots_are_unique_within_a_signature() {
         let mut trace = Trace::new(vec![]);
-        let a = trace.fresh_key();
+        let a = trace.fresh_id();
         let b = trace.fresh_id();
-        let c = trace.fresh_key();
-        assert_eq!(a.expr(), &Expr::FreshKey { slot: 0 });
+        let c = trace.fresh_id();
+        assert_eq!(a.expr(), &Expr::FreshId { slot: 0 });
         assert_eq!(b.expr(), &Expr::FreshId { slot: 1 });
-        assert_eq!(c.expr(), &Expr::FreshKey { slot: 2 });
+        assert_eq!(c.expr(), &Expr::FreshId { slot: 2 });
     }
 
     #[test]

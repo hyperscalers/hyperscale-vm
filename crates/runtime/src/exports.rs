@@ -11,10 +11,11 @@
 
 use std::collections::BTreeMap;
 
+use hyperscale_vm_types::CellKind;
 use wasmparser::component_types::{
     ComponentAnyTypeId, ComponentDefinedType, ComponentEntityType, ComponentValType, ResourceId,
 };
-use wasmparser::types::TypesRef;
+use wasmparser::types::{Types, TypesRef};
 use wasmparser::{ComponentExternalKind, Parser, Payload, PrimitiveValType, Validator};
 
 use crate::validator::{ProfileError, profile_features};
@@ -23,10 +24,12 @@ use crate::validator::{ProfileError, profile_features};
 /// can put there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExportParam {
-    /// `borrow<R>` of a state resource, named as the
-    /// `hyperscale:kernel/state` interface exports it — `"read-cell"`,
-    /// `"write-cell"`, and so on.
-    Handle(String),
+    /// `borrow<R>` of a state cell, at the kind whose world type the
+    /// `hyperscale:kernel/state` interface exports it as — one
+    /// correspondence, [`CellKind::world_type`]'s own.
+    Handle(CellKind),
+    /// `borrow<issuer>`: this invocation's authority to create value.
+    Issuer,
     /// `own<bucket>`: a value edge the call transfers into the guest.
     Bucket,
     /// `list<u8>`: keys, opaque values, and every other byte-shaped one.
@@ -73,6 +76,21 @@ pub fn component_exports(bytes: &[u8]) -> Result<BTreeMap<String, ExportShape>, 
     let types = Validator::new_with_features(profile_features())
         .validate_all(bytes)
         .map_err(|error| ProfileError::Feature(error.to_string()))?;
+    classify_exports(bytes, &types)
+}
+
+/// As [`component_exports`], over types a validation already in hand
+/// produced — how the publish gate reads the exports without validating
+/// the same bytes twice.
+///
+/// # Errors
+///
+/// [`ProfileError::Feature`] if the export section does not parse, which
+/// a validated artifact's cannot.
+pub fn classify_exports(
+    bytes: &[u8],
+    types: &Types,
+) -> Result<BTreeMap<String, ExportShape>, ProfileError> {
     let types = types.as_ref();
     let resources = state_resources(types);
 
@@ -202,7 +220,11 @@ fn param_shape(
             }) => ExportParam::Bytes,
             Some(ComponentDefinedType::Borrow(resource)) => resources
                 .get(&resource.resource())
-                .map_or(ExportParam::Other, |name| ExportParam::Handle(name.clone())),
+                .map_or(ExportParam::Other, |name| match name.as_str() {
+                    "issuer" => ExportParam::Issuer,
+                    named => CellKind::from_world_type(named)
+                        .map_or(ExportParam::Other, ExportParam::Handle),
+                }),
             // An owned handle is a value edge: the world owns one such
             // resource, and a body that holds one holds value.
             Some(ComponentDefinedType::Own(_)) => ExportParam::Bucket,

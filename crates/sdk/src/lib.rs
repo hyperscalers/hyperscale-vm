@@ -144,7 +144,7 @@ pub mod state;
 pub mod sym;
 pub mod trace;
 
-pub use blueprint::{Blueprint, Builder, HandlePlan, HandleShape, Method, TargetShape};
+pub use blueprint::{Blueprint, Builder, Method};
 // Re-exported so `#[blueprint]` output names one crate, and so a contract
 // never has to depend on `vm-effects` directly.
 pub use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};

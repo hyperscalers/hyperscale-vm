@@ -26,7 +26,6 @@
 use core::marker::PhantomData;
 
 use hyperscale_vm_effects::{Expr, ParamType, SlotId, Value};
-use hyperscale_vm_types::Address;
 
 /// A symbolic value's static kind.
 pub trait Kind {
@@ -341,12 +340,6 @@ pub fn tuple<K: Kind>(fields: &[Sym<K>]) -> Sym<Opaque> {
     Sym::new(Expr::Tuple(fields.iter().map(|f| f.expr.clone()).collect()))
 }
 
-/// A boolean literal.
-#[must_use]
-pub const fn lit_bool(value: bool) -> Sym<Flag> {
-    Sym::new(Expr::Literal(Value::Bool(value)))
-}
-
 /// A `u64` literal.
 #[must_use]
 pub const fn lit_u64(value: u64) -> Sym<Num> {
@@ -357,18 +350,6 @@ pub const fn lit_u64(value: u64) -> Sym<Num> {
 #[must_use]
 pub const fn lit_u128(value: u128) -> Sym<Amount> {
     Sym::new(Expr::Literal(Value::U128(value)))
-}
-
-/// A byte-string literal.
-#[must_use]
-pub const fn lit_bytes(value: Vec<u8>) -> Sym<Blob> {
-    Sym::new(Expr::Literal(Value::Bytes(value)))
-}
-
-/// An address literal.
-#[must_use]
-pub const fn lit_addr(value: Address) -> Sym<Addr> {
-    Sym::new(Expr::Literal(Value::Address(value)))
 }
 
 /// The nesting depth of an expression, as [`hyperscale_vm_effects::MAX_EXPR_DEPTH`]
@@ -430,8 +411,7 @@ mod tests {
     use hyperscale_vm_effects::{Expr, SlotId, Value};
 
     use super::{
-        Addr, Bucket, Flag, Kind, Seq, Sym, and, eq, expr_depth, lit_bool, lit_u64, lt, not, or,
-        select,
+        Addr, Bucket, Flag, Kind, Seq, Sym, and, eq, expr_depth, lit_u64, lt, not, or, select,
     };
 
     #[test]
@@ -466,13 +446,17 @@ mod tests {
                 otherwise: Box::new(Expr::Literal(Value::U64(0))),
             }
         );
-        let flag: Sym<Flag> = lit_bool(true);
+        let one_is_one = Expr::Eq(
+            Box::new(Expr::Literal(Value::U64(1))),
+            Box::new(Expr::Literal(Value::U64(1))),
+        );
+        let flag: Sym<Flag> = eq(&lit_u64(1), &lit_u64(1));
         assert_eq!(
             or(&and(&flag, &not(&flag)), &eq(&key, &key)).expr(),
             &Expr::Or(
                 Box::new(Expr::And(
-                    Box::new(Expr::Literal(Value::Bool(true))),
-                    Box::new(Expr::Not(Box::new(Expr::Literal(Value::Bool(true))))),
+                    Box::new(one_is_one.clone()),
+                    Box::new(Expr::Not(Box::new(one_is_one))),
                 )),
                 Box::new(Expr::Eq(
                     Box::new(Expr::Literal(Value::U64(7))),
@@ -488,15 +472,15 @@ mod tests {
         // bound is on the expression a signature carries, not on the
         // path a call takes through it.
         let shallow = lit_u64(0);
-        let deep = lt(&lit_u64(1), &not(&lit_bool(true)));
-        assert_eq!(expr_depth(deep.expr()), 3);
+        let deep = lt(&lit_u64(1), &not(&eq(&lit_u64(1), &lit_u64(1))));
+        assert_eq!(expr_depth(deep.expr()), 4);
         assert_eq!(
-            expr_depth(select(&lit_bool(true), &shallow, &deep).expr()),
-            4
+            expr_depth(select(&eq(&lit_u64(1), &lit_u64(1)), &shallow, &deep).expr()),
+            5
         );
         assert_eq!(
-            expr_depth(select(&lit_bool(true), &deep, &shallow).expr()),
-            4
+            expr_depth(select(&eq(&lit_u64(1), &lit_u64(1)), &deep, &shallow).expr()),
+            5
         );
     }
 

@@ -119,7 +119,6 @@ proptest! {
             args: &args,
             config: &config,
             node_index,
-            frame: 0,
             identity: ManifestHash(Hash32(seed)),
         };
         let first = evaluate_expr(&expr, &inputs, &TestHasher);
@@ -316,12 +315,12 @@ mod golden {
             "15387bd1be8120f212af82b61d60660653714fdcfbec8de9a98859080c41d98b"
         );
         assert_eq!(
-            format!("{:016x}", fresh_id(&TestHasher, identity, 1, 0, 0)),
-            "f60d547d88f36a07"
+            format!("{:016x}", fresh_id(&TestHasher, identity, 1, 0)),
+            "ae48054f471fcddd"
         );
         assert_eq!(
-            hex(&fresh_local(&TestHasher, identity, 1, 0, 0).0),
-            "076af3887d540df6e33131f7d5dfd7c1"
+            hex(&fresh_local(&TestHasher, identity, 1, 0).0),
+            "ddcd1f474f0548ae01826d01895eb589"
         );
     }
 }

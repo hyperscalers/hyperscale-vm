@@ -20,7 +20,7 @@ Substate partitioning sets three costs with one knob: lock granularity (false sh
 
 - **Hot mutable scalars get dedicated leaves.** A balance, a counter, a price never shares a substate with configuration or metadata.
 - **Cold configuration clusters.** Immutable-after-instantiation fields pack into one leaf.
-- **Layout is declared, not emergent.** Blueprint field groups carry layout annotations checked by the compiler; the default — one leaf per field group, scalars split — is chosen so the unannotated case is the safe case.
+- **Layout is declared, not emergent.** A blueprint's state struct declares one leaf per field, each behind a typed accessor, and slot numbering is declaration's — pinned per struct or derived in order, never mixed. Finer layout annotations are deferred until a shape needs one; the default — one leaf per field — is the safe case.
 - **Ordered collections are a kernel kind.** Beyond point-keyed entries, a field group can declare an ordered collection: entries keyed under a canonical order-prefixed interval space, accessed by declared ranges ([01-effects-and-routing.md](01-effects-and-routing.md) §5). Non-fungible vault contents are the canonical instance.
 - **Instance configuration is locked at creation.** Creation-fixed parameters — a resource's divisibility and feature set, which optional substates an object has at all — are permanently locked substates recorded with the object: an input to `route()`, an unbounded-window locked read at execution, never a cross-shard participation.
 
@@ -57,8 +57,8 @@ Any protocol- or ecosystem-wide cell — a total supply counter, a global regist
 
 - **Aggregates are per-shard accumulators.** Total supply is per-shard linear accounting (§6) composed at read time; registries are owner-sharded namespaces.
 - **Reshape-clean composition.** An accumulator defines its split and merge semantics, and those commute with the tree operation: composing two children's accumulators yields exactly the parent's (INV-VM-5). The per-shard supply ledger is the accumulator with that law, compose-tested; any future accumulator joins by defining and testing its own.
-- **The compiler warns on singleton shapes.** A blueprint declaring a global-role object with write effects reachable from unbounded callers gets a deploy-time lint; the stdlib provides the sharded alternative for each common shape.
-- **A single owner's prefix is the sharding atom.** Owner-prefixed keying means a shard boundary never cuts through one owner, so an unbounded collection under a single global owner is an un-splittable mass no reshape can ever relieve — the singleton rule extended from cells to owners. Deploy lint: an unbounded collection on a global single-owner component warns; the alternative is the sharded-registry template ([07-stdlib-and-upgrades.md](07-stdlib-and-upgrades.md)) — N sub-registries under distinct owners, routed by key hash, each name's home computable statically by any client.
+- **Deferred: singleton-shape lints.** A blueprint declaring a global-role object with write effects reachable from unbounded callers should get a deploy-time lint; none exists yet, and the stdlib provides the sharded alternative for each common shape in the meantime.
+- **A single owner's prefix is the sharding atom.** Owner-prefixed keying means a shard boundary never cuts through one owner, so an unbounded collection under a single global owner is an un-splittable mass no reshape can ever relieve — the singleton rule extended from cells to owners. The deferred lint above covers this case too — an unbounded collection on a global single-owner component should warn; the alternative is the sharded-registry template ([07-stdlib-and-upgrades.md](07-stdlib-and-upgrades.md)) — N sub-registries under distinct owners, routed by key hash, each name's home computable statically by any client.
 
 ## 6. Linearity and per-shard supply
 

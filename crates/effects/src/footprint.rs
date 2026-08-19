@@ -62,7 +62,7 @@ const KINDS: [ModeKind; 5] = [
 /// cheapest declaration on a hot cell the one that serializes the most
 /// traffic across it.
 #[must_use]
-pub const fn mode_weight(kind: ModeKind) -> u64 {
+const fn mode_weight(kind: ModeKind) -> u64 {
     let mut excluded = 0;
     let mut index = 0;
     while index < KINDS.len() {
@@ -85,7 +85,7 @@ pub const fn mode_weight(kind: ModeKind) -> u64 {
 /// that width calls negligible). The magnitude claimed is the measure
 /// that stays monotone and finite across both.
 #[must_use]
-pub const fn order_bits(lo: u128, hi: u128) -> u64 {
+const fn order_bits(lo: u128, hi: u128) -> u64 {
     // An inverted interval names nothing; `hi` is inclusive, so an
     // interval and its span differ by one key.
     match hi.checked_sub(lo) {
@@ -96,7 +96,7 @@ pub const fn order_bits(lo: u128, hi: u128) -> u64 {
 
 /// The key space `target` claims, before its mode weighs it.
 #[must_use]
-pub const fn span_units(target: &EffectTarget) -> u64 {
+const fn span_units(target: &EffectTarget) -> u64 {
     match target {
         EffectTarget::Point(_) | EffectTarget::Entry { .. } => TARGET_UNITS,
         EffectTarget::Range { lo, hi, .. } => {
@@ -138,10 +138,48 @@ pub fn footprint(declared: &EffectSet) -> u64 {
 mod tests {
     use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode,
-        ModeKind, Presence, SubstateKey,
+        ModeKind, Presence, SubstateKey, compatible,
     };
 
     use super::{EXCLUSIVITY_FLOOR, effect_units, footprint, mode_weight, order_bits};
+
+    const KINDS: [ModeKind; 5] = [
+        ModeKind::Read,
+        ModeKind::Locked,
+        ModeKind::Delta,
+        ModeKind::Reserve,
+        ModeKind::Write,
+    ];
+
+    /// The mode kinds `kind` cannot share a key with.
+    fn excluded(kind: ModeKind) -> Vec<ModeKind> {
+        KINDS
+            .into_iter()
+            .filter(|other| !compatible(kind, *other))
+            .collect()
+    }
+
+    #[test]
+    fn weight_respects_the_exclusion_ordering() {
+        for narrow in KINDS {
+            for wide in KINDS {
+                let (narrow_set, wide_set) = (excluded(narrow), excluded(wide));
+                if !narrow_set.iter().all(|kind| wide_set.contains(kind)) {
+                    continue;
+                }
+                assert!(
+                    mode_weight(narrow) <= mode_weight(wide),
+                    "{narrow:?} excludes a subset of {wide:?} but weighs more",
+                );
+                if wide_set.len() > narrow_set.len() {
+                    assert!(
+                        mode_weight(narrow) < mode_weight(wide),
+                        "{wide:?} excludes strictly more than {narrow:?} but weighs no more",
+                    );
+                }
+            }
+        }
+    }
 
     const OWNER: Address = Address::new([7; 31], AddressClass::Component);
 

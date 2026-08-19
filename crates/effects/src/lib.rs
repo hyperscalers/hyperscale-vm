@@ -61,19 +61,17 @@ pub use envelope::{
     SubintentHash, SubintentRecord, YieldBinding, YieldParam, admit_tree, encode_tree,
     nullifier_key, route_tree,
 };
-pub use footprint::{
-    EXCLUSIVITY_FLOOR, TARGET_UNITS, WIDTH_UNITS, effect_units, footprint, mode_weight, order_bits,
-    span_units,
-};
+pub use footprint::{EXCLUSIVITY_FLOOR, TARGET_UNITS, WIDTH_UNITS, effect_units, footprint};
 pub use graph::{
     Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, MAX_EVIDENCE_PER_NODE, ManifestGraph,
 };
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
-    ABSENT_REP, AUTH_BYTE_WEIGHT, AbortReason, EntryKey, EntryLeaf, Event, FOOTPRINT_WEIGHT,
-    FUEL_WEIGHT, ISSUER_REP, MAX_CELL_VALUE_LEN, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES,
-    MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, SettledWrites, StateWrites, TX_UNITS, TxHash,
-    VERIFY_WEIGHT, declared_work, entry_leaf_key, signature_work, work_units,
+    ABSENT_REP, ADDRESS_WORDS, AUTH_BYTE_WEIGHT, AbortReason, EntryKey, EntryLeaf, Event,
+    FOOTPRINT_WEIGHT, FUEL_WEIGHT, ISSUER_REP, MAX_CELL_VALUE_LEN, MAX_ERROR_CODES,
+    MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, SettledWrites,
+    StateWrites, TX_UNITS, TxHash, VERIFY_WEIGHT, declared_work, entry_leaf_key, signature_work,
+    work_units,
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, distinct_ids};

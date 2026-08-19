@@ -245,7 +245,7 @@ impl RuleExpr {
     /// leaf answers, because one caller-named branch of a threshold is
     /// one branch the caller satisfies for free.
     #[must_use]
-    pub fn reads_call_inputs(&self) -> bool {
+    pub(crate) fn reads_call_inputs(&self) -> bool {
         match self {
             Self::Require(claim) => claim.reads_call_inputs(),
             Self::CountOf { rules, .. } => rules.iter().any(Self::reads_call_inputs),

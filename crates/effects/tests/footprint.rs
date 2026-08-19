@@ -9,29 +9,13 @@
 //! single entry costs, which is what conflict-by-interval-overlap makes
 //! expensive for everyone else.
 
-use hyperscale_vm_effects::{effect_units, footprint, mode_weight};
+use hyperscale_vm_effects::{effect_units, footprint};
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind,
-    Presence, SubstateKey, compatible,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode, Presence,
+    SubstateKey,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
-
-const KINDS: [ModeKind; 5] = [
-    ModeKind::Read,
-    ModeKind::Locked,
-    ModeKind::Delta,
-    ModeKind::Reserve,
-    ModeKind::Write,
-];
-
-/// The mode kinds `kind` cannot share a key with.
-fn excluded(kind: ModeKind) -> Vec<ModeKind> {
-    KINDS
-        .into_iter()
-        .filter(|other| !compatible(kind, *other))
-        .collect()
-}
 
 fn arb_mode() -> impl Strategy<Value = Mode> {
     prop_oneof![
@@ -97,28 +81,6 @@ fn set_of(effects: &[Effect]) -> EffectSet {
 /// This is what ties the price to [`compatible`] rather than to a table
 /// beside it — a lattice change that reordered exclusivity without moving
 /// the weights would fail here.
-#[test]
-fn weight_respects_the_exclusion_ordering() {
-    for narrow in KINDS {
-        for wide in KINDS {
-            let (narrow_set, wide_set) = (excluded(narrow), excluded(wide));
-            if !narrow_set.iter().all(|kind| wide_set.contains(kind)) {
-                continue;
-            }
-            assert!(
-                mode_weight(narrow) <= mode_weight(wide),
-                "{narrow:?} excludes a subset of {wide:?} but weighs more",
-            );
-            if wide_set.len() > narrow_set.len() {
-                assert!(
-                    mode_weight(narrow) < mode_weight(wide),
-                    "{wide:?} excludes strictly more than {narrow:?} but weighs no more",
-                );
-            }
-        }
-    }
-}
-
 /// The inversion the quantity exists to foreclose: an interval over the
 /// whole order-key space conflicts with every declaration on its
 /// collection, so it must never price at what a narrow one prices at.

@@ -317,18 +317,18 @@ pub fn config_hash(hasher: &dyn Hasher, config_leaf: &[u8]) -> Hash32 {
 /// deterministic rejection rather than a divergence.
 pub const MAX_VALUE_DEPTH: usize = 16;
 
-/// The decoder nesting cap that admits exactly the values within
-/// [`MAX_VALUE_DEPTH`].
+/// The codec nesting cost of the deepest admissible value.
 ///
-/// One value level costs at most two decoder levels — the variant's
-/// collection field and its hoisted element body — and adding a level costs
-/// at least one more than a scalar leaf, so `2 * MAX_VALUE_DEPTH` admits
-/// every value of admissible depth and refuses every deeper one. The
-/// relation is pinned by test at both boundaries; a wire decoder for
-/// literals passes this cap and gets [`check_value_depth`] as a decode-time
-/// consequence rather than a pass afterwards.
-///
-/// [`check_value_depth`]: crate::admission
+/// One value level costs at most two codec levels — the variant's
+/// collection field and its hoisted element body — and adding a level
+/// costs at least one more than a scalar leaf, so `2 * MAX_VALUE_DEPTH`
+/// covers every value of admissible depth and no deeper one. The relation
+/// is pinned by test at both boundaries, and it is what
+/// [`Value::canonical_bytes`]' totality stands on: an admissible value
+/// costs at most this many encoder levels, well under the default cap, so
+/// hashing one cannot fail. No wire decoder passes this cap on its own —
+/// values arrive inside larger structures under the default cap, and
+/// `check_value_depth` gates admissible depth semantically at admission.
 pub const MAX_VALUE_WIRE_DEPTH: usize = 2 * MAX_VALUE_DEPTH;
 
 /// A typed value the DSL evaluates over: manifest literals, edge

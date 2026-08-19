@@ -22,7 +22,7 @@ Randomness is the same shape: the payer block's attested randomness, domain-sepa
 
 ## 4. Abort taxonomy
 
-Aborts are load-bearing in a deterministic cross-shard protocol — deadline all-aborts, race tiebreaks, reshape fences — and static access deliberately adds a retry class (stale declarations). Induced aborts must therefore never be free. Classes, mapped one-to-one onto the execution certificate's outcome vector so fee attribution is itself attested:
+Aborts are load-bearing in a deterministic cross-shard protocol — deadline all-aborts, race tiebreaks, reshape fences — and static access deliberately adds a retry class (stale declarations). Induced aborts must therefore never be free. Classes, recorded per receipt in the committed outcome so fee attribution is derivable from attested content — the host's certificate carries a coarser verdict, and the full class dies where the fee is charged:
 
 | Class | Meaning | Fee |
 |---|---|---|

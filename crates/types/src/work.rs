@@ -25,7 +25,8 @@
 //! alone; `vm_kernel`'s receipt constructor is where that rule is applied,
 //! because the outcome is what selects it and the outcome lives there.
 //!
-//! Placeholder weights, on the same terms as [`crate::footprint`]'s: what
+//! Placeholder weights, on the same terms as the effects crate's
+//! footprint weights: what
 //! one unit costs is set against measured baselines rather than chosen
 //! here. Which end of the ratio fails is worth knowing before calibrating —
 //! fuel runs at engine-schedule magnitude while footprint peaks in the low

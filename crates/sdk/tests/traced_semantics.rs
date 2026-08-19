@@ -8,11 +8,12 @@
 
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    Declaration, EvalInputs, Hash32, MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature,
-    ParamType, TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
+    Clause, Declaration, EvalInputs, Hash32, MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature,
+    ModeExpr, ParamType, TargetExpr, TestHasher, Value, child_key, evaluate_declaration,
+    evaluate_effects,
 };
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym, eq};
-use hyperscale_vm_sdk::{Blueprint, TargetShape, Trace};
+use hyperscale_vm_sdk::{Blueprint, Trace};
 use hyperscale_vm_types::{
     Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, ModeKind, Presence, SubstateKey,
 };
@@ -42,7 +43,6 @@ fn declared(signature: &MethodSignature, args: &[Value], config: &[Value]) -> Ef
         args,
         config,
         node_index: 0,
-        frame: 0,
         identity: identity(),
     };
     evaluate_effects(&signature.effects, &inputs, &TestHasher)
@@ -57,7 +57,6 @@ fn evaluated(signature: &MethodSignature, args: &[Value], config: &[Value]) -> D
         args,
         config,
         node_index: 0,
-        frame: 0,
         identity: identity(),
     };
     evaluate_declaration(&signature.effects, &inputs, &TestHasher)
@@ -187,6 +186,36 @@ fn nested_binders_survive_evaluation() {
     }
 }
 
+/// One handle the guest export receives, derived locally from the clause
+/// tree: the kernel materializes per clause in declaration order, so the
+/// clauses are the plan and nothing beside the metadata carries one.
+struct Planned {
+    mode: ModeKind,
+    point: bool,
+    repeat_depth: usize,
+}
+
+fn planned(clauses: &[Clause], depth: usize) -> Vec<Planned> {
+    let mut shapes = Vec::new();
+    for clause in clauses {
+        match clause {
+            Clause::Effect { target, mode, .. } => shapes.push(Planned {
+                mode: match mode {
+                    ModeExpr::Read => ModeKind::Read,
+                    ModeExpr::Locked => ModeKind::Locked,
+                    ModeExpr::Delta => ModeKind::Delta,
+                    ModeExpr::Reserve(_) => ModeKind::Reserve,
+                    ModeExpr::Write { .. } => ModeKind::Write,
+                },
+                point: matches!(target, TargetExpr::Point(_)),
+                repeat_depth: depth,
+            }),
+            Clause::ForEach { body, .. } => shapes.extend(planned(body, depth + 1)),
+        }
+    }
+    shapes
+}
+
 #[test]
 fn the_handle_plan_matches_what_the_kernel_materializes() {
     // The correspondence the whole SDK rests on: the order `HandlePlan`
@@ -216,15 +245,18 @@ fn the_handle_plan_matches_what_the_kernel_materializes() {
         .build();
     let method = pool.method("swap").unwrap();
 
-    let plan = method.handles();
-    assert!(plan.is_static(), "no clause is under a for-each");
-    let planned: Vec<ModeKind> = plan.shapes().iter().map(|s| s.mode).collect();
+    let plan = planned(&method.signature().effects, 0);
+    assert!(
+        plan.iter().all(|s| s.repeat_depth == 0),
+        "no clause is under a for-each"
+    );
+    let planned: Vec<ModeKind> = plan.iter().map(|s| s.mode).collect();
     assert_eq!(
         planned,
         vec![ModeKind::Locked, ModeKind::Write, ModeKind::Write],
         "the plan follows the author's order"
     );
-    assert!(plan.shapes().iter().all(|s| s.target == TargetShape::Point));
+    assert!(plan.iter().all(|s| s.point));
 
     let mut set_order_differed = 0;
     for x in 0..8_u8 {
@@ -291,7 +323,7 @@ fn a_degenerate_config_collapses_the_set_below_the_plan() {
         })
         .build();
     let method = pool.method("swap").unwrap();
-    assert_eq!(method.handles().shapes().len(), 3);
+    assert_eq!(planned(&method.signature().effects, 0).len(), 3);
 
     let distinct = vec![Value::Address(RES_X), Value::Address(RES_Y)];
     assert_eq!(declared(method.signature(), &[], &distinct).len(), 3);
@@ -307,13 +339,16 @@ fn a_degenerate_config_collapses_the_set_below_the_plan() {
 #[test]
 fn a_dynamic_plan_reports_itself_as_dynamic() {
     let blueprint = basket();
-    let plan = blueprint.method("rebalance").unwrap().handles();
+    let plan = planned(
+        &blueprint.method("rebalance").unwrap().signature().effects,
+        0,
+    );
     assert!(
-        !plan.is_static(),
+        plan.iter().any(|s| s.repeat_depth > 0),
         "a for-each clause makes the handle count configuration-dependent"
     );
-    assert_eq!(plan.shapes()[0].repeat_depth, 0, "the config leaf is fixed");
-    assert_eq!(plan.shapes()[1].repeat_depth, 1, "the vault write repeats");
+    assert_eq!(plan[0].repeat_depth, 0, "the config leaf is fixed");
+    assert_eq!(plan[1].repeat_depth, 1, "the vault write repeats");
 }
 
 #[test]

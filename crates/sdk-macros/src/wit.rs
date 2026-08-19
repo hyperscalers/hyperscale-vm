@@ -13,6 +13,8 @@
 
 use std::fmt::Write as _;
 
+use hyperscale_vm_effects::ADDRESS_WORDS;
+
 use crate::mode::HandleMode;
 
 /// What a world names the bucket resource, and why not `bucket`.
@@ -173,13 +175,15 @@ pub fn document(world: &str, exports: &[Export]) -> String {
         // could not resolve. Records are structural, so this is the same
         // type either way — and a value record is the export surface's,
         // which is what this document is.
-        out.push_str(
+        let [a, b, c, d] = ADDRESS_WORDS;
+        let _ = write!(
+            out,
             "\n    /// A global object's address, as its four 64-bit words.\n    \
-             record kernel-address {\n        \
-             /// Bytes 0..8, little-endian.\n        a: u64,\n        \
-             /// Bytes 8..16.\n        b: u64,\n        \
-             /// Bytes 16..24.\n        c: u64,\n        \
-             /// Bytes 24..32.\n        d: u64,\n    }\n\n",
+             record kernel-address {{\n        \
+             /// Bytes 0..8, little-endian.\n        {a}: u64,\n        \
+             /// Bytes 8..16.\n        {b}: u64,\n        \
+             /// Bytes 16..24.\n        {c}: u64,\n        \
+             /// Bytes 24..32.\n        {d}: u64,\n    }}\n\n",
         );
     }
     for export in exports {

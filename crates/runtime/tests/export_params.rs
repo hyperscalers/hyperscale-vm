@@ -2,6 +2,7 @@
 //! against.
 
 use hyperscale_vm_runtime::{ExportParam, component_exports};
+use hyperscale_vm_types::CellKind;
 use wat::parse_str;
 
 #[test]
@@ -44,10 +45,7 @@ fn every_world_shape_classifies_and_nested_exports_stay_invisible() {
     let exports = component_exports(&bytes).expect("the fixture validates");
     assert_eq!(
         exports["withdraw"].params,
-        vec![
-            ExportParam::Handle("reserve-cell".to_string()),
-            ExportParam::Bytes,
-        ],
+        vec![ExportParam::Handle(CellKind::Reserve), ExportParam::Bytes],
     );
     assert_eq!(exports["tick"].params, vec![ExportParam::U64]);
     assert_eq!(exports.len(), 3, "only function exports classify");

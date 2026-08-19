@@ -47,3 +47,49 @@ pub fn blessed_config() -> Config {
 pub fn blessed_engine() -> Result<Engine> {
     Engine::new(&blessed_config())
 }
+
+#[cfg(test)]
+mod tests {
+    use wasmtime::Module;
+    use wasmtime::component::Component;
+    use wat::parse_str;
+
+    use super::blessed_engine;
+
+    /// Everything [`crate::validator::profile_features`] admits, the
+    /// blessed engine compiles: one witness per feature the profile
+    /// turns on, so a config edit that quietly disabled one fails here
+    /// rather than at the first deployed package that uses it.
+    #[test]
+    fn the_blessed_engine_accepts_every_profile_feature() {
+        let engine = blessed_engine().expect("the blessed engine configures");
+        let core = |name: &str, wat: &str| {
+            Module::new(&engine, wat)
+                .unwrap_or_else(|error| panic!("{name} is in the profile: {error}"));
+        };
+        core(
+            "mutable globals",
+            "(module (global (export \"g\") (mut i32) (i32.const 0)))",
+        );
+        core(
+            "sign extension",
+            "(module (func (param i32) (result i32) local.get 0 i32.extend8_s))",
+        );
+        core(
+            "multi-value",
+            "(module (func (result i32 i32) i32.const 1 i32.const 2))",
+        );
+        core(
+            "bulk memory",
+            "(module (memory 1) (func (memory.copy (i32.const 0) (i32.const 0) (i32.const 0))))",
+        );
+        core(
+            "call_indirect over a declared table",
+            "(module (table 1 1 funcref) (type $t (func))
+                 (func (i32.const 0) (call_indirect (type $t)))
+                 (func $f (type $t)))",
+        );
+        Component::new(&engine, parse_str("(component)").expect("parses"))
+            .expect("the component model is in the profile");
+    }
+}

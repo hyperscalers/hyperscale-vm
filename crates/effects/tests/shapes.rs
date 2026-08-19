@@ -207,7 +207,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
     let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
     let routing = route(&admitted, &resolver());
 
-    let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0, 0);
+    let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0);
     let expected = BTreeMap::from([
         (
             shard_of(ALICE),

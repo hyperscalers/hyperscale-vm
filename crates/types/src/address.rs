@@ -24,9 +24,19 @@ pub struct LocalKey(pub [u8; 16]);
 /// everything downstream — conflict intervals, capabilities, the store,
 /// the receipt vocabulary — compares a single canonical identity rather
 /// than keeping two fields consistent by convention.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
 pub struct CollectionId(pub [u8; 16]);
+
+impl fmt::Debug for CollectionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CollectionId(")?;
+        for byte in &self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        write!(f, ")")
+    }
+}
 
 impl fmt::Debug for LocalKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -37,6 +47,14 @@ impl fmt::Debug for LocalKey {
         write!(f, ")")
     }
 }
+
+/// The world's `address` record field names, in byte order.
+///
+/// The four 64-bit little-endian words a 32-byte address flattens to at
+/// the call boundary. One definition, consumed by the WIT generator that
+/// declares the record and by every lowering that writes one, so a
+/// rename cannot leave the two disagreeing at run time.
+pub const ADDRESS_WORDS: [&str; 4] = ["a", "b", "c", "d"];
 
 /// A full JMT leaf key: owner prefix followed by the local half.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
@@ -614,6 +632,51 @@ position_addr! {
     }
 }
 
+/// One declared access target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+pub enum EffectTarget {
+    /// A single substate leaf.
+    Point(SubstateKey),
+    /// One entry of an ordered collection, at a declared order key.
+    Entry {
+        /// The collection's owner.
+        owner: Address,
+        /// The collection's identity under the owner.
+        collection: CollectionId,
+        /// The entry's position in the collection's order-key space.
+        order: u128,
+    },
+    /// A declared interval of an ordered collection's order-key space.
+    ///
+    /// The interval is access-stable: it stays valid whatever entries enter
+    /// or leave it between signing and execution. Conflict against points
+    /// and other ranges is interval overlap.
+    Range {
+        /// The collection's owner.
+        owner: Address,
+        /// The collection's identity under the owner.
+        collection: CollectionId,
+        /// Inclusive lower order-key bound.
+        lo: u128,
+        /// Inclusive upper order-key bound.
+        hi: u128,
+        /// The maximum entries execution may touch within the interval.
+        cap: u32,
+    },
+}
+
+impl EffectTarget {
+    /// The owner whose prefix the target lives under — and therefore the
+    /// target's shard.
+    #[must_use]
+    pub const fn owner(&self) -> Address {
+        match self {
+            Self::Point(key) => key.owner,
+            Self::Entry { owner, .. } | Self::Range { owner, .. } => *owner,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
@@ -834,50 +897,5 @@ mod tests {
             from_slice::<PackageAddr>(&package).unwrap(),
             PackageAddr::new([9; 31])
         );
-    }
-}
-
-/// One declared access target.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
-pub enum EffectTarget {
-    /// A single substate leaf.
-    Point(SubstateKey),
-    /// One entry of an ordered collection, at a declared order key.
-    Entry {
-        /// The collection's owner.
-        owner: Address,
-        /// The collection's identity under the owner.
-        collection: CollectionId,
-        /// The entry's position in the collection's order-key space.
-        order: u128,
-    },
-    /// A declared interval of an ordered collection's order-key space.
-    ///
-    /// The interval is access-stable: it stays valid whatever entries enter
-    /// or leave it between signing and execution. Conflict against points
-    /// and other ranges is interval overlap.
-    Range {
-        /// The collection's owner.
-        owner: Address,
-        /// The collection's identity under the owner.
-        collection: CollectionId,
-        /// Inclusive lower order-key bound.
-        lo: u128,
-        /// Inclusive upper order-key bound.
-        hi: u128,
-        /// The maximum entries execution may touch within the interval.
-        cap: u32,
-    },
-}
-
-impl EffectTarget {
-    /// The owner whose prefix the target lives under — and therefore the
-    /// target's shard.
-    #[must_use]
-    pub const fn owner(&self) -> Address {
-        match self {
-            Self::Point(key) => key.owner,
-            Self::Entry { owner, .. } | Self::Range { owner, .. } => *owner,
-        }
     }
 }

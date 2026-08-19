@@ -215,10 +215,4 @@ impl<S: Sink> Encoder<S> {
     pub fn nested<T: super::HborEncode + ?Sized>(&mut self, value: &T) -> Result<(), EncodeError> {
         self.descend(|encoder| value.encode(encoder))
     }
-
-    /// Bytes written so far.
-    #[must_use]
-    pub fn position(&self) -> usize {
-        self.out.written()
-    }
 }

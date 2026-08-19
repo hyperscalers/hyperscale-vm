@@ -23,7 +23,7 @@ use hyperscale_vm_effects::{
     check_signature, materialized_kind, metadata_section,
 };
 use hyperscale_vm_runtime::{
-    ExportParam, ExportShape, check_method, component_exports, validate_component,
+    ExportParam, ExportShape, check_method, classify_exports, validated_component,
 };
 
 pub use crate::section::{MAX_PACKAGE_METADATA_BYTES, decode_metadata, encode_metadata};
@@ -137,11 +137,11 @@ pub enum Provenance {
 }
 
 fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, GateError> {
-    validate_component(artifact)
+    let types = validated_component(artifact)
         .map_err(|error| GateError(format!("artifact is outside the profile: {error}")))?;
     let metadata = extract_metadata(artifact)?
         .ok_or_else(|| GateError("artifact declares no effect metadata section".into()))?;
-    let exports = component_exports(artifact)
+    let exports = classify_exports(artifact, &types)
         .map_err(|error| GateError(format!("artifact does not parse: {error}")))?;
     for (method, signature) in &metadata.methods {
         let Some(export) = exports.get(method.as_str()) else {
@@ -276,12 +276,13 @@ fn check_abi_against_export(
                     .and_then(|index| signature.effects.get(index))
                     .and_then(materialized_kind);
                 if let Some(expected) = expected
-                    && resource != expected.world_type()
+                    && *resource != expected
                 {
                     return Err(GateError(format!(
                         "method {method:?}: ABI parameter {position} borrows \
-                         `{resource}`, but clause {clause}'s mode materialises a \
+                         `{}`, but clause {clause}'s mode materialises a \
                          `{}`",
+                        resource.world_type(),
                         expected.world_type()
                     )));
                 }
@@ -295,7 +296,7 @@ fn check_abi_against_export(
                 }
             }
             AbiParam::Issuer => {
-                if *param != ExportParam::Handle("issuer".to_owned()) {
+                if *param != ExportParam::Issuer {
                     return Err(GateError(format!(
                         "method {method:?}: ABI parameter {position} is an issuance \
                          grant, but the export takes {param:?}"
@@ -329,6 +330,7 @@ mod tests {
         AbiParam, Accessibility, Expr, MethodSignature, PackageMetadata, RuleExpr,
     };
     use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, book, lottery};
+    use hyperscale_vm_runtime::component_exports;
     use hyperscale_vm_stdlib::{account, account_artifact, staking_artifact};
     use hyperscale_vm_types::Presence;
     use wat::parse_str;

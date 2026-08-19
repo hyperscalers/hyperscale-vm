@@ -137,7 +137,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
 
     // The placed ask landed at the declared fresh sequence.
     let admitted = admit(&place, MAKER, &world.0, &world.1, &TestHasher).unwrap();
-    let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0, 0);
+    let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0);
     let placed_ask = EntryKey {
         owner: Address::from(book()),
         collection: asks(),

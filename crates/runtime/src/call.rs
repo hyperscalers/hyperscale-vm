@@ -12,7 +12,7 @@
 //! its handle type is the same one the linker registers.
 
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
-use hyperscale_vm_types::{Address, CellKind, ISSUER_REP};
+use hyperscale_vm_types::{ADDRESS_WORDS, Address, CellKind, ISSUER_REP};
 use wasmtime::component::{Instance, Resource, ResourceAny, Val};
 use wasmtime::{AsContextMut, Error, Result, Store};
 
@@ -34,12 +34,13 @@ fn address_val(address: Address) -> Val {
             bytes[at..at + 8].try_into().expect("eight bytes"),
         ))
     };
-    Val::Record(vec![
-        ("a".to_owned(), word(0)),
-        ("b".to_owned(), word(8)),
-        ("c".to_owned(), word(16)),
-        ("d".to_owned(), word(24)),
-    ])
+    Val::Record(
+        ADDRESS_WORDS
+            .iter()
+            .enumerate()
+            .map(|(index, name)| ((*name).to_owned(), word(index * 8)))
+            .collect(),
+    )
 }
 
 /// The handle for one rep, as the resource type its mode names.

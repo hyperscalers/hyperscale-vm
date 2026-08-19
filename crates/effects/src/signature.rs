@@ -304,11 +304,11 @@ impl Accessibility {
 /// entirely — so ruling it out takes analysis of the body rather than a
 /// reading of its declaration.
 ///
-/// The ordering is what a caller may assume, weakest first. The default
-/// is not the weakest but the commonest: the mark is a function of the
-/// component type rather than a claim an author may under-shoot, and a
-/// method with no error arm is the shape most methods have.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+/// The variants sit weakest first. The default is not the weakest but
+/// the commonest: the mark is a function of the component type rather
+/// than a claim an author may under-shoot, and a method with no error
+/// arm is the shape most methods have.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hbor)]
 pub enum Totality {
     /// The signature carries an error arm, so the method fails on its own
     /// terms and every caller has a failure to handle. The publish gate

@@ -673,7 +673,6 @@ pub(crate) fn output_resources(
         args: values,
         config,
         node_index,
-        frame: 0,
         identity: UNBOUND,
     };
     signature

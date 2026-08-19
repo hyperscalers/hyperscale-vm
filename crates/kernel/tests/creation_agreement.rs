@@ -112,7 +112,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     let mut store = MemoryStore::new();
     let created = SubstateKey {
         owner: creator.address(),
-        local: fresh_local(&TestHasher, identity, 1, 0, 0),
+        local: fresh_local(&TestHasher, identity, 1, 0),
     };
     store.write(created, vec![42]).unwrap();
     assert!(declared.contains(&Effect {
@@ -121,7 +121,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     }));
 
     // The entry's fresh sequence agrees the same way.
-    let seq = fresh_id(&TestHasher, identity, 1, 0, 1);
+    let seq = fresh_id(&TestHasher, identity, 1, 1);
     store
         .entry_write(
             creator.address(),
@@ -144,7 +144,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     // Node 0's creation is a different key: the node index namespaces.
     let from_node_zero = SubstateKey {
         owner: creator.address(),
-        local: fresh_local(&TestHasher, identity, 0, 0, 0),
+        local: fresh_local(&TestHasher, identity, 0, 0),
     };
     assert_ne!(from_node_zero, created);
     assert!(declared.contains(&Effect {

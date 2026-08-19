@@ -892,7 +892,6 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
             args: &args,
             config: &config,
             node_index: 0,
-            frame: 0,
             identity: ManifestHash(Hash32([9; 32])),
         };
         let set = evaluate_effects(&effects("either"), &inputs, &TestHasher).unwrap();
@@ -920,7 +919,6 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
         args: &args,
         config: &config,
         node_index: 0,
-        frame: 0,
         identity: ManifestHash(Hash32([9; 32])),
     };
     let set = evaluate_effects(&effects("routed"), &inputs, &TestHasher).unwrap();

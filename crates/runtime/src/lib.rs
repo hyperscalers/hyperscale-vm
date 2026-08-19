@@ -30,9 +30,9 @@ pub mod gas;
 pub mod world;
 
 pub use charges::{InstantiationCharges, instantiation_charges, module_instantiation_charges};
-pub use exports::{ExportParam, ExportShape, component_exports};
+pub use exports::{ExportParam, ExportShape, classify_exports, component_exports};
 pub use totality::{TotalityError, check_body, check_method, check_reachable};
-pub use validator::{ProfileError, validate_component, validate_core_module};
+pub use validator::{ProfileError, validate_component, validate_core_module, validated_component};
 #[cfg(feature = "engine")]
 pub use {
     abort::{CallError, classify, exhausted, trap_reason},
@@ -40,7 +40,8 @@ pub use {
     charges::instantiate_charged,
     engine::{blessed_config, blessed_engine},
     world::{
-        AmountCell, AmountRead, Bucket, DeltaCell, HostRefusal, InstanceRange, Issuer, LockedCell,
-        RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell, add_kernel_to_linker,
+        Amount, AmountCell, AmountRead, Bucket, DeltaCell, HostRefusal, InstanceRange, Issuer,
+        LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, Wide, WitOrdering, WitRounding,
+        WriteCell, add_kernel_to_linker,
     },
 };

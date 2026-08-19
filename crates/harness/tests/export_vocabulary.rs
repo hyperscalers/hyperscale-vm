@@ -19,7 +19,7 @@ use hyperscale_vm_harness::dual::DualGuest;
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_ref::{CVal, RefComponent};
 use hyperscale_vm_runtime::{ExportParam, component_exports, validate_component};
-use hyperscale_vm_types::{EffectSet, TxHash};
+use hyperscale_vm_types::{CellKind, EffectSet, TxHash};
 use wasmtime::Result;
 use wat::parse_str;
 
@@ -111,13 +111,12 @@ fn every_shape_the_gate_can_demand_deploys_and_decodes() {
     let exports = component_exports(&bytes).expect("the exports classify");
     let handles: Vec<ExportParam> = HANDLE_KINDS
         .iter()
-        .map(|kind| ExportParam::Handle((*kind).to_string()))
+        .map(|kind| {
+            ExportParam::Handle(CellKind::from_world_type(kind).expect("a state cell kind"))
+        })
         .collect();
     assert_eq!(exports["handles"].params, handles);
-    assert_eq!(
-        exports["grant"].params,
-        vec![ExportParam::Handle("issuer".to_string())]
-    );
+    assert_eq!(exports["grant"].params, vec![ExportParam::Issuer]);
     assert_eq!(exports["edge"].params, vec![ExportParam::Bucket]);
     assert_eq!(
         exports["values"].params,

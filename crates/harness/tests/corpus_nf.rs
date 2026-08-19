@@ -196,7 +196,7 @@ fn a_mint_onto_an_instance_already_there_is_refused() {
     });
 
     let admitted = admit(&mint, ALICE, &world.0, &world.1, &TestHasher).unwrap();
-    let id = fresh_id(&TestHasher, admitted.identity(), 0, 0, 0);
+    let id = fresh_id(&TestHasher, admitted.identity(), 0, 0);
     let data = instance_data_key(&TestHasher, nf_issuer(), nf_resource(), id);
 
     let mut store = MemoryStore::new();

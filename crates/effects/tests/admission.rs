@@ -180,8 +180,8 @@ fn constraint_changes_reach_lowering_and_the_fresh_id_root() {
     assert_ne!(strict.manifest(), loose.manifest());
     assert_ne!(strict.identity(), loose.identity());
     assert_ne!(
-        fresh_id(&TestHasher, strict.identity(), 1, 0, 0),
-        fresh_id(&TestHasher, loose.identity(), 1, 0, 0)
+        fresh_id(&TestHasher, strict.identity(), 1, 0),
+        fresh_id(&TestHasher, loose.identity(), 1, 0)
     );
 }
 

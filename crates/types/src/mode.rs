@@ -112,6 +112,27 @@ impl CellKind {
             Self::InstanceRange => "instance-range",
         }
     }
+
+    /// The kind a WIT resource name denotes — [`Self::world_type`]'s
+    /// inverse, kept beside it so the correspondence is one table read
+    /// in both directions.
+    #[must_use]
+    pub fn from_world_type(name: &str) -> Option<Self> {
+        [
+            Self::Read,
+            Self::Locked,
+            Self::Write,
+            Self::Amount,
+            Self::AmountRead,
+            Self::Delta,
+            Self::Reserve,
+            Self::RangeRead,
+            Self::RangeWrite,
+            Self::InstanceRange,
+        ]
+        .into_iter()
+        .find(|kind| kind.world_type() == name)
+    }
 }
 
 /// What a write requires of the leaf it lands on.
@@ -186,7 +207,7 @@ pub enum ModeKind {
     Delta,
     /// See [`Mode::Reserve`].
     Reserve,
-    /// See [`Mode::Write { requires: Presence::Either }`].
+    /// See [`Mode::Write`], whatever presence it requires.
     Write,
 }
 

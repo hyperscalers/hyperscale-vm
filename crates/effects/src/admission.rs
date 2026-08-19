@@ -919,7 +919,6 @@ impl Lower<'_> {
             args: &bound,
             config: &meta.config,
             node_index,
-            frame: 0,
             identity: self.identity,
         };
         check_denominations(signature, &bound, &eval_inputs, self.hasher, node_index)?;
