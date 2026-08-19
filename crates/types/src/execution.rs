@@ -216,9 +216,6 @@ pub enum AbortReason {
     /// is execution holding the code to it, so the property survives a
     /// metadata section nobody derived.
     WrongResource,
-    /// Bytes written straight into a cell whose declaration says it holds
-    /// value, which would be a balance nobody moved.
-    ValueAsBytes,
     /// Value moved through a cell whose declaration denominates it in
     /// nothing, which would hand out an edge no destination could
     /// disagree with.

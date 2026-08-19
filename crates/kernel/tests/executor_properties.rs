@@ -255,6 +255,13 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 Capability::Write(_) => {
                     let _ = session.write_cell_set(rep, vec![id.0.0[0]]);
                 }
+                // A value cell takes no bytes; what it takes is a debit.
+                Capability::Amount(_) => {
+                    let _ = session.write_take(rep, seed % 11);
+                }
+                Capability::InstanceRange(..) => {
+                    let _ = session.range_count(rep);
+                }
                 Capability::Delta(_) => {
                     // Credit, then a smaller debit, so the cell moves both
                     // ways without always draining.

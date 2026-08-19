@@ -22,14 +22,19 @@ pub enum Handle {
     Read(u32),
     /// A read of a permanently locked substate.
     Locked(u32),
-    /// A declared exclusive read-modify-write.
+    /// A declared exclusive read-modify-write of a cell holding bytes.
     Write(u32),
+    /// The same, of a cell holding value.
+    Amount(u32),
     /// A declared commutative movement on an amount cell.
     Delta(u32),
     /// A declared reservation, already judged and held.
     Reserve(u32),
     /// A declared read interval of an ordered collection.
     RangeRead(u32),
-    /// A declared read-modify-write interval.
+    /// A declared read-modify-write interval of entries the package
+    /// writes as bytes.
     RangeWrite(u32),
+    /// The same, of entries that are instances of one resource.
+    InstanceRange(u32),
 }

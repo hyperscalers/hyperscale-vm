@@ -175,7 +175,7 @@ fn value_taken_from_a_cell_is_the_value_in_hand() {
     );
 
     let (_, held) = with_kernel(session, || {
-        let mut slot = Slot::<Vault>::at(Handle::Write(0));
+        let mut slot = Slot::<Vault>::at(Handle::Amount(0));
         let funds = slot.take(Quantity::from_subunits(30));
         let held = funds.quantity();
         slot.put(funds);
@@ -205,7 +205,7 @@ fn a_bucket_divides_into_what_comes_off_and_what_is_left() {
     );
 
     let (_, (split, rest)) = with_kernel(session, || {
-        let mut slot = Slot::<Vault>::at(Handle::Write(0));
+        let mut slot = Slot::<Vault>::at(Handle::Amount(0));
         let mut funds = slot.take(Quantity::from_subunits(50));
         let part = funds.take(Quantity::from_subunits(20));
         (part.quantity(), funds.quantity())
@@ -326,7 +326,7 @@ fn the_environment_is_the_transactions_own() {
 #[test]
 fn a_refused_operation_carries_its_class_out() {
     let vault = key(4);
-    let session = session(
+    let session = value_session(
         MemoryStore::new(),
         vec![point(
             vault,
@@ -339,7 +339,7 @@ fn a_refused_operation_carries_its_class_out() {
     let refusal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_kernel(session, || {
             // Nothing is in the cell, so there is nothing to take.
-            let mut slot = Slot::<Vault>::at(Handle::Write(0));
+            let mut slot = Slot::<Vault>::at(Handle::Amount(0));
             let _: Bucket = slot.take(Quantity::from_subunits(1));
         });
     }))
@@ -362,7 +362,7 @@ fn a_refused_operation_carries_its_class_out() {
 fn a_thread_a_refusal_unwound_through_runs_the_next_invocation() {
     let vault = key(5);
     let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let session = session(
+        let session = value_session(
             MemoryStore::new(),
             vec![point(
                 vault,
@@ -372,7 +372,7 @@ fn a_thread_a_refusal_unwound_through_runs_the_next_invocation() {
             )],
         );
         with_kernel(session, || {
-            let mut slot = Slot::<Vault>::at(Handle::Write(0));
+            let mut slot = Slot::<Vault>::at(Handle::Amount(0));
             let _: Bucket = slot.take(Quantity::from_subunits(1));
         });
     }));

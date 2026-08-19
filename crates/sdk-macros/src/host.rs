@@ -23,10 +23,12 @@ fn cell_kind(resource: &str) -> TokenStream {
     match resource {
         "locked-cell" => quote!(Locked),
         "write-cell" => quote!(Write),
+        "amount-cell" => quote!(Amount),
         "delta-cell" => quote!(Delta),
         "reserve-cell" => quote!(Reserve),
         "range-read" => quote!(RangeRead),
         "range-write" => quote!(RangeWrite),
+        "instance-range" => quote!(InstanceRange),
         _ => quote!(Read),
     }
 }

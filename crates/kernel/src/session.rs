@@ -67,8 +67,15 @@ pub enum Capability {
     Read(SubstateKey),
     /// A pinned read of one cell.
     Locked(SubstateKey),
-    /// An exclusive read-modify-write of one cell.
+    /// An exclusive read-modify-write of one cell holding bytes.
     Write(SubstateKey),
+    /// The same exclusive access to a cell holding value.
+    ///
+    /// A separate variant rather than a flag, because the two share no
+    /// operation: bytes are read and replaced, value is credited and
+    /// debited, and a handle that offered both would be one the kernel
+    /// had to refuse half of at every call.
+    Amount(SubstateKey),
     /// Commutative movement on one amount cell.
     Delta(SubstateKey),
     /// A held reservation on one amount cell, at this clause's own
@@ -83,8 +90,12 @@ pub enum Capability {
     },
     /// A read interval of an ordered collection.
     RangeRead(Interval),
-    /// A read-modify-write interval of an ordered collection.
+    /// A read-modify-write interval of an ordered collection whose
+    /// entries are the package's own bytes.
     RangeWrite(Interval),
+    /// The same interval over entries that are instances of one
+    /// resource, on the terms [`Capability::Amount`] states.
+    InstanceRange(Interval),
 }
 
 /// What a bucket carries.
@@ -219,21 +230,12 @@ pub enum SessionTrap {
         /// What the value going into it carries.
         carried: Address,
     },
-    /// Bytes written through a handle on a cell that holds value.
-    ///
-    /// An amount is sixteen bytes and a holdings entry is an instance, so
-    /// a raw write is an assignment: it would put a balance where one is
-    /// read from without any of it having moved. What a body may do to a
-    /// cell holding value is move value into or out of it, which is what
-    /// the movement calls are for.
-    #[error("handle {0} names a cell that holds value, which is not written as bytes")]
-    ValueAsBytes(u32),
     /// Value moved through a handle on a cell that denominates nothing.
     ///
-    /// The mirror of [`SessionTrap::ValueAsBytes`], and the reason that
-    /// one cannot be sidestepped by declaring less: an edge taken from a
-    /// cell carries what the cell holds, and a cell that says nothing
-    /// would produce one nothing could be compared against.
+    /// Unreachable through either runtime's canonical ABI — a movement
+    /// handle is materialized only for a cell the declaration
+    /// denominated — and kept as an honest error rather than a panic,
+    /// like the handle refusals above it.
     #[error("handle {0} names a cell that denominates nothing, so no value moves through it")]
     BytesAsValue(u32),
     /// An entry index past the interval's current entries.
@@ -364,7 +366,6 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::EventPayloadTooLarge(_) => Self::EventPayloadTooLarge,
             SessionTrap::ShareAboveOne => Self::ShareAboveOne,
             SessionTrap::WrongResource { .. } => Self::WrongResource,
-            SessionTrap::ValueAsBytes(_) => Self::ValueAsBytes,
             SessionTrap::BytesAsValue(_) => Self::BytesAsValue,
             SessionTrap::Math(error) => error.into(),
             SessionTrap::Supply(error) => error.into(),
@@ -863,20 +864,8 @@ impl KernelSession {
             .flatten()
     }
 
-    /// Refuse a raw write to a cell the declaration says holds value.
-    ///
-    /// The denomination is the statement: a cell that says what it holds
-    /// is one a movement reads and a destination compares against, and
-    /// bytes written straight into it would be a balance nobody moved.
-    fn bytes_allowed(&self, rep: u32) -> Result<(), SessionTrap> {
-        if self.cell_resource(rep).is_some() {
-            return Err(SessionTrap::ValueAsBytes(rep));
-        }
-        Ok(())
-    }
-
     /// What the cell behind a capability holds, for a movement through
-    /// it — the mirror of [`KernelSession::bytes_allowed`].
+    /// it.
     ///
     /// The check and the answer are one lookup: a movement needs the
     /// resource, and a cell that does not name one is a cell no value
@@ -972,8 +961,8 @@ impl KernelSession {
     /// declared interval, one the collection does not hold, or more
     /// entries than the interval's cap admits.
     pub fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, SessionTrap> {
+        let interval = self.instance_interval(rep)?;
         let resource = self.value_of(rep)?;
-        let interval = self.write_interval(rep)?;
         // The decoder refuses a repeated id, so the set below loses
         // nothing to dedup and a count is an instance count.
         let ids = cell_ids(ids).ok_or(SessionTrap::BadIdCell)?;
@@ -1015,7 +1004,7 @@ impl KernelSession {
     /// Any [`SessionTrap`]: an instance outside the declared interval, a
     /// bucket carrying an amount, or a cap the filing would overrun.
     pub fn range_put(&mut self, rep: u32, funds: u32, value: &[u8]) -> Result<(), SessionTrap> {
-        let interval = self.write_interval(rep)?;
+        let interval = self.instance_interval(rep)?;
         self.judge_credit(rep, funds)?;
         let Held::Instances(ids) = self.bucket(funds)? else {
             return Err(SessionTrap::WrongEdgeKind);
@@ -1264,13 +1253,29 @@ impl KernelSession {
         }
     }
 
+    /// What an amount cell holds.
+    ///
+    /// The one question about a balance that moves none of it, and the
+    /// reason a value cell needs a read at all: a curve is a function of
+    /// its reserves. An absent cell is nothing, and a stored cell that is
+    /// not an amount is the state's own defect.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn amount_cell_balance(&mut self, rep: u32) -> Result<u128, SessionTrap> {
+        let Capability::Amount(key) = self.capability(rep)? else {
+            return Err(SessionTrap::WrongMode(rep));
+        };
+        self.amount_cell(key)
+    }
+
     /// The write half of a write capability.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`].
     pub fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), SessionTrap> {
-        self.bytes_allowed(rep)?;
         match self.capability(rep)? {
             Capability::Write(key) => Ok(self.store.write(key, value)?),
             _ => Err(SessionTrap::WrongMode(rep)),
@@ -1341,8 +1346,8 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
-        let resource = self.value_of(rep)?;
         self.delta(rep, amount, DeltaOp::Sub)?;
+        let resource = self.value_of(rep)?;
         Ok(self.open_bucket(Held::Amount(amount), resource))
     }
 
@@ -1376,7 +1381,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
-        let Capability::Write(key) = self.capability(rep)? else {
+        let Capability::Amount(key) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
         self.judge_credit(rep, funds)?;
@@ -1410,10 +1415,10 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
-        let resource = self.value_of(rep)?;
-        let Capability::Write(key) = self.capability(rep)? else {
+        let Capability::Amount(key) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
+        let resource = self.value_of(rep)?;
         let held = self.amount_cell(key)?;
         let left = held.checked_sub(amount).ok_or(SessionTrap::CellUnderflow)?;
         self.store.write(key, encode_amount(left).to_vec())?;
@@ -1520,8 +1525,8 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn reserve_take(&mut self, rep: u32) -> Result<u32, SessionTrap> {
-        let resource = self.value_of(rep)?;
         let amount = self.reserve_amount(rep)?;
+        let resource = self.value_of(rep)?;
         if !self.taken.insert(rep) {
             return Err(SessionTrap::ReservationTaken);
         }
@@ -1534,20 +1539,32 @@ impl KernelSession {
     /// an index, which collection a scan belongs to.
     fn interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
         match self.capability(rep)? {
-            Capability::RangeRead(interval) | Capability::RangeWrite(interval) => Ok(interval),
+            Capability::RangeRead(interval)
+            | Capability::RangeWrite(interval)
+            | Capability::InstanceRange(interval) => Ok(interval),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
     }
 
-    /// The interval a *write* handle names.
+    /// The interval a byte-writing handle names.
     ///
-    /// Every mutation asks through here, so the refusal a read interval
-    /// meets is stated once rather than repeated at each of them — and a
-    /// mutation added later cannot forget to ask, because there is no
-    /// other way to reach the interval it would change.
+    /// Every entry rewrite asks through here, so the refusal a read
+    /// interval meets is stated once rather than repeated at each of
+    /// them — and a mutation added later cannot forget to ask, because
+    /// there is no other way to reach the interval it would change.
     fn write_interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
         match self.capability(rep)? {
             Capability::RangeWrite(interval) => Ok(interval),
+            _ => Err(SessionTrap::WrongMode(rep)),
+        }
+    }
+
+    /// The interval an instance-moving handle names — the same
+    /// statement as [`Self::write_interval`], for the entries that are
+    /// value rather than bytes.
+    fn instance_interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
+        match self.capability(rep)? {
+            Capability::InstanceRange(interval) => Ok(interval),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
     }
@@ -1686,7 +1703,6 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), SessionTrap> {
-        self.bytes_allowed(rep)?;
         let interval = self.write_interval(rep)?;
         self.scan(rep)?;
         let order = *indexed(&self.scans[&rep], index).map(|(order, _)| order)?;
@@ -1709,7 +1725,6 @@ impl KernelSession {
         order: u128,
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
-        self.bytes_allowed(rep)?;
         let interval = self.write_interval(rep)?;
         if !interval.holds(order) {
             return Err(SessionTrap::OrderOutsideInterval);
@@ -1727,7 +1742,6 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), SessionTrap> {
-        self.bytes_allowed(rep)?;
         let interval = self.write_interval(rep)?;
         self.scan(rep)?;
         let order = *indexed(&self.scans[&rep], index).map(|(order, _)| order)?;
@@ -2153,8 +2167,16 @@ fn capability_for(
                 Err(MaterializeError::UnlockedTarget(key))
             }
         }
+        // What a cell holds chooses the handle. The two share no
+        // operation, so a body reaching for the wrong one is holding a
+        // type that does not have it rather than meeting a refusal.
         (EffectTarget::Point(key), Mode::Write { .. }) => {
-            Ok(Capability::Write(locked_checked(key)?))
+            let key = locked_checked(key)?;
+            Ok(if denominated {
+                Capability::Amount(key)
+            } else {
+                Capability::Write(key)
+            })
         }
         // The two modes that move value and do nothing else. A cell
         // they name holds value, so the declaration has to say what —
@@ -2181,8 +2203,9 @@ fn capability_for(
         // collection one — and the two spell the same interval, the mode
         // choosing only which capability carries it.
         (target, mode @ (Mode::Read | Mode::Write { .. })) => interval_of(target)
-            .map(|interval| match mode {
-                Mode::Write { .. } => Capability::RangeWrite(interval),
+            .map(|interval| match (mode, denominated) {
+                (Mode::Write { .. }, true) => Capability::InstanceRange(interval),
+                (Mode::Write { .. }, false) => Capability::RangeWrite(interval),
                 _ => Capability::RangeRead(interval),
             })
             .ok_or_else(|| MaterializeError::Unsupported(Box::new(effect))),

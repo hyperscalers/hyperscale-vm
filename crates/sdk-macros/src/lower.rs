@@ -162,13 +162,20 @@ impl Site {
         self.resource().is_some()
     }
 
-    /// The kernel resource this site's handle borrows, which is its mode
-    /// and its target shape together.
+    /// The kernel resource this site's handle borrows, which is its
+    /// mode, its target shape and what the cell holds together.
+    ///
+    /// The denomination is read for the same reason routing reads it: a
+    /// cell that says what it holds gets the handle value moves through,
+    /// and a cell that says nothing gets the one bytes are written to.
+    /// The two share no operation, so a body reaching for the wrong one
+    /// holds a type that does not have it.
     ///
     /// `None` for a site the body opened and never used: it declares
     /// nothing, so there is no handle for the export to take.
     pub fn resource(&self) -> Option<&'static str> {
         let has = |op: Op| self.ops.iter().any(|(o, _)| *o == op);
+        let holds_value = self.denomination.is_some();
         let interval = matches!(
             self.target,
             Target::Entry { .. }
@@ -182,6 +189,7 @@ impl Site {
             has(Op::Get),
         );
         Some(match (interval, writes || moves, reads) {
+            (true, true, _) if holds_value => "instance-range",
             (true, true, _) => "range-write",
             (true, false, true) => "range-read",
             // A body that only moves value declares a commutative
@@ -189,6 +197,7 @@ impl Site {
             // needs the exclusivity a read-modify-write has. The mode is
             // what the body needs rather than which word it typed.
             (false, true, _) if moves && !writes && !reads => "delta-cell",
+            (false, true, _) if holds_value => "amount-cell",
             (false, true, _) => "write-cell",
             (false, false, true) => "read-cell",
             (_, false, false) => {
@@ -569,9 +578,11 @@ pub fn handle_variant(resource: &str) -> TokenStream {
         "read-cell" => quote!(Read),
         "locked-cell" => quote!(Locked),
         "write-cell" => quote!(Write),
+        "amount-cell" => quote!(Amount),
         "delta-cell" => quote!(Delta),
         "reserve-cell" => quote!(Reserve),
         "range-read" => quote!(RangeRead),
+        "instance-range" => quote!(InstanceRange),
         _ => quote!(RangeWrite),
     }
 }

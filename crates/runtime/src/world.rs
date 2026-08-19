@@ -173,6 +173,8 @@ pub struct ReadCell;
 pub struct LockedCell;
 /// Host-side marker for the `write-cell` resource.
 pub struct WriteCell;
+/// Host-side marker for the `amount-cell` resource.
+pub struct AmountCell;
 /// Host-side marker for the `delta-cell` resource.
 pub struct DeltaCell;
 /// Host-side marker for the `reserve-cell` resource.
@@ -181,6 +183,8 @@ pub struct ReserveCell;
 pub struct RangeRead;
 /// Host-side marker for the `range-write` resource.
 pub struct RangeWrite;
+/// Host-side marker for the `instance-range` resource.
+pub struct InstanceRange;
 
 /// A host refusal as an engine trap, with its class recoverable.
 ///
@@ -238,6 +242,9 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.resource("write-cell", ResourceType::host::<WriteCell>(), |_, _| {
         Ok(())
     })?;
+    state.resource("amount-cell", ResourceType::host::<AmountCell>(), |_, _| {
+        Ok(())
+    })?;
     state.resource("delta-cell", ResourceType::host::<DeltaCell>(), |_, _| {
         Ok(())
     })?;
@@ -252,6 +259,11 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.resource("range-write", ResourceType::host::<RangeWrite>(), |_, _| {
         Ok(())
     })?;
+    state.resource(
+        "instance-range",
+        ResourceType::host::<InstanceRange>(),
+        |_, _| Ok(()),
+    )?;
 
     state.func_wrap(
         "read-cell-get",
@@ -305,8 +317,16 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         },
     )?;
     state.func_wrap(
-        "write-cell-take",
-        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<WriteCell>, Amount)| {
+        "amount-cell-balance",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<AmountCell>,)| {
+            let held = store.data_mut().amount_cell_balance(r.rep());
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            Ok((Amount::from(held.map_err(host_trap)?),))
+        },
+    )?;
+    state.func_wrap(
+        "amount-cell-take",
+        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<AmountCell>, Amount)| {
             charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
             let rep = store
                 .data_mut()
@@ -339,8 +359,8 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         },
     )?;
     state.func_wrap(
-        "range-write-take",
-        |mut store: StoreContextMut<'_, T>, (r, ids): (Resource<RangeWrite>, Vec<u8>)| {
+        "instance-range-take",
+        |mut store: StoreContextMut<'_, T>, (r, ids): (Resource<InstanceRange>, Vec<u8>)| {
             charge_boundary_bytes(&mut store, ids.len())?;
             let taken = store.data_mut().range_take(r.rep(), &ids);
             charge_scan(&mut store)?;
@@ -348,9 +368,9 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         },
     )?;
     state.func_wrap(
-        "range-write-put",
+        "instance-range-put",
         |mut store: StoreContextMut<'_, T>,
-         (r, funds, value): (Resource<RangeWrite>, Resource<Bucket>, Vec<u8>)| {
+         (r, funds, value): (Resource<InstanceRange>, Resource<Bucket>, Vec<u8>)| {
             charge_boundary_bytes(&mut store, value.len())?;
             store
                 .data_mut()
@@ -398,8 +418,9 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         },
     )?;
     state.func_wrap(
-        "write-cell-put",
-        |mut store: StoreContextMut<'_, T>, (r, funds): (Resource<WriteCell>, Resource<Bucket>)| {
+        "amount-cell-put",
+        |mut store: StoreContextMut<'_, T>,
+         (r, funds): (Resource<AmountCell>, Resource<Bucket>)| {
             store
                 .data_mut()
                 .write_put(r.rep(), funds.rep())
@@ -483,6 +504,34 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "range-write-entry",
         |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWrite>, u32)| {
+            let value = store.data_mut().range_entry(r.rep(), index);
+            charge_scan(&mut store)?;
+            let value = value.map_err(host_trap)?;
+            charge_boundary_bytes(&mut store, value.len())?;
+            Ok((value,))
+        },
+    )?;
+    state.func_wrap(
+        "instance-range-count",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<InstanceRange>,)| {
+            let count = store.data_mut().range_count(r.rep());
+            charge_scan(&mut store)?;
+            Ok((count.map_err(host_trap)?,))
+        },
+    )?;
+    state.func_wrap(
+        "instance-range-order",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<InstanceRange>, u32)| {
+            let order = store.data_mut().range_order(r.rep(), index);
+            charge_scan(&mut store)?;
+            let order = order.map_err(host_trap)?;
+            charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
+            Ok((Amount::from(order),))
+        },
+    )?;
+    state.func_wrap(
+        "instance-range-entry",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<InstanceRange>, u32)| {
             let value = store.data_mut().range_entry(r.rep(), index);
             charge_scan(&mut store)?;
             let value = value.map_err(host_trap)?;

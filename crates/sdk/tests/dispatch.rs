@@ -288,7 +288,7 @@ fn an_edge_the_body_produces_comes_back_as_the_kernels_own() {
     let (mut session, invoked) = till::invoke(
         "withdraw",
         session,
-        &[cell(CellKind::Write), GuestArg::Bytes(&wide(30))],
+        &[cell(CellKind::Amount), GuestArg::Bytes(&wide(30))],
     );
 
     let Invoked::Produced(edges) = invoked else {
@@ -316,7 +316,7 @@ fn the_error_arm_declines_rather_than_trapping() {
     let (_, invoked) = till::invoke(
         "withdraw",
         session,
-        &[cell(CellKind::Write), GuestArg::Bytes(&wide(30))],
+        &[cell(CellKind::Amount), GuestArg::Bytes(&wide(30))],
     );
 
     assert_eq!(invoked, Invoked::Declined(0), "the package's own code");

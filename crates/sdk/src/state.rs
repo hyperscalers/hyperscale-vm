@@ -828,9 +828,9 @@ impl Slot<Vault> {
     #[inline(always)]
     pub fn balance(&self) -> Quantity {
         #[cfg(target_arch = "wasm32")]
-        return Quantity::from_cell(&crate::guest::cell_get(self.handle));
+        return Quantity::from_subunits(crate::guest::cell_balance(self.handle));
         #[cfg(not(target_arch = "wasm32"))]
-        return Quantity::from_cell(&host::cell_get(self.handle));
+        return Quantity::from_subunits(host::cell_balance(self.handle));
     }
 
     /// Move value into the cell, consuming the bucket.

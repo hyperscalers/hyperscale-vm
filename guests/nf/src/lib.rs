@@ -11,7 +11,7 @@ wit_bindgen::generate!({
 });
 
 use hyperscale::kernel::state::{
-    mint_instances, burn, range_write_put, range_write_take, write_cell_set,
+    burn, instance_range_put, instance_range_take, mint_instances, write_cell_set,
 };
 
 /// One id in the framing a declared id list crosses in: a count byte,
@@ -30,12 +30,12 @@ impl Guest for Nf {
         mint_instances(i, &one_id(id))
     }
 
-    fn deposit(holdings: &RangeWrite, funds: Bucket) {
-        range_write_put(holdings, funds, &[1]);
+    fn deposit(holdings: &InstanceRange, funds: Bucket) {
+        instance_range_put(holdings, funds, &[1]);
     }
 
-    fn withdraw(holdings: &RangeWrite, ids: Vec<u8>) -> Bucket {
-        range_write_take(holdings, &ids)
+    fn withdraw(holdings: &InstanceRange, ids: Vec<u8>) -> Bucket {
+        instance_range_take(holdings, &ids)
     }
 
     fn burn(funds: Bucket, i: &Issuer) {

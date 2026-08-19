@@ -324,8 +324,12 @@ fn run_blessed(
             ResourceKind::RangeRead => call1::<RangeRead>(&mut store, &instance, export, *rep),
             ResourceKind::RangeWrite => call1::<RangeWrite>(&mut store, &instance, export, *rep),
             // Nothing this fixture exports takes value or issues any;
-            // the bucket lane drives both.
-            ResourceKind::Bucket | ResourceKind::Issuer => {
+            // the bucket lane drives both, and the two value handles with
+            // it.
+            ResourceKind::Bucket
+            | ResourceKind::Issuer
+            | ResourceKind::AmountCell
+            | ResourceKind::InstanceRange => {
                 return Err(format_err!("{export} takes no value handle"));
             }
         },

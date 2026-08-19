@@ -47,6 +47,18 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
 
+    /// What an amount cell holds.
+    ///
+    /// The read beside the two movements, and the only question about a
+    /// balance that cannot change it. A quantity rather than the bytes
+    /// it is stored as: the width is the protocol's, and a cell holding
+    /// value has no byte surface for a body to read one through.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn amount_cell_balance(&mut self, rep: u32) -> Result<u128, AbortReason>;
+
     /// Create value under this invocation's issuance grant, returning
     /// the bucket's rep.
     ///

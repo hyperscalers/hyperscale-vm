@@ -18,7 +18,8 @@ use wasmtime::{AsContextMut, Error, Result};
 
 use crate::abort::CallError;
 use crate::world::{
-    Bucket, DeltaCell, Issuer, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
+    AmountCell, Bucket, DeltaCell, InstanceRange, Issuer, LockedCell, RangeRead, RangeWrite,
+    ReadCell, ReserveCell, WriteCell,
 };
 
 /// An address as the world's `record address`: four little-endian words.
@@ -60,6 +61,9 @@ fn handle(kind: CellKind, rep: u32, store: impl AsContextMut) -> Result<Resource
         CellKind::Write => {
             ResourceAny::try_from_resource(Resource::<WriteCell>::new_own(rep), store)
         }
+        CellKind::Amount => {
+            ResourceAny::try_from_resource(Resource::<AmountCell>::new_own(rep), store)
+        }
         CellKind::Delta => {
             ResourceAny::try_from_resource(Resource::<DeltaCell>::new_own(rep), store)
         }
@@ -68,6 +72,9 @@ fn handle(kind: CellKind, rep: u32, store: impl AsContextMut) -> Result<Resource
         }
         CellKind::RangeRead => {
             ResourceAny::try_from_resource(Resource::<RangeRead>::new_own(rep), store)
+        }
+        CellKind::InstanceRange => {
+            ResourceAny::try_from_resource(Resource::<InstanceRange>::new_own(rep), store)
         }
         CellKind::RangeWrite => {
             ResourceAny::try_from_resource(Resource::<RangeWrite>::new_own(rep), store)

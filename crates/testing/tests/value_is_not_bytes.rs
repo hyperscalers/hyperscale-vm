@@ -1,13 +1,13 @@
 //! What a package may do to a cell that holds value.
 //!
-//! A vault is sixteen bytes and a write capability writes bytes, so
-//! nothing about the shape of the two separates a debit from an
-//! assignment. What separates them is the declaration: a cell that says
-//! what it holds is one value moves into and out of, and a cell that
-//! says nothing is one bytes are written to. A package chooses which by
-//! what it declares, and the kernel holds it to the choice — which is
-//! what keeps a balance something that was moved rather than something
-//! that was written.
+//! A vault is sixteen bytes and bytes are what a write capability
+//! writes, so nothing about the shape of the two separates a debit from
+//! an assignment. What separates them is the declaration: a cell that
+//! says what it holds gets a handle value moves through, and a cell that
+//! says nothing gets one bytes are written to. The two share no
+//! operation, so a body reaching for the wrong one is holding a handle
+//! that does not have it — which is what keeps a balance something that
+//! was moved rather than something that was written.
 //!
 //! Every package here is hand-authored. That is the point: a
 //! `#[blueprint]` package reaches a vault through `vault()` and has no
@@ -128,7 +128,7 @@ fn a_package_cannot_assign_itself_a_balance() {
         account::deposit(b, ATTACKER, funds)
     });
 
-    assert_eq!(outcome.aborted(), Some(AbortReason::ValueAsBytes));
+    assert_eq!(outcome.aborted(), Some(AbortReason::HandleWrongMode));
     assert_eq!(chain.balance(ATTACKER, xrd()), 0, "nothing arrived");
     assert_eq!(
         chain.balance(VICTIM, xrd()),
@@ -276,7 +276,7 @@ fn a_badge_a_package_never_held_opens_nothing() {
     let armed = chain.transact(ATTACKER, |b| {
         b.call(front, "arm", (Address::from(BADGE),))?.none()
     });
-    assert_eq!(armed.aborted(), Some(AbortReason::ValueAsBytes));
+    assert_eq!(armed.aborted(), Some(AbortReason::HandleWrongMode));
 
     // So the gate reads an empty vault and mints nothing.
     let outcome = chain.transact(ATTACKER, |b| {
@@ -347,7 +347,9 @@ fn a_cell_that_says_nothing_takes_no_value() {
         b.call(pot, "fill", (funds,))?.none()
     });
 
-    assert_eq!(outcome.aborted(), Some(AbortReason::BytesAsValue));
+    // The cell said nothing, so the handle it got is the one bytes are
+    // written to — and that handle has no credit on it.
+    assert_eq!(outcome.aborted(), Some(AbortReason::HandleWrongMode));
     assert_eq!(
         chain.balance(ATTACKER, TREASURE),
         1_000,

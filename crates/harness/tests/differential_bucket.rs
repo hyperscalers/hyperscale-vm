@@ -24,7 +24,7 @@ use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
 };
 use hyperscale_vm_runtime::{
-    Bucket, DeltaCell, HostRefusal, Issuer, RangeWrite, ReadCell, ReserveCell, WriteCell,
+    AmountCell, Bucket, DeltaCell, HostRefusal, InstanceRange, Issuer, ReadCell, ReserveCell,
     add_kernel_to_linker, blessed_engine, classify, validate_component,
 };
 use wasmtime::component::{Component, Linker, Resource};
@@ -205,7 +205,7 @@ fn rep_of(host: &KernelSession, wanted: SubstateKey, mode: Mode) -> u32 {
                 Mode::Write {
                     requires: Presence::Either,
                 },
-                Capability::Write(key),
+                Capability::Amount(key),
             )
             | (Mode::Delta, Capability::Delta(key))
             | (Mode::Reserve { .. }, Capability::Reserve { key, .. }) => *key == wanted,
@@ -458,7 +458,7 @@ fn take_blessed(fx: &Fixture, take: Take) -> Result<(Took, KernelSession, u64)> 
             .get_typed_func::<(Resource<DeltaCell>, u64), (Resource<Bucket>,)>(&mut store, export)?
             .call(&mut store, (Resource::new_borrow(rep), n)),
         (Some((rep, Mode::Write { .. })), Some(n)) => instance
-            .get_typed_func::<(Resource<WriteCell>, u64), (Resource<Bucket>,)>(&mut store, export)?
+            .get_typed_func::<(Resource<AmountCell>, u64), (Resource<Bucket>,)>(&mut store, export)?
             .call(&mut store, (Resource::new_borrow(rep), n)),
         (Some((rep, _)), _) => instance
             .get_typed_func::<(Resource<ReserveCell>,), (Resource<Bucket>,)>(&mut store, export)?
@@ -492,7 +492,7 @@ fn take_ref(fx: &Fixture, take: Take) -> Result<(Took, KernelSession, u64)> {
             rep_of(&host, key, mode),
             match mode {
                 Mode::Delta => ResourceKind::DeltaCell,
-                Mode::Write { .. } => ResourceKind::WriteCell,
+                Mode::Write { .. } => ResourceKind::AmountCell,
                 _ => ResourceKind::ReserveCell,
             },
         ),
@@ -649,7 +649,7 @@ fn put_blessed(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(C
             )
     } else {
         instance
-            .get_typed_func::<(Resource<WriteCell>, Resource<Bucket>), (u64,)>(&mut store, export)?
+            .get_typed_func::<(Resource<AmountCell>, Resource<Bucket>), (u64,)>(&mut store, export)?
             .call(
                 &mut store,
                 (Resource::new_borrow(rep), Resource::new_own(funds)),
@@ -681,7 +681,7 @@ fn put_ref(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(Credi
             Mode::Write {
                 requires: Presence::Either,
             },
-            ResourceKind::WriteCell,
+            ResourceKind::AmountCell,
         )
     };
     let args = vec![
@@ -809,7 +809,7 @@ fn pair_blessed(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
 
     let ((one, two),) = instance
         .get_typed_func::<
-            (Resource<DeltaCell>, Resource<WriteCell>, u64, u64),
+            (Resource<DeltaCell>, Resource<AmountCell>, u64, u64),
             ((Resource<Bucket>, Resource<Bucket>),),
         >(&mut store, "take-two")?
         .call(
@@ -851,7 +851,7 @@ fn pair_ref(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
                     requires: Presence::Either,
                 },
             ),
-            ResourceKind::WriteCell,
+            ResourceKind::AmountCell,
         ),
         CVal::U64(a),
         CVal::U64(b),
@@ -982,12 +982,14 @@ fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
     let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let host = materialize(fx);
-    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite(..)));
+    let held = rep_where(&host, |c| matches!(c, Capability::InstanceRange(..)));
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
     let (taken,) = instance
-        .get_typed_func::<(Resource<RangeWrite>, &[u8]), (Resource<Bucket>,)>(&mut store, "lift")?
+        .get_typed_func::<(Resource<InstanceRange>, &[u8]), (Resource<Bucket>,)>(
+            &mut store, "lift",
+        )?
         .call(&mut store, (Resource::new_borrow(held), &ids_cell(ids)[..]))?;
     let mut host = store.into_data();
     let blessed = host.take_bucket(taken.rep())?.quantity();
@@ -997,11 +999,11 @@ fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
     // the collection as it was.
     let comp = RefComponent::decode(&bytes)?;
     let host = materialize(fx);
-    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite(..)));
+    let held = rep_where(&host, |c| matches!(c, Capability::InstanceRange(..)));
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
     let args = [
-        CVal::Borrow(held, ResourceKind::RangeWrite),
+        CVal::Borrow(held, ResourceKind::InstanceRange),
         CVal::Bytes(ids_cell(ids)),
     ];
     let reference = match invoke(&mut instance, "lift", &args)?.as_slice() {
@@ -1014,11 +1016,11 @@ fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
     assert_eq!(blessed, reference, "the lift diverged");
 
     let host = materialize(fx);
-    let held = rep_where(&host, |c| matches!(c, Capability::RangeWrite(..)));
+    let held = rep_where(&host, |c| matches!(c, Capability::InstanceRange(..)));
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
     let args = [
-        CVal::Borrow(held, ResourceKind::RangeWrite),
+        CVal::Borrow(held, ResourceKind::InstanceRange),
         CVal::Bytes(ids_cell(ids)),
     ];
     let round_trip = match invoke(&mut instance, "relift", &args)?.as_slice() {

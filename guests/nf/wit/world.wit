@@ -7,18 +7,18 @@ package test:guest;
 world nf {
     import hyperscale:kernel/state;
 
-    use hyperscale:kernel/state.{bucket, issuer, write-cell, range-write};
+    use hyperscale:kernel/state.{bucket, issuer, write-cell, instance-range};
 
     /// Mint one instance: write its data cell and produce the instance
     /// under this method's own issuance grant.
     export mint: func(data: borrow<write-cell>, id: u64, i: borrow<issuer>) -> own<bucket>;
 
     /// File the arriving instances as holdings entries.
-    export deposit: func(holdings: borrow<range-write>, funds: own<bucket>);
+    export deposit: func(holdings: borrow<instance-range>, funds: own<bucket>);
 
     /// Take the named instances out of the holdings interval, trapping on
     /// one not held.
-    export withdraw: func(holdings: borrow<range-write>, ids: list<u8>) -> own<bucket>;
+    export withdraw: func(holdings: borrow<instance-range>, ids: list<u8>) -> own<bucket>;
 
     /// Destroy the instances the edge carries; they stop existing.
     export burn: func(funds: own<bucket>, i: borrow<issuer>);

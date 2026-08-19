@@ -185,6 +185,23 @@ pub fn cell_get(handle: Handle) -> Vec<u8> {
     }))
 }
 
+/// What this handle's amount cell holds.
+///
+/// Beside [`cell_get`] rather than inside it: a cell holding value has
+/// no byte surface, so the two answer different questions on different
+/// handles and neither is the other's special case.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::Amount`].
+#[must_use]
+pub fn cell_balance(handle: Handle) -> u128 {
+    settled(kernel(|k| match handle {
+        Handle::Amount(rep) => k.amount_cell_balance(rep),
+        other => unreachable!("{other:?} holds no balance"),
+    }))
+}
+
 /// Replace the substate this handle holds exclusively.
 ///
 /// # Panics
@@ -205,7 +222,7 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
 pub fn cell_put(handle: Handle, funds: u32) {
     settled(kernel(|k| match handle {
         Handle::Delta(rep) => k.delta_put(rep, funds),
-        Handle::Write(rep) => k.write_put(rep, funds),
+        Handle::Amount(rep) => k.write_put(rep, funds),
         other => unreachable!("{other:?} carries no movement"),
     }));
 }
@@ -219,7 +236,7 @@ pub fn cell_put(handle: Handle, funds: u32) {
 pub fn cell_take(handle: Handle, value: u128) -> u32 {
     settled(kernel(|k| match handle {
         Handle::Delta(rep) => k.delta_take(rep, value),
-        Handle::Write(rep) => k.write_take(rep, value),
+        Handle::Amount(rep) => k.write_take(rep, value),
         other => unreachable!("{other:?} carries no movement"),
     }))
 }
@@ -362,7 +379,9 @@ pub fn bucket_amount(rep: u32) -> u128 {
 #[must_use]
 pub fn entry_count(handle: Handle) -> u32 {
     scanned(kernel(|k| match handle {
-        Handle::RangeRead(rep) | Handle::RangeWrite(rep) => k.range_count(rep),
+        Handle::RangeRead(rep) | Handle::RangeWrite(rep) | Handle::InstanceRange(rep) => {
+            k.range_count(rep)
+        }
         other => unreachable!("{other:?} is not an interval"),
     }))
 }
@@ -375,7 +394,9 @@ pub fn entry_count(handle: Handle) -> u32 {
 #[must_use]
 pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
     scanned(kernel(|k| match handle {
-        Handle::RangeRead(rep) | Handle::RangeWrite(rep) => k.range_order(rep, index),
+        Handle::RangeRead(rep) | Handle::RangeWrite(rep) | Handle::InstanceRange(rep) => {
+            k.range_order(rep, index)
+        }
         other => unreachable!("{other:?} yields no order keys"),
     }))
 }
@@ -388,7 +409,9 @@ pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
 #[must_use]
 pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
     scanned(kernel(|k| match handle {
-        Handle::RangeRead(rep) | Handle::RangeWrite(rep) => k.range_entry(rep, index),
+        Handle::RangeRead(rep) | Handle::RangeWrite(rep) | Handle::InstanceRange(rep) => {
+            k.range_entry(rep, index)
+        }
         other => unreachable!("{other:?} yields no entries"),
     }))
 }
@@ -432,7 +455,7 @@ pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
 /// On any mode but [`Handle::RangeWrite`].
 pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
     settled(kernel(|k| match handle {
-        Handle::RangeWrite(rep) => k.range_put(rep, funds, value.to_vec()),
+        Handle::InstanceRange(rep) => k.range_put(rep, funds, value.to_vec()),
         other => unreachable!("{other:?} carries no movement"),
     }));
 }
@@ -445,7 +468,7 @@ pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
 #[must_use]
 pub fn entry_take(handle: Handle, ids: &[u8]) -> u32 {
     scanned(kernel(|k| match handle {
-        Handle::RangeWrite(rep) => k.range_take(rep, ids),
+        Handle::InstanceRange(rep) => k.range_take(rep, ids),
         other => unreachable!("{other:?} carries no movement"),
     }))
 }
@@ -538,10 +561,12 @@ pub fn handle(args: &[GuestArg<'_>], at: usize, declared: CellKind) -> Handle {
         CellKind::Read => Handle::Read(rep),
         CellKind::Locked => Handle::Locked(rep),
         CellKind::Write => Handle::Write(rep),
+        CellKind::Amount => Handle::Amount(rep),
         CellKind::Delta => Handle::Delta(rep),
         CellKind::Reserve => Handle::Reserve(rep),
         CellKind::RangeRead => Handle::RangeRead(rep),
         CellKind::RangeWrite => Handle::RangeWrite(rep),
+        CellKind::InstanceRange => Handle::InstanceRange(rep),
     }
 }
 

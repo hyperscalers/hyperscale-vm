@@ -43,6 +43,10 @@ impl KernelHost for KernelSession {
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason> {
         refused(Self::write_cell_set(self, rep, value))
     }
+
+    fn amount_cell_balance(&mut self, rep: u32) -> Result<u128, AbortReason> {
+        self.amount_cell_balance(rep).map_err(Into::into)
+    }
     fn burn(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
         refused(Self::burn(self, rep, funds))
     }

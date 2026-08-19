@@ -331,13 +331,19 @@ pub enum TargetExpr {
     },
 }
 
-/// The handle type a clause's mode and target materialize, when the
-/// clause pins one statically.
+/// The handle type a clause's mode, target and denomination
+/// materialize, when the clause pins one statically.
 ///
 /// A `for-each` clause yields `None`: naming one as a handle parameter
 /// is a deterministic refusal at materialization, so there is no single
 /// type to answer with. So does a mode and target pairing no capability
 /// is built for.
+///
+/// The denomination is read for the same reason the kernel reads it: a
+/// cell that says what it holds is one value moves through, and a cell
+/// that says nothing is one bytes are written to. The two share no
+/// operation, so they are two types and an export borrows the one its
+/// clause named.
 ///
 /// Two callers, and neither can recover this from what it holds. The
 /// publish gate holds an export's declared resource to the clause it
@@ -346,20 +352,35 @@ pub enum TargetExpr {
 /// read the type off a capability that is not there.
 #[must_use]
 pub const fn materialized_kind(clause: &Clause) -> Option<CellKind> {
-    let Clause::Effect { target, mode, .. } = clause else {
+    let Clause::Effect {
+        target,
+        mode,
+        denomination,
+        ..
+    } = clause
+    else {
         return None;
     };
+    let holds_value = denomination.is_some();
     match (target, mode) {
         (TargetExpr::Point(_), ModeExpr::Read) => Some(CellKind::Read),
         (TargetExpr::Point(_), ModeExpr::Locked) => Some(CellKind::Locked),
-        (TargetExpr::Point(_), ModeExpr::Write { .. }) => Some(CellKind::Write),
+        (TargetExpr::Point(_), ModeExpr::Write { .. }) => Some(if holds_value {
+            CellKind::Amount
+        } else {
+            CellKind::Write
+        }),
         (TargetExpr::Point(_), ModeExpr::Delta) => Some(CellKind::Delta),
         (TargetExpr::Point(_), ModeExpr::Reserve(_)) => Some(CellKind::Reserve),
         (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Read) => {
             Some(CellKind::RangeRead)
         }
         (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write { .. }) => {
-            Some(CellKind::RangeWrite)
+            Some(if holds_value {
+                CellKind::InstanceRange
+            } else {
+                CellKind::RangeWrite
+            })
         }
         _ => None,
     }

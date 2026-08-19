@@ -49,7 +49,8 @@ use core::mem::ManuallyDrop;
 
 pub use bindings::hyperscale::kernel;
 use kernel::state::{
-    DeltaCell, Issuer, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
+    AmountCell, DeltaCell, InstanceRange, Issuer, LockedCell, RangeRead, RangeWrite, ReadCell,
+    ReserveCell, WriteCell,
 };
 
 use crate::Address;
@@ -195,18 +196,6 @@ pub fn bucket_amount(funds: &kernel::state::Bucket) -> u128 {
     whole(kernel::state::bucket_amount(funds))
 }
 
-/// Decode an amount cell. An absent cell reads as empty, which is zero.
-#[must_use]
-pub fn amount_of(cell: &[u8]) -> u128 {
-    cell.try_into().map_or(0, u128::from_le_bytes)
-}
-
-/// Encode an amount into the kernel's cell representation.
-#[must_use]
-pub const fn amount_cell(amount: u128) -> [u8; AMOUNT_CELL_BYTES] {
-    amount.to_le_bytes()
-}
-
 /// Reconstruct one borrow per resource type, for the duration of a call.
 ///
 /// The rep names a table entry the kernel owns and this body borrows.
@@ -236,10 +225,12 @@ borrows! {
     read_cell -> ReadCell,
     locked_cell -> LockedCell,
     write_cell -> WriteCell,
+    amount_cell -> AmountCell,
     delta_cell -> DeltaCell,
     reserve_cell -> ReserveCell,
     range_read -> RangeRead,
     range_write -> RangeWrite,
+    instance_range -> InstanceRange,
 }
 
 /// The substate this handle reads.
@@ -257,6 +248,27 @@ pub fn cell_get(handle: Handle) -> Vec<u8> {
         Handle::Locked(rep) => kernel::state::locked_cell_get(&locked_cell(rep)),
         Handle::Write(rep) => kernel::state::write_cell_get(&write_cell(rep)),
         other => unreachable!("{other:?} reads no point substate"),
+    }
+}
+
+/// What this handle's amount cell holds.
+///
+/// Beside [`cell_get`] rather than inside it: a cell holding value has
+/// no byte surface, so the two answer different questions on different
+/// handles and neither is the other's special case.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::Amount`].
+#[must_use]
+#[inline(always)]
+pub fn cell_balance(handle: Handle) -> u128 {
+    match handle {
+        Handle::Amount(rep) => {
+            let held = kernel::state::amount_cell_balance(&amount_cell(rep));
+            u128::from(held.high) << 64 | u128::from(held.low)
+        }
+        other => unreachable!("{other:?} holds no balance"),
     }
 }
 
@@ -283,7 +295,7 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
 pub fn cell_put(handle: Handle, funds: kernel::state::Bucket) {
     match handle {
         Handle::Delta(rep) => kernel::state::delta_cell_put(&delta_cell(rep), funds),
-        Handle::Write(rep) => kernel::state::write_cell_put(&write_cell(rep), funds),
+        Handle::Amount(rep) => kernel::state::amount_cell_put(&amount_cell(rep), funds),
         other => unreachable!("{other:?} carries no movement"),
     }
 }
@@ -298,7 +310,7 @@ pub fn cell_put(handle: Handle, funds: kernel::state::Bucket) {
 pub fn cell_take(handle: Handle, value: u128) -> kernel::state::Bucket {
     match handle {
         Handle::Delta(rep) => kernel::state::delta_cell_take(&delta_cell(rep), amount(value)),
-        Handle::Write(rep) => kernel::state::write_cell_take(&write_cell(rep), amount(value)),
+        Handle::Amount(rep) => kernel::state::amount_cell_take(&amount_cell(rep), amount(value)),
         other => unreachable!("{other:?} carries no movement"),
     }
 }
@@ -353,6 +365,7 @@ pub fn entry_count(handle: Handle) -> u32 {
     match handle {
         Handle::RangeRead(rep) => kernel::state::range_read_count(&range_read(rep)),
         Handle::RangeWrite(rep) => kernel::state::range_write_count(&range_write(rep)),
+        Handle::InstanceRange(rep) => kernel::state::instance_range_count(&instance_range(rep)),
         other => unreachable!("{other:?} is not an interval"),
     }
 }
@@ -372,6 +385,10 @@ pub fn entry_order(handle: Handle, index: u32) -> u128 {
         Handle::RangeWrite(rep) => {
             whole(kernel::state::range_write_order(&range_write(rep), index))
         }
+        Handle::InstanceRange(rep) => whole(kernel::state::instance_range_order(
+            &instance_range(rep),
+            index,
+        )),
         other => unreachable!("{other:?} yields no order keys"),
     }
 }
@@ -387,6 +404,9 @@ pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
     match handle {
         Handle::RangeRead(rep) => kernel::state::range_read_entry(&range_read(rep), index),
         Handle::RangeWrite(rep) => kernel::state::range_write_entry(&range_write(rep), index),
+        Handle::InstanceRange(rep) => {
+            kernel::state::instance_range_entry(&instance_range(rep), index)
+        }
         other => unreachable!("{other:?} yields no entries"),
     }
 }
@@ -444,8 +464,8 @@ pub fn entry_insert(handle: Handle, order: u128, value: &[u8]) {
 #[inline(always)]
 pub fn entry_put(handle: Handle, funds: kernel::state::Bucket, value: &[u8]) {
     match handle {
-        Handle::RangeWrite(rep) => {
-            kernel::state::range_write_put(&range_write(rep), funds, value);
+        Handle::InstanceRange(rep) => {
+            kernel::state::instance_range_put(&instance_range(rep), funds, value);
         }
         other => unreachable!("{other:?} carries no movement"),
     }
@@ -460,7 +480,7 @@ pub fn entry_put(handle: Handle, funds: kernel::state::Bucket, value: &[u8]) {
 #[inline(always)]
 pub fn entry_take(handle: Handle, ids: &[u8]) -> kernel::state::Bucket {
     match handle {
-        Handle::RangeWrite(rep) => kernel::state::range_write_take(&range_write(rep), ids),
+        Handle::InstanceRange(rep) => kernel::state::instance_range_take(&instance_range(rep), ids),
         other => unreachable!("{other:?} carries no movement"),
     }
 }

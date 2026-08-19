@@ -58,16 +58,27 @@ pub enum CellKind {
     Read,
     /// `locked-cell`.
     Locked,
-    /// `write-cell`.
+    /// `write-cell`: a cell holding bytes the package chose.
     Write,
+    /// `amount-cell`: the same exclusive access to a cell holding value.
+    ///
+    /// Its own type rather than a `write-cell` the kernel refuses half of.
+    /// Value moves through a bucket and bytes do not, so the two share no
+    /// operation, and a package that named the wrong one is answered by
+    /// the publish gate rather than by a trap at the call.
+    Amount,
     /// `delta-cell`.
     Delta,
     /// `reserve-cell`.
     Reserve,
     /// `range-read`.
     RangeRead,
-    /// `range-write`.
+    /// `range-write`: entries the package writes as bytes.
     RangeWrite,
+    /// `instance-range`: the same interval over entries that are
+    /// instances of one resource, on the terms [`CellKind::Amount`]
+    /// states.
+    InstanceRange,
 }
 
 impl CellKind {
@@ -84,10 +95,12 @@ impl CellKind {
             Self::Read => "read-cell",
             Self::Locked => "locked-cell",
             Self::Write => "write-cell",
+            Self::Amount => "amount-cell",
             Self::Delta => "delta-cell",
             Self::Reserve => "reserve-cell",
             Self::RangeRead => "range-read",
             Self::RangeWrite => "range-write",
+            Self::InstanceRange => "instance-range",
         }
     }
 }

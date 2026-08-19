@@ -168,6 +168,10 @@ impl KernelHost for TestHost {
         Ok(())
     }
 
+    fn amount_cell_balance(&mut self, _rep: u32) -> std::result::Result<u128, AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+
     fn burn(&mut self, _r: u32, _funds: u32) -> std::result::Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }

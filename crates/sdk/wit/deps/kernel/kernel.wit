@@ -60,6 +60,15 @@ interface state {
     resource locked-cell;
     /// A declared exclusive read-modify-write of one substate.
     resource write-cell;
+    /// The same, over a cell that holds value.
+    ///
+    /// Its own type rather than a `write-cell` half of whose operations
+    /// refuse: bytes are read and replaced, value is credited and
+    /// debited, and the two share none. Which one a clause materializes
+    /// is what its declaration said the cell holds, so an export that
+    /// borrowed the wrong one is answered by the publish gate rather
+    /// than by a trap at the call.
+    resource amount-cell;
     /// A declared commutative movement on one amount cell.
     resource delta-cell;
     /// A declared reservation, already judged feasible and held.
@@ -68,6 +77,8 @@ interface state {
     resource range-read;
     /// A declared read-modify-write interval of an ordered collection.
     resource range-write;
+    /// The same, over entries that are instances of one resource.
+    resource instance-range;
 
     /// The substate's current bytes; empty if absent.
     read-cell-get: func(c: borrow<read-cell>) -> list<u8>;
@@ -81,6 +92,14 @@ interface state {
     /// Replace the substate's bytes.
     write-cell-set: func(c: borrow<write-cell>, value: list<u8>);
 
+    /// What the amount cell holds.
+    ///
+    /// A borrow, so asking moves nothing, and an `amount` rather than the
+    /// bytes it is stored as — the width is the protocol's, and a cell
+    /// that holds value has no byte surface for a body to read one
+    /// through. The one question about a balance that cannot change it.
+    amount-cell-balance: func(c: borrow<amount-cell>) -> amount;
+
     /// Debit the amount cell and hand the value out.
     ///
     /// The kernel reads, subtracts and writes back, which is what makes
@@ -88,14 +107,14 @@ interface state {
     /// writes no absolute of its own, so nothing it computes can disagree
     /// with what left. Traps on a stored cell that is not an amount and
     /// on a debit past what it holds.
-    write-cell-take: func(c: borrow<write-cell>, amount: amount) -> own<bucket>;
+    amount-cell-take: func(c: borrow<amount-cell>, amount: amount) -> own<bucket>;
 
     /// Credit the amount cell with what the bucket carries.
     ///
     /// The bucket is consumed, so what lands in the cell is exactly what
     /// crossed and the body names no number. Traps on a stored cell that
     /// is not an amount and on a total past the cell's width.
-    write-cell-put: func(c: borrow<write-cell>, funds: own<bucket>);
+    amount-cell-put: func(c: borrow<amount-cell>, funds: own<bucket>);
 
     /// Split `amount` off a bucket, as a bucket.
     ///
@@ -204,6 +223,16 @@ interface state {
     /// Remove the entry at `index`.
     range-write-remove: func(r: borrow<range-write>, index: u32);
 
+    /// Entries currently in the interval, bounded by the declared cap.
+    instance-range-count: func(r: borrow<instance-range>) -> u32;
+
+    /// The order key of the entry at `index`, ascending — which for an
+    /// instance is its own id.
+    instance-range-order: func(r: borrow<instance-range>, index: u32) -> amount;
+
+    /// The value of the entry at `index`, ascending.
+    instance-range-entry: func(r: borrow<instance-range>, index: u32) -> list<u8>;
+
     /// Take the named entries, as the instances they were.
     ///
     /// The removal and the edge are one operation, which is what a
@@ -214,11 +243,11 @@ interface state {
     /// Naming none yields an empty bucket, which is how a method that
     /// moves nothing gets one. Traps on an id outside the declared
     /// interval and on one the collection does not hold.
-    range-write-take: func(r: borrow<range-write>, ids: list<u8>) -> own<bucket>;
+    instance-range-take: func(r: borrow<instance-range>, ids: list<u8>) -> own<bucket>;
 
     /// File every instance the bucket carries as an entry at the order it
     /// was taken under, consuming it.
-    range-write-put: func(r: borrow<range-write>, funds: own<bucket>, value: list<u8>);
+    instance-range-put: func(r: borrow<instance-range>, funds: own<bucket>, value: list<u8>);
 }
 
 /// Wide arithmetic: the operations a contract cannot write itself without

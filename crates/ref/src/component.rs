@@ -54,6 +54,8 @@ pub enum ResourceKind {
     LockedCell,
     /// `write-cell`.
     WriteCell,
+    /// `amount-cell`.
+    AmountCell,
     /// `delta-cell`.
     DeltaCell,
     /// `reserve-cell`.
@@ -62,6 +64,8 @@ pub enum ResourceKind {
     RangeRead,
     /// `range-write`.
     RangeWrite,
+    /// `instance-range`.
+    InstanceRange,
 }
 
 impl ResourceKind {
@@ -71,10 +75,12 @@ impl ResourceKind {
             CellKind::Read => Self::ReadCell,
             CellKind::Locked => Self::LockedCell,
             CellKind::Write => Self::WriteCell,
+            CellKind::Amount => Self::AmountCell,
             CellKind::Delta => Self::DeltaCell,
             CellKind::Reserve => Self::ReserveCell,
             CellKind::RangeRead => Self::RangeRead,
             CellKind::RangeWrite => Self::RangeWrite,
+            CellKind::InstanceRange => Self::InstanceRange,
         }
     }
 
@@ -85,10 +91,12 @@ impl ResourceKind {
             "read-cell" => Some(Self::ReadCell),
             "locked-cell" => Some(Self::LockedCell),
             "write-cell" => Some(Self::WriteCell),
+            "amount-cell" => Some(Self::AmountCell),
             "delta-cell" => Some(Self::DeltaCell),
             "reserve-cell" => Some(Self::ReserveCell),
             "range-read" => Some(Self::RangeRead),
             "range-write" => Some(Self::RangeWrite),
+            "instance-range" => Some(Self::InstanceRange),
             _ => None,
         }
     }
@@ -148,12 +156,16 @@ enum HostFn {
     LockedCellGet,
     WriteCellGet,
     WriteCellSet,
-    WriteTake,
-    WritePut,
+    AmountBalance,
+    InstanceCount,
+    InstanceOrder,
+    InstanceEntry,
+    AmountTake,
+    AmountPut,
     IssuerMint,
     IssuerPut,
-    RangeWriteTake,
-    RangeWritePut,
+    InstanceTake,
+    InstancePut,
     BucketTake,
     BucketSplit,
     BucketPut,
@@ -608,12 +620,16 @@ impl RefComponent {
             ("state", "locked-cell-get") => Ok(HostFn::LockedCellGet),
             ("state", "write-cell-get") => Ok(HostFn::WriteCellGet),
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
-            ("state", "write-cell-take") => Ok(HostFn::WriteTake),
-            ("state", "write-cell-put") => Ok(HostFn::WritePut),
+            ("state", "amount-cell-balance") => Ok(HostFn::AmountBalance),
+            ("state", "amount-cell-take") => Ok(HostFn::AmountTake),
+            ("state", "amount-cell-put") => Ok(HostFn::AmountPut),
             ("state", "mint-instances") => Ok(HostFn::IssuerMint),
             ("state", "burn") => Ok(HostFn::IssuerPut),
-            ("state", "range-write-take") => Ok(HostFn::RangeWriteTake),
-            ("state", "range-write-put") => Ok(HostFn::RangeWritePut),
+            ("state", "instance-range-take") => Ok(HostFn::InstanceTake),
+            ("state", "instance-range-put") => Ok(HostFn::InstancePut),
+            ("state", "instance-range-count") => Ok(HostFn::InstanceCount),
+            ("state", "instance-range-order") => Ok(HostFn::InstanceOrder),
+            ("state", "instance-range-entry") => Ok(HostFn::InstanceEntry),
             ("state", "bucket-take") => Ok(HostFn::BucketTake),
             ("state", "bucket-split") => Ok(HostFn::BucketSplit),
             ("state", "bucket-put") => Ok(HostFn::BucketPut),
@@ -1602,6 +1618,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                 CompFunc::Host(
                     HostFn::RangeReadCount
                     | HostFn::RangeWriteCount
+                    | HostFn::InstanceCount
                     | HostFn::Randomness
                     | HostFn::ReserveTake,
                 ) => 1,
@@ -1609,8 +1626,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::ReadCellGet
                     | HostFn::LockedCellGet
                     | HostFn::WriteCellGet
+                    | HostFn::AmountBalance
                     | HostFn::RangeWriteRemove
-                    | HostFn::WritePut
+                    | HostFn::AmountPut
                     | HostFn::DeltaPut
                     | HostFn::BucketAmount
                     | HostFn::BucketPut
@@ -1618,7 +1636,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                 ) => 2,
                 CompFunc::Host(
                     HostFn::WriteCellSet
-                    | HostFn::WriteTake
+                    | HostFn::AmountTake
                     | HostFn::IssuerTake
                     | HostFn::BucketTake
                     | HostFn::DeltaTake
@@ -1626,12 +1644,14 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::RangeReadEntry
                     | HostFn::RangeWriteOrder
                     | HostFn::RangeWriteEntry
+                    | HostFn::InstanceOrder
+                    | HostFn::InstanceEntry
                     | HostFn::Hash
                     | HostFn::Emit
-                    | HostFn::RangeWriteTake
+                    | HostFn::InstanceTake
                     | HostFn::IssuerMint,
                 ) => 3,
-                CompFunc::Host(HostFn::RangeWritePut | HostFn::RangeWriteSet) => 4,
+                CompFunc::Host(HostFn::InstancePut | HostFn::RangeWriteSet) => 4,
 
                 CompFunc::Host(HostFn::RangeWriteInsert) => 5,
                 // A `wide` flattens to four `i64`s, and a result wider
@@ -1717,6 +1737,17 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         self.lower_list(modules, store, mem, realloc, &bytes, args[1])?;
                         Ok(Vec::new())
                     }
+                    HostFn::AmountBalance => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::AmountCell)?;
+                        let held = self
+                            .host
+                            .amount_cell_balance(rep)
+                            .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
+                        self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
+                        let mem = self.mem_opt(id)?;
+                        Self::write_amount(store, mem, args[1], held)?;
+                        Ok(Vec::new())
+                    }
                     HostFn::WriteCellSet => {
                         let rep = self.resolve_handle(args[0], ResourceKind::WriteCell)?;
                         let mem = self.mem_opt(id)?;
@@ -1732,16 +1763,16 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     // drop — the same seating a lowered argument gets, so
                     // the numbering is one table's whatever opened the
                     // slot.
-                    HostFn::WriteTake | HostFn::DeltaTake => {
-                        let expected = if host_fn == HostFn::WriteTake {
-                            ResourceKind::WriteCell
+                    HostFn::AmountTake | HostFn::DeltaTake => {
+                        let expected = if host_fn == HostFn::AmountTake {
+                            ResourceKind::AmountCell
                         } else {
                             ResourceKind::DeltaCell
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let amount = flat_amount(args[1], args[2]);
                         self.charge_boundary(store, AMOUNT_BOUNDARY_BYTES)?;
-                        let result = if host_fn == HostFn::WriteTake {
+                        let result = if host_fn == HostFn::AmountTake {
                             self.host.write_take(rep, amount)
                         } else {
                             self.host.delta_take(rep, amount)
@@ -1768,8 +1799,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(minted).cast_signed())])
                     }
-                    HostFn::RangeWriteTake => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
+                    HostFn::InstanceTake => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::InstanceRange)?;
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_bytes(store, mem, args[1], args[2])?;
                         self.charge_boundary(store, ids.len())?;
@@ -1778,8 +1809,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let taken = taken.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(taken).cast_signed())])
                     }
-                    HostFn::RangeWritePut => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
+                    HostFn::InstancePut => {
+                        let rep = self.resolve_handle(args[0], ResourceKind::InstanceRange)?;
                         let funds = self.consume_bucket(args[1])?;
                         let mem = self.mem_opt(id)?;
                         let value = Self::read_guest_bytes(store, mem, args[2], args[3])?;
@@ -1893,15 +1924,15 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Self::write_amount(store, mem, args[1], amount)?;
                         Ok(Vec::new())
                     }
-                    HostFn::WritePut | HostFn::DeltaPut => {
-                        let expected = if host_fn == HostFn::WritePut {
-                            ResourceKind::WriteCell
+                    HostFn::AmountPut | HostFn::DeltaPut => {
+                        let expected = if host_fn == HostFn::AmountPut {
+                            ResourceKind::AmountCell
                         } else {
                             ResourceKind::DeltaCell
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let funds = self.consume_bucket(args[1])?;
-                        let result = if host_fn == HostFn::WritePut {
+                        let result = if host_fn == HostFn::AmountPut {
                             self.host.write_put(rep, funds)
                         } else {
                             self.host.delta_put(rep, funds)
@@ -1927,11 +1958,11 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             .map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
-                    HostFn::RangeReadCount | HostFn::RangeWriteCount => {
-                        let expected = if host_fn == HostFn::RangeReadCount {
-                            ResourceKind::RangeRead
-                        } else {
-                            ResourceKind::RangeWrite
+                    HostFn::RangeReadCount | HostFn::RangeWriteCount | HostFn::InstanceCount => {
+                        let expected = match host_fn {
+                            HostFn::RangeReadCount => ResourceKind::RangeRead,
+                            HostFn::InstanceCount => ResourceKind::InstanceRange,
+                            _ => ResourceKind::RangeWrite,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let count = self.host.range_count(rep);
@@ -1939,11 +1970,11 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let count = count.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;
                         Ok(vec![Value::I32(count.cast_signed())])
                     }
-                    HostFn::RangeReadOrder | HostFn::RangeWriteOrder => {
-                        let expected = if host_fn == HostFn::RangeReadOrder {
-                            ResourceKind::RangeRead
-                        } else {
-                            ResourceKind::RangeWrite
+                    HostFn::RangeReadOrder | HostFn::RangeWriteOrder | HostFn::InstanceOrder => {
+                        let expected = match host_fn {
+                            HostFn::RangeReadOrder => ResourceKind::RangeRead,
+                            HostFn::InstanceOrder => ResourceKind::InstanceRange,
+                            _ => ResourceKind::RangeWrite,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let index = args[1].as_i32().cast_unsigned();
@@ -1955,11 +1986,11 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Self::write_amount(store, mem, args[2], order)?;
                         Ok(Vec::new())
                     }
-                    HostFn::RangeReadEntry | HostFn::RangeWriteEntry => {
-                        let expected = if host_fn == HostFn::RangeReadEntry {
-                            ResourceKind::RangeRead
-                        } else {
-                            ResourceKind::RangeWrite
+                    HostFn::RangeReadEntry | HostFn::RangeWriteEntry | HostFn::InstanceEntry => {
+                        let expected = match host_fn {
+                            HostFn::RangeReadEntry => ResourceKind::RangeRead,
+                            HostFn::InstanceEntry => ResourceKind::InstanceRange,
+                            _ => ResourceKind::RangeWrite,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let index = args[1].as_i32().cast_unsigned();
