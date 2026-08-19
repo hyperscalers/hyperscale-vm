@@ -11,7 +11,7 @@
 //! bytes are what the sources build, which is what makes the sources
 //! trustworthy as documentation of the blobs.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
@@ -19,25 +19,22 @@ use hyperscale_vm_effects::{
     collection_id, order_key,
 };
 use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
+use hyperscale_vm_harness::dual::DualGuest;
 #[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, Held, Interval, KernelSession, MemoryStore, OverlayStore, Receipt,
 };
-use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
-use hyperscale_vm_runtime::{
-    Bucket, DeltaCell, RangeRead, RangeWrite, ReserveCell, WriteCell, add_kernel_to_linker,
-    blessed_engine, validate_component,
-};
+use hyperscale_vm_ref::{CVal, ResourceKind};
+use hyperscale_vm_runtime::validate_component;
 use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Movement,
     Presence, SubstateKey, TxHash, encode_amount,
 };
-use wasmtime::component::{Component, ComponentType, Lift, Linker, Lower, Resource};
+use wasmtime::Result;
 use wasmtime::error::Context;
-use wasmtime::{Result, Store};
 
 const CLOCK_MS: u64 = 77;
 const RANDOMNESS: [u8; 32] = [3; 32];
@@ -128,106 +125,62 @@ fn finish(session: KernelSession, fuel: u64) -> Receipt {
     session.finish(None, fuel).expect("oracle clean").0
 }
 
-/// Withdraw, deposit, then the pinned balance guard on the blessed
-/// engine — one instantiation per call, the session threaded through, as
-/// execution invokes guests.
-fn blessed_transfer() -> Result<(Receipt, u64)> {
-    let engine = blessed_engine()?;
-    let compiled = Component::new(&engine, ACCOUNT_COMPONENT)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
+/// The account blob in both engines' forms, compiled once per binary.
+static ACCOUNT: LazyLock<DualGuest> = LazyLock::new(|| {
+    DualGuest::compile(ACCOUNT_COMPONENT).expect("the committed account blob compiles")
+});
 
-    let host = entering(session(), SENDER);
+/// Withdraw, deposit, then the pinned balance guard — one instantiation
+/// per call, the session threaded through, as execution invokes guests,
+/// on both runtimes at once.
+fn dual_transfer() -> Result<(Receipt, u64)> {
     let (sender, recipient) = keys();
+    let probe = entering(session(), SENDER);
     let sender_rep = rep_of(
-        &host,
+        &probe,
         &Capability::Reserve {
             key: sender,
             amount: AMOUNT,
         },
     );
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &compiled)?;
+    let mut dual = ACCOUNT.instantiate(FUEL, || entering(session(), SENDER))?;
     // The grant is the bucket, so the withdrawal names no amount and
     // what comes back is the value itself rather than a reading of it.
-    let withdraw = instance
-        .get_typed_func::<(Resource<ReserveCell>,), (Resource<Bucket>,)>(&mut store, "withdraw")?;
-    let (funds,) = withdraw.call(&mut store, (Resource::new_borrow(sender_rep),))?;
-    let funds = funds.rep();
-    let withdraw_fuel = FUEL - store.get_fuel()?;
-    let host = entering(store.into_data(), RECIPIENT);
+    let funds = dual
+        .invoke_both(
+            "withdraw",
+            &[CVal::Borrow(sender_rep, ResourceKind::ReserveCell)],
+        )?
+        .bucket()?;
+    let (blessed, reference) = dual.finish()?;
+    let withdraw_fuel = blessed.fuel;
 
-    let recipient_rep = rep_of(&host, &Capability::Delta(recipient));
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &compiled)?;
-    let deposit = instance
-        .get_typed_func::<(Resource<DeltaCell>, Resource<Bucket>), ()>(&mut store, "deposit")?;
-    deposit.call(
-        &mut store,
-        (
-            Resource::new_borrow(recipient_rep),
-            Resource::new_own(funds),
-        ),
-    )?;
-    let deposit_fuel = FUEL - store.get_fuel()?;
-    let fuel = withdraw_fuel + deposit_fuel;
-
-    Ok((finish(store.into_data(), fuel), fuel))
-}
-
-/// The same transfer on the reference interpreter, instantiated per call
-/// with the session threaded through.
-fn reference_transfer() -> Result<(Receipt, u64)> {
-    let component = RefComponent::decode(ACCOUNT_COMPONENT)?;
-    let (sender, recipient) = keys();
-
-    let host = entering(session(), SENDER);
-    let sender_rep = rep_of(
-        &host,
-        &Capability::Reserve {
-            key: sender,
-            amount: AMOUNT,
-        },
-    );
-    let mut instance =
-        RefComponentInstance::instantiate(&component, host, FUEL).map_err(|(_, error)| error)?;
-    let outcome = instance.invoke(
-        "withdraw",
-        &[CVal::Borrow(sender_rep, ResourceKind::ReserveCell)],
-    )?;
-    let values =
-        outcome.map_err(|trap| wasmtime::error::format_err!("withdraw trapped: {trap:?}"))?;
-    let [CVal::Own(funds)] = values.as_slice() else {
-        wasmtime::error::bail!("unexpected withdraw result shape");
-    };
-    let funds = *funds;
-    let withdraw_fuel = instance.fuel_consumed();
-    let host = entering(instance.into_host(), RECIPIENT);
-
-    let recipient_rep = rep_of(&host, &Capability::Delta(recipient));
-    let mut instance =
-        RefComponentInstance::instantiate(&component, host, FUEL).map_err(|(_, error)| error)?;
-    let outcome = instance.invoke(
+    let blessed_host = entering(blessed.session, RECIPIENT);
+    let reference_host = entering(reference.session, RECIPIENT);
+    let recipient_rep = rep_of(&blessed_host, &Capability::Delta(recipient));
+    let mut dual = ACCOUNT.instantiate_pair(FUEL, blessed_host, reference_host)?;
+    dual.invoke_both(
         "deposit",
         &[
             CVal::Borrow(recipient_rep, ResourceKind::DeltaCell),
             CVal::Own(funds),
         ],
     )?;
-    outcome.map_err(|trap| wasmtime::error::format_err!("deposit trapped: {trap:?}"))?;
-    let deposit_fuel = instance.fuel_consumed();
-    let fuel = withdraw_fuel + deposit_fuel;
+    let (blessed, reference) = dual.finish()?;
+    let fuel = withdraw_fuel + blessed.fuel;
 
-    Ok((finish(instance.into_host(), fuel), fuel))
+    let receipt = finish(blessed.session, fuel);
+    assert_eq!(
+        receipt,
+        finish(reference.session, fuel),
+        "receipts must be byte-identical across runtimes"
+    );
+    Ok((receipt, fuel))
 }
 
 #[test]
 fn the_committed_blob_validates_and_transfers_on_both_runtimes() -> Result<()> {
-    validate_component(ACCOUNT_COMPONENT).context("profile validation of the committed blob")?;
-
-    let (blessed_receipt, blessed_fuel) = blessed_transfer()?;
+    let (blessed_receipt, _) = dual_transfer()?;
     let (sender, recipient) = keys();
     assert_eq!(blessed_receipt.delta.settles.get(&sender), Some(&AMOUNT));
     assert_eq!(
@@ -256,15 +209,6 @@ fn the_committed_blob_validates_and_transfers_on_both_runtimes() -> Result<()> {
         ],
     );
 
-    let (reference_receipt, reference_fuel) = reference_transfer()?;
-    assert_eq!(
-        blessed_receipt, reference_receipt,
-        "receipts must be byte-identical across runtimes"
-    );
-    assert_eq!(
-        blessed_fuel, reference_fuel,
-        "fuel must be identical across runtimes"
-    );
     Ok(())
 }
 
@@ -428,32 +372,6 @@ fn ticket_order() -> u128 {
     )
 }
 
-/// An address as the world's `address` record.
-///
-/// Spelled out here because this test drives an export directly, with no
-/// kernel between it and the component; everything else reaches the same
-/// shape through the argument path.
-#[derive(Clone, Copy, ComponentType, Lift, Lower)]
-#[component(record)]
-struct Words {
-    a: u64,
-    b: u64,
-    c: u64,
-    d: u64,
-}
-
-/// `who` as the four words its record carries.
-fn words(address: Address) -> Words {
-    let bytes = address.to_bytes();
-    let word = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().expect("eight bytes"));
-    Words {
-        a: word(0),
-        b: word(8),
-        c: word(16),
-        d: word(24),
-    }
-}
-
 /// A session over one entered round: the ticket entry, the pot, the
 /// result cell, and the interval a draw reads.
 fn lottery_session() -> KernelSession {
@@ -531,15 +449,24 @@ fn settled() -> Vec<u8> {
     .expect("an outcome encodes")
 }
 
-fn blessed_round() -> Result<(Receipt, u64)> {
-    let engine = blessed_engine()?;
-    let compiled = Component::new(&engine, LOTTERY_COMPONENT)?;
-    let mut linker = Linker::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
+/// The lottery blob in both engines' forms, compiled once per binary.
+static LOTTERY_GUEST: LazyLock<DualGuest> = LazyLock::new(|| {
+    DualGuest::compile(LOTTERY_COMPONENT).expect("the committed lottery blob compiles")
+});
 
-    let host = entering(lottery_session(), LOTTERY);
+/// Enter, then draw — the session threaded through, on both runtimes at
+/// once. The entrant crosses as the world's own address record, which the
+/// dual lowering spells for both engines.
+fn dual_round() -> Result<(Receipt, u64)> {
+    let entered = || {
+        let mut host = entering(lottery_session(), LOTTERY);
+        host.open_bucket(Held::Amount(AMOUNT), RESOURCE);
+        host
+    };
+    let mut probe = entering(lottery_session(), LOTTERY);
+    let funds = probe.open_bucket(Held::Amount(AMOUNT), RESOURCE);
     let entry_rep = rep_of(
-        &host,
+        &probe,
         &Capability::RangeWrite(Interval {
             owner: LOTTERY,
             collection: ticket_collection(),
@@ -549,88 +476,11 @@ fn blessed_round() -> Result<(Receipt, u64)> {
         }),
     );
     let pot_rep = rep_of(
-        &host,
+        &probe,
         &Capability::Delta(child_key(&TestHasher, LOTTERY, VAULT, &[])),
     );
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &compiled)?;
-    // The entrant crosses as the world's own address record, so a
-    // hand-written call spells its four words where it once spelled a
-    // byte list. The kernel never sees this shape — metadata and world
-    // are derived together — which is why a direct drive is the one
-    // reader that has to follow.
-    let funds = store.data_mut().open_bucket(Held::Amount(AMOUNT), RESOURCE);
-    let enter = instance.get_typed_func::<(
-        Resource<RangeWrite>,
-        Resource<DeltaCell>,
-        &[u8],
-        Words,
-        Resource<Bucket>,
-    ), ()>(&mut store, "enter")?;
-    enter.call(
-        &mut store,
-        (
-            Resource::new_borrow(entry_rep),
-            Resource::new_borrow(pot_rep),
-            &ticket_order().to_le_bytes()[..],
-            words(ENTRANT),
-            Resource::new_own(funds),
-        ),
-    )?;
-    let enter_fuel = FUEL - store.get_fuel()?;
-    let host = entering(store.into_data(), LOTTERY);
-
-    let outcome_rep = rep_of(&host, &Capability::Write(draw_key()));
-    let round_rep = rep_of(
-        &host,
-        &Capability::RangeRead(Interval {
-            owner: LOTTERY,
-            collection: ticket_collection(),
-            lo: 0,
-            hi: u128::MAX,
-            cap: lottery::ROUND_CAP,
-        }),
-    );
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &compiled)?;
-    let draw = instance
-        .get_typed_func::<(Resource<RangeRead>, Resource<WriteCell>), ()>(&mut store, "draw")?;
-    draw.call(
-        &mut store,
-        (
-            Resource::new_borrow(round_rep),
-            Resource::new_borrow(outcome_rep),
-        ),
-    )?;
-    let fuel = enter_fuel + (FUEL - store.get_fuel()?);
-
-    Ok((finish(store.into_data(), fuel), fuel))
-}
-
-fn reference_round() -> Result<(Receipt, u64)> {
-    let component = RefComponent::decode(LOTTERY_COMPONENT)?;
-    let host = entering(lottery_session(), LOTTERY);
-    let entry_rep = rep_of(
-        &host,
-        &Capability::RangeWrite(Interval {
-            owner: LOTTERY,
-            collection: ticket_collection(),
-            lo: ticket_order(),
-            hi: ticket_order(),
-            cap: 1,
-        }),
-    );
-    let pot_rep = rep_of(
-        &host,
-        &Capability::Delta(child_key(&TestHasher, LOTTERY, VAULT, &[])),
-    );
-    let mut host = host;
-    let funds = host.open_bucket(Held::Amount(AMOUNT), RESOURCE);
-    let mut instance =
-        RefComponentInstance::instantiate(&component, host, FUEL).map_err(|(_, error)| error)?;
-    let outcome = instance.invoke(
+    let mut dual = LOTTERY_GUEST.instantiate(FUEL, entered)?;
+    dual.invoke_both(
         "enter",
         &[
             CVal::Borrow(entry_rep, ResourceKind::RangeWrite),
@@ -640,13 +490,14 @@ fn reference_round() -> Result<(Receipt, u64)> {
             CVal::Own(funds),
         ],
     )?;
-    outcome.map_err(|trap| wasmtime::error::format_err!("enter trapped: {trap:?}"))?;
-    let enter_fuel = instance.fuel_consumed();
-    let host = entering(instance.into_host(), LOTTERY);
+    let (blessed, reference) = dual.finish()?;
+    let enter_fuel = blessed.fuel;
 
-    let outcome_rep = rep_of(&host, &Capability::Write(draw_key()));
+    let blessed_host = entering(blessed.session, LOTTERY);
+    let reference_host = entering(reference.session, LOTTERY);
+    let outcome_rep = rep_of(&blessed_host, &Capability::Write(draw_key()));
     let round_rep = rep_of(
-        &host,
+        &blessed_host,
         &Capability::RangeRead(Interval {
             owner: LOTTERY,
             collection: ticket_collection(),
@@ -655,19 +506,24 @@ fn reference_round() -> Result<(Receipt, u64)> {
             cap: lottery::ROUND_CAP,
         }),
     );
-    let mut instance =
-        RefComponentInstance::instantiate(&component, host, FUEL).map_err(|(_, error)| error)?;
-    let outcome = instance.invoke(
+    let mut dual = LOTTERY_GUEST.instantiate_pair(FUEL, blessed_host, reference_host)?;
+    dual.invoke_both(
         "draw",
         &[
             CVal::Borrow(round_rep, ResourceKind::RangeRead),
             CVal::Borrow(outcome_rep, ResourceKind::WriteCell),
         ],
     )?;
-    outcome.map_err(|trap| wasmtime::error::format_err!("draw trapped: {trap:?}"))?;
-    let fuel = enter_fuel + instance.fuel_consumed();
+    let (blessed, reference) = dual.finish()?;
+    let fuel = enter_fuel + blessed.fuel;
 
-    Ok((finish(instance.into_host(), fuel), fuel))
+    let receipt = finish(blessed.session, fuel);
+    assert_eq!(
+        receipt,
+        finish(reference.session, fuel),
+        "receipts must be byte-identical across runtimes"
+    );
+    Ok((receipt, fuel))
 }
 
 /// Randomness reaching the committed bytes, identically on both
@@ -681,21 +537,11 @@ fn reference_round() -> Result<(Receipt, u64)> {
 fn the_committed_lottery_settles_a_round_identically_on_both_runtimes() -> Result<()> {
     validate_component(LOTTERY_COMPONENT).context("profile validation of the committed blob")?;
 
-    let (blessed_receipt, blessed_fuel) = blessed_round()?;
+    let (blessed_receipt, _) = dual_round()?;
     assert_eq!(
         blessed_receipt.delta.cells.get(&draw_key()),
         Some(&Some(settled())),
         "the round records the draw the environment fixed"
-    );
-
-    let (reference_receipt, reference_fuel) = reference_round()?;
-    assert_eq!(
-        blessed_receipt, reference_receipt,
-        "receipts must be byte-identical across runtimes"
-    );
-    assert_eq!(
-        blessed_fuel, reference_fuel,
-        "fuel must be identical across runtimes"
     );
     Ok(())
 }

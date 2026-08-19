@@ -32,6 +32,7 @@ pub fn on_deep_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'stati
 }
 
 pub mod driver;
+pub mod dual;
 
 /// Shared guest fixtures for the differential lanes.
 pub mod fixtures {

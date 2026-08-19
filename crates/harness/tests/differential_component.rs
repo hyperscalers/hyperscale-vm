@@ -4,15 +4,11 @@
 //! receipts must agree byte-identically, and the trace-subset oracle runs
 //! after every successful execution.
 
-use std::sync::Arc;
-
-use hyperscale_vm_effects::{
-    Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, child_key,
-};
+use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, child_key};
+use hyperscale_vm_harness::driver::test_hash;
+use hyperscale_vm_harness::dual::materialize;
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
-use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore, Receipt,
-};
+use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, Receipt};
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
 };
@@ -34,10 +30,6 @@ const FUEL: u64 = 1_000_000_000;
 const ASKS: CollectionId = CollectionId([4; 16]);
 /// What the two cells the transfer moves between hold.
 const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
-
-fn test_hash(data: &[u8]) -> [u8; 32] {
-    TestHasher.hash(b"crypto", &[data]).0
-}
 
 const fn tx() -> TxHash {
     TxHash(Hash32([0x33; 32]))
@@ -183,33 +175,17 @@ fn denominations(fx: &Fixture) -> Vec<Option<Address>> {
 }
 
 fn session(fx: &Fixture) -> KernelSession {
-    KernelSession::materialize(
-        OverlayStore::new(Arc::new(fx.store.clone())),
-        &Declaration {
-            set: fx.declared.clone(),
-            ordered: fx
-                .declared
-                .iter()
-                .zip(denominations(fx))
-                .map(|(effect, holds)| DeclaredAccess { effect, holds })
-                .collect(),
-            ..Declaration::default()
-        },
-        tx(),
-        env(),
-        test_hash,
-    )
-    .expect("fixture materializes")
+    materialize(&fx.store, &fx.declared, &denominations(fx), tx(), env())
 }
 
-fn rep_where(caps: &[Capability], pred: impl Fn(&Capability) -> bool) -> u32 {
+fn rep_at(caps: &[Capability], pred: impl Fn(&Capability) -> bool) -> u32 {
     u32::try_from(caps.iter().position(pred).expect("capability present")).expect("bounded")
 }
 
 /// The handles each export receives, in parameter order.
 fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, ResourceKind)> {
     let point = |wanted: SubstateKey, kind: ResourceKind| {
-        let rep = rep_where(caps, |c| match (kind, c) {
+        let rep = rep_at(caps, |c| match (kind, c) {
             (ResourceKind::ReadCell, Capability::Read(key))
             | (ResourceKind::LockedCell, Capability::Locked(key))
             | (ResourceKind::WriteCell, Capability::Write(key))
@@ -220,7 +196,7 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Resour
         (rep, kind)
     };
     let range = |kind: ResourceKind| {
-        let rep = rep_where(caps, |c| {
+        let rep = rep_at(caps, |c| {
             matches!(
                 (kind, c),
                 (ResourceKind::RangeRead, Capability::RangeRead(..))

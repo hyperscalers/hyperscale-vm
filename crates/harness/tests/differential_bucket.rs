@@ -9,27 +9,19 @@
 //! borrows; transfer and drop ordering were not, and a divergence in
 //! either is a divergence in what value a transaction moved.
 
-use std::sync::Arc;
+use std::sync::LazyLock;
 
-use hyperscale_vm_effects::{
-    Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, child_key,
-};
+use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, child_key};
+use hyperscale_vm_harness::dual::{DualGuest, DualOutcome, materialize, rep_where};
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
-use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore, OverlayStore};
-use hyperscale_vm_ref::{
-    CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
-};
-use hyperscale_vm_runtime::{
-    AmountCell, AmountRead, Bucket, DeltaCell, HostRefusal, InstanceRange, Issuer, ReadCell,
-    ReserveCell, add_kernel_to_linker, blessed_engine, classify, validate_component,
-};
+use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore};
+use hyperscale_vm_ref::{CVal, ResourceKind};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, ISSUER_REP,
     Mode, Outcome, Presence, SubstateKey, TxHash, encode_amount,
 };
-use wasmtime::component::{Component, Linker, Resource};
-use wasmtime::error::format_err;
-use wasmtime::{Result, Store};
+use wasmtime::Result;
+use wasmtime::error::{bail, format_err};
 use wat::parse_str;
 
 const FUEL: u64 = 1_000_000_000;
@@ -39,10 +31,6 @@ const HELD: u128 = 40;
 /// What the discarded bucket carries: nothing, because a bucket that
 /// carries anything cannot be discarded at all.
 const SPENT: u128 = 0;
-
-fn test_hash(data: &[u8]) -> [u8; 32] {
-    TestHasher.hash(b"crypto", &[data]).0
-}
 
 const fn tx() -> TxHash {
     TxHash(Hash32([0x55; 32]))
@@ -72,6 +60,12 @@ const RESOURCE: Address = ISSUER;
 const HOLDINGS: CollectionId = CollectionId([9; 16]);
 /// The orders the fixture files instances at.
 const INSTANCES: [u128; 3] = [10, 20, 30];
+
+/// The bucket guest in both engines' forms, compiled once per binary.
+static GUEST: LazyLock<DualGuest> = LazyLock::new(|| {
+    DualGuest::compile(&parse_str(BUCKET_GUEST_WAT).expect("the fixture parses"))
+        .expect("the fixture compiles")
+});
 
 struct Fixture {
     declared: EffectSet,
@@ -180,45 +174,24 @@ fn denominations(fx: &Fixture) -> Vec<Option<Address>> {
         .collect()
 }
 
-fn materialize(fx: &Fixture) -> KernelSession {
-    KernelSession::materialize(
-        OverlayStore::new(Arc::new(fx.store.clone())),
-        &Declaration {
-            set: fx.declared.clone(),
-            ordered: fx
-                .declared
-                .iter()
-                .zip(denominations(fx))
-                .map(|(effect, holds)| DeclaredAccess { effect, holds })
-                .collect(),
-            ..Declaration::default()
-        },
-        tx(),
-        env(),
-        test_hash,
-    )
-    .expect("fixture materializes")
+fn session_of(fx: &Fixture) -> KernelSession {
+    materialize(&fx.store, &fx.declared, &denominations(fx), tx(), env())
 }
 
 /// The capability rep for one declared point, by the mode it carries.
 fn rep_of(host: &KernelSession, wanted: SubstateKey, mode: Mode) -> u32 {
-    let position = host
-        .capabilities()
-        .iter()
-        .position(|c| match (mode, c) {
-            (Mode::Read, Capability::Read(key))
-            | (
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-                Capability::Amount(key),
-            )
-            | (Mode::Delta, Capability::Delta(key))
-            | (Mode::Reserve { .. }, Capability::Reserve { key, .. }) => *key == wanted,
-            _ => false,
-        })
-        .expect("capability present");
-    u32::try_from(position).expect("bounded")
+    rep_where(host, |c| match (mode, c) {
+        (Mode::Read, Capability::Read(key))
+        | (
+            Mode::Write {
+                requires: Presence::Either,
+            },
+            Capability::Amount(key),
+        )
+        | (Mode::Delta, Capability::Delta(key))
+        | (Mode::Reserve { .. }, Capability::Reserve { key, .. }) => *key == wanted,
+        _ => false,
+    })
 }
 
 /// A session with the fixture's capabilities and two buckets in the
@@ -227,13 +200,14 @@ fn rep_of(host: &KernelSession, wanted: SubstateKey, mode: Mode) -> u32 {
 /// The reps are the table's own order, so both runtimes are handed the
 /// same two.
 fn session(fx: &Fixture) -> (KernelSession, u32, u32) {
-    let mut session = materialize(fx);
+    let mut session = session_of(fx);
     let held = session.open_bucket(Held::Amount(HELD), RESOURCE);
     let spent = session.open_bucket(Held::Amount(SPENT), RESOURCE);
     (session, held, spent)
 }
 
-/// What one run of the four-call sequence observed.
+/// What one run of the four-call sequence observed — on both engines,
+/// since every call already had to agree.
 #[derive(Debug, PartialEq, Eq)]
 struct Trace {
     /// The handle `hold` was given for the bucket it keeps.
@@ -250,101 +224,41 @@ struct Trace {
     discarded_survives: bool,
 }
 
-/// The sequence under the blessed engine.
-fn run_blessed(fx: &Fixture) -> Result<(Trace, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    validate_component(&bytes)?;
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let (host, held, spent) = session(fx);
-    let readable = rep_of(&host, fx.readable, Mode::Read);
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
+/// The four-call ownership sequence, agreed call by call.
+fn bucket_sequence(fx: &Fixture) -> Result<Trace> {
+    let (probe, held, spent) = session(fx);
+    let readable = rep_of(&probe, fx.readable, Mode::Read);
+    let mut dual = GUEST.instantiate(FUEL, || session(fx).0)?;
 
-    let (held_handle,) = instance
-        .get_typed_func::<(Resource<Bucket>,), (u64,)>(&mut store, "hold")?
-        .call(&mut store, (Resource::new_own(held),))?;
-    let (borrow_handle,) = instance
-        .get_typed_func::<(Resource<ReadCell>,), (u64,)>(&mut store, "peek")?
-        .call(&mut store, (Resource::new_borrow(readable),))?;
-    let (released,) = instance
-        .get_typed_func::<(), (Resource<Bucket>,)>(&mut store, "release")?
-        .call(&mut store, ())?;
-    let released_rep = released.rep();
-    let (discard_handle,) = instance
-        .get_typed_func::<(Resource<Bucket>,), (u64,)>(&mut store, "discard")?
-        .call(&mut store, (Resource::new_own(spent),))?;
+    let held_handle = dual.invoke_both("hold", &[CVal::Own(held)])?.scalar()?;
+    let borrow_handle = dual
+        .invoke_both("peek", &[CVal::Borrow(readable, ResourceKind::ReadCell)])?
+        .scalar()?;
+    let released_rep = dual.invoke_both("release", &[])?.bucket()?;
+    let discard_handle = dual.invoke_both("discard", &[CVal::Own(spent)])?.scalar()?;
 
-    let fuel = FUEL - store.get_fuel()?;
-    let mut host = store.into_data();
-    let trace = Trace {
+    let (blessed, reference) = dual.finish()?;
+    let (mut blessed, mut reference) = (blessed.session, reference.session);
+    let released_amount = blessed.take_bucket(released_rep)?.quantity();
+    assert_eq!(
+        released_amount,
+        reference.take_bucket(released_rep)?.quantity(),
+        "the released bucket diverged"
+    );
+    let discarded_survives = blessed.bucket(spent).is_ok();
+    assert_eq!(
+        discarded_survives,
+        reference.bucket(spent).is_ok(),
+        "the discarded rep diverged"
+    );
+    Ok(Trace {
         held_handle,
         borrow_handle,
         released_rep,
         discard_handle,
-        released_amount: host.take_bucket(released_rep)?.quantity(),
-        discarded_survives: host.bucket(spent).is_ok(),
-    };
-    Ok((trace, fuel))
-}
-
-/// The same sequence under the reference interpreter.
-fn run_ref(fx: &Fixture) -> Result<(Trace, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    let comp = RefComponent::decode(&bytes)?;
-    let (host, held, spent) = session(fx);
-    let readable = rep_of(&host, fx.readable, Mode::Read);
-    let mut instance =
-        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
-
-    let scalar = |export: &str, values: Vec<CVal>| match values.as_slice() {
-        [CVal::U64(v)] => Ok(*v),
-        other => Err(format_err!("{export} returned {other:?}")),
-    };
-    let held_handle = scalar("hold", invoke(&mut instance, "hold", &[CVal::Own(held)])?)?;
-    let borrow_handle = scalar(
-        "peek",
-        invoke(
-            &mut instance,
-            "peek",
-            &[CVal::Borrow(readable, ResourceKind::ReadCell)],
-        )?,
-    )?;
-    let released_rep = match invoke(&mut instance, "release", &[])?.as_slice() {
-        [CVal::Own(rep)] => *rep,
-        other => return Err(format_err!("release returned {other:?}")),
-    };
-    let discard_handle = scalar(
-        "discard",
-        invoke(&mut instance, "discard", &[CVal::Own(spent)])?,
-    )?;
-
-    let fuel = instance.fuel_consumed();
-    let mut host = instance.into_host();
-    let trace = Trace {
-        held_handle,
-        borrow_handle,
-        released_rep,
-        discard_handle,
-        released_amount: host.take_bucket(released_rep)?.quantity(),
-        discarded_survives: host.bucket(spent).is_ok(),
-    };
-    Ok((trace, fuel))
-}
-
-/// One reference-interpreter call, with a failure carried as an error
-/// rather than compared: nothing in this sequence is allowed to fail.
-fn invoke(
-    instance: &mut RefComponentInstance<'_, KernelSession>,
-    export: &str,
-    args: &[CVal],
-) -> Result<Vec<CVal>> {
-    instance
-        .invoke(export, args)?
-        .map_err(|e| format_err!("ref {export} failed: {e:?}"))
+        released_amount,
+        discarded_survives,
+    })
 }
 
 /// Which debit to drive, against which of the fixture's cells.
@@ -432,70 +346,22 @@ enum Took {
     Refusal(AbortReason),
 }
 
-/// One take under the blessed engine.
-fn take_blessed(fx: &Fixture, take: Take) -> Result<(Took, KernelSession, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    validate_component(&bytes)?;
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let mut host = materialize(fx);
-    host.enter_invocation(ISSUER);
-    if take.granted() {
-        host.grant_issuance(ISSUER);
-    }
-    let cell = take
-        .cell(fx)
-        .map(|(key, mode)| (rep_of(&host, key, mode), mode));
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
-
-    let export = take.export();
-    let produced = match (cell, take.amount()) {
-        (None, amount) => instance
-            .get_typed_func::<(Resource<Issuer>, u64), (Resource<Bucket>,)>(&mut store, export)?
-            .call(
-                &mut store,
-                (Resource::new_borrow(ISSUER_REP), amount.unwrap_or(0)),
-            ),
-        (Some((rep, Mode::Delta)), Some(n)) => instance
-            .get_typed_func::<(Resource<DeltaCell>, u64), (Resource<Bucket>,)>(&mut store, export)?
-            .call(&mut store, (Resource::new_borrow(rep), n)),
-        (Some((rep, Mode::Write { .. })), Some(n)) => instance
-            .get_typed_func::<(Resource<AmountCell>, u64), (Resource<Bucket>,)>(&mut store, export)?
-            .call(&mut store, (Resource::new_borrow(rep), n)),
-        (Some((rep, _)), _) => instance
-            .get_typed_func::<(Resource<ReserveCell>,), (Resource<Bucket>,)>(&mut store, export)?
-            .call(&mut store, (Resource::new_borrow(rep),)),
+/// One take on both engines, comparing what it produced, what it touched
+/// and what it cost; returns the blessed session for further assertions.
+fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
+    let build = || {
+        let mut host = session_of(fx);
+        host.enter_invocation(ISSUER);
+        if take.granted() {
+            host.grant_issuance(ISSUER);
+        }
+        host
     };
-
-    let fuel = FUEL - store.get_fuel()?;
-    let mut host = store.into_data();
-    let took = match produced {
-        Ok((bucket,)) => Took::Value(host.take_bucket(bucket.rep())?.quantity()),
-        Err(error) => match error.downcast_ref::<HostRefusal>() {
-            Some(refusal) => Took::Refusal(refusal.0),
-            None => return Err(error),
-        },
-    };
-    Ok((took, host, fuel))
-}
-
-/// The same take under the reference interpreter.
-fn take_ref(fx: &Fixture, take: Take) -> Result<(Took, KernelSession, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    let comp = RefComponent::decode(&bytes)?;
-    let mut host = materialize(fx);
-    host.enter_invocation(ISSUER);
-    if take.granted() {
-        host.grant_issuance(ISSUER);
-    }
+    let probe = build();
     let (rep, kind) = match take.cell(fx) {
         None => (ISSUER_REP, ResourceKind::Issuer),
         Some((key, mode)) => (
-            rep_of(&host, key, mode),
+            rep_of(&probe, key, mode),
             match mode {
                 Mode::Delta => ResourceKind::DeltaCell,
                 Mode::Write { .. } => ResourceKind::AmountCell,
@@ -505,37 +371,27 @@ fn take_ref(fx: &Fixture, take: Take) -> Result<(Took, KernelSession, u64)> {
     };
     let mut args = vec![CVal::Borrow(rep, kind)];
     args.extend(take.amount().map(CVal::U64));
-    let mut instance =
-        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
 
-    let produced = instance.invoke(take.export(), &args)?;
-    let fuel = instance.fuel_consumed();
-    let mut host = instance.into_host();
+    let mut dual = GUEST.instantiate(FUEL, build)?;
+    let produced = dual.invoke_both(take.export(), &args)?;
+    let (blessed, reference) = dual.finish()?;
+    let (mut blessed, mut reference) = (blessed.session, reference.session);
     let took = match produced {
-        Ok(values) => match values.as_slice() {
-            [CVal::Own(rep)] => Took::Value(host.take_bucket(*rep)?.quantity()),
-            other => return Err(format_err!("{} returned {other:?}", take.export())),
-        },
-        Err(ExecError::Canon(CanonError::Host(reason))) => Took::Refusal(reason),
-        Err(other) => return Err(format_err!("ref {} failed: {other:?}", take.export())),
+        DualOutcome::Values(_) => {
+            let rep = produced.bucket()?;
+            let value = blessed.take_bucket(rep)?.quantity();
+            assert_eq!(
+                value,
+                reference.take_bucket(rep)?.quantity(),
+                "{} diverged on the taken value",
+                take.export()
+            );
+            Took::Value(value)
+        }
+        DualOutcome::Refused(reason) => Took::Refusal(reason),
+        DualOutcome::Trapped(reason) => bail!("{} trapped: {reason:?}", take.export()),
     };
-    Ok((took, host, fuel))
-}
-
-/// One take on both engines, comparing what it produced, what it touched
-/// and what it cost; returns the blessed side for further assertions.
-fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
-    let (blessed, blessed_host, blessed_fuel) = take_blessed(fx, take)?;
-    let (reference, ref_host, ref_fuel) = take_ref(fx, take)?;
-    let export = take.export();
-    assert_eq!(blessed, reference, "{export} diverged");
-    assert_eq!(
-        blessed_host.store().access_log(),
-        ref_host.store().access_log(),
-        "{export} access log diverged"
-    );
-    assert_eq!(blessed_fuel, ref_fuel, "{export} fuel diverged");
-    Ok((blessed, blessed_host))
+    Ok((took, blessed))
 }
 
 #[test]
@@ -614,93 +470,6 @@ struct Credited {
     refusal: Option<AbortReason>,
 }
 
-/// One credit under one engine, both driven from the same closure over
-/// the two runtimes' call shapes.
-fn put_blessed(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(Credited, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    validate_component(&bytes)?;
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
-    let (key, mode) = if delta {
-        (fx.ledger, Mode::Delta)
-    } else {
-        (
-            fx.vault,
-            Mode::Write {
-                requires: Presence::Either,
-            },
-        )
-    };
-    let rep = rep_of(&host, key, mode);
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
-
-    let called = if delta {
-        instance
-            .get_typed_func::<(Resource<DeltaCell>, Resource<Bucket>), (u64,)>(&mut store, export)?
-            .call(
-                &mut store,
-                (Resource::new_borrow(rep), Resource::new_own(funds)),
-            )
-    } else {
-        instance
-            .get_typed_func::<(Resource<AmountCell>, Resource<Bucket>), (u64,)>(&mut store, export)?
-            .call(
-                &mut store,
-                (Resource::new_borrow(rep), Resource::new_own(funds)),
-            )
-    };
-    let fuel = FUEL - store.get_fuel()?;
-    let host = store.into_data();
-    let refusal = match called {
-        Ok(_) => None,
-        Err(error) => match error.downcast_ref::<HostRefusal>() {
-            Some(refusal) => Some(refusal.0),
-            None => return Err(error),
-        },
-    };
-    Ok((settled(host, key, funds, refusal), fuel))
-}
-
-/// The same credit under the reference interpreter.
-fn put_ref(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(Credited, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    let comp = RefComponent::decode(&bytes)?;
-    let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
-    let (key, mode, kind) = if delta {
-        (fx.ledger, Mode::Delta, ResourceKind::DeltaCell)
-    } else {
-        (
-            fx.vault,
-            Mode::Write {
-                requires: Presence::Either,
-            },
-            ResourceKind::AmountCell,
-        )
-    };
-    let args = vec![
-        CVal::Borrow(rep_of(&host, key, mode), kind),
-        CVal::Own(funds),
-    ];
-    let mut instance =
-        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
-    let called = instance.invoke(export, &args)?;
-    let fuel = instance.fuel_consumed();
-    let host = instance.into_host();
-    let refusal = match called {
-        Ok(_) => None,
-        Err(ExecError::Canon(CanonError::Host(reason))) => Some(reason),
-        Err(other) => return Err(format_err!("ref {export} failed: {other:?}")),
-    };
-    Ok((settled(host, key, funds, refusal), fuel))
-}
-
 /// What the session says about a credit once it settles.
 fn settled(
     host: KernelSession,
@@ -720,10 +489,38 @@ fn settled(
 
 /// One credit on both engines, comparing what settled and what it cost.
 fn credited(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<Credited> {
-    let (blessed, blessed_fuel) = put_blessed(fx, export, held, delta)?;
-    let (reference, ref_fuel) = put_ref(fx, export, held, delta)?;
-    assert_eq!(blessed, reference, "{export} diverged");
-    assert_eq!(blessed_fuel, ref_fuel, "{export} fuel diverged");
+    let build = || {
+        let mut host = session_of(fx);
+        host.open_bucket(Held::Amount(held), RESOURCE);
+        host
+    };
+    let mut probe = session_of(fx);
+    let funds = probe.open_bucket(Held::Amount(held), RESOURCE);
+    let (key, mode, kind) = if delta {
+        (fx.ledger, Mode::Delta, ResourceKind::DeltaCell)
+    } else {
+        (
+            fx.vault,
+            Mode::Write {
+                requires: Presence::Either,
+            },
+            ResourceKind::AmountCell,
+        )
+    };
+    let args = vec![
+        CVal::Borrow(rep_of(&probe, key, mode), kind),
+        CVal::Own(funds),
+    ];
+    let mut dual = GUEST.instantiate(FUEL, build)?;
+    let refusal = match dual.invoke_both(export, &args)? {
+        DualOutcome::Values(_) => None,
+        DualOutcome::Refused(reason) => Some(reason),
+        DualOutcome::Trapped(reason) => bail!("{export} trapped: {reason:?}"),
+    };
+    let (blessed, reference) = dual.finish()?;
+    let blessed = settled(blessed.session, key, funds, refusal);
+    let reference = settled(reference.session, key, funds, refusal);
+    assert_eq!(blessed, reference, "{export} settled differently");
     Ok(blessed)
 }
 
@@ -750,17 +547,38 @@ fn a_put_consumes_the_handle_it_was_given() -> Result<()> {
     // so the value is the kernel's again and the rep names nothing.
     let credited = credited(&fx, "put-write", 30, false)?;
     assert!(!credited.funds_survive);
+    Ok(())
+}
 
-    // And the handle is gone on the guest's side too: dropping it after
-    // the put reaches for a slot the table no longer holds, which both
-    // engines refuse. The class is the canonical ABI's own and reaches no
-    // receipt, so the lane reads each engine's own wording for it.
-    let blessed = put_blessed(&fx, "put-write-then-drop", 30, false)
-        .expect_err("the blessed engine refuses a consumed handle");
-    assert!(format!("{blessed:#}").contains("unknown handle"));
-    let reference = put_ref(&fx, "put-write-then-drop", 30, false)
-        .expect_err("the interpreter refuses a consumed handle");
-    assert!(format!("{reference:#}").contains("UnknownHandle"));
+/// And the handle is gone on the guest's side too: dropping it after
+/// the put reaches for a slot the table no longer holds, which both
+/// engines refuse as the canonical ABI's own violation.
+#[test]
+fn a_consumed_handle_cannot_be_dropped_again() -> Result<()> {
+    let fx = fixture();
+    let build = || {
+        let mut host = session_of(&fx);
+        host.open_bucket(Held::Amount(30), RESOURCE);
+        host
+    };
+    let mut probe = session_of(&fx);
+    let funds = probe.open_bucket(Held::Amount(30), RESOURCE);
+    let rep = rep_of(
+        &probe,
+        fx.vault,
+        Mode::Write {
+            requires: Presence::Either,
+        },
+    );
+    let mut dual = GUEST.instantiate(FUEL, build)?;
+    let refused = dual.invoke_both(
+        "put-write-then-drop",
+        &[
+            CVal::Borrow(rep, ResourceKind::AmountCell),
+            CVal::Own(funds),
+        ],
+    )?;
+    assert_eq!(refused, DualOutcome::Trapped(AbortReason::AbiViolation));
     Ok(())
 }
 
@@ -784,256 +602,135 @@ struct Pair {
     values: (u128, u128),
 }
 
-/// What both edges came to, blessed side.
-fn pair_blessed(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    validate_component(&bytes)?;
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let host = materialize(fx);
-    let ledger = rep_of(&host, fx.ledger, Mode::Delta);
+/// What both edges came to, agreed on both engines.
+fn paired(fx: &Fixture, a: u64, b: u64) -> Result<Pair> {
+    let probe = session_of(fx);
+    let ledger = rep_of(&probe, fx.ledger, Mode::Delta);
     let vault = rep_of(
-        &host,
+        &probe,
         fx.vault,
         Mode::Write {
             requires: Presence::Either,
         },
     );
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
-
-    let ((one, two),) = instance
-        .get_typed_func::<
-            (Resource<DeltaCell>, Resource<AmountCell>, u64, u64),
-            ((Resource<Bucket>, Resource<Bucket>),),
-        >(&mut store, "take-two")?
-        .call(
-            &mut store,
-            (
-                Resource::new_borrow(ledger),
-                Resource::new_borrow(vault),
-                a,
-                b,
-            ),
-        )?;
-    let fuel = FUEL - store.get_fuel()?;
-    let mut host = store.into_data();
+    let mut dual = GUEST.instantiate(FUEL, || session_of(fx))?;
+    let produced = dual.invoke_both(
+        "take-two",
+        &[
+            CVal::Borrow(ledger, ResourceKind::DeltaCell),
+            CVal::Borrow(vault, ResourceKind::AmountCell),
+            CVal::U64(a),
+            CVal::U64(b),
+        ],
+    )?;
+    let DualOutcome::Values(values) = produced else {
+        bail!("take-two did not produce: {produced:?}");
+    };
+    let [CVal::Own(one), CVal::Own(two)] = values.as_slice() else {
+        bail!("take-two returned {values:?}");
+    };
+    let (one, two) = (*one, *two);
+    let (blessed, reference) = dual.finish()?;
+    let (mut blessed, mut reference) = (blessed.session, reference.session);
     let pair = Pair {
-        reps: (one.rep(), two.rep()),
+        reps: (one, two),
         values: (
-            host.take_bucket(one.rep())?.quantity(),
-            host.take_bucket(two.rep())?.quantity(),
+            blessed.take_bucket(one)?.quantity(),
+            blessed.take_bucket(two)?.quantity(),
         ),
     };
-    Ok((pair, fuel))
+    assert_eq!(
+        pair.values,
+        (
+            reference.take_bucket(one)?.quantity(),
+            reference.take_bucket(two)?.quantity(),
+        ),
+        "the paired values diverged"
+    );
+    Ok(pair)
 }
 
-/// The same, under the reference interpreter.
-fn pair_ref(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    let comp = RefComponent::decode(&bytes)?;
-    let host = materialize(fx);
-    let args = vec![
-        CVal::Borrow(
-            rep_of(&host, fx.ledger, Mode::Delta),
-            ResourceKind::DeltaCell,
-        ),
-        CVal::Borrow(
-            rep_of(
-                &host,
-                fx.vault,
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            ),
-            ResourceKind::AmountCell,
-        ),
-        CVal::U64(a),
-        CVal::U64(b),
-    ];
-    let mut instance =
-        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
-    let produced = invoke(&mut instance, "take-two", &args)?;
-    let fuel = instance.fuel_consumed();
-    let mut host = instance.into_host();
-    let pair = match produced.as_slice() {
-        [CVal::Own(one), CVal::Own(two)] => Pair {
-            reps: (*one, *two),
-            values: (
-                host.take_bucket(*one)?.quantity(),
-                host.take_bucket(*two)?.quantity(),
-            ),
-        },
-        other => return Err(format_err!("take-two returned {other:?}")),
+/// What a bucket weighs, read through a borrow on both engines.
+fn weighed(fx: &Fixture, held: u128) -> Result<u64> {
+    let build = || {
+        let mut host = session_of(fx);
+        host.open_bucket(Held::Amount(held), RESOURCE);
+        host
     };
-    Ok((pair, fuel))
-}
-
-/// What a bucket weighs, read through a borrow on each engine.
-fn weighed(fx: &Fixture, held: u128) -> Result<(u64, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    validate_component(&bytes)?;
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
-    let ledger = rep_of(&host, fx.ledger, Mode::Delta);
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
-    let (blessed,) = instance
-        .get_typed_func::<(Resource<Bucket>, Resource<DeltaCell>), (u64,)>(&mut store, "weigh")?
-        .call(
-            &mut store,
-            (Resource::new_own(funds), Resource::new_borrow(ledger)),
-        )?;
-
-    let comp = RefComponent::decode(&bytes)?;
-    let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
-    let ledger = rep_of(&host, fx.ledger, Mode::Delta);
-    let mut instance =
-        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
-    let args = [
-        CVal::Own(funds),
-        CVal::Borrow(ledger, ResourceKind::DeltaCell),
-    ];
-    let reference = match invoke(&mut instance, "weigh", &args)?.as_slice() {
-        [CVal::U64(v)] => *v,
-        other => return Err(format_err!("weigh returned {other:?}")),
-    };
-    Ok((blessed, reference))
+    let mut probe = session_of(fx);
+    let funds = probe.open_bucket(Held::Amount(held), RESOURCE);
+    let ledger = rep_of(&probe, fx.ledger, Mode::Delta);
+    let mut dual = GUEST.instantiate(FUEL, build)?;
+    dual.invoke_both(
+        "weigh",
+        &[
+            CVal::Own(funds),
+            CVal::Borrow(ledger, ResourceKind::DeltaCell),
+        ],
+    )?
+    .scalar()
 }
 
 /// One split, driven on both engines: what came off, and what was left.
 fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    validate_component(&bytes)?;
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
-    let ledger = rep_of(&host, fx.ledger, Mode::Delta);
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
-    let (came_off,) = instance
-        .get_typed_func::<(Resource<Bucket>, u64, Resource<DeltaCell>), (Resource<Bucket>,)>(
-            &mut store, "split",
+    let build = || {
+        let mut host = session_of(fx);
+        host.open_bucket(Held::Amount(held), RESOURCE);
+        host
+    };
+    let mut probe = session_of(fx);
+    let funds = probe.open_bucket(Held::Amount(held), RESOURCE);
+    let ledger = rep_of(&probe, fx.ledger, Mode::Delta);
+    let mut dual = GUEST.instantiate(FUEL, build)?;
+    let came_off = dual
+        .invoke_both(
+            "split",
+            &[
+                CVal::Own(funds),
+                CVal::U64(off),
+                CVal::Borrow(ledger, ResourceKind::DeltaCell),
+            ],
         )?
-        .call(
-            &mut store,
-            (Resource::new_own(funds), off, Resource::new_borrow(ledger)),
-        )?;
-    let mut host = store.into_data();
-    let blessed = host.take_bucket(came_off.rep())?.quantity();
-    let (receipt, _) = host.finish(None, 0).expect("the oracle is clean");
+        .bucket()?;
+    let (blessed, reference) = dual.finish()?;
+    let (mut blessed, mut reference) = (blessed.session, reference.session);
+    let taken = blessed.take_bucket(came_off)?.quantity();
+    assert_eq!(
+        taken,
+        reference.take_bucket(came_off)?.quantity(),
+        "the split diverged"
+    );
+    let (receipt, _) = blessed.finish(None, 0).expect("the oracle is clean");
     let left = receipt
         .delta
         .movements
         .get(&fx.ledger)
         .map_or(0, |m| m.credit);
-
-    let comp = RefComponent::decode(&bytes)?;
-    let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
-    let ledger = rep_of(&host, fx.ledger, Mode::Delta);
-    let mut instance =
-        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
-    let args = [
-        CVal::Own(funds),
-        CVal::U64(off),
-        CVal::Borrow(ledger, ResourceKind::DeltaCell),
-    ];
-    let mut host = match invoke(&mut instance, "split", &args)?.as_slice() {
-        [CVal::Own(rep)] => {
-            let rep = *rep;
-            let mut host = instance.into_host();
-            assert_eq!(
-                host.take_bucket(rep)?.quantity(),
-                blessed,
-                "the split diverged"
-            );
-            host
-        }
-        other => return Err(format_err!("split returned {other:?}")),
-    };
-    let _ = &mut host;
-    Ok((blessed, left))
+    Ok((taken, left))
 }
 
-/// The instances an interval hands over, and what it holds afterwards.
-fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    validate_component(&bytes)?;
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let host = materialize(fx);
-    let held = rep_where(&host, |c| matches!(c, Capability::InstanceRange(..)));
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
-    let (taken,) = instance
-        .get_typed_func::<(Resource<InstanceRange>, &[u64]), (Resource<Bucket>,)>(
-            &mut store, "lift",
+/// The value a successful lift produced, taken back out beforehand.
+fn lifted_value(fx: &Fixture, ids: &[u64]) -> Result<u128> {
+    let probe = session_of(fx);
+    let held = rep_where(&probe, |c| matches!(c, Capability::InstanceRange(..)));
+    let mut dual = GUEST.instantiate(FUEL, || session_of(fx))?;
+    let rep = dual
+        .invoke_both(
+            "lift",
+            &[
+                CVal::Borrow(held, ResourceKind::InstanceRange),
+                CVal::Ids(ids.to_vec()),
+            ],
         )?
-        .call(&mut store, (Resource::new_borrow(held), ids))?;
-    let mut host = store.into_data();
-    let blessed = host.take_bucket(taken.rep())?.quantity();
-
-    // The same lift under the interpreter, and the round trip beside it:
-    // taking the instances out and filing them straight back has to leave
-    // the collection as it was.
-    let comp = RefComponent::decode(&bytes)?;
-    let host = materialize(fx);
-    let held = rep_where(&host, |c| matches!(c, Capability::InstanceRange(..)));
-    let mut instance =
-        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
-    let args = [
-        CVal::Borrow(held, ResourceKind::InstanceRange),
-        CVal::Ids(ids.to_vec()),
-    ];
-    let reference = match invoke(&mut instance, "lift", &args)?.as_slice() {
-        [CVal::Own(rep)] => {
-            let rep = *rep;
-            instance.into_host().take_bucket(rep)?.quantity()
-        }
-        other => return Err(format_err!("lift returned {other:?}")),
-    };
-    assert_eq!(blessed, reference, "the lift diverged");
-
-    let host = materialize(fx);
-    let held = rep_where(&host, |c| matches!(c, Capability::InstanceRange(..)));
-    let mut instance =
-        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
-    let args = [
-        CVal::Borrow(held, ResourceKind::InstanceRange),
-        CVal::Ids(ids.to_vec()),
-    ];
-    let round_trip = match invoke(&mut instance, "relift", &args)?.as_slice() {
-        [CVal::U64(count)] => *count,
-        other => return Err(format_err!("relift returned {other:?}")),
-    };
-    Ok((blessed, round_trip))
-}
-
-/// The rep of the first capability matching `pred`.
-fn rep_where(host: &KernelSession, pred: impl Fn(&Capability) -> bool) -> u32 {
-    let position = host
-        .capabilities()
-        .iter()
-        .position(pred)
-        .expect("capability present");
-    u32::try_from(position).expect("bounded")
+        .bucket()?;
+    let (mut blessed, mut reference) = dual.finish().map(|(b, r)| (b.session, r.session))?;
+    let value = blessed.take_bucket(rep)?.quantity();
+    assert_eq!(
+        value,
+        reference.take_bucket(rep)?.quantity(),
+        "the lift diverged"
+    );
+    Ok(value)
 }
 
 #[test]
@@ -1041,26 +738,51 @@ fn taking_instances_out_of_a_collection_is_what_produces_them() -> Result<()> {
     let fx = fixture();
     // The removal and the edge are one operation, so what crosses is
     // exactly what left.
-    let (taken, round_trip) = lifted(&fx, &[10, 20])?;
-    assert_eq!(taken, 2);
+    assert_eq!(lifted_value(&fx, &[10, 20])?, 2);
+
     // And filing them straight back leaves the collection as it was.
+    let probe = session_of(&fx);
+    let held = rep_where(&probe, |c| matches!(c, Capability::InstanceRange(..)));
+    let mut dual = GUEST.instantiate(FUEL, || session_of(&fx))?;
+    let round_trip = dual
+        .invoke_both(
+            "relift",
+            &[
+                CVal::Borrow(held, ResourceKind::InstanceRange),
+                CVal::Ids(vec![10, 20]),
+            ],
+        )?
+        .scalar()?;
     assert_eq!(round_trip, 3);
 
     // Naming none yields an empty bucket, which is how a method that
     // moves nothing gets one.
-    let (none, _) = lifted(&fx, &[])?;
-    assert_eq!(none, 0);
+    assert_eq!(lifted_value(&fx, &[])?, 0);
     Ok(())
 }
 
 #[test]
-fn an_instance_a_body_does_not_hold_is_refused() {
+fn an_instance_a_body_does_not_hold_is_refused() -> Result<()> {
     let fx = fixture();
     // The one thing a take can be wrong about: a body naming what the
     // collection does not hold. An interval take could only have answered
     // with silence.
-    let refusal = lifted(&fx, &[10, 99]).expect_err("an unheld instance is refused");
-    assert!(format!("{refusal:#}").contains("InstanceNotHeld"));
+    let probe = session_of(&fx);
+    let held = rep_where(&probe, |c| matches!(c, Capability::InstanceRange(..)));
+    let mut dual = GUEST.instantiate(FUEL, || session_of(&fx))?;
+    let refused = dual.invoke_both(
+        "lift",
+        &[
+            CVal::Borrow(held, ResourceKind::InstanceRange),
+            CVal::Ids(vec![10, 99]),
+        ],
+    )?;
+    assert_eq!(
+        refused,
+        DualOutcome::Refused(AbortReason::InstanceNotHeld),
+        "an unheld instance is refused"
+    );
+    Ok(())
 }
 
 #[test]
@@ -1076,23 +798,21 @@ fn a_split_divides_a_bucket_and_loses_nothing() -> Result<()> {
 
 #[test]
 fn a_bucket_survives_a_split_and_a_merge_whole() -> Result<()> {
-    let fx = &fixture();
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    validate_component(&bytes)?;
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(100), RESOURCE);
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
-    let (whole,) = instance
-        .get_typed_func::<(Resource<Bucket>, u64), (Resource<Bucket>,)>(&mut store, "halve")?
-        .call(&mut store, (Resource::new_own(funds), 30))?;
-    let mut host = store.into_data();
-    assert_eq!(host.take_bucket(whole.rep())?.quantity(), 100);
+    let fx = fixture();
+    let build = || {
+        let mut host = session_of(&fx);
+        host.open_bucket(Held::Amount(100), RESOURCE);
+        host
+    };
+    let mut probe = session_of(&fx);
+    let funds = probe.open_bucket(Held::Amount(100), RESOURCE);
+    let mut dual = GUEST.instantiate(FUEL, build)?;
+    let whole = dual
+        .invoke_both("halve", &[CVal::Own(funds), CVal::U64(30)])?
+        .bucket()?;
+    let (blessed, _) = dual.finish()?;
+    let mut blessed = blessed.session;
+    assert_eq!(blessed.take_bucket(whole)?.quantity(), 100);
     Ok(())
 }
 
@@ -1110,69 +830,40 @@ fn a_bucket_survives_a_split_and_a_merge_whole() -> Result<()> {
 #[test]
 fn a_merge_of_a_bucket_into_itself_is_refused_by_both_engines() -> Result<()> {
     let fx = fixture();
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    validate_component(&bytes)?;
-
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let mut host = materialize(&fx);
-    let funds = host.open_bucket(Held::Amount(100), RESOURCE);
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
-    let blessed = instance
-        .get_typed_func::<(Resource<Bucket>,), (u64,)>(&mut store, "self-merge")?
-        .call(&mut store, (Resource::new_own(funds),))
-        .map_err(|error| classify(&error))
-        .expect_err("the blessed engine refuses the lift");
-    let blessed_host = store.into_data();
-
-    let comp = RefComponent::decode(&bytes)?;
-    let mut host = materialize(&fx);
-    let funds = host.open_bucket(Held::Amount(100), RESOURCE);
-    let mut instance =
-        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, e)| e)?;
-    let reference = instance
-        .invoke("self-merge", &[CVal::Own(funds)])?
-        .expect_err("the interpreter refuses the same lift");
-    let reference_host = instance.into_host();
-
-    assert_eq!(
-        blessed,
-        reference.abort_reason(),
-        "the engines classified the refusal differently",
-    );
-    assert_eq!(blessed, AbortReason::AbiViolation);
+    let build = || {
+        let mut host = session_of(&fx);
+        host.open_bucket(Held::Amount(100), RESOURCE);
+        host
+    };
+    let mut probe = session_of(&fx);
+    let funds = probe.open_bucket(Held::Amount(100), RESOURCE);
+    let mut dual = GUEST.instantiate(FUEL, build)?;
+    let refused = dual.invoke_both("self-merge", &[CVal::Own(funds)])?;
+    assert_eq!(refused, DualOutcome::Trapped(AbortReason::AbiViolation));
     // And neither runtime moved value: the bucket carries what it did.
-    assert_eq!(blessed_host.bucket(funds)?, Held::Amount(100));
-    assert_eq!(reference_host.bucket(funds)?, Held::Amount(100));
+    let (blessed, reference) = dual.finish()?;
+    assert_eq!(blessed.session.bucket(funds)?, Held::Amount(100));
+    assert_eq!(reference.session.bucket(funds)?, Held::Amount(100));
     Ok(())
 }
 
 #[test]
 fn a_body_can_read_what_it_was_paid_without_moving_it() -> Result<()> {
     let fx = fixture();
-    let (blessed, reference) = weighed(&fx, 4242)?;
-    assert_eq!(blessed, reference, "the weighed amount diverged");
-    assert_eq!(blessed, 4242);
+    assert_eq!(weighed(&fx, 4242)?, 4242);
     Ok(())
 }
 
 #[test]
 fn a_method_with_two_edges_hands_back_two_buckets() -> Result<()> {
     let fx = fixture();
-    let (blessed, blessed_fuel) = pair_blessed(&fx, 30, 40)?;
-    let (reference, ref_fuel) = pair_ref(&fx, 30, 40)?;
-    assert_eq!(blessed, reference, "the paired edges diverged");
-    assert_eq!(blessed_fuel, ref_fuel, "take-two fuel diverged");
+    let pair = paired(&fx, 30, 40)?;
 
     // Distinct buckets, in the order the body took them: which slot an
     // edge lands in is what a consumer routes on, so the two engines
     // agreeing on it is the whole of what the tuple has to promise.
-    assert_eq!(blessed.values, (30, 40));
-    assert_ne!(blessed.reps.0, blessed.reps.1);
+    assert_eq!(pair.values, (30, 40));
+    assert_ne!(pair.reps.0, pair.reps.1);
     Ok(())
 }
 
@@ -1208,26 +899,23 @@ fn a_reservation_answers_once() -> Result<()> {
 #[test]
 fn ownership_transfer_and_the_drop_agree_across_the_engines() -> Result<()> {
     let fx = fixture();
-    let (blessed, blessed_fuel) = run_blessed(&fx)?;
-    let (reference, ref_fuel) = run_ref(&fx)?;
-    assert_eq!(blessed, reference, "the bucket sequence diverged");
-    assert_eq!(blessed_fuel, ref_fuel, "bucket-sequence fuel diverged");
+    let trace = bucket_sequence(&fx)?;
 
     // The component model reserves index 0, so the kept bucket takes the
     // first allocatable slot — and keeps it, which is what the borrow
     // lands one past.
-    assert_eq!(blessed.held_handle, 1);
-    assert_eq!(blessed.borrow_handle, 2);
+    assert_eq!(trace.held_handle, 1);
+    assert_eq!(trace.borrow_handle, 2);
     // Returning the bucket frees slot 1 after the borrow freed slot 2, so
     // the next lowered handle takes the more recently freed of the two.
-    assert_eq!(blessed.discard_handle, 1);
+    assert_eq!(trace.discard_handle, 1);
     Ok(())
 }
 
 #[test]
 fn a_returned_bucket_comes_back_to_the_kernel_whole() -> Result<()> {
     let fx = fixture();
-    let (trace, _) = run_blessed(&fx)?;
+    let trace = bucket_sequence(&fx)?;
     // The guest held a handle and gave back the same rep; the amount was
     // never anywhere it could be rewritten.
     assert_eq!(trace.released_amount, HELD);
@@ -1237,12 +925,10 @@ fn a_returned_bucket_comes_back_to_the_kernel_whole() -> Result<()> {
 #[test]
 fn an_empty_bucket_drops_and_reaches_the_host() -> Result<()> {
     let fx = fixture();
-    let (blessed, _) = run_blessed(&fx)?;
-    let (reference, _) = run_ref(&fx)?;
+    let trace = bucket_sequence(&fx)?;
     // Nothing but the destructor could have emptied the slot: the lane
     // takes the released bucket by hand and never touches this one.
-    assert!(!blessed.discarded_survives);
-    assert!(!reference.discarded_survives);
+    assert!(!trace.discarded_survives);
     Ok(())
 }
 
@@ -1252,59 +938,27 @@ fn letting_go_of_value_is_refused_by_the_hosts_own_hand() -> Result<()> {
     // The property the handle exists for. A record could carry the
     // amount and could not notice being forgotten; the canonical ABI
     // routes a discarded owned handle to the host, and the host says no.
-    let (blessed, _) = discard_blessed(&fx, 40)?;
-    let (reference, _) = discard_ref(&fx, 40)?;
-    assert_eq!(blessed, reference, "the discard diverged");
-    assert_eq!(blessed, Some(AbortReason::ValueDropped));
+    assert_eq!(
+        discarded(&fx, 40)?,
+        DualOutcome::Refused(AbortReason::ValueDropped)
+    );
 
     // And nothing to lose is nothing to refuse.
-    let (empty, _) = discard_blessed(&fx, 0)?;
-    assert_eq!(empty, None);
+    assert!(matches!(discarded(&fx, 0)?, DualOutcome::Values(_)));
     Ok(())
 }
 
-/// One discard under the blessed engine: the class it was refused with,
-/// or nothing where it was allowed.
-fn discard_blessed(fx: &Fixture, held: u128) -> Result<(Option<AbortReason>, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    validate_component(&bytes)?;
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
-    let mut store = Store::new(&engine, host);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
-    let called = instance
-        .get_typed_func::<(Resource<Bucket>,), (u64,)>(&mut store, "discard")?
-        .call(&mut store, (Resource::new_own(funds),));
-    let fuel = FUEL - store.get_fuel()?;
-    let Err(error) = called else {
-        return Ok((None, fuel));
+/// One discard on both engines: how the drop ended.
+fn discarded(fx: &Fixture, held: u128) -> Result<DualOutcome> {
+    let build = || {
+        let mut host = session_of(fx);
+        host.open_bucket(Held::Amount(held), RESOURCE);
+        host
     };
-    if let Some(refusal) = error.downcast_ref::<HostRefusal>() {
-        return Ok((Some(refusal.0), fuel));
-    }
-    Err(error)
-}
-
-/// The same discard under the reference interpreter.
-fn discard_ref(fx: &Fixture, held: u128) -> Result<(Option<AbortReason>, u64)> {
-    let bytes = parse_str(BUCKET_GUEST_WAT)?;
-    let comp = RefComponent::decode(&bytes)?;
-    let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
-    let mut instance =
-        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
-    let called = instance.invoke("discard", &[CVal::Own(funds)])?;
-    let fuel = instance.fuel_consumed();
-    match called {
-        Ok(_) => Ok((None, fuel)),
-        Err(ExecError::Canon(CanonError::Host(reason))) => Ok((Some(reason), fuel)),
-        Err(other) => Err(format_err!("ref discard failed: {other:?}")),
-    }
+    let mut probe = session_of(fx);
+    let funds = probe.open_bucket(Held::Amount(held), RESOURCE);
+    let mut dual = GUEST.instantiate(FUEL, build)?;
+    dual.invoke_both("discard", &[CVal::Own(funds)])
 }
 
 // ─── and the read that moves none of it ────────────────────────────────
@@ -1370,21 +1024,7 @@ fn peeking() -> KernelSession {
     };
     let mut declared = EffectSet::default();
     declared.insert(read).expect("the set takes it");
-    KernelSession::materialize(
-        OverlayStore::new(Arc::new(store)),
-        &Declaration {
-            set: declared.clone(),
-            ordered: vec![DeclaredAccess {
-                effect: read,
-                holds: Some(RESOURCE),
-            }],
-            ..Declaration::default()
-        },
-        tx(),
-        env(),
-        test_hash,
-    )
-    .expect("the declaration materializes")
+    materialize(&store, &declared, &[Some(RESOURCE)], tx(), env())
 }
 
 /// Asking a balance is the one thing a body does with value that moves
@@ -1392,35 +1032,12 @@ fn peeking() -> KernelSession {
 /// same handle.
 #[test]
 fn a_balance_read_agrees_between_the_engines() -> Result<()> {
-    let bytes = parse_str(PEEK_WAT)?;
-    validate_component(&bytes)?;
-
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let mut store = Store::new(&engine, peeking());
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
-    let (blessed,) = instance
-        .get_typed_func::<(Resource<AmountRead>,), (u64,)>(&mut store, "peek")?
-        .call(&mut store, (Resource::new_borrow(0),))?;
-
-    let comp = RefComponent::decode(&bytes)?;
-    let mut interpreted = RefComponentInstance::instantiate(&comp, peeking(), u64::MAX)
-        .map_err(|(_, error)| error)?;
-    let reference = match invoke(
-        &mut interpreted,
-        "peek",
-        &[CVal::Borrow(0, ResourceKind::AmountRead)],
-    )?
-    .as_slice()
-    {
-        [CVal::U64(held)] => *held,
-        other => return Err(format_err!("peek returned {other:?}")),
-    };
-
-    assert_eq!(blessed, reference, "the balance read diverged");
-    assert_eq!(u128::from(blessed), BALANCE);
+    let guest = DualGuest::compile(&parse_str(PEEK_WAT)?)?;
+    let mut dual = guest.instantiate(FUEL, peeking)?;
+    let held = dual
+        .invoke_both("peek", &[CVal::Borrow(0, ResourceKind::AmountRead)])?
+        .scalar()
+        .map_err(|other| format_err!("peek: {other}"))?;
+    assert_eq!(u128::from(held), BALANCE);
     Ok(())
 }
