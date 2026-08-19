@@ -27,7 +27,7 @@ use crate::metadata::MetadataCache;
 use crate::presented::Presented;
 use crate::resource::holdings_collection;
 use crate::route::MAX_MANIFEST_NODES;
-use crate::signature::{Accessibility, CustodyClaim, GateError, GateShape, ParamType};
+use crate::signature::{Accessibility, CustodyClaim, GateShape, ParamType};
 use crate::types::{EdgeContent, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::VAULT;
 
@@ -140,22 +140,6 @@ pub enum AdmissionError {
     /// address — a gate with nothing possessable to verify.
     #[error("node {node} mints an identity that is not a resource address")]
     MintType {
-        /// The offending node.
-        node: u32,
-    },
-    /// A custodial method whose declaration is not the pinned custody
-    /// shape — re-asked of the signature here for the same reason.
-    #[error("node {node}: the custodial method's declaration is not the custody shape")]
-    CustodyShape {
-        /// The offending node.
-        node: u32,
-    },
-    /// An authorizing method whose declaration is not the single point
-    /// read its stored rule lives at — the shape the publish check pins,
-    /// re-derived so a cached package that never passed one is a refusal
-    /// rather than a panic.
-    #[error("node {node}: the authorizing method names no rule cell")]
-    RuleCell {
         /// The offending node.
         node: u32,
     },
@@ -751,17 +735,19 @@ pub(crate) fn admit_intents(
         let meta = instances
             .get(node.target)
             .ok_or_else(|| ResolveError::UnknownInstance(node.target.address()))?;
-        let package = cache
+        cache
             .get(meta.package)
             .ok_or(ResolveError::UnknownPackage(meta.package))?;
-        let signature =
-            package
-                .methods
-                .get(&node.method)
-                .ok_or_else(|| ResolveError::UnknownMethod {
-                    package: meta.package,
-                    method: node.method.clone(),
-                })?;
+        // The witness, not the record: everything behind the cache door
+        // passed the composed signature check, so nothing below re-asks.
+        let checked = cache.method(meta.package, &node.method).ok_or_else(|| {
+            ResolveError::UnknownMethod {
+                package: meta.package,
+                method: node.method.clone(),
+            }
+        })?;
+        let gate = checked.gate();
+        let signature = checked.signature();
         if signature.params.len() != node.args.len() {
             return Err(AdmissionError::ArityMismatch {
                 node: node_index,
@@ -881,17 +867,6 @@ pub(crate) fn admit_intents(
         } else if !node.evidence.is_empty() {
             return Err(AdmissionError::UnexpectedEvidence { node: node_index });
         }
-        // What the gate judges, and what the declaration reads to judge
-        // it — asked of the signature itself, so a cached package that
-        // never passed the publish check is a refusal rather than an
-        // ungated node. The accessor returns shape refusals alone, and
-        // both rule shapes are one verdict here.
-        let gate = signature.gate().map_err(|error| match error {
-            GateError::CustodialShape => AdmissionError::CustodyShape { node: node_index },
-            GateError::AuthorizingShape | GateError::RoleGatedShape => {
-                AdmissionError::RuleCell { node: node_index }
-            }
-        })?;
         // A proof is scoped to the intent that produced it — a signature
         // proof to the intent whose signature, a node proof to the intent
         // whose node — so the identities resolve against this node's own

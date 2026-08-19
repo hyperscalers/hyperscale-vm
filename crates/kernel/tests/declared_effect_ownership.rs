@@ -84,7 +84,7 @@ fn predator() -> PackageMetadata {
 
 fn world() -> (MetadataCache, InstanceRegistry, ComponentAddr) {
     let mut cache = MetadataCache::new();
-    cache.publish(package(), predator());
+    cache.publish_unchecked(package(), predator());
     let mut instances = InstanceRegistry::new();
     let instance = instances.create(
         &TestHasher,

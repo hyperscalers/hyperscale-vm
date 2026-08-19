@@ -20,7 +20,7 @@
 pub use hyperscale_vm_effects::METADATA_SECTION;
 use hyperscale_vm_effects::{
     AbiParam, MethodSignature, PackageMetadata, Totality, attach_metadata as attach_canonical,
-    check_abi, check_declarations, materialized_kind, metadata_section,
+    check_signature, materialized_kind, metadata_section,
 };
 use hyperscale_vm_runtime::{
     ExportParam, ExportShape, check_method, component_exports, validate_component,
@@ -149,12 +149,10 @@ fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, Gat
                 "metadata declares method {method:?}, which the component does not export"
             )));
         };
-        // The binding is the vocabulary's to judge: every clause is a
-        // pure function of the signature, and routing judges the same
-        // predicate again for a package that reached a cache without
-        // ever passing this gate.
-        check_abi(signature).map_err(|error| GateError(format!("method {method:?}: {error}")))?;
-        check_declarations(signature)
+        // The composed signature check: the same judgment the metadata
+        // cache runs at its door, asked here first so a refusal names the
+        // artifact rather than a call.
+        check_signature(signature)
             .map_err(|error| GateError(format!("method {method:?}: {error}")))?;
         check_abi_against_export(method, signature, &export.params)?;
         check_outputs_against_export(method, signature, export)?;

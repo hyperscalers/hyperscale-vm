@@ -63,7 +63,7 @@ fn pair_config() -> Vec<Value> {
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
     for (name, metadata) in stdlib() {
-        cache.publish(pkg(name), metadata);
+        cache.publish_unchecked(pkg(name), metadata);
     }
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));

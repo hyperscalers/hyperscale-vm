@@ -657,6 +657,7 @@ name = "hyperscale-vm-effects"
 version = "0.1.0"
 dependencies = [
  "hyperscale-hbor",
+ "hyperscale-vm-effects",
  "hyperscale-vm-fixtures",
  "hyperscale-vm-stdlib",
  "hyperscale-vm-types",

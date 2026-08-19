@@ -354,7 +354,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
 #[test]
 fn a_declared_superset_evaluates_without_error() {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("wide"), wide_account_metadata());
+    cache.publish_unchecked(pkg("wide"), wide_account_metadata());
     let mut instances = InstanceRegistry::new();
     let alice = instances.create(
         &TestHasher,

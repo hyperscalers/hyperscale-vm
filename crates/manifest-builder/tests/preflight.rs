@@ -51,8 +51,8 @@ fn badge() -> ResourceAddr {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account::metadata());
-    cache.publish(pkg("staking"), staking::metadata());
+    cache.publish_unchecked(pkg("account"), account::metadata());
+    cache.publish_unchecked(pkg("staking"), staking::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, pool_meta());

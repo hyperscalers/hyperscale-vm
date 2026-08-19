@@ -27,7 +27,7 @@ fn pkg() -> PackageHash {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg(), account::metadata());
+    cache.publish_unchecked(pkg(), account::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg());
     (cache, instances)

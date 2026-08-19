@@ -118,8 +118,8 @@ fn staking_pkg() -> PackageHash {
 /// that.
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(account_pkg(), account::metadata());
-    cache.publish(staking_pkg(), staking::metadata());
+    cache.publish_unchecked(account_pkg(), account::metadata());
+    cache.publish_unchecked(staking_pkg(), staking::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(account_pkg());
     instances.create(&TestHasher, pool_meta());

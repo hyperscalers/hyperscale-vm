@@ -79,12 +79,13 @@ pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, distinct_ids};
 pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};
 pub use metadata::{
-    MetadataCache, PACKAGE_SLOT, PackageHash, PackageMetadata, package_hash, package_key,
+    MetadataCache, PACKAGE_SLOT, PackageHash, PackageMetadata, PublishRefusal, package_hash,
+    package_key,
 };
 pub use presented::Presented;
 pub use publish::{
-    AbiError, DeclarationError, MetadataBoundsError, SignatureBoundsError, check_abi,
-    check_declarations, check_metadata,
+    AbiError, CheckedSignature, DeclarationError, MetadataBoundsError, SignatureBoundsError,
+    SignatureError, check_abi, check_declarations, check_metadata, check_signature,
 };
 pub use resource::{
     Fungibility, ResourceRecord, holdings_collection, holdings_entry, holdings_range,

@@ -15,10 +15,91 @@ use crate::dsl::{
 };
 use crate::metadata::PackageMetadata;
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr};
-use crate::signature::{AbiParam, Accessibility, CustodyClaim, GateError, MethodSignature};
+use crate::signature::{
+    AbiParam, Accessibility, CustodyClaim, GateError, GateShape, MethodSignature,
+};
 use crate::types::{MAX_VALUE_DEPTH, SlotId};
 use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
+
+/// Why a signature is refused at publish: the composed verdict of every
+/// judgment the vocabulary makes of one.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum SignatureError {
+    /// Past a structural bound.
+    #[error(transparent)]
+    Bounds(#[from] SignatureBoundsError),
+    /// A declaration rule refused it.
+    #[error(transparent)]
+    Declaration(#[from] DeclarationError),
+    /// The ABI binding refused it — the gate shape included.
+    #[error(transparent)]
+    Abi(#[from] AbiError),
+}
+
+/// A signature every publish-time judgment has passed.
+///
+/// The witness [`check_signature`] mints, and the only thing the checked
+/// judgments hand out: a consumer holding one no longer has to know the
+/// list of checks, and a fold that forgot one is unrepresentable rather
+/// than an ordering nothing states.
+#[derive(Clone, Copy, Debug)]
+pub struct CheckedSignature<'a> {
+    signature: &'a MethodSignature,
+}
+
+impl<'a> CheckedSignature<'a> {
+    /// Mint the witness without judging — for the cache, whose invariant
+    /// is that everything behind its door already passed.
+    pub(crate) const fn trusted(signature: &'a MethodSignature) -> Self {
+        Self { signature }
+    }
+
+    /// The signature itself.
+    #[must_use]
+    pub const fn signature(&self) -> &'a MethodSignature {
+        self.signature
+    }
+
+    /// The gate the accessibility names — infallible here, because the
+    /// shape check is part of what minted the witness.
+    ///
+    /// # Panics
+    ///
+    /// Only for a witness minted over an unchecked fixture whose
+    /// accessibility shape would never have published.
+    #[must_use]
+    pub fn gate(&self) -> GateShape<'a> {
+        self.signature
+            .gate()
+            .expect("the witness is minted by the composed signature check")
+    }
+}
+
+impl std::ops::Deref for CheckedSignature<'_> {
+    type Target = MethodSignature;
+
+    fn deref(&self) -> &Self::Target {
+        self.signature
+    }
+}
+
+/// Judge one signature as the publish gate does: the structural bounds,
+/// the declaration rules, and the ABI binding, whose shape check covers
+/// the gate.
+///
+/// # Errors
+///
+/// [`SignatureError`]; verdicts are deterministic and identical on every
+/// node.
+pub fn check_signature(
+    signature: &MethodSignature,
+) -> Result<CheckedSignature<'_>, SignatureError> {
+    check_signature_bounds(signature)?;
+    check_declarations(signature)?;
+    check_abi(signature)?;
+    Ok(CheckedSignature::trusted(signature))
+}
 
 /// Why a signature's ABI binding cannot be honoured.
 ///

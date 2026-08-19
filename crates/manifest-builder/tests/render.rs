@@ -47,9 +47,9 @@ fn splitter() -> ComponentAddr {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account::metadata());
-    cache.publish(pkg("amm"), amm::metadata());
-    cache.publish(pkg("splitter"), splitter::metadata());
+    cache.publish_unchecked(pkg("account"), account::metadata());
+    cache.publish_unchecked(pkg("amm"), amm::metadata());
+    cache.publish_unchecked(pkg("splitter"), splitter::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, instance("amm", pair()));

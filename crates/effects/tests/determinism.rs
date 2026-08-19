@@ -136,7 +136,7 @@ proptest! {
     ) {
         let resource = Address::new([resource_byte; 31], AddressClass::Component);
         let mut cache = MetadataCache::new();
-        cache.publish(pkg("account"), account::metadata());
+        cache.publish_unchecked(pkg("account"), account::metadata());
         let mut instances = InstanceRegistry::new();
         let sender = instance(&mut instances, "account", 0, sender_byte);
         let recipient = instance(&mut instances, "account", 1, recipient_byte);
@@ -192,7 +192,7 @@ proptest! {
     ) {
         let resource = Address::new([resource_byte; 31], AddressClass::Component);
         let mut cache = MetadataCache::new();
-        cache.publish(pkg("account"), account::metadata());
+        cache.publish_unchecked(pkg("account"), account::metadata());
         // Each instance sits at the address its own record derives, so
         // distinct salt lanes are what keep the sender and any generated
         // recipient apart — no address is picked.

@@ -78,7 +78,7 @@ fn pkg() -> PackageHash {
 
 fn world(_senders: u32) -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg(), account::metadata());
+    cache.publish_unchecked(pkg(), account::metadata());
     let mut instances = InstanceRegistry::new();
     // Senders and the recipient are principals: one record serves every
     // account, so the bench's population costs the registry nothing.

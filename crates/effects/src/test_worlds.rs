@@ -100,9 +100,9 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
             ..MethodSignature::default()
         },
     );
-    cache.publish(pkg("vault"), vault_pkg);
-    cache.publish(pkg("venue"), venue_pkg);
-    cache.publish(pkg("sink"), sink_pkg);
+    cache.publish_unchecked(pkg("vault"), vault_pkg);
+    cache.publish_unchecked(pkg("venue"), venue_pkg);
+    cache.publish_unchecked(pkg("sink"), sink_pkg);
     let mut instances = InstanceRegistry::new();
     for name in ["vault", "venue", "sink"] {
         instances.create(&TestHasher, meta_of(name));
@@ -177,8 +177,8 @@ pub fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
             ..MethodSignature::default()
         },
     );
-    cache.publish(pkg("payer"), sender_pkg);
-    cache.publish(pkg("payee"), receiver_pkg);
+    cache.publish_unchecked(pkg("payer"), sender_pkg);
+    cache.publish_unchecked(pkg("payee"), receiver_pkg);
     let mut instances = InstanceRegistry::new();
     instances.create(&TestHasher, meta_of("payer"));
     instances.create(&TestHasher, meta_of("payee"));

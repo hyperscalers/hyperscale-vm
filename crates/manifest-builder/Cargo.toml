@@ -12,6 +12,8 @@ hyperscale-vm-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# The effects testing feature, for the tests' fixture seeding.
+hyperscale-vm-effects = { workspace = true, features = ["testing"] }
 # A dev-only cycle: the wrappers moved to the crates that own the
 # packages, and the builder's own tests still compose graphs out of them.
 hyperscale-vm-fixtures.workspace = true

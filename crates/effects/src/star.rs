@@ -313,7 +313,7 @@ mod tests {
             "act".into(),
             method(vec![self_point(SlotId(1), ModeExpr::Delta)]),
         );
-        cache.publish(pkg("solo"), solo);
+        cache.publish_unchecked(pkg("solo"), solo);
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, meta_of("solo"));
         let manifest = Manifest {
@@ -374,8 +374,8 @@ mod tests {
             "take".into(),
             method(vec![self_point(SlotId(2), ModeExpr::Delta)]),
         );
-        cache.publish(pkg("producer"), producing);
-        cache.publish(pkg("consumer"), consuming);
+        cache.publish_unchecked(pkg("producer"), producing);
+        cache.publish_unchecked(pkg("consumer"), consuming);
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, meta_of("producer"));
         instances.create(&TestHasher, meta_of("consumer"));

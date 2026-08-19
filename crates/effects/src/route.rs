@@ -20,7 +20,6 @@ use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
 use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall};
 use crate::manifest::{ManifestHash, Node, NodeInput};
 use crate::metadata::{MetadataCache, PackageHash};
-use crate::publish::{AbiError, check_abi};
 use crate::resource::issued_resource;
 use crate::signature::{AbiParam, MethodSignature};
 use crate::types::{MAX_IDS_PER_EDGE, ShardId, Value};
@@ -195,18 +194,6 @@ pub enum RouteError {
         clause: u32,
         /// The prefix it reached for.
         owner: Address,
-    },
-    /// A signature whose ABI binding is not well-formed against its own
-    /// declaration.
-    #[error("node {node}: `{method}` has a malformed ABI binding")]
-    MalformedAbi {
-        /// The manifest node being routed.
-        node: u32,
-        /// The method whose binding this is.
-        method: String,
-        /// What is wrong with it.
-        #[source]
-        source: AbiError,
     },
     /// An ABI argument the node's bound inputs cannot supply.
     #[error("node {node}: `{method}` cannot bind ABI parameter {param}: {reason}")]
@@ -407,16 +394,6 @@ fn lower_call(
     } = *lowering;
     let instance = node.target;
     let method = node.method.as_str();
-    // The publish gate judges this first, from the artifact's bytes
-    // alone. Judging it again here is what makes it hold for a package
-    // that reached the cache without one — a genesis static, a
-    // hand-authored fixture — so no arrangement of metadata leaves a
-    // consumed edge with no bucket argument to carry its bounds.
-    check_abi(signature).map_err(|source| RouteError::MalformedAbi {
-        node: node_index,
-        method: method.to_owned(),
-        source,
-    })?;
     let mut args = Vec::with_capacity(signature.abi.len());
     for (position, binding) in signature.abi.iter().enumerate() {
         let param = u32::try_from(position).unwrap_or(u32::MAX);
@@ -618,17 +595,20 @@ impl Fold<'_> {
         let instance = node.target;
         let method = node.method.as_str();
         let meta = Self::record_of(self.instances, instance)?;
-        let package = self
-            .cache
+        self.cache
             .get(meta.package)
             .ok_or(ResolveError::UnknownPackage(meta.package))?;
-        let signature = package
-            .methods
-            .get(method)
+        // The witness, not the record: everything behind the cache door
+        // passed the composed signature check — the ABI binding
+        // included — so the fold re-asks nothing of it.
+        let signature = self
+            .cache
+            .method(meta.package, method)
             .ok_or_else(|| ResolveError::UnknownMethod {
                 package: meta.package,
                 method: method.to_owned(),
-            })?;
+            })?
+            .signature();
         let inputs = EvalInputs {
             self_addr: instance,
             args,
@@ -706,12 +686,14 @@ mod tests {
     use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
     use crate::manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
     use crate::metadata::{MetadataCache, PackageMetadata};
-    use crate::publish::AbiError;
+    use crate::publish::{AbiError, SignatureError};
     use crate::signature::{MethodSignature, ParamType, Totality};
     use crate::test_worlds::{
         addr, instance_of, meta_of, method, payer_payee_world, pkg, resolver, self_point,
     };
-    use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, ShardId, SlotId, Value, child_key};
+    use crate::types::{
+        EdgeContent, MAX_IDS_PER_EDGE, ShardId, SlotId, Value, child_key, package_slot,
+    };
 
     fn identity() -> ManifestHash {
         ManifestHash(Hash32([0x1D; 32]))
@@ -864,7 +846,7 @@ mod tests {
         );
 
         let mut cache = MetadataCache::new();
-        cache.publish(pkg("ghost"), PackageMetadata::default());
+        cache.publish_unchecked(pkg("ghost"), PackageMetadata::default());
         let missing_method = route(
             &admitted(&manifest),
             &cache,
@@ -892,7 +874,7 @@ mod tests {
                 self_point(SlotId(2), ModeExpr::Locked),
             ]),
         );
-        cache.publish(pkg("oracle"), meta);
+        cache.publish_unchecked(pkg("oracle"), meta);
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, meta_of("oracle"));
         let manifest = Manifest {
@@ -934,7 +916,7 @@ mod tests {
         let mut cache = MetadataCache::new();
         let mut meta = PackageMetadata::default();
         meta.methods.insert("m".into(), method(vec![]));
-        cache.publish(pkg("wide"), meta);
+        cache.publish_unchecked(pkg("wide"), meta);
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, meta_of("wide"));
         let nodes = |count: usize| Manifest {
@@ -988,7 +970,7 @@ mod tests {
                 denomination: None,
             }]),
         );
-        cache.publish(pkg("vault"), meta);
+        cache.publish_unchecked(pkg("vault"), meta);
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, meta_of("vault"));
         let node = || Node {
@@ -1069,10 +1051,7 @@ mod tests {
     }
     /// A world whose one method declares `spread` before a point clause
     /// and binds its ABI handle to the point.
-    fn spreading_world(
-        spread: Vec<Value>,
-        abi: Vec<AbiParam>,
-    ) -> (MetadataCache, InstanceRegistry, Manifest) {
+    fn spreading_package(abi: Vec<AbiParam>) -> PackageMetadata {
         let mut package = PackageMetadata::default();
         package.methods.insert(
             "m".into(),
@@ -1087,15 +1066,17 @@ mod tests {
                             guard: None,
                             target: TargetExpr::Point(Expr::ChildKey {
                                 owner: Box::new(Expr::SelfAddr),
-                                slot: SlotId(9),
+                                slot: package_slot(0),
                                 material: vec![Expr::Binding(0)],
                             }),
-                            mode: ModeExpr::Delta,
+                            mode: ModeExpr::Write {
+                                requires: Presence::Either,
+                            },
                             denomination: None,
                         }],
                     },
                     self_point(
-                        SlotId(1),
+                        package_slot(1),
                         ModeExpr::Write {
                             requires: Presence::Either,
                         },
@@ -1104,8 +1085,15 @@ mod tests {
                 ..MethodSignature::default()
             },
         );
+        package
+    }
+
+    fn spreading_world(
+        spread: Vec<Value>,
+        abi: Vec<AbiParam>,
+    ) -> (MetadataCache, InstanceRegistry, Manifest) {
         let mut cache = MetadataCache::new();
-        cache.publish(pkg("spread"), package);
+        cache.publish_unchecked(pkg("spread"), spreading_package(abi));
         let mut instances = InstanceRegistry::new();
         let spreader = instances.create(
             &TestHasher,
@@ -1196,7 +1184,7 @@ mod tests {
             },
         );
         let mut cache = MetadataCache::new();
-        cache.publish(pkg("guarded"), package);
+        cache.publish_unchecked(pkg("guarded"), package);
         let mut instances = InstanceRegistry::new();
         let target = instances.create(
             &TestHasher,
@@ -1312,7 +1300,7 @@ mod tests {
             },
         );
         let mut cache = MetadataCache::new();
-        cache.publish(pkg("looped"), package);
+        cache.publish_unchecked(pkg("looped"), package);
         let mut instances = InstanceRegistry::new();
         let target = instances.create(
             &TestHasher,
@@ -1346,25 +1334,16 @@ mod tests {
     #[test]
     fn a_guard_binding_on_an_unguarded_clause_is_refused() {
         // Its verdict is the constant true, which no export needs told.
-        let (cache, instances, manifest) =
-            spreading_world(vec![Value::U64(1)], vec![AbiParam::Guard(1)]);
-        let error = route(
-            &admitted(&manifest),
-            &cache,
-            &instances,
-            &TestHasher,
-            &resolver(),
-        )
-        .expect_err("an unguarded clause has no verdict to bind");
+        // Refused at the cache door, so no fold ever sees the binding.
+        let refusal = MetadataCache::new()
+            .publish(pkg("spread"), spreading_package(vec![AbiParam::Guard(1)]))
+            .expect_err("an unguarded clause has no verdict to bind");
         assert!(
             matches!(
-                error,
-                RouteError::MalformedAbi {
-                    source: AbiError::UnguardedClause { clause: 1, .. },
-                    ..
-                }
+                refusal.source,
+                SignatureError::Abi(AbiError::UnguardedClause { clause: 1, .. })
             ),
-            "unexpected refusal: {error:?}"
+            "unexpected refusal: {refusal:?}"
         );
     }
 
@@ -1373,27 +1352,18 @@ mod tests {
         // A `for-each` expands over the target's creation-fixed
         // configuration, so a handle on one asks for a capability whose
         // count is the instance's rather than the signature's. Judged on
-        // the signature, before any evaluation reaches the spread: the
-        // clause is not a single access whatever the configuration says.
-        let spread = vec![Value::U64(1), Value::U64(2)];
-        let (cache, instances, manifest) = spreading_world(spread, vec![AbiParam::Handle(0)]);
-        let error = route(
-            &admitted(&manifest),
-            &cache,
-            &instances,
-            &TestHasher,
-            &resolver(),
-        )
-        .expect_err("a spreading clause cannot back a handle");
+        // the signature at the cache door, before any evaluation reaches
+        // the spread: the clause is not a single access whatever the
+        // configuration says.
+        let refusal = MetadataCache::new()
+            .publish(pkg("spread"), spreading_package(vec![AbiParam::Handle(0)]))
+            .expect_err("a spreading clause cannot back a handle");
         assert!(
             matches!(
-                error,
-                RouteError::MalformedAbi {
-                    source: AbiError::NotAnAccess { clause: 0, .. },
-                    ..
-                }
+                refusal.source,
+                SignatureError::Abi(AbiError::NotAnAccess { clause: 0, .. })
             ),
-            "unexpected refusal: {error:?}"
+            "unexpected refusal: {refusal:?}"
         );
     }
 
@@ -1474,7 +1444,7 @@ mod tests {
             },
         );
         let mut cache = MetadataCache::new();
-        cache.publish(pkg("nf"), package);
+        cache.publish_unchecked(pkg("nf"), package);
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, meta_of("nf"));
         let manifest = Manifest {
@@ -1535,7 +1505,7 @@ mod tests {
             },
         );
         let mut cache = MetadataCache::new();
-        cache.publish(pkg("edges"), package);
+        cache.publish_unchecked(pkg("edges"), package);
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, meta_of("edges"));
         let manifest = Manifest {
@@ -1621,7 +1591,7 @@ mod tests {
             },
         );
         let mut cache = MetadataCache::new();
-        cache.publish(pkg("router"), router);
+        cache.publish_unchecked(pkg("router"), router);
         let mut instances = InstanceRegistry::new();
         instances.create(&TestHasher, meta_of("router"));
         let manifest = Manifest {
@@ -1718,7 +1688,7 @@ mod tests {
                 },
             );
             let mut cache = MetadataCache::new();
-            cache.publish(pkg("reacher"), package);
+            cache.publish_unchecked(pkg("reacher"), package);
             let mut instances = InstanceRegistry::new();
             instances.create(&TestHasher, meta_of("reacher"));
             let manifest = Manifest {
@@ -1758,11 +1728,10 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_binding_refuses_at_routing() {
-        // Publish is the gate that should have caught this. Routing
-        // judges it again, so a package that reached the cache without
-        // one — a genesis static, a hand-authored fixture — cannot be
-        // called on a binding nothing can honour.
+    fn a_malformed_binding_refuses_at_the_door() {
+        // The cache door is where the composed check runs, so a binding
+        // nothing can honour never reaches a fold — there is no cached
+        // package for a call to resolve against.
         let mut package = PackageMetadata::default();
         package.methods.insert(
             "m".into(),
@@ -1770,57 +1739,22 @@ mod tests {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(0), AbiParam::Bucket(0)],
-                effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
+                effects: vec![self_point(
+                    package_slot(0),
+                    ModeExpr::Write {
+                        requires: Presence::Either,
+                    },
+                )],
                 ..MethodSignature::default()
             },
         );
-        package.methods.insert(
-            "make".into(),
-            MethodSignature {
-                totality: Totality::Fallible,
-                outputs: vec![Expr::Literal(Value::Address(addr(0xE1)))],
-                ..MethodSignature::default()
-            },
-        );
-        let mut cache = MetadataCache::new();
-        cache.publish(pkg("bad"), package);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("bad"));
-        let manifest = Manifest {
-            nodes: vec![
-                Node {
-                    target: instance_of("bad").into(),
-                    method: "make".into(),
-                    inputs: vec![],
-                    evidence: Vec::new(),
-                    authority: None,
-                },
-                Node {
-                    target: instance_of("bad").into(),
-                    method: "m".into(),
-                    inputs: vec![NodeInput::Edge {
-                        source: 0,
-                        output: 0,
-                        resource: addr(0xE1),
-                        content: EdgeContent::Fungible,
-                        bounds: Bounds::default(),
-                    }],
-                    evidence: Vec::new(),
-                    authority: None,
-                },
-            ],
-        };
-        let error = route(
-            &admitted(&manifest),
-            &cache,
-            &instances,
-            &TestHasher,
-            &resolver(),
-        )
-        .expect_err("a malformed binding cannot be called");
+        let refusal = MetadataCache::new()
+            .publish(pkg("bad"), package)
+            .expect_err("a malformed binding cannot be published");
+        assert_eq!(refusal.method, "m");
         assert!(
-            matches!(error, RouteError::MalformedAbi { node: 1, .. }),
-            "unexpected refusal: {error:?}"
+            matches!(refusal.source, SignatureError::Abi(_)),
+            "unexpected refusal: {refusal:?}"
         );
     }
 }

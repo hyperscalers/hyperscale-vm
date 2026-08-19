@@ -49,9 +49,9 @@ pub const fn identity() -> ManifestHash {
 #[must_use]
 pub fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account::metadata());
-    cache.publish(pkg("amm"), amm::metadata());
-    cache.publish(pkg("book"), book::metadata());
+    cache.publish_unchecked(pkg("account"), account::metadata());
+    cache.publish_unchecked(pkg("amm"), amm::metadata());
+    cache.publish_unchecked(pkg("book"), book::metadata());
 
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));

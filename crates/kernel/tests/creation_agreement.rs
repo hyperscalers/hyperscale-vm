@@ -71,7 +71,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     let package = spawner();
     let package_hash = PackageHash(Hash32([1; 32]));
     let mut cache = MetadataCache::new();
-    cache.publish(package_hash, package);
+    cache.publish_unchecked(package_hash, package);
     let mut instances = InstanceRegistry::new();
     let creator = instances.create(
         &TestHasher,

@@ -85,7 +85,7 @@ fn expected_signature(key: &[u8], digest: &[u8; 32]) -> Vec<u8> {
 fn world() -> (MetadataCache, InstanceRegistry) {
     let package = PackageHash(TestHasher.hash(b"package", &[b"account"]));
     let mut cache = MetadataCache::new();
-    cache.publish(package, account::metadata());
+    cache.publish_unchecked(package, account::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(package);
     (cache, instances)

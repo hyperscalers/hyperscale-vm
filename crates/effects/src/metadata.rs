@@ -8,6 +8,7 @@ use hyperscale_vm_types::{Address, SubstateKey};
 
 use crate::KERNEL_SLOT_BASE;
 use crate::hash::{Hash32, Hasher};
+use crate::publish::{CheckedSignature, SignatureError, check_signature};
 use crate::signature::MethodSignature;
 use crate::types::{SlotId, child_key};
 
@@ -47,6 +48,17 @@ pub fn package_key(
     package: PackageHash,
 ) -> SubstateKey {
     child_key(hasher, publisher, PACKAGE_SLOT, &[package.0.0.to_vec()])
+}
+
+/// Why a record was refused at the cache door.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("method {method:?}: {source}")]
+pub struct PublishRefusal {
+    /// The method whose signature was refused.
+    pub method: String,
+    /// The judgment that refused it.
+    #[source]
+    pub source: SignatureError,
 }
 
 /// Everything routing reads about a published package.
@@ -90,8 +102,42 @@ impl MetadataCache {
         }
     }
 
-    /// Add a package's metadata under its content address.
-    pub fn publish(&mut self, hash: PackageHash, metadata: PackageMetadata) {
+    /// Add a package's metadata under its content address, judging every
+    /// method's signature at the door.
+    ///
+    /// The door is what lets every consumer downstream stop re-asking:
+    /// admission and routing read signatures out of the cache as
+    /// [`CheckedSignature`] witnesses, so a record that never passed the
+    /// composed check cannot be behind one.
+    ///
+    /// # Errors
+    ///
+    /// [`PublishRefusal`], naming the first refused method.
+    pub fn publish(
+        &mut self,
+        hash: PackageHash,
+        metadata: PackageMetadata,
+    ) -> Result<(), PublishRefusal> {
+        for (name, signature) in &metadata.methods {
+            check_signature(signature).map_err(|source| PublishRefusal {
+                method: name.clone(),
+                source,
+            })?;
+        }
+        self.store(hash, metadata);
+        Ok(())
+    }
+
+    /// Seed a record past the door's judgment — for fixtures whose
+    /// signatures state the one property a test is about rather than the
+    /// whole vocabulary. Everything the door guarantees is this caller's
+    /// to keep.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn publish_unchecked(&mut self, hash: PackageHash, metadata: PackageMetadata) {
+        self.store(hash, metadata);
+    }
+
+    fn store(&mut self, hash: PackageHash, metadata: PackageMetadata) {
         match self.packages.entry(hash) {
             Entry::Vacant(slot) => {
                 slot.insert(metadata);
@@ -103,6 +149,19 @@ impl MetadataCache {
                 debug_assert_eq!(*stored.get(), metadata, "one package hash, two records");
             }
         }
+    }
+
+    /// The checked signature of `package`'s `method`.
+    ///
+    /// The witness is the cache's invariant: everything behind the door
+    /// passed the composed signature check when it entered.
+    #[must_use]
+    pub fn method(&self, package: PackageHash, method: &str) -> Option<CheckedSignature<'_>> {
+        self.packages
+            .get(&package)?
+            .methods
+            .get(method)
+            .map(CheckedSignature::trusted)
     }
 
     /// Look up a package's metadata.
@@ -124,8 +183,8 @@ mod tests {
         record
             .methods
             .insert("m".into(), MethodSignature::default());
-        cache.publish(hash, record.clone());
-        cache.publish(hash, record.clone());
+        cache.publish(hash, record.clone()).expect("publishes");
+        cache.publish(hash, record.clone()).expect("republishes");
         assert_eq!(cache.get(hash), Some(&record));
     }
 }

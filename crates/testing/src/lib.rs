@@ -43,8 +43,8 @@ use std::sync::Arc;
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
-    PrefixShardResolver, TestHasher, Value, admit, check_abi, check_declarations, child_key,
-    declaration_hash, issued_resource, route,
+    PrefixShardResolver, TestHasher, Value, admit, child_key, declaration_hash, issued_resource,
+    route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
@@ -162,7 +162,10 @@ impl Chain {
             created: 0,
         };
         let account = account_package();
-        chain.cache.publish(account, account::metadata());
+        chain
+            .cache
+            .publish(account, account::metadata())
+            .expect("the account package publishes");
         chain.instances.serve_principals(account);
         chain
     }
@@ -197,17 +200,6 @@ impl Chain {
     /// answer rather than a test's — or if a declaration the chain would
     /// refuse to publish is handed to it.
     pub fn publish(&mut self, package: Package) -> PackageHash {
-        // The half of the publish gate that reads the declaration alone.
-        // The other half needs an artifact and the native lane has none,
-        // but a chain that published what a network would refuse would
-        // let a test pass on a package nobody can deploy — and a
-        // hand-written declaration is exactly where that goes wrong.
-        for (method, signature) in &package.metadata.methods {
-            check_abi(signature)
-                .unwrap_or_else(|error| panic!("method {method:?} does not publish: {error}"));
-            check_declarations(signature)
-                .unwrap_or_else(|error| panic!("method {method:?} does not publish: {error}"));
-        }
         let hash =
             declaration_hash(&TestHasher, &package.metadata).expect("a traced declaration encodes");
         match &mut self.engine {
@@ -215,7 +207,15 @@ impl Chain {
             Engine::Blessed(blessed) => blessed.build(hash, &package),
             Engine::Native(native) => native.seed(hash, package.dispatch),
         }
-        self.cache.publish(hash, package.metadata);
+        // The cache door is the half of the publish gate that reads the
+        // declaration alone. The other half needs an artifact and the
+        // native lane has none, but a chain that published what a
+        // network would refuse would let a test pass on a package nobody
+        // can deploy — and a hand-written declaration is exactly where
+        // that goes wrong.
+        self.cache
+            .publish(hash, package.metadata)
+            .unwrap_or_else(|refusal| panic!("the package does not publish: {refusal}"));
         hash
     }
 

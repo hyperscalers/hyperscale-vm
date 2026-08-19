@@ -115,13 +115,13 @@ fn uniform_base(identity: Address) -> AuthBase {
 
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
-    cache.publish(pkg("account"), account::metadata());
-    cache.publish(pkg("amm"), amm::metadata());
-    cache.publish(pkg("book"), book::metadata());
-    cache.publish(pkg("registry"), registry::metadata());
-    cache.publish(pkg("nf"), nf::metadata());
-    cache.publish(pkg("lottery"), lottery::metadata());
-    cache.publish(pkg("shares"), shares::metadata());
+    cache.publish_unchecked(pkg("account"), account::metadata());
+    cache.publish_unchecked(pkg("amm"), amm::metadata());
+    cache.publish_unchecked(pkg("book"), book::metadata());
+    cache.publish_unchecked(pkg("registry"), registry::metadata());
+    cache.publish_unchecked(pkg("nf"), nf::metadata());
+    cache.publish_unchecked(pkg("lottery"), lottery::metadata());
+    cache.publish_unchecked(pkg("shares"), shares::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
     instances.create(&TestHasher, pool_meta());
@@ -780,7 +780,7 @@ fn mirror_metadata() -> PackageMetadata {
 #[test]
 fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<()> {
     let (mut cache, mut instances) = world();
-    cache.publish(pkg("mirror"), mirror_metadata());
+    cache.publish_unchecked(pkg("mirror"), mirror_metadata());
     let dana = instances.create(&TestHasher, mirror_meta());
     let world = (cache, instances);
 

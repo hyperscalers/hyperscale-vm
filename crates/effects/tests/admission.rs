@@ -71,7 +71,7 @@ fn sorter() -> ComponentAddr {
 
 fn setup() -> (MetadataCache, InstanceRegistry) {
     let (mut cache, mut instances) = world();
-    cache.publish(pkg("splitter"), splitter::metadata());
+    cache.publish_unchecked(pkg("splitter"), splitter::metadata());
     instances.create(&TestHasher, splitter_meta());
     (cache, instances)
 }
@@ -347,7 +347,7 @@ fn custodian_world(
         },
     );
     let (mut cache, mut instances) = setup();
-    cache.publish(pkg("custodian"), package);
+    cache.publish_unchecked(pkg("custodian"), package);
     let meta = InstanceMeta {
         package: pkg("custodian"),
         config,
@@ -769,7 +769,7 @@ fn repeated_amount_bounds_fold_to_their_conjunction() {
 #[test]
 fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
     let (mut cache, mut instances) = setup();
-    cache.publish(pkg("sorter"), sorter_metadata());
+    cache.publish_unchecked(pkg("sorter"), sorter_metadata());
     instances.create(&TestHasher, sorter_meta());
     let sorted = |resource: ResourceAddr| ManifestGraph {
         nodes: vec![
