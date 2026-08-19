@@ -45,6 +45,13 @@ pub const INSTANCE: SlotId = SlotId(7);
 /// fits it.
 pub const NF_MOVE_CAP: u32 = 64;
 
+/// The method a rest policy deposits through.
+///
+/// Every principal is answered by an account, and `deposit` is the
+/// account method the protocol's own flows assume — the one method name
+/// that is vocabulary rather than a package's own.
+pub const DEPOSIT_METHOD: &str = "deposit";
+
 #[cfg(test)]
 mod tests {
     use super::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_MOVE_CAP, NF_VAULT, RESOURCE, VAULT};

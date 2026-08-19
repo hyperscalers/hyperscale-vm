@@ -12,6 +12,7 @@
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use hyperscale_vm_effects::vocabulary::DEPOSIT_METHOD;
 use hyperscale_vm_effects::{
     Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, MAX_MANIFEST_NODES, ManifestGraph,
 };
@@ -465,7 +466,7 @@ impl GraphBuilder {
                 let arg = self.mint(edge.producer, edge.output).into_arg();
                 self.push(
                     sink.into(),
-                    "deposit".into(),
+                    DEPOSIT_METHOD.into(),
                     vec![arg],
                     Vec::new(),
                     BTreeSet::new(),

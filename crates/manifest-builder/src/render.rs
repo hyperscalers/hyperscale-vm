@@ -32,7 +32,7 @@ use std::fmt::Write as _;
 
 use hyperscale_vm_effects::{
     Constraint, EdgeContent, EdgeRef, GraphArg, Hasher, InstanceRegistry, ManifestGraph,
-    MetadataCache, Value,
+    MetadataCache, ParamType, Value,
 };
 use hyperscale_vm_types::{Address, ResourceRef, SubstateKey, TextError};
 
@@ -306,7 +306,7 @@ fn edge_types(
         };
         let mut known = Vec::with_capacity(node.args.len());
         let mut values = Vec::with_capacity(node.args.len());
-        for arg in &node.args {
+        for (at, arg) in node.args.iter().enumerate() {
             let value = match arg {
                 GraphArg::Literal(value) => Some(value.clone()),
                 GraphArg::Edge { edge, .. } => types
@@ -316,7 +316,15 @@ fn edge_types(
                     .flatten()
                     .map(|resource| Value::Bucket {
                         resource: resource.address(),
-                        content: EdgeContent::Fungible,
+                        // The stand-in types what the callee declared —
+                        // the rule the typed pass applies — since an
+                        // edge's own ids are the producing node's and
+                        // this pass does not resolve them.
+                        content: if signature.params.get(at) == Some(&ParamType::NfBucket) {
+                            EdgeContent::NonFungible { ids: Vec::new() }
+                        } else {
+                            EdgeContent::Fungible
+                        },
                     }),
                 GraphArg::Param(_) => None,
             };

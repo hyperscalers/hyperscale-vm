@@ -31,7 +31,7 @@ Rust implementation of the Hyperscale VM: an execution engine built for a sharde
 | [`runtime`](crates/runtime) | The blessed-engine embedding: wasmtime configuration, the deploy-time profile validator, the `hyperscale:kernel` world, fuel and canonical-ABI copy metering |
 | [`sdk`](crates/sdk) | The guest-side authoring surface |
 | [`sdk-macros`](crates/sdk-macros) | Proc macros behind the SDK's blueprint and state declarations |
-| [`stdlib`](crates/stdlib) | The system-tier components: resources, principals, badges, the restructuring idioms |
+| [`stdlib`](crates/stdlib) | The protocol's own packages — the account and the stake pool — as committed blobs, traced metadata, and the genesis flash |
 | [`testing`](crates/testing) | The package author's chain: publish, seed, call, assert — a `cargo test` in a package crate, against the real kernel |
 | [`types`](crates/types) | The transaction envelope, addresses, and the wire vocabulary shared with the host |
 

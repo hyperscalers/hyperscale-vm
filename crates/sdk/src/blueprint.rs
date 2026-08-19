@@ -194,9 +194,10 @@ impl Builder {
     /// # Panics
     ///
     /// If the declaration violates a structural bound, reads an argument at
-    /// the wrong kind, or lets a `for-each` element escape its closure. All
-    /// three would otherwise become a published method that can never be
-    /// called.
+    /// the wrong kind, lets a `for-each` element escape its closure, or
+    /// publishes under a name the package already publishes. All four
+    /// would otherwise become a published method that can never be called
+    /// — or one that silently replaced another.
     #[must_use]
     pub fn method<F>(mut self, name: &str, params: &[ParamType], declare: F) -> Self
     where
@@ -223,7 +224,11 @@ impl Builder {
             handles,
             worst_case: recorded.worst_case,
         };
-        self.blueprint.methods.insert(name.to_owned(), method);
+        let taken = self.blueprint.methods.insert(name.to_owned(), method);
+        assert!(
+            taken.is_none(),
+            "the package already publishes a method named `{name}`"
+        );
         self
     }
 

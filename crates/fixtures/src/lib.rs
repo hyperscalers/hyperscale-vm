@@ -19,6 +19,14 @@
 //! committed bytes are what consumers hold, and the harness's blob
 //! conformance lane runs them under both runtimes.
 //!
+//! Three guards hold hand-authored metadata to what the modules do:
+//! `effects/tests/authored.rs` sweeps every package's declarations
+//! against the admission rules, `harness/tests/wrappers.rs` holds each
+//! generated wrapper to the signature it wraps, and the harness corpus
+//! executes the packages end to end on both runtimes. A new hand-authored
+//! module joins all three or its metadata can drift from its bodies with
+//! nothing to say so.
+//!
 //! [`hyperscale_vm_stdlib`]: https://docs.rs/hyperscale-vm-stdlib
 
 pub mod amm;
@@ -59,8 +67,9 @@ pub fn lottery_artifact() -> &'static [u8] {
     &LOTTERY_ARTIFACT
 }
 
-/// Every fixture package's artifact, for an embedder seeding the set
-/// rather than picking from it.
+/// The fixture artifacts an embedder seeds as a set: only the lottery
+/// today — the other fixtures publish through tests rather than ship as
+/// seedable artifacts.
 #[must_use]
 pub fn artifacts() -> Vec<&'static [u8]> {
     vec![lottery_artifact()]
