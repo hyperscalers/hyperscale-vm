@@ -37,7 +37,7 @@ hyperscale-vm-types = { path = "crates/types" }
 hyperscale-vm-kernel = { path = "crates/kernel" }
 hyperscale-vm-manifest-builder = { path = "crates/manifest-builder" }
 hyperscale-vm-ref = { path = "crates/ref" }
-hyperscale-vm-runtime = { path = "crates/runtime" }
+hyperscale-vm-runtime = { path = "crates/runtime", default-features = false }
 hyperscale-vm-sdk = { path = "crates/sdk" }
 hyperscale-vm-sdk-macros = { path = "crates/sdk-macros" }
 hyperscale-vm-stdlib = { path = "crates/stdlib" }

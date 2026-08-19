@@ -24,7 +24,7 @@ thiserror.workspace = true
 # question: whether the artifact is admissible, rather than whether the
 # contract is right.
 hyperscale-vm-cli = { workspace = true, optional = true }
-hyperscale-vm-runtime = { workspace = true, optional = true }
+hyperscale-vm-runtime = { workspace = true, optional = true, features = ["engine"] }
 wasmtime = { workspace = true, optional = true }
 
 [features]

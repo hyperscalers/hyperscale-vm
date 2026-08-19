@@ -12,7 +12,7 @@ hyperscale-vm-effects.workspace = true
 hyperscale-vm-embed.workspace = true
 hyperscale-vm-kernel.workspace = true
 hyperscale-vm-ref.workspace = true
-hyperscale-vm-runtime.workspace = true
+hyperscale-vm-runtime = { workspace = true, features = ["engine"] }
 wasmtime.workspace = true
 wit-component.workspace = true
 

@@ -14,7 +14,7 @@ hyperscale-vm-effects.workspace = true
 # The publish gate, run locally against exactly the bytes a publish would
 # carry: a package that builds here has passed the call admission runs.
 hyperscale-vm-gate.workspace = true
-hyperscale-vm-runtime.workspace = true
+hyperscale-vm-runtime = { workspace = true, features = ["engine"] }
 thiserror.workspace = true
 wit-component.workspace = true
 
