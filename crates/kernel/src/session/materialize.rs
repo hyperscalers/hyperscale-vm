@@ -1117,6 +1117,40 @@ mod tests {
         );
     }
 
+    /// A movement mutates the cell it lands on, so a locked cell admits
+    /// none — the same refusal every write meets, judged where the
+    /// clause's capability is built.
+    #[test]
+    fn a_movement_on_a_locked_cell_is_refused() {
+        let vault = key(0xCA);
+        for mode in [Mode::Reserve { amount: 10 }, Mode::Delta] {
+            let mut store = MemoryStore::new();
+            store.write(vault, encode_amount(100).to_vec()).unwrap();
+            store.lock(vault);
+            let set = declared(&[Effect {
+                target: EffectTarget::Point(vault),
+                mode,
+            }]);
+            assert_eq!(
+                KernelSession::materialize(
+                    OverlayStore::new(Arc::new(store)),
+                    &Declaration {
+                        set: set.clone(),
+                        ordered: holding(&ord(&set)),
+                        ..Declaration::default()
+                    },
+                    tx(1),
+                    env(),
+                    hash,
+                )
+                .map(|_| ())
+                .expect_err("a movement mutates, and a locked cell admits none"),
+                MaterializeError::MutationOfLocked(vault),
+                "{mode:?}"
+            );
+        }
+    }
+
     #[test]
     fn a_mode_the_world_cannot_hand_out_refuses_at_materialization() {
         // A locked read of a collection interval has no capability form.

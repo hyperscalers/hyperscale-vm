@@ -370,13 +370,17 @@ fn indexed<T>(entries: &[T], index: u32) -> Result<&T, SessionTrap> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use hyperscale_vm_effects::Declaration;
     use hyperscale_vm_types::{
         AMOUNT_CELL_BYTES, Address, AddressClass, CollectionId, Effect, EffectTarget, Mode,
         Presence,
     };
 
-    use super::super::fixtures::{declared, session_holding, session_over};
-    use super::{Held, SCAN_SEEK_BYTES, SessionTrap};
+    use super::super::fixtures::{declared, env, hash, holding, session_holding, session_over, tx};
+    use super::{Held, KernelSession, SCAN_SEEK_BYTES, SessionTrap};
+    use crate::overlay::OverlayStore;
     use crate::store::MemoryStore;
 
     #[test]
@@ -559,6 +563,50 @@ mod tests {
         assert_eq!(session.range_set(0, 0, vec![8; 10]), Ok(()));
         assert_eq!(session.range_count(0), Ok(4));
         assert_eq!(session.take_scan_debt(), page);
+    }
+
+    /// Scan debt is priced fuel, so which pages a write drops is
+    /// consensus-visible: a write into one collection must not buy the
+    /// re-materialization of another's page.
+    #[test]
+    fn a_write_invalidates_only_its_own_collection() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let (held, other) = (CollectionId([1; 16]), CollectionId([2; 16]));
+        let mut store = MemoryStore::new();
+        store.entry_write(owner, held, 1, vec![7]).unwrap();
+        let interval = |collection| Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 4,
+            },
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
+        };
+        // The clause order pins the reps: 0 reads the held collection,
+        // 1 writes the other.
+        let set = declared(&[interval(held), interval(other)]);
+        let mut session = KernelSession::materialize(
+            OverlayStore::new(Arc::new(store)),
+            &Declaration {
+                set,
+                ordered: holding(&[interval(held), interval(other)]),
+                ..Declaration::default()
+            },
+            tx(1),
+            env(),
+            hash,
+        )
+        .expect("two write intervals materialize");
+
+        assert_eq!(session.range_count(0), Ok(1));
+        assert!(session.take_scan_debt() > 0, "the page was lifted");
+        assert_eq!(session.range_insert(1, 5, vec![1]), Ok(()));
+        assert_eq!(session.range_count(0), Ok(1));
+        assert_eq!(session.take_scan_debt(), 0, "the cached page survives");
     }
 
     #[test]

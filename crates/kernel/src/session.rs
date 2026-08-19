@@ -791,7 +791,7 @@ mod tests {
     };
 
     use super::SessionTrap;
-    use super::fixtures::{declared, env, key, session_over, tx};
+    use super::fixtures::{declared, env, key, session_holding, session_over, tx};
     use crate::ledger::AmountLedger;
     use crate::overlay::OverlayStore;
     use crate::store::{MemoryStore, StoreError};
@@ -890,6 +890,25 @@ mod tests {
 
         session.leave_invocation();
         assert_eq!(session.emit(0, Vec::new()), Err(SessionTrap::NoInvocation));
+    }
+
+    /// The grant is a quantity and it leaves the kernel once: a second
+    /// take of one reservation would be a second edge against one hold.
+    #[test]
+    fn a_reservation_is_taken_once() {
+        let vault = key(6);
+        let mut store = MemoryStore::new();
+        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        let set = declared(&[Effect {
+            target: EffectTarget::Point(vault),
+            mode: Mode::Reserve { amount: 40 },
+        }]);
+        let mut session = session_holding(store, &set);
+
+        let funds = session.reserve_take(0).expect("the grant is held");
+        assert_eq!(session.reserve_take(0), Err(SessionTrap::ReservationTaken));
+        // The refusal minted nothing: the one edge stands as it was.
+        assert_eq!(session.bucket_amount(funds), Ok(40));
     }
 
     #[test]
