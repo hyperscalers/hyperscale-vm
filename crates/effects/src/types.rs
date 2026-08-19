@@ -68,6 +68,20 @@ pub struct SlotId(pub u16);
 /// stored anything.
 pub const PACKAGE_SLOT_BASE: u16 = 16;
 
+/// The first slot the kernel keeps for itself.
+///
+/// The top of the space, as the bottom is the protocol vocabulary's and
+/// the middle is where packages number from. The cells here are reached
+/// by the publish path and by the envelope, under a publisher's and a
+/// signer's prefix, and no signature declares one — which is what makes
+/// the band a refusal rather than a shape.
+pub const KERNEL_SLOT_BASE: u16 = 0xFFFE;
+
+// The three bands in order, held at compile time: all three are
+// constants, so a base that swallowed the band below it is a thing the
+// build can refuse outright.
+const _: () = assert!(KERNEL_SLOT_BASE > PACKAGE_SLOT_BASE);
+
 /// A package's `n`th own slot.
 ///
 /// Packages number from zero independently, a value being scoped by the

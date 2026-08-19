@@ -59,12 +59,11 @@ pub fn decode_metadata(bytes: &[u8]) -> Result<PackageMetadata, GateError> {
 mod tests {
 
     use hyperscale_hbor::to_vec_with_depth;
-    use hyperscale_vm_effects::vocabulary::VAULT;
     use hyperscale_vm_effects::{
         AbiParam, Accessibility, Address, AddressClass, Clause, EdgeContent, Expr, LocalKey,
         MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_VALUE_DEPTH,
-        METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType, Presence, RuleExpr, SlotId,
-        SubstateKey, TargetExpr, Totality, Value,
+        METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType, Presence, RuleExpr, SubstateKey,
+        TargetExpr, Totality, Value, package_slot,
     };
     use hyperscale_vm_fixtures::{amm, book, splitter};
     use hyperscale_vm_stdlib::account;
@@ -207,7 +206,7 @@ mod tests {
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
-                        slot: VAULT,
+                        slot: package_slot(0),
                         material: vec![Expr::Arg(3), Expr::FreshKey { slot: 1 }],
                     }),
                     mode: ModeExpr::Reserve(Expr::Arg(1)),
@@ -217,7 +216,7 @@ mod tests {
                     guard: None,
                     target: TargetExpr::Entry {
                         owner: Expr::Field(Box::new(Expr::Config(0)), 2),
-                        collection: SlotId(9),
+                        collection: package_slot(1),
                         material: vec![],
                         order: Expr::Pack {
                             hi: Box::new(Expr::Arg(0)),
@@ -231,7 +230,7 @@ mod tests {
                     guard: None,
                     target: TargetExpr::Range {
                         owner: Expr::SelfAddr,
-                        collection: SlotId(4),
+                        collection: package_slot(2),
                         material: vec![],
                         lo: Expr::Literal(Value::U128(0)),
                         hi: Expr::Literal(Value::U128(u128::MAX)),
@@ -377,7 +376,7 @@ mod tests {
         for _ in 0..MAX_EXPR_DEPTH {
             deepest = Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: VAULT,
+                slot: package_slot(0),
                 material: vec![deepest],
             };
         }
@@ -385,7 +384,7 @@ mod tests {
             guard: None,
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
-                collection: SlotId(4),
+                collection: package_slot(2),
                 material: vec![],
                 lo: deepest.clone(),
                 hi: deepest,

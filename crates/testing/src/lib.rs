@@ -44,8 +44,8 @@ use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 pub use hyperscale_vm_effects::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_effects::{
     CallTarget, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
-    PrefixShardResolver, SubstateKey, TestHasher, Value, admit, child_key, declaration_hash,
-    resource_address, route,
+    PrefixShardResolver, SubstateKey, TestHasher, Value, admit, check_abi, check_declarations,
+    child_key, declaration_hash, resource_address, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, ExecutionMode, Locality, ManifestWalk, MemoryStore, Outcome as KernelOutcome, TxHash,
@@ -191,8 +191,20 @@ impl Chain {
     ///
     /// If the package crate does not build, or its artifact does not
     /// clear the deploy-time profile — both of which are the author's
-    /// answer rather than a test's.
+    /// answer rather than a test's — or if a declaration the chain would
+    /// refuse to publish is handed to it.
     pub fn publish(&mut self, package: Package) -> PackageHash {
+        // The half of the publish gate that reads the declaration alone.
+        // The other half needs an artifact and the native lane has none,
+        // but a chain that published what a network would refuse would
+        // let a test pass on a package nobody can deploy — and a
+        // hand-written declaration is exactly where that goes wrong.
+        for (method, signature) in &package.metadata.methods {
+            check_abi(signature)
+                .unwrap_or_else(|error| panic!("method {method:?} does not publish: {error}"));
+            check_declarations(signature)
+                .unwrap_or_else(|error| panic!("method {method:?} does not publish: {error}"));
+        }
         let hash =
             declaration_hash(&TestHasher, &package.metadata).expect("a traced declaration encodes");
         match &mut self.engine {

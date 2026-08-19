@@ -674,7 +674,7 @@ mod tests {
 
     #[test]
     fn a_binding_the_export_type_cannot_honour_refuses_at_publish() {
-        use hyperscale_vm_effects::{Clause, Expr, ModeExpr, SlotId, TargetExpr};
+        use hyperscale_vm_effects::{Clause, Expr, ModeExpr, TargetExpr, package_slot};
 
         // Arity: the binding builds nothing, the export takes one.
         let empty = declaring(&["m"]);
@@ -690,7 +690,7 @@ mod tests {
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: SlotId(1),
+                    slot: package_slot(0),
                     material: vec![],
                 }),
                 mode: ModeExpr::Write {
@@ -725,7 +725,7 @@ mod tests {
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: SlotId(1),
+                    slot: package_slot(0),
                     material: vec![],
                 }),
                 mode: ModeExpr::Reserve(Expr::Arg(0)),
@@ -746,7 +746,7 @@ mod tests {
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: SlotId(1),
+                    slot: package_slot(0),
                     material: vec![],
                 }),
                 mode: ModeExpr::Delta,

@@ -6,7 +6,6 @@ use hyperscale_hbor::{EncodeError, Hbor, to_vec};
 use hyperscale_vm_types::{MAX_ERROR_CODES, MAX_EVENT_TYPES};
 use thiserror::Error;
 
-use crate::PACKAGE_SLOT_BASE;
 use crate::auth::{AuthRole, RoleSet};
 use crate::dsl::{
     Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_RANGE_CAP,
@@ -20,7 +19,8 @@ use crate::types::{
     Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Presence, SlotId,
     SubstateKey, Value, child_key, component_address, config_hash,
 };
-use crate::vocabulary::VAULT;
+use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
+use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
 
 /// A published package's identity: the hash of its artifact, which covers
 /// the metadata section, so metadata is immutable with the package.
@@ -44,7 +44,7 @@ pub fn package_hash(hasher: &dyn Hasher, artifact: &[u8]) -> PackageHash {
 /// reachable by the publish path and by nothing else.
 pub const PACKAGE_SLOT: SlotId = SlotId(0xFFFE);
 
-const _: () = assert!(PACKAGE_SLOT.0 > PACKAGE_SLOT_BASE);
+const _: () = assert!(PACKAGE_SLOT.0 >= KERNEL_SLOT_BASE);
 
 /// Where `publisher`'s copy of the package addressed by `package` lives.
 ///
@@ -866,6 +866,28 @@ pub enum DeclarationError {
         /// The kind declared there.
         kind: &'static str,
     },
+    /// A clause naming a protocol cell in a shape that cell does not
+    /// have.
+    #[error("effect clause {clause} names slot {slot}, which {wanted}")]
+    ProtocolSlotShape {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+        /// The slot named.
+        slot: u16,
+        /// The shape that slot does have.
+        wanted: &'static str,
+    },
+    /// A clause naming a slot no cell is assigned: unassigned below
+    /// [`PACKAGE_SLOT_BASE`], or the kernel's own band at the top.
+    #[error("effect clause {clause} names slot {slot}, which no cell is assigned")]
+    ReservedSlot {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+        /// The slot named.
+        slot: u16,
+    },
 }
 
 /// Whether a target names the declaring instance's own prefix.
@@ -886,6 +908,199 @@ fn targets_own_prefix(target: &TargetExpr) -> bool {
             matches!(owner, Expr::SelfAddr)
         }
     }
+}
+
+/// The slot a target names, and the material keying it there.
+///
+/// Both point shapes and both collection shapes carry one: a child key
+/// spells the slot beside its material, and a collection carries it as
+/// the identity its entries hang under. A fresh key is the exception and
+/// answers `None` — it is a local id minted under the owner rather than
+/// a child of any slot, so there is nothing for the vocabulary to be
+/// about.
+fn slot_of(target: &TargetExpr) -> Option<(SlotId, &[Expr])> {
+    match target {
+        TargetExpr::Point(Expr::ChildKey { slot, material, .. }) => Some((*slot, material)),
+        TargetExpr::Point(_) => None,
+        TargetExpr::Entry {
+            collection,
+            material,
+            ..
+        }
+        | TargetExpr::Range {
+            collection,
+            material,
+            ..
+        } => Some((*collection, material)),
+    }
+}
+
+/// Judge a clause naming a cell the protocol derives keys for.
+///
+/// The vocabulary below [`PACKAGE_SLOT_BASE`] is the set of cells an
+/// engine finds without consulting any metadata, which is what makes
+/// their values protocol facts rather than one package's business. A
+/// fact has a shape: a vault holds an amount keyed by the resource it
+/// holds, a record is written when the thing it describes comes into
+/// being, a configuration leaf is locked. So the shape is not the
+/// declaring package's to choose either, and a clause naming one of
+/// these cells any other way is a clause whose leaf would be read as
+/// something it does not hold.
+///
+/// Judgeable at all because the slot is authenticated by the derivation
+/// that consumes it: [`child_key`] hashes the slot into the key, and
+/// [`targets_own_prefix`] admits no point target that reaches a leaf
+/// without spelling one. A declaration landing on a vault therefore
+/// *says* `VAULT`, and cannot be written to land there while saying
+/// something else.
+///
+/// The kernel's own band at the top is refused outright, as is any slot
+/// below the base the vocabulary has not assigned. Neither names a cell,
+/// and a slot naming no cell has no shape to be held to.
+fn protocol_shape(
+    clause: u32,
+    target: &TargetExpr,
+    mode: &ModeExpr,
+    denomination: Option<&Expr>,
+) -> Result<(), DeclarationError> {
+    let Some((slot, material)) = slot_of(target) else {
+        return Ok(());
+    };
+    let reserved = || DeclarationError::ReservedSlot {
+        clause,
+        slot: slot.0,
+    };
+    if slot.0 >= KERNEL_SLOT_BASE {
+        return Err(reserved());
+    }
+    if slot.0 >= PACKAGE_SLOT_BASE {
+        return Ok(());
+    }
+    let Some((shaped, wanted)) = vocabulary_shape(slot, target, material, mode, denomination)
+    else {
+        return Err(reserved());
+    };
+    if shaped {
+        Ok(())
+    } else {
+        Err(DeclarationError::ProtocolSlotShape {
+            clause,
+            slot: slot.0,
+            wanted,
+        })
+    }
+}
+
+/// Whether a clause's target, mode and denomination are the shape the
+/// vocabulary fixes for `slot`, and the sentence saying what that shape
+/// is. `None` where the vocabulary assigns the slot no cell at all.
+///
+/// One arm per cell, and the sentence beside each is what an author is
+/// told: a refusal naming only the slot number would leave them to read
+/// this table out of the source.
+fn vocabulary_shape(
+    slot: SlotId,
+    target: &TargetExpr,
+    material: &[Expr],
+    mode: &ModeExpr,
+    denomination: Option<&Expr>,
+) -> Option<(bool, &'static str)> {
+    let point = matches!(target, TargetExpr::Point(_));
+    // A value cell is keyed by what it holds, so where the declaration
+    // names a resource it names the key again. The key is what makes one
+    // leaf hold one resource; a second answer beside it would be the
+    // leaf and the declaration disagreeing about what came out of it.
+    //
+    // Named wherever value can move, and optional on a read: a read
+    // opens no bucket and credits no cell, so nothing consults what the
+    // leaf holds, and the custody gate's possession read is exactly that
+    // — the balance is a yes or no rather than a quantity going
+    // anywhere.
+    let moves_value = matches!(
+        mode,
+        ModeExpr::Write { .. } | ModeExpr::Delta | ModeExpr::Reserve(_)
+    );
+    let keyed_by_what_it_holds = match (material, denomination) {
+        ([held], Some(named)) => named == held,
+        ([_], None) => !moves_value,
+        _ => false,
+    };
+    let bare = material.is_empty() && denomination.is_none();
+    let keyed = |terms: usize| material.len() == terms && denomination.is_none();
+    let creates = matches!(
+        mode,
+        ModeExpr::Read
+            | ModeExpr::Write {
+                requires: Presence::Absent
+            }
+    );
+
+    let (shaped, wanted) = match slot {
+        VAULT => (
+            point
+                && keyed_by_what_it_holds
+                && matches!(
+                    mode,
+                    ModeExpr::Read
+                        | ModeExpr::Write { .. }
+                        | ModeExpr::Delta
+                        | ModeExpr::Reserve(_)
+                ),
+            "holds a fungible balance: one leaf, keyed by the resource it holds, \
+             denominated in that resource wherever value moves, and never locked",
+        ),
+        CLAIMS => (
+            point
+                && keyed_by_what_it_holds
+                && matches!(
+                    mode,
+                    ModeExpr::Read
+                        | ModeExpr::Write { .. }
+                        | ModeExpr::Delta
+                        | ModeExpr::Reserve(_)
+                ),
+            "is the delivery fallback beside a vault, and holds value on the same \
+             terms: one leaf, keyed by the resource it holds and denominated in that \
+             resource wherever value moves",
+        ),
+        // Instances are a quantity too, and the interval they sit in is
+        // the holdings of exactly one resource.
+        NF_VAULT => (
+            !point
+                && keyed_by_what_it_holds
+                && matches!(mode, ModeExpr::Read | ModeExpr::Write { .. }),
+            "holds a resource's instances: an interval or one of its entries, keyed by \
+             that resource and denominated in it wherever instances move",
+        ),
+        CONFIG => (
+            point && bare && matches!(mode, ModeExpr::Locked | ModeExpr::Read),
+            "is the creation-fixed configuration leaf: one leaf, no material, and \
+             nothing rewrites it",
+        ),
+        AUTH => (
+            point && bare && matches!(mode, ModeExpr::Read | ModeExpr::Write { .. }),
+            "is the stored authority cell: one leaf, no material, read or rewritten whole",
+        ),
+        // A record and an instance's data are written when the thing
+        // they describe comes into existence and not again, so creating
+        // one and overwriting one are different declarations and the
+        // shard holding the leaf tells them apart before any body runs.
+        RESOURCE => (
+            point && keyed(1) && creates,
+            "is a resource's record under its issuer: one leaf, keyed by the resource, \
+             written where absent",
+        ),
+        INSTANCE => (
+            point && keyed(2) && creates,
+            "is an instance's data under its issuer: one leaf, keyed by the resource and \
+             the id, written where absent",
+        ),
+        // Below the base and spoken for by nothing: the vocabulary
+        // reserves room for a cell it has not defined yet, and a slot
+        // naming no cell has no shape to be held to.
+        _ => return None,
+    };
+    Some((shaped, wanted))
 }
 
 /// Every effect clause of a signature, `for-each` bodies counted in
@@ -917,14 +1132,17 @@ fn complementary(left: Option<&Expr>, right: Option<&Expr>) -> bool {
         || matches!(right, Expr::Not(inner) if inner.as_ref() == left)
 }
 
-/// Judge a signature's declared effects against the prefix they are the
-/// signature's to declare.
+/// Judge a signature's declared effects against the prefix and the cells
+/// they are the signature's to declare.
 ///
 /// A declaration bounds what execution may touch, and this bounds what a
-/// declaration may claim: an object's cells are reachable by calling it,
-/// never by naming them. Refused here so an author hears about it, and
-/// again on the evaluated effect at routing, where no expression shape can
-/// be overlooked.
+/// declaration may claim. Two questions, and the answers are independent.
+/// Whose prefix: an object's cells are reachable by calling it, never by
+/// naming them — refused here so an author hears about it, and again on
+/// the evaluated effect at routing, where no expression shape can be
+/// overlooked. Which cell under that prefix: everything an engine derives
+/// a key for without reading metadata has a shape, and a package reaching
+/// one of those leaves reaches it in that shape or not at all.
 ///
 /// # Errors
 ///
@@ -936,12 +1154,22 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
             let clause_index = *next;
             *next = next.saturating_add(1);
             match clause {
-                Clause::Effect { target, mode, .. } => {
+                Clause::Effect {
+                    target,
+                    mode,
+                    denomination,
+                    ..
+                } => {
                     if !targets_own_prefix(target) {
                         return Err(DeclarationError::ForeignPrefix {
                             clause: clause_index,
                         });
                     }
+                    // Whose prefix, then which cell under it. The order
+                    // is the useful one for an author: a clause reaching
+                    // a stranger's leaf is wrong about more than its
+                    // shape.
+                    protocol_shape(clause_index, target, mode, denomination.as_deref())?;
                     // A presence requirement is about the leaf a write
                     // lands on, and an interval has none. Refused here
                     // so an author hears about it, and again at
@@ -1560,8 +1788,9 @@ impl InstanceRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::envelope::NULLIFIER_SLOT;
     use crate::hash::TestHasher;
-    use crate::types::PrincipalAddr;
+    use crate::types::{PrincipalAddr, package_slot};
 
     /// A signature whose only effect points at `expr`.
     fn signature_over(expr: Expr) -> MethodSignature {
@@ -2359,7 +2588,7 @@ mod tests {
         };
         let point = TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
-            slot: VAULT,
+            slot: SlotId(PACKAGE_SLOT_BASE),
             material: vec![],
         });
         let entry = TargetExpr::Entry {
@@ -2405,7 +2634,7 @@ mod tests {
             guard: guard.map(Box::new),
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: VAULT,
+                slot: SlotId(PACKAGE_SLOT_BASE),
                 material: vec![],
             }),
             mode: ModeExpr::Write { requires },
@@ -2507,7 +2736,7 @@ mod tests {
         let cell = |material| {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: VAULT,
+                slot: SlotId(PACKAGE_SLOT_BASE),
                 material,
             })
         };
@@ -2652,6 +2881,265 @@ mod tests {
         );
     }
 
+    /// A resource address, for a value cell to be keyed by.
+    fn a_resource() -> Expr {
+        Expr::Literal(Value::Address(Address::new(
+            [7; 31],
+            AddressClass::Resource,
+        )))
+    }
+
+    /// A leaf under the declaring instance, at `slot` and keyed by
+    /// `material`.
+    fn own_point(slot: SlotId, material: Vec<Expr>) -> TargetExpr {
+        TargetExpr::Point(Expr::ChildKey {
+            owner: Box::new(Expr::SelfAddr),
+            slot,
+            material,
+        })
+    }
+
+    /// The whole order-key space of a collection under the declaring
+    /// instance, at a cap no test reaches.
+    fn own_interval(slot: SlotId, material: Vec<Expr>) -> TargetExpr {
+        TargetExpr::Range {
+            owner: Expr::SelfAddr,
+            collection: slot,
+            material,
+            lo: Expr::Literal(Value::U128(0)),
+            hi: Expr::Literal(Value::U128(u128::MAX)),
+            cap: 4,
+        }
+    }
+
+    /// A signature declaring exactly one clause.
+    fn one_clause(
+        target: TargetExpr,
+        mode: ModeExpr,
+        denomination: Option<Expr>,
+    ) -> MethodSignature {
+        MethodSignature {
+            totality: Totality::Fallible,
+            effects: vec![Clause::Effect {
+                guard: None,
+                target,
+                mode,
+                denomination: denomination.map(Box::new),
+            }],
+            ..MethodSignature::default()
+        }
+    }
+
+    /// Whether a signature is refused for naming a protocol cell in a
+    /// shape that cell does not have.
+    fn misshapen(signature: &MethodSignature) -> bool {
+        matches!(
+            check_declarations(signature),
+            Err(DeclarationError::ProtocolSlotShape { .. })
+        )
+    }
+
+    /// The protocol's value cells, and the shape each one has.
+    ///
+    /// Exhaustive over the three on purpose. The corpus declares a vault
+    /// in two of its four modes and reaches the claims cell without ever
+    /// opening it, so a rule about the rest would be a rule nothing
+    /// holds.
+    #[test]
+    fn a_value_cell_is_keyed_by_what_it_holds() {
+        let moves = [
+            ModeExpr::Write {
+                requires: Presence::Either,
+            },
+            ModeExpr::Delta,
+            ModeExpr::Reserve(Expr::Arg(0)),
+        ];
+        // A vault and the delivery cell beside it are keyed by the
+        // resource they hold and say so wherever any of it can move. A
+        // read moves none, and the custody gate's possession read is
+        // exactly that.
+        for slot in [VAULT, CLAIMS] {
+            for mode in moves.clone() {
+                let keyed = || own_point(slot, vec![a_resource()]);
+                assert_eq!(
+                    check_declarations(&one_clause(keyed(), mode.clone(), Some(a_resource()))),
+                    Ok(()),
+                    "{slot:?} {mode:?}"
+                );
+                // Keyed by one resource and denominated in another: two
+                // answers to what one leaf holds.
+                assert!(misshapen(&one_clause(
+                    keyed(),
+                    mode.clone(),
+                    Some(Expr::Arg(0))
+                )));
+                // And no answer at all, where value moves.
+                assert!(misshapen(&one_clause(keyed(), mode, None)));
+            }
+            let read = |target| one_clause(target, ModeExpr::Read, None);
+            assert_eq!(
+                check_declarations(&read(own_point(slot, vec![a_resource()]))),
+                Ok(())
+            );
+            // Value is never locked, never keyed by nothing, and never a
+            // collection.
+            assert!(misshapen(&one_clause(
+                own_point(slot, vec![a_resource()]),
+                ModeExpr::Locked,
+                None
+            )));
+            assert!(misshapen(&read(own_point(slot, vec![]))));
+            assert!(misshapen(&read(own_interval(slot, vec![a_resource()]))));
+        }
+
+        // Holdings are the same statement in collection form: one
+        // resource's instances, in the interval narrowed by it.
+        let holdings = || own_interval(NF_VAULT, vec![a_resource()]);
+        let write = || ModeExpr::Write {
+            requires: Presence::Either,
+        };
+        assert_eq!(
+            check_declarations(&one_clause(holdings(), write(), Some(a_resource()))),
+            Ok(())
+        );
+        assert!(misshapen(&one_clause(
+            own_point(NF_VAULT, vec![a_resource()]),
+            write(),
+            Some(a_resource())
+        )));
+        assert!(misshapen(&one_clause(
+            holdings(),
+            ModeExpr::Delta,
+            Some(a_resource())
+        )));
+    }
+
+    /// The protocol's cells that hold no value, and the shape each one
+    /// has.
+    ///
+    /// Exhaustive over the rest of the vocabulary, on the same terms as
+    /// the value cells beside it.
+    #[test]
+    fn a_protocol_cell_holding_no_value_is_declared_in_its_own_shape() {
+        let write = || ModeExpr::Write {
+            requires: Presence::Either,
+        };
+        let creates = || ModeExpr::Write {
+            requires: Presence::Absent,
+        };
+        let plain = |target, mode| one_clause(target, mode, None);
+
+        // A configuration leaf is read and never rewritten; a stored
+        // authority cell is read or rewritten whole. Neither is keyed by
+        // anything and neither holds value.
+        for mode in [ModeExpr::Locked, ModeExpr::Read] {
+            assert_eq!(
+                check_declarations(&plain(own_point(CONFIG, vec![]), mode)),
+                Ok(())
+            );
+        }
+        assert!(misshapen(&plain(own_point(CONFIG, vec![]), write())));
+        for mode in [ModeExpr::Read, write(), creates()] {
+            assert_eq!(
+                check_declarations(&plain(own_point(AUTH, vec![]), mode)),
+                Ok(())
+            );
+        }
+        assert!(misshapen(&plain(own_point(AUTH, vec![]), ModeExpr::Delta)));
+        assert!(misshapen(&plain(
+            own_point(AUTH, vec![a_resource()]),
+            write()
+        )));
+
+        // A record and an instance's data are written where the thing
+        // they describe is not there yet, and not again.
+        for (slot, material) in [
+            (RESOURCE, vec![a_resource()]),
+            (INSTANCE, vec![a_resource(), Expr::Arg(0)]),
+        ] {
+            let keyed = || own_point(slot, material.clone());
+            assert_eq!(
+                check_declarations(&plain(keyed(), creates())),
+                Ok(()),
+                "{slot:?}"
+            );
+            assert_eq!(
+                check_declarations(&plain(keyed(), ModeExpr::Read)),
+                Ok(()),
+                "{slot:?}"
+            );
+            assert!(misshapen(&plain(keyed(), write())));
+            // Nothing here holds value, so nothing here denominates.
+            assert!(misshapen(&one_clause(
+                keyed(),
+                creates(),
+                Some(a_resource())
+            )));
+        }
+        // Keyed by the wrong number of terms: an instance is a resource
+        // and an id, and a record is a resource.
+        assert!(misshapen(&plain(own_point(RESOURCE, vec![]), creates())));
+        assert!(misshapen(&plain(
+            own_point(INSTANCE, vec![a_resource()]),
+            creates()
+        )));
+    }
+
+    /// A slot naming no cell has no shape to be held to, so it is not a
+    /// slot a signature may name at all: the unassigned part of the
+    /// vocabulary's band, and the kernel's own at the top.
+    #[test]
+    fn a_slot_the_protocol_assigns_no_cell_is_not_a_signature_to_name() {
+        let declaring = |slot| MethodSignature {
+            totality: Totality::Fallible,
+            effects: vec![Clause::Effect {
+                guard: None,
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot,
+                    material: vec![],
+                }),
+                mode: ModeExpr::Read,
+                denomination: None,
+            }],
+            ..MethodSignature::default()
+        };
+        // Everything below the base the vocabulary has not spoken for.
+        let assigned = [VAULT, CLAIMS, CONFIG, AUTH, RESOURCE, NF_VAULT, INSTANCE];
+        for slot in (0..PACKAGE_SLOT_BASE).map(SlotId) {
+            if assigned.contains(&slot) {
+                continue;
+            }
+            assert_eq!(
+                check_declarations(&declaring(slot)),
+                Err(DeclarationError::ReservedSlot {
+                    clause: 0,
+                    slot: slot.0
+                }),
+                "{slot:?}"
+            );
+        }
+        // The kernel's own band: the publish path's cell and the
+        // envelope's, neither of which any signature declares.
+        for slot in [PACKAGE_SLOT, NULLIFIER_SLOT] {
+            assert_eq!(
+                check_declarations(&declaring(slot)),
+                Err(DeclarationError::ReservedSlot {
+                    clause: 0,
+                    slot: slot.0
+                }),
+                "{slot:?}"
+            );
+        }
+        // And the band between them is a package's own, where the
+        // vocabulary has nothing to say.
+        assert_eq!(check_declarations(&declaring(package_slot(0))), Ok(()));
+        assert_eq!(
+            check_declarations(&declaring(SlotId(KERNEL_SLOT_BASE - 1))),
+            Ok(())
+        );
+    }
+
     /// Every way a signature can write somebody else's prefix, refused
     /// where its author can see it.
     #[test]
@@ -2669,7 +3157,7 @@ mod tests {
         let child_of = |owner: Expr| {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(owner),
-                slot: SlotId(1),
+                slot: SlotId(PACKAGE_SLOT_BASE),
                 material: vec![],
             })
         };
@@ -2686,7 +3174,7 @@ mod tests {
         assert_eq!(
             check_declarations(&declaring(TargetExpr::Entry {
                 owner: Expr::SelfAddr,
-                collection: SlotId(2),
+                collection: SlotId(PACKAGE_SLOT_BASE + 1),
                 material: vec![],
                 order: Expr::Literal(Value::U128(0)),
             })),

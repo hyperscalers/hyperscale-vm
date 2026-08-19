@@ -86,7 +86,11 @@ pub fn metadata() -> PackageMetadata {
                 mode: ModeExpr::Write {
                     requires: Presence::Either,
                 },
-                denomination: None,
+                // The interval is one resource's holdings, and the
+                // resource is the key it is narrowed by: what an entry
+                // moving out of here carries is the same expression the
+                // target names.
+                denomination: Some(Box::new(Expr::ResourceOf(Box::new(Expr::Arg(0))))),
             }],
             ..MethodSignature::default()
         },
@@ -109,7 +113,7 @@ pub fn metadata() -> PackageMetadata {
                 mode: ModeExpr::Write {
                     requires: Presence::Either,
                 },
-                denomination: None,
+                denomination: Some(Box::new(Expr::Arg(0))),
             }],
             ..MethodSignature::default()
         },
