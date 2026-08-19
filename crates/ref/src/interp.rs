@@ -70,6 +70,9 @@ pub enum CanonError {
     /// the ABI declining to read through the pointer it was handed. The
     /// blessed engine says the same, so the two abort under one name.
     PointerOutOfBounds,
+    /// An enum discriminant past the declared cases — the lift refuses it
+    /// rather than resolving it to a case, as the engine's lift does.
+    InvalidDiscriminant,
     /// A deterministic kernel refusal, carrying the host's own class.
     Host(AbortReason),
     /// An unresolved canon definition — a decoder or instantiation defect,

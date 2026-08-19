@@ -18,7 +18,7 @@ use hyperscale_vm_harness::fixtures::NoHost;
 use hyperscale_vm_kernel::AbortReason;
 use hyperscale_vm_ref::{CVal, CanonError, ExecError, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{
-    HostRefusal, add_kernel_to_linker, blessed_engine, validate_component,
+    HostRefusal, add_kernel_to_linker, blessed_engine, classify, validate_component,
 };
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Result, Store};
@@ -327,6 +327,39 @@ fn rounding_direction_crosses_as_a_discriminant() {
     assert_eq!(value(call_with("mul-div", &[7, 1, 2], 0)), 3);
     assert_eq!(value(call_with("mul-div", &[7, 1, 2], 1)), 4);
     assert_eq!(value(call_with("mul-div", &[8, 1, 2], 1)), 4);
+}
+
+#[test]
+fn an_out_of_range_discriminant_aborts_identically() -> Result<()> {
+    // The guest export takes the rounding as a raw `u32` and forwards it,
+    // so the discriminant space past the enum's declared cases reaches
+    // the host boundary from ordinary guest code. Neither lift may
+    // resolve it to a case: the engine traps, the interpreter refuses,
+    // and both classify as the same violation.
+    let bytes = parse_str(MATH_GUEST_WAT)?;
+
+    let engine = blessed_engine()?;
+    let component = Component::new(&engine, &bytes)?;
+    let mut linker = Linker::<NoHost>::new(&engine);
+    add_kernel_to_linker(&mut linker)?;
+    let mut store = Store::new(&engine, NoHost);
+    store.set_fuel(FUEL)?;
+    let instance = linker.instantiate(&mut store, &component)?;
+    let func = instance.get_typed_func::<(u64, u64, u64, u32), (u64,)>(&mut store, "mul-div")?;
+    let blessed = func
+        .call(&mut store, (21, 2, 6, 2))
+        .expect_err("an invalid discriminant reaches no host body");
+    assert_eq!(classify(&blessed), AbortReason::AbiViolation);
+
+    let comp = RefComponent::decode(&bytes)?;
+    let mut ref_instance =
+        RefComponentInstance::instantiate(&comp, NoHost).map_err(|(_, error)| error)?;
+    let args = [CVal::U64(21), CVal::U64(2), CVal::U64(6), CVal::U32(2)];
+    let reference = ref_instance
+        .invoke("mul-div", &args)?
+        .expect_err("an invalid discriminant reaches no host body");
+    assert_eq!(reference.abort_reason(), AbortReason::AbiViolation);
+    Ok(())
 }
 
 #[test]

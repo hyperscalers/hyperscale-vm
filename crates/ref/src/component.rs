@@ -331,13 +331,14 @@ fn flat_wide(args: &[Value], at: usize) -> U256 {
 
 /// The rounding a flattened enum discriminant names.
 ///
-/// Anything past the declared cases is a canonical-ABI violation the
-/// engine rejects before a host body runs; here it resolves to the
-/// direction that keeps a lossy operation from creating value.
-fn flat_rounding(value: Value) -> Rounding {
+/// Anything past the declared cases is refused as the canonical ABI's
+/// invalid-discriminant lift — the violation the engine traps on before
+/// a host body runs — rather than resolved to a direction.
+fn flat_rounding(value: Value) -> Result<Rounding, ExecError> {
     match value.as_i32() {
-        1 => Rounding::Up,
-        _ => Rounding::Down,
+        0 => Ok(Rounding::Down),
+        1 => Ok(Rounding::Up),
+        _ => Err(ExecError::Canon(CanonError::InvalidDiscriminant)),
     }
 }
 
@@ -1937,7 +1938,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             flat_wide(&args, 0),
                             flat_wide(&args, 4),
                             flat_wide(&args, 8),
-                            flat_rounding(args[12]),
+                            flat_rounding(args[12])?,
                         )
                         .map_err(|e| ExecError::Canon(CanonError::Host(e.into())))?;
                         let mem = self.mem_opt(id)?;
@@ -1985,7 +1986,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let answer = math::fixed_pow(
                             flat_wide(&args, 0),
                             args[4].as_i32().cast_unsigned(),
-                            flat_rounding(args[5]),
+                            flat_rounding(args[5])?,
                         )
                         .map_err(|e| ExecError::Canon(CanonError::Host(e.into())))?;
                         let mem = self.mem_opt(id)?;
