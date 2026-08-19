@@ -59,8 +59,15 @@ const fn env() -> EnvInputs {
 const RESERVED: u128 = 75;
 /// What the absolute vault holds before a take.
 const BALANCE: u128 = 100;
-/// The instance whose invocation the take lane runs inside.
+/// The instance whose invocation the take lane runs inside, and the
+/// resource it issues.
 const ISSUER: Address = Address::new([0x80; 31], AddressClass::Component);
+/// What every value cell in the fixture holds.
+///
+/// One resource across the fixture, because what this lane is about is
+/// ownership and numbering rather than denomination: a second would make
+/// every credit a resource comparison as well as a transfer.
+const RESOURCE: Address = ISSUER;
 /// The collection whose entries the instance lane moves.
 const HOLDINGS: CollectionId = CollectionId([9; 16]);
 /// The orders the fixture files instances at.
@@ -158,12 +165,28 @@ fn fixture() -> Fixture {
     }
 }
 
+/// What each declared cell holds, aligned with the order the capability
+/// table is built in.
+///
+/// Everything but the read cell: a cell that denominates nothing is one
+/// no value moves through, and every cell here but that one is moved
+/// through.
+fn denominations(fx: &Fixture) -> Vec<Option<Address>> {
+    fx.declared
+        .iter()
+        .map(|effect| match effect.target {
+            EffectTarget::Point(key) if key == fx.readable => None,
+            _ => Some(RESOURCE),
+        })
+        .collect()
+}
+
 fn materialize(fx: &Fixture) -> KernelSession {
     KernelSession::materialize(
         OverlayStore::new(Arc::new(fx.store.clone())),
         &fx.declared,
         &fx.declared.iter().collect::<Vec<_>>(),
-        &[],
+        &denominations(fx),
         tx(),
         env(),
         test_hash,

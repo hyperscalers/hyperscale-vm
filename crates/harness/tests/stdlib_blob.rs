@@ -40,6 +40,8 @@ const CLOCK_MS: u64 = 77;
 const RANDOMNESS: [u8; 32] = [3; 32];
 const FUEL: u64 = 10_000_000;
 const AMOUNT: u128 = 100;
+/// What the vaults in these fixtures hold.
+const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
@@ -84,11 +86,15 @@ fn session() -> KernelSession {
         .write(sender, encode_amount(500).to_vec())
         .expect("seed sender balance");
     store.clear_log();
+    // Both cells the transfer moves between hold the same resource,
+    // which is what makes the credit a transfer rather than a
+    // conversion.
+    let denominations: Vec<_> = declared.iter().map(|_| Some(RESOURCE)).collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &declared,
         &declared.iter().collect::<Vec<_>>(),
-        &[],
+        &denominations,
         TxHash(Hash32([0x77; 32])),
         EnvInputs {
             clock_ms: CLOCK_MS,
@@ -481,11 +487,17 @@ fn lottery_session() -> KernelSession {
     ] {
         declared.insert(effect).unwrap();
     }
+    // The pot is the one cell here that holds value; the ticket entries
+    // and the settled draw are records the round writes.
+    let denominations: Vec<_> = declared
+        .iter()
+        .map(|effect| matches!(effect.mode, Mode::Delta).then_some(RESOURCE))
+        .collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(MemoryStore::new())),
         &declared,
         &declared.iter().collect::<Vec<_>>(),
-        &[],
+        &denominations,
         TxHash(Hash32([0x78; 32])),
         EnvInputs {
             clock_ms: CLOCK_MS,

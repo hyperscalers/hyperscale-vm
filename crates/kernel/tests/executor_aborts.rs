@@ -6,14 +6,29 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, SlotId,
-    SubintentHash, SubstateKey, TestHasher, child_key, nullifier_key,
+    Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
+    Presence, SlotId, SubintentHash, SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession,
     Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, WorkingStore, decode_amount,
     encode_amount, execute_batch,
 };
+
+/// What every cell these fixtures move value through holds.
+const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+
+/// The declaration a hand-built set stands for.
+///
+/// A commutative movement names a cell that holds value, and what it
+/// holds is the declaration's to say — so a fixture standing in for a
+/// signature has to say it too, or the movement is refused before any
+/// body runs.
+fn moving(set: EffectSet) -> Declaration {
+    Declaration::from_set(set).denominated(|effect| {
+        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
+    })
+}
 
 const FUEL: u64 = 7;
 
@@ -113,13 +128,16 @@ fn a_debit_below_a_held_reservation_aborts_only_its_transaction() {
     let batch = vec![
         BatchTx::new(
             tx(0x01),
-            with_delta(point(cell(0xA), Mode::Reserve { amount: 50 }), cell(0xC)),
+            moving(with_delta(
+                point(cell(0xA), Mode::Reserve { amount: 50 }),
+                cell(0xC),
+            )),
             env().clock_ms,
             env().randomness,
         ),
         BatchTx::new(
             tx(0x02),
-            point(cell(0xA), Mode::Delta),
+            moving(point(cell(0xA), Mode::Delta)),
             env().clock_ms,
             env().randomness,
         ),
@@ -161,13 +179,16 @@ fn a_covered_debit_completes_beside_a_reservation() {
     let batch = vec![
         BatchTx::new(
             tx(0x01),
-            with_delta(point(cell(0xA), Mode::Reserve { amount: 50 }), cell(0xC)),
+            moving(with_delta(
+                point(cell(0xA), Mode::Reserve { amount: 50 }),
+                cell(0xC),
+            )),
             env().clock_ms,
             env().randomness,
         ),
         BatchTx::new(
             tx(0x02),
-            point(cell(0xA), Mode::Delta),
+            moving(point(cell(0xA), Mode::Delta)),
             env().clock_ms,
             env().randomness,
         ),
@@ -205,13 +226,13 @@ fn racing_debits_lose_deterministically_in_canonical_order() {
     let batch = vec![
         BatchTx::new(
             tx(0x01),
-            point(cell(0xA), Mode::Delta),
+            moving(point(cell(0xA), Mode::Delta)),
             env().clock_ms,
             env().randomness,
         ),
         BatchTx::new(
             tx(0x02),
-            point(cell(0xA), Mode::Delta),
+            moving(point(cell(0xA), Mode::Delta)),
             env().clock_ms,
             env().randomness,
         ),
@@ -260,19 +281,28 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
     let batch = vec![
         BatchTx::new(
             tx(0x01),
-            with_delta(point(cell(0xAB), Mode::Reserve { amount: 10 }), cell(0xC)),
+            moving(with_delta(
+                point(cell(0xAB), Mode::Reserve { amount: 10 }),
+                cell(0xC),
+            )),
             env().clock_ms,
             env().randomness,
         ),
         BatchTx::new(
             tx(0x02),
-            with_delta(point(cell(0xAC), Mode::Reserve { amount: 10 }), cell(0xC)),
+            moving(with_delta(
+                point(cell(0xAC), Mode::Reserve { amount: 10 }),
+                cell(0xC),
+            )),
             env().clock_ms,
             env().randomness,
         ),
         BatchTx::new(
             tx(0x03),
-            with_delta(point(cell(0xAD), Mode::Reserve { amount: 40 }), cell(0xC)),
+            moving(with_delta(
+                point(cell(0xAD), Mode::Reserve { amount: 40 }),
+                cell(0xC),
+            )),
             env().clock_ms,
             env().randomness,
         ),
@@ -400,13 +430,16 @@ fn a_drained_vault_leaves_no_cell() {
     let batch = vec![
         BatchTx::new(
             tx(0x01),
-            with_delta(point(cell(0xA), Mode::Reserve { amount: 50 }), cell(0xC)),
+            moving(with_delta(
+                point(cell(0xA), Mode::Reserve { amount: 50 }),
+                cell(0xC),
+            )),
             env().clock_ms,
             env().randomness,
         ),
         BatchTx::new(
             tx(0x02),
-            point(cell(0xD), Mode::Delta),
+            moving(point(cell(0xD), Mode::Delta)),
             env().clock_ms,
             env().randomness,
         ),
@@ -438,7 +471,10 @@ fn a_drained_vault_leaves_no_cell() {
         Arc::new(outcome.store),
         &[BatchTx::new(
             tx(0x03),
-            with_delta(point(cell(0xC), Mode::Reserve { amount: 20 }), cell(0xA)),
+            moving(with_delta(
+                point(cell(0xC), Mode::Reserve { amount: 20 }),
+                cell(0xA),
+            )),
             env().clock_ms,
             env().randomness,
         )],
@@ -622,18 +658,18 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
         &[
             BatchTx::new(
                 tx(0x01),
-                point(
+                moving(point(
                     poisoned,
                     Mode::Write {
                         requires: Presence::Either,
                     },
-                ),
+                )),
                 env().clock_ms,
                 env().randomness,
             ),
             BatchTx::new(
                 tx(0x02),
-                point(poisoned, Mode::Delta),
+                moving(point(poisoned, Mode::Delta)),
                 env().clock_ms,
                 env().randomness,
             ),
@@ -696,18 +732,18 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
         &[
             BatchTx::new(
                 tx(0x01),
-                point(
+                moving(point(
                     vault,
                     Mode::Write {
                         requires: Presence::Either,
                     },
-                ),
+                )),
                 env().clock_ms,
                 env().randomness,
             ),
             BatchTx::new(
                 tx(0x02),
-                point(vault, Mode::Reserve { amount: 100 }),
+                moving(point(vault, Mode::Reserve { amount: 100 })),
                 env().clock_ms,
                 env().randomness,
             ),
@@ -765,13 +801,13 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
         &[
             BatchTx::new(
                 tx(0x01),
-                point(vault, Mode::Delta),
+                moving(point(vault, Mode::Delta)),
                 env().clock_ms,
                 env().randomness,
             ),
             BatchTx::new(
                 tx(0x02),
-                point(cell(0xD), Mode::Read),
+                moving(point(cell(0xD), Mode::Read)),
                 env().clock_ms,
                 env().randomness,
             ),

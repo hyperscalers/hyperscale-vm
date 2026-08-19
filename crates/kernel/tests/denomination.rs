@@ -11,8 +11,10 @@
 //!
 //! So the declaration reaches execution and the movement is judged there.
 //! What that buys is the case the layers above cannot reach: a package
-//! that declares its vaults honestly and then credits the wrong one, and
-//! a package that declares nothing at all.
+//! that declares its vaults honestly and then credits the wrong one. The
+//! package that declares nothing at all is turned away earlier, where a
+//! declaration becomes capabilities — a movement names what it moves, or
+//! there is no handle to move through.
 
 use std::sync::Arc;
 
@@ -21,7 +23,8 @@ use hyperscale_vm_effects::{
     SubstateKey, TestHasher, Value, child_key,
 };
 use hyperscale_vm_kernel::{
-    AbortReason, EnvInputs, ISSUER_REP, KernelSession, MemoryStore, OverlayStore, TxHash,
+    AbortReason, EnvInputs, ISSUER_REP, KernelSession, MaterializeError, MemoryStore, OverlayStore,
+    TxHash,
 };
 
 const VAULT: SlotId = SlotId(1);
@@ -51,7 +54,18 @@ const fn env() -> EnvInputs {
 
 /// A session over the pool's two vaults, denominated as the declaration
 /// says — or as `denominations` says, which is the point.
+///
+/// # Panics
+///
+/// On a declaration that does not materialize, which is a fixture's own
+/// defect wherever the test is about what a movement does rather than
+/// about whether one is granted.
 fn session(denominations: &[Option<Address>]) -> KernelSession {
+    try_session(denominations).expect("the declaration materializes")
+}
+
+/// The same, with the materialization verdict left to the caller.
+fn try_session(denominations: &[Option<Address>]) -> Result<KernelSession, MaterializeError> {
     let ordered = vec![
         Effect {
             target: EffectTarget::Point(vault(X)),
@@ -75,7 +89,6 @@ fn session(denominations: &[Option<Address>]) -> KernelSession {
         env(),
         hash,
     )
-    .expect("two unheld delta cells materialize")
 }
 
 /// A debit from one vault credited to the other is refused, whatever the
@@ -125,17 +138,25 @@ fn two_edges_of_different_resources_do_not_merge() {
     );
 }
 
-/// A declaration that says nothing leaves execution nothing to judge.
+/// A declaration that says nothing moves nothing.
 ///
-/// Stated as a test rather than left implied, because it is the honest
-/// bound on what this layer gives: a cell nobody denominated is a cell
-/// any value fits, and closing that is the declaration's job — the
-/// publish gate's and admission's — not this one's.
+/// The comparison below it is between two resources, and a cell naming
+/// neither would leave nothing to compare — so a movement mode on such a
+/// cell is refused where a declaration is turned into capabilities,
+/// before any body has a handle to move through. What is closed is the
+/// case the comparison cannot reach: not a package that declares its
+/// vaults and credits the wrong one, but one that declares no vault at
+/// all and moves value anyway.
 #[test]
-fn an_undenominated_cell_admits_whatever_arrives() {
-    let mut session = session(&[None, None]);
-    let funds = session.delta_take(0, 100).expect("the debit is queued");
-    assert_eq!(session.delta_put(1, funds), Ok(()));
+fn a_cell_that_denominates_nothing_moves_nothing() {
+    let refused = try_session(&[None, None]).expect_err("a movement names what it moves");
+    assert_eq!(refused, MaterializeError::UndenominatedMovement(vault(X)));
+
+    // One end saying nothing is enough: the pair is judged cell by cell.
+    assert_eq!(
+        try_session(&[Some(X), None]).expect_err("the second says nothing"),
+        MaterializeError::UndenominatedMovement(vault(Y))
+    );
 }
 
 /// A grant names one resource, so it destroys that one.

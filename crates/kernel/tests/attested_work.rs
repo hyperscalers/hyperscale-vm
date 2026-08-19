@@ -24,15 +24,30 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, FOOTPRINT_WEIGHT, Hash32,
-    Hasher, Mode, Presence, SlotId, SubintentHash, SubstateKey, TestHasher, child_key,
-    effect_units, footprint, nullifier_key, work_units,
+    Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget,
+    FOOTPRINT_WEIGHT, Hash32, Hasher, Mode, Presence, SlotId, SubintentHash, SubstateKey,
+    TestHasher, child_key, effect_units, footprint, nullifier_key, work_units,
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality,
     MemoryStore, Outcome, Receipt, RunResult, TxHash, Work, WorkingStore, encode_amount,
     execute_batch,
 };
+
+/// What every cell these fixtures move value through holds.
+const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+
+/// The declaration a hand-built set stands for.
+///
+/// A commutative movement names a cell that holds value, and what it
+/// holds is the declaration's to say — so a fixture standing in for a
+/// signature has to say it too, or the movement is refused before any
+/// body runs.
+fn moving(set: EffectSet) -> Declaration {
+    Declaration::from_set(set).denominated(|effect| {
+        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
+    })
+}
 
 const PAYER_BYTE: u8 = 0xA1;
 const RECIPIENT_BYTE: u8 = 0xC1;
@@ -164,7 +179,7 @@ fn run_one<R>(declared: EffectSet, runner: &R, locality: &Locality) -> (Receipt,
 where
     R: Fn(&BatchTx, KernelSession) -> RunResult + Sync,
 {
-    let batch = [BatchTx::new(tx(1), declared, 1_000, [1; 32])];
+    let batch = [BatchTx::new(tx(1), moving(declared), 1_000, [1; 32])];
     let outcome = run_batch(funded_store(1_000), &batch, runner, locality);
     (
         outcome.receipts[&tx(1)].clone(),
@@ -248,7 +263,12 @@ fn one_receipt_two_shares() {
     // disagree. A locality-scoped field inside the receipt would have made
     // one structure carry both claims.
     let declared = transfer_declared(100);
-    let batch = [BatchTx::new(tx(1), declared.clone(), 1_000, [1; 32])];
+    let batch = [BatchTx::new(
+        tx(1),
+        moving(declared.clone()),
+        1_000,
+        [1; 32],
+    )];
 
     let payer = run_batch(
         funded_store(1_000),
@@ -359,8 +379,10 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
     let mut store = MemoryStore::default();
     store.write(payer, encode_amount(1_000).to_vec()).unwrap();
     store.write(nullifier, vec![1]).unwrap();
-    let batch =
-        [BatchTx::new(tx(1), declared.clone(), 1_000, [1; 32]).with_nullifiers(vec![nullifier])];
+    let batch = [
+        BatchTx::new(tx(1), moving(declared.clone()), 1_000, [1; 32])
+            .with_nullifiers(vec![nullifier]),
+    ];
     let outcome = run_batch(Arc::new(store), &batch, &transfer_guest, &Locality::All);
     let spent = &outcome.receipts[&tx(1)];
     let spent_work = outcome.work[&tx(1)];
@@ -379,8 +401,8 @@ fn a_completion_flipped_at_apply_drops_its_fuel_but_keeps_its_declaration() {
     // declaration it put through routing and locking regardless.
     let declared = transfer_declared(600);
     let batch = [
-        BatchTx::new(tx(1), transfer_declared(600), 1_000, [1; 32]),
-        BatchTx::new(tx(2), declared.clone(), 1_000, [1; 32]),
+        BatchTx::new(tx(1), moving(transfer_declared(600)), 1_000, [1; 32]),
+        BatchTx::new(tx(2), moving(declared.clone()), 1_000, [1; 32]),
     ];
     let mut store = MemoryStore::default();
     store
@@ -415,8 +437,8 @@ fn work_is_a_function_of_the_batch_alone() {
     // serially or on their own threads is a scheduling choice, and a
     // quantity that moved with it could not be voted on.
     let batch = [
-        BatchTx::new(tx(1), transfer_declared(100), 1_000, [1; 32]),
-        BatchTx::new(tx(2), transfer_declared(50), 1_000, [1; 32]),
+        BatchTx::new(tx(1), moving(transfer_declared(100)), 1_000, [1; 32]),
+        BatchTx::new(tx(2), moving(transfer_declared(50)), 1_000, [1; 32]),
     ];
     let run = |mode| {
         execute_batch(
@@ -439,9 +461,9 @@ fn every_receipt_is_priced() {
     // without a work entry is a shard reporting a transaction it did no
     // work for, and the consumer sums the map rather than the receipts.
     let batch = [
-        BatchTx::new(tx(1), transfer_declared(100), 1_000, [1; 32]),
-        BatchTx::new(tx(2), transfer_declared(10_000), 1_000, [1; 32]),
-        BatchTx::new(tx(3), transfer_declared(50), 1_000, [1; 32]),
+        BatchTx::new(tx(1), moving(transfer_declared(100)), 1_000, [1; 32]),
+        BatchTx::new(tx(2), moving(transfer_declared(10_000)), 1_000, [1; 32]),
+        BatchTx::new(tx(3), moving(transfer_declared(50)), 1_000, [1; 32]),
     ];
     let outcome = run_batch(funded_store(1_000), &batch, &transfer_guest, &Locality::All);
     assert_eq!(

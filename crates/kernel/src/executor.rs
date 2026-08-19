@@ -646,6 +646,9 @@ impl From<MaterializeError> for Outcome {
             MaterializeError::SelfConflicting(_) => Self::UserError {
                 reason: AbortReason::SelfConflictingModes,
             },
+            MaterializeError::UndenominatedMovement(_) => Self::UserError {
+                reason: AbortReason::UndenominatedMovement,
+            },
             MaterializeError::Occupied(target) => Self::PresenceUnmet {
                 target,
                 required: Presence::Absent,

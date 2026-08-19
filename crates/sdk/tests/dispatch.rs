@@ -92,11 +92,14 @@ fn session(mode: Mode, funded: u128) -> KernelSession {
         })
         .expect("the effect set takes it");
     let ordered: Vec<_> = declared.iter().collect();
+    // The one cell these bodies move value through, so it says what it
+    // holds — a cell that said nothing would grant no movement.
+    let holds: Vec<_> = ordered.iter().map(|_| Some(RESOURCE)).collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &declared,
         &ordered,
-        &[],
+        &holds,
         TxHash(Hash32([4; 32])),
         EnvInputs {
             clock_ms: 1_000,
@@ -145,6 +148,8 @@ fn two_cells() -> KernelSession {
             .expect("the effect set takes it");
     }
     let ordered: Vec<_> = declared.iter().collect();
+    // Nothing here holds value: these are the cells a body writes as
+    // bytes, which is what a declaration saying nothing means.
     KernelSession::materialize(
         OverlayStore::new(Arc::new(MemoryStore::new())),
         &declared,

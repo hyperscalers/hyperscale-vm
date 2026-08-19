@@ -20,14 +20,29 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Hash32, Hasher,
-    Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
+    Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget, EntryKey,
+    Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality,
     MemoryStore, Movement, Outcome, RunResult, TxHash, WorkingStore, decode_amount, encode_amount,
     execute_batch,
 };
+
+/// What every cell these fixtures move value through holds.
+const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+
+/// The declaration a hand-built set stands for.
+///
+/// A commutative movement names a cell that holds value, and what it
+/// holds is the declaration's to say — so a fixture standing in for a
+/// signature has to say it too, or the movement is refused before any
+/// body runs.
+fn moving(set: EffectSet) -> Declaration {
+    Declaration::from_set(set).denominated(|effect| {
+        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
+    })
+}
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{Strategy, any, prop_oneof, proptest};
 
@@ -214,7 +229,9 @@ fn batch_of(specs: &[TxSpec]) -> (Vec<BatchTx>, BTreeSet<TxHash>) {
     let batch = specs
         .iter()
         .enumerate()
-        .map(|(index, spec)| BatchTx::new(identity(index), declared_of(spec), 1_000, [7; 32]))
+        .map(|(index, spec)| {
+            BatchTx::new(identity(index), moving(declared_of(spec)), 1_000, [7; 32])
+        })
         .collect();
     (batch, aborting)
 }
@@ -536,7 +553,7 @@ proptest! {
                     mode: Mode::Delta,
                 })
                 .expect("one mode per key");
-            batch.push(BatchTx::new(tx(index), declared, 1_000, [7; 32]));
+            batch.push(BatchTx::new(tx(index), moving(declared), 1_000, [7; 32]));
         }
         // Reading every cell conflicts with every delta over one, so the
         // whole batch lands in a single conflict group.
@@ -549,7 +566,7 @@ proptest! {
                 })
                 .expect("one mode per key");
         }
-        batch.push(BatchTx::new(READER, reading, 1_000, [7; 32]));
+        batch.push(BatchTx::new(READER, moving(reading), 1_000, [7; 32]));
 
         let outcome = execute_batch(
             Arc::new(funded()),
@@ -672,7 +689,7 @@ proptest! {
             .map(|(index, claims)| {
                 BatchTx::new(
                     tx(u8::try_from(index).expect("small batch")),
-                    portable_declared(claims),
+                    moving(portable_declared(claims)),
                     1_000,
                     [7; 32],
                 )

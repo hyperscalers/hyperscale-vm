@@ -709,6 +709,22 @@ impl Declaration {
             clause_spans,
         }
     }
+
+    /// The same declaration, with what each entry of
+    /// [`Declaration::ordered`] holds answered per effect.
+    ///
+    /// The companion to [`Declaration::from_set`], and needed for the
+    /// same reason: a set has discarded the clauses that would have said
+    /// what a cell holds, so a caller that built one by hand is the only
+    /// thing left that knows. A movement through a cell that says
+    /// nothing is refused at materialization, which is what makes this
+    /// the difference between a fixture that transfers and one that does
+    /// not.
+    #[must_use]
+    pub fn denominated(mut self, holds: impl Fn(&Effect) -> Option<Address>) -> Self {
+        self.denominations = self.ordered.iter().map(holds).collect();
+        self
+    }
 }
 
 impl From<EffectSet> for Declaration {

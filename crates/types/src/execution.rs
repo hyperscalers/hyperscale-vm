@@ -216,6 +216,18 @@ pub enum AbortReason {
     /// is execution holding the code to it, so the property survives a
     /// metadata section nobody derived.
     WrongResource,
+    /// Bytes written straight into a cell whose declaration says it holds
+    /// value, which would be a balance nobody moved.
+    ValueAsBytes,
+    /// Value moved through a cell whose declaration denominates it in
+    /// nothing, which would hand out an edge no destination could
+    /// disagree with.
+    BytesAsValue,
+    /// A commutative movement declared on a cell that denominates
+    /// nothing. `Delta` and `Reserve` move value and do nothing else, so
+    /// the cell they name is one whose contents the declaration owes an
+    /// answer about.
+    UndenominatedMovement,
     /// A declared mode and target combination the world cannot hand out.
     EffectUnsupported,
     /// A mutation declared on a permanently locked substate.

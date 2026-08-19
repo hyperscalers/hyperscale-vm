@@ -30,6 +30,8 @@ use wat::parse_str;
 const CLOCK_MS: u64 = 424_242;
 const FUEL: u64 = 1_000_000_000;
 const ASKS: CollectionId = CollectionId([4; 16]);
+/// What the two cells the transfer moves between hold.
+const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
@@ -163,12 +165,28 @@ fn fixture() -> Fixture {
     }
 }
 
+/// What each declared cell holds, aligned with the order the capability
+/// table is built in.
+///
+/// The two the transfer moves between, and nothing else: the
+/// read-modify-write cell and the ask ladder are written as bytes and as
+/// entries, which is what a cell denominating nothing is for.
+fn denominations(fx: &Fixture) -> Vec<Option<Address>> {
+    fx.declared
+        .iter()
+        .map(|effect| match effect.target {
+            EffectTarget::Point(key) if key == fx.sender || key == fx.recipient => Some(RESOURCE),
+            _ => None,
+        })
+        .collect()
+}
+
 fn session(fx: &Fixture) -> KernelSession {
     KernelSession::materialize(
         OverlayStore::new(Arc::new(fx.store.clone())),
         &fx.declared,
         &fx.declared.iter().collect::<Vec<_>>(),
-        &[],
+        &denominations(fx),
         tx(),
         env(),
         test_hash,

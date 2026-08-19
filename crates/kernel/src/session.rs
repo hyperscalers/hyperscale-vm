@@ -168,6 +168,16 @@ pub enum MaterializeError {
     /// within one receipt.
     #[error("write and delta/reserve declared on the same cell {0:?}")]
     SelfConflicting(SubstateKey),
+    /// A commutative movement declared on a cell that denominates
+    /// nothing.
+    ///
+    /// `Delta` and `Reserve` move value and nothing else, so a cell they
+    /// name is a cell that holds value — and what it holds is the
+    /// declaration's to say, since a key is a hash and nothing inverts
+    /// it. A movement through a cell that says nothing would hand out an
+    /// edge no destination could disagree with.
+    #[error("a movement declared on {0:?}, which denominates nothing")]
+    UndenominatedMovement(SubstateKey),
     /// An already-held reservation whose amount differs from the declared
     /// one — a batch bookkeeping defect, surfaced rather than adopted.
     #[error("held reservation on {0:?} does not match the declaration")]
@@ -209,6 +219,23 @@ pub enum SessionTrap {
         /// What the value going into it carries.
         carried: Address,
     },
+    /// Bytes written through a handle on a cell that holds value.
+    ///
+    /// An amount is sixteen bytes and a holdings entry is an instance, so
+    /// a raw write is an assignment: it would put a balance where one is
+    /// read from without any of it having moved. What a body may do to a
+    /// cell holding value is move value into or out of it, which is what
+    /// the movement calls are for.
+    #[error("handle {0} names a cell that holds value, which is not written as bytes")]
+    ValueAsBytes(u32),
+    /// Value moved through a handle on a cell that denominates nothing.
+    ///
+    /// The mirror of [`SessionTrap::ValueAsBytes`], and the reason that
+    /// one cannot be sidestepped by declaring less: an edge taken from a
+    /// cell carries what the cell holds, and a cell that says nothing
+    /// would produce one nothing could be compared against.
+    #[error("handle {0} names a cell that denominates nothing, so no value moves through it")]
+    BytesAsValue(u32),
     /// An entry index past the interval's current entries.
     #[error("entry index {index} out of bounds ({count} entries)")]
     IndexOutOfBounds {
@@ -337,6 +364,8 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::EventPayloadTooLarge(_) => Self::EventPayloadTooLarge,
             SessionTrap::ShareAboveOne => Self::ShareAboveOne,
             SessionTrap::WrongResource { .. } => Self::WrongResource,
+            SessionTrap::ValueAsBytes(_) => Self::ValueAsBytes,
+            SessionTrap::BytesAsValue(_) => Self::BytesAsValue,
             SessionTrap::Math(error) => error.into(),
             SessionTrap::Supply(error) => error.into(),
             SessionTrap::Store(store) => store.into(),
@@ -697,8 +726,9 @@ impl KernelSession {
         // parameter list a function of instance configuration rather than
         // of its own signature.
         let mut table = Vec::with_capacity(ordered.len());
-        for effect in ordered {
-            table.push(capability_for(&store, *effect)?);
+        for (index, effect) in ordered.iter().enumerate() {
+            let denominated = denominations.get(index).is_some_and(Option::is_some);
+            table.push(capability_for(&store, *effect, denominated)?);
         }
         // One transaction may not declare both an exclusive write and a
         // commutative mode on the same cell: the receipt records
@@ -827,6 +857,27 @@ impl KernelSession {
             .flatten()
     }
 
+    /// Refuse a raw write to a cell the declaration says holds value.
+    ///
+    /// The denomination is the statement: a cell that says what it holds
+    /// is one a movement reads and a destination compares against, and
+    /// bytes written straight into it would be a balance nobody moved.
+    fn bytes_allowed(&self, rep: u32) -> Result<(), SessionTrap> {
+        if self.cell_resource(rep).is_some() {
+            return Err(SessionTrap::ValueAsBytes(rep));
+        }
+        Ok(())
+    }
+
+    /// Refuse a movement through a cell the declaration denominates in
+    /// nothing — the mirror of [`KernelSession::bytes_allowed`].
+    fn value_allowed(&self, rep: u32) -> Result<(), SessionTrap> {
+        if self.cell_resource(rep).is_none() {
+            return Err(SessionTrap::BytesAsValue(rep));
+        }
+        Ok(())
+    }
+
     /// What the bucket at `rep` carries, where the kernel knows.
     fn bucket_resource(&self, rep: u32) -> Option<Address> {
         usize::try_from(rep)
@@ -908,6 +959,7 @@ impl KernelSession {
     /// declared interval, one the collection does not hold, or more
     /// entries than the interval's cap admits.
     pub fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, SessionTrap> {
+        self.value_allowed(rep)?;
         let interval = self.write_interval(rep)?;
         // The decoder refuses a repeated id, so the set below loses
         // nothing to dedup and a count is an instance count.
@@ -951,6 +1003,7 @@ impl KernelSession {
     /// Any [`SessionTrap`]: an instance outside the declared interval, a
     /// bucket carrying an amount, or a cap the filing would overrun.
     pub fn range_put(&mut self, rep: u32, funds: u32, value: &[u8]) -> Result<(), SessionTrap> {
+        self.value_allowed(rep)?;
         let interval = self.write_interval(rep)?;
         self.judge_credit(rep, funds)?;
         let Held::Instances(ids) = self.bucket(funds)? else {
@@ -1205,6 +1258,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), SessionTrap> {
+        self.bytes_allowed(rep)?;
         match self.capability(rep)? {
             Capability::Write(key) => Ok(self.store.write(key, value)?),
             _ => Err(SessionTrap::WrongMode(rep)),
@@ -1310,6 +1364,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
+        self.value_allowed(rep)?;
         let Capability::Write(key) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
@@ -1344,6 +1399,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
+        self.value_allowed(rep)?;
         let Capability::Write(key) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
@@ -1621,6 +1677,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), SessionTrap> {
+        self.bytes_allowed(rep)?;
         let interval = self.write_interval(rep)?;
         self.scan(rep)?;
         let order = *indexed(&self.scans[&rep], index).map(|(order, _)| order)?;
@@ -1643,6 +1700,7 @@ impl KernelSession {
         order: u128,
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
+        self.bytes_allowed(rep)?;
         let interval = self.write_interval(rep)?;
         if !interval.holds(order) {
             return Err(SessionTrap::OrderOutsideInterval);
@@ -1660,6 +1718,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), SessionTrap> {
+        self.bytes_allowed(rep)?;
         let interval = self.write_interval(rep)?;
         self.scan(rep)?;
         let order = *indexed(&self.scans[&rep], index).map(|(order, _)| order)?;
@@ -2057,7 +2116,11 @@ const fn interval_of(target: EffectTarget) -> Option<Interval> {
 /// The capability form of one declared effect: the world-design mapping.
 /// Entry targets are degenerate one-entry intervals, so collection access
 /// needs exactly two resource shapes.
-fn capability_for(store: &OverlayStore, effect: Effect) -> Result<Capability, MaterializeError> {
+fn capability_for(
+    store: &OverlayStore,
+    effect: Effect,
+    denominated: bool,
+) -> Result<Capability, MaterializeError> {
     let locked_checked = |key: SubstateKey| {
         if store.is_locked(key) {
             Err(MaterializeError::MutationOfLocked(key))
@@ -2084,11 +2147,27 @@ fn capability_for(store: &OverlayStore, effect: Effect) -> Result<Capability, Ma
         (EffectTarget::Point(key), Mode::Write { .. }) => {
             Ok(Capability::Write(locked_checked(key)?))
         }
-        (EffectTarget::Point(key), Mode::Delta) => Ok(Capability::Delta(locked_checked(key)?)),
-        (EffectTarget::Point(key), Mode::Reserve { amount }) => Ok(Capability::Reserve {
-            key: locked_checked(key)?,
-            amount,
-        }),
+        // The two modes that move value and do nothing else. A cell
+        // they name holds value, so the declaration has to say what —
+        // judged here rather than at the movement, because a declaration
+        // that cannot be materialized is one no body should run against.
+        (EffectTarget::Point(key), Mode::Delta) => {
+            if denominated {
+                Ok(Capability::Delta(locked_checked(key)?))
+            } else {
+                Err(MaterializeError::UndenominatedMovement(key))
+            }
+        }
+        (EffectTarget::Point(key), Mode::Reserve { amount }) => {
+            if denominated {
+                Ok(Capability::Reserve {
+                    key: locked_checked(key)?,
+                    amount,
+                })
+            } else {
+                Err(MaterializeError::UndenominatedMovement(key))
+            }
+        }
         // Point targets are spoken for above, so what is left is a
         // collection one — and the two spell the same interval, the mode
         // choosing only which capability carries it.
@@ -2212,7 +2291,7 @@ mod tests {
             OverlayStore::new(Arc::new(store)),
             &set,
             &ordered,
-            &[],
+            &holding(&ordered),
             tx(1),
             env(),
             hash,
@@ -2383,7 +2462,7 @@ mod tests {
             OverlayStore::new(Arc::new(MemoryStore::new())),
             &set,
             &reversed,
-            &[],
+            &holding(&reversed),
             tx(1),
             env(),
             hash,
@@ -2420,7 +2499,7 @@ mod tests {
             OverlayStore::new(Arc::new(MemoryStore::new())),
             &set,
             &[write, write],
-            &[],
+            &holding(&[write, write]),
             tx(1),
             env(),
             hash,
@@ -2454,7 +2533,7 @@ mod tests {
             OverlayStore::new(Arc::new(store)),
             &set,
             &[reserve, reserve],
-            &[],
+            &holding(&[reserve, reserve]),
             tx(1),
             env(),
             hash,
@@ -2490,7 +2569,7 @@ mod tests {
             OverlayStore::new(Arc::new(store)),
             &declared(&[reserve(5), reserve(6)]),
             &[reserve(5), reserve(6)],
-            &[],
+            &holding(&[reserve(5), reserve(6)]),
             tx(1),
             env(),
             hash,
@@ -2501,12 +2580,47 @@ mod tests {
         assert_eq!(session.reserve_amount(1), Ok(6));
     }
 
+    /// What every cell these fixtures move value through holds.
+    const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+
+    /// What each entry of an ordered declaration holds.
+    ///
+    /// A movement names a cell that holds value, and a hand-built set has
+    /// no clause left to say what — so a fixture standing in for a
+    /// signature says it here, or the movement is refused before any body
+    /// runs.
+    fn holding(ordered: &[Effect]) -> Vec<Option<Address>> {
+        ordered
+            .iter()
+            .map(|effect| {
+                matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
+            })
+            .collect()
+    }
+
+    /// A session over cells that all hold value — what a fixture wants
+    /// when the write it declares is a debit rather than a byte write.
+    fn session_holding(store: MemoryStore, set: &EffectSet) -> KernelSession {
+        let ordered = ord(set);
+        let holds: Vec<_> = ordered.iter().map(|_| Some(RESOURCE)).collect();
+        KernelSession::materialize(
+            OverlayStore::new(Arc::new(store)),
+            set,
+            &ordered,
+            &holds,
+            tx(1),
+            env(),
+            hash,
+        )
+        .expect("materializes")
+    }
+
     fn session_over(store: MemoryStore, set: &EffectSet) -> KernelSession {
         KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
             set,
             &ord(set),
-            &[],
+            &holding(&ord(set)),
             tx(1),
             env(),
             hash,
@@ -2938,7 +3052,7 @@ mod tests {
                 requires: Presence::Either,
             },
         }]);
-        let mut session = session_over(store, &set);
+        let mut session = session_holding(store, &set);
 
         // An id well past the first page of four.
         assert_eq!(session.range_take(0, &ids_cell(&[90])), Ok(0));
@@ -3002,7 +3116,7 @@ mod tests {
                 OverlayStore::new(Arc::new(MemoryStore::new())),
                 &set,
                 &ord(&set),
-                &[],
+                &holding(&ord(&set)),
                 tx(1),
                 env(),
                 hash,
@@ -3030,7 +3144,7 @@ mod tests {
                 OverlayStore::new(Arc::new(store)),
                 &set,
                 &ord(&set),
-                &[],
+                &holding(&ord(&set)),
                 tx(1),
                 env(),
                 hash,
@@ -3058,7 +3172,7 @@ mod tests {
                 OverlayStore::new(Arc::new(MemoryStore::new())),
                 &set,
                 &ord(&set),
-                &[],
+                &holding(&ord(&set)),
                 tx(1),
                 env(),
                 hash,
@@ -3184,7 +3298,7 @@ mod tests {
                 requires: Presence::Either,
             },
         }]);
-        let mut session = session_over(store, &set);
+        let mut session = session_holding(store, &set);
 
         let funds = session.write_take(0, 40).expect("the cell covers it");
         assert_eq!(
@@ -3216,7 +3330,7 @@ mod tests {
                 requires: Presence::Either,
             },
         }]);
-        let mut session = session_over(store, &set);
+        let mut session = session_holding(store, &set);
 
         let funds = session.write_take(0, 40).expect("the cell covers it");
         let (receipt, mut threaded) = session
@@ -3255,7 +3369,7 @@ mod tests {
                 requires: Presence::Either,
             },
         }]);
-        let mut session = session_over(store, &set);
+        let mut session = session_holding(store, &set);
 
         let funds = session.write_take(0, 40).expect("the cell covers it");
         let split = session.bucket_take(funds, 40).expect("the whole of it");

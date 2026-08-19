@@ -8,14 +8,29 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, SlotId,
-    SubstateKey, TestHasher, child_key,
+    Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
+    Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession,
     Locality, MemoryStore, Movement, Outcome, RunResult, TxHash, WorkingStore, decode_amount,
     encode_amount, execute_batch,
 };
+
+/// What every cell these fixtures move value through holds.
+const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+
+/// The declaration a hand-built set stands for.
+///
+/// A commutative movement names a cell that holds value, and what it
+/// holds is the declaration's to say — so a fixture standing in for a
+/// signature has to say it too, or the movement is refused before any
+/// body runs.
+fn moving(set: EffectSet) -> Declaration {
+    Declaration::from_set(set).denominated(|effect| {
+        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
+    })
+}
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
@@ -134,13 +149,13 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
         // so they land in different groups and merge by movement.
         BatchTx::new(
             tx(0x01),
-            reserve_and_delta(cell(0xA), 40, cell(0xC)),
+            moving(reserve_and_delta(cell(0xA), 40, cell(0xC))),
             env().clock_ms,
             env().randomness,
         ),
         BatchTx::new(
             tx(0x02),
-            reserve_and_delta(cell(0xB), 25, cell(0xC)),
+            moving(reserve_and_delta(cell(0xB), 25, cell(0xC))),
             env().clock_ms,
             env().randomness,
         ),
@@ -148,42 +163,42 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
         // canonical order.
         BatchTx::new(
             tx(0x03),
-            point(
+            moving(point(
                 cell(0xE),
                 Mode::Write {
                     requires: Presence::Either,
                 },
-            ),
+            )),
             env().clock_ms,
             env().randomness,
         ),
         BatchTx::new(
             tx(0x04),
-            point(
+            moving(point(
                 cell(0xE),
                 Mode::Write {
                     requires: Presence::Either,
                 },
-            ),
+            )),
             env().clock_ms,
             env().randomness,
         ),
         // Infeasible: the sender vault cannot cover it after tx 0x01.
         BatchTx::new(
             tx(0x05),
-            reserve_and_delta(cell(0xA), 1_000, cell(0xC)),
+            moving(reserve_and_delta(cell(0xA), 1_000, cell(0xC))),
             env().clock_ms,
             env().randomness,
         ),
         // The doomed writer on its own cell.
         BatchTx::new(
             tx(0x66),
-            point(
+            moving(point(
                 cell(0xF),
                 Mode::Write {
                     requires: Presence::Either,
                 },
-            ),
+            )),
             env().clock_ms,
             env().randomness,
         ),
@@ -370,23 +385,23 @@ fn each_transaction_sees_its_own_clock() {
 
     let early = BatchTx::new(
         tx(0x01),
-        point(
+        moving(point(
             cell(0xE),
             Mode::Write {
                 requires: Presence::Either,
             },
-        ),
+        )),
         1_000,
         env().randomness,
     );
     let late = BatchTx::new(
         tx(0x02),
-        point(
+        moving(point(
             cell(0xF),
             Mode::Write {
                 requires: Presence::Either,
             },
-        ),
+        )),
         2_000,
         env().randomness,
     );
@@ -431,23 +446,23 @@ fn each_transaction_sees_its_own_draw() {
 
     let first = BatchTx::new(
         tx(0x01),
-        point(
+        moving(point(
             cell(0xE),
             Mode::Write {
                 requires: Presence::Either,
             },
-        ),
+        )),
         env().clock_ms,
         [7; 32],
     );
     let second = BatchTx::new(
         tx(0x02),
-        point(
+        moving(point(
             cell(0xF),
             Mode::Write {
                 requires: Presence::Either,
             },
-        ),
+        )),
         env().clock_ms,
         [9; 32],
     );

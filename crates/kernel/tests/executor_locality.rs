@@ -9,13 +9,28 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, SlotId,
-    SubintentHash, SubstateKey, TestHasher, child_key, nullifier_key,
+    Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
+    Presence, SlotId, SubintentHash, SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MemoryStore, Movement,
     Outcome, RunResult, TxHash, WorkingStore, decode_amount, encode_amount, execute_batch,
 };
+
+/// What every cell these fixtures move value through holds.
+const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+
+/// The declaration a hand-built set stands for.
+///
+/// A commutative movement names a cell that holds value, and what it
+/// holds is the declaration's to say — so a fixture standing in for a
+/// signature has to say it too, or the movement is refused before any
+/// body runs.
+fn moving(set: EffectSet) -> Declaration {
+    Declaration::from_set(set).denominated(|effect| {
+        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
+    })
+}
 
 const FUEL: u64 = 7;
 const PAYER_BYTE: u8 = 0xA1;
@@ -86,7 +101,7 @@ fn owned_by(byte: u8) -> Locality {
 fn a_covered_transfer_derives_one_receipt_on_both_shards() {
     let batch = vec![BatchTx::new(
         TxHash(Hash32([0x11; 32])),
-        transfer_declared(50),
+        moving(transfer_declared(50)),
         env().clock_ms,
         env().randomness,
     )];
@@ -180,11 +195,12 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
             },
         })
         .unwrap();
+    let declaration = moving(declared);
     BatchTx {
         tx: TxHash(Hash32([id; 32])),
-        ordered: declared.iter().collect(),
-        denominations: Vec::new(),
-        declared,
+        ordered: declaration.ordered,
+        denominations: declaration.denominations,
+        declared: declaration.set,
         calls: Vec::new(),
         nullifiers: vec![signed_nullifier()],
         clock_ms: env().clock_ms,
@@ -249,7 +265,7 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
     let draw = [0x5A; 32];
     let batch = vec![BatchTx::new(
         TxHash(Hash32([0x44; 32])),
-        transfer_declared(50),
+        moving(transfer_declared(50)),
         env().clock_ms,
         draw,
     )];
@@ -296,7 +312,7 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
     // different one and the two stop agreeing.
     let divergent = vec![BatchTx::new(
         batch[0].tx,
-        transfer_declared(50),
+        moving(transfer_declared(50)),
         env().clock_ms,
         [0x5B; 32],
     )];
@@ -368,13 +384,13 @@ fn remote_movement_batch() -> Vec<BatchTx> {
     vec![
         BatchTx::new(
             TxHash(Hash32([0x51; 32])),
-            moved,
+            moving(moved),
             env().clock_ms,
             env().randomness,
         ),
         BatchTx::new(
             TxHash(Hash32([0x52; 32])),
-            read,
+            moving(read),
             env().clock_ms,
             env().randomness,
         ),
@@ -448,7 +464,7 @@ fn a_remote_credit_never_becomes_a_local_balance() {
 fn only_the_owning_shard_judges_an_uncovered_reserve() {
     let batch = vec![BatchTx::new(
         TxHash(Hash32([0x22; 32])),
-        transfer_declared(50),
+        moving(transfer_declared(50)),
         env().clock_ms,
         env().randomness,
     )];

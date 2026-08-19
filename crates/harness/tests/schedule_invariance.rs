@@ -9,8 +9,8 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, SlotId,
-    SubstateKey, TestHasher, child_key,
+    Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
+    Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
@@ -27,6 +27,8 @@ use wasmtime::{Engine, Result, Store};
 use wat::parse_str;
 
 const FUEL: u64 = 1_000_000_000;
+/// What the vaults in this batch hold.
+const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
@@ -103,7 +105,9 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
             .unwrap();
         batch.push(BatchTx::new(
             tx(id),
-            declared,
+            // Both ends of a transfer hold the one resource this batch
+            // moves; a cell that said nothing would move nothing.
+            Declaration::from_set(declared).denominated(|_| Some(RESOURCE)),
             env().clock_ms,
             env().randomness,
         ));

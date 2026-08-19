@@ -21,6 +21,8 @@ use hyperscale_vm_sdk::host::{Refusal, with_kernel};
 use hyperscale_vm_sdk::state::{self, Bucket, Entry, Interval, OrderKey, Quantity, Slot, Vault};
 
 const OWNER: Address = Address::new([0x11; 31], AddressClass::Component);
+/// What the value cells in these fixtures hold.
+const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
 const CLOCK_MS: u64 = 4_000;
 
 fn hash(data: &[u8]) -> [u8; 32] {
@@ -48,6 +50,33 @@ fn session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
         &declared,
         &ordered,
         &[],
+        TxHash(Hash32([9; 32])),
+        EnvInputs {
+            clock_ms: CLOCK_MS,
+            randomness: [3; 32],
+        },
+        hash,
+    )
+    .expect("the declaration materializes")
+}
+
+/// The same, over cells that all hold value.
+///
+/// What a vault's own vocabulary needs: a write there is a debit rather
+/// than a byte write, and the kernel grants the one or the other by what
+/// the declaration says the cell holds.
+fn value_session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
+    let mut declared = EffectSet::new();
+    for effect in effects {
+        declared.insert(effect).expect("the effect set takes it");
+    }
+    let ordered: Vec<_> = declared.iter().collect();
+    let holds: Vec<_> = ordered.iter().map(|_| Some(RESOURCE)).collect();
+    KernelSession::materialize(
+        OverlayStore::new(Arc::new(store)),
+        &declared,
+        &ordered,
+        &holds,
         TxHash(Hash32([9; 32])),
         EnvInputs {
             clock_ms: CLOCK_MS,
@@ -135,7 +164,7 @@ fn value_taken_from_a_cell_is_the_value_in_hand() {
         .write(vault, encode_amount(100).to_vec())
         .expect("the store takes it");
     store.clear_log();
-    let session = session(
+    let session = value_session(
         store,
         vec![point(
             vault,
@@ -165,7 +194,7 @@ fn a_bucket_divides_into_what_comes_off_and_what_is_left() {
         .write(vault, encode_amount(100).to_vec())
         .expect("the store takes it");
     store.clear_log();
-    let session = session(
+    let session = value_session(
         store,
         vec![point(
             vault,
