@@ -1,0 +1,5 @@
+error: the arms of this selection cross the call boundary as different shapes, so no one export parameter can carry what it chooses
+  --> tests/refusals/mixed_selection.rs:24:23
+   |
+24 |             let key = if pick == settings.left {
+   |                       ^^

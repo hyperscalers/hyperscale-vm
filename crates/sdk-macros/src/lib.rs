@@ -98,6 +98,7 @@ mod emit;
 mod guest;
 mod host;
 mod lower;
+mod syntax;
 mod term;
 mod wit;
 
@@ -113,6 +114,7 @@ use quote::quote;
 use syn::spanned::Spanned;
 
 use crate::lower::{Field, FieldKind, Lowerer, Target};
+use crate::syntax::byte_literal;
 
 /// Derive a contract's package from its module: the declaration routing
 /// reads, and the component that executes it.
@@ -702,18 +704,6 @@ fn guarded_identity(
     }
 }
 
-/// The bytes of a byte-string literal, when an expression is one.
-fn byte_literal(expr: &syn::Expr) -> Option<Vec<u8>> {
-    match expr {
-        syn::Expr::Lit(lit) => match &lit.lit {
-            syn::Lit::ByteStr(bytes) => Some(bytes.value()),
-            _ => None,
-        },
-        syn::Expr::Reference(reference) => byte_literal(&reference.expr),
-        _ => None,
-    }
-}
-
 /// Read a method's gate off its attributes.
 fn parse_gate(
     method: &syn::ImplItemFn,
@@ -793,7 +783,9 @@ fn parse_gate(
                 params
                     .iter()
                     .position(|(p, _)| named == p.as_str())
-                    .map(|index| u32::try_from(index).unwrap_or(0))
+                    .map(|index| {
+                        u32::try_from(index).expect("a parameter list is shorter than u32")
+                    })
                     .ok_or_else(|| syn::Error::new(named.span(), "not a parameter of this method"))
             };
             return Ok(Gate::Custodial {
@@ -1167,7 +1159,7 @@ fn lower_method(
                 declining,
             ))
         },
-        |why| Err(guest::refusal(&name, why)),
+        |(span, why)| Err(guest::refusal(&name, *span, why)),
     );
     let host = host::arm(&name, &lowered, &params, config_fields, declining);
     let client = client::Method {

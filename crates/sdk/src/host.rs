@@ -40,7 +40,7 @@ use hyperscale_vm_types::{AbortReason, Address, ISSUER_REP, math};
 
 use crate::handle::Handle;
 use crate::num::{Rounding, Wide};
-use crate::state::{Bucket, OrderKey};
+use crate::state::{Bucket, NfBucket, OrderKey};
 
 /// A kernel refusal, in flight through the unwind that carries it.
 ///
@@ -616,6 +616,15 @@ pub fn ids<'a>(args: &'a [GuestArg<'a>], at: usize) -> &'a [u64] {
 pub fn edge(args: &[GuestArg<'_>], at: usize) -> Bucket {
     match *arg(args, at) {
         GuestArg::Bucket(rep) => Bucket::at(rep),
+        _ => refuse(AbortReason::AbiViolation),
+    }
+}
+
+/// The non-fungible edge at `at`, as the instances it carries.
+#[must_use]
+pub fn nf_edge(args: &[GuestArg<'_>], at: usize) -> NfBucket {
+    match *arg(args, at) {
+        GuestArg::Bucket(rep) => NfBucket::at(rep),
         _ => refuse(AbortReason::AbiViolation),
     }
 }

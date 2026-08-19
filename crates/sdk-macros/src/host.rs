@@ -54,10 +54,13 @@ pub fn arm(
                     );
                 )
             }
-            Carries::Edge { name } => quote!(
-                #[allow(unused_mut)]
-                let mut #name = ::hyperscale_vm_sdk::host::edge(__args, #position);
-            ),
+            Carries::Edge { name, nf } => {
+                let reader = if nf { quote!(nf_edge) } else { quote!(edge) };
+                quote!(
+                    #[allow(unused_mut)]
+                    let mut #name = ::hyperscale_vm_sdk::host::#reader(__args, #position);
+                )
+            }
             Carries::Issuer => quote!(
                 let __issuer = ::hyperscale_vm_sdk::host::issuer(__args, #position);
             ),

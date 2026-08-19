@@ -46,6 +46,7 @@ use syn::spanned::Spanned;
 
 use crate::is_named;
 use crate::mode::HandleMode;
+use crate::syntax::byte_literal;
 use crate::term::{Op, Slot, Term};
 
 /// What kind of state a component field holds, and under which slot.
@@ -331,8 +332,9 @@ pub enum Code {
     /// nothing in its ABI carries it.
     Bucket(u32),
     /// Nothing the guest can produce: a resource address, a table lookup,
-    /// a handle in value position.
-    Absent(&'static str),
+    /// a handle in value position. Carries where the body named it, so a
+    /// refusal can point at the line.
+    Absent(Span, &'static str),
 }
 
 /// What one lowered method declares, and what its guest export runs.
@@ -378,11 +380,11 @@ pub struct Lowered {
     pub edges: Vec<TokenStream>,
     /// Whether the method yields a value at all.
     pub returns: bool,
-    /// Why the guest half cannot be emitted, if it cannot. The
-    /// declaration still stands: the publish gate judges artifacts, so a
-    /// package the SDK cannot execute is one whose guest is written the
-    /// long way.
-    pub refusal: Option<String>,
+    /// Why the guest half cannot be emitted, if it cannot, and where the
+    /// body wrote what it cannot. The declaration still stands: the
+    /// publish gate judges artifacts, so a package the SDK cannot
+    /// execute is one whose guest is written the long way.
+    pub refusal: Option<(Span, String)>,
 }
 
 /// What a subexpression evaluated to.
@@ -451,10 +453,10 @@ impl Eval {
     }
 
     /// An expression neither reading names anything.
-    const fn absent(why: &'static str) -> Self {
+    const fn absent(span: Span, why: &'static str) -> Self {
         Self {
             val: Val::Opaque,
-            code: Code::Absent(why),
+            code: Code::Absent(span, why),
         }
     }
 }
@@ -813,7 +815,10 @@ impl<'a> Lowerer<'a> {
                         // edge, which is the truth — so this refuses the
                         // guest half and not the package.
                         let code = self.value(eval.code);
-                        self.refuse("a method returning a value that is not a value edge");
+                        self.refuse(
+                            other.span(),
+                            "a method returning a value that is not a value edge",
+                        );
                         (vec![], vec![code])
                     }
                 }
@@ -837,9 +842,9 @@ impl<'a> Lowerer<'a> {
 
     /// Record why the guest half cannot be emitted, keeping the first
     /// reason: the rest are usually consequences of it.
-    fn refuse(&mut self, why: &str) {
+    fn refuse(&mut self, span: Span, why: &str) {
         if self.out.refusal.is_none() {
-            self.out.refusal = Some(why.to_owned());
+            self.out.refusal = Some((span, why.to_owned()));
         }
     }
 
@@ -1017,7 +1022,9 @@ impl<'a> Lowerer<'a> {
                     );
                     return None;
                 };
-                Some(Term::Config(u32::try_from(index).unwrap_or(0)))
+                Some(Term::Config(
+                    u32::try_from(index).expect("a configuration record is shorter than u32"),
+                ))
             }
             // `issued(b"..")` — the instance's own resource, by the mark
             // separating it from the instance's others.
@@ -1084,7 +1091,7 @@ impl<'a> Lowerer<'a> {
     fn lower_burn(&mut self, mark: &[u8], call: &syn::ExprCall) -> Eval {
         let Some(destroyed) = call.args.iter().nth(1).map(|a| self.expr(a)) else {
             self.error(call.args.span(), "a burn with nothing to destroy");
-            return Eval::absent("a burn with no value");
+            return Eval::absent(call.args.span(), "a burn with no value");
         };
         let held = Term::SelfResource(mark.to_vec());
         match Self::edge_resource(&destroyed) {
@@ -1220,11 +1227,14 @@ impl<'a> Lowerer<'a> {
             }
             Code::Term(term) => self.term_value(&term),
             Code::Bucket(param) => self.need(&Need::Amount(param)),
-            Code::Absent(why) => {
-                self.refuse(&format!(
-                    "this value is not one a guest can reach: {why}. The declaration \
+            Code::Absent(span, why) => {
+                self.refuse(
+                    span,
+                    &format!(
+                        "this value is not one a guest can reach: {why}. The declaration \
                      stands; the executing body has to be written the long way"
-                ));
+                    ),
+                );
                 quote!(::core::unimplemented!())
             }
         }
@@ -1286,7 +1296,10 @@ impl<'a> Lowerer<'a> {
             | Term::Field(..)
             | Term::Binding(_)
             | Term::NfBucket { .. } => {
+                // A term names no line of its own; the whole invocation
+                // is the nearest anchor.
                 self.refuse(
+                    Span::call_site(),
                     "this term is evaluated where the declaration is, and the guest \
                      has no way to ask for it",
                 );
@@ -1333,10 +1346,8 @@ impl<'a> Lowerer<'a> {
 
     /// The author's own name for the `index`-th declared parameter.
     fn param_ident(&self, index: u32) -> syn::Ident {
-        self.params.get(index as usize).map_or_else(
-            || value_ident(index as usize),
-            |(name, _)| syn::Ident::new(name, Span::call_site()),
-        )
+        crate::syntax::param_ident(index, self.params)
+            .unwrap_or_else(|| value_ident(index as usize))
     }
 
     /// Bind this method's issuance grant as an export parameter, and
@@ -1374,7 +1385,7 @@ impl<'a> Lowerer<'a> {
         match stmt {
             syn::Stmt::Local(local) => {
                 let eval = local.init.as_ref().map_or_else(
-                    || Eval::absent("an uninitialised binding"),
+                    || Eval::absent(local.span(), "an uninitialised binding"),
                     |init| self.expr(&init.expr),
                 );
                 let diverge = if let Some(init) = &local.init
@@ -1440,7 +1451,7 @@ impl<'a> Lowerer<'a> {
                     syn::Pat::Ident(ident) => self.bind(ident.ident.to_string(), slot),
                     other => self.bind_pattern(other),
                 }
-                if matches!(eval.code, Code::Absent(_)) {
+                if matches!(eval.code, Code::Absent(..)) {
                     // The declaration read something the guest has no
                     // value for. Whatever the body does with the name is
                     // either evaluated elsewhere — a configuration field
@@ -1606,6 +1617,18 @@ impl<'a> Lowerer<'a> {
                 then: Box::new(taken.clone()),
                 otherwise: Box::new(untaken.clone()),
             };
+            // What a selection chooses crosses the boundary as one
+            // value, so its arms must cross as one shape — an address
+            // one way and a scalar the other is a parameter no export
+            // can declare. Refused here, where the selection was
+            // written, rather than shaped by fallback at emission.
+            if crate::bind::derived_shape(&term, self.params, self.config_fields).is_none() {
+                self.error(
+                    branch.if_token.span,
+                    "the arms of this selection cross the call boundary as different \
+                     shapes, so no one export parameter can carry what it chooses",
+                );
+            }
             return Eval {
                 val: Val::Term(term.clone()),
                 code: Code::Term(term),
@@ -2009,7 +2032,7 @@ impl<'a> Lowerer<'a> {
                     "`#[blueprint]` does not model closures — an access inside one \
                      cannot be attributed to a declaration",
                 );
-                Eval::absent("a closure")
+                Eval::absent(closure.span(), "a closure")
             }
 
             // Anything not modelled above would be walked past silently,
@@ -2023,7 +2046,7 @@ impl<'a> Lowerer<'a> {
                      the accesses inside it — rewrite the body with the forms the \
                      macro admits (see the crate docs)",
                 );
-                Eval::absent("an unmodelled expression")
+                Eval::absent(other.span(), "an unmodelled expression")
             }
         }
     }
@@ -2095,7 +2118,7 @@ impl<'a> Lowerer<'a> {
             // naming one costs an export parameter only where the guest
             // reads it and nothing where the declaration does.
             let code = match &slot {
-                Slot::Config => Code::Absent("the pinned configuration record"),
+                Slot::Config => Code::Absent(path.span(), "the pinned configuration record"),
                 Slot::Deferred(term) => Code::Term(term.clone()),
                 _ => Code::Rust(quote!(#ident)),
             };
@@ -2105,7 +2128,7 @@ impl<'a> Lowerer<'a> {
             };
         }
         if let Some(index) = self.params.iter().position(|(p, _)| *p == name) {
-            let slot = u32::try_from(index).unwrap_or(0);
+            let slot = u32::try_from(index).expect("a parameter list is shorter than u32");
             let term = Term::Arg(slot);
             return Eval {
                 val: Val::Term(term.clone()),
@@ -2126,12 +2149,19 @@ impl<'a> Lowerer<'a> {
     }
 
     fn literal(lit: &syn::ExprLit) -> Eval {
-        let val = if let syn::Lit::Int(int) = &lit.lit
-            && let Ok(value) = int.base10_parse::<u64>()
-        {
-            Val::Term(Term::LitU64(value))
-        } else {
-            Val::Opaque
+        // The wide read is a fallback rather than the only parse, so a
+        // key within `u64` keeps the term its consumers match on; what
+        // the wide one buys is that an order-key literal is a literal
+        // rather than "not derivable".
+        let val = match &lit.lit {
+            syn::Lit::Int(int) => int.base10_parse::<u64>().map_or_else(
+                |_| {
+                    int.base10_parse::<u128>()
+                        .map_or(Val::Opaque, |value| Val::Term(Term::LitU128(value)))
+                },
+                |value| Val::Term(Term::LitU64(value)),
+            ),
+            _ => Val::Opaque,
         };
         Eval {
             val,
@@ -2150,7 +2180,7 @@ impl<'a> Lowerer<'a> {
                     name: name.to_string(),
                     material: Vec::new(),
                 },
-                code: Code::Absent("a state field in value position"),
+                code: Code::Absent(field.span(), "a state field in value position"),
             };
         }
         let base = self.expr(&field.base);
@@ -2204,9 +2234,10 @@ impl<'a> Lowerer<'a> {
                 field.span(),
                 "not a field of the component's configuration struct",
             );
-            return Eval::absent("an unknown configuration field");
+            return Eval::absent(field.span(), "an unknown configuration field");
         };
-        let term = Term::Config(u32::try_from(index).unwrap_or(0));
+        let term =
+            Term::Config(u32::try_from(index).expect("a configuration record is shorter than u32"));
         Eval {
             val: Val::Term(term.clone()),
             code: Code::Term(term),
@@ -2250,15 +2281,12 @@ impl<'a> Lowerer<'a> {
                     "the mark separating an instance's resources is part of every key \
                      derived from one, so it must be a byte-string literal",
                 );
-                return Eval::absent("a computed resource mark");
+                return Eval::absent(call.args.span(), "a computed resource mark");
             };
-            let amount = call
-                .args
-                .iter()
-                .nth(1)
-                .map_or(Code::Absent("an issue with no amount"), |a| {
-                    self.expr(a).code
-                });
+            let amount = call.args.iter().nth(1).map_or(
+                Code::Absent(call.args.span(), "an issue with no amount"),
+                |a| self.expr(a).code,
+            );
             let amount = self.value(amount);
             let grant = self.issuer(&mark);
             return Eval {
@@ -2274,7 +2302,7 @@ impl<'a> Lowerer<'a> {
                     "the mark separating an instance's resources is part of every key \
                      derived from one, so it must be a byte-string literal",
                 );
-                return Eval::absent("a computed resource mark");
+                return Eval::absent(call.args.span(), "a computed resource mark");
             };
             return self.lower_burn(&mark, call);
         }
@@ -2286,7 +2314,7 @@ impl<'a> Lowerer<'a> {
                     "the mark separating an instance's resources is part of every key \
                      derived from one, so it must be a byte-string literal",
                 );
-                return Eval::absent("a computed resource mark");
+                return Eval::absent(call.args.span(), "a computed resource mark");
             };
             let term = Term::SelfResource(mark);
             return Eval {
@@ -2334,7 +2362,7 @@ impl<'a> Lowerer<'a> {
             for arg in &call.args {
                 self.expr(arg);
             }
-            return Eval::absent("a call to another method of the component");
+            return Eval::absent(call.span(), "a call to another method of the component");
         }
         for arg in &call.args {
             if is_self(arg) {
@@ -2384,7 +2412,7 @@ impl<'a> Lowerer<'a> {
                         call.receiver.span(),
                         "not a declared field of the component's state struct",
                     );
-                    return Eval::absent("an undeclared state field");
+                    return Eval::absent(call.receiver.span(), "an undeclared state field");
                 };
                 // Narrowing to a sub-collection is not an access: it names
                 // which collection under the slot, and every accessor
@@ -2399,13 +2427,13 @@ impl<'a> Lowerer<'a> {
                              state, so a key computed from a substate value cannot be \
                              declared — pass it as a parameter instead",
                         );
-                        return Eval::absent("an underivable collection key");
+                        return Eval::absent(call.args.span(), "an underivable collection key");
                     };
                     let mut material = material;
                     material.push(key.clone());
                     return Eval {
                         val: Val::Field { name, material },
-                        code: Code::Absent("a collection in value position"),
+                        code: Code::Absent(call.span(), "a collection in value position"),
                     };
                 }
                 self.on_field(&field, &material, &method, &evals, call)
@@ -2553,7 +2581,7 @@ impl<'a> Lowerer<'a> {
                                 "the instances a take names are the edge it produces, so \
                                  they must be derivable from the method's arguments",
                             );
-                            return Eval::absent("an underivable instance set");
+                            return Eval::absent(call.args.span(), "an underivable instance set");
                         };
                         Term::NfBucket {
                             resource: Box::new(resource),
@@ -2604,7 +2632,7 @@ impl<'a> Lowerer<'a> {
                 },
                 "lookup" | "get" | "contains" if matches!(args.first(), Some(Val::Term(_))) => {
                     let Some(Val::Term(key)) = args.first() else {
-                        return Eval::absent("a lookup with no key");
+                        return Eval::absent(call.span(), "a lookup with no key");
                     };
                     let map = Box::new(term);
                     let key = Box::new(key.clone());
@@ -2666,13 +2694,13 @@ impl<'a> Lowerer<'a> {
     /// lowering.
     fn accessor(&mut self, name: &str, call: &syn::ExprMethodCall) -> Eval {
         let Some(field) = self.accessors.get(name).cloned() else {
-            return Eval::absent("an unknown protocol cell");
+            return Eval::absent(call.span(), "an unknown protocol cell");
         };
         let evals: Vec<Eval> = call.args.iter().map(|arg| self.expr(arg)).collect();
         let arity = usize::from(!matches!(field.kind, FieldKind::Cell | FieldKind::Locked));
         if evals.len() != arity {
             self.error(call.span(), &format!("`{name}` takes {arity} argument(s)"));
-            return Eval::absent("a protocol cell named with the wrong arity");
+            return Eval::absent(call.span(), "a protocol cell named with the wrong arity");
         }
         match field.kind {
             // A leaf of the family, at the key the accessor was handed.
@@ -2686,14 +2714,14 @@ impl<'a> Lowerer<'a> {
                         "this collection key is not derivable from the method's arguments \
                          or the component's configuration",
                     );
-                    return Eval::absent("an underivable collection key");
+                    return Eval::absent(call.args.span(), "an underivable collection key");
                 };
                 Eval {
                     val: Val::Field {
                         name: name.to_owned(),
                         material: vec![key],
                     },
-                    code: Code::Absent("a collection in value position"),
+                    code: Code::Absent(call.span(), "a collection in value position"),
                 }
             }
             // The cell itself, which the body then reads or writes.
@@ -2702,9 +2730,9 @@ impl<'a> Lowerer<'a> {
                     name: name.to_owned(),
                     material: Vec::new(),
                 },
-                code: Code::Absent("a protocol cell in value position"),
+                code: Code::Absent(call.span(), "a protocol cell in value position"),
             },
-            FieldKind::Unordered => Eval::absent("an unordered protocol cell"),
+            FieldKind::Unordered => Eval::absent(call.span(), "an unordered protocol cell"),
         }
     }
 
@@ -2738,7 +2766,7 @@ impl<'a> Lowerer<'a> {
                     // The pin is a declaration; the values it covers reach
                     // the guest as evaluated slots, so the record itself
                     // is never decoded.
-                    code: Code::Absent("the pinned configuration record"),
+                    code: Code::Absent(call.span(), "the pinned configuration record"),
                 }
             }
 
@@ -2762,7 +2790,7 @@ impl<'a> Lowerer<'a> {
                      execution and never reads state, so a key computed from a substate \
                      value cannot be declared — pass it as a parameter instead",
                     );
-                    Eval::absent("an underivable key")
+                    Eval::absent(call.args.span(), "an underivable key")
                 }
             }
 
@@ -2786,7 +2814,7 @@ impl<'a> Lowerer<'a> {
                         "this order key is not derivable from the method's arguments or the \
                      component's configuration",
                     );
-                    Eval::absent("an underivable order key")
+                    Eval::absent(call.args.span(), "an underivable order key")
                 }
             }
 
@@ -2817,7 +2845,7 @@ impl<'a> Lowerer<'a> {
                      execution and never reads state, so a key computed from a substate \
                      value cannot be declared — pass it as a parameter instead",
                     );
-                    Eval::absent("an underivable key")
+                    Eval::absent(call.args.span(), "an underivable key")
                 }
             }
 
@@ -2843,7 +2871,7 @@ impl<'a> Lowerer<'a> {
                      cap must be a literal — the cap bounds the work execution may do, so \
                      it is declaration, not data",
                     );
-                    Eval::absent("an underivable sweep")
+                    Eval::absent(call.args.span(), "an underivable sweep")
                 }
             }
 
@@ -2874,7 +2902,7 @@ impl<'a> Lowerer<'a> {
                      cap must be a literal — the cap bounds the work execution may do, so \
                      it is declaration, not data",
                     );
-                    Eval::absent("an underivable range")
+                    Eval::absent(call.args.span(), "an underivable range")
                 }
             }
 
@@ -2899,7 +2927,7 @@ impl<'a> Lowerer<'a> {
                         "an interval's entry cap must be a literal — the cap bounds the \
                      work execution may do, so it is declaration, not data",
                     );
-                    Eval::absent("an underivable interval")
+                    Eval::absent(call.args.span(), "an underivable interval")
                 }
             }
 
@@ -2949,10 +2977,10 @@ impl<'a> Lowerer<'a> {
                     let name = &call.method;
                     return Eval::plain(quote!(#receiver.#name(#(#rewritten),*)));
                 }
-                Eval::absent("an accessor the vocabulary does not name")
+                Eval::absent(call.span(), "an accessor the vocabulary does not name")
             }
 
-            _ => Eval::absent("an accessor this field shape does not have"),
+            _ => Eval::absent(call.span(), "an accessor this field shape does not have"),
         }
     }
 
@@ -3034,6 +3062,7 @@ impl<'a> Lowerer<'a> {
         // occupy a fixed export parameter, so a body that declares a
         // `for-each` declares and does not execute.
         self.refuse(
+            loop_.for_token.span,
             "a `for-each` clause expands over instance configuration, so its handles \
              occupy no fixed export parameter",
         );
@@ -3060,18 +3089,6 @@ impl<'a> Lowerer<'a> {
             body,
         });
         quote!(for #pat in #list { #(#statements)* })
-    }
-}
-
-/// The bytes of a byte-string literal, when an expression is one.
-fn byte_literal(expr: &syn::Expr) -> Option<Vec<u8>> {
-    match expr {
-        syn::Expr::Lit(lit) => match &lit.lit {
-            syn::Lit::ByteStr(bytes) => Some(bytes.value()),
-            _ => None,
-        },
-        syn::Expr::Reference(reference) => byte_literal(&reference.expr),
-        _ => None,
     }
 }
 

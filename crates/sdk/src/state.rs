@@ -535,11 +535,64 @@ impl Bucket {
 /// A non-fungible value edge: the instances it moves rather than an
 /// amount.
 ///
-/// The same object, because a bucket is one thing — what separates the
-/// two kinds is the cell they cross as, which is the declaration's
-/// answer. Naming this in a signature is how a method says which kind it
-/// consumes.
-pub type NfBucket = Bucket;
+/// A type of its own rather than an alias, so a body that splits one by
+/// amount or merges one into a fungible edge is refused at the author's
+/// build — the kernel would have refused the same call at run time as
+/// the wrong edge kind, but a signature that cannot express the mistake
+/// is cheaper than a receipt reporting it. What it carries instead of
+/// the amount surface is the instance-oriented one: its resource, and a
+/// merge with its own kind.
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq, Eq))]
+pub struct NfBucket(Bucket);
+
+impl NfBucket {
+    /// The edge an export was handed, under the name its author gave it.
+    ///
+    /// Called by generated code, never by an author, on the terms
+    /// [`Bucket::held`] states.
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub const fn held(handle: crate::guest::kernel::state::Bucket) -> Self {
+        Self(Bucket::held(handle))
+    }
+
+    /// The handle the kernel holds these instances behind.
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub fn into_handle(self) -> crate::guest::kernel::state::Bucket {
+        self.0.into_handle()
+    }
+
+    /// The edge the kernel holds at `rep`, on the terms [`Bucket::at`]
+    /// states.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[must_use]
+    pub const fn at(rep: u32) -> Self {
+        Self(Bucket::at(rep))
+    }
+
+    /// The table position the kernel holds these instances at.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[must_use]
+    pub const fn rep(&self) -> u32 {
+        self.0.rep()
+    }
+
+    /// The resource this edge carries, as the declaration names it.
+    ///
+    /// Read by the authoring half and never by the executing one, on the
+    /// terms [`Bucket::resource`] states.
+    #[must_use]
+    pub fn resource(&self) -> Address {
+        self.0.resource()
+    }
+
+    /// Merge `other` in, consuming it.
+    #[allow(clippy::needless_pass_by_value)] // a merge consumes what it takes
+    pub fn put(&mut self, other: Self) {
+        self.0.put(other.0);
+    }
+}
 
 /// Mint `amount` of the resource this instance derives from `mark`.
 ///
@@ -1040,7 +1093,7 @@ impl Interval<()> {
     /// presence-only interval alone, because it is the only one with
     /// nothing to say.
     #[inline(always)]
-    pub fn file(&mut self, funds: Bucket) {
+    pub fn file(&mut self, funds: NfBucket) {
         self.put(funds, &[]);
     }
 }
@@ -1198,7 +1251,7 @@ impl<T: Cellular> Interval<T> {
     /// eligible for the total mark.
     #[inline(always)]
     #[allow(clippy::needless_pass_by_value)] // the filing consumes the edge; off host nothing runs
-    pub fn put(&mut self, funds: Bucket, value: &[u8]) {
+    pub fn put(&mut self, funds: NfBucket, value: &[u8]) {
         let _ = (&funds, value);
         #[cfg(target_arch = "wasm32")]
         return crate::guest::entry_put(self.handle, funds.into_handle(), value);
@@ -1206,7 +1259,7 @@ impl<T: Cellular> Interval<T> {
         return host::entry_put(self.handle, funds.rep(), value);
     }
 
-    /// Take the named instances out, as the bucket they become.
+    /// Take the named instances out, as the edge they become.
     ///
     /// The removal and the edge are one operation, exactly as a debit and
     /// its bucket are, so a body cannot hand on instances it left where
@@ -1214,12 +1267,12 @@ impl<T: Cellular> Interval<T> {
     #[must_use]
     #[allow(clippy::needless_pass_by_value)] // the take consumes the ids it names
     #[inline(always)]
-    pub fn take(&mut self, ids: Ids) -> Bucket {
+    pub fn take(&mut self, ids: Ids) -> NfBucket {
         let _ = &ids;
         #[cfg(target_arch = "wasm32")]
-        return Bucket::held(crate::guest::entry_take(self.handle, ids.named()));
+        return NfBucket::held(crate::guest::entry_take(self.handle, ids.named()));
         #[cfg(not(target_arch = "wasm32"))]
-        return Bucket::at(host::entry_take(self.handle, ids.named()));
+        return NfBucket::at(host::entry_take(self.handle, ids.named()));
     }
 }
 

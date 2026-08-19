@@ -21,6 +21,9 @@ pub enum Carries {
     Edge {
         /// The name the method's signature gave the parameter.
         name: syn::Ident,
+        /// Whether the parameter is declared `NfBucket`, which is the
+        /// type the prologue rebuilds it as.
+        nf: bool,
     },
     /// A value the body reads, in the shape its parameter names.
     Value,
@@ -54,6 +57,24 @@ fn value_shape(
     params: &[(String, syn::Type)],
     config: &[(String, syn::Type)],
 ) -> Shape {
+    match need {
+        // A value edge crosses as the handle the kernel holds it behind.
+        Need::Amount(_) => Shape::Bucket,
+        // A selection whose arms disagree was refused where it was
+        // written, so nothing derivable reaches here without a shape.
+        Need::Derived(term) => derived_shape(term, params, config).unwrap_or(Shape::Scalar),
+    }
+}
+
+/// The shape a derived term crosses the boundary as, or `None` where a
+/// selection's arms cross as different shapes — no one export parameter
+/// can carry what such a term chooses, and the lowering refuses it on
+/// the line that wrote the selection.
+pub fn derived_shape(
+    term: &Term,
+    params: &[(String, syn::Type)],
+    config: &[(String, syn::Type)],
+) -> Option<Shape> {
     let scalar = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.is_ident("u64"));
     let address = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Address"));
     let id_set = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Ids"));
@@ -68,34 +89,89 @@ fn value_shape(
             Shape::Cell(Box::new(ty.clone()))
         }
     };
-    match need {
-        // A value edge crosses as the handle the kernel holds it behind.
-        Need::Amount(_) => Shape::Bucket,
+    Some(match term {
         // An order key crosses at the kernel's own 128-bit cell width,
         // whatever the logical key it was derived from.
-        Need::Derived(Term::OrderKey { .. }) => Shape::Cell(Box::new(syn::parse_quote!(
+        Term::OrderKey { .. } => Shape::Cell(Box::new(syn::parse_quote!(
             ::hyperscale_vm_sdk::state::OrderKey
         ))),
         // A resource is an address however it was derived.
-        Need::Derived(Term::SelfResource(_) | Term::ResourceOf(_)) => Shape::Address,
-        Need::Derived(Term::Arg(index)) => params
+        Term::SelfResource(_) | Term::ResourceOf(_) => Shape::Address,
+        Term::Arg(index) => params
             .get(*index as usize)
             .map_or(Shape::Scalar, |(_, ty)| named(ty)),
-        Need::Derived(Term::Config(index)) => config
+        Term::Config(index) => config
             .get(*index as usize)
             .map_or(Shape::Scalar, |(_, ty)| named(ty)),
+        // A lookup crosses as the table's value, whose type is written
+        // on the configured field holding the table.
+        Term::Lookup { map, .. } => match &**map {
+            Term::Config(index) => config
+                .get(*index as usize)
+                .and_then(|(_, ty)| table_value(ty))
+                .map_or(Shape::Scalar, |value| named(&value)),
+            _ => Shape::Scalar,
+        },
+        // A selection crosses as its arms do, so it has a shape only
+        // where they share one.
+        Term::If {
+            then, otherwise, ..
+        } => {
+            let taken = derived_shape(then, params, config)?;
+            let untaken = derived_shape(otherwise, params, config)?;
+            if same_shape(&taken, &untaken) {
+                taken
+            } else {
+                return None;
+            }
+        }
         // A fresh id is a `u64`, and so is anything else the evaluator
         // reduces to a scalar.
-        Need::Derived(_) => Shape::Scalar,
+        _ => Shape::Scalar,
+    })
+}
+
+/// The value type of a configured `Table<K, V>`, where `ty` is one.
+fn table_value(ty: &syn::Type) -> Option<syn::Type> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != "Table" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    match args.args.iter().nth(1)? {
+        syn::GenericArgument::Type(value) => Some(value.clone()),
+        _ => None,
     }
 }
 
-/// The author's own name for the `index`-th declared parameter.
+/// Whether two shapes cross the boundary identically. Cell types compare
+/// by their tokens, which is what the emitted prologue is made of.
+fn same_shape(a: &Shape, b: &Shape) -> bool {
+    match (a, b) {
+        (Shape::Scalar, Shape::Scalar)
+        | (Shape::Address, Shape::Address)
+        | (Shape::Ids, Shape::Ids)
+        | (Shape::Flag, Shape::Flag)
+        | (Shape::Bucket, Shape::Bucket)
+        | (Shape::Issuer, Shape::Issuer) => true,
+        (Shape::Cell(left), Shape::Cell(right)) => {
+            quote::quote!(#left).to_string() == quote::quote!(#right).to_string()
+        }
+        (Shape::Handle(left), Shape::Handle(right)) => left == right,
+        _ => false,
+    }
+}
+
+/// The author's own name for the `index`-th declared parameter, with a
+/// stand-in for an edge past the list.
 fn param_ident(index: u32, params: &[(String, syn::Type)]) -> syn::Ident {
-    params.get(index as usize).map_or_else(
-        || syn::Ident::new("__edge", proc_macro2::Span::call_site()),
-        |(name, _)| syn::Ident::new(name, proc_macro2::Span::call_site()),
-    )
+    crate::syntax::param_ident(index, params)
+        .unwrap_or_else(|| syn::Ident::new("__edge", proc_macro2::Span::call_site()))
 }
 
 /// Everything one export takes, in the order it takes it.
@@ -145,6 +221,9 @@ pub fn bindings(
         let carries = match need {
             Need::Amount(param) => Carries::Edge {
                 name: param_ident(*param, params),
+                nf: params
+                    .get(*param as usize)
+                    .is_some_and(|(_, ty)| crate::is_named(ty, "NfBucket")),
             },
             Need::Derived(_) => Carries::Value,
         };

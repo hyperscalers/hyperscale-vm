@@ -12,7 +12,7 @@
 //! wrote passes through unchanged, which is what keeps the grammar the
 //! cost of A3 and nothing more.
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
 
 use crate::bind::{Binding, Carries, bindings};
@@ -29,7 +29,7 @@ pub struct Method {
 
 /// The Rust name wit-bindgen gives a kebab-cased export.
 fn rust_name(published: &str) -> syn::Ident {
-    syn::Ident::new(&published.replace('-', "_"), proc_macro2::Span::call_site())
+    syn::Ident::new(&published.replace('-', "_"), Span::call_site())
 }
 
 /// One method's export and its executing body.
@@ -80,15 +80,16 @@ pub fn method(
                     let #ident = ::hyperscale_vm_sdk::guest::Handle::#variant(#ident.handle());
                 ));
             }
-            // A value edge is rebuilt under the name the author gave it,
-            // so the body reads it as written. Mutable because a body may
-            // split it, and whether one does is not worth a second pass
-            // over the text to find out.
-            Carries::Edge { name } => {
+            // A value edge is rebuilt under the name and the kind the
+            // author gave it, so the body reads it as written. Mutable
+            // because a body may split it, and whether one does is not
+            // worth a second pass over the text to find out.
+            Carries::Edge { name, nf } => {
                 signature.push(quote!(#ident: KernelBucket));
+                let kind = if nf { quote!(NfBucket) } else { quote!(Bucket) };
                 prologue.push(quote!(
                     #[allow(unused_mut)]
-                    let mut #name = ::hyperscale_vm_sdk::state::Bucket::held(#ident);
+                    let mut #name = ::hyperscale_vm_sdk::state::#kind::held(#ident);
                 ));
             }
             Carries::Issuer => {
@@ -240,15 +241,17 @@ pub fn component(world: &str, document: &str, methods: &[&Method]) -> TokenStrea
 /// A compile error rather than a silently absent export, and one scoped to
 /// the guest build: the declaration the same body yields is sound, and a
 /// package whose executing half is written the long way publishes exactly
-/// as it does today.
-pub fn refusal(method: &str, why: &str) -> TokenStream {
+/// as it does today. The error lands on the line that wrote what the
+/// emission cannot execute, not on the macro invocation.
+pub fn refusal(method: &str, span: Span, why: &str) -> TokenStream {
     let message = format!(
         "`#[blueprint]` cannot emit a guest body for `{method}`: {why}. Write this \
          package's component by hand — the publish gate judges artifacts, not \
          authorship"
     );
+    let error = syn::Error::new(span, message).to_compile_error();
     quote!(
         #[cfg(target_arch = "wasm32")]
-        ::core::compile_error!(#message);
+        const _: () = { #error };
     )
 }
