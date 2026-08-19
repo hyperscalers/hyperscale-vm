@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_types::{Address, Effect, EffectConflict, EffectSet};
+use hyperscale_vm_types::{Address, Effect, EffectSet};
 
 use crate::admission::Admitted;
 use crate::dsl::{Declaration, DeclaredAccess};
@@ -140,17 +140,6 @@ impl Routing {
 /// The bound on manifest nodes admission or routing will address.
 pub const MAX_MANIFEST_NODES: usize = 4096;
 
-/// Why routing rejected a transaction. Deterministic: every node reaches
-/// the identical verdict.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum RouteError {
-    /// A conflict met while folding declared effects into a shard's set —
-    /// refused where the set is built rather than at the shard that
-    /// would have to judge it.
-    #[error(transparent)]
-    Conflict(#[from] EffectConflict),
-}
-
 /// Route an admitted transaction: project its evaluated declaration
 /// onto the shard topology.
 ///
@@ -160,13 +149,13 @@ pub enum RouteError {
 /// is the one thing that depends on where prefixes live. Re-routing
 /// under a new epoch topology is this projection again and nothing more.
 ///
-/// # Errors
+/// # Panics
 ///
-/// [`RouteError::Conflict`] on a per-shard fold conflict, which a
-/// declaration the union already folded cannot produce — kept as a
-/// refusal rather than a panic while the kernel effects a tree appends
-/// arrive after this projection.
-pub fn route(admitted: &Admitted, shards: &dyn ShardResolver) -> Result<Routing, RouteError> {
+/// Never: a target's every access lands on the one shard its owner
+/// resolves to, so each shard's fold reaches exactly the sums and meets
+/// the union declaration already folded without conflict.
+#[must_use]
+pub fn route(admitted: &Admitted, shards: &dyn ShardResolver) -> Routing {
     let declaration = admitted.declaration();
     let mut per_shard: BTreeMap<ShardId, EffectSet> = BTreeMap::new();
     for access in &declaration.ordered {
@@ -174,14 +163,14 @@ pub fn route(admitted: &Admitted, shards: &dyn ShardResolver) -> Result<Routing,
             .entry(shards.shard_of(access.effect.target.owner()))
             .or_default()
             .insert(access.effect)
-            .map_err(RouteError::from)?;
+            .expect("the union declaration folded these effects");
     }
-    Ok(Routing {
+    Routing {
         per_shard,
         frames: admitted.frames().to_vec(),
         calls: admitted.calls().to_vec(),
         declaration: declaration.clone(),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -244,7 +233,7 @@ mod tests {
         instances: &InstanceRegistry,
     ) -> Routing {
         let admitted = admit(graph, alice(), cache, instances, &TestHasher).expect("admits");
-        route(&admitted, &resolver()).expect("routes")
+        route(&admitted, &resolver())
     }
 
     fn point(owner: impl Into<Address>, slot: SlotId) -> EffectTarget {
@@ -414,7 +403,7 @@ mod tests {
                     .collect(),
             };
             admit(&graph, alice(), &cache, &instances, &TestHasher)
-                .map(|admitted| route(&admitted, &resolver()).expect("routes"))
+                .map(|admitted| route(&admitted, &resolver()))
         };
 
         // The size at which the old budget started refusing admissible

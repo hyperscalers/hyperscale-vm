@@ -276,7 +276,7 @@ fn batch_entry(
     let identity = tree.hash(&TestHasher);
     let admitted =
         admit_tree(tree, composer, identity, cache, instances, &TestHasher).context("admission")?;
-    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 }).context("routing")?;
+    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
     ensure!(
         routing.per_shard.len() == 1,
         "the null resolver routes to one shard"

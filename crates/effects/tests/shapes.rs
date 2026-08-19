@@ -63,7 +63,7 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
         ],
     };
     let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver()).unwrap();
+    let routing = route(&admitted, &resolver());
 
     let expected = BTreeMap::from([
         (
@@ -131,7 +131,7 @@ fn swap_writes_both_reserves_and_reads_the_locked_config() {
         ],
     };
     let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver()).unwrap();
+    let routing = route(&admitted, &resolver());
 
     let expected = BTreeMap::from([
         (
@@ -205,7 +205,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
         ],
     };
     let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver()).unwrap();
+    let routing = route(&admitted, &resolver());
 
     let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0, 0);
     let expected = BTreeMap::from([
@@ -290,7 +290,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
         ],
     };
     let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver()).unwrap();
+    let routing = route(&admitted, &resolver());
 
     let expected = BTreeMap::from([
         (
@@ -384,7 +384,7 @@ fn a_declared_superset_evaluates_without_error() {
         ],
     };
     let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver()).unwrap();
+    let routing = route(&admitted, &resolver());
     let set = &routing.per_shard[&shard_of(alice)];
     // The exact effect and the never-touched superset both routed; the
     // remaining two are the deposit that consumes the withdrawal.
@@ -454,9 +454,9 @@ fn a_presented_record_is_the_whole_of_instantiation() {
     // routing a pre-registered world derives.
     let certified = bare.with_instances(&[common::pool_meta()], &TestHasher);
     let admitted = admit(&graph, ALICE, &cache, &certified, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver()).expect("routes");
+    let routing = route(&admitted, &resolver());
 
     let reference = admit(&graph, ALICE, &cache, &registered, &TestHasher).expect("admits");
-    let reference = route(&reference, &resolver()).expect("routes");
+    let reference = route(&reference, &resolver());
     assert_eq!(routing.per_shard, reference.per_shard);
 }

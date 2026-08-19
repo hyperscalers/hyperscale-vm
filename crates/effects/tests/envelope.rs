@@ -180,7 +180,7 @@ fn a_composed_tree_flattens_deterministically() {
 fn routing_carries_the_nullifier_creation_write() {
     let tree = composed_tree(100);
     let admitted = admit_composed(&tree).unwrap();
-    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 8 }).unwrap();
+    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 8 });
     let record = admitted.subintents[0];
     // Asked of the resolver rather than restated: the claim is that the
     // write lands at the signer's shard and nowhere else, not what those

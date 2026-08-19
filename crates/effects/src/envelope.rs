@@ -37,7 +37,7 @@ use crate::hash::{Hash32, Hasher};
 use crate::instance::{InstanceMeta, InstanceRegistry};
 use crate::manifest::ManifestHash;
 use crate::metadata::MetadataCache;
-use crate::route::{MAX_MANIFEST_NODES, RouteError, Routing, ShardResolver, route};
+use crate::route::{MAX_MANIFEST_NODES, Routing, ShardResolver, route};
 use crate::types::{SlotId, child_key};
 
 /// The kernel-reserved role of subintent nullifier substates under a
@@ -322,17 +322,13 @@ pub fn admit_tree(
 /// creation write per subintent at its signer's shard — the same union
 /// effect set admission, scheduling, and execution all derive.
 ///
-/// # Errors
-///
-/// Any [`RouteError`]; verdicts are deterministic and identical on every
-/// node.
-///
 /// # Panics
 ///
 /// Never: the only fallible insert folds reserve amounts, and a nullifier
 /// is declared as an exclusive write.
-pub fn route_tree(tree: &AdmittedTree, shards: &dyn ShardResolver) -> Result<Routing, RouteError> {
-    let mut routing = route(&tree.admitted, shards)?;
+#[must_use]
+pub fn route_tree(tree: &AdmittedTree, shards: &dyn ShardResolver) -> Routing {
+    let mut routing = route(&tree.admitted, shards);
     for record in &tree.subintents {
         let shard = shards.shard_of(record.signer.address());
         let effect = Effect {
@@ -344,5 +340,5 @@ pub fn route_tree(tree: &AdmittedTree, shards: &dyn ShardResolver) -> Result<Rou
         // No signature declared this, so it belongs to no frame.
         routing.push_kernel_effect(shard, effect);
     }
-    Ok(routing)
+    routing
 }

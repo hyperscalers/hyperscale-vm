@@ -119,9 +119,7 @@ fn a_package_cannot_declare_an_effect_on_a_cell_it_does_not_own() {
     let Ok(admitted) = admit(&graph, ATTACKER, &cache, &instances, &TestHasher) else {
         return; // Refused before routing: the gap is closed at admission.
     };
-    let Ok(routing) = route(&admitted, &PrefixShardResolver { bits: 0 }) else {
-        return; // Refused at routing: the gap is closed there.
-    };
+    let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
     let declaration = routing.declaration().clone();
 
     // The victim's balance, committed before the attacker's transaction
@@ -171,9 +169,7 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
     let Ok(admitted) = admit(&graph, ATTACKER, &cache, &instances, &TestHasher) else {
         return;
     };
-    let Ok(routing) = route(&admitted, &PrefixShardResolver { bits: 0 }) else {
-        return;
-    };
+    let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
     let declaration = routing.declaration().clone();
 
     let mut base = MemoryStore::new();

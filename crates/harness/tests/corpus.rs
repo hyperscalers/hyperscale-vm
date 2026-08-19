@@ -498,7 +498,7 @@ fn execute_manifest(
     } = under;
     let (cache, instances) = world;
     let admitted = admit(graph, signer, cache, instances, &TestHasher).context("admission")?;
-    let routing = route(&admitted, &PrefixShardResolver { bits: 0 }).context("routing")?;
+    let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
     // The null resolver puts every effect on one shard, so the whole
     // declaration is the sole entry — taken as that rather than by naming
     // an id the resolver is free to choose.
@@ -591,8 +591,8 @@ fn shard_of(address: impl Into<Address>) -> ShardId {
 fn sharded_routing(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> Routing {
     let (cache, instances) = world;
     let admitted = admit(graph, composer(graph), cache, instances, &TestHasher).expect("admits");
-    let first = route(&admitted, &PrefixShardResolver { bits: 8 }).expect("routes");
-    let second = route(&admitted, &PrefixShardResolver { bits: 8 }).expect("routes");
+    let first = route(&admitted, &PrefixShardResolver { bits: 8 });
+    let second = route(&admitted, &PrefixShardResolver { bits: 8 });
     assert_eq!(first, second, "route is a function over the corpus");
     first
 }

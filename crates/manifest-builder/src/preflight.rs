@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, AuthRole, AuthorityGate, EnvelopeTree, Hasher, InstanceRegistry,
-    Manifest, ManifestGraph, ManifestHash, MetadataCache, Presented, RouteError, Routing, ShardId,
+    Manifest, ManifestGraph, ManifestHash, MetadataCache, Presented, Routing, ShardId,
     ShardResolver, StoredRule, SubintentRecord, admit, admit_tree, footprint, route, route_tree,
 };
 use hyperscale_vm_types::{
@@ -37,9 +37,6 @@ pub enum PreflightError {
     /// The signed form is one admission would refuse.
     #[error(transparent)]
     Admission(#[from] AdmissionError),
-    /// The admitted form is one routing would refuse.
-    #[error(transparent)]
-    Route(#[from] RouteError),
     /// A network word no address can be named under.
     #[error(transparent)]
     Network(#[from] TextError),
@@ -231,7 +228,7 @@ pub fn preflight(
     network: &str,
 ) -> Result<Report, PreflightError> {
     let admitted = admit(graph, composer, cache, instances, hasher)?;
-    let routing = route(&admitted, shards)?;
+    let routing = route(&admitted, shards);
     report(admitted, routing, Vec::new(), network)
 }
 
@@ -252,7 +249,7 @@ pub fn preflight_tree(
 ) -> Result<Report, PreflightError> {
     let identity = tree.hash(hasher);
     let admitted = admit_tree(tree, composer, identity, cache, instances, hasher)?;
-    let routing = route_tree(&admitted, shards)?;
+    let routing = route_tree(&admitted, shards);
     report(admitted.admitted, routing, admitted.subintents, network)
 }
 

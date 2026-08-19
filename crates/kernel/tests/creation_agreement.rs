@@ -102,7 +102,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     };
     let admitted = admit(&graph, COMPOSER, &cache, &instances, &TestHasher).expect("admits");
     let identity = admitted.identity();
-    let routing = route(&admitted, &PrefixShardResolver { bits: 8 }).unwrap();
+    let routing = route(&admitted, &PrefixShardResolver { bits: 8 });
     // Asked of the resolver rather than restated: the claim is about the
     // creator's shard holding the key, not about what it is called.
     let declared = &routing.per_shard[&PrefixShardResolver { bits: 8 }.shard_of(creator.address())];
