@@ -767,15 +767,22 @@ fn run_group<R: GuestRunner>(
                 // receipt wherever the transaction runs — the outbound
                 // effect record, filtered at apply like every other
                 // operation — and reaches the store only at the signer's
-                // shard, which is where the spent check reads it.
-                for key in &entry.nullifiers {
-                    if locality.is_local(key.owner) {
-                        threaded.write(*key, entry.tx.0.0.to_vec())?;
+                // shard, which is where the spent check reads it. Only a
+                // receipt that stayed committed spends: a finish that
+                // flipped the outcome — value dropped, a movement past
+                // its floor — committed nothing, and spending a subintent
+                // for a transaction that never happened would burn it for
+                // every future retry.
+                if matches!(receipt.outcome, Outcome::Completed { .. }) {
+                    for key in &entry.nullifiers {
+                        if locality.is_local(key.owner) {
+                            threaded.write(*key, entry.tx.0.0.to_vec())?;
+                        }
+                        receipt
+                            .delta
+                            .cells
+                            .insert(*key, Some(entry.tx.0.0.to_vec()));
                     }
-                    receipt
-                        .delta
-                        .cells
-                        .insert(*key, Some(entry.tx.0.0.to_vec()));
                 }
                 store = threaded;
                 receipts.push((entry.tx, receipt));
