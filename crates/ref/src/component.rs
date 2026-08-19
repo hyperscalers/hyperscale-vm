@@ -341,6 +341,8 @@ fn flat_rounding(value: Value) -> Result<Rounding, ExecError> {
 /// A component value type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CTy {
+    /// `bool`, which only a clause's guard verdict crosses as.
+    Bool,
     U32,
     U64,
     List8,
@@ -597,6 +599,7 @@ impl RefComponent {
 
     fn value_type(&self, vt: ComponentValType) -> Result<CTy, DecodeError> {
         match vt {
+            ComponentValType::Primitive(PrimitiveValType::Bool) => Ok(CTy::Bool),
             ComponentValType::Primitive(PrimitiveValType::U32 | PrimitiveValType::U8) => {
                 Ok(CTy::U32)
             }
@@ -1206,6 +1209,9 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
         let mut flat = Vec::new();
         for (arg, want) in args.iter().zip(&ctype.params) {
             match (arg, want) {
+                // The canonical ABI's despecialization: a verdict crosses
+                // the core boundary as an `i32` holding zero or one.
+                (CVal::Bool(v), CTy::Bool) => flat.push(Value::I32(i32::from(*v))),
                 (CVal::U32(v), CTy::U32) => flat.push(Value::I32(v.cast_signed())),
                 (CVal::U64(v), CTy::U64) => flat.push(Value::I64(v.cast_signed())),
                 (CVal::Borrow(rep, kind), CTy::Borrow) => {

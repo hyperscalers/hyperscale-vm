@@ -114,6 +114,10 @@ pub fn validate_component(bytes: &[u8]) -> Result<(), ProfileError> {
 enum ValueSlot {
     /// `u8`, `u32` or `u64`.
     Scalar,
+    /// `bool`: the verdict of a declaration clause, which is the one
+    /// thing that crosses as a flag. A parameter shape only — no method
+    /// returns one, so a result position refuses it.
+    Flag,
     /// A record whose every field is a scalar.
     ///
     /// Admitted as a class rather than by naming the kernel's own types,
@@ -154,6 +158,7 @@ fn resolve(defined: &[Option<ValueSlot>], vt: ComponentValType) -> Option<ValueS
         ComponentValType::Primitive(
             PrimitiveValType::U8 | PrimitiveValType::U32 | PrimitiveValType::U64,
         ) => Some(ValueSlot::Scalar),
+        ComponentValType::Primitive(PrimitiveValType::Bool) => Some(ValueSlot::Flag),
         ComponentValType::Type(index) => usize::try_from(index)
             .ok()
             .and_then(|index| defined.get(index).copied())
@@ -173,6 +178,7 @@ fn admits_param_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> boo
         resolve(defined, vt),
         Some(
             ValueSlot::Scalar
+                | ValueSlot::Flag
                 | ValueSlot::Flat
                 | ValueSlot::Bytes
                 | ValueSlot::Ids
@@ -183,10 +189,11 @@ fn admits_param_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> boo
 }
 
 /// Whether a value type may occupy an export's result position:
-/// everything a parameter admits, plus the refusal channel and the tuple
-/// a multi-edge method returns.
+/// everything a parameter admits except the guard verdict — a flag says
+/// which way a clause went, and a method has no clause to report — plus
+/// the refusal channel and the tuple a multi-edge method returns.
 fn admits_result_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> bool {
-    resolve(defined, vt).is_some()
+    !matches!(resolve(defined, vt), None | Some(ValueSlot::Flag))
 }
 
 /// Records one component type entry, resolving what its type-index slot

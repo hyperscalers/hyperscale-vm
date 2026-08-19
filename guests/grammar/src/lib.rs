@@ -71,6 +71,20 @@ pub mod grammar {
                 .insert(2, Quantity::from_subunits(2));
         }
 
+        /// A branch whose arm alone declares its clause, so the export
+        /// takes the declaration's verdict as a `bool` and the guest
+        /// branches on that rather than on a second copy of the
+        /// condition. The guarded shape `settle` deliberately avoids:
+        /// nothing outside the arm reaches the handle, so the clause is
+        /// conditional and the verdict crosses the boundary.
+        pub fn stash(&mut self, seed: u64) {
+            if seed == 1 {
+                self.entries
+                    .range(pack(0, 0), pack(u64::MAX, u64::MAX), 64)
+                    .insert(3, Quantity::from_subunits(3));
+            }
+        }
+
         /// A produced edge out of a conditional body, so the value path
         /// is exercised beside the statement ones.
         pub fn take(&mut self, resource: Address, amount: Quantity) -> Bucket {
