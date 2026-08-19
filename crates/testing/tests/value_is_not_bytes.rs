@@ -9,6 +9,13 @@
 //! that does not have it — which is what keeps a balance something that
 //! was moved rather than something that was written.
 //!
+//! What the two handles rest on is that a cell gets one of them. Which
+//! it gets is the declaration's answer about what the cell holds, and a
+//! signature that answered twice would hand out both over one leaf —
+//! writing a balance through the byte handle and debiting it through the
+//! value one. So one cell is one answer, held at publish and again at
+//! materialization.
+//!
 //! Every package here is hand-authored. That is the point: a
 //! `#[blueprint]` package reaches a vault through `vault()` and has no
 //! way to spell a byte write to one, so a rule the macro enforced would
@@ -135,6 +142,77 @@ fn a_package_cannot_assign_itself_a_balance() {
         1_000,
         "the victim is untouched"
     );
+}
+
+// ─── and one cell is one answer about what it holds ────────────────────
+
+/// The same forge, spelled as two clauses on one leaf: one saying it
+/// holds value, one saying nothing.
+///
+/// Everything the pair needs is legal on its own. Each clause names the
+/// package's own slot under its own prefix, at a key it is entitled to;
+/// the denominated one is keyed by what it holds, and the silent one is
+/// an ordinary byte cell. What is wrong is only that they are the same
+/// leaf, so the body would hold it as a vault and as a byte cell at once.
+fn aliased() -> PackageMetadata {
+    let held = || Expr::Literal(Value::Address(TREASURE.address()));
+    let pot = || own(POT, vec![held()]);
+    let mut metadata = PackageMetadata::default();
+    metadata.methods.insert(
+        "forge".into(),
+        MethodSignature {
+            accessibility: Accessibility::Public,
+            totality: Totality::Infallible,
+            params: vec![ParamType::U64],
+            outputs: vec![held()],
+            abi: vec![
+                AbiParam::Handle(0),
+                AbiParam::Handle(1),
+                AbiParam::Derived(Expr::Arg(0)),
+            ],
+            effects: vec![write(pot(), Some(Box::new(held()))), write(pot(), None)],
+            ..MethodSignature::default()
+        },
+    );
+    metadata
+}
+
+/// The publish gate is where this ends, so no body runs — but the body a
+/// package would have written is the one that mints: assign through the
+/// byte handle, debit through the value one.
+fn alias_body(
+    export: &str,
+    mut session: KernelSession,
+    args: &[GuestArg<'_>],
+) -> (KernelSession, Invoked) {
+    assert_eq!(export, "forge");
+    let [
+        GuestArg::Handle { rep: value, .. },
+        GuestArg::Handle { rep: bytes, .. },
+        GuestArg::U64(amount),
+    ] = args
+    else {
+        panic!("two handles and a scalar: {args:?}");
+    };
+    let (value, bytes, amount) = (*value, *bytes, u128::from(*amount));
+    if let Err(trap) = session.write_cell_set(bytes, encode_amount(amount).to_vec()) {
+        return (session, Invoked::Aborted(trap.into()));
+    }
+    match session.write_take(value, amount) {
+        Ok(bucket) => (session, Invoked::Produced(vec![bucket])),
+        Err(trap) => (session, Invoked::Aborted(trap.into())),
+    }
+}
+
+#[test]
+#[should_panic(expected = "names a cell another clause says holds something else")]
+fn one_cell_is_not_a_vault_and_a_byte_cell_at_once() {
+    let mut chain = Chain::native();
+    chain.publish(Package::new(
+        aliased(),
+        env!("CARGO_MANIFEST_DIR"),
+        alias_body,
+    ));
 }
 
 // ─── and a badge is held, never declared ───────────────────────────────

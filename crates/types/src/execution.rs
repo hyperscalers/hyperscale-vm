@@ -225,6 +225,10 @@ pub enum AbortReason {
     /// the cell they name is one whose contents the declaration owes an
     /// answer about.
     UndenominatedMovement,
+    /// Two clauses reaching one cell and disagreeing about what it
+    /// holds, which would hand a body both the handle value moves
+    /// through and the handle bytes are written to, over one leaf.
+    MixedContents,
     /// A declared mode and target combination the world cannot hand out.
     EffectUnsupported,
     /// A mutation declared on a permanently locked substate.

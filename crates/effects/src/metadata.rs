@@ -914,6 +914,22 @@ pub enum DeclarationError {
         /// The slot named.
         slot: u16,
     },
+    /// Two clauses reaching one cell and disagreeing about what it holds.
+    ///
+    /// A denomination chooses which handle the clause materializes, so a
+    /// leaf one clause denominates and another does not is a leaf a body
+    /// holds twice: once as the cell value moves through, once as the
+    /// cell bytes are written to. Writing a balance through the second
+    /// and debiting it through the first is value from nowhere.
+    ///
+    /// Refused again at materialization, which has the evaluated keys;
+    /// this is the same verdict where an author can hear it.
+    #[error("effect clause {clause} names a cell another clause says holds something else")]
+    MixedContents {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+    },
 }
 
 /// Whether a target names the declaring instance's own prefix.
@@ -933,6 +949,42 @@ fn targets_own_prefix(target: &TargetExpr) -> bool {
         TargetExpr::Entry { owner, .. } | TargetExpr::Range { owner, .. } => {
             matches!(owner, Expr::SelfAddr)
         }
+    }
+}
+
+/// What a target names as the thing whose contents are one fact: the
+/// leaf a point names, or the collection an entry or an interval sits in.
+///
+/// Not the target itself, because two intervals of one collection are two
+/// targets over one set of entries — so an interval saying its entries
+/// are instances and an overlapping one saying they are bytes are two
+/// answers about the same entries, and comparing targets would let them
+/// both through.
+#[derive(PartialEq, Eq)]
+enum Contents<'a> {
+    /// One leaf, as the expression naming it.
+    Leaf(&'a Expr),
+    /// Every entry of one collection, as the owner and identity it hangs
+    /// under.
+    Entries(&'a Expr, SlotId, &'a [Expr]),
+}
+
+/// Which cell's contents a clause is an answer about.
+fn contents(target: &TargetExpr) -> Contents<'_> {
+    match target {
+        TargetExpr::Point(key) => Contents::Leaf(key),
+        TargetExpr::Entry {
+            owner,
+            collection,
+            material,
+            ..
+        }
+        | TargetExpr::Range {
+            owner,
+            collection,
+            material,
+            ..
+        } => Contents::Entries(owner, *collection, material),
     }
 }
 
@@ -1280,6 +1332,42 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
                     .ok_or(DeclarationError::PresenceConflict)?;
             }
             None => required.push((target, guard, *requires)),
+        }
+    }
+    // What a cell holds is a fact about the cell rather than about the
+    // clause that reached it, and the denomination is what chooses which
+    // handle a clause materializes — so a leaf one clause denominates
+    // and another does not is a leaf a body holds as a vault and as a
+    // byte cell at once. Writing a balance through the byte handle and
+    // debiting it through the value one is a balance nothing moved.
+    //
+    // Folded by container rather than by target: two intervals of one
+    // collection are two targets over one set of entries, and the
+    // disagreement is about the entries.
+    //
+    // No guard exemption, unlike the presence fold above. A presence is
+    // a question one execution answers, and complementary arms answer it
+    // differently on purpose; what a cell holds is not a question an
+    // execution answers at all.
+    let mut holds: Vec<(Contents<'_>, bool)> = Vec::new();
+    for (index, clause) in flat_clauses(&signature.effects).iter().enumerate() {
+        let Clause::Effect {
+            target,
+            denomination,
+            ..
+        } = clause
+        else {
+            continue;
+        };
+        let clause = u32::try_from(index).unwrap_or(u32::MAX);
+        let cell = contents(target);
+        let value = denomination.is_some();
+        match holds.iter().find(|(seen, _)| *seen == cell) {
+            Some((_, held)) if *held != value => {
+                return Err(DeclarationError::MixedContents { clause });
+            }
+            Some(_) => {}
+            None => holds.push((cell, value)),
         }
     }
     // A gate is an error arm the vocabulary can see. Trap freedom is what
@@ -3250,6 +3338,133 @@ mod tests {
         );
         assert_eq!(
             check_declarations(&one_clause(own(vec![]), ModeExpr::Read, None)),
+            Ok(())
+        );
+    }
+
+    /// One cell holds one thing, and a signature says so once.
+    ///
+    /// The denomination chooses which handle a clause materializes, so a
+    /// leaf denominated by one clause and not by another is a leaf a body
+    /// holds as a vault and as a byte cell at once — and a balance
+    /// written through the byte handle and debited through the value one
+    /// is value from nowhere. What makes this the whole of the property
+    /// is that the two clauses need not agree on anything else: a mode, a
+    /// presence and a guard are all free.
+    #[test]
+    fn one_cell_is_not_a_vault_and_a_byte_cell_at_once() {
+        let held = || Some(a_resource());
+        let declared = |clauses: Vec<Clause>| {
+            check_declarations(&MethodSignature {
+                effects: clauses,
+                ..MethodSignature::default()
+            })
+        };
+        let write = || ModeExpr::Write {
+            requires: Presence::Either,
+        };
+        let effect = |target, mode, denomination: Option<Expr>| Clause::Effect {
+            guard: None,
+            target,
+            mode,
+            denomination: denomination.map(Box::new),
+        };
+
+        // One leaf, two answers — the shape that would mint.
+        let leaf = || own_point(package_slot(0), vec![a_resource()]);
+        assert_eq!(
+            declared(vec![
+                effect(leaf(), write(), held()),
+                effect(leaf(), write(), None),
+            ]),
+            Err(DeclarationError::MixedContents { clause: 1 })
+        );
+        // The reading modes are no exception: a read of a vault and a
+        // byte read of the same leaf still disagree about what came out.
+        assert_eq!(
+            declared(vec![
+                effect(leaf(), ModeExpr::Delta, held()),
+                effect(leaf(), ModeExpr::Read, None),
+            ]),
+            Err(DeclarationError::MixedContents { clause: 1 })
+        );
+        // Nor does a guard make them arms of one answer: what a cell
+        // holds is not a question an execution answers.
+        let guarded = |cond, denomination| Clause::Effect {
+            guard: Some(Box::new(cond)),
+            target: leaf(),
+            mode: write(),
+            denomination,
+        };
+        let cond = Expr::Eq(Box::new(Expr::Arg(0)), Box::new(Expr::Config(0)));
+        assert_eq!(
+            declared(vec![
+                guarded(cond.clone(), Some(Box::new(a_resource()))),
+                guarded(Expr::Not(Box::new(cond)), None),
+            ]),
+            Err(DeclarationError::MixedContents { clause: 1 })
+        );
+
+        // Two intervals of one collection are two targets over one set of
+        // entries, so the disagreement is about the entries and comparing
+        // targets would let it through. Overlapping or not: what the
+        // collection holds is the collection's.
+        let interval = |hi| TargetExpr::Range {
+            owner: Expr::SelfAddr,
+            collection: package_slot(1),
+            material: vec![a_resource()],
+            lo: Expr::Literal(Value::U128(0)),
+            hi: Expr::Literal(Value::U128(hi)),
+            cap: 4,
+        };
+        assert_eq!(
+            declared(vec![
+                effect(interval(u128::MAX), write(), held()),
+                effect(interval(10), write(), None),
+            ]),
+            Err(DeclarationError::MixedContents { clause: 1 })
+        );
+        // And an entry of it is the same statement at width one.
+        assert_eq!(
+            declared(vec![
+                effect(interval(u128::MAX), write(), held()),
+                effect(
+                    TargetExpr::Entry {
+                        owner: Expr::SelfAddr,
+                        collection: package_slot(1),
+                        material: vec![a_resource()],
+                        order: Expr::Literal(Value::U128(3)),
+                    },
+                    write(),
+                    None,
+                ),
+            ]),
+            Err(DeclarationError::MixedContents { clause: 1 })
+        );
+
+        // Agreeing clauses are what a body that reads and writes one cell
+        // declares, and they stand — in both directions.
+        assert_eq!(
+            declared(vec![
+                effect(leaf(), write(), held()),
+                effect(leaf(), ModeExpr::Read, held()),
+            ]),
+            Ok(())
+        );
+        let bytes = || own_point(package_slot(2), vec![]);
+        assert_eq!(
+            declared(vec![
+                effect(bytes(), write(), None),
+                effect(bytes(), ModeExpr::Read, None),
+            ]),
+            Ok(())
+        );
+        // Two different cells answer for themselves.
+        assert_eq!(
+            declared(vec![
+                effect(leaf(), write(), held()),
+                effect(bytes(), write(), None),
+            ]),
             Ok(())
         );
     }

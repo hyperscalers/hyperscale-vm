@@ -189,6 +189,19 @@ pub enum MaterializeError {
     /// edge no destination could disagree with.
     #[error("a movement declared on {0:?}, which denominates nothing")]
     UndenominatedMovement(SubstateKey),
+    /// Two clauses reaching one cell and disagreeing about what it holds.
+    ///
+    /// The denomination chooses which handle a clause materializes, so a
+    /// leaf one clause denominates and another does not would be handed
+    /// out twice — as the cell value moves through and as the cell bytes
+    /// are written to. A balance written through the second and debited
+    /// through the first is value from nowhere, so the pair is refused
+    /// before either handle exists.
+    ///
+    /// Refused at publish too, against the target expressions; this is
+    /// the verdict two expressions that evaluate onto one cell reach.
+    #[error("clauses disagree about what {0:?} holds")]
+    MixedContents(EffectTarget),
     /// An already-held reservation whose amount differs from the declared
     /// one — a batch bookkeeping defect, surfaced rather than adopted.
     #[error("held reservation on {0:?} does not match the declaration")]
@@ -733,9 +746,24 @@ impl KernelSession {
         // whenever two clauses evaluated to one target — making a guest's
         // parameter list a function of instance configuration rather than
         // of its own signature.
+        //
+        // What each cell holds is folded as the table is built, because
+        // the two clauses that disagree can be any two: a leaf one
+        // denominates and another does not is a leaf handed out as a
+        // vault and as a byte cell at once, and a balance written
+        // through the byte handle is a balance nothing moved. Keyed by
+        // what the target names rather than by the target, so two
+        // intervals of one collection are one answer about its entries.
         let mut table = Vec::with_capacity(ordered.len());
+        let mut holds: BTreeMap<Holds, bool> = BTreeMap::new();
         for (index, effect) in ordered.iter().enumerate() {
             let denominated = denominations.get(index).is_some_and(Option::is_some);
+            if holds
+                .insert(holds_of(effect.target), denominated)
+                .is_some_and(|held| held != denominated)
+            {
+                return Err(MaterializeError::MixedContents(effect.target));
+            }
             table.push(capability_for(&store, *effect, denominated)?);
         }
         // One transaction may not declare both an exclusive write and a
@@ -2102,6 +2130,34 @@ fn declaration_defect(defect: &StoreError) -> Option<Outcome> {
     }
 }
 
+/// What a target names as the thing whose contents are one fact: the
+/// leaf a point names, or the collection an entry or an interval sits in.
+///
+/// Not the target itself, because two intervals of one collection are two
+/// targets over one set of entries — so an interval saying its entries
+/// are instances and an overlapping one saying they are bytes are two
+/// answers about the same entries.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Holds {
+    /// One leaf.
+    Leaf(SubstateKey),
+    /// Every entry of one collection.
+    Entries(Address, CollectionId),
+}
+
+/// Which cell's contents an effect is an answer about.
+const fn holds_of(target: EffectTarget) -> Holds {
+    match target {
+        EffectTarget::Point(key) => Holds::Leaf(key),
+        EffectTarget::Entry {
+            owner, collection, ..
+        }
+        | EffectTarget::Range {
+            owner, collection, ..
+        } => Holds::Entries(owner, collection),
+    }
+}
+
 /// The interval a collection target names; `None` for a point key.
 ///
 /// An entry is the width-one interval at its order — the same
@@ -2248,6 +2304,7 @@ fn diff(store: &OverlayStore) -> StateDelta {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
@@ -2257,9 +2314,9 @@ mod tests {
     use hyperscale_vm_types::Presence;
 
     use super::{
-        Capability, EnvInputs, Event, Held, KernelSession, MAX_EVENT_PAYLOAD_BYTES,
+        Capability, EnvInputs, Event, Held, Holds, KernelSession, MAX_EVENT_PAYLOAD_BYTES,
         MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, MathError, Outcome, SCAN_SEEK_BYTES,
-        SessionTrap, U256,
+        SessionTrap, U256, holds_of,
     };
     use crate::ledger::AmountLedger;
     use crate::modes::{AMOUNT_CELL_BYTES, TxHash, decode_amount, encode_amount};
@@ -2621,12 +2678,20 @@ mod tests {
     /// no clause left to say what — so a fixture standing in for a
     /// signature says it here, or the movement is refused before any body
     /// runs.
+    ///
+    /// Answered per cell rather than per clause, because that is the
+    /// shape of the fact: every clause reaching a cell some movement
+    /// reaches says the same thing about it, which is what
+    /// [`MaterializeError::MixedContents`] holds a signature to.
     fn holding(ordered: &[Effect]) -> Vec<Option<Address>> {
+        let value: BTreeSet<Holds> = ordered
+            .iter()
+            .filter(|effect| matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }))
+            .map(|effect| holds_of(effect.target))
+            .collect();
         ordered
             .iter()
-            .map(|effect| {
-                matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
-            })
+            .map(|effect| value.contains(&holds_of(effect.target)).then_some(RESOURCE))
             .collect()
     }
 
@@ -2806,6 +2871,85 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &set);
         assert_eq!(session.read_cell(7), Err(SessionTrap::UnknownHandle(7)));
         assert_eq!(session.range_count(7), Err(SessionTrap::UnknownHandle(7)));
+    }
+
+    /// One cell holds one thing, judged where two expressions that
+    /// evaluate onto it can no longer hide behind being different
+    /// expressions.
+    ///
+    /// The publish gate compares target expressions, so a signature that
+    /// spells one cell two ways passes it. What lands here is the
+    /// evaluated key — and if a body held both handles over it, a balance
+    /// written through the byte one and debited through the value one
+    /// would be value from nowhere.
+    #[test]
+    fn one_cell_does_not_materialise_as_a_vault_and_a_byte_cell() {
+        let write = Effect {
+            target: EffectTarget::Point(key(1)),
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
+        };
+        let materialise = |holds: &[Option<Address>]| {
+            KernelSession::materialize(
+                OverlayStore::new(Arc::new(MemoryStore::new())),
+                &declared(&[write]),
+                &[write, write],
+                holds,
+                tx(1),
+                env(),
+                hash,
+            )
+            .map(|_| ())
+        };
+
+        // Two clauses on one leaf, one saying it holds value and one
+        // saying nothing: the pair no handle is built for.
+        assert_eq!(
+            materialise(&[Some(RESOURCE), None]),
+            Err(MaterializeError::MixedContents(write.target))
+        );
+        assert_eq!(
+            materialise(&[None, Some(RESOURCE)]),
+            Err(MaterializeError::MixedContents(write.target))
+        );
+        // Agreeing clauses are what a body that reads and writes one cell
+        // declares, and both directions stand.
+        assert!(materialise(&[Some(RESOURCE), Some(RESOURCE)]).is_ok());
+        assert!(materialise(&[None, None]).is_ok());
+
+        // A collection is the same statement over its entries: two
+        // intervals of one collection are two targets, so the
+        // disagreement is about the entries rather than about the slices
+        // naming them.
+        let interval = |hi| Effect {
+            target: EffectTarget::Range {
+                owner: Address::new([9; 31], AddressClass::Component),
+                collection: CollectionId([4; 16]),
+                lo: 0,
+                hi,
+                cap: 4,
+            },
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
+        };
+        let wide = interval(u128::MAX);
+        let narrow = interval(10);
+        assert_eq!(
+            KernelSession::materialize(
+                OverlayStore::new(Arc::new(MemoryStore::new())),
+                &declared(&[wide, narrow]),
+                &[wide, narrow],
+                &[Some(RESOURCE), None],
+                tx(1),
+                env(),
+                hash,
+            )
+            .map(|_| ())
+            .expect_err("one collection, two answers about its entries"),
+            MaterializeError::MixedContents(narrow.target)
+        );
     }
 
     #[test]

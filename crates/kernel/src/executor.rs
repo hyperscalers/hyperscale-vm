@@ -649,6 +649,9 @@ impl From<MaterializeError> for Outcome {
             MaterializeError::UndenominatedMovement(_) => Self::UserError {
                 reason: AbortReason::UndenominatedMovement,
             },
+            MaterializeError::MixedContents(_) => Self::UserError {
+                reason: AbortReason::MixedContents,
+            },
             MaterializeError::Occupied(target) => Self::PresenceUnmet {
                 target,
                 required: Presence::Absent,
