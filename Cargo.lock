@@ -712,6 +712,7 @@ dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-stdlib",
  "hyperscale-vm-testing",
+ "hyperscale-vm-types",
  "wasm-smith",
  "wasmtime",
  "wat",
@@ -777,6 +778,7 @@ dependencies = [
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-sdk-macros",
  "hyperscale-vm-stdlib",
+ "hyperscale-vm-types",
  "trybuild",
  "wit-bindgen 0.60.0",
 ]

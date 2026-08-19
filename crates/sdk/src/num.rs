@@ -73,7 +73,7 @@ pub enum Rounding {
 /// past the width on well-formed inputs is a defect, and there is nothing
 /// for a caller to do with it but stop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MathError {
+pub enum NumError {
     /// A fraction with a zero denominator: an empty pool, a rate against
     /// nothing.
     ZeroDenominator,
@@ -83,10 +83,12 @@ pub enum MathError {
 
 /// A 256-bit unsigned value, as four limbs, least significant first.
 ///
-/// Storage only. Every operation on one is the host's, so this carries no
-/// arithmetic of its own — it is the shape a fraction's terms travel and
-/// live in, wide enough that composing two quantity-derived rates does
-/// not overflow at the depth a cross rate reaches.
+/// Storage only, and deliberately not the arithmetic's
+/// [`U256`](hyperscale_vm_types::math::U256): every lossy operation on
+/// one is the host's, so this carries exact guest-side addition and
+/// ordering and nothing else — it is the shape a fraction's terms travel
+/// and live in, wide enough that composing two quantity-derived rates
+/// does not overflow at the depth a cross rate reaches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Wide([u64; 4]);
 
@@ -327,9 +329,9 @@ impl Quantity {
     ///
     /// # Errors
     ///
-    /// [`MathError::ZeroDenominator`] against nothing — an empty pool,
+    /// [`NumError::ZeroDenominator`] against nothing — an empty pool,
     /// which is a refusal an author can word rather than a trap.
-    pub const fn ratio_to(self, other: Self) -> Result<Ratio, MathError> {
+    pub const fn ratio_to(self, other: Self) -> Result<Ratio, NumError> {
         Ratio::of(self.0, other.0)
     }
 
@@ -337,8 +339,8 @@ impl Quantity {
     ///
     /// # Errors
     ///
-    /// [`MathError::ZeroDenominator`] against nothing.
-    pub const fn per<A, B>(self, other: Self) -> Result<Rate<A, B>, MathError> {
+    /// [`NumError::ZeroDenominator`] against nothing.
+    pub const fn per<A, B>(self, other: Self) -> Result<Rate<A, B>, NumError> {
         match Ratio::of(self.0, other.0) {
             Ok(ratio) => Ok(Rate {
                 ratio,
@@ -478,10 +480,10 @@ impl Ratio {
     ///
     /// # Errors
     ///
-    /// [`MathError::ZeroDenominator`] on a zero denominator.
-    pub const fn of(num: u128, den: u128) -> Result<Self, MathError> {
+    /// [`NumError::ZeroDenominator`] on a zero denominator.
+    pub const fn of(num: u128, den: u128) -> Result<Self, NumError> {
         if den == 0 {
-            return Err(MathError::ZeroDenominator);
+            return Err(NumError::ZeroDenominator);
         }
         Ok(Self {
             num: Wide::from_u128(num),
@@ -493,10 +495,10 @@ impl Ratio {
     ///
     /// # Errors
     ///
-    /// [`MathError::OutOfRange`] past ten thousand, which is one.
-    pub const fn bps(bps: u16) -> Result<Self, MathError> {
+    /// [`NumError::OutOfRange`] past ten thousand, which is one.
+    pub const fn bps(bps: u16) -> Result<Self, NumError> {
         if bps > 10_000 {
-            return Err(MathError::OutOfRange);
+            return Err(NumError::OutOfRange);
         }
         Self::of(bps as u128, 10_000)
     }
@@ -505,10 +507,10 @@ impl Ratio {
     ///
     /// # Errors
     ///
-    /// [`MathError::OutOfRange`] past a hundred.
-    pub const fn percent(percent: u8) -> Result<Self, MathError> {
+    /// [`NumError::OutOfRange`] past a hundred.
+    pub const fn percent(percent: u8) -> Result<Self, NumError> {
         if percent > 100 {
-            return Err(MathError::OutOfRange);
+            return Err(NumError::OutOfRange);
         }
         Self::of(percent as u128, 100)
     }
@@ -530,10 +532,10 @@ impl Ratio {
     ///
     /// # Errors
     ///
-    /// [`MathError::ZeroDenominator`] on zero, which has no reciprocal.
-    pub fn recip(self) -> Result<Self, MathError> {
+    /// [`NumError::ZeroDenominator`] on zero, which has no reciprocal.
+    pub fn recip(self) -> Result<Self, NumError> {
         if self.num.is_zero() {
-            return Err(MathError::ZeroDenominator);
+            return Err(NumError::ZeroDenominator);
         }
         Ok(Self {
             num: self.den,
@@ -651,8 +653,8 @@ impl<A, B> Rate<A, B> {
     ///
     /// # Errors
     ///
-    /// [`MathError::ZeroDenominator`] on a zero rate.
-    pub fn recip(self) -> Result<Rate<B, A>, MathError> {
+    /// [`NumError::ZeroDenominator`] on a zero rate.
+    pub fn recip(self) -> Result<Rate<B, A>, NumError> {
         Ok(Rate {
             ratio: self.ratio.recip()?,
             dimension: PhantomData,
@@ -790,8 +792,8 @@ impl<A, B> Fixed<A, B> {
     ///
     /// # Errors
     ///
-    /// [`MathError::ZeroDenominator`] on a zero rate.
-    pub fn recip_rate(self) -> Result<Rate<B, A>, MathError> {
+    /// [`NumError::ZeroDenominator`] on a zero rate.
+    pub fn recip_rate(self) -> Result<Rate<B, A>, NumError> {
         self.rate().recip()
     }
 
@@ -888,10 +890,10 @@ impl UnitFixed {
     ///
     /// # Errors
     ///
-    /// [`MathError::OutOfRange`] past one.
-    pub const fn new(scaled: u128) -> Result<Self, MathError> {
+    /// [`NumError::OutOfRange`] past one.
+    pub const fn new(scaled: u128) -> Result<Self, NumError> {
         if scaled > UNIT_SCALE {
-            return Err(MathError::OutOfRange);
+            return Err(NumError::OutOfRange);
         }
         Ok(Self(scaled))
     }
@@ -904,10 +906,10 @@ impl UnitFixed {
     ///
     /// # Errors
     ///
-    /// [`MathError::OutOfRange`] past ten thousand.
-    pub const fn bps(bps: u16) -> Result<Self, MathError> {
+    /// [`NumError::OutOfRange`] past ten thousand.
+    pub const fn bps(bps: u16) -> Result<Self, NumError> {
         if bps > 10_000 {
-            return Err(MathError::OutOfRange);
+            return Err(NumError::OutOfRange);
         }
         Ok(Self(bps as u128 * (UNIT_SCALE / 10_000)))
     }
@@ -916,10 +918,10 @@ impl UnitFixed {
     ///
     /// # Errors
     ///
-    /// [`MathError::OutOfRange`] past a hundred.
-    pub const fn percent(percent: u8) -> Result<Self, MathError> {
+    /// [`NumError::OutOfRange`] past a hundred.
+    pub const fn percent(percent: u8) -> Result<Self, NumError> {
         if percent > 100 {
-            return Err(MathError::OutOfRange);
+            return Err(NumError::OutOfRange);
         }
         Ok(Self(percent as u128 * (UNIT_SCALE / 100)))
     }
@@ -956,7 +958,7 @@ impl UnitFixed {
 
 #[cfg(test)]
 mod tests {
-    use super::{Fixed, MathError, Quantity, Rate, Ratio, Rounding, UnitFixed, Wide, arith};
+    use super::{Fixed, NumError, Quantity, Rate, Ratio, Rounding, UnitFixed, Wide, arith};
 
     fn q(n: u128) -> Quantity {
         Quantity::from_subunits(n)
@@ -979,7 +981,7 @@ mod tests {
     fn an_empty_pool_declines_rather_than_trapping() {
         assert_eq!(
             q(5).ratio_to(Quantity::ZERO),
-            Err(MathError::ZeroDenominator)
+            Err(NumError::ZeroDenominator)
         );
     }
 
@@ -1023,10 +1025,10 @@ mod tests {
 
     #[test]
     fn a_fee_out_of_range_cannot_be_constructed() {
-        assert_eq!(UnitFixed::bps(20_000), Err(MathError::OutOfRange));
+        assert_eq!(UnitFixed::bps(20_000), Err(NumError::OutOfRange));
         assert_eq!(
             UnitFixed::new(super::UNIT_SCALE + 1),
-            Err(MathError::OutOfRange)
+            Err(NumError::OutOfRange)
         );
         assert_eq!(
             UnitFixed::bps(10_000).expect("one is in range"),

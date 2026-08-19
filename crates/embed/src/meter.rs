@@ -13,7 +13,8 @@
 //! owning its prices *and* the order they interleave with the host
 //! operation, over two capabilities an engine adapts to — [`FuelSink`],
 //! the budget, and [`HostAccess`], the kernel behind the call. Shared
-//! rather than specified, on the same argument as [`crate::math`]: two
+//! rather than specified, on the same argument as
+//! [`hyperscale_vm_types::math`]: two
 //! engines that each restated thirty charge sequences would drift one arm
 //! at a time, and a missed or reordered charge is a consensus fuel
 //! divergence only a corpus case reaching that exact arm could catch.
@@ -25,9 +26,9 @@
 use core::cmp::Ordering;
 
 use hyperscale_vm_types::AbortReason;
+use hyperscale_vm_types::math::{self, Rounding, U256};
 
 use crate::KernelHost;
-use crate::math::{self, Rounding, U256};
 
 /// Fuel charged per byte crossing the canonical ABI boundary.
 pub const FUEL_PER_BOUNDARY_BYTE: u64 = 1;

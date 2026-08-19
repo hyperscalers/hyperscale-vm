@@ -3,12 +3,12 @@
 //! the boundary supplement charged against fuel.
 
 use hyperscale_vm_embed::KernelHost;
-use hyperscale_vm_embed::math::U256;
 use hyperscale_vm_embed::meter::FUEL_PER_BOUNDARY_BYTE;
 use hyperscale_vm_runtime::{
     ReadCell, WriteCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
 use hyperscale_vm_types::AbortReason;
+use hyperscale_vm_types::math::U256;
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Engine, Result, Store, Trap};
 use wat::parse_str;

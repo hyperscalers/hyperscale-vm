@@ -10,11 +10,11 @@ use std::cmp::Ordering;
 use std::sync::{Arc, Mutex};
 
 use hyperscale_vm_embed::KernelHost;
-use hyperscale_vm_embed::math::{MathError, Rounding, U256};
 use hyperscale_vm_embed::meter::{
     self, AMOUNT_BOUNDARY_BYTES, Exhausted, FuelSink, HostAccess, MeterError, WIDE_BOUNDARY_BYTES,
 };
 use hyperscale_vm_types::AbortReason;
+use hyperscale_vm_types::math::{MathError, Rounding, U256};
 
 /// One observed step: a fuel charge, or a host operation by name.
 #[derive(Debug, PartialEq, Eq)]

@@ -18,12 +18,12 @@
 
 use std::collections::HashMap;
 
-use hyperscale_vm_embed::math::{Rounding, U256};
 use hyperscale_vm_embed::meter::{
     self, AMOUNT_BOUNDARY_BYTES, Exhausted, FuelSink, HostAccess, MeterError, WIDE_BOUNDARY_BYTES,
 };
 use hyperscale_vm_embed::{CellKind, GuestArg, KernelHost};
 use hyperscale_vm_types::ISSUER_REP;
+use hyperscale_vm_types::math::{Rounding, U256};
 use wasmparser::{
     CanonicalFunction, CanonicalOption, ComponentAlias, ComponentDefinedType,
     ComponentExternalKind, ComponentType, ComponentTypeRef, ComponentValType, ExternalKind,

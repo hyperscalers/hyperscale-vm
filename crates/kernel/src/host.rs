@@ -14,7 +14,7 @@
 
 use hyperscale_vm_effects::AbortReason;
 use hyperscale_vm_embed::KernelHost;
-use hyperscale_vm_embed::math::U256;
+use hyperscale_vm_types::math::U256;
 
 use crate::session::{KernelSession, SessionTrap};
 

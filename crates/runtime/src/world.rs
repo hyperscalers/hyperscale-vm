@@ -20,9 +20,9 @@
 use core::cmp::Ordering;
 
 use hyperscale_vm_embed::KernelHost;
-use hyperscale_vm_embed::math::{Rounding, U256};
 use hyperscale_vm_embed::meter::{self, MeterError};
 use hyperscale_vm_types::AbortReason;
+use hyperscale_vm_types::math::{Rounding, U256};
 use wasmtime::component::{ComponentType, Lift, Linker, Lower, Resource, ResourceType};
 use wasmtime::{Error, Result, StoreContextMut, Trap};
 

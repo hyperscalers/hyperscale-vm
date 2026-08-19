@@ -2,8 +2,7 @@
 //! answers.
 
 use hyperscale_vm_types::AbortReason;
-
-use crate::math::U256;
+use hyperscale_vm_types::math::U256;
 
 /// The kernel's operations, as reps and bytes.
 ///

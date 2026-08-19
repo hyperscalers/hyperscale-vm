@@ -60,7 +60,7 @@ pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, StoredRoles as Rol
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host;
-pub use crate::num::{Fixed, MathError, Quantity, Rate, Ratio, Rounding, UnitFixed, Wide};
+pub use crate::num::{Fixed, NumError, Quantity, Rate, Ratio, Rounding, UnitFixed, Wide};
 
 /// Where an entry sits in a collection's ordering.
 ///

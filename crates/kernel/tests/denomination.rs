@@ -23,11 +23,11 @@ use hyperscale_vm_effects::{
     Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
     Presence, SlotId, SubstateKey, TestHasher, Value, child_key, collection_id,
 };
-use hyperscale_vm_embed::math::U256;
 use hyperscale_vm_kernel::{
     AbortReason, EnvInputs, ISSUER_REP, KernelSession, MaterializeError, MemoryStore, OverlayStore,
     TxHash, encode_amount,
 };
+use hyperscale_vm_types::math::U256;
 
 const VAULT: SlotId = SlotId(1);
 const POOL: Address = Address::new([0x70; 31], AddressClass::Component);

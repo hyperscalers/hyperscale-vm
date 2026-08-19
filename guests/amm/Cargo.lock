@@ -113,6 +113,7 @@ dependencies = [
  "hyperscale-vm-embed",
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-sdk-macros",
+ "hyperscale-vm-types",
  "wit-bindgen",
 ]
 

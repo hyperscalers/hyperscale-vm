@@ -36,8 +36,8 @@ pub mod fixtures {
     use std::path::PathBuf;
 
     use hyperscale_vm_cli::compile;
-    use hyperscale_vm_embed::math::U256;
     use hyperscale_vm_kernel::{AbortReason, KernelHost};
+    use hyperscale_vm_types::math::U256;
     use wasmtime::Result;
     use wasmtime::error::format_err;
 

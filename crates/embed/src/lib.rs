@@ -22,7 +22,6 @@
 
 mod call;
 mod host;
-pub mod math;
 pub mod meter;
 
 pub use call::{GuestArg, Invoked};

@@ -21,7 +21,7 @@ use hyperscale_vm_effects::{
     EntryKey, ISSUER_REP, Mode, Presence, SubstateKey, distinct_ids,
 };
 use hyperscale_vm_embed::CellKind;
-use hyperscale_vm_embed::math::{MathError, Rounding, U256, mul_div};
+use hyperscale_vm_types::math::{MathError, Rounding, U256, mul_div};
 
 use crate::ledger::AmountLedger;
 use crate::locality::Locality;

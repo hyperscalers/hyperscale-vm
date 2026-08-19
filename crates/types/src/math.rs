@@ -28,7 +28,7 @@
 
 use core::cmp::Ordering;
 
-use hyperscale_vm_types::AbortReason;
+use crate::AbortReason;
 
 /// Which way a lossy operation resolves a non-zero remainder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

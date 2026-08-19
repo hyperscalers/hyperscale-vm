@@ -20,6 +20,7 @@ pub mod address;
 pub mod amount;
 pub mod envelope;
 pub mod execution;
+pub mod math;
 pub mod mode;
 pub mod scheme;
 pub mod work;
