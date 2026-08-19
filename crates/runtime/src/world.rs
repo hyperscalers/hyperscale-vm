@@ -324,17 +324,23 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "amount-cell-balance",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<AmountCell>,)| {
-            let held = store.data_mut().amount_cell_balance(r.rep());
+            let held = store
+                .data_mut()
+                .amount_cell_balance(r.rep())
+                .map_err(host_trap)?;
             charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
-            Ok((Amount::from(held.map_err(host_trap)?),))
+            Ok((Amount::from(held),))
         },
     )?;
     state.func_wrap(
         "amount-read-balance",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<AmountRead>,)| {
-            let held = store.data_mut().amount_cell_balance(r.rep());
+            let held = store
+                .data_mut()
+                .amount_cell_balance(r.rep())
+                .map_err(host_trap)?;
             charge_boundary_bytes(&mut store, AMOUNT_BOUNDARY_BYTES)?;
-            Ok((Amount::from(held.map_err(host_trap)?),))
+            Ok((Amount::from(held),))
         },
     )?;
     state.func_wrap(
