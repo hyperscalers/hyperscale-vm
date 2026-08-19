@@ -18,6 +18,7 @@
 
 pub mod address;
 pub mod amount;
+pub mod effect;
 pub mod envelope;
 pub mod execution;
 pub mod math;
@@ -33,6 +34,7 @@ pub use address::{
     ResourceAddr, ResourceRef, SubstateKey, WrongClass,
 };
 pub use amount::{AMOUNT_CELL_BYTES, amount_cell, encode_amount, read_amount};
+pub use effect::{Effect, EffectConflict, EffectSet};
 pub use envelope::{
     MAX_MESSAGE_LEN, MAX_SUBINTENTS, MAX_TX_BYTES_LEN, NetworkId, SubintentSig, TransactionBody,
     TransactionEnvelope, TxHash,
