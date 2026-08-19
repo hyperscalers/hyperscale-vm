@@ -1,0 +1,5 @@
+error: `NfVault` is the holdings element and only the accessor names it — a holder's instances are reached by `holdings(resource)`, not declared as a field
+ --> tests/refusals/nf_vault_field.rs:9:20
+  |
+9 |         instances: Ordered<NfVault>,
+  |                    ^^^^^^^

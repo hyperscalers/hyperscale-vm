@@ -988,3 +988,84 @@ fn every_comparison_reaches_the_two_the_vocabulary_has() {
         )
     );
 }
+
+/// A collection that holds no value, narrowed the way holdings are: the
+/// sub-collection key is whatever its author found useful — a validator,
+/// a name — which is a key and not a resource. The derivation leaves the
+/// clause undenominated, or the first narrowing by a non-resource meets
+/// a resource check at routing that has no business reading its key.
+#[blueprint]
+mod roster {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::Ordered;
+
+    #[state]
+    struct Roster {
+        /// One weight per seat, filed per validator.
+        seats: Ordered<u128>,
+    }
+
+    impl Roster {
+        /// File a seat for `validator` at `index`.
+        pub fn seat(&mut self, validator: Address, index: u128) {
+            self.seats.of(validator).at(index).set(0);
+        }
+
+        /// Every seat filed for `validator`, up to the cap.
+        pub fn page(&mut self, validator: Address) {
+            let entries = self.seats.of(validator).all(8);
+            let _ = entries.count();
+        }
+    }
+}
+
+#[test]
+fn a_valueless_narrowing_is_a_key_not_a_denomination() {
+    let metadata = roster::blueprint().metadata();
+    for method in ["seat", "page"] {
+        let effects = &metadata.methods[method].effects;
+        assert_eq!(effects.len(), 1, "{method} declares one clause");
+        let Clause::Effect { denomination, .. } = &effects[0] else {
+            panic!("{method} declares an access");
+        };
+        assert!(denomination.is_none(), "{method} denominates nothing");
+    }
+}
+
+/// The holdings interval is the value-bearing collection, and its
+/// narrowing is its denomination: one expression names the sub-collection
+/// and the resource its entries are instances of.
+#[blueprint]
+mod shelf {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Ids, NfBucket};
+
+    #[state]
+    struct Shelf {}
+
+    impl Shelf {
+        /// Take the named instances out of the caller's holdings.
+        pub fn pull(&mut self, resource: Address, ids: Ids) -> NfBucket {
+            self.holdings(resource).all(8).take(ids)
+        }
+    }
+}
+
+#[test]
+fn a_holdings_interval_is_denominated_by_its_narrowing() {
+    use hyperscale_vm_effects::{Expr, TargetExpr};
+
+    let metadata = shelf::blueprint().metadata();
+    let effects = &metadata.methods["pull"].effects;
+    assert_eq!(effects.len(), 1, "pull declares one clause");
+    let Clause::Effect {
+        target,
+        denomination,
+        ..
+    } = &effects[0]
+    else {
+        panic!("pull declares an access");
+    };
+    assert!(matches!(target, TargetExpr::Range { .. }));
+    assert_eq!(denomination.as_deref(), Some(&Expr::Arg(0)));
+}

@@ -871,6 +871,17 @@ impl<T: Record> Slot<Option<T>> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Vault;
 
+/// The element of a holder's non-fungible instances, reached by
+/// `holdings(resource)`.
+///
+/// An alias of the unit entry rather than a marker struct: an instance's
+/// id is the entry's own order key, so the entry holds nothing, and the
+/// generated guest code must say so in bytes. The name exists for the
+/// derivation, which reads it to learn that the interval holds value and
+/// is therefore narrowed by a resource — a package's own field cannot
+/// declare it, so only the accessor's collections denominate by key.
+pub type NfVault = ();
+
 #[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
 impl Slot<Vault> {
     /// What the vault holds.
@@ -1083,15 +1094,14 @@ impl<T: Cellular> Entry<T> {
 }
 
 #[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
-impl Interval<()> {
+impl Interval<NfVault> {
     /// File the instances a bucket carries, each at the order it was
     /// taken under, holding nothing.
     ///
     /// What a holdings entry says is that the holder holds it, and the
     /// instance's id is the entry's own order key — so there is no value
-    /// to name and no marker for an author to invent. On the
-    /// presence-only interval alone, because it is the only one with
-    /// nothing to say.
+    /// to name. On the presence-only interval alone, because it is the
+    /// only one with nothing to say.
     #[inline(always)]
     pub fn file(&mut self, funds: NfBucket) {
         self.put(funds, &[]);

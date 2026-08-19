@@ -244,6 +244,16 @@ fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
             ));
         }
     };
+    // The holdings element is the accessor's alone: a package's own
+    // non-fungible collection is not a shape the protocol slots support,
+    // and a holder's instances are reached through `holdings(resource)`.
+    if matches!(&element_of(&field.ty), Some(ty) if is_named(ty, "NfVault")) {
+        return Err(syn::Error::new(
+            field.ty.span(),
+            "`NfVault` is the holdings element and only the accessor names it — a holder's \
+             instances are reached by `holdings(resource)`, not declared as a field",
+        ));
+    }
     // A vault holds one resource and has to say which. A keyed family is
     // denominated by whatever key a body names it at, so an attribute
     // there would be a second answer to a question the key already
@@ -828,10 +838,11 @@ fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
             Field {
                 slot: NF_VAULT.0,
                 kind: FieldKind::Ordered,
-                // Presence and nothing else: the instance's id is the
-                // entry's own order key, so an entry has nothing left to
-                // hold and no marker for a body to invent.
-                element: Some(syn::parse_quote!(())),
+                // The instance's id is the entry's own order key, so an
+                // entry has nothing left to hold — the element is the
+                // name the derivation reads to know the interval holds
+                // value and is narrowed by a resource.
+                element: Some(syn::parse_quote!(::hyperscale_vm_sdk::state::NfVault)),
                 denomination: None,
             },
         ),
@@ -1440,7 +1451,9 @@ fn authoring_accessors(state: &syn::Ident, config: Option<&syn::Ident>) -> Token
             }
 
             /// The holder's instances of `resource`.
-            fn holdings<K>(&self, resource: K) -> ::hyperscale_vm_sdk::state::Ordered<()> {
+            fn holdings<K>(&self, resource: K) -> ::hyperscale_vm_sdk::state::Ordered<
+                ::hyperscale_vm_sdk::state::NfVault,
+            > {
                 let _ = resource;
                 ::core::unimplemented!("a contract body runs on the guest")
             }

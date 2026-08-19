@@ -903,20 +903,25 @@ impl<'a> Lowerer<'a> {
         // it; one that does not is keyed by the resource, and the key is
         // the material a body named it at.
         //
-        // Only where the leaf holds value at all. A point cell says so by
-        // its element type, and a cell holding anything else is keyed by
-        // whatever its author found useful — a validator id, a name —
-        // which is a key and not a resource however it is spelled. An
-        // instance collection is narrowed by the resource whose holdings
-        // it is, which is the same statement in collection form.
-        let holds_value = matches!(&element, Some(ty) if is_named(ty, "Vault"));
+        // Only where the leaf holds value at all, which the element type
+        // says. A cell holding anything else is keyed by whatever its
+        // author found useful — a validator id, a name — which is a key
+        // and not a resource however it is spelled. An instance
+        // collection is narrowed by the resource whose holdings it is,
+        // which is the same statement in collection form.
+        let holds_value =
+            matches!(&element, Some(ty) if is_named(ty, "Vault") || is_named(ty, "NfVault"));
         let denomination = declared.or_else(|| match &target {
-            Target::Point { material, .. } if holds_value => material.first().cloned(),
-            Target::Range { material, .. } | Target::Entry { material, .. } => {
+            Target::Point { material, .. }
+            | Target::Range { material, .. }
+            | Target::Entry { material, .. }
+                if holds_value =>
+            {
                 material.first().cloned()
             }
-            // A hashed key and a cursor name an entry, never a resource.
-            Target::Point { .. } | Target::KeyedEntry { .. } | Target::Sweep { .. } => None,
+            // A hashed key, a cursor, and a valueless collection's
+            // narrowing name an entry, never a resource.
+            _ => None,
         });
         self.out.sites.push(Site {
             target,
