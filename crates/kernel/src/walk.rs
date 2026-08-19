@@ -402,7 +402,7 @@ impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
                 }
                 Err(NodeFailure::Abort(failure)) => {
                     let (returned, outcome, consumed) = *failure;
-                    return Ok(RunResult {
+                    return Ok(RunResult::Aborted {
                         session: returned,
                         outcome,
                         fuel: fuel.saturating_add(consumed),
@@ -411,9 +411,9 @@ impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
                 Err(NodeFailure::Unavailable(reason)) => return Err(Unavailable(reason)),
             }
         }
-        Ok(RunResult {
+        Ok(RunResult::Completed {
             session,
-            outcome: Outcome::Completed { value: None },
+            value: None,
             fuel,
         })
     }

@@ -23,7 +23,7 @@ use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
 #[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, Event, Held, Interval, KernelSession, MemoryStore, Movement, Outcome,
+    Capability, EnvInputs, Event, Held, Interval, KernelSession, MemoryStore, Movement,
     OverlayStore, Receipt, TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
@@ -121,10 +121,7 @@ fn rep_of(session: &KernelSession, wanted: &Capability) -> u32 {
 }
 
 fn finish(session: KernelSession, fuel: u64) -> Receipt {
-    session
-        .finish(Outcome::Completed { value: None }, fuel)
-        .expect("oracle clean")
-        .0
+    session.finish(None, fuel).expect("oracle clean").0
 }
 
 /// Withdraw, deposit, then the pinned balance guard on the blessed

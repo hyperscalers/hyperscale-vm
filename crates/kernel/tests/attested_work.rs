@@ -104,9 +104,9 @@ fn transfer_declared(amount: u128) -> EffectSet {
 
 /// A guest that completes without touching anything, reporting `fuel`.
 fn quiet_guest(fuel: u64) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
-    move |_entry: &BatchTx, session| RunResult {
+    move |_entry: &BatchTx, session| RunResult::Completed {
         session,
-        outcome: Outcome::Completed { value: None },
+        value: None,
         fuel,
     }
 }
@@ -114,7 +114,7 @@ fn quiet_guest(fuel: u64) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Syn
 /// A guest that traps, reporting `fuel` — the number the two runtimes
 /// disagree on.
 fn trapping_guest(fuel: u64) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
-    move |_entry: &BatchTx, session| RunResult {
+    move |_entry: &BatchTx, session| RunResult::Aborted {
         session,
         outcome: Outcome::UserError {
             reason: AbortReason::IntegerDivideByZero,
@@ -139,9 +139,9 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
         let amount = session.reserve_amount(reserve).unwrap();
         session.delta_add(delta, amount).unwrap();
     }
-    RunResult {
+    RunResult::Completed {
         session,
-        outcome: Outcome::Completed { value: None },
+        value: None,
         fuel: 7,
     }
 }

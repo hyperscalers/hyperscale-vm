@@ -225,17 +225,21 @@ impl GuestRunner for BlessedRunner {
                     })
             }
         };
-        let outcome = result.map_or_else(
-            |_| Outcome::UserError {
-                reason: AbortReason::Unreachable,
-            },
-            |value| Outcome::Completed { value: Some(value) },
-        );
         let fuel = FUEL - store.get_fuel().expect("fuel");
-        Ok(RunResult {
-            session: store.into_data(),
-            outcome,
-            fuel,
+        let session = store.into_data();
+        Ok(match result {
+            Ok(value) => RunResult::Completed {
+                session,
+                value: Some(value),
+                fuel,
+            },
+            Err(_) => RunResult::Aborted {
+                session,
+                outcome: Outcome::UserError {
+                    reason: AbortReason::Unreachable,
+                },
+                fuel,
+            },
         })
     }
 }
@@ -302,22 +306,29 @@ impl GuestRunner for RefRunner {
         let mut instance = RefComponentInstance::instantiate(&self.comp, session)
             .map_err(|(_, error)| error)
             .expect("decode");
-        let outcome = instance.invoke(export, &args).expect("invoke").map_or_else(
-            |_| Outcome::UserError {
-                reason: AbortReason::Unreachable,
+        let answer = instance.invoke(export, &args).expect("invoke");
+        let fuel = instance.fuel_consumed();
+        let session = instance.into_host();
+        Ok(match answer.as_deref() {
+            Ok([CVal::U64(v)]) => RunResult::Completed {
+                session,
+                value: Some(*v),
+                fuel,
             },
-            |values| match values.as_slice() {
-                [CVal::U64(v)] => Outcome::Completed { value: Some(*v) },
-                _ => Outcome::UserError {
+            Ok(_) => RunResult::Aborted {
+                session,
+                outcome: Outcome::UserError {
                     reason: AbortReason::BadReturnShape,
                 },
+                fuel,
             },
-        );
-        let fuel = instance.fuel_consumed();
-        Ok(RunResult {
-            session: instance.into_host(),
-            outcome,
-            fuel,
+            Err(_) => RunResult::Aborted {
+                session,
+                outcome: Outcome::UserError {
+                    reason: AbortReason::Unreachable,
+                },
+                fuel,
+            },
         })
     }
 }

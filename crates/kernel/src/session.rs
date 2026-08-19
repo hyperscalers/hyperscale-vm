@@ -1897,16 +1897,17 @@ impl KernelSession {
         Ok(Settlement::Settled(settles))
     }
 
-    /// Close the session: fold queued deltas, settle this transaction's
-    /// reservations, run the trace-subset oracle, and produce the receipt
-    /// together with the threaded store (the input for the next
-    /// transaction in a conflict group).
+    /// Close the session for a guest that completed: fold queued deltas,
+    /// settle this transaction's reservations, run the trace-subset
+    /// oracle, and produce the receipt together with the threaded store
+    /// (the input for the next transaction in a conflict group).
     ///
-    /// A debit past the movement floor — committed plus this
-    /// transaction's credit, minus every outstanding reservation — is the
-    /// transaction's own deterministic loss: it comes back as an
-    /// [`Outcome::Infeasible`] receipt over the untouched store, never as
-    /// an error.
+    /// The outcome is this function's to produce, never its caller's to
+    /// assert: [`Outcome::Completed`] with `value` when the account
+    /// balances, or the flip the judgement forces — value dropped, a
+    /// movement past its floor, a reservation lost — as an abort receipt
+    /// over the untouched store. An abort that happened *before*
+    /// completion never reaches here; it goes to [`Self::discard`].
     ///
     /// Supply accumulators do not move here, and cannot: a movement lands
     /// on a hashed key, so the resource it moved is unknowable at this
@@ -1924,7 +1925,7 @@ impl KernelSession {
     /// scan without charging for it.
     pub fn finish(
         mut self,
-        outcome: Outcome,
+        value: Option<u64>,
         fuel: u64,
     ) -> Result<(Receipt, OverlayStore), FinishError> {
         assert_eq!(
@@ -2036,22 +2037,15 @@ impl KernelSession {
         delta.movements = movements.into();
         delta.settles = settles.into();
         self.store.merge_active();
-        // Value exists because a transaction that committed created it.
-        // Every other outcome leaves the shard as it found it, so what an
-        // uncommitted one said it minted or burned is a claim about a
-        // world that never happened — the same rule its events are under,
-        // applied here rather than left to whoever picked the outcome.
-        let supply = if matches!(outcome, Outcome::Completed { .. }) {
-            self.supply
-        } else {
-            SupplyDelta::default()
-        };
         Ok((
             Receipt {
-                outcome,
+                outcome: Outcome::Completed { value },
                 delta,
                 events: self.events,
-                supply,
+                // Value exists because the transaction committed it;
+                // every flip above discarded its claims — supply and
+                // events alike — with its effects.
+                supply: self.supply,
                 fuel,
             },
             self.store,
@@ -3436,7 +3430,7 @@ mod tests {
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
         session.range_count(0).unwrap();
-        let _ = session.finish(Outcome::Completed { value: None }, 0);
+        let _ = session.finish(None, 0);
     }
 
     #[test]
@@ -3627,9 +3621,7 @@ mod tests {
         session.enter_invocation(second);
         session.emit(4, b"two".to_vec()).unwrap();
 
-        let (receipt, _) = session
-            .finish(Outcome::Completed { value: None }, 0)
-            .unwrap();
+        let (receipt, _) = session.finish(None, 0).unwrap();
         assert_eq!(
             receipt.events,
             vec![
@@ -3690,9 +3682,7 @@ mod tests {
         session.emit(1, b"paid".to_vec()).unwrap();
         session.delta_sub(0, 1).unwrap();
 
-        let (receipt, _) = session
-            .finish(Outcome::Completed { value: None }, 7)
-            .unwrap();
+        let (receipt, _) = session.finish(None, 7).unwrap();
         assert!(
             matches!(receipt.outcome, Outcome::Infeasible { .. }),
             "a debit past the floor is the transaction's own loss",
@@ -3754,9 +3744,7 @@ mod tests {
         let mut session = session_holding(store, &set);
 
         let funds = session.write_take(0, 40).expect("the cell covers it");
-        let (receipt, mut threaded) = session
-            .finish(Outcome::Completed { value: None }, 7)
-            .expect("finishes");
+        let (receipt, mut threaded) = session.finish(None, 7).expect("finishes");
         assert_eq!(
             receipt.outcome,
             Outcome::UserError {
@@ -3796,9 +3784,7 @@ mod tests {
         let split = session.bucket_take(funds, 40).expect("the whole of it");
         session.write_put(0, split).expect("the credit lands");
 
-        let (receipt, _) = session
-            .finish(Outcome::Completed { value: None }, 7)
-            .expect("finishes");
+        let (receipt, _) = session.finish(None, 7).expect("finishes");
         assert_eq!(receipt.outcome, Outcome::Completed { value: None });
     }
 

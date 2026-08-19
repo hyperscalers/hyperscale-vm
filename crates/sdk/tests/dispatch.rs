@@ -12,8 +12,8 @@ use hyperscale_vm_effects::{
     Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, Value, child_key,
 };
 use hyperscale_vm_kernel::{
-    AbortReason, Capability, EnvInputs, Held, KernelSession, MemoryStore, Outcome, OverlayStore,
-    TxHash, WorkingStore, encode_amount,
+    AbortReason, Capability, EnvInputs, Held, KernelSession, MemoryStore, OverlayStore, TxHash,
+    WorkingStore, encode_amount,
 };
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_sdk::host::{CellKind, GuestArg, Invoked};
@@ -189,7 +189,7 @@ fn a_body_branches_on_the_verdict_it_was_handed() {
     );
     assert!(matches!(invoked, Invoked::Produced(ref edges) if edges.is_empty()));
     session
-        .finish(Outcome::Completed { value: None }, 0)
+        .finish(None, 0)
         .expect("nothing outside the declared set was touched");
 
     // Handed the other verdict, it reaches the other handle — and the
@@ -211,7 +211,7 @@ fn a_body_branches_on_the_verdict_it_was_handed() {
     );
     assert!(matches!(invoked, Invoked::Produced(ref edges) if edges.is_empty()));
     session
-        .finish(Outcome::Completed { value: None }, 0)
+        .finish(None, 0)
         .expect("nothing outside the declared set was touched");
 }
 
@@ -266,7 +266,7 @@ fn an_edge_the_body_credits_lands_in_the_declared_cell() {
 
     assert!(matches!(invoked, Invoked::Produced(ref edges) if edges.is_empty()));
     let (receipt, _) = session
-        .finish(Outcome::Completed { value: None }, 0)
+        .finish(None, 0)
         .expect("nothing outside the declared set was touched");
     // A commutative credit is a movement rather than an absolute: what
     // the receipt carries is what to add, not what the cell became.

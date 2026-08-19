@@ -133,9 +133,7 @@ mod through_the_session {
     }
 
     fn completed(session: KernelSession) -> SupplyDelta {
-        let (receipt, _) = session
-            .finish(Outcome::Completed { value: None }, 0)
-            .expect("the oracle stands");
+        let (receipt, _) = session.finish(None, 0).expect("the oracle stands");
         receipt.supply
     }
 
@@ -203,21 +201,25 @@ mod through_the_session {
         assert_eq!(ledger.amount(UNIT), 0);
     }
 
-    /// An abort brings nothing into existence, whatever it ran.
+    /// An abort brings nothing into existence, whatever it ran: a body
+    /// that dropped value flips inside `finish`, and the flip discards
+    /// the supply it claimed along with everything else.
     #[test]
     fn an_aborted_mint_moves_no_supply() {
         let mut session = session();
+        // Minted, and never landed in a cell: the account cannot balance.
         let minted = session.mint(ISSUER_REP, 500).expect("the grant mints");
-        session.delta_put(0, minted).expect("into its own vault");
+        let _ = minted;
 
         let (receipt, _) = session
-            .finish(
-                Outcome::UserError {
-                    reason: AbortReason::Unreachable,
-                },
-                0,
-            )
-            .expect("an abort still produces a receipt");
+            .finish(None, 0)
+            .expect("the flip still produces a receipt");
+        assert!(matches!(
+            receipt.outcome,
+            Outcome::UserError {
+                reason: AbortReason::ValueDropped
+            }
+        ));
         assert!(receipt.supply.is_empty());
     }
 

@@ -12,8 +12,8 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
-    AbortReason, Capability, EnvInputs, KernelSession, MemoryStore, Movement, Outcome,
-    OverlayStore, Receipt, TxHash, WorkingStore, encode_amount,
+    AbortReason, Capability, EnvInputs, KernelSession, MemoryStore, Movement, OverlayStore,
+    Receipt, TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
@@ -417,12 +417,11 @@ fn receipts_agree(fx: &Fixture, export: &str) -> Result<Receipt> {
     let LaneOutcome::Value(value) = blessed else {
         panic!("{export} did not complete: {blessed:?}");
     };
-    let outcome = Outcome::Completed { value: Some(value) };
     let (blessed_receipt, _) = blessed_host
-        .finish(outcome.clone(), blessed_fuel)
+        .finish(Some(value), blessed_fuel)
         .expect("oracle clean on the blessed side");
     let (ref_receipt, _) = ref_host
-        .finish(outcome, ref_fuel)
+        .finish(Some(value), ref_fuel)
         .expect("oracle clean on the reference side");
     assert_eq!(blessed_receipt, ref_receipt, "{export} receipts diverged");
     Ok(blessed_receipt)

@@ -129,10 +129,18 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
     } else {
         Outcome::Completed { value: None }
     };
-    RunResult {
-        session,
-        outcome,
-        fuel: 10 + u64::from(tx_id.0.0[0]),
+    let fuel = 10 + u64::from(tx_id.0.0[0]);
+    match outcome {
+        Outcome::Completed { value } => RunResult::Completed {
+            session,
+            value,
+            fuel,
+        },
+        outcome => RunResult::Aborted {
+            session,
+            outcome,
+            fuel,
+        },
     }
 }
 
@@ -406,12 +414,10 @@ fn each_transaction_sees_its_own_clock() {
         env().randomness,
     );
 
-    let observe = |entry: &BatchTx, session: KernelSession| RunResult {
-        outcome: Outcome::Completed {
-            value: Some(session.clock_ms()),
-        },
-        session,
+    let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
+        value: Some(session.clock_ms()),
         fuel: u64::from(entry.tx.0.0[0]),
+        session,
     };
     let outcome = execute_batch(
         Arc::new(store),
@@ -467,12 +473,10 @@ fn each_transaction_sees_its_own_draw() {
         [9; 32],
     );
 
-    let observe = |entry: &BatchTx, session: KernelSession| RunResult {
-        outcome: Outcome::Completed {
-            value: Some(u64::from(session.randomness()[0])),
-        },
-        session,
+    let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
+        value: Some(u64::from(session.randomness()[0])),
         fuel: u64::from(entry.tx.0.0[0]),
+        session,
     };
     let outcome = execute_batch(
         Arc::new(store),

@@ -21,7 +21,7 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, GuestRunner,
     InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome,
-    OverlayStore, TxHash, WorkingStore, encode_amount, execute_batch,
+    OverlayStore, RunResult, TxHash, WorkingStore, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_runtime::{
@@ -268,8 +268,15 @@ fn main() -> Result<()> {
             let session =
                 KernelSession::materialize(store, &entry.declaration, entry.tx, env(), test_hash)
                     .expect("feasible");
-            let run = walk.run(entry, session).expect("the engine is available");
-            let (_receipt, threaded) = run.session.finish(run.outcome, run.fuel).expect("oracle");
+            let RunResult::Completed {
+                session,
+                value,
+                fuel,
+            } = walk.run(entry, session).expect("the engine is available")
+            else {
+                panic!("the bench transfer completes");
+            };
+            let (_receipt, threaded) = session.finish(value, fuel).expect("oracle");
             store = threaded;
         }
         println!(
@@ -352,9 +359,9 @@ fn main() -> Result<()> {
             test_hash,
         )
         .expect("feasible");
-        walk.run(&entry, session)
-            .expect("the engine is available")
-            .fuel
+        match walk.run(&entry, session).expect("the engine is available") {
+            RunResult::Completed { fuel, .. } | RunResult::Aborted { fuel, .. } => fuel,
+        }
     };
     println!("\nfuel per transfer: {fuel_check} (engine schedule + boundary supplement)");
     Ok(())

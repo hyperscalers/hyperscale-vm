@@ -72,9 +72,9 @@ fn scripted(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
         let seen = session.locked_cell(snapshot).unwrap();
         session.write_cell_set(write, seen).unwrap();
     }
-    RunResult {
+    RunResult::Completed {
         session,
-        outcome: Outcome::Completed { value: None },
+        value: None,
         fuel: 1,
     }
 }

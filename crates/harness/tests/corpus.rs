@@ -26,8 +26,8 @@ use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_kernel::{
     AbortReason, BatchTx, EnvInputs, Event, GuestBackend, GuestCall, GuestRunner, InvokeResult,
-    Invoked, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt, TxHash,
-    WorkingStore, decode_amount, encode_amount, multiply_held_ids,
+    Invoked, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt, RunResult,
+    TxHash, WorkingStore, decode_amount, encode_amount, multiply_held_ids,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{CVal, ExecError, RefComponent, RefComponentInstance, Trap as RefTrap};
@@ -547,17 +547,18 @@ fn execute_manifest(
         .run(&entry, session),
     }
     .expect("every corpus package is registered with both engines");
-    match run.outcome {
-        Outcome::Completed { .. } => {
-            let (receipt, threaded) = run
-                .session
-                .finish(Outcome::Completed { value: None }, run.fuel)
+    match run {
+        RunResult::Completed { session, fuel, .. } => {
+            let (receipt, threaded) = session
+                .finish(None, fuel)
                 .expect("the oracle stands on every corpus receipt");
             Ok((TxResult::Completed(receipt), threaded.collapse_onto(before)))
         }
-        Outcome::UserError { reason } => Ok((TxResult::Trapped(reason), before)),
-        Outcome::Declined { code, .. } => Ok((TxResult::Declined(code), before)),
-        refused => Ok((TxResult::Refused(refused), before)),
+        RunResult::Aborted { outcome, .. } => match outcome {
+            Outcome::UserError { reason } => Ok((TxResult::Trapped(reason), before)),
+            Outcome::Declined { code, .. } => Ok((TxResult::Declined(code), before)),
+            refused => Ok((TxResult::Refused(refused), before)),
+        },
     }
 }
 

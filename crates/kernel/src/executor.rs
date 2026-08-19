@@ -192,13 +192,27 @@ where
 
 /// What a [`GuestRunner`] produced.
 #[derive(Debug)]
-pub struct RunResult {
-    /// The session back from the engine.
-    pub session: KernelSession,
-    /// How the guest ended: completed, or a user-error trap.
-    pub outcome: Outcome,
-    /// Fuel consumed: engine schedule plus boundary supplement.
-    pub fuel: u64,
+pub enum RunResult {
+    /// The guest completed with its value; [`KernelSession::finish`]
+    /// judges the account and prices the commit.
+    Completed {
+        /// The session back from the engine.
+        session: KernelSession,
+        /// The value the export completed with, if its signature has one.
+        value: Option<u64>,
+        /// Fuel consumed: engine schedule plus boundary supplement.
+        fuel: u64,
+    },
+    /// The guest failed with its outcome; the session comes back for the
+    /// rollback and nothing of it commits.
+    Aborted {
+        /// The session back from the engine.
+        session: KernelSession,
+        /// How the guest failed.
+        outcome: Outcome,
+        /// Fuel consumed before the failure.
+        fuel: u64,
+    },
 }
 
 /// The environment could not run a guest: code not resolvable, an
@@ -753,15 +767,19 @@ fn run_group<R: GuestRunner>(
                     tx: entry.tx,
                     reason,
                 })?;
-        match result.outcome {
-            Outcome::Completed { .. } => {
-                let (mut receipt, mut threaded) = result
-                    .session
-                    .finish(result.outcome, result.fuel)
-                    .map_err(|source| BatchError::Finish {
-                        tx: entry.tx,
-                        source,
-                    })?;
+        match result {
+            RunResult::Completed {
+                session,
+                value,
+                fuel,
+            } => {
+                let (mut receipt, mut threaded) =
+                    session
+                        .finish(value, fuel)
+                        .map_err(|source| BatchError::Finish {
+                            tx: entry.tx,
+                            source,
+                        })?;
                 // Committing spends every subintent: the nullifier cell
                 // records the consuming transaction. The write enters the
                 // receipt wherever the transaction runs — the outbound
@@ -787,10 +805,14 @@ fn run_group<R: GuestRunner>(
                 store = threaded;
                 receipts.push((entry.tx, receipt));
             }
-            aborted => {
+            RunResult::Aborted {
+                session,
+                outcome,
+                fuel,
+            } => {
                 // The guest failed: its partial writes never commit.
-                store = result.session.discard();
-                receipts.push((entry.tx, abort_receipt(aborted, result.fuel)));
+                store = session.discard();
+                receipts.push((entry.tx, abort_receipt(outcome, fuel)));
             }
         }
     }

@@ -86,9 +86,9 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
         let amount = session.reserve_amount(reserve).unwrap();
         session.delta_add(delta, amount).unwrap();
     }
-    RunResult {
+    RunResult::Completed {
         session,
-        outcome: Outcome::Completed { value: None },
+        value: None,
         fuel: FUEL,
     }
 }
@@ -266,10 +266,8 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
         env().clock_ms,
         draw,
     )];
-    let reading_guest = |_entry: &BatchTx, session: KernelSession| RunResult {
-        outcome: Outcome::Completed {
-            value: Some(u64::from(session.randomness()[0])),
-        },
+    let reading_guest = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
+        value: Some(u64::from(session.randomness()[0])),
         session,
         fuel: FUEL,
     };
@@ -352,9 +350,9 @@ fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -
                 _ => {}
             }
         }
-        RunResult {
+        RunResult::Completed {
             session,
-            outcome: Outcome::Completed { value },
+            value,
             fuel: FUEL,
         }
     }

@@ -99,9 +99,9 @@ fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
             }
             _ => {}
         }
-        RunResult {
+        RunResult::Completed {
             session,
-            outcome: Outcome::Completed { value: None },
+            value: None,
             fuel: FUEL,
         }
     }
@@ -361,9 +361,9 @@ fn racing_nullifier_writers_commit_exactly_once() {
     // Two envelopes commit the same signed subintent: both declare the
     // nullifier's exclusive write, so they share a group, and canonical
     // order picks the winner; the loser aborts before running.
-    let noop = |_entry: &BatchTx, session: KernelSession| RunResult {
+    let noop = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         session,
-        outcome: Outcome::Completed { value: None },
+        value: None,
         fuel: FUEL,
     };
     let batch = vec![nullifier_tx(0x02), nullifier_tx(0x01)];
@@ -485,9 +485,9 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
     // two committing envelopes fall into different conflict groups, each
     // checks its own isolated store, and both spend the same subintent.
     // The batch refuses rather than run.
-    let noop = |_entry: &BatchTx, session: KernelSession| RunResult {
+    let noop = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         session,
-        outcome: Outcome::Completed { value: None },
+        value: None,
         fuel: FUEL,
     };
     // A read is not the write the conflict relation needs.
@@ -525,9 +525,9 @@ fn declaration_views_that_disagree_refuse_the_batch() {
     // struct literally can pair them wrongly, and the consequence would
     // be a transaction routed against one declaration and handed
     // capabilities for another. The batch refuses rather than run.
-    let noop = |_entry: &BatchTx, session: KernelSession| RunResult {
+    let noop = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         session,
-        outcome: Outcome::Completed { value: None },
+        value: None,
         fuel: FUEL,
     };
     let mismatched = BatchTx {
@@ -576,16 +576,22 @@ fn declaration_views_that_disagree_refuse_the_batch() {
 fn an_aborted_transaction_spends_no_nullifier() {
     // The canonical-first envelope traps; the subintent stays unspent
     // and the second envelope commits it.
-    let scripted = |entry: &BatchTx, session: KernelSession| RunResult {
-        session,
-        outcome: if entry.tx == tx(0x01) {
-            Outcome::UserError {
-                reason: AbortReason::Unreachable,
+    let scripted = |entry: &BatchTx, session: KernelSession| {
+        if entry.tx == tx(0x01) {
+            RunResult::Aborted {
+                session,
+                outcome: Outcome::UserError {
+                    reason: AbortReason::Unreachable,
+                },
+                fuel: FUEL,
             }
         } else {
-            Outcome::Completed { value: None }
-        },
-        fuel: FUEL,
+            RunResult::Completed {
+                session,
+                value: None,
+                fuel: FUEL,
+            }
+        }
     };
     let batch = vec![nullifier_tx(0x01), nullifier_tx(0x02)];
     let outcome = execute_batch(
@@ -638,9 +644,9 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
         if let Some(rep) = delta {
             session.delta_add(rep, 1).unwrap();
         }
-        RunResult {
+        RunResult::Completed {
             session,
-            outcome: Outcome::Completed { value: None },
+            value: None,
             fuel: FUEL,
         }
     };
@@ -712,9 +718,9 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
                 _ => {}
             }
         }
-        RunResult {
+        RunResult::Completed {
             session,
-            outcome: Outcome::Completed { value: None },
+            value: None,
             fuel: FUEL,
         }
     };
@@ -781,9 +787,9 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
             session.delta_add(rep, u128::MAX).unwrap();
             session.delta_add(rep, u128::MAX).unwrap();
         }
-        RunResult {
+        RunResult::Completed {
             session,
-            outcome: Outcome::Completed { value: None },
+            value: None,
             fuel: FUEL,
         }
     };

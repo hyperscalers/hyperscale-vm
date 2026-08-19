@@ -13,8 +13,7 @@ use hyperscale_vm_effects::{
     Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key, collection_id,
 };
 use hyperscale_vm_kernel::{
-    EnvInputs, KernelSession, MemoryStore, Outcome, OverlayStore, TxHash, WorkingStore,
-    encode_amount,
+    EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, WorkingStore, encode_amount,
 };
 use hyperscale_vm_sdk::handle::Handle;
 use hyperscale_vm_sdk::host::{Refusal, with_kernel};
@@ -140,7 +139,7 @@ fn a_write_cell_reads_back_what_it_was_set_to() {
     });
 
     let (receipt, _) = session
-        .finish(Outcome::Completed { value: None }, 0)
+        .finish(None, 0)
         .expect("nothing outside the declared set was touched");
     assert_eq!(
         receipt.delta.cells.get(&cell),
@@ -234,7 +233,7 @@ fn an_interval_reads_and_writes_the_entries_it_covers() {
     assert_eq!(orders, vec![1, 2, 3]);
     assert_eq!(second, 20);
     let (receipt, _) = session
-        .finish(Outcome::Completed { value: None }, 0)
+        .finish(None, 0)
         .expect("nothing outside the declared set was touched");
     assert_eq!(receipt.delta.entries.len(), 1, "one entry was rewritten");
 }
@@ -262,7 +261,7 @@ fn an_interval_removes_the_entry_it_names() {
     assert_eq!(left, 2);
     assert_eq!(orders, vec![1, 3]);
     let (receipt, _) = session
-        .finish(Outcome::Completed { value: None }, 0)
+        .finish(None, 0)
         .expect("nothing outside the declared set was touched");
     assert_eq!(receipt.delta.entries.len(), 1);
     assert_eq!(
@@ -295,7 +294,7 @@ fn an_entry_writes_at_the_order_it_names() {
 
     assert_eq!(read, 1234);
     let (receipt, _) = session
-        .finish(Outcome::Completed { value: None }, 0)
+        .finish(None, 0)
         .expect("nothing outside the declared set was touched");
     assert_eq!(receipt.delta.entries.len(), 1);
 }
