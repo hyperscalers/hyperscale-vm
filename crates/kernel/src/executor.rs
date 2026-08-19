@@ -170,16 +170,23 @@ impl BatchTx {
 /// tested.
 pub trait GuestRunner: Sync {
     /// Execute the transaction, returning the session, how it ended, and
-    /// the fuel consumed.
-    fn run(&self, entry: &BatchTx, session: KernelSession) -> RunResult;
+    /// the fuel consumed — or [`Unavailable`], when the environment could
+    /// not run a guest at all and no verdict exists to price.
+    ///
+    /// # Errors
+    ///
+    /// [`Unavailable`] refuses the whole batch: it is machine-local where
+    /// every outcome is deterministic, so nothing downstream may attest a
+    /// receipt built from it.
+    fn run(&self, entry: &BatchTx, session: KernelSession) -> Result<RunResult, Unavailable>;
 }
 
 impl<F> GuestRunner for F
 where
     F: Fn(&BatchTx, KernelSession) -> RunResult + Sync,
 {
-    fn run(&self, entry: &BatchTx, session: KernelSession) -> RunResult {
-        self(entry, session)
+    fn run(&self, entry: &BatchTx, session: KernelSession) -> Result<RunResult, Unavailable> {
+        Ok(self(entry, session))
     }
 }
 
@@ -193,6 +200,12 @@ pub struct RunResult {
     /// Fuel consumed: engine schedule plus boundary supplement.
     pub fuel: u64,
 }
+
+/// The environment could not run a guest: code not resolvable, an
+/// instance the engine failed to set up. Carries the nearest class for
+/// diagnostics — it reaches no receipt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unavailable(pub AbortReason);
 
 /// How the executor schedules groups. The choice cannot influence any
 /// receipt or the final store — that is the schedule-invariance property
@@ -211,6 +224,17 @@ pub enum BatchError {
     /// Two batch entries with the same transaction hash.
     #[error("duplicate transaction {0:?}")]
     DuplicateTx(TxHash),
+    /// The environment could not run a guest — code not resolvable, an
+    /// instance the engine failed to set up. Machine-local where every
+    /// outcome is deterministic: the batch produces no receipts, and the
+    /// embedder recovers the environment rather than attesting anything.
+    #[error("transaction {tx:?} found the engine unavailable: {reason:?}")]
+    Unavailable {
+        /// The transaction whose invocation found the environment wanting.
+        tx: TxHash,
+        /// The diagnostic class the backend reported.
+        reason: AbortReason,
+    },
     /// A nullifier key the transaction's effect set does not declare as an
     /// exclusive write. Once-only safety rests on that declaration: it is
     /// what forces racing committers of one subintent into a single
@@ -722,7 +746,13 @@ fn run_group<R: GuestRunner>(
                     continue;
                 }
             };
-        let result = runner.run(entry, session);
+        let result =
+            runner
+                .run(entry, session)
+                .map_err(|Unavailable(reason)| BatchError::Unavailable {
+                    tx: entry.tx,
+                    reason,
+                })?;
         match result.outcome {
             Outcome::Completed { .. } => {
                 let (mut receipt, mut threaded) = result

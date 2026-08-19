@@ -15,8 +15,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner,
-    KernelSession, Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, WorkingStore,
-    decode_amount, encode_amount, execute_batch,
+    KernelSession, Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, Unavailable,
+    WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
@@ -172,7 +172,11 @@ impl BlessedRunner {
 }
 
 impl GuestRunner for BlessedRunner {
-    fn run(&self, entry: &BatchTx, session: KernelSession) -> RunResult {
+    fn run(
+        &self,
+        entry: &BatchTx,
+        session: KernelSession,
+    ) -> std::result::Result<RunResult, Unavailable> {
         let id = entry.tx;
         if self.delay {
             stall(id);
@@ -228,11 +232,11 @@ impl GuestRunner for BlessedRunner {
             |value| Outcome::Completed { value: Some(value) },
         );
         let fuel = FUEL - store.get_fuel().expect("fuel");
-        RunResult {
+        Ok(RunResult {
             session: store.into_data(),
             outcome,
             fuel,
-        }
+        })
     }
 }
 
@@ -254,7 +258,11 @@ impl RefRunner {
 }
 
 impl GuestRunner for RefRunner {
-    fn run(&self, entry: &BatchTx, session: KernelSession) -> RunResult {
+    fn run(
+        &self,
+        entry: &BatchTx,
+        session: KernelSession,
+    ) -> std::result::Result<RunResult, Unavailable> {
         let id = entry.tx;
         if self.delay {
             stall(id);
@@ -306,11 +314,11 @@ impl GuestRunner for RefRunner {
             },
         );
         let fuel = instance.fuel_consumed();
-        RunResult {
+        Ok(RunResult {
             session: instance.into_host(),
             outcome,
             fuel,
-        }
+        })
     }
 }
 

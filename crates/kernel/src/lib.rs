@@ -35,7 +35,8 @@ pub mod work;
 
 pub use conflict::{conflicts, targets_overlap};
 pub use executor::{
-    BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, execute_batch,
+    BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, Unavailable,
+    execute_batch,
 };
 pub use hyperscale_vm_effects::{AbortReason, ISSUER_REP, StateWrites};
 pub use hyperscale_vm_embed::{CellKind, GuestArg, Invoked, KernelHost};

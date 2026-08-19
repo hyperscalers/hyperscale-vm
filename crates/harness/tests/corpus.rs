@@ -545,7 +545,8 @@ fn execute_manifest(
             backend: &reference,
         }
         .run(&entry, session),
-    };
+    }
+    .expect("every corpus package is registered with both engines");
     match run.outcome {
         Outcome::Completed { .. } => {
             let (receipt, threaded) = run

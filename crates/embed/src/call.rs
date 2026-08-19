@@ -57,4 +57,14 @@ pub enum Invoked {
     /// A class rather than a message, so an engine has no formatting
     /// decision to make and two engines cannot word one failure two ways.
     Aborted(AbortReason),
+    /// The environment could not run the guest at all — the code was not
+    /// resolvable, or the engine failed to set an instance up — with the
+    /// nearest class for diagnostics.
+    ///
+    /// Not a verdict. Every other ending is deterministic and speaks for
+    /// the transaction; this one is machine-local and speaks only for
+    /// this node. The kernel refuses the whole batch on it rather than
+    /// pricing it, so no receipt is attested that a peer with a working
+    /// environment would not reproduce.
+    Unavailable(AbortReason),
 }

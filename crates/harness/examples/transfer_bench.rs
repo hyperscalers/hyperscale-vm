@@ -268,7 +268,7 @@ fn main() -> Result<()> {
             let session =
                 KernelSession::materialize(store, &entry.declaration, entry.tx, env(), test_hash)
                     .expect("feasible");
-            let run = walk.run(entry, session);
+            let run = walk.run(entry, session).expect("the engine is available");
             let (_receipt, threaded) = run.session.finish(run.outcome, run.fuel).expect("oracle");
             store = threaded;
         }
@@ -334,7 +334,7 @@ fn main() -> Result<()> {
             .collect();
         let start = Instant::now();
         for (entry, session) in entries.iter().zip(sessions) {
-            std::hint::black_box(walk.run(entry, session));
+            let _ = std::hint::black_box(walk.run(entry, session));
         }
         println!(
             "wasm floor (2 calls + 2 inst)      {}",
@@ -352,7 +352,9 @@ fn main() -> Result<()> {
             test_hash,
         )
         .expect("feasible");
-        walk.run(&entry, session).fuel
+        walk.run(&entry, session)
+            .expect("the engine is available")
+            .fuel
     };
     println!("\nfuel per transfer: {fuel_check} (engine schedule + boundary supplement)");
     Ok(())

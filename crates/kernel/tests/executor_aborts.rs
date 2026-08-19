@@ -10,9 +10,9 @@ use hyperscale_vm_effects::{
     Presence, SlotId, SubintentHash, SubstateKey, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    AbortReason, BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession,
-    Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, WorkingStore, decode_amount,
-    encode_amount, execute_batch,
+    AbortReason, BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner,
+    KernelSession, Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, Unavailable,
+    WorkingStore, decode_amount, encode_amount, execute_batch,
 };
 
 /// What every cell these fixtures move value through holds.
@@ -820,4 +820,50 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
         Outcome::Completed { .. }
     ));
     assert_eq!(amount_at(&outcome.store, vault), 0);
+}
+
+/// An engine with nothing behind it: every invocation finds the
+/// environment wanting.
+struct Downed;
+
+impl GuestRunner for Downed {
+    fn run(&self, _entry: &BatchTx, _session: KernelSession) -> Result<RunResult, Unavailable> {
+        Err(Unavailable(AbortReason::CodeUnavailable))
+    }
+}
+
+#[test]
+fn an_unavailable_engine_refuses_the_batch() {
+    let mut store = MemoryStore::new();
+    store.write(cell(0xA), encode_amount(60).to_vec()).unwrap();
+    store.clear_log();
+    let batch = vec![BatchTx::new(
+        tx(0x01),
+        moving(with_delta(
+            point(cell(0xA), Mode::Reserve { amount: 50 }),
+            cell(0xC),
+        )),
+        env().clock_ms,
+        env().randomness,
+    )];
+
+    // Machine-local failure is not a verdict: no receipt exists to price
+    // it, and the batch refuses rather than letting this node attest
+    // something its peers would not reproduce.
+    let refused = execute_batch(
+        Arc::new(store),
+        &batch,
+        &Downed,
+        test_hash,
+        ExecutionMode::Serial,
+        &Locality::All,
+    )
+    .expect_err("a machine-local failure is not an outcome");
+    assert!(matches!(
+        refused,
+        BatchError::Unavailable {
+            tx: hash,
+            reason: AbortReason::CodeUnavailable,
+        } if hash == tx(0x01)
+    ));
 }

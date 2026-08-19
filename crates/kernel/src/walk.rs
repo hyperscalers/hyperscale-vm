@@ -16,7 +16,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::{CellKind, GuestArg, Invoked};
 
-use crate::executor::{BatchTx, GuestRunner, RunResult};
+use crate::executor::{BatchTx, GuestRunner, RunResult, Unavailable};
 use crate::modes::decode_amount;
 use crate::session::{Capability, KernelSession, Outcome, SessionTrap};
 
@@ -103,17 +103,23 @@ const fn trapped(exhausted: bool, reason: AbortReason, budget: u64, spent: u64) 
     (Outcome::UserError { reason }, charged)
 }
 
-/// A node's invocation failed, deterministically. The session comes back
-/// for the executor's rollback; boxed because it is large and this path
-/// is cold.
-type NodeFailure = Box<(KernelSession, Outcome, u64)>;
+/// A node's invocation did not produce edges.
+enum NodeFailure {
+    /// The transaction failed, deterministically: its outcome and what it
+    /// spent. The session comes back for the executor's rollback; boxed
+    /// because it is large and this path is cold.
+    Abort(Box<(KernelSession, Outcome, u64)>),
+    /// The environment could not run the node — no verdict exists, and
+    /// the walk refuses the batch rather than pricing the transaction.
+    Unavailable(AbortReason),
+}
 
 /// A node's invocation succeeded: the session, the edges it produced, and
 /// the fuel it consumed.
 type NodeSuccess = (KernelSession, Vec<u32>, u64);
 
 fn fail(session: KernelSession, outcome: Outcome, fuel: u64) -> NodeFailure {
-    Box::new((session, outcome, fuel))
+    NodeFailure::Abort(Box::new((session, outcome, fuel)))
 }
 
 /// A defect in whoever composed the batch: a lowered call that does not
@@ -250,6 +256,7 @@ fn settled(
             let (outcome, spent) = trapped(invoked.exhausted, reason, fuel_budget, invoked.fuel);
             Err(fail(session, outcome, spent))
         }
+        Invoked::Unavailable(reason) => Err(NodeFailure::Unavailable(reason)),
     }
 }
 
@@ -378,7 +385,7 @@ fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, Sess
 }
 
 impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
-    fn run(&self, entry: &BatchTx, mut session: KernelSession) -> RunResult {
+    fn run(&self, entry: &BatchTx, mut session: KernelSession) -> Result<RunResult, Unavailable> {
         let mut outputs: Vec<Vec<u32>> = Vec::with_capacity(entry.calls.len());
         let mut fuel = 0u64;
         for (index, call) in entry.calls.iter().enumerate() {
@@ -393,20 +400,21 @@ impl<B: GuestBackend> GuestRunner for ManifestWalk<'_, B> {
                     fuel = fuel.saturating_add(consumed);
                     outputs.push(produced);
                 }
-                Err(failure) => {
+                Err(NodeFailure::Abort(failure)) => {
                     let (returned, outcome, consumed) = *failure;
-                    return RunResult {
+                    return Ok(RunResult {
                         session: returned,
                         outcome,
                         fuel: fuel.saturating_add(consumed),
-                    };
+                    });
                 }
+                Err(NodeFailure::Unavailable(reason)) => return Err(Unavailable(reason)),
             }
         }
-        RunResult {
+        Ok(RunResult {
             session,
             outcome: Outcome::Completed { value: None },
             fuel,
-        }
+        })
     }
 }
