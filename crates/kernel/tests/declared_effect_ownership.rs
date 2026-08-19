@@ -19,13 +19,14 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Clause, ComponentAddr, Declaration, Expr, GraphArg, GraphNode, Hash32,
-    Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, MethodSignature,
-    ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver, PrincipalAddr, SlotId,
-    SubstateKey, TargetExpr, TestHasher, Totality, Value, admit, child_key, route,
+    Clause, Declaration, Expr, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, InstanceRegistry,
+    ManifestGraph, MetadataCache, MethodSignature, ModeExpr, PackageHash, PackageMetadata,
+    ParamType, PrefixShardResolver, SlotId, TargetExpr, TestHasher, Totality, Value, admit,
+    child_key, route,
 };
-use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, encode_amount,
+use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
+use hyperscale_vm_types::{
+    Address, AddressClass, ComponentAddr, PrincipalAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// The role the stdlib account keeps its balances under.

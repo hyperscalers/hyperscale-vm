@@ -6,15 +6,15 @@
 //! `cargo run -p hyperscale-vm-manifest-builder --example render`.
 
 use hyperscale_vm_effects::{
-    ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
-    PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId, TestHasher, Value,
-    resource_address,
+    Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, PackageHash,
+    PrefixShardResolver, TestHasher, Value, resource_address,
 };
 use hyperscale_vm_fixtures::{amm, splitter};
 use hyperscale_vm_manifest_builder::{
     Authority, Names, TypedBuilder, TypedError, preflight, render,
 };
 use hyperscale_vm_stdlib::{account, staking};
+use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr, SchemeId};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);

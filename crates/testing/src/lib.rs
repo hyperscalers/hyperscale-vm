@@ -41,19 +41,22 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
-pub use hyperscale_vm_effects::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_effects::{
-    CallTarget, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
-    PrefixShardResolver, SubstateKey, TestHasher, Value, admit, check_abi, check_declarations,
-    child_key, declaration_hash, resource_address, route,
+    Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
+    PrefixShardResolver, TestHasher, Value, admit, check_abi, check_declarations, child_key,
+    declaration_hash, resource_address, route,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore,
-    Outcome as KernelOutcome, Substates, TxHash, decode_amount, encode_amount, execute_batch,
+    BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
+    decode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 #[cfg(feature = "wasm")]
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
+pub use hyperscale_vm_types::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{
+    CallTarget, Outcome as KernelOutcome, SubstateKey, TxHash, encode_amount,
+};
 
 mod native;
 mod outcome;

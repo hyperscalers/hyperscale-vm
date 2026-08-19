@@ -8,6 +8,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use hyperscale_vm_types::{Address, CallTarget, Effect, EffectConflict, EffectSet};
+
 use crate::admission::Admitted;
 use crate::dsl::{
     Clause, Declaration, DeclaredAccess, EvalError, EvalInputs, ModeExpr, evaluate_declaration,
@@ -20,10 +22,7 @@ use crate::metadata::{
     AbiError, AbiParam, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature,
     PackageHash, Totality, check_abi,
 };
-use crate::types::{
-    Address, CallTarget, EdgeContent, Effect, EffectConflict, EffectSet, MAX_IDS_PER_EDGE, ShardId,
-    Value, resource_address,
-};
+use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, ShardId, Value, resource_address};
 
 /// Resolves an owner prefix to the shard holding it.
 pub trait ShardResolver {
@@ -1027,6 +1026,11 @@ impl Fold<'_> {
 mod tests {
     use std::collections::BTreeSet;
 
+    use hyperscale_vm_types::{
+        Address, AddressClass, CellKind, ComponentAddr, Effect, EffectSet, EffectTarget, Mode,
+        Presence,
+    };
+
     use super::{
         AbiParam, Admitted, CallArg, EdgeBound, EdgeKind, MAX_MANIFEST_NODES, MAX_STAGED_DEPTH,
         PrefixShardResolver, Role, RouteError, ShardResolver, Strategy, classify_strategy, route,
@@ -1038,10 +1042,7 @@ mod tests {
         AbiError, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
         PackageMetadata, ParamType, Totality,
     };
-    use crate::types::{
-        Address, AddressClass, CellKind, ComponentAddr, EdgeContent, Effect, EffectSet,
-        EffectTarget, MAX_IDS_PER_EDGE, Mode, Presence, ShardId, SlotId, Value, child_key,
-    };
+    use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, ShardId, SlotId, Value, child_key};
 
     fn pkg(name: &str) -> PackageHash {
         PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))

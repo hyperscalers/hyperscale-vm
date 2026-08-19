@@ -10,12 +10,14 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world};
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, Address, AddressClass, AdmissionError, AuthRole, AuthorityGate,
-    Clause, ComponentAddr, Constraint, CustodyClaim, EdgeKind, EdgeRef, Effect, EffectTarget,
-    EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
-    MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr,
-    PackageMetadata, ParamType, Possession, Presented, ResourceAddr, RuleExpr, StoredRule,
-    TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
+    AbiParam, Accessibility, AdmissionError, AuthRole, AuthorityGate, Clause, Constraint,
+    CustodyClaim, EdgeKind, EdgeRef, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta,
+    InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature, ModeExpr,
+    PackageMetadata, ParamType, Possession, Presented, RuleExpr, StoredRule, TargetExpr,
+    TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
+};
+use hyperscale_vm_types::{
+    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, ResourceAddr,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};

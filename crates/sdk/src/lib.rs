@@ -149,9 +149,10 @@ pub use blueprint::{Blueprint, Builder, HandlePlan, HandleShape, Method, TargetS
 // never has to depend on `vm-effects` directly.
 pub use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
 pub use hyperscale_vm_effects::{
-    Address, AuthBase, AuthCell, AuthRole, ParamType, Proposal, SlotId, encode_metadata,
+    AuthBase, AuthCell, AuthRole, ParamType, Proposal, SlotId, encode_metadata,
 };
 #[cfg(feature = "macros")]
 pub use hyperscale_vm_sdk_macros::blueprint;
+pub use hyperscale_vm_types::Address;
 pub use sym::{Addr, Amount, Blob, Bucket, Flag, Key, Kind, Num, Opaque, Seq, Sym};
 pub use trace::{Access, Interval, Leaf, Requirement, Trace};

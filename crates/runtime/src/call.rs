@@ -11,8 +11,8 @@
 //! constructs are that world's, and because the mapping from a mode to
 //! its handle type is the same one the linker registers.
 
-use hyperscale_vm_embed::{CellKind, GuestArg};
-use hyperscale_vm_types::{Address, ISSUER_REP};
+use hyperscale_vm_embed::GuestArg;
+use hyperscale_vm_types::{Address, CellKind, ISSUER_REP};
 use wasmtime::component::{Instance, Resource, ResourceAny, Val};
 use wasmtime::{AsContextMut, Error, Result};
 

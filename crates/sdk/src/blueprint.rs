@@ -14,9 +14,10 @@
 use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{
-    Clause, MAX_EFFECTS_PER_SIGNATURE, MethodSignature, ModeExpr, ModeKind, PackageMetadata,
-    ParamType, TargetExpr,
+    Clause, MAX_EFFECTS_PER_SIGNATURE, MethodSignature, ModeExpr, PackageMetadata, ParamType,
+    TargetExpr,
 };
+use hyperscale_vm_types::ModeKind;
 
 use crate::trace::Trace;
 

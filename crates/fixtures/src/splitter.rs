@@ -6,9 +6,10 @@
 //! mirroring it drift the moment they live apart.
 
 use hyperscale_vm_effects::{
-    AbiParam, ComponentAddr, Expr, MethodSignature, PackageMetadata, ParamType, Totality,
+    AbiParam, Expr, MethodSignature, PackageMetadata, ParamType, Totality,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, TypedBuilder, TypedError};
+use hyperscale_vm_types::ComponentAddr;
 
 /// `take(bucket, amount)`: split a bucket, producing the taken part and
 /// the rest — two output edges of the same resource, both of which

@@ -1,7 +1,7 @@
 //! What one transaction did, as a test asks about it.
 
-use hyperscale_vm_effects::AbortReason;
-use hyperscale_vm_kernel::{Outcome as KernelOutcome, Receipt};
+use hyperscale_vm_kernel::Receipt;
+use hyperscale_vm_types::{AbortReason, Outcome as KernelOutcome};
 
 /// The receipt one [`transact`](crate::Chain::transact) produced.
 ///

@@ -8,19 +8,20 @@ use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
-use hyperscale_vm_effects::{
-    Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    Presence, SlotId, SubstateKey, TestHasher, child_key,
-};
+use hyperscale_vm_effects::{Declaration, Hash32, Hasher, SlotId, TestHasher, child_key};
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
-    AbortReason, BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner,
-    KernelSession, Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, Unavailable,
-    WorkingStore, decode_amount, encode_amount, execute_batch,
+    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
+    Locality, MemoryStore, OverlayStore, RunResult, Unavailable, WorkingStore, decode_amount,
+    execute_batch,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, WriteCell, add_kernel_to_linker, blessed_engine,
+};
+use hyperscale_vm_types::{
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome, Presence,
+    SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Engine, Result, Store};

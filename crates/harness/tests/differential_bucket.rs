@@ -12,20 +12,20 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Declaration, DeclaredAccess, Effect, EffectSet,
-    EffectTarget, Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
+    Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
-use hyperscale_vm_kernel::{
-    AbortReason, Capability, EnvInputs, Held, ISSUER_REP, KernelSession, MemoryStore, Outcome,
-    OverlayStore, TxHash, encode_amount,
-};
+use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
 };
 use hyperscale_vm_runtime::{
     AmountCell, AmountRead, Bucket, DeltaCell, HostRefusal, InstanceRange, Issuer, ReadCell,
     ReserveCell, add_kernel_to_linker, blessed_engine, classify, validate_component,
+};
+use hyperscale_vm_types::{
+    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, ISSUER_REP,
+    Mode, Outcome, Presence, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::error::format_err;

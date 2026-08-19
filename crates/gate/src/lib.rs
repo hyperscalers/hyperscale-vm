@@ -674,9 +674,8 @@ mod tests {
 
     #[test]
     fn a_binding_the_export_type_cannot_honour_refuses_at_publish() {
-        use hyperscale_vm_effects::{
-            Address, AddressClass, Clause, Expr, ModeExpr, TargetExpr, Value, package_slot,
-        };
+        use hyperscale_vm_effects::{Clause, Expr, ModeExpr, TargetExpr, Value, package_slot};
+        use hyperscale_vm_types::{Address, AddressClass};
 
         // A value cell is keyed by what it holds, so the two clauses
         // below that move value say so twice.

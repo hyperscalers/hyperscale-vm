@@ -60,14 +60,15 @@ mod tests {
 
     use hyperscale_hbor::to_vec_with_depth;
     use hyperscale_vm_effects::{
-        AbiParam, Accessibility, Address, AddressClass, Clause, EdgeContent, Expr, LocalKey,
-        MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_VALUE_DEPTH,
-        METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType, Presence, RuleExpr, SubstateKey,
-        TargetExpr, Totality, Value, package_slot,
+        AbiParam, Accessibility, Clause, EdgeContent, Expr, MAX_CLAUSE_DEPTH,
+        MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_VALUE_DEPTH, METADATA_WIRE_DEPTH,
+        MethodSignature, ModeExpr, ParamType, RuleExpr, TargetExpr, Totality, Value, package_slot,
     };
     use hyperscale_vm_fixtures::{amm, book, splitter};
     use hyperscale_vm_stdlib::account;
-    use hyperscale_vm_types::{MAX_ERROR_CODES, MAX_EVENT_TYPES};
+    use hyperscale_vm_types::{
+        Address, AddressClass, LocalKey, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence, SubstateKey,
+    };
 
     use super::*;
 

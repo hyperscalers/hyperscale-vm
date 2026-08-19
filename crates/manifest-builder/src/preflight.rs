@@ -23,11 +23,12 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    Address, AdmissionError, Admitted, AuthRole, AuthorityGate, EnvelopeTree, Hasher,
-    InstanceRegistry, Manifest, ManifestGraph, ManifestHash, MetadataCache, NetworkWord, Presented,
-    PrincipalAddr, RouteError, Routing, SchemeId, ShardId, ShardResolver, StoredRule,
-    SubintentRecord, TextError, admit, admit_tree, declared_work, footprint, route, route_tree,
-    signature_work,
+    AdmissionError, Admitted, AuthRole, AuthorityGate, EnvelopeTree, Hasher, InstanceRegistry,
+    Manifest, ManifestGraph, ManifestHash, MetadataCache, Presented, RouteError, Routing, ShardId,
+    ShardResolver, StoredRule, SubintentRecord, admit, admit_tree, footprint, route, route_tree,
+};
+use hyperscale_vm_types::{
+    Address, NetworkWord, PrincipalAddr, SchemeId, TextError, declared_work, signature_work,
 };
 
 /// Why a transaction could not be preflighted.

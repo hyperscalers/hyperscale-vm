@@ -7,6 +7,7 @@ description = "Prebuilt genesis stdlib artifacts and their effect metadata"
 
 [dependencies]
 hyperscale-vm-effects.workspace = true
+hyperscale-vm-types.workspace = true
 hyperscale-vm-manifest-builder.workspace = true
 # The packages themselves: a package's declaration is traced from the
 # module its component is built from, never restated beside it.

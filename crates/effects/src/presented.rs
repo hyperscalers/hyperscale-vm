@@ -13,8 +13,9 @@
 //! about who may say it.
 
 use hyperscale_hbor::Hbor;
+use hyperscale_vm_types::{Address, AddressClass};
 
-use crate::types::{Address, AddressClass, Value};
+use crate::types::Value;
 
 /// A claim a proof carries and a rule names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
@@ -86,8 +87,10 @@ impl From<Address> for Presented {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_vm_types::{Address, AddressClass};
+
     use super::Presented;
-    use crate::types::{Address, AddressClass, EdgeContent, Value};
+    use crate::types::{EdgeContent, Value};
 
     fn address(byte: u8, class: AddressClass) -> Address {
         Address::new([byte; 31], class)

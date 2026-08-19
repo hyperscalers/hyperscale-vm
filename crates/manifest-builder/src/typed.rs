@@ -26,11 +26,11 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    Address, CallTarget, Constraint, EdgeContent, EdgeRef, EvalInputs, EvidenceRef, Expr, GraphArg,
-    Hash32, Hasher, InstanceMeta, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash,
-    MetadataCache, MethodSignature, PackageHash, ParamType, PrincipalAddr, ResourceRef, Value,
-    evaluate_expr,
+    Constraint, EdgeContent, EdgeRef, EvalInputs, EvidenceRef, Expr, GraphArg, Hash32, Hasher,
+    InstanceMeta, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MetadataCache,
+    MethodSignature, PackageHash, ParamType, Value, evaluate_expr,
 };
+use hyperscale_vm_types::{Address, CallTarget, PrincipalAddr, ResourceRef};
 
 use crate::args::Args;
 use crate::builder::{Bucket, BuildError, GraphBuilder};

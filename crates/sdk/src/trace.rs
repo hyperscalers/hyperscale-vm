@@ -32,8 +32,9 @@
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, AuthRole, Clause, CustodyClaim, Expr, MAX_CLAUSE_DEPTH,
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, ModeExpr, ParamType,
-    Presence, RuleExpr, SlotId, TargetExpr, Totality, Value,
+    RuleExpr, SlotId, TargetExpr, Totality, Value,
 };
+use hyperscale_vm_types::Presence;
 
 use crate::sym::{Addr, Amount, Flag, Key, Kind, Num, Opaque, Seq, Sym, expr_depth};
 

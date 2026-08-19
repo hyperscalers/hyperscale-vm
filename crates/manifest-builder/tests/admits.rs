@@ -14,12 +14,13 @@
 //! hand.
 
 use hyperscale_vm_effects::{
-    ComponentAddr, Constraint, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    MetadataCache, PackageHash, PrincipalAddr, ResourceAddr, TestHasher, admit,
+    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache,
+    PackageHash, TestHasher, admit,
 };
 use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{GraphBuilder, TypedBuilder};
 use hyperscale_vm_stdlib::account;
+use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
 use proptest::prelude::{Strategy, prop, prop_assert, proptest};
 
 const ACCOUNTS: [PrincipalAddr; 4] = [

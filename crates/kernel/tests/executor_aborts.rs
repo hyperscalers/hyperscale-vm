@@ -6,14 +6,17 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Declaration, DeclaredAccess, Effect, EffectSet, EffectTarget, Hash32,
-    Hasher, Mode, Presence, SlotId, SubintentHash, SubstateKey, TestHasher, child_key,
+    Declaration, DeclaredAccess, Hash32, Hasher, SlotId, SubintentHash, TestHasher, child_key,
     nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    AbortReason, BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner,
-    KernelSession, Locality, MemoryStore, Outcome, OverlayStore, RunResult, TxHash, Unavailable,
-    WorkingStore, decode_amount, encode_amount, execute_batch,
+    BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
+    Locality, MemoryStore, OverlayStore, RunResult, Unavailable, WorkingStore, decode_amount,
+    execute_batch,
+};
+use hyperscale_vm_types::{
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome, Presence,
+    SubstateKey, TxHash, encode_amount,
 };
 
 /// What every cell these fixtures move value through holds.

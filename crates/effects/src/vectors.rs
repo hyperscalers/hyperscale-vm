@@ -9,11 +9,13 @@
 
 use std::fmt::Write as _;
 
+use hyperscale_vm_types::{Address, AddressClass, SchemeId};
+
 use crate::hash::{Hash32, Hasher};
 use crate::metadata::PackageHash;
 use crate::types::{
-    Address, AddressClass, SchemeId, component_address, config_hash, native_address,
-    package_address, principal_address, resource_address,
+    component_address, config_hash, native_address, package_address, principal_address,
+    resource_address,
 };
 use crate::vocabulary::XRD;
 

@@ -50,13 +50,14 @@
 use hyperscale_hbor::{
     DEFAULT_MAX_DEPTH, HborDecode, HborEncode, from_slice_with_depth, to_vec_with_depth,
 };
-use hyperscale_vm_effects::{Address, MAX_AUTH_CELL_WIRE_DEPTH};
+use hyperscale_vm_effects::MAX_AUTH_CELL_WIRE_DEPTH;
 /// The stored-authority vocabulary, named where a body's words live.
 ///
 /// A role-set parameter is [`RoleSet`] — the canonical bytes a signature
 /// binds and a cell holds, which is the same type in both positions, so a
 /// body that stores what it was handed converts nothing.
 pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, StoredRoles as RoleSet};
+use hyperscale_vm_types::Address;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host;

@@ -16,18 +16,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{
-    ABSENT_REP, AbortReason, Address, CollectionId, Declaration, Effect, EffectSet, EffectTarget,
-    EntryKey, ISSUER_REP, Mode, Presence, SubstateKey, distinct_ids,
-};
-use hyperscale_vm_embed::CellKind;
+use hyperscale_vm_effects::{Declaration, distinct_ids};
 use hyperscale_vm_types::math::{MathError, Rounding, U256, mul_div};
+use hyperscale_vm_types::{
+    ABSENT_REP, AMOUNT_CELL_BYTES, AbortReason, Address, CellKind, CollectionId, Effect, EffectSet,
+    EffectTarget, EntryKey, ISSUER_REP, Mode, Presence, SubstateKey, TxHash, encode_amount,
+};
 
 use crate::ledger::AmountLedger;
 use crate::locality::Locality;
-use crate::modes::{
-    AMOUNT_CELL_BYTES, DeltaOp, ModeError, TxHash, decode_amount, encode_amount, total_movement,
-};
+use crate::modes::{DeltaOp, ModeError, decode_amount, total_movement};
 use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
 use crate::store::{Access, Fault, StoreError, WorkingStore};
@@ -415,9 +413,7 @@ impl From<SessionTrap> for AbortReason {
 // The emission caps and the event record are the shared vocabulary: the
 // same constants bound the kernel's emission here and the wire's decode in
 // the consensus workspace, so the two cannot drift.
-pub use hyperscale_vm_effects::{
-    Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
-};
+use hyperscale_vm_types::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX};
 
 /// What one interval scan costs before any entry is counted, in the
 /// boundary-byte terms the fuel schedule prices.
@@ -439,8 +435,8 @@ pub struct EnvInputs {
 
 /// How execution ended — the shared abort taxonomy, whose docs live with
 /// the type.
-pub use hyperscale_vm_effects::Outcome;
-pub use hyperscale_vm_types::Movement;
+use hyperscale_vm_types::Movement;
+use hyperscale_vm_types::Outcome;
 
 /// The committed state change, keyed canonically: `None` is a removal.
 /// Exclusive accesses report absolute outcomes; commutative accesses
@@ -2316,11 +2312,13 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Declaration, DeclaredAccess,
-        Effect, EffectConflict, EffectSet, EffectTarget, Hash32, Mode, SlotId, SubstateKey,
-        TestHasher, child_key,
+        Declaration, DeclaredAccess, Hash32, SlotId, TestHasher, child_key,
     };
-    use hyperscale_vm_types::Presence;
+    use hyperscale_vm_types::{
+        ABSENT_REP, AMOUNT_CELL_BYTES, AbortReason, Address, AddressClass, CollectionId, Effect,
+        EffectConflict, EffectSet, EffectTarget, Mode, Presence, SubstateKey, TxHash,
+        encode_amount,
+    };
 
     use super::{
         Capability, EnvInputs, Event, Held, Holds, KernelSession, MAX_EVENT_PAYLOAD_BYTES,
@@ -2328,7 +2326,7 @@ mod tests {
         SessionTrap, U256, capability_for, holds_of,
     };
     use crate::ledger::AmountLedger;
-    use crate::modes::{AMOUNT_CELL_BYTES, TxHash, decode_amount, encode_amount};
+    use crate::modes::decode_amount;
     use crate::overlay::OverlayStore;
     use crate::store::{MemoryStore, StoreError, WorkingStore};
 

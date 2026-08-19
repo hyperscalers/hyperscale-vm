@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_effects::{Address, CollectionId, EffectSet, EffectTarget, ModeKind};
+use hyperscale_vm_types::{Address, CollectionId, EffectSet, EffectTarget, ModeKind};
 
 use crate::store::{Access, Substates};
 
@@ -164,9 +164,10 @@ pub fn multiply_held_ids(store: &dyn Substates, holdings: &[(Address, Collection
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{
+    use hyperscale_vm_effects::{SlotId, TestHasher, child_key, collection_id};
+    use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, ModeKind,
-        Presence, SlotId, TestHasher, child_key, collection_id,
+        Presence,
     };
 
     use super::{multiply_held_ids, undeclared_accesses};

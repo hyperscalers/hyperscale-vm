@@ -9,9 +9,10 @@
 //! single entry costs, which is what conflict-by-interval-overlap makes
 //! expensive for everyone else.
 
-use hyperscale_vm_effects::{
+use hyperscale_vm_effects::{effect_units, footprint, mode_weight};
+use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode, ModeKind,
-    Presence, SubstateKey, compatible, effect_units, footprint, mode_weight,
+    Presence, SubstateKey, compatible,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};

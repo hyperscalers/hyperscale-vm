@@ -13,11 +13,13 @@
 
 use hyperscale_vm_effects::Value;
 pub use hyperscale_vm_effects::{
-    Address, CallTarget, ComponentAddr, PackageMetadata, PrincipalAddr, ResourceAddr, ResourceRef,
-    RoleSet, SlotId, StoredRule, Value as ManifestValue,
+    PackageMetadata, RoleSet, SlotId, StoredRule, Value as ManifestValue,
 };
 pub use hyperscale_vm_manifest_builder::{
     AddressArg, Arg, Args, Bucket, BucketArg, Outputs, Proof, TypedBuilder, TypedError,
+};
+pub use hyperscale_vm_types::{
+    Address, CallTarget, ComponentAddr, PrincipalAddr, ResourceAddr, ResourceRef,
 };
 
 use crate::num::{Quantity, UnitFixed};

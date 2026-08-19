@@ -6,12 +6,13 @@
 //! value somewhere the author never named is worse than making them say.
 
 use hyperscale_vm_effects::{
-    CallTarget, ComponentAddr, Constraint, GraphArg, Hash32, Hasher, InstanceMeta,
-    InstanceRegistry, MetadataCache, PackageHash, PrincipalAddr, ResourceAddr, TestHasher, admit,
+    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache,
+    PackageHash, TestHasher, admit,
 };
 use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{BuildError, GraphBuilder, TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::account;
+use hyperscale_vm_types::{CallTarget, ComponentAddr, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);

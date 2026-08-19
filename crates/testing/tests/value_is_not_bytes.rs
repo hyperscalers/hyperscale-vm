@@ -23,13 +23,15 @@
 
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT, XRD};
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, Address, AuthBase, AuthCell, Clause, ComponentAddr, CustodyClaim,
-    Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, Presence, Presented,
-    PrincipalAddr, ResourceAddr, RoleSet, RuleExpr, SlotId, StoredRule, TargetExpr, TestHasher,
-    Totality, Value, native_address,
+    AbiParam, Accessibility, AuthBase, AuthCell, Clause, CustodyClaim, Expr, MethodSignature,
+    ModeExpr, PackageMetadata, ParamType, Presented, RoleSet, RuleExpr, SlotId, StoredRule,
+    TargetExpr, TestHasher, Totality, Value, native_address,
 };
-use hyperscale_vm_kernel::{AbortReason, GuestArg, Invoked, KernelSession, encode_amount};
+use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, account, principal, resource};
+use hyperscale_vm_types::{
+    AbortReason, Address, ComponentAddr, Presence, PrincipalAddr, ResourceAddr, encode_amount,
+};
 
 const ATTACKER: PrincipalAddr = principal(0x22);
 const VICTIM: PrincipalAddr = principal(0x11);

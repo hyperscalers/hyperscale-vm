@@ -13,10 +13,10 @@
 //! compaction of what reads already answer, never a change of verdict.
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
+use hyperscale_vm_types::Address;
 
 use crate::presented::Presented;
 use crate::rule::{MAX_RULE_WIRE_DEPTH, StoredRule};
-use crate::types::Address;
 
 /// The decoder cap that admits exactly the role sets within the rule
 /// vocabulary's caps.

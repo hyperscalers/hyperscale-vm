@@ -16,10 +16,11 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Declaration, EffectSet, Hash32, Hasher, TestHasher};
-use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash};
+use hyperscale_vm_effects::{Declaration, Hash32, Hasher, TestHasher};
+use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_ref::{CVal, CanonError, ExecError, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{add_kernel_to_linker, blessed_engine, validate_component};
+use hyperscale_vm_types::{EffectSet, TxHash};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Result, Store};
 use wat::parse_str;

@@ -1,8 +1,8 @@
-error[E0277]: the trait bound `CallTarget: From<hyperscale_vm_effects::Address>` is not satisfied
+error[E0277]: the trait bound `CallTarget: From<Address>` is not satisfied
   --> tests/refusals/untyped_target.rs:11:21
    |
 11 |     let [] = b.call(SOMEBODY, "deposit", ());
-   |                ---- ^^^^^^^^ the trait `From<hyperscale_vm_effects::Address>` is not implemented for `CallTarget`
+   |                ---- ^^^^^^^^ the trait `From<Address>` is not implemented for `CallTarget`
    |                |
    |                required by a bound introduced by this call
    |
@@ -22,7 +22,7 @@ help: `CallTarget` implements trait `From<T>`
 ...  |
    | | }
    | |_- in this macro invocation
-   = note: required for `hyperscale_vm_effects::Address` to implement `Into<CallTarget>`
+   = note: required for `Address` to implement `Into<CallTarget>`
 note: required by a bound in `GraphBuilder::call`
   --> src/builder.rs
    |

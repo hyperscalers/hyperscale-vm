@@ -29,17 +29,17 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::thread;
 
-use hyperscale_vm_effects::{
-    AbortReason, Address, CollectionId, ConflictClass, Declaration, Effect, EffectSet,
-    EffectTarget, Mode, ModeKind, NodeCall, Presence, SubstateKey,
+use hyperscale_vm_effects::{Declaration, NodeCall};
+use hyperscale_vm_types::{
+    AbortReason, Address, CollectionId, ConflictClass, Effect, EffectSet, EffectTarget, Mode,
+    ModeKind, Outcome, Presence, SubstateKey, TxHash,
 };
 
 use crate::ledger::AmountLedger;
 use crate::locality::Locality;
-use crate::modes::TxHash;
 use crate::overlay::OverlayStore;
 use crate::session::{
-    EnvInputs, FinishError, KernelSession, MaterializeError, Outcome, Receipt, StateDelta,
+    EnvInputs, FinishError, KernelSession, MaterializeError, Receipt, StateDelta,
 };
 use crate::store::{Baseline, Fault, StoreError, Substates, WorkingStore};
 use crate::supply::SupplyDelta;
@@ -1097,16 +1097,17 @@ fn apply_completed(
 mod tests {
     use std::collections::BTreeMap;
 
-    use hyperscale_vm_effects::{
-        Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Hash32,
-        Mode, Presence, SlotId, TestHasher, child_key,
+    use hyperscale_vm_effects::{Declaration, Hash32, SlotId, TestHasher, child_key};
+    use hyperscale_vm_types::{
+        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Presence,
+        TxHash,
     };
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
 
     use super::{BatchTx, Outcome, conflict_groups, merge, root};
     use crate::conflict::conflicts;
-    use crate::modes::{ModeError, TxHash};
+    use crate::modes::ModeError;
     use crate::session::{EnvInputs, MaterializeError};
     use crate::store::StoreError;
 

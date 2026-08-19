@@ -1,7 +1,7 @@
 //! An account holds resources; it is not one. Constraining an edge to
 //! carry "an account" is the misaddressing the classes exist to catch.
 
-use hyperscale_vm_effects::{PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
 use hyperscale_vm_manifest_builder::GraphBuilder;
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);

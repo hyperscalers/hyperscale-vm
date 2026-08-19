@@ -10,10 +10,11 @@
 //! where the verdict is one.
 
 use hyperscale_vm_effects::{
-    AbiParam, Address, AddressClass, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata,
-    ParamType, Presence, TargetExpr, Value, package_slot,
+    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, TargetExpr,
+    Value, package_slot,
 };
 use hyperscale_vm_gate::{admit_package, attach_metadata};
+use hyperscale_vm_types::{Address, AddressClass, Presence};
 use wat::parse_str;
 
 /// A component whose one export borrows `resource`, named as the state

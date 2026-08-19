@@ -10,7 +10,7 @@
 //! which is what every other reader of one already does: routing refuses
 //! it, a scan of it is empty, and an insert into it is refused.
 
-use hyperscale_vm_effects::{Effect, EffectTarget, compatible};
+use hyperscale_vm_types::{Effect, EffectTarget, compatible};
 
 /// Whether two declared targets can name any common state.
 #[must_use]
@@ -109,9 +109,9 @@ pub fn conflicts(a: &Effect, b: &Effect) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{
+    use hyperscale_vm_effects::{SlotId, TestHasher, child_key};
+    use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, ModeKind, Presence,
-        SlotId, TestHasher, child_key,
     };
 
     use super::{conflicts, targets_overlap};

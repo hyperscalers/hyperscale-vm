@@ -8,12 +8,14 @@
 
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, EvalInputs, Hash32,
-    MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature, Mode, ModeKind, ParamType, Presence,
-    SubstateKey, TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
+    Declaration, EvalInputs, Hash32, MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature,
+    ParamType, TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
 };
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym, eq};
 use hyperscale_vm_sdk::{Blueprint, TargetShape, Trace};
+use hyperscale_vm_types::{
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, ModeKind, Presence, SubstateKey,
+};
 
 const BASKET: Address = Address::new([0x50; 31], AddressClass::Component);
 const RES_X: Address = Address::new([0xE1; 31], AddressClass::Component);

@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 
 use hyperscale_hbor::{EncodeError, Hbor, to_vec};
-use hyperscale_vm_types::{MAX_ERROR_CODES, MAX_EVENT_TYPES};
+use hyperscale_vm_types::{
+    Address, CallTarget, ComponentAddr, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence, SubstateKey,
+};
 use thiserror::Error;
 
 use crate::auth::{AuthRole, RoleSet};
@@ -16,8 +18,7 @@ use crate::invoke::EdgeKind;
 use crate::resource::holdings_entry;
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, StoredRule};
 use crate::types::{
-    Address, CallTarget, ComponentAddr, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Presence, SlotId,
-    SubstateKey, Value, child_key, component_address, config_hash,
+    MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, SlotId, Value, child_key, component_address, config_hash,
 };
 use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
@@ -1938,10 +1939,12 @@ impl InstanceRegistry {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_vm_types::PrincipalAddr;
+
     use super::*;
     use crate::envelope::NULLIFIER_SLOT;
     use crate::hash::TestHasher;
-    use crate::types::{PrincipalAddr, package_slot};
+    use crate::types::package_slot;
 
     /// A signature whose only effect points at `expr`.
     fn signature_over(expr: Expr) -> MethodSignature {
@@ -2294,6 +2297,8 @@ mod tests {
             )
         );
     }
+    use hyperscale_vm_types::AddressClass;
+
     use super::{
         AbiError, AbiParam, Accessibility, DeclarationError, MetadataCache, MethodSignature,
         PackageHash, PackageMetadata, ParamType, check_abi, check_declarations,
@@ -2301,7 +2306,6 @@ mod tests {
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::hash::Hash32;
     use crate::resource::holdings_range;
-    use crate::types::AddressClass;
 
     fn clause() -> Clause {
         Clause::Effect {

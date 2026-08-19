@@ -34,9 +34,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
     Constraint, EdgeRef, EnvelopeTree, GraphArg, Hasher, InstanceMeta, InstanceRegistry,
-    IntentDecl, MAX_SUBINTENTS, MAX_YIELD_PARAMS, ManifestGraph, MetadataCache, PrincipalAddr,
-    ResourceRef, Subintent, YieldBinding, YieldParam,
+    IntentDecl, MAX_YIELD_PARAMS, ManifestGraph, MetadataCache, Subintent, YieldBinding,
+    YieldParam,
 };
+use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceRef};
 
 use crate::builder::{Bucket, Param};
 use crate::typed::{TypedBuilder, TypedError};

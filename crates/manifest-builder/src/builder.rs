@@ -13,9 +13,9 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
-    CallTarget, Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, MAX_MANIFEST_NODES,
-    ManifestGraph, PrincipalAddr, ResourceRef,
+    Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, MAX_MANIFEST_NODES, ManifestGraph,
 };
+use hyperscale_vm_types::{CallTarget, PrincipalAddr, ResourceRef};
 
 use crate::args::Args;
 
@@ -513,9 +513,9 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_effects::{
-        Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, ManifestGraph, PrincipalAddr,
-        ResourceAddr, Value,
+        Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, ManifestGraph, Value,
     };
+    use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
 
     use super::{BuildError, GraphBuilder, Param};
 

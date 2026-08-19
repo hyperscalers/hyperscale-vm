@@ -33,10 +33,10 @@
 use core::any::Any;
 use core::cell::RefCell;
 
-use hyperscale_vm_effects::{AbortReason, Address, ISSUER_REP};
 use hyperscale_vm_embed::KernelHost;
-pub use hyperscale_vm_embed::{CellKind, GuestArg, Invoked};
-use hyperscale_vm_types::math;
+pub use hyperscale_vm_embed::{GuestArg, Invoked};
+pub use hyperscale_vm_types::CellKind;
+use hyperscale_vm_types::{AbortReason, Address, ISSUER_REP, math};
 
 use crate::handle::Handle;
 use crate::num::{Rounding, Wide};

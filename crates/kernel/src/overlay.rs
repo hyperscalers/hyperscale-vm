@@ -18,10 +18,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Address, CollectionId, EffectTarget, EntryKey, ModeKind, SubstateKey};
+use hyperscale_vm_types::{
+    Address, CollectionId, EffectTarget, EntryKey, ModeKind, SubstateKey, TxHash,
+};
 
 use crate::ledger::{AmountLedger, amount_bytes};
-use crate::modes::{DeltaOp, TxHash};
+use crate::modes::DeltaOp;
 use crate::store::{Access, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
 
 /// A collection's layered entry changes: `None` values are tombstones.
@@ -609,13 +611,14 @@ impl Baseline for OverlayStore {
 mod tests {
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{
-        Address, AddressClass, CollectionId, Hash32, SlotId, SubstateKey, TestHasher, child_key,
+    use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, child_key};
+    use hyperscale_vm_types::{
+        Address, AddressClass, CollectionId, SubstateKey, TxHash, encode_amount,
     };
 
     use super::OverlayStore;
     use crate::ledger::AmountLedger;
-    use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
+    use crate::modes::{DeltaOp, ModeError, decode_amount};
     use crate::store::{MemoryStore, StoreError, Substates, WorkingStore};
 
     fn key(byte: u8) -> SubstateKey {

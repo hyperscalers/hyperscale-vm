@@ -26,4 +26,3 @@ pub mod meter;
 
 pub use call::{GuestArg, Invoked};
 pub use host::KernelHost;
-pub use hyperscale_vm_types::CellKind;

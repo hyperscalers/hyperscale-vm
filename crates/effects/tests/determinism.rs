@@ -8,10 +8,11 @@ use std::collections::BTreeSet;
 
 use common::{ALICE, account, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
-    Address, AddressClass, ComponentAddr, EdgeContent, EdgeRef, Effect, EffectTarget, EvalInputs,
-    EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph,
-    ManifestHash, MetadataCache, Mode, SlotId, TestHasher, Value, admit, evaluate_expr, route,
+    EdgeContent, EdgeRef, EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta,
+    InstanceRegistry, ManifestGraph, ManifestHash, MetadataCache, SlotId, TestHasher, Value, admit,
+    evaluate_expr, route,
 };
+use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode};
 use proptest::collection::vec;
 use proptest::option;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
@@ -249,9 +250,10 @@ mod golden {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_effects::{
-        Address, AddressClass, ComponentAddr, EdgeRef, EvidenceRef, GraphArg, GraphNode,
-        ManifestGraph, SlotId, TestHasher, Value, child_key, fresh_id, fresh_local,
+        EdgeRef, EvidenceRef, GraphArg, GraphNode, ManifestGraph, SlotId, TestHasher, Value,
+        child_key, fresh_id, fresh_local,
     };
+    use hyperscale_vm_types::{Address, AddressClass, ComponentAddr};
 
     fn hex(bytes: &[u8]) -> String {
         use std::fmt::Write;

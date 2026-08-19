@@ -17,12 +17,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{
-    AbortReason, Address, CollectionId, EffectTarget, EntryKey, ModeKind, SubstateKey,
+use hyperscale_vm_types::{
+    AbortReason, Address, CollectionId, EffectTarget, EntryKey, ModeKind, SubstateKey, TxHash,
 };
 
 use crate::ledger::{AmountLedger, amount_bytes};
-use crate::modes::{DeltaOp, ModeError, TxHash};
+use crate::modes::{DeltaOp, ModeError};
 
 /// Why a store operation rejected. Deterministic: identical on every
 /// replica.
@@ -488,14 +488,15 @@ impl MemoryStore {
 mod tests {
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{
-        Address, AddressClass, CollectionId, EffectTarget, Hash32, ModeKind, SlotId, SubstateKey,
-        TestHasher, child_key,
+    use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, child_key};
+    use hyperscale_vm_types::{
+        Address, AddressClass, CollectionId, EffectTarget, ModeKind, SubstateKey, TxHash,
+        encode_amount,
     };
 
     use super::{Access, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
     use crate::ledger::AmountLedger;
-    use crate::modes::{DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount};
+    use crate::modes::{DeltaOp, Feasibility, ModeError, decode_amount};
     use crate::overlay::OverlayStore;
 
     /// The production shape: execution runs over an overlay of the base.

@@ -12,7 +12,7 @@
 //! So the executor derives it alongside the receipts, from the same
 //! declaration and the same [`Locality`] the receipts were applied under.
 
-use hyperscale_vm_effects::work_units;
+use hyperscale_vm_types::work_units;
 
 /// One transaction's attested work at one shard.
 ///

@@ -680,6 +680,7 @@ dependencies = [
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-runtime",
  "hyperscale-vm-sdk",
+ "hyperscale-vm-types",
 ]
 
 [[package]]
@@ -801,6 +802,7 @@ dependencies = [
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-runtime",
  "hyperscale-vm-sdk",
+ "hyperscale-vm-types",
 ]
 
 [[package]]
@@ -815,6 +817,7 @@ dependencies = [
  "hyperscale-vm-runtime",
  "hyperscale-vm-sdk",
  "hyperscale-vm-stdlib",
+ "hyperscale-vm-types",
  "thiserror 2.0.19",
  "wasmtime",
 ]

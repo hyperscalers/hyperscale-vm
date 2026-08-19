@@ -20,14 +20,15 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::NF_VAULT;
 use hyperscale_vm_effects::{
-    Address, AddressClass, Declaration, DeclaredAccess, Effect, EffectSet, EffectTarget, Hash32,
-    Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, Value, child_key, collection_id,
+    Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, Value, child_key,
+    collection_id,
 };
-use hyperscale_vm_kernel::{
-    AbortReason, EnvInputs, ISSUER_REP, KernelSession, MaterializeError, MemoryStore, OverlayStore,
-    TxHash, encode_amount,
-};
+use hyperscale_vm_kernel::{EnvInputs, KernelSession, MaterializeError, MemoryStore, OverlayStore};
 use hyperscale_vm_types::math::U256;
+use hyperscale_vm_types::{
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode,
+    Presence, SubstateKey, TxHash, encode_amount,
+};
 
 const VAULT: SlotId = SlotId(1);
 const POOL: Address = Address::new([0x70; 31], AddressClass::Component);

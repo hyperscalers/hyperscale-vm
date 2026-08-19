@@ -8,12 +8,13 @@
 use std::collections::BTreeMap;
 
 use hyperscale_vm_cli::compile;
-use hyperscale_vm_effects::{AbortReason, PackageHash};
+use hyperscale_vm_effects::PackageHash;
 use hyperscale_vm_kernel::{GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession};
 use hyperscale_vm_runtime::{
     Returned, add_kernel_to_linker, blessed_engine, call_export, classify, exhausted,
     validate_component,
 };
+use hyperscale_vm_types::AbortReason;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Engine, Store};
 

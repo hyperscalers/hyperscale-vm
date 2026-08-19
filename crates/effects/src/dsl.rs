@@ -9,13 +9,16 @@
 //! and identical on every node.
 
 use hyperscale_hbor::Hbor;
+use hyperscale_vm_types::{
+    Address, CellKind, CollectionId, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey,
+    Mode, Presence, SubstateKey,
+};
 
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::ManifestHash;
 use crate::types::{
-    Address, CellKind, CollectionId, EdgeContent, Effect, EffectConflict, EffectSet, EffectTarget,
-    LocalKey, MAX_IDS_PER_EDGE, Mode, Presence, SlotId, SubstateKey, Value, child_key,
-    collection_id, order_key, resource_address,
+    EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
+    resource_address,
 };
 
 /// The bound on any collection a `for-each` clause maps over. Keeps
@@ -1363,6 +1366,8 @@ fn as_list(value: Value) -> Result<Vec<Value>, EvalError> {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_vm_types::{Address, AddressClass, Effect, EffectTarget, Mode, Presence};
+
     use super::{
         Clause, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
         MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, evaluate_declaration, evaluate_effects,
@@ -1371,8 +1376,7 @@ mod tests {
     use crate::hash::{Hash32, TestHasher};
     use crate::manifest::ManifestHash;
     use crate::types::{
-        Address, AddressClass, EdgeContent, Effect, EffectTarget, MAX_IDS_PER_EDGE, Mode, Presence,
-        SlotId, Value, child_key, collection_id, order_key,
+        EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
     };
 
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {

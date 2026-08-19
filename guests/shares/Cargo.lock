@@ -125,6 +125,7 @@ dependencies = [
  "hyperscale-vm-effects",
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-sdk",
+ "hyperscale-vm-types",
 ]
 
 [[package]]
@@ -136,6 +137,7 @@ dependencies = [
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-sdk",
  "hyperscale-vm-stdlib",
+ "hyperscale-vm-types",
  "thiserror",
 ]
 

@@ -7,10 +7,11 @@
 
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, ComponentAddr, Expr, MethodSignature, PackageMetadata, ParamType,
-    Presence, SlotId, Totality, Value, package_slot,
+    AbiParam, Accessibility, Expr, MethodSignature, PackageMetadata, ParamType, SlotId, Totality,
+    Value, package_slot,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
+use hyperscale_vm_types::{ComponentAddr, Presence};
 
 /// The entry cap the registry's drain declares.
 pub const DRAIN_CAP: u32 = 8;

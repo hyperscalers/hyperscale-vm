@@ -10,9 +10,9 @@
 //! variant decides the fee.
 
 use hyperscale_vm_harness::fixtures::NoHost;
-use hyperscale_vm_kernel::AbortReason;
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{Returned, blessed_engine, call_export, classify, validate_component};
+use hyperscale_vm_types::AbortReason;
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::Context;
 use wasmtime::{Error, Result, Store};

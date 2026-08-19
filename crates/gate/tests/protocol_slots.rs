@@ -9,10 +9,11 @@
 use hyperscale_vm_effects::envelope::NULLIFIER_SLOT;
 use hyperscale_vm_effects::vocabulary::{AUTH, INSTANCE, RESOURCE};
 use hyperscale_vm_effects::{
-    AbiParam, Address, AddressClass, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata,
-    ParamType, Presence, SlotId, TargetExpr, Value,
+    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, SlotId,
+    TargetExpr, Value,
 };
 use hyperscale_vm_gate::{admit_package, attach_metadata};
+use hyperscale_vm_types::{Address, AddressClass, Presence};
 use wat::parse_str;
 
 const RES: Address = Address::new([0xE1; 31], AddressClass::Resource);

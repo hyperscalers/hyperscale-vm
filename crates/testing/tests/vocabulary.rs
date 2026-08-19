@@ -9,15 +9,16 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget, EntryKey,
-    Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key, collection_id,
+    Declaration, Hash32, Hasher, SlotId, TestHasher, child_key, collection_id,
 };
-use hyperscale_vm_kernel::{
-    EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, encode_amount,
-};
+use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_sdk::handle::Handle;
 use hyperscale_vm_sdk::host::{Refusal, with_kernel};
 use hyperscale_vm_sdk::state::{self, Bucket, Entry, Interval, OrderKey, Quantity, Slot, Vault};
+use hyperscale_vm_types::{
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Mode, Presence,
+    SubstateKey, TxHash, encode_amount,
+};
 
 const OWNER: Address = Address::new([0x11; 31], AddressClass::Component);
 /// What the value cells in these fixtures hold.

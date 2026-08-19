@@ -1,6 +1,6 @@
 //! A package address names code, which answers no calls.
 
-use hyperscale_vm_effects::PackageAddr;
+use hyperscale_vm_types::PackageAddr;
 use hyperscale_vm_manifest_builder::GraphBuilder;
 
 const CODE: PackageAddr = PackageAddr::new([0x30; 31]);

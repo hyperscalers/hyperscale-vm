@@ -24,13 +24,16 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget,
-    FOOTPRINT_WEIGHT, Hash32, Hasher, Mode, Presence, SlotId, SubintentHash, SubstateKey,
-    TestHasher, child_key, effect_units, footprint, nullifier_key, work_units,
+    Declaration, Hash32, Hasher, SlotId, SubintentHash, TestHasher, child_key, effect_units,
+    footprint, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    AbortReason, BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession,
-    Locality, MemoryStore, Outcome, Receipt, RunResult, TxHash, Work, encode_amount, execute_batch,
+    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
+    MemoryStore, Receipt, RunResult, Work, execute_batch,
+};
+use hyperscale_vm_types::{
+    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget,
+    FOOTPRINT_WEIGHT, Mode, Outcome, Presence, SubstateKey, TxHash, encode_amount, work_units,
 };
 
 /// What every cell these fixtures move value through holds.

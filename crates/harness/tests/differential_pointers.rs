@@ -16,16 +16,17 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Declaration, DeclaredAccess, Effect, EffectSet,
-    EffectTarget, Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
+    Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, child_key,
 };
-use hyperscale_vm_kernel::{
-    EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, encode_amount,
-};
+use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
     AmountCell, Bucket, InstanceRange, add_kernel_to_linker, blessed_engine, classify,
     validate_component,
+};
+use hyperscale_vm_types::{
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Presence,
+    SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
 use wasmtime::{Result, Store};

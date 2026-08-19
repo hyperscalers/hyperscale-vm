@@ -10,9 +10,7 @@
 //! same order against committed balance minus prior reservations, never
 //! counting in-flight deltas.
 
-pub use hyperscale_vm_effects::TxHash;
-pub use hyperscale_vm_types::{AMOUNT_CELL_BYTES, amount_cell, encode_amount};
-use hyperscale_vm_types::{AbortReason, Movement, read_amount};
+use hyperscale_vm_types::{AMOUNT_CELL_BYTES, AbortReason, Movement, TxHash, read_amount};
 
 /// Why a mode-semantics computation rejected its inputs. Deterministic:
 /// the same inputs fail identically on every replica.
@@ -162,10 +160,11 @@ pub fn judge(available: u128, requests: &[(TxHash, u128)]) -> Vec<(TxHash, Feasi
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::Hash32;
+    use hyperscale_vm_types::encode_amount;
 
     use super::{
-        AMOUNT_CELL_BYTES, DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount,
-        fold_deltas, judge,
+        AMOUNT_CELL_BYTES, DeltaOp, Feasibility, ModeError, TxHash, decode_amount, fold_deltas,
+        judge,
     };
 
     fn tx(byte: u8) -> TxHash {

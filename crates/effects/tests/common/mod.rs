@@ -4,15 +4,16 @@
 
 pub use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    Address, Clause, ComponentAddr, Effect, EffectSet, Expr, Hash32, Hasher, InstanceMeta,
-    InstanceRegistry, ManifestHash, MetadataCache, MethodSignature, ModeExpr, PackageHash,
-    PackageMetadata, ParamType, PrefixShardResolver, Presence, PrincipalAddr, ResourceAddr,
-    ShardId, ShardResolver, SlotId, SubstateKey, TargetExpr, TestHasher, Totality, Value,
-    child_key,
+    Clause, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestHash, MetadataCache,
+    MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
+    ShardId, ShardResolver, SlotId, TargetExpr, TestHasher, Totality, Value, child_key,
 };
 pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
 pub use hyperscale_vm_fixtures::{amm, book, splitter};
 pub use hyperscale_vm_stdlib::account;
+use hyperscale_vm_types::{
+    Address, ComponentAddr, Effect, EffectSet, Presence, PrincipalAddr, ResourceAddr, SubstateKey,
+};
 
 /// Accounts are principals: their class is what resolves them to the
 /// protocol's account blueprint, so a fixture names one without anything

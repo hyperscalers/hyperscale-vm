@@ -12,8 +12,8 @@
 //! so every body reaches past itself by path — and [`refused`] is what
 //! makes reaching the wrong one fail to compile.
 
-use hyperscale_vm_effects::AbortReason;
 use hyperscale_vm_embed::KernelHost;
+use hyperscale_vm_types::AbortReason;
 use hyperscale_vm_types::math::U256;
 
 use crate::session::{KernelSession, SessionTrap};

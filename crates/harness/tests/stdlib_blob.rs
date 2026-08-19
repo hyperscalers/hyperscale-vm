@@ -15,16 +15,14 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Declaration, DeclaredAccess, Effect, EffectSet,
-    EffectTarget, Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, Value,
-    child_key, collection_id, order_key,
+    Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, Value, child_key,
+    collection_id, order_key,
 };
 use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
 #[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, Event, Held, Interval, KernelSession, MemoryStore, Movement,
-    OverlayStore, Receipt, TxHash, encode_amount,
+    Capability, EnvInputs, Held, Interval, KernelSession, MemoryStore, OverlayStore, Receipt,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
@@ -33,6 +31,10 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
+use hyperscale_vm_types::{
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Movement,
+    Presence, SubstateKey, TxHash, encode_amount,
+};
 use wasmtime::component::{Component, ComponentType, Lift, Linker, Lower, Resource};
 use wasmtime::error::Context;
 use wasmtime::{Result, Store};

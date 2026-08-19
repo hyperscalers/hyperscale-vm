@@ -14,13 +14,13 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    Address, ComponentAddr, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    ManifestGraph, MetadataCache, PackageHash, PackageMetadata, PrincipalAddr, ResourceAddr,
-    RoleSet, StoredRule, TestHasher, Value, admit, resource_address,
+    EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
+    PackageHash, PackageMetadata, RoleSet, StoredRule, TestHasher, Value, admit, resource_address,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
+use hyperscale_vm_types::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);

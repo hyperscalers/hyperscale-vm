@@ -3,13 +3,13 @@
 //! them.
 
 use hyperscale_vm_effects::{
-    ComponentAddr, Constraint, EdgeRef, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    ManifestGraph, MetadataCache, PackageHash, PrincipalAddr, ResourceAddr, ResourceRef,
-    TestHasher, Value, admit, resource_address,
+    Constraint, EdgeRef, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
+    MetadataCache, PackageHash, TestHasher, Value, admit, resource_address,
 };
 use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
+use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr, ResourceRef};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);

@@ -18,11 +18,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{EffectTarget, ModeKind, SubstateKey};
+use hyperscale_vm_types::{EffectTarget, ModeKind, SubstateKey, TxHash, amount_cell};
 
-use crate::modes::{
-    DeltaOp, Feasibility, ModeError, TxHash, amount_cell, decode_amount, fold_deltas, judge,
-};
+use crate::modes::{DeltaOp, Feasibility, ModeError, decode_amount, fold_deltas, judge};
 use crate::store::{AppliedDelta, Baseline, StoreError};
 
 /// The amount-cell semantics, over a store's own view of committed

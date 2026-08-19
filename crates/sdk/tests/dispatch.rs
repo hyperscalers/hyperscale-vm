@@ -7,16 +7,14 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{
-    ABSENT_REP, Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32,
-    Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, Value, child_key,
-};
-use hyperscale_vm_kernel::{
-    AbortReason, Capability, EnvInputs, Held, KernelSession, MemoryStore, OverlayStore, TxHash,
-    encode_amount,
-};
+use hyperscale_vm_effects::{Declaration, Hash32, Hasher, SlotId, TestHasher, Value, child_key};
+use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_sdk::host::{CellKind, GuestArg, Invoked};
+use hyperscale_vm_types::{
+    ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode,
+    Presence, SubstateKey, TxHash, encode_amount,
+};
 
 const OWNER: Address = Address::new([0x21; 31], AddressClass::Component);
 const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);

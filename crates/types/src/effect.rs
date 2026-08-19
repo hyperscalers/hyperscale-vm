@@ -166,3 +166,195 @@ impl EffectSet {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::{Effect, EffectSet};
+    use crate::address::{
+        Address, AddressClass, CollectionId, EffectTarget, LocalKey, SubstateKey,
+    };
+    use crate::mode::{Mode, Presence};
+
+    /// Distinct point targets, with no derivation: what these tests need
+    /// of a key is only that two differ.
+    fn target(byte: u8) -> EffectTarget {
+        EffectTarget::Point(SubstateKey {
+            owner: Address::new([0x10; 31], AddressClass::Component),
+            local: LocalKey([byte; 16]),
+        })
+    }
+
+    #[test]
+    fn only_read_and_write_targets_provision() {
+        // A counterpart shard has to carry what execution reads: fresh
+        // reads, and the prior value a read-modify-write folds over.
+        // A locked target cannot change, deltas read nothing, and a
+        // reservation is judged where it lives — so a commutative-only
+        // leg provisions nothing at all.
+        let mut set = EffectSet::new();
+        for (byte, mode) in [
+            (1, Mode::Read),
+            (
+                2,
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+            ),
+            (3, Mode::Delta),
+            (4, Mode::Reserve { amount: 5 }),
+            (5, Mode::Locked),
+        ] {
+            set.insert(Effect {
+                target: target(byte),
+                mode,
+            })
+            .unwrap();
+        }
+        assert_eq!(
+            set.provision_targets(),
+            BTreeSet::from([target(1), target(2)])
+        );
+
+        // A cell carrying both a delta and a read still provisions: the
+        // read is what needs the value.
+        let mut mixed = EffectSet::new();
+        mixed
+            .insert(Effect {
+                target: target(3),
+                mode: Mode::Read,
+            })
+            .unwrap();
+        mixed
+            .insert(Effect {
+                target: target(3),
+                mode: Mode::Delta,
+            })
+            .unwrap();
+        assert_eq!(mixed.provision_targets(), BTreeSet::from([target(3)]));
+
+        assert!(EffectSet::new().provision_targets().is_empty());
+    }
+
+    #[test]
+    fn a_self_conflict_is_an_exclusive_beside_a_commutative() {
+        let cell = SubstateKey {
+            owner: Address::new([1; 31], AddressClass::Component),
+            local: LocalKey([2; 16]),
+        };
+        let set_of = |modes: &[Mode]| {
+            let mut set = EffectSet::new();
+            for mode in modes {
+                set.insert(Effect {
+                    target: EffectTarget::Point(cell),
+                    mode: *mode,
+                })
+                .unwrap();
+            }
+            set
+        };
+
+        for pair in [
+            [
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+                Mode::Delta,
+            ],
+            [
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+                Mode::Reserve { amount: 1 },
+            ],
+        ] {
+            assert_eq!(set_of(&pair).self_conflicting(), Some(cell), "{pair:?}");
+        }
+
+        // Everything else composes: the commutative modes with each
+        // other, and reads with anything — a read is not an absolute, so
+        // there is nothing for a movement to disagree with.
+        for modes in [
+            &[Mode::Delta, Mode::Reserve { amount: 1 }][..],
+            &[Mode::Read, Mode::Delta],
+            &[Mode::Locked, Mode::Reserve { amount: 1 }],
+            &[
+                Mode::Read,
+                Mode::Write {
+                    requires: Presence::Either,
+                },
+            ],
+            &[Mode::Write {
+                requires: Presence::Either,
+            }],
+        ] {
+            assert_eq!(set_of(modes).self_conflicting(), None, "{modes:?}");
+        }
+
+        // A collection target is never one: it holds no amount, so the
+        // pairing the check is about cannot arise.
+        let mut ranges = EffectSet::new();
+        for mode in [
+            Mode::Write {
+                requires: Presence::Either,
+            },
+            Mode::Delta,
+        ] {
+            ranges
+                .insert(Effect {
+                    target: EffectTarget::Range {
+                        owner: Address::new([1; 31], AddressClass::Component),
+                        collection: CollectionId([3; 16]),
+                        lo: 0,
+                        hi: 9,
+                        cap: 4,
+                    },
+                    mode,
+                })
+                .unwrap();
+        }
+        assert_eq!(ranges.self_conflicting(), None);
+    }
+
+    #[test]
+    fn effect_set_folds_reserves_and_dedups() {
+        let target = target(1);
+        let mut set = EffectSet::new();
+        set.insert(Effect {
+            target,
+            mode: Mode::Reserve { amount: 100 },
+        })
+        .unwrap();
+        set.insert(Effect {
+            target,
+            mode: Mode::Reserve { amount: 50 },
+        })
+        .unwrap();
+        set.insert(Effect {
+            target,
+            mode: Mode::Delta,
+        })
+        .unwrap();
+        set.insert(Effect {
+            target,
+            mode: Mode::Delta,
+        })
+        .unwrap();
+        assert_eq!(set.iter().count(), 2);
+        assert!(set.contains(&Effect {
+            target,
+            mode: Mode::Reserve { amount: 150 },
+        }));
+        assert!(set.contains(&Effect {
+            target,
+            mode: Mode::Delta,
+        }));
+
+        let overflow = set.insert(Effect {
+            target,
+            mode: Mode::Reserve { amount: u128::MAX },
+        });
+        assert!(overflow.is_err());
+    }
+}

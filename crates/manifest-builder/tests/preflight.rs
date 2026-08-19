@@ -7,13 +7,15 @@
 
 use hyperscale_vm_effects::{
     AuthRole, Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache,
-    PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SchemeId, TestHasher, TextError,
-    Value, admit, declared_work, footprint, resource_address, route, signature_work,
+    PackageHash, PrefixShardResolver, TestHasher, Value, admit, footprint, resource_address, route,
 };
 use hyperscale_vm_manifest_builder::{
     Authority, EnvelopeBuilder, PreflightError, TypedBuilder, preflight, preflight_tree,
 };
 use hyperscale_vm_stdlib::{account, staking};
+use hyperscale_vm_types::{
+    PrincipalAddr, ResourceAddr, SchemeId, TextError, declared_work, signature_work,
+};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);

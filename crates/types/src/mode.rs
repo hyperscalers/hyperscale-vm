@@ -270,7 +270,7 @@ impl ModeKind {
 
 #[cfg(test)]
 mod tests {
-    use super::Presence;
+    use super::{ModeKind, Presence, compatible};
 
     /// The lattice both judges fold over: symmetric, idempotent, and
     /// with the indifferent requirement as its unit.
@@ -288,5 +288,23 @@ mod tests {
         // The one pair with no answer.
         assert_eq!(Presence::Absent.meet(Presence::Present), None);
         assert_eq!(Presence::Present.meet(Presence::Absent), None);
+    }
+    #[test]
+    fn compatibility_matrix() {
+        use ModeKind::{Delta, Locked, Read, Reserve, Write};
+        let kinds = [Read, Locked, Delta, Reserve, Write];
+        let table = [
+            [true, true, false, false, false],
+            [true, true, true, true, true],
+            [false, true, true, true, false],
+            [false, true, true, true, false],
+            [false, true, false, false, false],
+        ];
+        for (i, &a) in kinds.iter().enumerate() {
+            for (j, &b) in kinds.iter().enumerate() {
+                assert_eq!(compatible(a, b), table[i][j], "{a:?} vs {b:?}");
+                assert_eq!(compatible(a, b), compatible(b, a), "symmetry {a:?}/{b:?}");
+            }
+        }
     }
 }

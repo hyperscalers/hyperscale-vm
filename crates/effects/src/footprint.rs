@@ -23,7 +23,7 @@
 //! carry placeholder values, and what one unit costs in fee terms is set
 //! against measured baselines rather than chosen here.
 
-use crate::types::{Effect, EffectSet, EffectTarget, ModeKind, compatible};
+use hyperscale_vm_types::{Effect, EffectSet, EffectTarget, ModeKind, compatible};
 
 /// Units charged for naming one target at all, before any span.
 ///
@@ -136,11 +136,12 @@ pub fn footprint(declared: &EffectSet) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{EXCLUSIVITY_FLOOR, effect_units, footprint, mode_weight, order_bits};
-    use crate::types::{
+    use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode,
         ModeKind, Presence, SubstateKey,
     };
+
+    use super::{EXCLUSIVITY_FLOOR, effect_units, footprint, mode_weight, order_bits};
 
     const OWNER: Address = Address::new([7; 31], AddressClass::Component);
 

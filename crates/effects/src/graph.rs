@@ -14,11 +14,12 @@
 use std::collections::BTreeSet;
 
 use hyperscale_hbor::{Hbor, to_vec};
+use hyperscale_vm_types::{CallTarget, ResourceRef};
 
 use crate::hash::Hasher;
 use crate::manifest::ManifestHash;
 use crate::route::MAX_MANIFEST_NODES;
-use crate::types::{CallTarget, ResourceRef, Value};
+use crate::types::Value;
 
 /// One produced value edge: the `output`-th edge of the `producer` node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
@@ -206,9 +207,11 @@ impl ManifestGraph {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_vm_types::ComponentAddr;
+
     use super::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
     use crate::hash::TestHasher;
-    use crate::types::{ComponentAddr, Value};
+    use crate::types::Value;
 
     #[test]
     fn the_graph_hash_covers_edges_and_constraints() {

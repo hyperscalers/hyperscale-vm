@@ -36,7 +36,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_effects::Address;
+use hyperscale_vm_types::Address;
 
 use crate::modes::ModeError;
 
@@ -217,7 +217,7 @@ impl SupplyLedger {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{Address, AddressClass};
+    use hyperscale_vm_types::{Address, AddressClass};
 
     use super::SupplyLedger;
     use crate::modes::ModeError;

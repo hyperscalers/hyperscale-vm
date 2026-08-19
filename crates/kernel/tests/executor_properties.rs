@@ -19,14 +19,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget, EntryKey,
-    Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
-};
+use hyperscale_vm_effects::{Declaration, Hash32, Hasher, SlotId, TestHasher, child_key};
 use hyperscale_vm_kernel::{
-    AbortReason, BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession,
-    Locality, MemoryStore, Movement, Outcome, RunResult, TxHash, WorkingStore, decode_amount,
-    encode_amount, execute_batch,
+    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
+    MemoryStore, RunResult, WorkingStore, decode_amount, execute_batch,
+};
+use hyperscale_vm_types::{
+    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey,
+    Mode, Movement, Outcome, Presence, SubstateKey, TxHash, encode_amount,
 };
 
 /// What every cell these fixtures move value through holds.

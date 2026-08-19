@@ -25,7 +25,8 @@
 
 use core::marker::PhantomData;
 
-use hyperscale_vm_effects::{Address, Expr, ParamType, SlotId, Value};
+use hyperscale_vm_effects::{Expr, ParamType, SlotId, Value};
+use hyperscale_vm_types::Address;
 
 /// A symbolic value's static kind.
 pub trait Kind {

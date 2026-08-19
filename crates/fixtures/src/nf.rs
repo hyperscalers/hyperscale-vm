@@ -9,10 +9,11 @@
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::vocabulary::{INSTANCE, NF_MOVE_CAP};
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, ComponentAddr, Expr, MethodSignature, PackageMetadata, ParamType,
-    Presence, ResourceRef, RuleExpr, Totality, Value, holdings_range,
+    AbiParam, Accessibility, Expr, MethodSignature, PackageMetadata, ParamType, RuleExpr, Totality,
+    Value, holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
+use hyperscale_vm_types::{ComponentAddr, Presence, ResourceRef};
 
 /// The non-fungible surface end to end: an issuer that mints and burns,
 /// and holders whose instances are the entries of their per-resource

@@ -5,12 +5,12 @@
 //! somebody before they sign.
 
 use hyperscale_vm_effects::{
-    ComponentAddr, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
-    PrincipalAddr, ResourceAddr, TestHasher, TextError, Value,
+    Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash, TestHasher, Value,
 };
 use hyperscale_vm_fixtures::{amm, splitter};
 use hyperscale_vm_manifest_builder::{GraphBuilder, Names, Param, TypedBuilder, render};
 use hyperscale_vm_stdlib::account;
+use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr, TextError};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);

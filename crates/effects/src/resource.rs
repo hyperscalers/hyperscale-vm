@@ -7,10 +7,11 @@
 //! the record says what they issue, never how much of it exists.
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
+use hyperscale_vm_types::{Address, CollectionId, SubstateKey};
 
 use crate::dsl::{Expr, TargetExpr};
 use crate::hash::Hasher;
-use crate::types::{Address, CollectionId, SubstateKey, Value, child_key, collection_id};
+use crate::types::{Value, child_key, collection_id};
 pub use crate::vocabulary::{INSTANCE, NF_VAULT, RESOURCE};
 
 /// The decoder cap for a record cell: a flat two-field struct, one level
@@ -180,12 +181,13 @@ pub fn instance_data_key(
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::assert_canonical;
+    use hyperscale_vm_types::{Address, AddressClass};
 
     use super::{
         Fungibility, ResourceRecord, holdings_collection, instance_data_key, resource_record_key,
     };
     use crate::hash::TestHasher;
-    use crate::types::{Address, AddressClass, native_address};
+    use crate::types::native_address;
     use crate::vocabulary::{GENESIS_PUBLISHER, XRD};
 
     #[test]

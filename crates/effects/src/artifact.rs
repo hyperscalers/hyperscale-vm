@@ -256,6 +256,7 @@ fn read_uleb128(bytes: &[u8], pos: &mut usize) -> Result<usize, ArtifactError> {
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::to_vec_with_depth;
+    use hyperscale_vm_types::Presence;
 
     use super::{
         ArtifactError, CUSTOM_SECTION_ID, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata,
@@ -264,7 +265,6 @@ mod tests {
     use crate::dsl::{Clause, Expr, MAX_EXPR_DEPTH, ModeExpr, TargetExpr};
     use crate::hash::TestHasher;
     use crate::metadata::{MethodSignature, PackageMetadata, Totality, package_hash};
-    use crate::types::Presence;
 
     fn empty_component() -> Vec<u8> {
         let mut artifact = b"\0asm".to_vec();

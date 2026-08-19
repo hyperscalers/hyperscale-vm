@@ -17,9 +17,9 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::vocabulary::GENESIS_PUBLISHER as GENESIS_PUBLISHER_ROLE;
 use hyperscale_vm_effects::{
-    Hasher, NativeAddr, PackageHash, StateWrites, attach_metadata, native_address, package_hash,
-    package_key,
+    Hasher, PackageHash, attach_metadata, native_address, package_hash, package_key,
 };
+use hyperscale_vm_types::{NativeAddr, StateWrites};
 
 /// The componentized account guest: reservation-backed `withdraw` and
 /// delta `deposit`.

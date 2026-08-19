@@ -12,12 +12,12 @@
 //! withdrawal under the other reaches.
 
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, Clause, ComponentAddr, Expr, MethodSignature, ModeExpr,
-    PackageMetadata, ParamType, Presence, PrincipalAddr, ResourceAddr, SlotId, TargetExpr,
-    Totality, Value,
+    AbiParam, Accessibility, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType,
+    SlotId, TargetExpr, Totality, Value,
 };
-use hyperscale_vm_kernel::{AbortReason, GuestArg, Invoked, KernelSession};
+use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, account, principal, resource};
+use hyperscale_vm_types::{AbortReason, ComponentAddr, Presence, PrincipalAddr, ResourceAddr};
 
 const ATTACKER: PrincipalAddr = principal(0x22);
 /// What the attacker actually has.

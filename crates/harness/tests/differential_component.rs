@@ -7,14 +7,11 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    ABSENT_REP, Address, AddressClass, CollectionId, Declaration, DeclaredAccess, Effect,
-    EffectSet, EffectTarget, EntryKey, Hash32, Hasher, Mode, Presence, SlotId, SubstateKey,
-    TestHasher, child_key,
+    Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
-    AbortReason, Capability, EnvInputs, KernelSession, MemoryStore, Movement, OverlayStore,
-    Receipt, TxHash, encode_amount,
+    Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore, Receipt,
 };
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
@@ -22,6 +19,10 @@ use hyperscale_vm_ref::{
 use hyperscale_vm_runtime::{
     DeltaCell, HostRefusal, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
     add_kernel_to_linker, blessed_engine, validate_component,
+};
+use hyperscale_vm_types::{
+    ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget,
+    EntryKey, Mode, Movement, Presence, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
 use wasmtime::error::{Context, format_err};

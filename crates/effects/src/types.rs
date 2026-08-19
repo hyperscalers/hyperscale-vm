@@ -2,11 +2,9 @@
 //! DSL evaluator, the router, and the kernel.
 
 use hyperscale_hbor::{Hbor, to_vec};
-pub use hyperscale_vm_types::{
-    Address, AddressClass, CallTarget, CellKind, CollectionId, ComponentAddr, ConflictClass,
-    Effect, EffectConflict, EffectSet, EffectTarget, InvalidAddress, LocalKey, Mode, ModeKind,
-    NativeAddr, NetworkWord, NotAResource, NotCallable, PackageAddr, Presence, PrincipalAddr,
-    ResourceAddr, ResourceRef, SchemeId, SubstateKey, TextError, WrongClass, compatible,
+use hyperscale_vm_types::{
+    Address, CollectionId, ComponentAddr, LocalKey, NativeAddr, PackageAddr, PrincipalAddr,
+    ResourceAddr, SchemeId, SubstateKey,
 };
 
 use crate::hash::{Hash32, Hasher};
@@ -453,91 +451,18 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_hbor::{assert_canonical, from_slice_with_depth};
+    use hyperscale_vm_types::AddressClass;
 
     use super::{
-        Address, AddressClass, CollectionId, EdgeContent, Effect, EffectSet, EffectTarget,
-        LocalKey, MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH, Mode, ModeKind, NativeRole, Presence,
-        SchemeId, SlotId, SubstateKey, Value, child_key, compatible, component_address,
-        config_hash, native_address, package_address, principal_address, resource_address, to_vec,
+        Address, EdgeContent, LocalKey, MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH, NativeRole,
+        SchemeId, SlotId, SubstateKey, Value, child_key, component_address, config_hash,
+        native_address, package_address, principal_address, resource_address, to_vec,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::metadata::PackageHash;
     use crate::vectors::{
         CONFIG_LEAF, PACKAGE, SALT, address_vector_lines, address_vectors, expected_classes,
     };
-
-    #[test]
-    fn compatibility_matrix() {
-        use ModeKind::{Delta, Locked, Read, Reserve, Write};
-        let kinds = [Read, Locked, Delta, Reserve, Write];
-        let table = [
-            [true, true, false, false, false],
-            [true, true, true, true, true],
-            [false, true, true, true, false],
-            [false, true, true, true, false],
-            [false, true, false, false, false],
-        ];
-        for (i, &a) in kinds.iter().enumerate() {
-            for (j, &b) in kinds.iter().enumerate() {
-                assert_eq!(compatible(a, b), table[i][j], "{a:?} vs {b:?}");
-                assert_eq!(compatible(a, b), compatible(b, a), "symmetry {a:?}/{b:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn only_read_and_write_targets_provision() {
-        // A counterpart shard has to carry what execution reads: fresh
-        // reads, and the prior value a read-modify-write folds over.
-        // A locked target cannot change, deltas read nothing, and a
-        // reservation is judged where it lives — so a commutative-only
-        // leg provisions nothing at all.
-        let owner = Address::new([1; 31], AddressClass::Component);
-        let target =
-            |byte: u8| EffectTarget::Point(child_key(&TestHasher, owner, SlotId(byte.into()), &[]));
-        let mut set = EffectSet::new();
-        for (byte, mode) in [
-            (1, Mode::Read),
-            (
-                2,
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            ),
-            (3, Mode::Delta),
-            (4, Mode::Reserve { amount: 5 }),
-            (5, Mode::Locked),
-        ] {
-            set.insert(Effect {
-                target: target(byte),
-                mode,
-            })
-            .unwrap();
-        }
-        assert_eq!(
-            set.provision_targets(),
-            BTreeSet::from([target(1), target(2)])
-        );
-
-        // A cell carrying both a delta and a read still provisions: the
-        // read is what needs the value.
-        let mut mixed = EffectSet::new();
-        mixed
-            .insert(Effect {
-                target: target(3),
-                mode: Mode::Read,
-            })
-            .unwrap();
-        mixed
-            .insert(Effect {
-                target: target(3),
-                mode: Mode::Delta,
-            })
-            .unwrap();
-        assert_eq!(mixed.provision_targets(), BTreeSet::from([target(3)]));
-
-        assert!(EffectSet::new().provision_targets().is_empty());
-    }
 
     /// The hashing feed and the wire form are one byte string, and the
     /// vocabulary is canonical on the same terms as any wire type.
@@ -620,133 +545,6 @@ mod tests {
             &[vec![9]],
         );
         assert_ne!(a.local, b.local);
-    }
-
-    #[test]
-    fn a_self_conflict_is_an_exclusive_beside_a_commutative() {
-        let cell = SubstateKey {
-            owner: Address::new([1; 31], AddressClass::Component),
-            local: LocalKey([2; 16]),
-        };
-        let set_of = |modes: &[Mode]| {
-            let mut set = EffectSet::new();
-            for mode in modes {
-                set.insert(Effect {
-                    target: EffectTarget::Point(cell),
-                    mode: *mode,
-                })
-                .unwrap();
-            }
-            set
-        };
-
-        for pair in [
-            [
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-                Mode::Delta,
-            ],
-            [
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-                Mode::Reserve { amount: 1 },
-            ],
-        ] {
-            assert_eq!(set_of(&pair).self_conflicting(), Some(cell), "{pair:?}");
-        }
-
-        // Everything else composes: the commutative modes with each
-        // other, and reads with anything — a read is not an absolute, so
-        // there is nothing for a movement to disagree with.
-        for modes in [
-            &[Mode::Delta, Mode::Reserve { amount: 1 }][..],
-            &[Mode::Read, Mode::Delta],
-            &[Mode::Locked, Mode::Reserve { amount: 1 }],
-            &[
-                Mode::Read,
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            ],
-            &[Mode::Write {
-                requires: Presence::Either,
-            }],
-        ] {
-            assert_eq!(set_of(modes).self_conflicting(), None, "{modes:?}");
-        }
-
-        // A collection target is never one: it holds no amount, so the
-        // pairing the check is about cannot arise.
-        let mut ranges = EffectSet::new();
-        for mode in [
-            Mode::Write {
-                requires: Presence::Either,
-            },
-            Mode::Delta,
-        ] {
-            ranges
-                .insert(Effect {
-                    target: EffectTarget::Range {
-                        owner: Address::new([1; 31], AddressClass::Component),
-                        collection: CollectionId([3; 16]),
-                        lo: 0,
-                        hi: 9,
-                        cap: 4,
-                    },
-                    mode,
-                })
-                .unwrap();
-        }
-        assert_eq!(ranges.self_conflicting(), None);
-    }
-
-    #[test]
-    fn effect_set_folds_reserves_and_dedups() {
-        let key = child_key(
-            &TestHasher,
-            Address::new([1; 31], AddressClass::Component),
-            SlotId(1),
-            &[],
-        );
-        let target = EffectTarget::Point(key);
-        let mut set = EffectSet::new();
-        set.insert(Effect {
-            target,
-            mode: Mode::Reserve { amount: 100 },
-        })
-        .unwrap();
-        set.insert(Effect {
-            target,
-            mode: Mode::Reserve { amount: 50 },
-        })
-        .unwrap();
-        set.insert(Effect {
-            target,
-            mode: Mode::Delta,
-        })
-        .unwrap();
-        set.insert(Effect {
-            target,
-            mode: Mode::Delta,
-        })
-        .unwrap();
-        assert_eq!(set.iter().count(), 2);
-        assert!(set.contains(&Effect {
-            target,
-            mode: Mode::Reserve { amount: 150 },
-        }));
-        assert!(set.contains(&Effect {
-            target,
-            mode: Mode::Delta,
-        }));
-
-        let overflow = set.insert(Effect {
-            target,
-            mode: Mode::Reserve { amount: u128::MAX },
-        });
-        assert!(overflow.is_err());
     }
 
     #[test]

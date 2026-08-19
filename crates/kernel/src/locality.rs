@@ -17,9 +17,10 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Address, EffectSet, EntryKey, StateWrites, SubstateKey, effect_units};
+use hyperscale_vm_effects::effect_units;
+use hyperscale_vm_types::{Address, EffectSet, EntryKey, Movement, StateWrites, SubstateKey};
 
-use crate::session::{Movement, StateDelta};
+use crate::session::StateDelta;
 
 /// Which keys the executing shard owns.
 ///
@@ -193,15 +194,17 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{
-        Address, AddressClass, CollectionId, EntryKey, Hash32, LocalKey, SubstateKey, TxHash,
+    use hyperscale_vm_effects::Hash32;
+    use hyperscale_vm_types::{
+        Address, AddressClass, CollectionId, EntryKey, LocalKey, Movement, SubstateKey, TxHash,
+        encode_amount,
     };
 
     use super::Locality;
     use crate::ledger::AmountLedger;
-    use crate::modes::{decode_amount, encode_amount};
+    use crate::modes::decode_amount;
     use crate::overlay::OverlayStore;
-    use crate::session::{Movement, StateDelta};
+    use crate::session::StateDelta;
     use crate::store::{MemoryStore, WorkingStore};
 
     fn key(owner: u8, local: u8) -> SubstateKey {

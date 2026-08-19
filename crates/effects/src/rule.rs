@@ -250,10 +250,10 @@ impl RuleExpr {
 #[cfg(test)]
 pub(crate) mod testing {
     use hyperscale_hbor::Hbor;
+    use hyperscale_vm_types::{Address, AddressClass};
 
     use super::StoredRule;
     use crate::presented::Presented;
-    use crate::types::{Address, AddressClass};
 
     /// The same wire form as [`StoredRule`], with no caps.
     ///

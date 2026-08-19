@@ -16,8 +16,9 @@
 // the appearance is an artifact of a contract living inside a test binary.
 #![allow(dead_code)]
 
-use hyperscale_vm_effects::{Clause, ModeExpr, Presence, RuleExpr};
+use hyperscale_vm_effects::{Clause, ModeExpr, RuleExpr};
 use hyperscale_vm_sdk::blueprint;
+use hyperscale_vm_types::Presence;
 
 /// Control-flow spellings of one access set, each beside its straight-line
 /// equivalent. A conditional access is declared on every arm, so whichever
@@ -857,10 +858,11 @@ mod selection {
 #[test]
 fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() {
     use hyperscale_vm_effects::{
-        Address, AddressClass, EffectTarget, EvalInputs, Expr, Hash32, ManifestHash, SlotId,
-        TargetExpr, TestHasher, Value, child_key, evaluate_effects,
+        EvalInputs, Expr, Hash32, ManifestHash, SlotId, TargetExpr, TestHasher, Value, child_key,
+        evaluate_effects,
     };
     use hyperscale_vm_sdk::VAULT;
+    use hyperscale_vm_types::{Address, AddressClass, EffectTarget};
 
     let metadata = selection::blueprint().metadata();
     let effects = |name: &str| metadata.methods[name].effects.clone();

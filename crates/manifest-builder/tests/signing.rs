@@ -14,14 +14,14 @@
 //! accept the result.
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, Hasher, InstanceRegistry, IntentDecl, MetadataCache, PackageHash, PrincipalAddr,
-    ResourceAddr, TestHasher,
+    EnvelopeTree, Hasher, InstanceRegistry, IntentDecl, MetadataCache, PackageHash, TestHasher,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    AccountSigner, NetworkId, SchemeId, SchemeVerifier, TransactionEnvelope,
+    AccountSigner, NetworkId, PrincipalAddr, ResourceAddr, SchemeId, SchemeVerifier,
+    TransactionEnvelope,
 };
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);

@@ -15,11 +15,11 @@
 //! two is exactly the mistake this lane exists to catch.
 
 use hyperscale_vm_harness::fixtures::NoHost;
-use hyperscale_vm_kernel::AbortReason;
 use hyperscale_vm_ref::{CVal, CanonError, ExecError, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{
     HostRefusal, add_kernel_to_linker, blessed_engine, classify, validate_component,
 };
+use hyperscale_vm_types::AbortReason;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Result, Store};
 use wat::parse_str;

@@ -4,13 +4,12 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{
-    Address, AddressClass, Hash32, SlotId, SubstateKey, TestHasher, Value, child_key,
-};
+use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, Value, child_key};
 use hyperscale_vm_kernel::{
-    AmountLedger, Baseline, DeltaOp, MemoryStore, OverlayStore, Substates, SupplyLedger, TxHash,
-    WorkingStore, decode_amount, encode_amount,
+    AmountLedger, Baseline, DeltaOp, MemoryStore, OverlayStore, Substates, SupplyLedger,
+    WorkingStore, decode_amount,
 };
+use hyperscale_vm_types::{Address, AddressClass, SubstateKey, TxHash, encode_amount};
 
 const VAULT: SlotId = SlotId(1);
 
@@ -88,10 +87,10 @@ fn supply_tracks_cells_through_transfers_and_cross_shard_legs() {
 mod through_the_session {
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{Declaration, Effect, EffectSet, EffectTarget, Hasher, Mode};
-    use hyperscale_vm_kernel::{
-        AbortReason, EnvInputs, ISSUER_REP, KernelSession, Outcome, OverlayStore, SupplyDelta,
-        SupplyLedger,
+    use hyperscale_vm_effects::{Declaration, Hasher};
+    use hyperscale_vm_kernel::{EnvInputs, KernelSession, OverlayStore, SupplyDelta, SupplyLedger};
+    use hyperscale_vm_types::{
+        AbortReason, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome,
     };
 
     use super::{

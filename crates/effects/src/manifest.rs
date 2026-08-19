@@ -7,11 +7,13 @@
 //! reads only what signatures evaluate over: each node's target, method, and
 //! bound inputs. Amounts are dynamic; types are static.
 
+use hyperscale_vm_types::{Address, CollectionId, SubstateKey};
+
 use crate::auth::AuthRole;
 use crate::hash::Hash32;
 use crate::presented::Presented;
 use crate::rule::StoredRule;
-use crate::types::{Address, CollectionId, EdgeContent, SubstateKey, Value};
+use crate::types::{EdgeContent, Value};
 
 /// A consumer's signed amount bounds on an edge, folded to their
 /// conjunction: the greatest declared lower bound and the least declared

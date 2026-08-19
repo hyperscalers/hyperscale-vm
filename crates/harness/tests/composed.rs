@@ -8,15 +8,14 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    Address, AdmittedTree, Constraint, EnvelopeTree, Hasher, InstanceRegistry, MetadataCache,
-    PackageHash, PrefixShardResolver, PrincipalAddr, ResourceAddr, SubstateKey, TestHasher, Value,
-    admit_tree, child_key, route_tree,
+    AdmittedTree, Constraint, EnvelopeTree, Hasher, InstanceRegistry, MetadataCache, PackageHash,
+    PrefixShardResolver, TestHasher, Value, admit_tree, child_key, route_tree,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
-    AbortReason, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall,
-    InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, Receipt,
-    TxHash, decode_amount, encode_amount, execute_batch,
+    BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult,
+    Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Receipt, decode_amount,
+    execute_batch,
 };
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
 use hyperscale_vm_ref::{CVal, ExecError, RefComponent, RefComponentInstance, Trap as RefTrap};
@@ -26,6 +25,9 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_testing::Native;
+use hyperscale_vm_types::{
+    AbortReason, Address, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
+};
 use wasmtime::component::{Component, Linker};
 use wasmtime::error::{Context, ensure};
 use wasmtime::{Engine, Result, Store};

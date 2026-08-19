@@ -17,11 +17,10 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Hash32, SlotId, SubstateKey, TestHasher, child_key,
-};
-use hyperscale_vm_kernel::{
-    AmountLedger, DeltaOp, MemoryStore, OverlayStore, TxHash, WorkingStore, encode_amount,
+use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, child_key};
+use hyperscale_vm_kernel::{AmountLedger, DeltaOp, MemoryStore, OverlayStore, WorkingStore};
+use hyperscale_vm_types::{
+    Address, AddressClass, CollectionId, SubstateKey, TxHash, encode_amount,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};

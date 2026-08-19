@@ -8,9 +8,10 @@
 //! caller's, and growing it is a change to this crate rather than an impl
 //! away.
 
-use hyperscale_vm_effects::{
-    Address, CallTarget, ComponentAddr, GraphArg, NativeAddr, PackageAddr, PrincipalAddr,
-    ResourceAddr, ResourceRef, RoleSet, StoredRule, Value,
+use hyperscale_vm_effects::{GraphArg, RoleSet, StoredRule, Value};
+use hyperscale_vm_types::{
+    Address, CallTarget, ComponentAddr, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr,
+    ResourceRef,
 };
 
 use crate::builder::{Bucket, GraphBuilder, Param};

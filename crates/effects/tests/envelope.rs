@@ -3,14 +3,17 @@
 //! addresses, and every malformed composition rejects exactly.
 
 use hyperscale_vm_effects::{
-    Address, AdmissionError, AdmittedTree, Bounds, CallTarget, Constraint, EdgeContent, EdgeKind,
-    EdgeRef, Effect, EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta,
-    InstanceRegistry, IntentDecl, MAX_SUBINTENTS, MAX_VALUE_DEPTH, MAX_YIELD_PARAMS, ManifestGraph,
-    ManifestHash, MetadataCache, Mode, NULLIFIER_SLOT, NodeInput, PackageHash, PrefixShardResolver,
-    Presence, PrincipalAddr, ResourceAddr, ShardResolver, Subintent, TestHasher, Value,
+    AdmissionError, AdmittedTree, Bounds, Constraint, EdgeContent, EdgeKind, EdgeRef, EnvelopeTree,
+    GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, InstanceRegistry, IntentDecl,
+    MAX_VALUE_DEPTH, MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, NULLIFIER_SLOT,
+    NodeInput, PackageHash, PrefixShardResolver, ShardResolver, Subintent, TestHasher, Value,
     YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
 use hyperscale_vm_stdlib::account;
+use hyperscale_vm_types::{
+    Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, Presence, PrincipalAddr,
+    ResourceAddr,
+};
 use proptest::prelude::{any, proptest};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);

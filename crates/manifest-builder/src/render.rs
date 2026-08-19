@@ -31,9 +31,10 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use hyperscale_vm_effects::{
-    Address, Constraint, EdgeContent, EdgeRef, GraphArg, Hasher, InstanceRegistry, ManifestGraph,
-    MetadataCache, ResourceRef, SubstateKey, TextError, Value,
+    Constraint, EdgeContent, EdgeRef, GraphArg, Hasher, InstanceRegistry, ManifestGraph,
+    MetadataCache, Value,
 };
+use hyperscale_vm_types::{Address, ResourceRef, SubstateKey, TextError};
 
 use crate::typed::{output_resources, unknown};
 

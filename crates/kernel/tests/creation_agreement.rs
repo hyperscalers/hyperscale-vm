@@ -6,12 +6,13 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    Clause, Effect, EffectTarget, Expr, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
-    ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
-    PrefixShardResolver, Presence, PrincipalAddr, ShardResolver, SlotId, SubstateKey, TargetExpr,
-    TestHasher, Totality, Value, admit, collection_id, fresh_id, fresh_local, route,
+    Clause, Expr, GraphNode, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
+    MethodSignature, ModeExpr, PackageHash, PackageMetadata, PrefixShardResolver, ShardResolver,
+    SlotId, TargetExpr, TestHasher, Totality, Value, admit, collection_id, fresh_id, fresh_local,
+    route,
 };
 use hyperscale_vm_kernel::MemoryStore;
+use hyperscale_vm_types::{Effect, EffectTarget, Mode, Presence, PrincipalAddr, SubstateKey};
 
 /// A package whose one method creates one object and inserts one
 /// collection entry at a fresh sequence.

@@ -13,10 +13,12 @@
 //! actually returned. So a lowered argument is either a settled value, a
 //! table position, or an edge to read once its producer has run.
 
+use hyperscale_vm_types::{Address, CellKind};
+
 use crate::manifest::{AuthorityGate, Bounds};
 use crate::metadata::PackageHash;
 use crate::presented::Presented;
-use crate::types::{Address, CellKind, EdgeContent, MAX_IDS_PER_EDGE};
+use crate::types::{EdgeContent, MAX_IDS_PER_EDGE};
 
 /// What kind of value an edge carries.
 ///

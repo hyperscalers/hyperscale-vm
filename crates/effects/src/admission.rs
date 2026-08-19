@@ -14,6 +14,8 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
+use hyperscale_vm_types::{Address, AddressClass, PrincipalAddr};
+
 use crate::dsl::{EvalError, EvalInputs, evaluate_expr};
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
@@ -27,9 +29,7 @@ use crate::metadata::{
 use crate::presented::Presented;
 use crate::resource::holdings_collection;
 use crate::route::MAX_MANIFEST_NODES;
-use crate::types::{
-    Address, AddressClass, EdgeContent, MAX_VALUE_DEPTH, PrincipalAddr, Value, child_key,
-};
+use crate::types::{EdgeContent, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::VAULT;
 
 /// The bound on yield parameters one intent may declare.

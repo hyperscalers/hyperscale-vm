@@ -10,10 +10,11 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_effects::{AbortReason, PackageHash};
+use hyperscale_vm_effects::PackageHash;
 use hyperscale_vm_kernel::{
     GuestArg, GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession,
 };
+use hyperscale_vm_types::AbortReason;
 
 /// One package's native dispatch, at the session it is called with.
 ///

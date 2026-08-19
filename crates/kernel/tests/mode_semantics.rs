@@ -4,11 +4,12 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Address, AddressClass, Hash32, SlotId, TestHasher, child_key};
+use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, child_key};
 use hyperscale_vm_kernel::{
-    AmountLedger, Baseline, DeltaOp, MemoryStore, OverlayStore, TxHash, WorkingStore,
-    decode_amount, encode_amount, fold_deltas, judge,
+    AmountLedger, Baseline, DeltaOp, MemoryStore, OverlayStore, WorkingStore, decode_amount,
+    fold_deltas, judge,
 };
+use hyperscale_vm_types::{Address, AddressClass, TxHash, encode_amount};
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, proptest};
 

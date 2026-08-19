@@ -12,10 +12,11 @@ use common::{
     effect_set, pkg, pool, resolver, shard_of, vault, wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
-    AdmissionError, EdgeRef, Effect, EffectTarget, EvidenceRef, GraphArg, GraphNode, Hash32,
-    InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, Mode, Presence, TestHasher,
-    Value, admit, collection_id, fresh_id, route,
+    AdmissionError, EdgeRef, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
+    InstanceRegistry, ManifestGraph, MetadataCache, TestHasher, Value, admit, collection_id,
+    fresh_id, route,
 };
+use hyperscale_vm_types::{Effect, EffectTarget, Mode, Presence};
 
 /// One consumed output edge, unconstrained.
 const fn edge(producer: u32, output: u32) -> GraphArg {

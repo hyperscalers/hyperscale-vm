@@ -10,9 +10,10 @@
 //! [`AccountSigner`], which is what lets a wallet sign without this crate
 //! knowing what blake3 or ed25519 are.
 
-use hyperscale_vm_effects::{EnvelopeTree, Hasher, PrincipalAddr, encode_tree};
+use hyperscale_vm_effects::{EnvelopeTree, Hasher, encode_tree};
 use hyperscale_vm_types::{
-    AccountSigner, NetworkId, SchemeId, SubintentSig, TransactionBody, TransactionEnvelope,
+    AccountSigner, NetworkId, PrincipalAddr, SchemeId, SubintentSig, TransactionBody,
+    TransactionEnvelope,
 };
 
 /// What a signer commits to beyond the manifest.

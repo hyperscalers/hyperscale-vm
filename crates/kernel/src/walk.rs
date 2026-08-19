@@ -11,14 +11,14 @@
 //! embedding wrong; it cannot get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
-    ABSENT_REP, AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, MAX_ERROR_CODES,
-    NodeCall, PackageHash, Possession,
+    AuthCell, AuthRole, AuthorityGate, CallArg, NodeCall, PackageHash, Possession,
 };
 use hyperscale_vm_embed::{GuestArg, Invoked};
+use hyperscale_vm_types::{ABSENT_REP, AbortReason, Address, MAX_ERROR_CODES, Outcome};
 
 use crate::executor::{BatchTx, GuestRunner, RunResult, Unavailable};
 use crate::modes::decode_amount;
-use crate::session::{KernelSession, Outcome, SessionTrap};
+use crate::session::{KernelSession, SessionTrap};
 
 /// One export invocation, fully assembled.
 pub struct GuestCall<'a> {
