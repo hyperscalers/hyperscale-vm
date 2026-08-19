@@ -88,7 +88,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn mint_instances(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
+    fn mint_instances(&mut self, rep: u32, ids: &[u64]) -> Result<u32, AbortReason>;
 
     /// Take the named entries as the instances they were; the bucket's
     /// rep.
@@ -96,7 +96,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason>;
+    fn range_take(&mut self, rep: u32, ids: &[u64]) -> Result<u32, AbortReason>;
 
     /// File every instance the bucket at `funds` carries as an entry,
     /// consuming it.

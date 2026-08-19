@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
     ABSENT_REP, AbortReason, Address, CollectionId, Effect, EffectSet, EffectTarget, EntryKey,
-    ISSUER_REP, Mode, Presence, SubstateKey, cell_ids,
+    ISSUER_REP, Mode, Presence, SubstateKey, distinct_ids,
 };
 use hyperscale_vm_embed::math::{MathError, Rounding, U256, mul_div};
 
@@ -294,9 +294,10 @@ pub enum SessionTrap {
     /// named twice in one take.
     #[error("instance {0} is not held")]
     InstanceNotHeld(u128),
-    /// An id list that is not the framing a declared one crosses in.
-    #[error("not an id cell")]
-    BadIdCell,
+    /// An id list that is not a set: more ids than an edge may carry, or
+    /// a repeated one.
+    #[error("not an id set")]
+    MalformedIdSet,
     /// A discarded bucket that still carried value.
     #[error("a bucket carrying {0} was let go of")]
     ValueDropped(u128),
@@ -355,7 +356,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::WrongEdgeKind => Self::WrongEdgeKind,
             SessionTrap::InstanceHeldTwice(_) => Self::InstanceHeldTwice,
             SessionTrap::InstanceNotHeld(_) => Self::InstanceNotHeld,
-            SessionTrap::BadIdCell => Self::MalformedEdgeCell,
+            SessionTrap::MalformedIdSet => Self::MalformedEdgeCell,
             SessionTrap::ValueDropped(_) => Self::ValueDropped,
             SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
             SessionTrap::CellUnderflow => Self::CellUnderflow,
@@ -960,12 +961,12 @@ impl KernelSession {
     /// Any [`SessionTrap`]: a malformed id cell, an id outside the
     /// declared interval, one the collection does not hold, or more
     /// entries than the interval's cap admits.
-    pub fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, SessionTrap> {
+    pub fn range_take(&mut self, rep: u32, ids: &[u64]) -> Result<u32, SessionTrap> {
         let interval = self.instance_interval(rep)?;
         let resource = self.value_of(rep)?;
         // The decoder refuses a repeated id, so the set below loses
         // nothing to dedup and a count is an instance count.
-        let ids = cell_ids(ids).ok_or(SessionTrap::BadIdCell)?;
+        let ids = distinct_ids(ids).ok_or(SessionTrap::MalformedIdSet)?;
         // Every entry is charged and removed, or none is: the budget is
         // what the declaration bought, and a take that overran it must
         // leave the collection alone.
@@ -1452,14 +1453,14 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`], including a mint against a grant this
     /// invocation was never given.
-    pub fn mint_instances(&mut self, rep: u32, ids: &[u8]) -> Result<u32, SessionTrap> {
+    pub fn mint_instances(&mut self, rep: u32, ids: &[u64]) -> Result<u32, SessionTrap> {
         if rep != ISSUER_REP {
             return Err(SessionTrap::UnknownHandle(rep));
         }
         let Some(resource) = self.issuance else {
             return Err(SessionTrap::IssuanceUngranted);
         };
-        let named = cell_ids(ids).ok_or(SessionTrap::BadIdCell)?;
+        let named = distinct_ids(ids).ok_or(SessionTrap::MalformedIdSet)?;
         let mut instances = BTreeSet::new();
         for id in named {
             if !instances.insert(u128::from(id)) {
@@ -2252,7 +2253,6 @@ mod tests {
     use hyperscale_vm_effects::{
         ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Effect, EffectConflict,
         EffectSet, EffectTarget, Hash32, Mode, SlotId, SubstateKey, TestHasher, child_key,
-        ids_cell,
     };
     use hyperscale_vm_types::Presence;
 
@@ -3090,18 +3090,18 @@ mod tests {
         let mut session = session_holding(store, &set);
 
         // An id well past the first page of four.
-        assert_eq!(session.range_take(0, &ids_cell(&[90])), Ok(0));
+        assert_eq!(session.range_take(0, &[90]), Ok(0));
         assert_eq!(session.bucket(0), Ok(Held::Instances([90].into())));
         // And one the collection does not hold still refuses.
         assert_eq!(
-            session.range_take(0, &ids_cell(&[500])),
+            session.range_take(0, &[500]),
             Err(SessionTrap::InstanceNotHeld(500))
         );
         // The cap is the budget it always was: three more distinct
         // entries fit, a fourth does not.
-        assert!(session.range_take(0, &ids_cell(&[91, 92, 93])).is_ok());
+        assert!(session.range_take(0, &[91, 92, 93]).is_ok());
         assert_eq!(
-            session.range_take(0, &ids_cell(&[94])),
+            session.range_take(0, &[94]),
             Err(SessionTrap::WriteCapExceeded { cap: 4, order: 94 })
         );
     }

@@ -14,27 +14,19 @@ use hyperscale::kernel::state::{
     burn, instance_range_put, instance_range_take, mint_instances, write_cell_set,
 };
 
-/// One id in the framing a declared id list crosses in: a count byte,
-/// then that many little-endian `u64`s.
-fn one_id(id: u64) -> Vec<u8> {
-    let mut cell = vec![1u8];
-    cell.extend_from_slice(&id.to_le_bytes());
-    cell
-}
-
 struct Nf;
 
 impl Guest for Nf {
     fn mint(data: &WriteCell, id: u64, i: &Issuer) -> Bucket {
         write_cell_set(data, &id.to_le_bytes());
-        mint_instances(i, &one_id(id))
+        mint_instances(i, &[id])
     }
 
     fn deposit(holdings: &InstanceRange, funds: Bucket) {
         instance_range_put(holdings, funds, &[1]);
     }
 
-    fn withdraw(holdings: &InstanceRange, ids: Vec<u8>) -> Bucket {
+    fn withdraw(holdings: &InstanceRange, ids: Vec<u64>) -> Bucket {
         instance_range_take(holdings, &ids)
     }
 

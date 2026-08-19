@@ -124,6 +124,8 @@ pub enum CVal {
     Address([u8; 32]),
     /// A `list<u8>` value at the export boundary.
     Bytes(Vec<u8>),
+    /// `list<u64>`: a set of non-fungible instance ids.
+    Ids(Vec<u64>),
     /// A declined result: the code the guest returned on the error arm,
     /// an index into its package's error table.
     Declined(u32),
@@ -143,6 +145,7 @@ impl From<&GuestArg<'_>> for CVal {
             GuestArg::U64(scalar) => Self::U64(*scalar),
             GuestArg::Address(address) => Self::Address(address.to_bytes()),
             GuestArg::Bytes(bytes) => Self::Bytes(bytes.to_vec()),
+            GuestArg::Ids(ids) => Self::Ids(ids.to_vec()),
             GuestArg::Bucket(rep) => Self::Own(*rep),
             GuestArg::Issuer => Self::Borrow(ISSUER_REP, ResourceKind::Issuer),
         }
@@ -296,6 +299,10 @@ enum CTy {
     U32,
     U64,
     List8,
+    /// `list<u64>`: an id set, whose elements are eight bytes and whose
+    /// allocation is eight-aligned — which is the whole of what
+    /// separates its lowering from a byte list's.
+    List64,
     /// `record { u64, u64 }`: the kernel's own amount, flattened to its
     /// two halves as a parameter and written whole to the return area as
     /// a result.
@@ -476,8 +483,13 @@ impl RefComponent {
                 ComponentDefinedType::List(ComponentValType::Primitive(PrimitiveValType::U8)) => {
                     CTypeEntry::Defined(CTy::List8)
                 }
+                ComponentDefinedType::List(ComponentValType::Primitive(PrimitiveValType::U64)) => {
+                    CTypeEntry::Defined(CTy::List64)
+                }
                 ComponentDefinedType::List(_) => {
-                    return Err(DecodeError::Unsupported("non-u8 list".to_string()));
+                    return Err(DecodeError::Unsupported(
+                        "list of an unadmitted element".to_string(),
+                    ));
                 }
                 // The profile admits a record whose fields are scalars,
                 // and the kernel declares exactly one: two `u64` halves
@@ -1131,6 +1143,50 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
                         flat.push(Value::I64(u64::from_le_bytes(*word).cast_signed()));
                     }
                 }
+                (CVal::Ids(ids), CTy::List64) => {
+                    // The byte list's path at the element width an id
+                    // has: eight-aligned, eight bytes each, the same
+                    // realloc and the same flat (ptr, len) pair.
+                    let (Some(mem), Some(realloc)) = (mem_idx, realloc) else {
+                        return Err(DecodeError::Unsupported(
+                            "list argument without lift options".to_string(),
+                        ));
+                    };
+                    let count =
+                        i32::try_from(ids.len()).map_err(|_| DecodeError::ArgumentMismatch)?;
+                    let bytes: Vec<u8> = ids.iter().flat_map(|id| id.to_le_bytes()).collect();
+                    let size =
+                        i32::try_from(bytes.len()).map_err(|_| DecodeError::ArgumentMismatch)?;
+                    self.canon.may_leave = false;
+                    let allocated = call(
+                        &modules,
+                        &mut self.canon,
+                        &mut self.store,
+                        realloc,
+                        vec![
+                            Value::I32(0),
+                            Value::I32(0),
+                            Value::I32(8),
+                            Value::I32(size),
+                        ],
+                    );
+                    self.canon.may_leave = true;
+                    let ptr = match allocated {
+                        Ok(values) => values.first().copied().unwrap_or(Value::I32(0)).as_i32(),
+                        Err(e) => return Ok(Err(e)),
+                    };
+                    let memory = &mut self.store.memories[mem as usize];
+                    let start = usize::try_from(ptr.cast_unsigned()).expect("32-bit");
+                    let Some(end) = start.checked_add(bytes.len()) else {
+                        return Ok(Err(ExecError::Trap(Trap::MemoryOutOfBounds)));
+                    };
+                    if end > memory.data.len() {
+                        return Ok(Err(ExecError::Trap(Trap::MemoryOutOfBounds)));
+                    }
+                    memory.data[start..end].copy_from_slice(&bytes);
+                    flat.push(Value::I32(ptr));
+                    flat.push(Value::I32(count));
+                }
                 (CVal::Bytes(bytes), CTy::List8) => {
                     // Lower through the lift options: the guest's realloc
                     // allocates, the bytes copy in, the (ptr, len) pair
@@ -1587,6 +1643,31 @@ impl<H: KernelHost> KernelCanon<'_, H> {
         Ok(())
     }
 
+    /// The ids a guest's `list<u64>` argument names.
+    fn read_guest_ids(
+        store: &Store,
+        mem_idx: u32,
+        ptr: Value,
+        len: Value,
+    ) -> Result<Vec<u64>, ExecError> {
+        let mem = &store.memories[mem_idx as usize];
+        let start = usize::try_from(ptr.as_i32().cast_unsigned()).expect("32-bit");
+        let count = usize::try_from(len.as_i32().cast_unsigned()).expect("32-bit");
+        let end = count
+            .checked_mul(8)
+            .and_then(|width| start.checked_add(width))
+            .ok_or(ExecError::Trap(Trap::MemoryOutOfBounds))?;
+        if end > mem.data.len() {
+            return Err(ExecError::Trap(Trap::MemoryOutOfBounds));
+        }
+        Ok(mem.data[start..end]
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|id| u64::from_le_bytes(*id))
+            .collect())
+    }
+
     fn read_guest_bytes(
         store: &Store,
         mem_idx: u32,
@@ -1791,8 +1872,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::IssuerMint => {
                         let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
                         let mem = self.mem_opt(id)?;
-                        let ids = Self::read_guest_bytes(store, mem, args[1], args[2])?;
-                        self.charge_boundary(store, ids.len())?;
+                        let ids = Self::read_guest_ids(store, mem, args[1], args[2])?;
+                        self.charge_boundary(store, ids.len() * 8)?;
                         let minted = self
                             .host
                             .mint_instances(rep, &ids)
@@ -1802,8 +1883,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::InstanceTake => {
                         let rep = self.resolve_handle(args[0], ResourceKind::InstanceRange)?;
                         let mem = self.mem_opt(id)?;
-                        let ids = Self::read_guest_bytes(store, mem, args[1], args[2])?;
-                        self.charge_boundary(store, ids.len())?;
+                        let ids = Self::read_guest_ids(store, mem, args[1], args[2])?;
+                        self.charge_boundary(store, ids.len() * 8)?;
                         let taken = self.host.range_take(rep, &ids);
                         self.charge_scan(store)?;
                         let taken = taken.map_err(|m| ExecError::Canon(CanonError::Host(m)))?;

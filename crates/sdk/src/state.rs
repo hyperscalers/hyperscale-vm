@@ -1216,9 +1216,9 @@ impl<T: Cellular> Interval<T> {
     pub fn take(&mut self, ids: Ids) -> Bucket {
         let _ = &ids;
         #[cfg(target_arch = "wasm32")]
-        return Bucket::held(crate::guest::entry_take(self.handle, ids.bytes()));
+        return Bucket::held(crate::guest::entry_take(self.handle, ids.named()));
         #[cfg(not(target_arch = "wasm32"))]
-        return Bucket::at(host::entry_take(self.handle, ids.bytes()));
+        return Bucket::at(host::entry_take(self.handle, ids.named()));
     }
 }
 
@@ -1340,24 +1340,14 @@ pub fn hash(data: &[u8]) -> Vec<u8> {
 /// crosses in — so a method moving the ids it was given passes them
 /// straight through and reads none of them.
 #[derive(Clone, Debug, Default)]
-pub struct Ids(pub Vec<u8>);
+pub struct Ids(pub Vec<u64>);
 
 impl Ids {
-    /// The canonical bytes, which is all a body may do with one: what
+    /// The ids themselves, which is all a body may do with one: what
     /// they mean was settled at admission.
     #[must_use]
-    pub fn bytes(&self) -> &[u8] {
+    pub fn named(&self) -> &[u64] {
         &self.0
-    }
-}
-
-impl Cellular for Ids {
-    fn from_cell(cell: &[u8]) -> Self {
-        Self(cell.to_vec())
-    }
-
-    fn to_cell(&self) -> Vec<u8> {
-        self.0.clone()
     }
 }
 

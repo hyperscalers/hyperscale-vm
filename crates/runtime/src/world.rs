@@ -349,8 +349,8 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     )?;
     state.func_wrap(
         "mint-instances",
-        |mut store: StoreContextMut<'_, T>, (i, ids): (Resource<Issuer>, Vec<u8>)| {
-            charge_boundary_bytes(&mut store, ids.len())?;
+        |mut store: StoreContextMut<'_, T>, (i, ids): (Resource<Issuer>, Vec<u64>)| {
+            charge_boundary_bytes(&mut store, ids.len() * 8)?;
             let rep = store
                 .data_mut()
                 .mint_instances(i.rep(), &ids)
@@ -360,8 +360,8 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     )?;
     state.func_wrap(
         "instance-range-take",
-        |mut store: StoreContextMut<'_, T>, (r, ids): (Resource<InstanceRange>, Vec<u8>)| {
-            charge_boundary_bytes(&mut store, ids.len())?;
+        |mut store: StoreContextMut<'_, T>, (r, ids): (Resource<InstanceRange>, Vec<u64>)| {
+            charge_boundary_bytes(&mut store, ids.len() * 8)?;
             let taken = store.data_mut().range_take(r.rep(), &ids);
             charge_scan(&mut store)?;
             Ok((Resource::<Bucket>::new_own(taken.map_err(host_trap)?),))

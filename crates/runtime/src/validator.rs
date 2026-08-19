@@ -124,6 +124,11 @@ enum ValueSlot {
     Flat,
     /// `list<u8>`.
     Bytes,
+    /// `list<u64>`: the one non-byte list the world names, carrying a
+    /// set of non-fungible instance ids. Admitted as its own slot rather
+    /// than by widening the byte one, because the element width is what
+    /// each engine's lowering turns on.
+    Ids,
     /// `borrow<R>` of a state resource.
     Handle,
     /// `own<R>` of a state resource: a handle the guest holds rather than
@@ -170,6 +175,7 @@ fn admits_param_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> boo
             ValueSlot::Scalar
                 | ValueSlot::Flat
                 | ValueSlot::Bytes
+                | ValueSlot::Ids
                 | ValueSlot::Handle
                 | ValueSlot::Owned
         )
@@ -209,14 +215,15 @@ fn record_component_type(
             }
             None
         }
-        ComponentType::Defined(ComponentDefinedType::List(element)) => {
-            if !matches!(element, ComponentValType::Primitive(PrimitiveValType::U8)) {
+        ComponentType::Defined(ComponentDefinedType::List(element)) => match element {
+            ComponentValType::Primitive(PrimitiveValType::U8) => Some(ValueSlot::Bytes),
+            ComponentValType::Primitive(PrimitiveValType::U64) => Some(ValueSlot::Ids),
+            _ => {
                 return Err(ProfileError::Structural(
-                    "only list<u8> is within the profile".to_string(),
+                    "only list<u8> and list<u64> are within the profile".to_string(),
                 ));
             }
-            Some(ValueSlot::Bytes)
-        }
+        },
         ComponentType::Defined(ComponentDefinedType::Record(fields)) => {
             for (_, vt) in &**fields {
                 if !matches!(resolve(defined, *vt), Some(ValueSlot::Scalar)) {

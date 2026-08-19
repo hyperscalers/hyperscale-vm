@@ -50,10 +50,10 @@ impl KernelHost for KernelSession {
     fn burn(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
         refused(Self::burn(self, rep, funds))
     }
-    fn mint_instances(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason> {
+    fn mint_instances(&mut self, rep: u32, ids: &[u64]) -> Result<u32, AbortReason> {
         refused(Self::mint_instances(self, rep, ids))
     }
-    fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, AbortReason> {
+    fn range_take(&mut self, rep: u32, ids: &[u64]) -> Result<u32, AbortReason> {
         refused(Self::range_take(self, rep, ids))
     }
     fn range_put(&mut self, rep: u32, funds: u32, value: Vec<u8>) -> Result<(), AbortReason> {

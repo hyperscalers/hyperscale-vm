@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    Presence, SlotId, SubstateKey, TestHasher, child_key, ids_cell,
+    Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{
@@ -987,10 +987,10 @@ fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
     let (taken,) = instance
-        .get_typed_func::<(Resource<InstanceRange>, &[u8]), (Resource<Bucket>,)>(
+        .get_typed_func::<(Resource<InstanceRange>, &[u64]), (Resource<Bucket>,)>(
             &mut store, "lift",
         )?
-        .call(&mut store, (Resource::new_borrow(held), &ids_cell(ids)[..]))?;
+        .call(&mut store, (Resource::new_borrow(held), ids))?;
     let mut host = store.into_data();
     let blessed = host.take_bucket(taken.rep())?.quantity();
 
@@ -1004,7 +1004,7 @@ fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
     let args = [
         CVal::Borrow(held, ResourceKind::InstanceRange),
-        CVal::Bytes(ids_cell(ids)),
+        CVal::Ids(ids.to_vec()),
     ];
     let reference = match invoke(&mut instance, "lift", &args)?.as_slice() {
         [CVal::Own(rep)] => {
@@ -1021,7 +1021,7 @@ fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
     let args = [
         CVal::Borrow(held, ResourceKind::InstanceRange),
-        CVal::Bytes(ids_cell(ids)),
+        CVal::Ids(ids.to_vec()),
     ];
     let round_trip = match invoke(&mut instance, "relift", &args)?.as_slice() {
         [CVal::U64(count)] => *count,

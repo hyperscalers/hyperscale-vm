@@ -21,6 +21,12 @@ pub enum GuestArg<'a> {
     Address(Address),
     /// A `list<u8>` argument.
     Bytes(&'a [u8]),
+    /// A `list<u64>` of non-fungible instance ids.
+    ///
+    /// Its own kind rather than the bytes a framing would make of it:
+    /// what an id set is crosses as what it is, and the encoding stays
+    /// the kernel's.
+    Ids(&'a [u64]),
     /// A value edge, transferred to the guest as the bucket the kernel
     /// holds for it.
     ///

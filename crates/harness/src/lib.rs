@@ -69,10 +69,10 @@ pub mod fixtures {
         fn burn(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn mint_instances(&mut self, _rep: u32, _ids: &[u8]) -> Result<u32, AbortReason> {
+        fn mint_instances(&mut self, _rep: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn range_take(&mut self, _rep: u32, _ids: &[u8]) -> Result<u32, AbortReason> {
+        fn range_take(&mut self, _rep: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn range_put(&mut self, _rep: u32, _funds: u32, _v: Vec<u8>) -> Result<(), AbortReason> {
@@ -670,7 +670,7 @@ pub mod fixtures {
     (export "bucket-take" (func (param "b" (borrow $bk)) (param "amount" $amt) (result (own $bk))))
     (export "instance-range" (type $rw (sub resource)))
     (export "instance-range-count" (func (param "r" (borrow $rw)) (result u32)))
-    (export "instance-range-take" (func (param "r" (borrow $rw)) (param "ids" (list u8)) (result (own $bk))))
+    (export "instance-range-take" (func (param "r" (borrow $rw)) (param "ids" (list u64)) (result (own $bk))))
     (export "instance-range-put" (func (param "r" (borrow $rw)) (param "funds" (own $bk)) (param "value" (list u8))))
     (export "bucket-put" (func (param "b" (borrow $bk)) (param "other" (own $bk))))
     (export "delta-cell-put" (func (param "c" (borrow $dc)) (param "funds" (own $bk))))
@@ -1019,11 +1019,11 @@ pub mod fixtures {
     (result (tuple (own $bucket) (own $bucket)))
     (canon lift (core func $i "take-two") (memory $a "mem")))
   (func (export "lift")
-    (param "r" (borrow $wrange)) (param "ids" (list u8))
+    (param "r" (borrow $wrange)) (param "ids" (list u64))
     (result (own $bucket))
     (canon lift (core func $i "lift") (memory $a "mem") (realloc (func $a "realloc"))))
   (func (export "relift")
-    (param "r" (borrow $wrange)) (param "ids" (list u8)) (result u64)
+    (param "r" (borrow $wrange)) (param "ids" (list u64)) (result u64)
     (canon lift (core func $i "relift") (memory $a "mem") (realloc (func $a "realloc"))))
   (func (export "halve")
     (param "b" (own $bucket)) (param "amount" u64) (result (own $bucket))

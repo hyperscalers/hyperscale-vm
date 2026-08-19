@@ -21,7 +21,7 @@ use std::sync::Arc;
 use hyperscale_vm_effects::vocabulary::NF_VAULT;
 use hyperscale_vm_effects::{
     Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, SlotId,
-    SubstateKey, TestHasher, Value, child_key, collection_id, ids_cell,
+    SubstateKey, TestHasher, Value, child_key, collection_id,
 };
 use hyperscale_vm_embed::math::U256;
 use hyperscale_vm_kernel::{
@@ -228,12 +228,10 @@ fn every_instance_producer_stamps_what_its_source_held() {
     )
     .expect("two denominated intervals materialize");
 
-    let taken = session
-        .range_take(0, &ids_cell(&[10]))
-        .expect("the holder has it");
+    let taken = session.range_take(0, &[10]).expect("the holder has it");
     session.grant_issuance(X);
     let minted = session
-        .mint_instances(ISSUER_REP, &ids_cell(&[99]))
+        .mint_instances(ISSUER_REP, &[99])
         .expect("the grant mints");
 
     for (name, funds) in [("range-take", taken), ("mint-instances", minted)] {

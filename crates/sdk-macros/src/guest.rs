@@ -131,6 +131,12 @@ pub fn method(
                             ::hyperscale_vm_sdk::state::Cellular::from_cell(&#ident);
                     ));
                 }
+                Shape::Ids => {
+                    signature.push(quote!(#ident: ::std::vec::Vec<u64>));
+                    prologue.push(quote!(
+                        let #ident = ::hyperscale_vm_sdk::state::Ids(#ident);
+                    ));
+                }
                 Shape::Handle(_) | Shape::Bucket | Shape::Issuer => {
                     unreachable!("a value binding is never a handle")
                 }

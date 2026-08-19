@@ -42,9 +42,10 @@ pub struct Binding {
 
 /// How the guest reads the value carrying `need`.
 ///
-/// A `u64` crosses as itself; everything else crosses as the kernel's
-/// cell representation and is decoded through [`Cellular`], which is the
-/// same vocabulary a substate value uses.
+/// A `u64` crosses as itself, an address as the world's record and an id
+/// set as the ids it is; everything else crosses as the kernel's cell
+/// representation and is decoded through [`Cellular`], which is the same
+/// vocabulary a substate value uses.
 ///
 /// [`Cellular`]: hyperscale_vm_sdk::state::Cellular
 fn value_shape(
@@ -54,11 +55,14 @@ fn value_shape(
 ) -> Shape {
     let scalar = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.is_ident("u64"));
     let address = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Address"));
+    let id_set = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Ids"));
     let named = |ty: &syn::Type| {
         if scalar(ty) {
             Shape::Scalar
         } else if address(ty) {
             Shape::Address
+        } else if id_set(ty) {
+            Shape::Ids
         } else {
             Shape::Cell(Box::new(ty.clone()))
         }

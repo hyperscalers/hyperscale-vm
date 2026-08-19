@@ -45,6 +45,9 @@ pub enum Shape {
     Address,
     /// A byte list the guest decodes into the named Rust type.
     Cell(Box<syn::Type>),
+    /// A list of non-fungible instance ids, which crosses as the ids it
+    /// is rather than as a framing the guest would have to decode.
+    Ids,
     /// `own<bucket>`: a value edge the call transfers to the guest.
     Bucket,
     /// `borrow<issuer>`: this invocation's authority to create value.
@@ -82,6 +85,7 @@ impl Shape {
             Self::Flag => "bool".to_owned(),
             Self::Address => "kernel-address".to_owned(),
             Self::Cell(_) => "list<u8>".to_owned(),
+            Self::Ids => "list<u64>".to_owned(),
             Self::Bucket => format!("own<{BUCKET}>"),
             Self::Issuer => "borrow<issuer>".to_owned(),
         }

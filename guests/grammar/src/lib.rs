@@ -16,16 +16,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod grammar {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Keyed, Ordered, Quantity, Vault, pack};
-
-    /// The ids a count-prefixed edge cell carries.
-    fn cell_ids(cell: &[u8]) -> Vec<u64> {
-        let (&count, ids) = cell.split_first().expect("an id cell has a count");
-        assert!(ids.len() == usize::from(count) * 8, "malformed id cell");
-        ids.chunks_exact(8)
-            .map(|id| u64::from_le_bytes(id.try_into().unwrap()))
-            .collect()
-    }
+    use hyperscale_vm_sdk::state::{Bucket, Ids, Keyed, Ordered, Quantity, Vault, pack};
 
     #[state]
     struct Grammar {
@@ -37,9 +28,9 @@ pub mod grammar {
         /// matter: the loop is not a `for-each` because what it ranges
         /// over is not a term, and it is not a returned value because the
         /// method yields nothing however the tail is spelled.
-        pub fn file(&mut self, ids: Vec<u8>) {
+        pub fn file(&mut self, ids: Ids) {
             let mut held = self.entries.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
-            for id in cell_ids(&ids) {
+            for id in ids.named().iter().copied() {
                 held.insert(u128::from(id), Quantity::from_subunits(1));
             }
         }

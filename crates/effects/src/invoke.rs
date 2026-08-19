@@ -43,61 +43,26 @@ impl EdgeKind {
     }
 }
 
-/// A non-fungible edge's boundary cell: one count byte, then that many
-/// little-endian `u64` ids.
+/// The ids a non-fungible edge carries, as a set, or `None` for a list
+/// that is not one: more than [`MAX_IDS_PER_EDGE`], or a repeated id.
 ///
-/// The count fits a byte because [`MAX_IDS_PER_EDGE`] does; every decoder
-/// refuses a count past the cap, so the byte's spare range is
-/// unrepresentable rather than reserved.
-///
-/// # Panics
-///
-/// On more ids than [`MAX_IDS_PER_EDGE`] — a set no admitted projection
-/// can carry.
+/// An id set is distinct wherever it exists — evaluation's `id_set`
+/// refuses a repeat in a declared set, and this refuses one in a set a
+/// guest named — so an id count is an instance count everywhere it is
+/// judged. The cap is here rather than in a wire format because there is
+/// no longer a wire format: a list of ids crosses as a list of ids, and
+/// what bounds it is the rule rather than a count byte.
 #[must_use]
-pub fn ids_cell(ids: &[u64]) -> Vec<u8> {
-    assert!(ids.len() <= MAX_IDS_PER_EDGE, "id set exceeds the edge cap");
-    let mut cell = Vec::with_capacity(1 + ids.len() * 8);
-    cell.push(u8::try_from(ids.len()).expect("the cap fits a byte"));
-    for id in ids {
-        cell.extend_from_slice(&id.to_le_bytes());
-    }
-    cell
-}
-
-/// The frame width of the id cell at the head of `bytes`, or `None` for
-/// a missing or over-cap count byte.
-fn nf_cell_len(bytes: &[u8]) -> Option<usize> {
-    let count = usize::from(*bytes.first()?);
-    (count <= MAX_IDS_PER_EDGE).then_some(1 + count * 8)
-}
-
-/// The ids a non-fungible cell carries, or `None` for bytes that are not
-/// exactly one well-formed cell: a missing or over-cap count, a width
-/// that disagrees with it, a repeated id.
-///
-/// An id set is distinct wherever it exists: evaluation's `id_set`
-/// refuses a repeated id in a declared set, and this decoder refuses one
-/// in a runtime cell — so an id count is an instance count everywhere it
-/// is judged, whatever bytes a guest returns.
-#[must_use]
-pub fn cell_ids(cell: &[u8]) -> Option<Vec<u64>> {
-    let width = nf_cell_len(cell)?;
-    if cell.len() != width {
+pub fn distinct_ids(ids: &[u64]) -> Option<Vec<u64>> {
+    if ids.len() > MAX_IDS_PER_EDGE {
         return None;
     }
-    let ids: Vec<u64> = cell[1..]
-        .as_chunks::<8>()
-        .0
-        .iter()
-        .map(|id| u64::from_le_bytes(*id))
-        .collect();
     for (index, id) in ids.iter().enumerate() {
         if ids[..index].contains(id) {
             return None;
         }
     }
-    Some(ids)
+    Some(ids.to_vec())
 }
 
 /// Where one ABI argument comes from.
@@ -134,6 +99,12 @@ pub enum CallArg {
     Address(Address),
     /// A byte string the signature derived from the node's inputs.
     Bytes(Vec<u8>),
+    /// A set of non-fungible instance ids.
+    ///
+    /// Its own variant rather than the bytes a count-prefixed cell would
+    /// make of it: what crosses is a list of ids, and the framing a
+    /// guest would otherwise decode is the kernel's own business.
+    Ids(Vec<u64>),
     /// This invocation's authority to issue.
     ///
     /// Carries nothing: the grant is that it exists, and which resource
@@ -217,37 +188,25 @@ pub struct NodeCall {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_IDS_PER_EDGE, cell_ids, ids_cell};
+    use super::{MAX_IDS_PER_EDGE, distinct_ids};
 
+    /// What an id set is: distinct ids, no more than an edge carries.
+    ///
+    /// The framing that used to carry them is gone — a list of ids
+    /// crosses as a list of ids — so what is left to judge is the set
+    /// property itself, and it is judged here rather than fallen out of
+    /// a decode.
     #[test]
-    fn an_id_cell_is_a_count_byte_then_little_endian_ids() {
-        assert_eq!(ids_cell(&[]), vec![0]);
-        assert_eq!(
-            ids_cell(&[3, 0x0102]),
-            vec![2, 3, 0, 0, 0, 0, 0, 0, 0, 0x02, 0x01, 0, 0, 0, 0, 0, 0]
-        );
-        assert_eq!(cell_ids(&ids_cell(&[3, 9])), Some(vec![3, 9]));
-    }
+    fn an_id_set_is_distinct_and_within_the_edge_cap() {
+        assert_eq!(distinct_ids(&[]), Some(vec![]));
+        assert_eq!(distinct_ids(&[3, 9]), Some(vec![3, 9]));
 
-    #[test]
-    fn bytes_that_are_not_exactly_one_cell_are_refused() {
-        // No count byte, a count with no ids behind it, a cell cut
-        // short, a count past the cap, and trailing bytes.
-        assert_eq!(cell_ids(&[]), None);
-        assert_eq!(cell_ids(&[1]), None);
-        assert_eq!(cell_ids(&ids_cell(&[7])[..8]), None);
-        let over = u8::try_from(MAX_IDS_PER_EDGE + 1).unwrap();
-        let mut cell = vec![over];
-        cell.extend(std::iter::repeat_n(0u8, usize::from(over) * 8));
-        assert_eq!(cell_ids(&cell), None);
-        let mut trailing = ids_cell(&[7]);
-        trailing.push(0);
-        assert_eq!(cell_ids(&trailing), None);
-    }
+        assert_eq!(distinct_ids(&[7, 7]), None);
+        assert_eq!(distinct_ids(&[1, 2, 1]), None);
 
-    #[test]
-    fn a_repeated_id_is_refused() {
-        assert_eq!(cell_ids(&ids_cell(&[7, 7])), None);
-        assert_eq!(cell_ids(&ids_cell(&[1, 2, 1])), None);
+        let full: Vec<u64> = (0..u64::try_from(MAX_IDS_PER_EDGE).unwrap()).collect();
+        assert_eq!(distinct_ids(&full), Some(full.clone()));
+        let over: Vec<u64> = (0..=u64::try_from(MAX_IDS_PER_EDGE).unwrap()).collect();
+        assert_eq!(distinct_ids(&over), None);
     }
 }

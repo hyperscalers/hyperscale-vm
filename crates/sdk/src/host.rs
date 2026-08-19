@@ -466,7 +466,7 @@ pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
 ///
 /// On any mode but [`Handle::RangeWrite`].
 #[must_use]
-pub fn entry_take(handle: Handle, ids: &[u8]) -> u32 {
+pub fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
     scanned(kernel(|k| match handle {
         Handle::InstanceRange(rep) => k.range_take(rep, ids),
         other => unreachable!("{other:?} carries no movement"),
@@ -607,6 +607,15 @@ pub fn address(args: &[GuestArg<'_>], at: usize) -> Address {
 pub fn cell<'a>(args: &'a [GuestArg<'a>], at: usize) -> &'a [u8] {
     match *arg(args, at) {
         GuestArg::Bytes(bytes) => bytes,
+        _ => refuse(AbortReason::AbiViolation),
+    }
+}
+
+/// The id set at `at`, as the ids it is.
+#[must_use]
+pub fn ids<'a>(args: &'a [GuestArg<'a>], at: usize) -> &'a [u64] {
+    match *arg(args, at) {
+        GuestArg::Ids(ids) => ids,
         _ => refuse(AbortReason::AbiViolation),
     }
 }

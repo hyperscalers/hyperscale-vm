@@ -14,7 +14,7 @@ use crate::dsl::{
     materialized_kind,
 };
 use crate::hash::Hasher;
-use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, ids_cell};
+use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall};
 use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{
     AbiError, AbiParam, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature,
@@ -916,7 +916,7 @@ fn guest_arg(value: &Value) -> Option<CallArg> {
                     _ => None,
                 })
                 .collect::<Option<Vec<u64>>>()?;
-            Some(CallArg::Bytes(ids_cell(&ids)))
+            Some(CallArg::Ids(ids))
         }
         // A judgment has no guest representation and no export takes
         // one: a selection hands over the value it chose, and a body
@@ -2287,13 +2287,12 @@ mod tests {
     }
 
     #[test]
-    fn an_id_list_crosses_the_abi_as_the_edge_cell_framing() {
+    fn an_id_list_crosses_the_abi_as_the_ids_it_is() {
         use super::guest_arg;
-        use crate::invoke::ids_cell;
 
         assert_eq!(
             guest_arg(&Value::List(vec![Value::U64(3), Value::U64(9)])),
-            Some(CallArg::Bytes(ids_cell(&[3, 9]))),
+            Some(CallArg::Ids(vec![3, 9])),
         );
         // A list of anything else has no guest representation, and
         // neither has a judgment.

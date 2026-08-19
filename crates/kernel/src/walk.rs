@@ -175,6 +175,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                 CallArg::U64(scalar) => args.push(GuestArg::U64(*scalar)),
                 CallArg::Address(address) => args.push(GuestArg::Address(*address)),
                 CallArg::Bytes(bytes) => args.push(GuestArg::Bytes(bytes)),
+                CallArg::Ids(ids) => args.push(GuestArg::Ids(ids)),
             }
         }
 

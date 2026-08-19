@@ -176,9 +176,9 @@ interface state {
     /// Create the named instances of the resource this invocation issues.
     ///
     /// The same grant and the same terms as a quantity, for the value
-    /// that is counted by name rather than by amount. `ids` is the
-    /// count-prefixed cell a declared id list crosses in.
-    mint-instances: func(i: borrow<issuer>, ids: list<u8>) -> own<bucket>;
+    /// that is counted by name rather than by amount. Traps on a
+    /// repeated id and on more than one edge may carry.
+    mint-instances: func(i: borrow<issuer>, ids: list<u64>) -> own<bucket>;
 
     /// Destroy what this invocation issues, consuming the bucket.
     ///
@@ -237,13 +237,13 @@ interface state {
     ///
     /// The removal and the edge are one operation, which is what a
     /// movement is for an amount cell and what this is for a collection:
-    /// a body cannot hand on instances it left where they were. `ids` is
-    /// the same count-prefixed cell a declared id list crosses in, so a
-    /// method moving the ids it was given passes them straight through.
-    /// Naming none yields an empty bucket, which is how a method that
-    /// moves nothing gets one. Traps on an id outside the declared
-    /// interval and on one the collection does not hold.
-    instance-range-take: func(r: borrow<instance-range>, ids: list<u8>) -> own<bucket>;
+    /// a body cannot hand on instances it left where they were. A method
+    /// moving the ids it was given passes them straight through, because
+    /// what it was given is what this takes. Naming none yields an empty
+    /// bucket, which is how a method that moves nothing gets one. Traps
+    /// on an id outside the declared interval and on one the collection
+    /// does not hold.
+    instance-range-take: func(r: borrow<instance-range>, ids: list<u64>) -> own<bucket>;
 
     /// File every instance the bucket carries as an entry at the order it
     /// was taken under, consuming it.

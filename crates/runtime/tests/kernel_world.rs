@@ -176,11 +176,11 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn mint_instances(&mut self, _r: u32, _ids: &[u8]) -> std::result::Result<u32, AbortReason> {
+    fn mint_instances(&mut self, _r: u32, _ids: &[u64]) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn range_take(&mut self, _r: u32, _ids: &[u8]) -> std::result::Result<u32, AbortReason> {
+    fn range_take(&mut self, _r: u32, _ids: &[u64]) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 

@@ -59,11 +59,6 @@ use crate::num::{Rounding, Wide};
 
 /// The kernel's amount-cell width: a little-endian `u128`.
 ///
-/// A stored amount is still bytes — a cell holds bytes — but one crossing
-/// the boundary is an `amount`, so this width is the substate's rather
-/// than the world's.
-pub const AMOUNT_CELL_BYTES: usize = 16;
-
 /// A `u128` as the kernel's world names it.
 #[allow(clippy::cast_possible_truncation)] // taking a half is the truncation
 fn amount(value: u128) -> kernel::state::Amount {
@@ -478,7 +473,7 @@ pub fn entry_put(handle: Handle, funds: kernel::state::Bucket, value: &[u8]) {
 /// On any mode but [`Handle::RangeWrite`].
 #[must_use]
 #[inline(always)]
-pub fn entry_take(handle: Handle, ids: &[u8]) -> kernel::state::Bucket {
+pub fn entry_take(handle: Handle, ids: &[u64]) -> kernel::state::Bucket {
     match handle {
         Handle::InstanceRange(rep) => kernel::state::instance_range_take(&instance_range(rep), ids),
         other => unreachable!("{other:?} carries no movement"),

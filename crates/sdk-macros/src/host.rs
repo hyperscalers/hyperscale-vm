@@ -92,6 +92,11 @@ pub fn arm(
                         ::hyperscale_vm_sdk::host::cell(__args, #position),
                     );
                 ),
+                Shape::Ids => quote!(
+                    let #ident = ::hyperscale_vm_sdk::state::Ids(
+                        ::hyperscale_vm_sdk::host::ids(__args, #position).to_vec(),
+                    );
+                ),
                 Shape::Handle(_) | Shape::Bucket | Shape::Issuer => {
                     unreachable!("a value binding is never a handle")
                 }

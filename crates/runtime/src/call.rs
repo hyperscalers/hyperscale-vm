@@ -128,6 +128,7 @@ pub fn call_export<T: 'static>(
             GuestArg::U64(scalar) => Val::U64(*scalar),
             GuestArg::Address(address) => address_val(*address),
             GuestArg::Bytes(bytes) => Val::List(bytes.iter().copied().map(Val::U8).collect()),
+            GuestArg::Ids(ids) => Val::List(ids.iter().copied().map(Val::U64).collect()),
             GuestArg::Bucket(rep) => Val::Resource(ResourceAny::try_from_resource(
                 Resource::<Bucket>::new_own(*rep),
                 store.as_context_mut(),
