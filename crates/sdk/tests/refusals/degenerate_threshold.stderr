@@ -1,4 +1,4 @@
-error: a threshold requiring 3 of 2 claims would admit no one
+error: a threshold requiring more branches than it has would admit no one
   --> tests/refusals/degenerate_threshold.rs:24:19
    |
 24 |         #[guarded(n_of(3, chair, deputy))]

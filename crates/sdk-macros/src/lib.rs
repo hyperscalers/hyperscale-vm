@@ -106,7 +106,7 @@ use std::collections::BTreeMap;
 use hyperscale_vm_effects::vocabulary::{
     AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT,
 };
-use hyperscale_vm_effects::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, PACKAGE_SLOT_BASE, SlotId};
+use hyperscale_vm_effects::{MAX_RULE_DEPTH, PACKAGE_SLOT_BASE, Rule, SlotId, well_formed};
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
@@ -500,6 +500,7 @@ fn guarded_rule(
             } else {
                 1
             };
+            check_threshold_node(expr.span(), count, lowered.len())?;
             Ok((
                 quote!(__t.n_of(#count, ::std::vec![#(#lowered),*])),
                 false,
@@ -524,24 +525,7 @@ fn guarded_rule(
                 params,
                 depth,
             )?;
-            // The counts the vocabulary has no rule for: one nobody has
-            // to meet, and one nobody can. Refused on the line that wrote
-            // it rather than where the shape is all that is left.
-            if count == 0 {
-                return Err(syn::Error::new(
-                    call.span(),
-                    "a threshold requiring nothing would admit anyone",
-                ));
-            }
-            if usize::from(count) > lowered.len() {
-                return Err(syn::Error::new(
-                    call.span(),
-                    format!(
-                        "a threshold requiring {count} of {} claims would admit no one",
-                        lowered.len()
-                    ),
-                ));
-            }
+            check_threshold_node(call.span(), count, lowered.len())?;
             Ok((
                 quote!(__t.n_of(#count, ::std::vec![#(#lowered),*])),
                 false,
@@ -555,14 +539,30 @@ fn guarded_rule(
     }
 }
 
-/// The branches of one threshold, lowered, held to the depth and width
-/// the vocabulary admits.
+/// One threshold node's shape, judged by the vocabulary's own predicate
+/// — the same one the tracer's `n_of` and the stored rule's decode gate
+/// apply — so what the macro refuses cannot fork from what they refuse.
+/// The span is the one thing this side adds: the line that wrote the
+/// gate, rather than the tracer's panic inside a generated `blueprint()`.
+fn check_threshold_node(span: Span, count: u8, width: usize) -> syn::Result<()> {
+    let node = Rule::CountOf {
+        count,
+        rules: vec![Rule::Require(()); width],
+    };
+    well_formed(&node).map_err(|reason| syn::Error::new(span, reason))
+}
+
+/// The branches of one threshold, lowered, held to the depth the
+/// vocabulary admits.
 ///
-/// The caps are read from the vocabulary rather than restated, and they
-/// are checked here rather than at the tracer's own assertions: both
-/// refuse the same trees, but only this one can point at the line that
-/// wrote it. Depth and width are properties of the shape alone, so a
-/// gate whose leaves nobody has evaluated is still answerable for them.
+/// The cap is read from the vocabulary rather than restated, and it is
+/// checked here rather than at the tracer's own assertion: both refuse
+/// the same trees — a threshold at the deepest level would put its
+/// branches past the cap, which is what `within_caps` walks into — but
+/// only this one can point at the line that wrote it. Depth is a
+/// property of the shape alone, so a gate whose leaves nobody has
+/// evaluated is still answerable for it; the node's count and width are
+/// judged where each arm knows its count, through the shared predicate.
 fn threshold(
     span: Span,
     branches: &[&syn::Expr],
@@ -575,15 +575,6 @@ fn threshold(
         return Err(syn::Error::new(
             span,
             format!("a gate nests past the {MAX_RULE_DEPTH} levels the vocabulary admits"),
-        ));
-    }
-    if branches.len() > MAX_RULE_BRANCHES {
-        return Err(syn::Error::new(
-            span,
-            format!(
-                "a threshold over {} claims is past the {MAX_RULE_BRANCHES} the vocabulary admits",
-                branches.len()
-            ),
         ));
     }
     branches

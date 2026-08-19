@@ -31,8 +31,8 @@
 
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, AuthRole, Clause, CustodyClaim, Expr, MAX_CLAUSE_DEPTH,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, ModeExpr, ParamType,
-    RuleExpr, SlotId, TargetExpr, Totality, Value,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, RuleExpr, SlotId,
+    TargetExpr, Totality, Value, well_formed,
 };
 use hyperscale_vm_types::Presence;
 
@@ -605,24 +605,16 @@ impl Trace {
     /// than at publish where the shape is all that is left.
     #[must_use]
     pub fn n_of(&self, count: u8, branches: Vec<Requirement>) -> Requirement {
-        assert!(
-            branches.len() <= MAX_RULE_BRANCHES,
-            "a threshold over {} branches is past the {MAX_RULE_BRANCHES} the vocabulary admits",
-            branches.len()
-        );
-        assert!(
-            count >= 1,
-            "a threshold requiring nothing would admit anyone"
-        );
-        assert!(
-            usize::from(count) <= branches.len(),
-            "a threshold requiring {count} of {} branches would admit no one",
-            branches.len()
-        );
         let rule = RuleExpr::CountOf {
             count,
             rules: branches.into_iter().map(|branch| branch.0).collect(),
         };
+        // The node's shape is judged by the vocabulary's own predicate —
+        // the one the decode gate and the macro's lowering also apply —
+        // so what this refuses cannot fork from what they refuse.
+        if let Err(reason) = well_formed(&rule) {
+            panic!("{reason}");
+        }
         assert!(
             rule.within_caps(0),
             "the rule nests past the {MAX_RULE_DEPTH} the vocabulary admits"

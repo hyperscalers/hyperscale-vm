@@ -95,7 +95,7 @@ pub use route::{
     FrameDeclaration, MAX_MANIFEST_NODES, PrefixShardResolver, Routing, ShardResolver, route,
 };
 pub use rule::{
-    MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, StoredRule,
+    MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, StoredRule, well_formed,
 };
 pub use signature::{
     AbiParam, Accessibility, CustodyClaim, GateError, GateShape, MethodSignature, ParamType,

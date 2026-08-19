@@ -95,6 +95,7 @@ fn the_lowering_refuses_a_threshold_nobody_could_have_meant() {
     refuse.compile_fail("tests/refusals/degenerate_threshold.rs");
     refuse.compile_fail("tests/refusals/vacuous_threshold.rs");
     refuse.compile_fail("tests/refusals/nested_threshold.rs");
+    refuse.compile_fail("tests/refusals/wide_threshold.rs");
 }
 
 /// What the generated calling surface refuses.

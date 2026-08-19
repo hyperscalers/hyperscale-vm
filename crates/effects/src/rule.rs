@@ -104,18 +104,28 @@ pub type StoredRule = Rule<Presented>;
 /// [`check_metadata`]: crate::metadata::check_metadata
 pub type RuleExpr = Rule<Expr>;
 
-/// The threshold rule one node meets, wherever the rule came from: a
-/// count of one through the branch count, so the vocabulary holds no
+/// The threshold rule one node meets, wherever the rule came from.
+///
+/// A count of one through the branch count, so the vocabulary holds no
 /// rule that admits everyone or no one, over a branch list within the
 /// width cap.
 ///
-/// One node rather than a tree, which is what lets both sides share it.
+/// One node rather than a tree, which is what lets every side share it.
 /// As a decode gate it runs per value, so branches judge themselves and
 /// the check never recurses; inside [`Rule::within_caps`] it is what the
-/// walk applies at each node. Depth is absent because it is the one cap
-/// the two sides do not share a mechanism for — a stored rule takes it
-/// from the decoder's own nesting bound, a declared one from that walk.
-fn well_formed<L>(rule: &Rule<L>) -> Result<(), &'static str> {
+/// walk applies at each node; the tracer's `n_of` and the macro's
+/// threshold lowering judge each node they build through it, so a
+/// refusal cannot fork between the span-bearing copy and the one that
+/// panics. Depth is absent because it is the one cap the sides do not
+/// share a mechanism for — a stored rule takes it from the decoder's own
+/// nesting bound, a declared one from the caps walk, a written one from
+/// the lowering's counter.
+///
+/// # Errors
+///
+/// The refusal, phrased for whoever wrote the rule: each caller adds its
+/// own span or panic site and passes the reason through.
+pub fn well_formed<L>(rule: &Rule<L>) -> Result<(), &'static str> {
     match rule {
         Rule::Require(_) => Ok(()),
         Rule::CountOf { count, rules } => {

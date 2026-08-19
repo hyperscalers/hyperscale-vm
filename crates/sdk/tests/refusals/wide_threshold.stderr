@@ -1,0 +1,5 @@
+error: a threshold branches wider than the vocabulary admits
+  --> tests/refusals/wide_threshold.rs:39:19
+   |
+39 |         #[guarded(n_of(
+   |                   ^^^^
