@@ -625,7 +625,13 @@ pub struct KernelSession {
     /// against a grant, or handed in as a routed edge — and read where it
     /// lands, which is the pair that makes value crossing between two
     /// resources inexpressible rather than merely undeclared.
-    bucket_resources: Vec<Option<Address>>,
+    ///
+    /// Not an `Option`. Every producer names what it made: a cell a
+    /// movement reached is one the declaration denominated, a grant is
+    /// authority over one resource, and a split inherits from what it
+    /// came off. A bucket that could carry nothing in particular would
+    /// be one every destination had to admit.
+    bucket_resources: Vec<Address>,
     /// Value held on the executing body's behalf, indexed by the rep a
     /// guest's `own<bucket>` handle names.
     ///
@@ -841,7 +847,7 @@ impl KernelSession {
     ///
     /// Only past `u32` buckets in one transaction, which the declared
     /// edge and clause counts exclude.
-    pub fn open_bucket(&mut self, held: Held, resource: Option<Address>) -> u32 {
+    pub fn open_bucket(&mut self, held: Held, resource: Address) -> u32 {
         let rep = u32::try_from(self.buckets.len()).expect("bounded");
         self.buckets.push(Some(held));
         self.bucket_resources.push(resource);
@@ -869,37 +875,44 @@ impl KernelSession {
         Ok(())
     }
 
-    /// Refuse a movement through a cell the declaration denominates in
-    /// nothing — the mirror of [`KernelSession::bytes_allowed`].
-    fn value_allowed(&self, rep: u32) -> Result<(), SessionTrap> {
-        if self.cell_resource(rep).is_none() {
-            return Err(SessionTrap::BytesAsValue(rep));
-        }
-        Ok(())
+    /// What the cell behind a capability holds, for a movement through
+    /// it — the mirror of [`KernelSession::bytes_allowed`].
+    ///
+    /// The check and the answer are one lookup: a movement needs the
+    /// resource, and a cell that does not name one is a cell no value
+    /// moves through.
+    fn value_of(&self, rep: u32) -> Result<Address, SessionTrap> {
+        self.cell_resource(rep)
+            .ok_or(SessionTrap::BytesAsValue(rep))
     }
 
-    /// What the bucket at `rep` carries, where the kernel knows.
-    fn bucket_resource(&self, rep: u32) -> Option<Address> {
+    /// What the bucket at `rep` carries.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::UnknownHandle`] for a rep past the bucket table.
+    fn bucket_resource(&self, rep: u32) -> Result<Address, SessionTrap> {
         usize::try_from(rep)
             .ok()
             .and_then(|index| self.bucket_resources.get(index))
             .copied()
-            .flatten()
+            .ok_or(SessionTrap::UnknownHandle(rep))
     }
 
     /// Judge a credit: the value going into a cell is the resource that
     /// cell holds, or it does not go in.
     ///
-    /// Silent where either side is unknown. A cell that holds no value has
-    /// nothing to disagree with, and an edge whose provenance the kernel
-    /// never stamped is one no rule here can speak about — what closes
-    /// that is the declaration, above.
+    /// One comparison with nothing to skip. Both sides are known by
+    /// construction — a cell a movement reaches was denominated by the
+    /// declaration, and a bucket carries what it was made from — so the
+    /// question is only whether they agree.
     fn judge_credit(&self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
-        match (self.cell_resource(rep), self.bucket_resource(funds)) {
-            (Some(cell), Some(carried)) if cell != carried => {
-                Err(SessionTrap::WrongResource { cell, carried })
-            }
-            _ => Ok(()),
+        let cell = self.value_of(rep)?;
+        let carried = self.bucket_resource(funds)?;
+        if cell == carried {
+            Ok(())
+        } else {
+            Err(SessionTrap::WrongResource { cell, carried })
         }
     }
 
@@ -959,7 +972,7 @@ impl KernelSession {
     /// declared interval, one the collection does not hold, or more
     /// entries than the interval's cap admits.
     pub fn range_take(&mut self, rep: u32, ids: &[u8]) -> Result<u32, SessionTrap> {
-        self.value_allowed(rep)?;
+        let resource = self.value_of(rep)?;
         let interval = self.write_interval(rep)?;
         // The decoder refuses a repeated id, so the set below loses
         // nothing to dedup and a count is an instance count.
@@ -991,7 +1004,6 @@ impl KernelSession {
                 .entry_remove(interval.owner, interval.collection, *order)?;
         }
         self.invalidate(interval.owner, interval.collection);
-        let resource = self.cell_resource(rep);
         Ok(self.open_bucket(Held::Instances(taken), resource))
     }
 
@@ -1003,7 +1015,6 @@ impl KernelSession {
     /// Any [`SessionTrap`]: an instance outside the declared interval, a
     /// bucket carrying an amount, or a cap the filing would overrun.
     pub fn range_put(&mut self, rep: u32, funds: u32, value: &[u8]) -> Result<(), SessionTrap> {
-        self.value_allowed(rep)?;
         let interval = self.write_interval(rep)?;
         self.judge_credit(rep, funds)?;
         let Held::Instances(ids) = self.bucket(funds)? else {
@@ -1039,11 +1050,11 @@ impl KernelSession {
         // set by a number has no answer — which instances? — so the
         // vocabulary refuses rather than picking.
         let held = self.bucket_amount(rep)?;
+        let resource = self.bucket_resource(rep)?;
         let left = held
             .checked_sub(amount)
             .ok_or(SessionTrap::BucketUnderflow { amount, held })?;
         self.set_bucket(rep, Held::Amount(left));
-        let resource = self.bucket_resource(rep);
         Ok(self.open_bucket(Held::Amount(amount), resource))
     }
 
@@ -1077,6 +1088,7 @@ impl KernelSession {
         let share = mul_div(U256::from_u128(held), num, den, Rounding::Down)?
             .to_u128()
             .ok_or(SessionTrap::Math(MathError::Overflow))?;
+        let resource = self.bucket_resource(rep)?;
         let left = held
             .checked_sub(share)
             .ok_or(SessionTrap::BucketUnderflow {
@@ -1084,7 +1096,6 @@ impl KernelSession {
                 held,
             })?;
         self.set_bucket(rep, Held::Amount(left));
-        let resource = self.bucket_resource(rep);
         Ok(self.open_bucket(Held::Amount(share), resource))
     }
 
@@ -1104,11 +1115,12 @@ impl KernelSession {
     pub fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), SessionTrap> {
         // A merge makes two edges one, so it is the same question a cell
         // credit asks — with the receiving edge's resource in place of a
-        // cell's.
-        if let (Some(into), Some(carried)) =
-            (self.bucket_resource(rep), self.bucket_resource(other))
-            && into != carried
-        {
+        // cell's. Both lookups answer for a rep the table has ever held,
+        // so a merge into itself still reaches the take below and fails
+        // there, which is where the guest's own table agrees it should.
+        let into = self.bucket_resource(rep)?;
+        let carried = self.bucket_resource(other)?;
+        if into != carried {
             return Err(SessionTrap::WrongResource {
                 cell: into,
                 carried,
@@ -1329,8 +1341,8 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
+        let resource = self.value_of(rep)?;
         self.delta(rep, amount, DeltaOp::Sub)?;
-        let resource = self.cell_resource(rep);
         Ok(self.open_bucket(Held::Amount(amount), resource))
     }
 
@@ -1364,7 +1376,6 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
-        self.value_allowed(rep)?;
         let Capability::Write(key) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
@@ -1399,14 +1410,13 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
-        self.value_allowed(rep)?;
+        let resource = self.value_of(rep)?;
         let Capability::Write(key) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
         let held = self.amount_cell(key)?;
         let left = held.checked_sub(amount).ok_or(SessionTrap::CellUnderflow)?;
         self.store.write(key, encode_amount(left).to_vec())?;
-        let resource = self.cell_resource(rep);
         Ok(self.open_bucket(Held::Amount(amount), resource))
     }
 
@@ -1428,7 +1438,7 @@ impl KernelSession {
             return Err(SessionTrap::IssuanceUngranted);
         };
         self.supply.mint(resource, amount)?;
-        Ok(self.open_bucket(Held::Amount(amount), Some(resource)))
+        Ok(self.open_bucket(Held::Amount(amount), resource))
     }
 
     /// Create the named instances of what this invocation issues.
@@ -1457,7 +1467,7 @@ impl KernelSession {
             resource,
             u128::try_from(instances.len()).unwrap_or(u128::MAX),
         )?;
-        Ok(self.open_bucket(Held::Instances(instances), Some(resource)))
+        Ok(self.open_bucket(Held::Instances(instances), resource))
     }
 
     /// Destroy what this invocation issues, consuming the bucket.
@@ -1476,9 +1486,8 @@ impl KernelSession {
         // A grant names one resource, so what it destroys is that one:
         // burning through another instance's grant would be destroying
         // value this invocation has no authority over.
-        if let Some(carried) = self.bucket_resource(funds)
-            && carried != resource
-        {
+        let carried = self.bucket_resource(funds)?;
+        if carried != resource {
             return Err(SessionTrap::WrongResource {
                 cell: resource,
                 carried,
@@ -1511,11 +1520,11 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn reserve_take(&mut self, rep: u32) -> Result<u32, SessionTrap> {
+        let resource = self.value_of(rep)?;
         let amount = self.reserve_amount(rep)?;
         if !self.taken.insert(rep) {
             return Err(SessionTrap::ReservationTaken);
         }
-        let resource = self.cell_resource(rep);
         Ok(self.open_bucket(Held::Amount(amount), resource))
     }
 
@@ -2664,7 +2673,7 @@ mod tests {
             let held = rng.amount();
             let den = rng.amount().max(1);
             let num = rng.amount() % (den + 1);
-            let rep = session.open_bucket(Held::Amount(held), None);
+            let rep = session.open_bucket(Held::Amount(held), RESOURCE);
             let part = session
                 .bucket_split(rep, U256::from_u128(num), U256::from_u128(den))
                 .expect("a share at or under one");
@@ -2687,7 +2696,7 @@ mod tests {
     fn a_split_leaves_its_dust_with_the_remainder() {
         let set = declared(&[]);
         let mut session = session_over(MemoryStore::new(), &set);
-        let rep = session.open_bucket(Held::Amount(10), None);
+        let rep = session.open_bucket(Held::Amount(10), RESOURCE);
         let part = session
             .bucket_split(rep, U256::from_u128(1), U256::from_u128(3))
             .expect("a third");
@@ -2702,7 +2711,7 @@ mod tests {
     fn a_split_holds_a_product_the_amount_width_cannot() {
         let set = declared(&[]);
         let mut session = session_over(MemoryStore::new(), &set);
-        let rep = session.open_bucket(Held::Amount(u128::MAX), None);
+        let rep = session.open_bucket(Held::Amount(u128::MAX), RESOURCE);
         let part = session
             .bucket_split(
                 rep,
@@ -2724,7 +2733,7 @@ mod tests {
     fn a_share_above_one_is_refused_rather_than_saturated() {
         let set = declared(&[]);
         let mut session = session_over(MemoryStore::new(), &set);
-        let rep = session.open_bucket(Held::Amount(100), None);
+        let rep = session.open_bucket(Held::Amount(100), RESOURCE);
         assert_eq!(
             session.bucket_split(rep, U256::from_u128(3), U256::from_u128(2)),
             Err(SessionTrap::ShareAboveOne)
@@ -2742,7 +2751,7 @@ mod tests {
     fn a_split_by_nothing_is_refused() {
         let set = declared(&[]);
         let mut session = session_over(MemoryStore::new(), &set);
-        let rep = session.open_bucket(Held::Amount(100), None);
+        let rep = session.open_bucket(Held::Amount(100), RESOURCE);
         assert_eq!(
             session.bucket_split(rep, U256::from_u128(1), U256::ZERO),
             Err(SessionTrap::Math(MathError::DivideByZero))
@@ -2755,7 +2764,10 @@ mod tests {
     fn a_proportion_does_not_divide_an_instance_edge() {
         let set = declared(&[]);
         let mut session = session_over(MemoryStore::new(), &set);
-        let rep = session.open_bucket(Held::Instances([1u128, 2, 3].into_iter().collect()), None);
+        let rep = session.open_bucket(
+            Held::Instances([1u128, 2, 3].into_iter().collect()),
+            RESOURCE,
+        );
         assert_eq!(
             session.bucket_split(rep, U256::from_u128(1), U256::from_u128(2)),
             Err(SessionTrap::WrongEdgeKind)

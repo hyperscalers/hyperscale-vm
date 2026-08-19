@@ -549,7 +549,7 @@ fn blessed_round() -> Result<(Receipt, u64)> {
     // byte list. The kernel never sees this shape — metadata and world
     // are derived together — which is why a direct drive is the one
     // reader that has to follow.
-    let funds = store.data_mut().open_bucket(Held::Amount(AMOUNT), None);
+    let funds = store.data_mut().open_bucket(Held::Amount(AMOUNT), RESOURCE);
     let enter = instance.get_typed_func::<(
         Resource<RangeWrite>,
         Resource<DeltaCell>,
@@ -616,7 +616,7 @@ fn reference_round() -> Result<(Receipt, u64)> {
         &Capability::Delta(child_key(&TestHasher, LOTTERY, VAULT, &[])),
     );
     let mut host = host;
-    let funds = host.open_bucket(Held::Amount(AMOUNT), None);
+    let funds = host.open_bucket(Held::Amount(AMOUNT), RESOURCE);
     let mut instance =
         RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(

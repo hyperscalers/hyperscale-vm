@@ -222,8 +222,8 @@ fn rep_of(host: &KernelSession, wanted: SubstateKey, mode: Mode) -> u32 {
 /// same two.
 fn session(fx: &Fixture) -> (KernelSession, u32, u32) {
     let mut session = materialize(fx);
-    let held = session.open_bucket(Held::Amount(HELD), None);
-    let spent = session.open_bucket(Held::Amount(SPENT), None);
+    let held = session.open_bucket(Held::Amount(HELD), RESOURCE);
+    let spent = session.open_bucket(Held::Amount(SPENT), RESOURCE);
     (session, held, spent)
 }
 
@@ -624,7 +624,7 @@ fn put_blessed(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(C
     let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), None);
+    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
     let (key, mode) = if delta {
         (fx.ledger, Mode::Delta)
     } else {
@@ -672,7 +672,7 @@ fn put_ref(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(Credi
     let bytes = parse_str(BUCKET_GUEST_WAT)?;
     let comp = RefComponent::decode(&bytes)?;
     let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), None);
+    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
     let (key, mode, kind) = if delta {
         (fx.ledger, Mode::Delta, ResourceKind::DeltaCell)
     } else {
@@ -883,7 +883,7 @@ fn weighed(fx: &Fixture, held: u128) -> Result<(u64, u64)> {
     let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), None);
+    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
     let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
@@ -897,7 +897,7 @@ fn weighed(fx: &Fixture, held: u128) -> Result<(u64, u64)> {
 
     let comp = RefComponent::decode(&bytes)?;
     let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), None);
+    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
     let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
@@ -921,7 +921,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
     let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), None);
+    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
     let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
@@ -947,7 +947,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
 
     let comp = RefComponent::decode(&bytes)?;
     let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), None);
+    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
     let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
@@ -1086,7 +1086,7 @@ fn a_bucket_survives_a_split_and_a_merge_whole() -> Result<()> {
     let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(100), None);
+    let funds = host.open_bucket(Held::Amount(100), RESOURCE);
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
@@ -1120,7 +1120,7 @@ fn a_merge_of_a_bucket_into_itself_is_refused_by_both_engines() -> Result<()> {
     let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut host = materialize(&fx);
-    let funds = host.open_bucket(Held::Amount(100), None);
+    let funds = host.open_bucket(Held::Amount(100), RESOURCE);
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
@@ -1133,7 +1133,7 @@ fn a_merge_of_a_bucket_into_itself_is_refused_by_both_engines() -> Result<()> {
 
     let comp = RefComponent::decode(&bytes)?;
     let mut host = materialize(&fx);
-    let funds = host.open_bucket(Held::Amount(100), None);
+    let funds = host.open_bucket(Held::Amount(100), RESOURCE);
     let mut instance = RefComponentInstance::instantiate(&comp, host).map_err(|(_, e)| e)?;
     let reference = instance
         .invoke("self-merge", &[CVal::Own(funds)])?
@@ -1274,7 +1274,7 @@ fn discard_blessed(fx: &Fixture, held: u128) -> Result<(Option<AbortReason>, u64
     let mut linker = Linker::<KernelSession>::new(&engine);
     add_kernel_to_linker(&mut linker)?;
     let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), None);
+    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
     let mut store = Store::new(&engine, host);
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
@@ -1296,7 +1296,7 @@ fn discard_ref(fx: &Fixture, held: u128) -> Result<(Option<AbortReason>, u64)> {
     let bytes = parse_str(BUCKET_GUEST_WAT)?;
     let comp = RefComponent::decode(&bytes)?;
     let mut host = materialize(fx);
-    let funds = host.open_bucket(Held::Amount(held), None);
+    let funds = host.open_bucket(Held::Amount(held), RESOURCE);
     let mut instance =
         RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
     let called = instance.invoke("discard", &[CVal::Own(funds)])?;

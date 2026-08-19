@@ -18,13 +18,15 @@
 
 use std::sync::Arc;
 
+use hyperscale_vm_effects::vocabulary::NF_VAULT;
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, SlotId,
-    SubstateKey, TestHasher, Value, child_key,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, SlotId,
+    SubstateKey, TestHasher, Value, child_key, collection_id, ids_cell,
 };
+use hyperscale_vm_embed::math::U256;
 use hyperscale_vm_kernel::{
     AbortReason, EnvInputs, ISSUER_REP, KernelSession, MaterializeError, MemoryStore, OverlayStore,
-    TxHash,
+    TxHash, WorkingStore, encode_amount,
 };
 
 const VAULT: SlotId = SlotId(1);
@@ -89,6 +91,158 @@ fn try_session(denominations: &[Option<Address>]) -> Result<KernelSession, Mater
         env(),
         hash,
     )
+}
+
+/// Every way a bucket comes into being, and what it carries out.
+///
+/// Exhaustive over the producers on purpose. A bucket's resource is
+/// stamped where value comes into being, and a producer that stamped
+/// nothing would hand out an edge every destination admits — which is
+/// the one shape the comparison below cannot catch, because there would
+/// be nothing to compare. The stamp is only visible through that
+/// comparison, so each edge is offered to the vault that does not hold
+/// it.
+#[test]
+fn every_producer_stamps_what_its_source_held() {
+    let absolute = child_key(&TestHasher, POOL, SlotId(20), &[]);
+    let commutative = child_key(&TestHasher, POOL, SlotId(21), &[]);
+    let reserved = child_key(&TestHasher, POOL, SlotId(22), &[]);
+    let ordered = vec![
+        Effect {
+            target: EffectTarget::Point(absolute),
+            mode: Mode::Write {
+                requires: Presence::Either,
+            },
+        },
+        Effect {
+            target: EffectTarget::Point(commutative),
+            mode: Mode::Delta,
+        },
+        Effect {
+            target: EffectTarget::Point(reserved),
+            mode: Mode::Reserve { amount: 50 },
+        },
+        // The vault that holds the other resource: what each edge is
+        // offered to, and what every one of them must refuse.
+        Effect {
+            target: EffectTarget::Point(vault(Y)),
+            mode: Mode::Delta,
+        },
+    ];
+    let mut set = EffectSet::new();
+    for effect in &ordered {
+        set.insert(*effect).expect("four distinct cells");
+    }
+    let mut store = MemoryStore::new();
+    for key in [absolute, reserved] {
+        store.write(key, encode_amount(100).to_vec()).expect("seed");
+    }
+    store.clear_log();
+
+    let mut session = KernelSession::materialize(
+        OverlayStore::new(Arc::new(store)),
+        &set,
+        &ordered,
+        &[Some(X), Some(X), Some(X), Some(Y)],
+        TxHash(Hash32([2; 32])),
+        env(),
+        hash,
+    )
+    .expect("four denominated cells materialize");
+
+    // A debit out of each mode that holds an amount, and the two ways an
+    // edge divides once it is in hand.
+    let from_absolute = session.write_take(0, 40).expect("the cell covers it");
+    let split = session
+        .bucket_take(from_absolute, 10)
+        .expect("the edge covers it");
+    let share = session
+        .bucket_split(from_absolute, U256::from_u128(1), U256::from_u128(2))
+        .expect("half of what is left");
+    let from_commutative = session.delta_take(1, 40).expect("the debit is queued");
+    let from_reserved = session.reserve_take(2).expect("the grant is held");
+
+    for (name, funds) in [
+        ("write-take", from_absolute),
+        ("bucket-take", split),
+        ("bucket-split", share),
+        ("delta-take", from_commutative),
+        ("reserve-take", from_reserved),
+    ] {
+        assert_eq!(
+            session.delta_put(3, funds).map_err(AbortReason::from),
+            Err(AbortReason::WrongResource),
+            "{name} handed out an edge the other vault admitted"
+        );
+    }
+}
+
+/// The same, for the two producers that hand back named instances.
+///
+/// Separate because an instance edge lands in a holdings interval rather
+/// than an amount cell, so the vault that must refuse it is a different
+/// shape — not a different rule.
+#[test]
+fn every_instance_producer_stamps_what_its_source_held() {
+    let held = |resource: Address| {
+        collection_id(
+            &TestHasher,
+            POOL,
+            NF_VAULT,
+            &[Value::Address(resource).canonical_bytes()],
+        )
+    };
+    let interval = |resource: Address| Effect {
+        target: EffectTarget::Range {
+            owner: POOL,
+            collection: held(resource),
+            lo: 0,
+            hi: u128::MAX,
+            cap: 8,
+        },
+        mode: Mode::Write {
+            requires: Presence::Either,
+        },
+    };
+    let ordered = vec![interval(X), interval(Y)];
+    let mut set = EffectSet::new();
+    for effect in &ordered {
+        set.insert(*effect).expect("two distinct collections");
+    }
+    let mut store = MemoryStore::new();
+    for order in [10u128, 20] {
+        store
+            .entry_write(POOL, held(X), order, vec![1])
+            .expect("seed");
+    }
+    store.clear_log();
+
+    let mut session = KernelSession::materialize(
+        OverlayStore::new(Arc::new(store)),
+        &set,
+        &ordered,
+        &[Some(X), Some(Y)],
+        TxHash(Hash32([3; 32])),
+        env(),
+        hash,
+    )
+    .expect("two denominated intervals materialize");
+
+    let taken = session
+        .range_take(0, &ids_cell(&[10]))
+        .expect("the holder has it");
+    session.grant_issuance(X);
+    let minted = session
+        .mint_instances(ISSUER_REP, &ids_cell(&[99]))
+        .expect("the grant mints");
+
+    for (name, funds) in [("range-take", taken), ("mint-instances", minted)] {
+        assert_eq!(
+            session.range_put(1, funds, &[1]).map_err(AbortReason::from),
+            Err(AbortReason::WrongResource),
+            "{name} handed out instances the other holder's interval admitted"
+        );
+    }
 }
 
 /// A debit from one vault credited to the other is refused, whatever the
