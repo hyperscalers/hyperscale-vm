@@ -510,7 +510,15 @@ fn execute_manifest(
         "the null resolver routes to one shard"
     );
     let declaration = routing.declaration().context("declaration")?;
-    let entry = BatchTx::new(tx, declaration, clock_ms, env().randomness).with_calls(routing.calls);
+    let entry = BatchTx::new(
+        tx,
+        declaration,
+        EnvInputs {
+            clock_ms,
+            randomness: env().randomness,
+        },
+    )
+    .with_calls(routing.calls);
 
     let before = store.clone();
     // A presence requirement and a reservation are both judged here,

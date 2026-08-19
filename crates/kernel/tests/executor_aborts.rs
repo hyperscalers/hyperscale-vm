@@ -131,15 +131,9 @@ fn a_debit_below_a_held_reservation_aborts_only_its_transaction() {
                 point(cell(0xA), Mode::Reserve { amount: 50 }),
                 cell(0xC),
             )),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
-        BatchTx::new(
-            tx(0x02),
-            moving(point(cell(0xA), Mode::Delta)),
-            env().clock_ms,
-            env().randomness,
-        ),
+        BatchTx::new(tx(0x02), moving(point(cell(0xA), Mode::Delta)), env()),
     ];
 
     for mode in [ExecutionMode::Serial, ExecutionMode::Parallel] {
@@ -181,15 +175,9 @@ fn a_covered_debit_completes_beside_a_reservation() {
                 point(cell(0xA), Mode::Reserve { amount: 50 }),
                 cell(0xC),
             )),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
-        BatchTx::new(
-            tx(0x02),
-            moving(point(cell(0xA), Mode::Delta)),
-            env().clock_ms,
-            env().randomness,
-        ),
+        BatchTx::new(tx(0x02), moving(point(cell(0xA), Mode::Delta)), env()),
     ];
 
     let outcome = execute_batch(
@@ -221,18 +209,8 @@ fn racing_debits_lose_deterministically_in_canonical_order() {
     let mut store = MemoryStore::new();
     store.write(cell(0xA), encode_amount(20).to_vec()).unwrap();
     let batch = vec![
-        BatchTx::new(
-            tx(0x01),
-            moving(point(cell(0xA), Mode::Delta)),
-            env().clock_ms,
-            env().randomness,
-        ),
-        BatchTx::new(
-            tx(0x02),
-            moving(point(cell(0xA), Mode::Delta)),
-            env().clock_ms,
-            env().randomness,
-        ),
+        BatchTx::new(tx(0x01), moving(point(cell(0xA), Mode::Delta)), env()),
+        BatchTx::new(tx(0x02), moving(point(cell(0xA), Mode::Delta)), env()),
     ];
     let mut reversed = batch.clone();
     reversed.reverse();
@@ -281,8 +259,7 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
                 point(cell(0xAB), Mode::Reserve { amount: 10 }),
                 cell(0xC),
             )),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
         BatchTx::new(
             tx(0x02),
@@ -290,8 +267,7 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
                 point(cell(0xAC), Mode::Reserve { amount: 10 }),
                 cell(0xC),
             )),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
         BatchTx::new(
             tx(0x03),
@@ -299,8 +275,7 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
                 point(cell(0xAD), Mode::Reserve { amount: 40 }),
                 cell(0xC),
             )),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
     ];
 
@@ -346,8 +321,7 @@ fn nullifier_tx(id: u8) -> BatchTx {
         )),
         calls: Vec::new(),
         nullifiers: vec![nullifier()],
-        clock_ms: env().clock_ms,
-        randomness: env().randomness,
+        env: env(),
         gas_limit: u64::MAX,
     }
 }
@@ -420,15 +394,9 @@ fn a_drained_vault_leaves_no_cell() {
                 point(cell(0xA), Mode::Reserve { amount: 50 }),
                 cell(0xC),
             )),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
-        BatchTx::new(
-            tx(0x02),
-            moving(point(cell(0xD), Mode::Delta)),
-            env().clock_ms,
-            env().randomness,
-        ),
+        BatchTx::new(tx(0x02), moving(point(cell(0xD), Mode::Delta)), env()),
     ];
     let outcome = execute_batch(
         Arc::new(store),
@@ -461,8 +429,7 @@ fn a_drained_vault_leaves_no_cell() {
                 point(cell(0xC), Mode::Reserve { amount: 20 }),
                 cell(0xA),
             )),
-            env().clock_ms,
-            env().randomness,
+            env(),
         )],
         &scripted(0),
         test_hash,
@@ -491,8 +458,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         declaration: Declaration::from_set(point(nullifier(), Mode::Read)),
         calls: Vec::new(),
         nullifiers: vec![nullifier()],
-        clock_ms: env().clock_ms,
-        randomness: env().randomness,
+        env: env(),
         gas_limit: u64::MAX,
     };
     let refused = execute_batch(
@@ -549,8 +515,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
         },
         calls: Vec::new(),
         nullifiers: vec![],
-        clock_ms: env().clock_ms,
-        randomness: env().randomness,
+        env: env(),
         gas_limit: u64::MAX,
     };
     let refused = execute_batch(
@@ -656,15 +621,9 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
                         requires: Presence::Either,
                     },
                 )),
-                env().clock_ms,
-                env().randomness,
+                env(),
             ),
-            BatchTx::new(
-                tx(0x02),
-                moving(point(poisoned, Mode::Delta)),
-                env().clock_ms,
-                env().randomness,
-            ),
+            BatchTx::new(tx(0x02), moving(point(poisoned, Mode::Delta)), env()),
         ],
         &writer,
         test_hash,
@@ -729,14 +688,12 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
                         requires: Presence::Either,
                     },
                 )),
-                env().clock_ms,
-                env().randomness,
+                env(),
             ),
             BatchTx::new(
                 tx(0x02),
                 moving(point(vault, Mode::Reserve { amount: 100 })),
-                env().clock_ms,
-                env().randomness,
+                env(),
             ),
         ],
         &scripted,
@@ -790,18 +747,8 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
     let outcome = execute_batch(
         Arc::new(MemoryStore::new()),
         &[
-            BatchTx::new(
-                tx(0x01),
-                moving(point(vault, Mode::Delta)),
-                env().clock_ms,
-                env().randomness,
-            ),
-            BatchTx::new(
-                tx(0x02),
-                moving(point(cell(0xD), Mode::Read)),
-                env().clock_ms,
-                env().randomness,
-            ),
+            BatchTx::new(tx(0x01), moving(point(vault, Mode::Delta)), env()),
+            BatchTx::new(tx(0x02), moving(point(cell(0xD), Mode::Read)), env()),
         ],
         &overflowing,
         test_hash,
@@ -841,8 +788,7 @@ fn an_unavailable_engine_refuses_the_batch() {
             point(cell(0xA), Mode::Reserve { amount: 50 }),
             cell(0xC),
         )),
-        env().clock_ms,
-        env().randomness,
+        env(),
     )];
 
     // Machine-local failure is not a verdict: no receipt exists to price

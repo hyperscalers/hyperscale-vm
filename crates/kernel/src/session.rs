@@ -20,11 +20,14 @@ use hyperscale_vm_effects::{
     ABSENT_REP, AbortReason, Address, CollectionId, Declaration, Effect, EffectSet, EffectTarget,
     EntryKey, ISSUER_REP, Mode, Presence, SubstateKey, distinct_ids,
 };
+use hyperscale_vm_embed::CellKind;
 use hyperscale_vm_embed::math::{MathError, Rounding, U256, mul_div};
 
 use crate::ledger::AmountLedger;
 use crate::locality::Locality;
-use crate::modes::{AMOUNT_CELL_BYTES, DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
+use crate::modes::{
+    AMOUNT_CELL_BYTES, DeltaOp, ModeError, TxHash, decode_amount, encode_amount, total_movement,
+};
 use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
 use crate::store::{Access, Fault, StoreError, WorkingStore};
@@ -105,6 +108,25 @@ pub enum Capability {
     InstanceRange(Interval),
 }
 
+impl Capability {
+    /// The handle type a materialized capability is passed as.
+    #[must_use]
+    pub const fn kind(&self) -> CellKind {
+        match self {
+            Self::Read(_) => CellKind::Read,
+            Self::Locked(_) => CellKind::Locked,
+            Self::Write(_) => CellKind::Write,
+            Self::Amount(_) => CellKind::Amount,
+            Self::AmountRead(_) => CellKind::AmountRead,
+            Self::Delta(_) => CellKind::Delta,
+            Self::Reserve { .. } => CellKind::Reserve,
+            Self::RangeRead(..) => CellKind::RangeRead,
+            Self::RangeWrite(..) => CellKind::RangeWrite,
+            Self::InstanceRange(..) => CellKind::InstanceRange,
+        }
+    }
+}
+
 /// What a bucket carries.
 ///
 /// The two are one object because they are one thing to a manifest — value
@@ -123,16 +145,11 @@ pub enum Held {
 impl Held {
     /// What a signed bound is judged over: an amount, or how many
     /// instances.
-    ///
-    /// # Panics
-    ///
-    /// Never: an instance set is bounded by the per-edge cap, well below
-    /// `u128`.
     #[must_use]
     pub fn quantity(&self) -> u128 {
         match self {
             Self::Amount(amount) => *amount,
-            Self::Instances(ids) => u128::try_from(ids.len()).expect("bounded by the edge cap"),
+            Self::Instances(ids) => ids.len() as u128,
         }
     }
 
@@ -874,8 +891,9 @@ impl KernelSession {
     ///
     /// # Panics
     ///
-    /// Only past `u32` buckets in one transaction, which the declared
-    /// edge and clause counts exclude.
+    /// Only past `u32` buckets in one transaction. Reps are minted per
+    /// take and split, so the bound is the fuel budget — four billion
+    /// host calls — not any declared count.
     pub fn open_bucket(&mut self, held: Held, resource: Address) -> u32 {
         let rep = u32::try_from(self.buckets.len()).expect("bounded");
         self.buckets.push(Some(held));
@@ -1488,18 +1506,10 @@ impl KernelSession {
             return Err(SessionTrap::IssuanceUngranted);
         };
         let named = distinct_ids(ids).ok_or(SessionTrap::MalformedIdSet)?;
-        let mut instances = BTreeSet::new();
-        for id in named {
-            if !instances.insert(u128::from(id)) {
-                return Err(SessionTrap::InstanceHeldTwice(u128::from(id)));
-            }
-        }
+        let instances: BTreeSet<u128> = named.into_iter().map(u128::from).collect();
         // An instance's supply is its existence: what a non-fungible
         // mints is a count, which is what its holdings are measured in.
-        self.supply.mint(
-            resource,
-            u128::try_from(instances.len()).unwrap_or(u128::MAX),
-        )?;
+        self.supply.mint(resource, instances.len() as u128)?;
         Ok(self.open_bucket(Held::Instances(instances), resource))
     }
 
@@ -2065,33 +2075,6 @@ impl KernelSession {
     pub const fn store(&self) -> &OverlayStore {
         &self.store
     }
-}
-
-/// One cell's credit and debit totals over this transaction's queued
-/// deltas.
-///
-/// # Errors
-///
-/// [`ModeError::DeltaOverflow`] if either total leaves `u128`.
-fn total_movement(ops: &[DeltaOp]) -> Result<Movement, ModeError> {
-    let mut movement = Movement::default();
-    for op in ops {
-        match op {
-            DeltaOp::Add(amount) => {
-                movement.credit = movement
-                    .credit
-                    .checked_add(*amount)
-                    .ok_or(ModeError::DeltaOverflow)?;
-            }
-            DeltaOp::Sub(amount) => {
-                movement.debit = movement
-                    .debit
-                    .checked_add(*amount)
-                    .ok_or(ModeError::DeltaOverflow)?;
-            }
-        }
-    }
-    Ok(movement)
 }
 
 /// How a session's reservations settled: the per-cell amounts, or the

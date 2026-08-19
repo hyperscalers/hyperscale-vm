@@ -102,8 +102,7 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
     let batch = vec![BatchTx::new(
         TxHash(Hash32([0x11; 32])),
         moving(transfer_declared(50)),
-        env().clock_ms,
-        env().randomness,
+        env(),
     )];
 
     // The payer's shard: it owns the reserve, judges it, settles it, and
@@ -199,8 +198,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
         declaration: moving(declared),
         calls: Vec::new(),
         nullifiers: vec![signed_nullifier()],
-        clock_ms: env().clock_ms,
-        randomness: env().randomness,
+        env: env(),
         gas_limit: u64::MAX,
     }
 }
@@ -261,8 +259,10 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
     let batch = vec![BatchTx::new(
         TxHash(Hash32([0x44; 32])),
         moving(transfer_declared(50)),
-        env().clock_ms,
-        draw,
+        EnvInputs {
+            clock_ms: env().clock_ms,
+            randomness: draw,
+        },
     )];
     let reading_guest = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         value: Some(u64::from(session.randomness()[0])),
@@ -305,8 +305,10 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
     let divergent = vec![BatchTx::new(
         batch[0].tx,
         moving(transfer_declared(50)),
-        env().clock_ms,
-        [0x5B; 32],
+        EnvInputs {
+            clock_ms: env().clock_ms,
+            randomness: [0x5B; 32],
+        },
     )];
     let elsewhere = execute_batch(
         Arc::new(MemoryStore::new()),
@@ -374,18 +376,8 @@ fn remote_movement_batch() -> Vec<BatchTx> {
         })
         .unwrap();
     vec![
-        BatchTx::new(
-            TxHash(Hash32([0x51; 32])),
-            moving(moved),
-            env().clock_ms,
-            env().randomness,
-        ),
-        BatchTx::new(
-            TxHash(Hash32([0x52; 32])),
-            moving(read),
-            env().clock_ms,
-            env().randomness,
-        ),
+        BatchTx::new(TxHash(Hash32([0x51; 32])), moving(moved), env()),
+        BatchTx::new(TxHash(Hash32([0x52; 32])), moving(read), env()),
     ]
 }
 
@@ -457,8 +449,7 @@ fn only_the_owning_shard_judges_an_uncovered_reserve() {
     let batch = vec![BatchTx::new(
         TxHash(Hash32([0x22; 32])),
         moving(transfer_declared(50)),
-        env().clock_ms,
-        env().randomness,
+        env(),
     )];
 
     // The payer's shard sees the shortfall and refuses.

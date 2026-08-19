@@ -212,6 +212,62 @@ pub const fn compatible(a: ModeKind, b: ModeKind) -> bool {
     )
 }
 
+/// The three classes [`compatible`] partitions the conflicting modes
+/// into: reads share with reads, the commutative modes with each other,
+/// and a write shares with nothing.
+///
+/// Discriminants are stable indices, so a scheduler can key per-class
+/// state by `class as usize`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictClass {
+    /// Fresh reads: internally compatible.
+    Read = 0,
+    /// Delta and reserve: commute with each other.
+    Commutative = 1,
+    /// Exclusive writes: compatible with nothing that conflicts at all.
+    Write = 2,
+}
+
+impl ConflictClass {
+    /// Every class, ordered by discriminant.
+    pub const ALL: [Self; 3] = [Self::Read, Self::Commutative, Self::Write];
+
+    /// A mode kind standing for this class.
+    ///
+    /// The commutative modes are interchangeable under [`compatible`], so
+    /// one of them speaks for both and conflict stays read off the
+    /// lattice rather than tabulated again beside it.
+    #[must_use]
+    pub const fn representative(self) -> ModeKind {
+        match self {
+            Self::Read => ModeKind::Read,
+            Self::Commutative => ModeKind::Delta,
+            Self::Write => ModeKind::Write,
+        }
+    }
+
+    /// Whether two classes conflict — [`compatible`], asked of the
+    /// representatives.
+    #[must_use]
+    pub const fn conflicts_with(self, other: Self) -> bool {
+        !compatible(self.representative(), other.representative())
+    }
+}
+
+impl ModeKind {
+    /// The conflict class this mode joins, or `None` for a locked read,
+    /// which conflicts with nothing and joins no group.
+    #[must_use]
+    pub const fn conflict_class(self) -> Option<ConflictClass> {
+        match self {
+            Self::Locked => None,
+            Self::Read => Some(ConflictClass::Read),
+            Self::Delta | Self::Reserve => Some(ConflictClass::Commutative),
+            Self::Write => Some(ConflictClass::Write),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Presence;

@@ -18,8 +18,8 @@ use hyperscale_vm_effects::{
     SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    AbortReason, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore, Outcome,
-    RunResult, TxHash, decode_amount, encode_amount, execute_batch,
+    AbortReason, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
+    MemoryStore, Outcome, RunResult, TxHash, decode_amount, encode_amount, execute_batch,
 };
 
 const CONFIG: u128 = 7;
@@ -92,7 +92,14 @@ fn store() -> MemoryStore {
 }
 
 fn run(declared: EffectSet) -> Outcome {
-    let batch = vec![BatchTx::new(tx(0x01), declared, 1_000, [1; 32])];
+    let batch = vec![BatchTx::new(
+        tx(0x01),
+        declared,
+        EnvInputs {
+            clock_ms: 1_000,
+            randomness: [1; 32],
+        },
+    )];
     let outcome = execute_batch(
         Arc::new(store()),
         &batch,
@@ -119,8 +126,10 @@ fn a_locked_read_of_a_locked_cell_reads_it() {
                 },
             ),
         ]),
-        1_000,
-        [1; 32],
+        EnvInputs {
+            clock_ms: 1_000,
+            randomness: [1; 32],
+        },
     )];
     let outcome = execute_batch(
         Arc::new(store()),

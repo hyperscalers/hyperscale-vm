@@ -14,27 +14,11 @@ use hyperscale_vm_effects::{
     ABSENT_REP, AbortReason, Address, AuthCell, AuthRole, AuthorityGate, CallArg, MAX_ERROR_CODES,
     NodeCall, PackageHash, Possession,
 };
-use hyperscale_vm_embed::{CellKind, GuestArg, Invoked};
+use hyperscale_vm_embed::{GuestArg, Invoked};
 
 use crate::executor::{BatchTx, GuestRunner, RunResult, Unavailable};
 use crate::modes::decode_amount;
-use crate::session::{Capability, KernelSession, Outcome, SessionTrap};
-
-/// The handle type a materialized capability is passed as.
-const fn cell_kind(capability: &Capability) -> CellKind {
-    match capability {
-        Capability::Read(_) => CellKind::Read,
-        Capability::Locked(_) => CellKind::Locked,
-        Capability::Write(_) => CellKind::Write,
-        Capability::Amount(_) => CellKind::Amount,
-        Capability::AmountRead(_) => CellKind::AmountRead,
-        Capability::Delta(_) => CellKind::Delta,
-        Capability::Reserve { .. } => CellKind::Reserve,
-        Capability::RangeRead(..) => CellKind::RangeRead,
-        Capability::RangeWrite(..) => CellKind::RangeWrite,
-        Capability::InstanceRange(..) => CellKind::InstanceRange,
-    }
-}
+use crate::session::{KernelSession, Outcome, SessionTrap};
 
 /// One export invocation, fully assembled.
 pub struct GuestCall<'a> {
@@ -161,7 +145,7 @@ impl<B: GuestBackend> ManifestWalk<'_, B> {
                     };
                     args.push(GuestArg::Handle {
                         rep: *rep,
-                        kind: cell_kind(capability),
+                        kind: capability.kind(),
                     });
                 }
                 CallArg::Bucket { source, output } => {

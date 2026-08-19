@@ -90,8 +90,8 @@ pub use rule::{
     MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, StoredRule,
 };
 pub use types::{
-    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, EdgeContent, Effect,
-    EffectConflict, EffectSet, EffectTarget, InvalidAddress, KERNEL_SLOT_BASE, LocalKey,
+    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, ConflictClass, EdgeContent,
+    Effect, EffectConflict, EffectSet, EffectTarget, InvalidAddress, KERNEL_SLOT_BASE, LocalKey,
     MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Mode, ModeKind, NativeAddr, NativeRole, NetworkWord,
     NotAResource, NotCallable, PACKAGE_SLOT_BASE, PackageAddr, Presence, PrincipalAddr,
     ResourceAddr, ResourceRef, SchemeId, ShardId, SlotId, SubstateKey, TextError, Value,

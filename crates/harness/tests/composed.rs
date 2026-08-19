@@ -136,20 +136,15 @@ fn batch_entry(
     // folded set's order instead would hand the guest a table the
     // lowered calls were not resolved against.
     let declaration = routing.declaration().context("declaration")?;
-    let entry = BatchTx::new(
-        TxHash(identity.0),
-        declaration,
-        env().clock_ms,
-        env().randomness,
-    )
-    .with_calls(routing.calls)
-    .with_nullifiers(
-        admitted
-            .subintents
-            .iter()
-            .map(|record| record.nullifier)
-            .collect(),
-    );
+    let entry = BatchTx::new(TxHash(identity.0), declaration, env())
+        .with_calls(routing.calls)
+        .with_nullifiers(
+            admitted
+                .subintents
+                .iter()
+                .map(|record| record.nullifier)
+                .collect(),
+        );
     Ok((entry, admitted))
 }
 

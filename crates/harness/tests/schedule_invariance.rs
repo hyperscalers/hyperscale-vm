@@ -107,8 +107,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
             // Both ends of a transfer hold the one resource this batch
             // moves; a cell that said nothing would move nothing.
             Declaration::from_set(declared).denominated(|_| Some(RESOURCE)),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ));
         shapes.insert(tx(id), Shape::Transfer { sender, recipient });
     }
@@ -122,12 +121,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
                 },
             })
             .unwrap();
-        batch.push(BatchTx::new(
-            tx(id),
-            declared,
-            env().clock_ms,
-            env().randomness,
-        ));
+        batch.push(BatchTx::new(tx(id), declared, env()));
         shapes.insert(tx(id), Shape::Rmw { cell: rmw_cell() });
     }
     (store, batch, shapes)

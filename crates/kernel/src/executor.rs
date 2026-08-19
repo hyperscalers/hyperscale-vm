@@ -30,8 +30,8 @@ use std::sync::Arc;
 use std::thread;
 
 use hyperscale_vm_effects::{
-    AbortReason, Address, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Mode,
-    ModeKind, NodeCall, Presence, SubstateKey, compatible,
+    AbortReason, Address, CollectionId, ConflictClass, Declaration, Effect, EffectSet,
+    EffectTarget, Mode, ModeKind, NodeCall, Presence, SubstateKey,
 };
 
 use crate::ledger::AmountLedger;
@@ -87,18 +87,17 @@ pub struct BatchTx {
     /// at any of them aborts the transaction before it runs; completing
     /// writes them all — once-only by creation conflict.
     pub nullifiers: Vec<SubstateKey>,
-    /// The transaction's clock in milliseconds. Per transaction, not per
-    /// batch: every replica executing this transaction must pass the same
-    /// value, and one batch may mix transactions with different clocks.
-    pub clock_ms: u64,
-    /// The transaction's randomness draw, on the same terms as
-    /// [`BatchTx::clock_ms`]. A guest can read it, so it can reach the
-    /// receipt — and the two shards of a cross-shard transaction execute
-    /// it in different batches of different composition, so anything
-    /// derived from the batch or from the executing block would put them
-    /// on different receipts. The draw anchors to the transaction, and
-    /// every replica of it passes the same one.
-    pub randomness: [u8; 32],
+    /// The deterministic environment: the transaction clock and the
+    /// randomness draw. Per transaction, not per batch — every replica
+    /// executing this transaction must pass the same values, and one
+    /// batch may mix transactions with different clocks. A guest can read
+    /// both, so they can reach the receipt — and the two shards of a
+    /// cross-shard transaction execute it in different batches of
+    /// different composition, so anything derived from the batch or from
+    /// the executing block would put them on different receipts. The
+    /// inputs anchor to the transaction, and every replica passes the
+    /// same ones.
+    pub env: EnvInputs,
     /// The signed execution ceiling, in fuel.
     ///
     /// Per transaction, not per invocation: a manifest's nodes draw from
@@ -112,23 +111,17 @@ impl BatchTx {
     /// A transaction with no bound subintents.
     ///
     /// Takes the whole [`Declaration`] rather than either view, so the two
-    /// cannot be paired wrongly on this path. The environment inputs are
-    /// arguments rather than defaults: a silently zeroed clock or draw is
+    /// cannot be paired wrongly on this path. The environment is an
+    /// argument rather than a default: a silently zeroed clock or draw is
     /// a wrong consensus input that nothing would catch.
     #[must_use]
-    pub fn new(
-        tx: TxHash,
-        declaration: impl Into<Declaration>,
-        clock_ms: u64,
-        randomness: [u8; 32],
-    ) -> Self {
+    pub fn new(tx: TxHash, declaration: impl Into<Declaration>, env: EnvInputs) -> Self {
         Self {
             tx,
             declaration: declaration.into(),
             calls: Vec::new(),
             nullifiers: Vec::new(),
-            clock_ms,
-            randomness,
+            env,
             gas_limit: u64::MAX,
         }
     }
@@ -260,8 +253,8 @@ pub enum BatchError {
         /// The nullifier key missing from the declaration.
         key: SubstateKey,
     },
-    /// A transaction's two declaration views disagree: folding
-    /// [`BatchTx::ordered`] does not reproduce [`BatchTx::declared`].
+    /// A transaction's two declaration views disagree: folding the
+    /// [`Declaration`]'s ordered clause list does not reproduce its set.
     ///
     /// The pair is one declaration seen two ways, and every consumer picks
     /// the view its job needs — scheduling and judging read the set,
@@ -378,57 +371,14 @@ fn merge(component: &mut [usize], left: usize, right: usize) {
 
 /// Which side of the mode lattice a collection claim sits on.
 ///
-/// The three classes the sweep distinguishes: a locked claim conflicts
-/// with nothing and never becomes one. Reads are compatible with reads and
-/// the commutative modes with each other; every other pairing conflicts —
-/// which is what lets the sweep decide conflict from the classes alone.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ClaimClass {
-    Read,
-    Commutative,
-    Write,
-}
-
-impl ClaimClass {
-    /// Every class, in the order the sweep's active lists are indexed.
-    const ALL: [Self; 3] = [Self::Read, Self::Commutative, Self::Write];
-
-    /// The class of a mode kind, or `None` for one that conflicts with
-    /// nothing and so cannot join a group.
-    const fn of(kind: ModeKind) -> Option<Self> {
-        match kind {
-            ModeKind::Locked => None,
-            ModeKind::Read => Some(Self::Read),
-            ModeKind::Delta | ModeKind::Reserve => Some(Self::Commutative),
-            ModeKind::Write => Some(Self::Write),
-        }
-    }
-
-    /// A mode kind standing for this class.
-    ///
-    /// The commutative modes are interchangeable under [`compatible`], so
-    /// one of them speaks for both and conflict stays read off the lattice
-    /// rather than tabulated again beside it.
-    const fn kind(self) -> ModeKind {
-        match self {
-            Self::Read => ModeKind::Read,
-            Self::Commutative => ModeKind::Delta,
-            Self::Write => ModeKind::Write,
-        }
-    }
-
-    /// Which active list this class occupies.
-    const fn slot(self) -> usize {
-        match self {
-            Self::Read => 0,
-            Self::Commutative => 1,
-            Self::Write => 2,
-        }
-    }
-
-    const fn conflicts_with(self, other: Self) -> bool {
-        !compatible(self.kind(), other.kind())
-    }
+/// The three classes the sweep distinguishes are the lattice's own —
+/// [`ConflictClass`] — with a locked claim classifying to `None` and so
+/// never joining a group. The classification, the representatives, and
+/// the conflict question all live beside
+/// [`compatible`](hyperscale_vm_effects::compatible), so the sweep
+/// cannot drift from the relation it schedules by.
+const fn slot(class: ConflictClass) -> usize {
+    class as usize
 }
 
 /// One claim on a collection: who declared it, the interval it names, and
@@ -437,7 +387,7 @@ struct CollectionClaim {
     tx: usize,
     lo: u128,
     hi: u128,
-    class: ClaimClass,
+    class: ConflictClass,
 }
 
 /// One collection's claims, in declaration order until the sweep sorts
@@ -505,11 +455,11 @@ fn sweep_collection(claims: &mut CollectionClaims, component: &mut [usize]) {
     let mut active: [Active; 3] = [Vec::new(), Vec::new(), Vec::new()];
     for claim in claims.iter() {
         let mut reach = claim.hi;
-        for class in ClaimClass::ALL {
+        for class in ConflictClass::ALL {
             if !claim.class.conflicts_with(class) {
                 continue;
             }
-            let Some(far) = absorb(&mut active[class.slot()], component, claim.tx, claim.lo) else {
+            let Some(far) = absorb(&mut active[slot(class)], component, claim.tx, claim.lo) else {
                 continue;
             };
             if class == claim.class {
@@ -517,10 +467,10 @@ fn sweep_collection(claims: &mut CollectionClaims, component: &mut [usize]) {
                 // this claim leaves behind: its reach folds into the entry.
                 reach = reach.max(far);
             } else {
-                active[class.slot()].push((far, claim.tx));
+                active[slot(class)].push((far, claim.tx));
             }
         }
-        active[claim.class.slot()].push((reach, claim.tx));
+        active[slot(claim.class)].push((reach, claim.tx));
     }
 }
 
@@ -539,11 +489,11 @@ struct PointClasses {
 
 impl PointClasses {
     fn push(&mut self, index: usize, kind: ModeKind) {
-        match kind {
-            ModeKind::Read => self.reads.push(index),
-            ModeKind::Delta | ModeKind::Reserve => self.commutative.push(index),
-            ModeKind::Write => self.writes.push(index),
-            ModeKind::Locked => {}
+        match kind.conflict_class() {
+            Some(ConflictClass::Read) => self.reads.push(index),
+            Some(ConflictClass::Commutative) => self.commutative.push(index),
+            Some(ConflictClass::Write) => self.writes.push(index),
+            None => {}
         }
     }
 
@@ -608,7 +558,7 @@ fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
                     // A claim conflicting with nothing, or naming an empty
                     // interval, joins no group and never enters the sweep.
                     let (Some(class), Some((lo, hi))) =
-                        (ClaimClass::of(kind), claim_interval(&effect.target))
+                        (kind.conflict_class(), claim_interval(&effect.target))
                     else {
                         continue;
                     };
@@ -742,24 +692,25 @@ fn run_group<R: GuestRunner>(
             continue;
         }
         let before = store.clone();
-        let env = EnvInputs {
-            clock_ms: entry.clock_ms,
-            randomness: entry.randomness,
+        let session = match KernelSession::materialize(
+            store,
+            &entry.declaration,
+            entry.tx,
+            entry.env,
+            hash_fn,
+        ) {
+            Ok(session) => {
+                // The rollback clone must drop here: it keeps the threaded
+                // layer's Arc unshared, so finish merges it in place.
+                drop(before);
+                session.with_locality(locality.clone())
+            }
+            Err(defect) => {
+                receipts.push((entry.tx, abort_receipt(defect.into(), 0)));
+                store = before;
+                continue;
+            }
         };
-        let session =
-            match KernelSession::materialize(store, &entry.declaration, entry.tx, env, hash_fn) {
-                Ok(session) => {
-                    // The rollback clone must drop here: it keeps the threaded
-                    // layer's Arc unshared, so finish merges it in place.
-                    drop(before);
-                    session.with_locality(locality.clone())
-                }
-                Err(defect) => {
-                    receipts.push((entry.tx, abort_receipt(defect.into(), 0)));
-                    store = before;
-                    continue;
-                }
-            };
         let result =
             runner
                 .run(entry, session)
@@ -902,11 +853,12 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
 ///
 /// # Declaration well-formedness
 ///
-/// The executor judges exactly two things about the declarations it is
-/// given, and both are batch-level facts nothing else can see: that no
-/// transaction hash repeats, and that every nullifier a transaction
-/// commits is declared as an exclusive write. Both fail the batch, because
-/// neither transaction alone could have been judged on it.
+/// The executor judges three things about the declarations it is given,
+/// each a batch-level fact nothing else can see: that no transaction
+/// hash repeats, that each declaration's two views agree, and that every
+/// nullifier a transaction commits is declared as an exclusive write.
+/// All fail the batch, because no transaction alone could have been
+/// judged on any of them.
 ///
 /// Everything else about a declared set belongs to whoever built it —
 /// that its modes compose, that its targets can carry them, that it is
@@ -1161,7 +1113,7 @@ mod tests {
     use super::{BatchTx, Outcome, conflict_groups, merge, root};
     use crate::conflict::conflicts;
     use crate::modes::{ModeError, TxHash};
-    use crate::session::MaterializeError;
+    use crate::session::{EnvInputs, MaterializeError};
     use crate::store::StoreError;
 
     const BOOK: Address = Address::new([0x77; 31], AddressClass::Component);
@@ -1284,8 +1236,10 @@ mod tests {
                     BatchTx::new(
                         TxHash(Hash32([u8::try_from(index).expect("small batch"); 32])),
                         declared,
-                        0,
-                        [0; 32],
+                        EnvInputs {
+                            clock_ms: 0,
+                            randomness: [0; 32],
+                        },
                     )
                 })
                 .collect();

@@ -24,9 +24,9 @@ use hyperscale_vm_effects::{
     Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    AbortReason, BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality,
-    MemoryStore, Movement, Outcome, RunResult, TxHash, WorkingStore, decode_amount, encode_amount,
-    execute_batch,
+    AbortReason, BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession,
+    Locality, MemoryStore, Movement, Outcome, RunResult, TxHash, WorkingStore, decode_amount,
+    encode_amount, execute_batch,
 };
 
 /// What every cell these fixtures move value through holds.
@@ -230,7 +230,14 @@ fn batch_of(specs: &[TxSpec]) -> (Vec<BatchTx>, BTreeSet<TxHash>) {
         .iter()
         .enumerate()
         .map(|(index, spec)| {
-            BatchTx::new(identity(index), moving(declared_of(spec)), 1_000, [7; 32])
+            BatchTx::new(
+                identity(index),
+                moving(declared_of(spec)),
+                EnvInputs {
+                    clock_ms: 1_000,
+                    randomness: [7; 32],
+                },
+            )
         })
         .collect();
     (batch, aborting)
@@ -568,7 +575,7 @@ proptest! {
                     mode: Mode::Delta,
                 })
                 .expect("one mode per key");
-            batch.push(BatchTx::new(tx(index), moving(declared), 1_000, [7; 32]));
+            batch.push(BatchTx::new(tx(index), moving(declared), EnvInputs { clock_ms: 1_000, randomness: [7; 32] }));
         }
         // Reading every cell conflicts with every delta over one, so the
         // whole batch lands in a single conflict group.
@@ -581,7 +588,7 @@ proptest! {
                 })
                 .expect("one mode per key");
         }
-        batch.push(BatchTx::new(READER, moving(reading), 1_000, [7; 32]));
+        batch.push(BatchTx::new(READER, moving(reading), EnvInputs { clock_ms: 1_000, randomness: [7; 32] }));
 
         let outcome = execute_batch(
             Arc::new(funded()),
@@ -705,8 +712,10 @@ proptest! {
                 BatchTx::new(
                     tx(u8::try_from(index).expect("small batch")),
                     moving(portable_declared(claims)),
-                    1_000,
-                    [7; 32],
+                    EnvInputs {
+                        clock_ms: 1_000,
+                        randomness: [7; 32],
+                    },
                 )
             })
             .collect();

@@ -286,13 +286,7 @@ fn batch_entry(
         "the null resolver routes to one shard"
     );
     let declaration = routing.declaration().context("declaration")?;
-    Ok(BatchTx::new(
-        TxHash(identity.0),
-        declaration,
-        env().clock_ms,
-        env().randomness,
-    )
-    .with_calls(routing.calls))
+    Ok(BatchTx::new(TxHash(identity.0), declaration, env()).with_calls(routing.calls))
 }
 
 /// A backend over more than one package: each call names its own code by

@@ -157,14 +157,12 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
         BatchTx::new(
             tx(0x01),
             moving(reserve_and_delta(cell(0xA), 40, cell(0xC))),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
         BatchTx::new(
             tx(0x02),
             moving(reserve_and_delta(cell(0xB), 25, cell(0xC))),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
         // Two writers of one cell: write-write conflict, one group,
         // canonical order.
@@ -176,8 +174,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
                     requires: Presence::Either,
                 },
             )),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
         BatchTx::new(
             tx(0x04),
@@ -187,15 +184,13 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
                     requires: Presence::Either,
                 },
             )),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
         // Infeasible: the sender vault cannot cover it after tx 0x01.
         BatchTx::new(
             tx(0x05),
             moving(reserve_and_delta(cell(0xA), 1_000, cell(0xC))),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
         // The doomed writer on its own cell.
         BatchTx::new(
@@ -206,8 +201,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
                     requires: Presence::Either,
                 },
             )),
-            env().clock_ms,
-            env().randomness,
+            env(),
         ),
     ];
     (store, batch)
@@ -397,8 +391,10 @@ fn each_transaction_sees_its_own_clock() {
                 requires: Presence::Either,
             },
         )),
-        1_000,
-        env().randomness,
+        EnvInputs {
+            clock_ms: 1_000,
+            randomness: env().randomness,
+        },
     );
     let late = BatchTx::new(
         tx(0x02),
@@ -408,8 +404,10 @@ fn each_transaction_sees_its_own_clock() {
                 requires: Presence::Either,
             },
         )),
-        2_000,
-        env().randomness,
+        EnvInputs {
+            clock_ms: 2_000,
+            randomness: env().randomness,
+        },
     );
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
@@ -455,8 +453,10 @@ fn each_transaction_sees_its_own_draw() {
                 requires: Presence::Either,
             },
         )),
-        env().clock_ms,
-        [7; 32],
+        EnvInputs {
+            clock_ms: env().clock_ms,
+            randomness: [7; 32],
+        },
     );
     let second = BatchTx::new(
         tx(0x02),
@@ -466,8 +466,10 @@ fn each_transaction_sees_its_own_draw() {
                 requires: Presence::Either,
             },
         )),
-        env().clock_ms,
-        [9; 32],
+        EnvInputs {
+            clock_ms: env().clock_ms,
+            randomness: [9; 32],
+        },
     );
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {

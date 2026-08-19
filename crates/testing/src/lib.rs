@@ -48,8 +48,8 @@ use hyperscale_vm_effects::{
     child_key, declaration_hash, resource_address, route,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, ExecutionMode, Locality, ManifestWalk, MemoryStore, Outcome as KernelOutcome,
-    Substates, TxHash, decode_amount, encode_amount, execute_batch,
+    BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore,
+    Outcome as KernelOutcome, Substates, TxHash, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 #[cfg(feature = "wasm")]
@@ -396,8 +396,15 @@ impl Chain {
 
         self.sequence += 1;
         let tx = TxHash(salt(self.sequence));
-        let entry =
-            BatchTx::new(tx, declaration, self.clock_ms, RANDOMNESS).with_calls(routing.calls);
+        let entry = BatchTx::new(
+            tx,
+            declaration,
+            EnvInputs {
+                clock_ms: self.clock_ms,
+                randomness: RANDOMNESS,
+            },
+        )
+        .with_calls(routing.calls);
 
         // Execution replaces the chain's store, so it moves out rather
         // than being copied and dropped. Two owned copies are still

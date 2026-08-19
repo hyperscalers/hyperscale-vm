@@ -12,7 +12,7 @@
 
 pub use hyperscale_vm_effects::TxHash;
 pub use hyperscale_vm_types::{AMOUNT_CELL_BYTES, amount_cell, encode_amount};
-use hyperscale_vm_types::{AbortReason, read_amount};
+use hyperscale_vm_types::{AbortReason, Movement, read_amount};
 
 /// Why a mode-semantics computation rejected its inputs. Deterministic:
 /// the same inputs fail identically on every replica.
@@ -80,25 +80,40 @@ pub enum DeltaOp {
 /// [`ModeError::CellOverflow`] / [`ModeError::CellUnderflow`] if the folded
 /// cell leaves `u128`.
 pub fn fold_deltas(committed: u128, ops: &[DeltaOp]) -> Result<u128, ModeError> {
-    let mut credit: u128 = 0;
-    let mut debit: u128 = 0;
+    let movement = total_movement(ops)?;
+    committed
+        .checked_add(movement.credit)
+        .ok_or(ModeError::CellOverflow)?
+        .checked_sub(movement.debit)
+        .ok_or(ModeError::CellUnderflow)
+}
+
+/// A batch of deltas as its checked credit and debit totals — the one
+/// summation a fold applies and a movement judgment prices, so the two
+/// cannot disagree on what a queue adds up to.
+///
+/// # Errors
+///
+/// [`ModeError::DeltaOverflow`] if either total leaves `u128`.
+pub fn total_movement(ops: &[DeltaOp]) -> Result<Movement, ModeError> {
+    let mut movement = Movement::default();
     for op in ops {
         match op {
             DeltaOp::Add(amount) => {
-                credit = credit
+                movement.credit = movement
+                    .credit
                     .checked_add(*amount)
                     .ok_or(ModeError::DeltaOverflow)?;
             }
             DeltaOp::Sub(amount) => {
-                debit = debit.checked_add(*amount).ok_or(ModeError::DeltaOverflow)?;
+                movement.debit = movement
+                    .debit
+                    .checked_add(*amount)
+                    .ok_or(ModeError::DeltaOverflow)?;
             }
         }
     }
-    committed
-        .checked_add(credit)
-        .ok_or(ModeError::CellOverflow)?
-        .checked_sub(debit)
-        .ok_or(ModeError::CellUnderflow)
+    Ok(movement)
 }
 
 /// A reservation verdict.

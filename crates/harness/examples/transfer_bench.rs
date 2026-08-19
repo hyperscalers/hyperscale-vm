@@ -125,13 +125,7 @@ fn routed(world: &(MetadataCache, InstanceRegistry), from: PrincipalAddr) -> Res
 }
 
 fn entry_for(index: u32, routed: &Routed) -> BatchTx {
-    BatchTx::new(
-        tx(index),
-        routed.declaration.clone(),
-        env().clock_ms,
-        env().randomness,
-    )
-    .with_calls(routed.calls.clone())
+    BatchTx::new(tx(index), routed.declaration.clone(), env()).with_calls(routed.calls.clone())
 }
 
 fn funded_store(senders: u32) -> MemoryStore {
