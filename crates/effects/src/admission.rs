@@ -505,6 +505,67 @@ pub fn admit(
 /// against each other: the amount does not exist until the producer runs,
 /// so the conjunction rides the lowered edge and the manifest walk
 /// enforces it against what the producer actually returned.
+/// Bind one produced edge to an edge parameter: the output lookup, the
+/// consumption bookkeeping, the kind check, and the constraint bounds —
+/// shared by a direct edge and a subintent yield, so neither path can
+/// drop a check the other makes. `verify` is the caller's own look at
+/// the resolved resource, asked before anything is consumed.
+fn bind_edge(
+    outputs: &[Vec<(Address, EdgeContent)>],
+    consumed: &mut [Vec<u32>],
+    (source, output): (u32, u32),
+    constraints: &[Constraint],
+    param: ParamType,
+    (node_index, param_index): (u32, u32),
+    verify: impl FnOnce(Address) -> Result<(), AdmissionError>,
+) -> Result<(Value, NodeInput), AdmissionError> {
+    let flat = usize::try_from(source).map_err(|_| AdmissionError::TooManyNodes)?;
+    let slot = usize::try_from(output).map_err(|_| AdmissionError::TooManyNodes)?;
+    let (resource, content) =
+        outputs[flat]
+            .get(slot)
+            .cloned()
+            .ok_or(AdmissionError::NoSuchOutput {
+                producer: source,
+                output,
+            })?;
+    verify(resource)?;
+    consumed[flat][slot] += 1;
+    if consumed[flat][slot] > 1 {
+        return Err(AdmissionError::DoubleConsumption {
+            producer: source,
+            output,
+        });
+    }
+    // The producer's projection fixes what the edge carries and the
+    // callee's signature fixes what it takes; a fungible cell and an id
+    // cell are different shapes, so a mismatch is a graph nothing should
+    // sign rather than something a guest decodes its way out of.
+    let carried = EdgeKind::of(&content);
+    if param.edge_kind() != Some(carried) {
+        return Err(AdmissionError::EdgeKindMismatch {
+            node: node_index,
+            param: param_index,
+            expected: param.name(),
+            found: carried,
+        });
+    }
+    let bounds = check_constraints(constraints, resource, node_index, param_index)?;
+    Ok((
+        Value::Bucket {
+            resource,
+            content: content.clone(),
+        },
+        NodeInput::Edge {
+            source,
+            output,
+            resource,
+            content,
+            bounds,
+        },
+    ))
+}
+
 pub(crate) fn check_constraints(
     constraints: &[Constraint],
     resource: Address,
@@ -752,51 +813,17 @@ pub(crate) fn admit_intents(
                     let producer =
                         usize::try_from(edge.producer).map_err(|_| AdmissionError::TooManyNodes)?;
                     let source = flat_of[intent_index][producer];
-                    let flat = usize::try_from(source).map_err(|_| AdmissionError::TooManyNodes)?;
-                    let output =
-                        usize::try_from(edge.output).map_err(|_| AdmissionError::TooManyNodes)?;
-                    let (resource, content) =
-                        outputs[flat]
-                            .get(output)
-                            .cloned()
-                            .ok_or(AdmissionError::NoSuchOutput {
-                                producer: source,
-                                output: edge.output,
-                            })?;
-                    consumed[flat][output] += 1;
-                    if consumed[flat][output] > 1 {
-                        return Err(AdmissionError::DoubleConsumption {
-                            producer: source,
-                            output: edge.output,
-                        });
-                    }
-                    // The producer's projection fixes what the edge
-                    // carries and the callee's signature fixes what it
-                    // takes; a fungible cell and an id cell are different
-                    // shapes, so a mismatch is a graph nothing should
-                    // sign rather than something a guest decodes its way
-                    // out of.
-                    let carried = EdgeKind::of(&content);
-                    if param.edge_kind() != Some(carried) {
-                        return Err(AdmissionError::EdgeKindMismatch {
-                            node: node_index,
-                            param: param_index,
-                            expected: param.name(),
-                            found: carried,
-                        });
-                    }
-                    let bounds = check_constraints(constraints, resource, node_index, param_index)?;
-                    bound.push(Value::Bucket {
-                        resource,
-                        content: content.clone(),
-                    });
-                    inputs.push(NodeInput::Edge {
-                        source,
-                        output: edge.output,
-                        resource,
-                        content,
-                        bounds,
-                    });
+                    let (value, input) = bind_edge(
+                        &outputs,
+                        &mut consumed,
+                        (source, edge.output),
+                        constraints,
+                        *param,
+                        (node_index, param_index),
+                        |_| Ok(()),
+                    )?;
+                    bound.push(value);
+                    inputs.push(input);
                 }
                 GraphArg::Param(reference) => {
                     let Some((decl, binding)) =
@@ -809,7 +836,7 @@ pub(crate) fn admit_intents(
                             param: *reference,
                         });
                     };
-                    if *param != ParamType::Bucket {
+                    if !param.is_edge() {
                         return Err(AdmissionError::ParamForValueParam {
                             node: node_index,
                             param: param_index,
@@ -820,44 +847,28 @@ pub(crate) fn admit_intents(
                     let producer = usize::try_from(binding.edge.producer)
                         .map_err(|_| AdmissionError::TooManyNodes)?;
                     let source = flat_of[source_intent][producer];
-                    let flat = usize::try_from(source).map_err(|_| AdmissionError::TooManyNodes)?;
-                    let output = usize::try_from(binding.edge.output)
-                        .map_err(|_| AdmissionError::TooManyNodes)?;
-                    let (resource, content) =
-                        outputs[flat]
-                            .get(output)
-                            .cloned()
-                            .ok_or(AdmissionError::NoSuchOutput {
-                                producer: source,
-                                output: binding.edge.output,
-                            })?;
-                    if resource != decl.resource {
-                        return Err(AdmissionError::YieldResourceMismatch {
-                            intent: u32::try_from(intent_index)
-                                .expect("intents are bounded by MAX_SUBINTENTS"),
-                            param: *reference,
-                        });
-                    }
-                    consumed[flat][output] += 1;
-                    if consumed[flat][output] > 1 {
-                        return Err(AdmissionError::DoubleConsumption {
-                            producer: source,
-                            output: binding.edge.output,
-                        });
-                    }
-                    let bounds =
-                        check_constraints(&decl.constraints, resource, node_index, param_index)?;
-                    bound.push(Value::Bucket {
-                        resource,
-                        content: content.clone(),
-                    });
-                    inputs.push(NodeInput::Edge {
-                        source,
-                        output: binding.edge.output,
-                        resource,
-                        content,
-                        bounds,
-                    });
+                    let intent_at =
+                        u32::try_from(intent_index).expect("intents are bounded by MAX_SUBINTENTS");
+                    let (value, input) = bind_edge(
+                        &outputs,
+                        &mut consumed,
+                        (source, binding.edge.output),
+                        &decl.constraints,
+                        *param,
+                        (node_index, param_index),
+                        |resource| {
+                            if resource == decl.resource {
+                                Ok(())
+                            } else {
+                                Err(AdmissionError::YieldResourceMismatch {
+                                    intent: intent_at,
+                                    param: *reference,
+                                })
+                            }
+                        },
+                    )?;
+                    bound.push(value);
+                    inputs.push(input);
                 }
             }
         }

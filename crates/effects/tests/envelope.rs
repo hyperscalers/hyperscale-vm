@@ -3,8 +3,8 @@
 //! addresses, and every malformed composition rejects exactly.
 
 use hyperscale_vm_effects::{
-    Address, AdmissionError, AdmittedTree, Bounds, CallTarget, Constraint, EdgeContent, EdgeRef,
-    Effect, EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta,
+    Address, AdmissionError, AdmittedTree, Bounds, CallTarget, Constraint, EdgeContent, EdgeKind,
+    EdgeRef, Effect, EffectTarget, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta,
     InstanceRegistry, IntentDecl, MAX_SUBINTENTS, MAX_VALUE_DEPTH, MAX_YIELD_PARAMS, ManifestGraph,
     ManifestHash, MetadataCache, Mode, NULLIFIER_SLOT, NodeInput, PackageHash, PrefixShardResolver,
     Presence, PrincipalAddr, ResourceAddr, ShardResolver, Subintent, TestHasher, Value,
@@ -262,6 +262,96 @@ fn a_yielded_resource_must_match_the_declared_type() {
             param: 0
         })
     );
+}
+
+/// The subintent's producer, yielding named instances instead of an
+/// amount.
+fn withdraw_nf(target: impl Into<CallTarget>, resource: impl Into<Address>, id: u64) -> GraphNode {
+    GraphNode::bearing(
+        target,
+        "withdraw-nf",
+        vec![
+            GraphArg::Literal(Value::Address(resource.into())),
+            GraphArg::Literal(Value::List(vec![Value::U64(id)])),
+        ],
+        0,
+    )
+}
+
+#[test]
+fn a_yielded_edge_is_judged_by_its_kind() {
+    let nf_tree = |consumer: GraphNode| EnvelopeTree {
+        root: IntentDecl {
+            graph: ManifestGraph {
+                nodes: vec![authorize(ALICE), withdraw(ALICE, RES_X, 100), consumer],
+            },
+            params: vec![YieldParam {
+                resource: RES_Y.into(),
+                constraints: vec![],
+            }],
+        },
+        root_bindings: vec![YieldBinding {
+            intent: 1,
+            edge: EdgeRef {
+                producer: 1,
+                output: 0,
+            },
+        }],
+        subintents: vec![Subintent {
+            decl: IntentDecl {
+                graph: ManifestGraph {
+                    nodes: vec![
+                        authorize(BOB),
+                        withdraw_nf(BOB, RES_Y, 7),
+                        deposit_param(BOB, 0),
+                    ],
+                },
+                params: vec![YieldParam {
+                    resource: RES_X.into(),
+                    constraints: vec![],
+                }],
+            },
+            signer: BOB,
+            bindings: vec![YieldBinding {
+                intent: 0,
+                edge: EdgeRef {
+                    producer: 1,
+                    output: 0,
+                },
+            }],
+        }],
+        instances: Vec::new(),
+    };
+
+    // Named instances into the fungible `deposit`: refused by kind, the
+    // same judgment a direct edge gets.
+    let wrong = nf_tree(deposit_param(ALICE, 0));
+    assert!(matches!(
+        admit_composed(&wrong),
+        Err(AdmissionError::EdgeKindMismatch {
+            found: EdgeKind::NonFungible,
+            ..
+        })
+    ));
+
+    // The same yield into `deposit-nf` admits.
+    let right = nf_tree(GraphNode::new(
+        ALICE,
+        "deposit-nf",
+        vec![GraphArg::Param(0)],
+    ));
+    admit_composed(&right).expect("an NF yield binds an NF parameter");
+
+    // And a fungible yield into `deposit-nf` refuses the other way.
+    let mut crossed = composed_tree(100);
+    crossed.root.graph.nodes[2] = GraphNode::new(ALICE, "deposit-nf", vec![GraphArg::Param(0)]);
+    assert!(matches!(
+        admit_composed(&crossed),
+        Err(AdmissionError::EdgeKindMismatch {
+            found: EdgeKind::Fungible,
+            ..
+        })
+    ));
 }
 
 #[test]
