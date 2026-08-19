@@ -1,12 +1,11 @@
 //! The kernel's object model and mode semantics, in isolation.
 //!
-//! Four pieces, each deterministic by construction: the substate store
-//! traits and their in-memory access-recording implementation; structural
-//! ownership (creation under the owning context, explicit move, never a
-//! re-parent); the mode lattice's execution semantics (amount cells, the
-//! order-invariant delta fold, reservation feasibility in canonical
-//! transaction-hash order, locked substates, capped interval scans); and
-//! the per-shard supply accumulators that substrate conservation.
+//! Three pieces, each deterministic by construction: the substate store
+//! traits and their in-memory access-recording implementation; the mode
+//! lattice's execution semantics (amount cells, the order-invariant delta
+//! fold, reservation feasibility in canonical transaction-hash order,
+//! locked substates, capped interval scans); and the per-shard supply
+//! accumulators that substrate conservation.
 //!
 //! The mode semantics stand on a store's view rather than on a store:
 //! [`AmountLedger`] derives every reservation and movement verdict from
@@ -18,7 +17,10 @@
 //! log checked against a declared effect set, the standing assertion that
 //! execution touches nothing it did not declare.
 
-pub mod conflict;
+// The pairwise conflict oracle: the executor's grouping is differentially
+// tested against it.
+#[cfg(test)]
+mod conflict;
 pub mod executor;
 pub mod host;
 pub mod ledger;
@@ -26,14 +28,12 @@ pub mod locality;
 pub mod modes;
 pub mod oracle;
 pub mod overlay;
-pub mod ownership;
 pub mod session;
 pub mod store;
 pub mod supply;
 pub mod walk;
 pub mod work;
 
-pub use conflict::{conflicts, targets_overlap};
 pub use executor::{
     BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, Unavailable,
     execute_batch,
@@ -48,7 +48,6 @@ pub use modes::{
 };
 pub use oracle::{covered, multiply_held_ids, permits, target_covers, undeclared_accesses};
 pub use overlay::OverlayStore;
-pub use ownership::{CreationContext, MoveError, move_object};
 pub use session::{
     Capability, DeltaMap, EnvInputs, Event, FinishError, Held, Interval, KernelSession,
     MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MaterializeError, Movement,

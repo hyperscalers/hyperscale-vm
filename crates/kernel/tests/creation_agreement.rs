@@ -1,17 +1,17 @@
 //! Declaration and execution agree on fresh keys: the effect DSL's
-//! fresh-key expression and the kernel's creation context share one
-//! derivation, so a routed declaration names exactly the key the kernel
-//! creates.
+//! fresh-key expression evaluates the shared derivation, so a routed
+//! declaration names exactly the key an execution creating at that slot
+//! writes.
 
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
     Clause, Effect, EffectTarget, Expr, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
     ManifestGraph, MetadataCache, MethodSignature, Mode, ModeExpr, PackageHash, PackageMetadata,
-    PrefixShardResolver, Presence, PrincipalAddr, ShardResolver, SlotId, TargetExpr, TestHasher,
-    Totality, Value, admit, collection_id, fresh_id, route,
+    PrefixShardResolver, Presence, PrincipalAddr, ShardResolver, SlotId, SubstateKey, TargetExpr,
+    TestHasher, Totality, Value, admit, collection_id, fresh_id, fresh_local, route,
 };
-use hyperscale_vm_kernel::{CreationContext, MemoryStore, WorkingStore};
+use hyperscale_vm_kernel::{MemoryStore, WorkingStore};
 
 /// A package whose one method creates one object and inserts one
 /// collection entry at a fresh sequence.
@@ -113,11 +113,14 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     // creator's shard holding the key, not about what it is called.
     let declared = &routing.per_shard[&PrefixShardResolver { bits: 8 }.shard_of(creator.address())];
 
-    // The kernel executes node 1: its creation context derives from the
-    // same transaction identity, node index, and frame.
+    // The kernel executes node 1: a creation there derives from the same
+    // transaction identity, node index, and frame.
     let mut store = MemoryStore::new();
-    let mut ctx = CreationContext::new(creator.address(), identity, 1, 0);
-    let created = ctx.create(&mut store, &TestHasher, vec![42]).unwrap();
+    let created = SubstateKey {
+        owner: creator.address(),
+        local: fresh_local(&TestHasher, identity, 1, 0, 0),
+    };
+    store.write(created, vec![42]).unwrap();
     assert!(declared.contains(&Effect {
         target: EffectTarget::Point(created),
         mode: write(),
@@ -145,8 +148,10 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     }));
 
     // Node 0's creation is a different key: the node index namespaces.
-    let mut other = CreationContext::new(creator.address(), identity, 0, 0);
-    let from_node_zero = other.fresh_key(&TestHasher);
+    let from_node_zero = SubstateKey {
+        owner: creator.address(),
+        local: fresh_local(&TestHasher, identity, 0, 0, 0),
+    };
     assert_ne!(from_node_zero, created);
     assert!(declared.contains(&Effect {
         target: EffectTarget::Point(from_node_zero),
