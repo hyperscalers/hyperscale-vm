@@ -51,6 +51,26 @@ pub mod grammar {
             }
         }
 
+        /// A branch the declaration can read, over a cell the code around
+        /// it also reaches.
+        ///
+        /// The guard is a fact about the collection rather than about the
+        /// line that first named it, so the clause is declared always and
+        /// the guest takes no verdict — it branches on the condition it
+        /// wrote. What the emission has to get right is that the handle
+        /// is there on both arms: a body writing an entry conditionally
+        /// and another unconditionally reaches one handle twice.
+        pub fn settle(&mut self, seed: u64) {
+            if seed == 1 {
+                self.entries
+                    .range(pack(0, 0), pack(u64::MAX, u64::MAX), 64)
+                    .insert(1, Quantity::from_subunits(1));
+            }
+            self.entries
+                .range(pack(0, 0), pack(u64::MAX, u64::MAX), 64)
+                .insert(2, Quantity::from_subunits(2));
+        }
+
         /// A produced edge out of a conditional body, so the value path
         /// is exercised beside the statement ones.
         pub fn take(&mut self, resource: Address, amount: Quantity) -> Bucket {

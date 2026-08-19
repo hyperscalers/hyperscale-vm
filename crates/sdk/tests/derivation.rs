@@ -547,6 +547,104 @@ fn a_branch_the_declaration_cannot_read_declares_the_union() {
     );
 }
 
+/// A body that reaches one cell from more than one place, three ways.
+///
+/// A guard is a fact about the cell rather than about where the access
+/// was written, so the condition a clause carries is the one holding at
+/// every place the cell is reached. Where those disagree the only such
+/// condition is the trivial one, and the clause is declared always.
+#[blueprint]
+mod shared {
+    use hyperscale_vm_sdk::state::Cell;
+
+    #[state]
+    struct Shared {
+        counter: Cell<u64>,
+        other: Cell<u64>,
+    }
+
+    impl Shared {
+        /// Written inside a branch and again after it — so it is written
+        /// whatever the branch decides.
+        pub fn after(&mut self, which: u64) {
+            if which == 1 {
+                self.counter.set(1);
+            }
+            self.counter.set(2);
+        }
+
+        /// Written by both arms, which between them cover every call.
+        pub fn both(&mut self, which: u64) {
+            if which == 1 {
+                self.counter.set(1);
+            } else {
+                self.counter.set(2);
+            }
+        }
+
+        /// One arm shares its cell with the code around the branch and
+        /// the other does not, so precision survives where it is
+        /// available.
+        pub fn mixed(&mut self, which: u64) {
+            if which == 1 {
+                self.counter.set(1);
+            } else {
+                self.other.set(2);
+            }
+            self.counter.set(3);
+        }
+    }
+}
+
+/// A cell reached from more than one place is declared always, and the
+/// branch hands over no verdict about it.
+///
+/// The guest half is what this protects. A body that writes a cell
+/// unconditionally would reach its handle on every call, so a clause
+/// declared only on one arm would leave the other arm holding a handle
+/// nothing materialized — and the shard the cell lives on would not even
+/// be a participant.
+#[test]
+fn a_cell_reached_from_more_than_one_place_is_declared_always() {
+    use hyperscale_vm_effects::{AbiParam, Expr, Value};
+
+    let metadata = shared::blueprint().metadata();
+    let verdicts = |method: &str| {
+        metadata.methods[method]
+            .abi
+            .iter()
+            .filter(|binding| matches!(binding, AbiParam::Guard(_)))
+            .collect::<Vec<_>>()
+    };
+    let guards = |method: &str| {
+        metadata.methods[method]
+            .effects
+            .iter()
+            .map(|clause| clause.guard().cloned())
+            .collect::<Vec<_>>()
+    };
+
+    // Written inside the branch and after it: one clause, no condition,
+    // and nothing for the guest to branch its declaration on.
+    assert_eq!(guards("after"), vec![None]);
+    assert!(verdicts("after").is_empty());
+
+    // Written by both arms: the same statement, because between them the
+    // arms cover every call.
+    assert_eq!(guards("both"), vec![None]);
+    assert!(verdicts("both").is_empty());
+
+    // And the precision is per cell rather than per branch: the shared
+    // one is declared always, the arm's own keeps its condition, and the
+    // verdict that crosses is that arm's.
+    let cond = Expr::Eq(
+        Box::new(Expr::Arg(0)),
+        Box::new(Expr::Literal(Value::U64(1))),
+    );
+    assert_eq!(guards("mixed"), vec![None, Some(Expr::Not(Box::new(cond)))]);
+    assert_eq!(verdicts("mixed"), vec![&AbiParam::Guard(1)]);
+}
+
 /// A component whose admin set is configuration rather than storage:
 /// the free gate, whose reads take no admission key and make its owner
 /// no participant. Both shapes an admin set takes are here — either of

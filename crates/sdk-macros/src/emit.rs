@@ -204,24 +204,27 @@ fn node(node: &Node, lowered: &Lowered) -> TokenStream {
                 .handles
                 .contains(index)
                 .then(|| quote!(__t.bind_handle();));
-            quote!({ #prelude #held #target __access #holding #call; #bind })
+            let declare = quote!({ #prelude #held #target __access #holding #call; #bind });
+            // The condition the clause is declared under, where the cell
+            // is only ever reached under one. It wraps the declaration
+            // rather than nesting it: the tracer conjoins conditions and
+            // leaves every clause where it was, so a guard changes what a
+            // clause says and never where it sits.
+            match &site.guard {
+                None => declare,
+                Some(cond) => {
+                    let cond = cond.emit();
+                    quote!({
+                        let __cond = #cond.cast::<::hyperscale_vm_sdk::Flag>();
+                        __t.when(&__cond, |__t| #declare);
+                    })
+                }
+            }
         }
-        Node::Guarded { cond, body, binds } => {
-            let cond = cond.emit();
-            let body = body.iter().map(|n| self::node(n, lowered));
-            // The flag names the clause this arm just declared, which
-            // the tracer knows as the last one emitted — so the binding
-            // rides beside the branch rather than being recovered by
-            // counting a clause list the emission would have to walk.
-            let bind = binds.then(|| quote!(__t.bind_guard();));
-            quote!({
-                let __cond = #cond.cast::<::hyperscale_vm_sdk::Flag>();
-                __t.when(&__cond, |__t| {
-                    #(#body)*
-                });
-                #bind
-            })
-        }
+        // The flag names the clause just declared, which the tracer knows
+        // as the last one emitted — so the binding rides in the emission
+        // order rather than being recovered by counting a clause list.
+        Node::BindGuard => quote!(__t.bind_guard();),
         Node::ForEach { list, depth, body } => {
             let list = list.emit();
             let element = binding_ident(*depth);

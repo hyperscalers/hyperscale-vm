@@ -149,6 +149,15 @@ pub struct Site {
     /// through it produces — one fact, read from the declaration rather
     /// than guessed from the shape of a key.
     pub denomination: Option<Term>,
+    /// The condition this site's clause is declared under, or `None` for
+    /// a clause declared always.
+    ///
+    /// A property of the cell rather than of where the access was
+    /// written: a body touches one cell from wherever it likes, and what
+    /// the declaration owes is the condition that holds at every one of
+    /// those places. Where they do not agree there is no such condition
+    /// but the trivial one, which is what `None` says.
+    pub guard: Option<Term>,
 }
 
 impl Site {
@@ -219,18 +228,14 @@ impl Site {
 pub enum Node {
     /// One declared access, by index into [`Lowered::sites`].
     Site(usize),
-    /// One access set per branch of a condition the declaration can
-    /// read: the clauses inside carry it, and an execution that does not
-    /// meet it declares none of them.
-    Guarded {
-        /// The condition, as the declaration evaluates it.
-        cond: Term,
-        /// The clauses inside.
-        body: Vec<Self>,
-        /// Whether the export takes this arm's verdict, which is true
-        /// for exactly one arm of a branch that declares anything.
-        binds: bool,
-    },
+    /// Bind the verdict of the clause just declared to the `bool` the
+    /// export takes.
+    ///
+    /// A node rather than a flag on the site, because what the tracer
+    /// answers with is *the clause just declared* — a fact about where
+    /// emission has got to, and the emission order is what a node
+    /// carries.
+    BindGuard,
     /// One access set per element of a configured collection.
     ForEach {
         /// The collection mapped over.
@@ -255,11 +260,18 @@ pub enum Polarity {
     Untaken,
 }
 
-/// Whether any clause under these nodes declares an access.
-fn declares(nodes: &[Node], sites: &[Site]) -> bool {
+/// Whether any clause under these nodes is one `cond` guards.
+///
+/// The arm's own clauses and no others: a cell the arm shares with the
+/// code around it is declared always, so its verdict is the constant
+/// true and no export needs told.
+fn declares_under(nodes: &[Node], sites: &[Site], cond: &Term) -> bool {
     nodes.iter().any(|node| match node {
-        Node::Site(index) => sites.get(*index).is_some_and(Site::declares),
-        Node::Guarded { body, .. } | Node::ForEach { body, .. } => declares(body, sites),
+        Node::Site(index) => sites
+            .get(*index)
+            .is_some_and(|site| site.declares() && site.guard.as_ref() == Some(cond)),
+        Node::ForEach { body, .. } => declares_under(body, sites, cond),
+        Node::BindGuard => false,
     })
 }
 
@@ -614,6 +626,12 @@ pub struct Lowerer<'a> {
     /// The conditions the walk is under, innermost last, each already
     /// conjoined with the ones enclosing it.
     guards: Vec<Term>,
+    /// The cells the survey found touched under more than one condition,
+    /// whose clauses are therefore declared always.
+    escaping: Vec<Target>,
+    /// Every condition a site was reached under, in the order the walk
+    /// reached them. Filled by the survey and read by nothing else.
+    reached: Vec<(usize, Option<Term>)>,
     errors: Vec<syn::Error>,
 }
 
@@ -639,8 +657,52 @@ impl<'a> Lowerer<'a> {
             scopes: vec![Vec::new()],
             binders: 0,
             guards: Vec::new(),
+            escaping: Vec::new(),
+            reached: Vec::new(),
             errors: Vec::new(),
         }
+    }
+
+    /// A second lowerer over the same inputs, for the survey walk.
+    fn twin(&self) -> Self {
+        Self::new(
+            self.fields,
+            self.accessors,
+            self.config_fields,
+            self.params,
+            self.returns,
+            self.total,
+        )
+    }
+
+    /// The cells this body touches under more than one condition.
+    ///
+    /// A guard is a fact about the cell, and one walk cannot settle it:
+    /// a body that writes a cell inside a branch and again after it has
+    /// written it unconditionally, and the second write is not reached
+    /// until the branch is long emitted. So the walk runs twice — once
+    /// to see where every cell is touched, once to declare it — and what
+    /// crosses between them is this.
+    ///
+    /// Errors and refusals are the emitting walk's to report: this one
+    /// takes the same path and would only say the same things twice.
+    fn survey(mut self, block: &syn::Block) -> Vec<Target> {
+        let _ = self.walk(block);
+        let mut escaping = Vec::new();
+        for (index, cond) in &self.reached {
+            let first = self
+                .reached
+                .iter()
+                .find(|(seen, _)| seen == index)
+                .map(|(_, cond)| cond);
+            if first != Some(cond)
+                && let Some(site) = self.out.sites.get(*index)
+                && !escaping.contains(&site.target)
+            {
+                escaping.push(site.target.clone());
+            }
+        }
+        escaping
     }
 
     /// The state a name refers to: the package's own field, or the
@@ -661,6 +723,28 @@ impl<'a> Lowerer<'a> {
     /// produced bucket — or a tuple of them — becomes the method's declared
     /// outputs.
     pub fn run(mut self, block: &syn::Block) -> Result<Lowered, Vec<syn::Error>> {
+        // Which cells the body touches from more than one place is
+        // settled before anything is declared, because a guard is a fact
+        // about the cell and the walk that declares meets each cell's
+        // first mention before its last.
+        self.escaping = self.twin().survey(block);
+        let (statements, returned) = self.walk(block);
+
+        if self.errors.is_empty() {
+            self.out.nodes = self.scopes.pop().unwrap_or_default();
+            self.out.body = quote!(#(#statements)*);
+            self.out.returns = !returned.is_empty();
+            self.out.edges = returned;
+            Ok(self.out)
+        } else {
+            Err(self.errors)
+        }
+    }
+
+    /// The walk itself: the body's statements and the edges its tail
+    /// yields. Shared with [`Lowerer::survey`], so the two passes see the
+    /// same body the same way.
+    fn walk(&mut self, block: &syn::Block) -> (Vec<TokenStream>, Vec<TokenStream>) {
         self.locals.push(BTreeMap::new());
         // A method yielding nothing has no tail expression worth the
         // name: whatever sits last is a statement, and reading it as a
@@ -682,16 +766,7 @@ impl<'a> Lowerer<'a> {
             Vec::new()
         };
         self.locals.pop();
-
-        if self.errors.is_empty() {
-            self.out.nodes = self.scopes.pop().unwrap_or_default();
-            self.out.body = quote!(#(#statements)*);
-            self.out.returns = !returned.is_empty();
-            self.out.edges = returned;
-            Ok(self.out)
-        } else {
-            Err(self.errors)
-        }
+        (statements, returned)
     }
 
     /// Evaluate an expression in return position, collecting the resources
@@ -807,6 +882,11 @@ impl<'a> Lowerer<'a> {
     /// capability per clause. Folding here is also what holds a cell a
     /// body reads and writes to a single `Write`, rather than declaring
     /// the leaf twice under modes that exclude each other.
+    ///
+    /// One handle is also one clause and therefore one guard, so every
+    /// reach is recorded: a cell the survey saw reached under two
+    /// conditions is declared always, because the only condition holding
+    /// at both places is the trivial one.
     fn open(
         &mut self,
         target: Target,
@@ -814,9 +894,19 @@ impl<'a> Lowerer<'a> {
         declared: Option<Term>,
     ) -> usize {
         if let Some(index) = self.out.sites.iter().position(|s| s.target == target) {
+            self.reached.push((index, self.guards.last().cloned()));
             return index;
         }
         let index = self.out.sites.len();
+        self.reached.push((index, self.guards.last().cloned()));
+        // A cell reached from more than one place is reached
+        // unconditionally by the weakest of them, and the survey has
+        // already found which those are.
+        let guard = if self.escaping.contains(&target) {
+            None
+        } else {
+            self.guards.last().cloned()
+        };
         // A field that states its resource answers for every leaf under
         // it; one that does not is keyed by the resource, and the key is
         // the material a body named it at.
@@ -841,6 +931,7 @@ impl<'a> Lowerer<'a> {
             ops: Vec::new(),
             element,
             denomination,
+            guard,
         });
         self.push_node(Node::Site(index));
         index
@@ -1580,44 +1671,53 @@ impl<'a> Lowerer<'a> {
             return None;
         }
 
-        let (then_nodes, then_code) =
+        let (then_path, then_nodes, then_code) =
             self.arm(judgment.clone(), |me| me.block(&branch.then_branch));
-        let negated = Term::Not(Box::new(judgment.clone()));
+        let negated = Term::Not(Box::new(judgment));
         let otherwise = branch.else_branch.as_ref().map(|(_, otherwise)| {
-            self.arm(negated.clone(), |me| {
+            self.arm(negated, |me| {
                 let code = me.code(otherwise);
                 quote!(#code)
             })
         });
 
         // The guest branches on the declaration's own verdict, so the
-        // flag names a clause the arm declared. Where an arm declares
-        // none there is nothing to be absent, and the condition stands
-        // as the author wrote it.
-        let taken = declares(&then_nodes, &self.out.sites);
+        // flag names a clause the arm declared *and this arm guards*. An
+        // arm whose cells are all shared with the code around it guards
+        // nothing, so there is no verdict to hand over and the condition
+        // stands as the author wrote it — as it does for an arm that
+        // declares nothing at all.
+        //
+        // Nor inside a `for-each`, whose clause count is the instance's
+        // rather than the signature's: a run of verdicts as wide as a
+        // configuration occupies no fixed export parameter.
+        let taken = declares_under(&then_nodes, &self.out.sites, &then_path);
         let untaken = otherwise
             .as_ref()
-            .is_some_and(|(nodes, _)| declares(nodes, &self.out.sites));
+            .is_some_and(|(path, nodes, _)| declares_under(nodes, &self.out.sites, path));
         let flag = match (taken, untaken) {
+            _ if self.binders > 0 => None,
             (true, _) => Some(Polarity::Taken),
             (false, true) => Some(Polarity::Untaken),
             (false, false) => None,
         };
-        if taken {
-            self.push_node(Node::Guarded {
-                cond: judgment,
-                body: then_nodes,
-                binds: flag == Some(Polarity::Taken),
-            });
+
+        // The arms' clauses land where the branch does. Each carries its
+        // own condition, so nothing about the order or the depth they sit
+        // at is what makes them conditional.
+        for node in then_nodes {
+            self.push_node(node);
         }
-        if let Some((else_nodes, _)) = &otherwise
-            && untaken
-        {
-            self.push_node(Node::Guarded {
-                cond: negated,
-                body: else_nodes.clone(),
-                binds: flag == Some(Polarity::Untaken),
-            });
+        if flag == Some(Polarity::Taken) {
+            self.push_node(Node::BindGuard);
+        }
+        if let Some((_, else_nodes, _)) = &otherwise {
+            for node in else_nodes.clone() {
+                self.push_node(node);
+            }
+            if flag == Some(Polarity::Untaken) {
+                self.push_node(Node::BindGuard);
+            }
         }
 
         let cond = match flag {
@@ -1632,12 +1732,18 @@ impl<'a> Lowerer<'a> {
             }
             None => self.value(cond.code),
         };
-        let otherwise = otherwise.map(|(_, code)| quote!(else #code));
+        let otherwise = otherwise.map(|(_, _, code)| quote!(else #code));
         Some(Eval::plain(quote!(if #cond #then_code #otherwise)))
     }
 
-    /// One arm, walked into a scope of its own: its clauses and its code.
-    fn arm<F>(&mut self, cond: Term, walk: F) -> (Vec<Node>, TokenStream)
+    /// One arm: the condition its clauses are declared under, the clauses
+    /// themselves, and its code.
+    ///
+    /// The clauses are collected rather than pushed, so the branch can
+    /// ask which of them it guards before deciding whether a verdict
+    /// crosses. Where they land is the branch's to say, and it says the
+    /// scope it sits in.
+    fn arm<F>(&mut self, cond: Term, walk: F) -> (Term, Vec<Node>, TokenStream)
     where
         F: FnOnce(&mut Self) -> TokenStream,
     {
@@ -1645,14 +1751,14 @@ impl<'a> Lowerer<'a> {
             Some(outer) => Term::And(Box::new(outer.clone()), Box::new(cond)),
             None => cond,
         };
-        self.guards.push(conjoined);
+        self.guards.push(conjoined.clone());
         self.locals.push(BTreeMap::new());
         self.scopes.push(Vec::new());
         let code = walk(self);
         let nodes = self.scopes.pop().unwrap_or_default();
         self.locals.pop();
         self.guards.pop();
-        (nodes, code)
+        (conjoined, nodes, code)
     }
 
     /// An array or a tuple, read as a term where every element is one.

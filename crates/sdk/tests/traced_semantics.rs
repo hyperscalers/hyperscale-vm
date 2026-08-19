@@ -12,7 +12,7 @@ use hyperscale_vm_effects::{
     MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature, Mode, ModeKind, ParamType, Presence,
     SubstateKey, TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
 };
-use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym};
+use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym, eq};
 use hyperscale_vm_sdk::{Blueprint, TargetShape, Trace};
 
 const BASKET: Address = Address::new([0x50; 31], AddressClass::Component);
@@ -357,6 +357,27 @@ fn nesting_past_the_clause_bound_fails_the_build() {
         }
     }
     let _ = Blueprint::builder().method("deep", &[], |t: &mut Trace| nest(t, 5));
+}
+
+#[test]
+#[should_panic(expected = "configuration-dependent number of clauses")]
+fn a_verdict_from_inside_a_for_each_fails_the_build() {
+    // A verdict occupies a fixed export parameter, and a branch inside a
+    // `for-each` reaches one clause per element — so there is no single
+    // verdict to hand over. The lowering declines to bind one there, and
+    // this is the tracer holding a hand-written declaration to the same
+    // thing.
+    let _ = Blueprint::builder().method("pick", &[], |t: &mut Trace| {
+        let list: Sym<Seq> = t.config(0);
+        t.for_each(&list, |t, item| {
+            let owner = t.self_addr();
+            let chosen = eq(&item, &owner);
+            t.when(&chosen, |t| {
+                t.point(&owner.child(VAULT, &[])).write();
+            });
+            t.bind_guard();
+        });
+    });
 }
 
 #[test]
