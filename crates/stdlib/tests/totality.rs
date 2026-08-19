@@ -87,11 +87,13 @@ fn every_marked_method_survives_its_artifact() {
 /// is a judgement. Fixing the set means a guest rebuild that changes it
 /// has to be looked at rather than absorbed.
 ///
-/// `stake` sits outside it and `unstake` does not, which is the whole of
-/// what a derived body costs: an export returning a value builds its
-/// `list<u8>` on the heap, and allocation failure is a fault the scan is
-/// right to see. A method that only moves amounts reaches no allocator,
-/// so what separates the two is the result shape rather than the body.
+/// The set is one method, and each near miss names the refusal that
+/// keeps it out. `deposit-nf` files into a capped interval, and a
+/// holdings collection near its declared cap refuses the write. `stake`
+/// mints and `unstake` burns, and a supply movement is judged against
+/// the accumulator's bounds at the call. Each is a refusal the caller
+/// can actually meet, so the scan is right to see it — a mark on any of
+/// these would be a promise the body cannot keep.
 #[test]
 fn the_candidates_for_the_mark_are_what_they_were() {
     let mut candidates: Vec<String> = Vec::new();
@@ -108,18 +110,7 @@ fn the_candidates_for_the_mark_are_what_they_were() {
 
     assert_eq!(
         candidates,
-        vec![
-            "account::deposit".to_string(),
-            // Filing instances earns the mark too, now that the kernel
-            // does the filing: what used to be a loop over an id set is
-            // one call.
-            "account::deposit-nf".to_string(),
-            // The pool's own delegation earns the mark once its body is
-            // a transfer: what it hands back is a handle, so nothing on
-            // its path reaches the allocator.
-            "staking::stake".to_string(),
-            "staking::unstake".to_string(),
-        ],
+        vec!["account::deposit".to_string()],
         "the methods eligible for the mark moved; decide whether the marks should follow",
     );
 }

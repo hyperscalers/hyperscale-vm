@@ -7,8 +7,9 @@
 //! a handle argument is, what a returned blob means, when an emitter is
 //! entered and left. What an embedder still owns is the engine —
 //! [`GuestBackend`] takes a call and a session and gives back a session
-//! with either the export's bytes or a trap. An embedder can get engine
-//! embedding wrong; it cannot get manifest semantics wrong.
+//! with how the export ended — the edges it produced, a declined code,
+//! or an abort. An embedder can get engine embedding wrong; it cannot
+//! get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
     AuthCell, AuthRole, AuthorityGate, CallArg, NodeCall, PackageHash, Possession,
