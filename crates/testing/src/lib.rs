@@ -42,7 +42,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
+    AdmissionError, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
     PrefixShardResolver, TestHasher, Value, admit, child_key, declaration_hash, issued_resource,
     route,
 };
@@ -371,19 +371,40 @@ impl Chain {
     ///
     /// # Panics
     ///
-    /// If the manifest does not build, admit, or route — none of which is
-    /// an execution outcome, and all of which are the test's own defect.
+    /// If the manifest does not build or admit — see
+    /// [`Self::try_transact`] for asserting on such a refusal instead.
     pub fn transact(
         &mut self,
         signer: PrincipalAddr,
         build: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
     ) -> Outcome {
-        let mut builder = TypedBuilder::new(&self.cache, &self.instances, &TestHasher);
-        build(&mut builder).expect("every call types against its signature");
-        let graph = builder.build().expect("every output is consumed");
+        self.try_transact(signer, build)
+            .expect("the manifest builds and admits")
+    }
 
-        let admitted = admit(&graph, signer, &self.cache, &self.instances, &TestHasher)
-            .expect("the manifest admits");
+    /// As [`Self::transact`], with a refusal before execution answered
+    /// rather than panicked on — how a test asserts that a declared
+    /// guard refuses a call.
+    ///
+    /// # Errors
+    ///
+    /// The builder's or admission's own refusal, where the transaction
+    /// never reached execution.
+    ///
+    /// # Panics
+    ///
+    /// Panics if execution itself fails to produce a receipt — a batch
+    /// defect, never a refusal.
+    pub fn try_transact(
+        &mut self,
+        signer: PrincipalAddr,
+        build: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
+    ) -> Result<Outcome, Refused> {
+        let mut builder = TypedBuilder::new(&self.cache, &self.instances, &TestHasher);
+        build(&mut builder)?;
+        let graph = builder.build()?;
+
+        let admitted = admit(&graph, signer, &self.cache, &self.instances, &TestHasher)?;
         let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
         let declaration = routing.declaration().clone();
 
@@ -444,8 +465,20 @@ impl Chain {
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
-        Outcome::new(receipt, errors)
+        Ok(Outcome::new(receipt, errors))
     }
+}
+
+/// Why a transaction never reached execution: the manifest did not
+/// type, did not build, or was refused at admission.
+#[derive(Debug, thiserror::Error)]
+pub enum Refused {
+    /// A call the package's own signature refuses.
+    #[error(transparent)]
+    Typed(#[from] TypedError),
+    /// The manifest was refused at admission.
+    #[error(transparent)]
+    Admission(#[from] AdmissionError),
 }
 
 /// A principal, at an address a test can write down.

@@ -64,6 +64,23 @@ impl Outcome {
         }
     }
 
+    /// The kernel's refusal, where the transaction was refused around
+    /// the call rather than run: everything that is not a completion, a
+    /// decline, or the sender's own trap.
+    ///
+    /// Its own question because the other three all answer no to a
+    /// refusal, and a test asserting `!completed()` would pass on a
+    /// refusal it never meant to accept.
+    #[must_use]
+    pub const fn refused(&self) -> Option<&KernelOutcome> {
+        match &self.receipt.outcome {
+            KernelOutcome::Completed { .. }
+            | KernelOutcome::Declined { .. }
+            | KernelOutcome::UserError { .. } => None,
+            refusal => Some(refusal),
+        }
+    }
+
     /// The payloads emitted under one of the package's event types, in
     /// emission order.
     ///

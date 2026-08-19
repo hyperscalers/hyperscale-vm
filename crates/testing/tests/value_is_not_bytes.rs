@@ -366,7 +366,11 @@ fn a_badge_a_package_never_held_opens_nothing() {
         let funds = b.call_as(proof, vault, "payout", (500_000_u64,))?.one()?;
         account::deposit(b, ATTACKER, funds)
     });
-    assert!(!outcome.completed(), "{:?}", outcome.receipt().outcome);
+    assert!(
+        outcome.refused().is_some(),
+        "{:?}",
+        outcome.receipt().outcome
+    );
     assert_eq!(chain.balance(ATTACKER, TREASURE), 0);
     assert_eq!(chain.balance(vault, TREASURE), 500_000);
 }
