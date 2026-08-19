@@ -130,6 +130,108 @@ fn every_shape_the_gate_can_demand_deploys_and_decodes() {
     );
 }
 
+/// A component whose exports end every way the call convention folds: a
+/// scalar observation, one edge, a run of edges, and the refusal channel
+/// over each of the three.
+fn result_component() -> Vec<u8> {
+    parse_str(
+        r#"(component
+             (import "hyperscale:kernel/state" (instance $state
+               (export "bucket" (type $bk (sub resource)))))
+             (alias export $state "bucket" (type $bucket))
+             (type $pair (tuple (own $bucket) (own $bucket)))
+
+             (core module $m
+               (memory (export "mem") 1 1)
+               (func (export "realloc") (param i32 i32 i32 i32) (result i32)
+                 i32.const 512)
+               (func (export "count") (result i64) i64.const 0)
+               (func (export "produce") (result i32) i32.const 0)
+               (func (export "produce-two") (result i32) i32.const 0)
+               (func (export "settle") (result i32) i32.const 0)
+               (func (export "yield") (result i32) i32.const 0)
+               (func (export "yield-two") (result i32) i32.const 0))
+             (core instance $i (instantiate $m))
+
+             (func (export "count") (result u64)
+               (canon lift (core func $i "count")))
+             (func (export "produce") (result (own $bucket))
+               (canon lift (core func $i "produce")))
+             (func (export "produce-two") (result $pair)
+               (canon lift (core func $i "produce-two")
+                 (memory $i "mem") (realloc (func $i "realloc"))))
+             (func (export "settle") (result (result (error u32)))
+               (canon lift (core func $i "settle")
+                 (memory $i "mem") (realloc (func $i "realloc"))))
+             (func (export "yield") (result (result (own $bucket) (error u32)))
+               (canon lift (core func $i "yield")
+                 (memory $i "mem") (realloc (func $i "realloc"))))
+             (func (export "yield-two") (result (result $pair (error u32)))
+               (canon lift (core func $i "yield-two")
+                 (memory $i "mem") (realloc (func $i "realloc")))))"#,
+    )
+    .expect("the result fixture parses")
+}
+
+/// Every way a method can end deploys, decodes, and classifies as
+/// itself: the edges it produces and whether it can decline, read off
+/// the same artifact by all three layers.
+#[test]
+fn every_ending_the_convention_folds_deploys_and_decodes() {
+    let bytes = result_component();
+    validate_component(&bytes).expect("the profile admits every ending the convention folds");
+    RefComponent::decode(&bytes).expect("the executable spec models every admitted ending");
+
+    let exports = component_exports(&bytes).expect("the exports classify");
+    for (name, edges, declines) in [
+        ("count", 0, false),
+        ("produce", 1, false),
+        ("produce-two", 2, false),
+        ("settle", 0, true),
+        ("yield", 1, true),
+        ("yield-two", 2, true),
+    ] {
+        assert_eq!(exports[name].edges, edges, "{name} edges");
+        assert_eq!(exports[name].declines, declines, "{name} declines");
+    }
+}
+
+/// The endings the convention cannot fold refuse at deploy: a byte or id
+/// list, a declinable byte list, and a verdict are results no receipt
+/// has a reading of, so no such method deploys to abort per call.
+#[test]
+fn a_result_the_convention_cannot_fold_refuses_at_deploy() {
+    for (label, ty, result) in [
+        ("bytes", "(type $t (list u8))", "(result $t)"),
+        ("ids", "(type $t (list u64))", "(result $t)"),
+        (
+            "declinable bytes",
+            "(type $t (list u8))",
+            "(result (result $t (error u32)))",
+        ),
+        ("verdict", "(type $t (list u8))", "(result bool)"),
+    ] {
+        let text = format!(
+            r#"(component
+                 {ty}
+                 (core module $m
+                   (memory (export "mem") 1 1)
+                   (func (export "realloc") (param i32 i32 i32 i32) (result i32)
+                     i32.const 512)
+                   (func (export "f") (result i32) i32.const 0))
+                 (core instance $i (instantiate $m))
+                 (func (export "f") {result}
+                   (canon lift (core func $i "f")
+                     (memory $i "mem") (realloc (func $i "realloc")))))"#,
+        );
+        let bytes = parse_str(&text).expect("the refusal fixture parses");
+        assert!(
+            validate_component(&bytes).is_err(),
+            "a {label} result must refuse at deploy"
+        );
+    }
+}
+
 /// A session over no declared state: the verdict lane's guest reads and
 /// writes nothing, so the fixture is the argument itself.
 fn session() -> KernelSession {

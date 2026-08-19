@@ -25,8 +25,9 @@ pub enum CallError {
     /// The component exports no function of the invoked name.
     #[error("component exports no function `{0}`")]
     ExportMissing(String),
-    /// A result that is not the single byte list the convention fixes.
-    #[error("`{export}` returned {found}, not a byte list")]
+    /// A result outside the call convention: a method ends with the
+    /// edges it produced, a declined code, or nothing.
+    #[error("`{export}` returned {found}, not edges or a decline")]
     BadReturnShape {
         /// The invoked export.
         export: String,

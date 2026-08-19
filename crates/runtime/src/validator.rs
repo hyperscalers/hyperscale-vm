@@ -146,8 +146,8 @@ enum ValueSlot {
     /// tuple of handles is a run of `i32`s, so it costs the return area
     /// its own width and reaches linear memory for nothing else.
     OwnedTuple,
-    /// `result<list<u8>, u32>` or `result<_, u32>`: the declared refusal
-    /// channel.
+    /// `result<_, u32>`: the declared refusal channel, over the edges
+    /// the method produces or over nothing.
     Declinable,
 }
 
@@ -188,12 +188,21 @@ fn admits_param_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> boo
     )
 }
 
-/// Whether a value type may occupy an export's result position:
-/// everything a parameter admits except the guard verdict — a flag says
-/// which way a clause went, and a method has no clause to report — plus
-/// the refusal channel and the tuple a multi-edge method returns.
+/// Whether a value type may occupy an export's result position.
+///
+/// How a method ends is what this admits: its edges — one own, or the
+/// tuple a multi-edge method returns — with or without the refusal
+/// channel over them. The call convention folds nothing else into a
+/// receipt. Scalars are the one shape past that: both engines lift one
+/// identically and the convention aborts it deterministically, and it is
+/// what the differential lanes observe an execution through — a
+/// byte-shaped or record result has no such consumer, so it refuses
+/// here rather than deploying as a method that cannot end.
 fn admits_result_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> bool {
-    !matches!(resolve(defined, vt), None | Some(ValueSlot::Flag))
+    matches!(
+        resolve(defined, vt),
+        Some(ValueSlot::Scalar | ValueSlot::Owned | ValueSlot::OwnedTuple | ValueSlot::Declinable)
+    )
 }
 
 /// Records one component type entry, resolving what its type-index slot
@@ -274,13 +283,13 @@ fn record_component_type(
             // have returned: its edges, or nothing. An error arm says how
             // a method ends, and says nothing about what it produces.
             match ok.map(|vt| resolve(defined, vt)) {
-                None | Some(Some(ValueSlot::Bytes | ValueSlot::Owned | ValueSlot::OwnedTuple)) => {
+                None | Some(Some(ValueSlot::Owned | ValueSlot::OwnedTuple)) => {
                     Some(ValueSlot::Declinable)
                 }
                 _ => {
                     return Err(ProfileError::Structural(
                         "a result's ok arm carries what the method produces: its edges, \
-                         a byte list, or nothing"
+                         or nothing"
                             .to_string(),
                     ));
                 }

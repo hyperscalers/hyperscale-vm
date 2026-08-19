@@ -439,14 +439,14 @@ fn the_wide_record_is_within_the_profile_where_a_guest_declares_it() {
     let hoisted = r#"(component
       (type $wide (record (field "limb0" u64) (field "limb1" u64)
                           (field "limb2" u64) (field "limb3" u64)))
-      (type $f (func (param "a" $wide) (result $wide))))"#;
+      (type $f (func (param "a" $wide))))"#;
     let bytes = parse_str(hoisted).expect("the shape parses");
     validate_component(&bytes).expect("four flat limbs are within the profile");
 
     let nested = r#"(component
       (type $amount (record (field "low" u64) (field "high" u64)))
       (type $wide (record (field "low" $amount) (field "high" $amount)))
-      (type $f (func (param "a" $wide) (result $wide))))"#;
+      (type $f (func (param "a" $wide))))"#;
     let bytes = parse_str(nested).expect("the shape parses");
     assert!(
         validate_component(&bytes).is_err(),
