@@ -158,7 +158,7 @@ struct Callback {
 }
 
 /// A core instance before its imports are resolved.
-enum InstanceDef {
+pub(crate) enum InstanceDef {
     Instantiate {
         module: u32,
         args: Vec<(String, u32)>,
@@ -666,7 +666,7 @@ fn canon_callbacks(canon: &CanonicalFunction) -> Vec<Callback> {
         .collect()
 }
 
-fn instance_def(instance: &InstanceReader<'_>) -> Result<InstanceDef, ProfileError> {
+pub(crate) fn instance_def(instance: &InstanceReader<'_>) -> Result<InstanceDef, ProfileError> {
     match instance {
         InstanceReader::Instantiate { module_index, args } => {
             let mut resolved = Vec::with_capacity(args.len());
