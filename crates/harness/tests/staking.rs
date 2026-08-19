@@ -288,7 +288,7 @@ fn batch_entry(
         routing.per_shard.len() == 1,
         "the null resolver routes to one shard"
     );
-    let declaration = routing.declaration().context("declaration")?;
+    let declaration = routing.declaration().clone();
     Ok(BatchTx::new(TxHash(identity.0), declaration, env()).with_calls(routing.calls))
 }
 

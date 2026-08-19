@@ -347,15 +347,8 @@ pub fn route_tree(
                 requires: Presence::Either,
             },
         };
-        routing
-            .per_shard
-            .entry(shard)
-            .or_default()
-            .insert(effect)
-            .expect("only reserve amounts fold, and this is a write");
-        // No signature declared this, so it belongs to no frame — see
-        // `Routing::kernel_effects`.
-        routing.kernel_effects.push(effect);
+        // No signature declared this, so it belongs to no frame.
+        routing.push_kernel_effect(shard, effect);
     }
     Ok(routing)
 }

@@ -91,8 +91,8 @@ pub use resource::{
     instance_data_key, issued_resource, resource_record_key,
 };
 pub use route::{
-    FrameDeclaration, MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver, RouteError, Routing,
-    ShardResolver, route,
+    FrameDeclaration, MAX_MANIFEST_NODES, PrefixShardResolver, RouteError, Routing, ShardResolver,
+    route,
 };
 pub use rule::{
     MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, StoredRule,

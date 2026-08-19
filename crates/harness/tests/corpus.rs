@@ -513,7 +513,7 @@ fn execute_manifest(
         routing.per_shard.len() == 1,
         "the null resolver routes to one shard"
     );
-    let declaration = routing.declaration().context("declaration")?;
+    let declaration = routing.declaration().clone();
     let entry = BatchTx::new(
         tx,
         declaration,

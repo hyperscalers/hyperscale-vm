@@ -61,15 +61,6 @@ impl ShardResolver for PrefixShardResolver {
     }
 }
 
-/// A method on an instance: what a frame evaluated.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct MethodRef {
-    /// The instance the method runs on.
-    pub instance: Address,
-    /// The method name.
-    pub method: String,
-}
-
 /// A routed transaction: what admission, scheduling, provisioning, and fee
 /// estimation consume.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -86,14 +77,9 @@ pub struct Routing {
     /// the identical call list, and locality scopes what is *applied*
     /// rather than what is invoked.
     pub calls: Vec<NodeCall>,
-    /// Effects no signature declared: the kernel synthesizes them from the
-    /// envelope rather than from a method body — today, the nullifier write
-    /// of every subintent the transaction commits.
-    ///
-    /// Materialized after every frame, so a frame's handle slice keeps the
-    /// position its signature gives it however many subintents the envelope
-    /// carries.
-    pub kernel_effects: Vec<Effect>,
+    /// The transaction's whole declaration, built as the fold runs;
+    /// reached through [`Routing::declaration`].
+    declaration: Declaration,
 }
 
 /// One frame's contribution to the transaction's declaration.
@@ -105,8 +91,6 @@ pub struct Routing {
 pub struct FrameDeclaration {
     /// The invoking manifest node.
     pub node: u32,
-    /// The method this frame evaluated.
-    pub method: MethodRef,
     /// This frame's accesses in clause order — one entry per clause the
     /// evaluation reached, `for-each` bodies expanded in place, each
     /// carrying what its cell holds.
@@ -122,7 +106,8 @@ impl Routing {
         self.per_shard.keys().copied()
     }
 
-    /// The transaction's whole declaration, both views.
+    /// The transaction's whole declaration, both views, straight from
+    /// the fold.
     ///
     /// `ordered` is every frame's clauses concatenated in preorder — the
     /// order capability materialization builds its table in, and therefore
@@ -130,40 +115,36 @@ impl Routing {
     /// filtered by shard: the table is shard-invariant so that every
     /// participant of a cross-shard transaction agrees on which rep is
     /// which, and locality scopes what is *applied* rather than what is
-    /// materialized.
+    /// materialized. A fold whose reservations overflow the set is a
+    /// [`RouteError::Conflict`] at `route()`, so a routing that exists
+    /// has a declaration.
+    #[must_use]
+    pub const fn declaration(&self) -> &Declaration {
+        &self.declaration
+    }
+
+    /// Append an effect no signature declared: the kernel synthesizes it
+    /// from the envelope rather than from a method body — today, the
+    /// nullifier write of every subintent the transaction commits.
     ///
-    /// # Errors
-    ///
-    /// [`RouteError::Conflict`] if folding two reservations on one
-    /// target exceeds `u128`.
-    pub fn declaration(&self) -> Result<Declaration, RouteError> {
-        let mut set = EffectSet::new();
-        let mut ordered = Vec::new();
-        // The kernel's own effects are the fee reservation and its
-        // settlement, which move value the payer's account already
-        // denominates; nothing about them is a package's declaration, so
-        // they carry no resource of their own.
-        let frame_accesses = self
-            .frames
-            .iter()
-            .flat_map(|frame| frame.ordered.iter().copied());
-        let kernel_accesses = self.kernel_effects.iter().map(|effect| DeclaredAccess {
-            effect: *effect,
+    /// Lands after every frame's clauses, so a frame's handle slice
+    /// keeps the position its signature gives it however many subintents
+    /// the envelope carries. Carries no resource of its own: nothing
+    /// about it is a package's declaration.
+    pub(crate) fn push_kernel_effect(&mut self, shard: ShardId, effect: Effect) {
+        self.per_shard
+            .entry(shard)
+            .or_default()
+            .insert(effect)
+            .expect("only reserve amounts fold, and this is a write");
+        self.declaration
+            .set
+            .insert(effect)
+            .expect("only reserve amounts fold, and this is a write");
+        self.declaration.ordered.push(DeclaredAccess {
+            effect,
             holds: None,
         });
-        for access in frame_accesses.chain(kernel_accesses) {
-            set.insert(access.effect).map_err(RouteError::from)?;
-            ordered.push(access);
-        }
-        Ok(Declaration {
-            set,
-            ordered,
-            // A clause index is a method's; this is every frame's clauses
-            // concatenated, so there is no clause to index and no verdict
-            // to bind.
-            clause_spans: Vec::new(),
-            clause_taken: Vec::new(),
-        })
     }
 }
 
@@ -284,6 +265,7 @@ pub fn route(
         per_shard: BTreeMap::new(),
         frames_log: Vec::new(),
         calls: Vec::new(),
+        declaration: Declaration::default(),
         table_len: 0,
     };
     for (index, node) in manifest.nodes.iter().enumerate() {
@@ -318,7 +300,7 @@ pub fn route(
         per_shard: fold.per_shard,
         frames: fold.frames_log,
         calls: fold.calls,
-        kernel_effects: Vec::new(),
+        declaration: fold.declaration,
     })
 }
 
@@ -607,6 +589,7 @@ struct Fold<'a> {
     per_shard: BTreeMap<ShardId, EffectSet>,
     frames_log: Vec<FrameDeclaration>,
     calls: Vec<NodeCall>,
+    declaration: Declaration,
     // Effects logged so far across every frame: the offset the next
     // frame's clause spans are relative to, and therefore the base of
     // every handle position that frame's binding resolves to.
@@ -679,12 +662,18 @@ impl Fold<'_> {
         self.table_len = offset
             .checked_add(u32::try_from(declaration.ordered.len()).unwrap_or(u32::MAX))
             .ok_or(RouteError::TableOverflow)?;
+        // The union is folded access by access, so reserve amounts two
+        // clauses declared on one target sum here exactly as the set
+        // semantics say — and an overflow is this fold's refusal.
+        for access in &declaration.ordered {
+            self.declaration
+                .set
+                .insert(access.effect)
+                .map_err(RouteError::from)?;
+            self.declaration.ordered.push(*access);
+        }
         self.frames_log.push(FrameDeclaration {
             node: node_index,
-            method: MethodRef {
-                instance,
-                method: method.to_owned(),
-            },
             ordered: declaration.ordered,
         });
         for effect in declaration.set.iter() {
@@ -758,16 +747,16 @@ mod tests {
             routing
                 .frames
                 .iter()
-                .map(|frame| (frame.node, frame.method.method.clone()))
+                .map(|frame| frame.node)
                 .collect::<Vec<_>>(),
-            vec![(0, "pay".to_owned()), (1, "recv".to_owned())],
+            vec![0, 1],
         );
 
         // The transaction-wide declaration reaches every effect routing
         // placed on a shard and folds back to exactly that union — the
         // property a consumer building a kernel batch depends on, and the
         // one `execute_batch` rechecks before running anything.
-        let declaration = routing.declaration().unwrap();
+        let declaration = routing.declaration().clone();
         let mut union = EffectSet::new();
         for set in routing.per_shard.values() {
             for effect in set.iter() {
@@ -1160,7 +1149,7 @@ mod tests {
             let CallArg::Handle(rep) = routing.calls[0].args[0] else {
                 panic!("a handle argument");
             };
-            let declaration = routing.declaration().expect("one frame folds");
+            let declaration = routing.declaration().clone();
             assert_eq!(u64::from(rep), width);
             assert_eq!(
                 declaration.ordered[usize::try_from(rep).unwrap()]
@@ -1234,7 +1223,7 @@ mod tests {
         )
         .expect("routes");
         assert_eq!(
-            routing.declaration().expect("folds").set.len(),
+            routing.declaration().clone().set.len(),
             0,
             "a guarded-out clause is out of the declared set"
         );
@@ -1254,7 +1243,7 @@ mod tests {
             &resolver(),
         )
         .expect("routes");
-        assert_eq!(routing.declaration().expect("folds").set.len(), 1);
+        assert_eq!(routing.declaration().clone().set.len(), 1);
     }
 
     #[test]
@@ -1346,7 +1335,7 @@ mod tests {
             &resolver(),
         )
         .expect("routes");
-        let declaration = routing.declaration().expect("folds");
+        let declaration = routing.declaration().clone();
         assert_eq!(
             declaration.set.len(),
             1,

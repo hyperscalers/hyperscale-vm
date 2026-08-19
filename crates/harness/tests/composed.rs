@@ -137,7 +137,7 @@ fn batch_entry(
     // clause order is what a handle's rep indexes into, so taking the
     // folded set's order instead would hand the guest a table the
     // lowered calls were not resolved against.
-    let declaration = routing.declaration().context("declaration")?;
+    let declaration = routing.declaration().clone();
     let entry = BatchTx::new(TxHash(identity.0), declaration, env())
         .with_calls(routing.calls)
         .with_nullifiers(

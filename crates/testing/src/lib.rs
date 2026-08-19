@@ -390,7 +390,7 @@ impl Chain {
             &PrefixShardResolver { bits: 0 },
         )
         .expect("the manifest routes");
-        let declaration = routing.declaration().expect("one shard, one declaration");
+        let declaration = routing.declaration().clone();
 
         self.sequence += 1;
         let tx = TxHash(salt(self.sequence));

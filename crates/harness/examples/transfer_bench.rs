@@ -121,7 +121,7 @@ fn routed(world: &(MetadataCache, InstanceRegistry), from: PrincipalAddr) -> Res
         &PrefixShardResolver { bits: 0 },
     )?;
     Ok(Routed {
-        declaration: routing.declaration()?,
+        declaration: routing.declaration().clone(),
         calls: routing.calls,
     })
 }
