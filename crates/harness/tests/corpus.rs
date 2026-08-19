@@ -16,9 +16,10 @@ use hyperscale_vm_effects::{
     AbiParam, AdmissionError, AuthBase, AuthCell, Clause, Constraint, EvidenceRef, Expr, Hash32,
     Hasher, InstanceMeta, InstanceRegistry, MAX_STAGED_DEPTH, ManifestGraph, MetadataCache,
     MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
-    Presented, Proposal, Role, RoleSet, Routing, ShardId, ShardResolver, SlotId, StoredRule,
-    Strategy, TargetExpr, TestHasher, Totality, Value, admit, child_key, collection_id, fresh_id,
-    holdings_collection, instance_data_key, order_key, resource_address, route,
+    Presented, Proposal, Role, RoleSet, Routing, ShardId, ShardResolver, SlotId, StarShape,
+    StoredRule, Strategy, TargetExpr, TestHasher, Totality, Value, admit, child_key,
+    classify as classify_star, collection_id, fresh_id, holdings_collection, instance_data_key,
+    order_key, resource_address, route,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
@@ -615,6 +616,18 @@ fn sharded_routing(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGr
     .expect("routes");
     assert_eq!(first, second, "route is a function over the corpus");
     first
+}
+
+/// The star the classifier reads off a graph's admitted form.
+fn star_of(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> StarShape {
+    let (cache, instances) = world;
+    let admitted = admit(graph, composer(graph), cache, instances, &TestHasher).expect("admits");
+    classify_star(
+        admitted.manifest(),
+        cache,
+        instances,
+        &PrefixShardResolver { bits: 8 },
+    )
 }
 
 fn run_both(
@@ -2075,22 +2088,19 @@ fn every_pattern_takes_the_star_its_shape_implies() {
     ];
 
     for shape in shapes {
-        let routing = sharded_routing(&world, &shape.graph);
+        let star = star_of(&world, &shape.graph);
         let name = shape.name;
-        assert_eq!(routing.roles, shape.roles, "{name}: star");
-        assert_eq!(
-            routing.alternation_depth, shape.crossings,
-            "{name}: crossings"
-        );
-        assert_eq!(routing.staged_depth, shape.stages, "{name}: stages");
-        assert_eq!(routing.strategy, shape.strategy, "{name}: strategy");
+        assert_eq!(star.roles, shape.roles, "{name}: star");
+        assert_eq!(star.crossings, shape.crossings, "{name}: crossings");
+        assert_eq!(star.stages, shape.stages, "{name}: stages");
+        assert_eq!(star.strategy, shape.strategy, "{name}: strategy");
         // The budget is what the verdict is for, so nothing may decompose
         // past it. Read across the table rather than per row: the claim
         // is about the classifier, not about any one shape's depth.
         assert!(
-            shape.strategy != Strategy::LegLocal || routing.staged_depth <= MAX_STAGED_DEPTH,
+            shape.strategy != Strategy::LegLocal || star.stages <= MAX_STAGED_DEPTH,
             "{name}: decomposed at {} stages, past a budget of {MAX_STAGED_DEPTH}",
-            routing.staged_depth,
+            star.stages,
         );
     }
 }
@@ -2122,18 +2132,18 @@ fn named_instances_inside_a_core_still_decompose() {
         let minted = nf::mint(b, nf_issuer())?;
         account::deposit_nf(b, ALICE, minted)
     });
-    let routing = sharded_routing(&world, &seat);
+    let star = star_of(&world, &seat);
 
     assert!(
-        routing.alternation_depth > 0,
+        star.crossings > 0,
         "the fixture has to cross, or the verdict below proves nothing",
     );
     assert!(
-        routing.roles.iter().all(|slot| *slot == Role::Core),
+        star.roles.iter().all(|slot| *slot == Role::Core),
         "neither end is a leg: {:?}",
-        routing.roles,
+        star.roles,
     );
-    assert_eq!(routing.strategy, Strategy::LegLocal);
+    assert_eq!(star.strategy, Strategy::LegLocal);
 }
 
 #[test]

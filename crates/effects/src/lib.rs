@@ -34,6 +34,9 @@ pub mod resource;
 pub mod route;
 pub mod rule;
 pub mod signature;
+pub mod star;
+#[cfg(test)]
+mod test_worlds;
 pub mod types;
 pub mod vectors;
 pub mod vocabulary;
@@ -87,8 +90,8 @@ pub use resource::{
     instance_data_key, resource_record_key,
 };
 pub use route::{
-    FrameDeclaration, MAX_MANIFEST_NODES, MAX_STAGED_DEPTH, MethodRef, PrefixShardResolver, Role,
-    RouteError, Routing, ShardResolver, Strategy, route,
+    FrameDeclaration, MAX_MANIFEST_NODES, MethodRef, PrefixShardResolver, RouteError, Routing,
+    ShardResolver, route,
 };
 pub use rule::{
     MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, StoredRule,
@@ -96,6 +99,7 @@ pub use rule::{
 pub use signature::{
     AbiParam, Accessibility, CustodyClaim, GateShape, MethodSignature, ParamType, Totality,
 };
+pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};
 pub use types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, NativeRole,
     PACKAGE_SLOT_BASE, ShardId, SlotId, Value, child_key, collection_id, component_address,
