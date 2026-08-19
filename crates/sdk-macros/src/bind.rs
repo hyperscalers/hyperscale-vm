@@ -26,7 +26,11 @@ pub enum Carries {
         nf: bool,
     },
     /// A value the body reads, in the shape its parameter names.
-    Value,
+    Value {
+        /// The class-typed form the body reads an address as, where the
+        /// declared type names one narrower than `Address`.
+        narrow: Option<Box<syn::Type>>,
+    },
     /// A branch's verdict, as the declaration reached it.
     Flag,
     /// This invocation's authority to issue.
@@ -66,6 +70,66 @@ fn value_shape(
     }
 }
 
+/// The address vocabulary: the wide type and every class or position
+/// newtype that crosses the boundary as the world's own address record.
+const ADDRESS_FAMILY: [&str; 8] = [
+    "Address",
+    "CallTarget",
+    "ComponentAddr",
+    "Denomination",
+    "NativeAddr",
+    "PackageAddr",
+    "PrincipalAddr",
+    "ResourceAddr",
+];
+
+/// The class-typed form the body reads an address-shaped term as, where
+/// the type it was declared at — or the accessor it came from — names one
+/// narrower than `Address`.
+fn narrow_type(
+    term: &Term,
+    params: &[(String, syn::Type)],
+    config: &[(String, syn::Type)],
+) -> Option<syn::Type> {
+    let named = |ty: &syn::Type| match ty {
+        syn::Type::Path(p)
+            if p.path.segments.last().is_some_and(|s| {
+                s.ident != "Address" && ADDRESS_FAMILY.contains(&s.ident.to_string().as_str())
+            }) =>
+        {
+            Some(ty.clone())
+        }
+        _ => None,
+    };
+    match term {
+        // A resource is a denomination however it was derived, which is
+        // the type `issued()` and `Bucket::resource()` hand the body.
+        Term::SelfResource(_) | Term::ResourceOf(_) => {
+            Some(syn::parse_quote!(::hyperscale_vm_sdk::Denomination))
+        }
+        Term::Arg(index) => params.get(*index as usize).and_then(|(_, ty)| named(ty)),
+        Term::Config(index) => config.get(*index as usize).and_then(|(_, ty)| named(ty)),
+        Term::Lookup { map, .. } => match &**map {
+            Term::Config(index) => config
+                .get(*index as usize)
+                .and_then(|(_, ty)| table_value(ty))
+                .and_then(|value| named(&value)),
+            _ => None,
+        },
+        // A selection narrows only where both arms read at one type,
+        // which the author's own text has already required.
+        Term::If {
+            then, otherwise, ..
+        } => {
+            let taken = narrow_type(then, params, config)?;
+            let untaken = narrow_type(otherwise, params, config)?;
+            (quote::quote!(#taken).to_string() == quote::quote!(#untaken).to_string())
+                .then_some(taken)
+        }
+        _ => None,
+    }
+}
+
 /// The shape a derived term crosses the boundary as, or `None` where a
 /// selection's arms cross as different shapes — no one export parameter
 /// can carry what such a term chooses, and the lowering refuses it on
@@ -76,7 +140,11 @@ pub fn derived_shape(
     config: &[(String, syn::Type)],
 ) -> Option<Shape> {
     let scalar = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.is_ident("u64"));
-    let address = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Address"));
+    let address = |ty: &syn::Type| {
+        matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| {
+            ADDRESS_FAMILY.contains(&s.ident.to_string().as_str())
+        }))
+    };
     let id_set = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Ids"));
     let named = |ty: &syn::Type| {
         if scalar(ty) {
@@ -225,7 +293,12 @@ pub fn bindings(
                     .get(*param as usize)
                     .is_some_and(|(_, ty)| crate::is_named(ty, "NfBucket")),
             },
-            Need::Derived(_) => Carries::Value,
+            Need::Derived(term) => Carries::Value {
+                narrow: matches!(shape, Shape::Address)
+                    .then(|| narrow_type(term, params, config))
+                    .flatten()
+                    .map(Box::new),
+            },
         };
         bindings.push(Binding {
             param: Param {

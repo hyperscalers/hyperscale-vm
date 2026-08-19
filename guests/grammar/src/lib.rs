@@ -15,7 +15,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod grammar {
-    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::Denomination;
     use hyperscale_vm_sdk::state::{Bucket, Ids, Keyed, Ordered, Quantity, Vault, pack};
 
     #[state]
@@ -37,7 +37,7 @@ pub mod grammar {
 
         /// A `while` walking an interval by index, and a conditional in
         /// tail position — the other two ways a unit body ends.
-        pub fn sweep(&mut self, holder: Address) {
+        pub fn sweep(&mut self, holder: Denomination) {
             let mut held = self.entries.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
             let vault = self.vault(holder);
             let mut index = 0;
@@ -87,7 +87,7 @@ pub mod grammar {
 
         /// A produced edge out of a conditional body, so the value path
         /// is exercised beside the statement ones.
-        pub fn take(&mut self, resource: Address, amount: Quantity) -> Bucket {
+        pub fn take(&mut self, resource: Denomination, amount: Quantity) -> Bucket {
             self.vault(resource).reserve(amount)
         }
     }

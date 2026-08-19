@@ -355,7 +355,12 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         // guest's and erases here, where a manifest binds a number.
         "u128" | "Quantity" => quote!(U128),
         "u64" => quote!(U64),
-        "Address" => quote!(Address),
+        // The declared kind stays `address` for the whole family: the
+        // class a narrower type names is the denomination expression's
+        // to check, and a `ParamType` variant per class would move every
+        // package hash to buy what that check already buys.
+        "Address" | "CallTarget" | "ComponentAddr" | "Denomination" | "NativeAddr"
+        | "PackageAddr" | "PrincipalAddr" | "ResourceAddr" => quote!(Address),
         "Vec" | "Bytes" => quote!(Bytes),
         "Rule" => quote!(Rule),
         "RoleSet" => quote!(RoleSet),

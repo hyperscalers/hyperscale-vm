@@ -64,16 +64,24 @@ pub fn arm(
             Carries::Issuer => quote!(
                 let __issuer = ::hyperscale_vm_sdk::host::issuer(__args, #position);
             ),
-            Carries::Value => match param.shape {
+            Carries::Value { narrow } => match param.shape {
                 Shape::Scalar => quote!(
                     let #ident = ::hyperscale_vm_sdk::host::scalar(__args, #position);
                 ),
                 Shape::Flag => quote!(
                     let #ident = ::hyperscale_vm_sdk::host::flag(__args, #position);
                 ),
-                Shape::Address => quote!(
-                    let #ident = ::hyperscale_vm_sdk::host::address(__args, #position);
-                ),
+                Shape::Address => {
+                    let rebuilt = quote!(::hyperscale_vm_sdk::host::address(__args, #position));
+                    narrow.as_ref().map_or_else(
+                        || quote!(let #ident = #rebuilt;),
+                        |ty| {
+                            quote!(
+                                let #ident: #ty = ::hyperscale_vm_sdk::guest::narrowed(#rebuilt);
+                            )
+                        },
+                    )
+                }
                 Shape::Cell(ty) => quote!(
                     let #ident: #ty = ::hyperscale_vm_sdk::state::Cellular::from_cell(
                         ::hyperscale_vm_sdk::host::cell(__args, #position),

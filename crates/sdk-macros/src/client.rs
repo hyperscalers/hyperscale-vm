@@ -154,6 +154,24 @@ fn widen(name: &syn::Ident, ty: &syn::Type) -> (TokenStream2, TokenStream2) {
     if is_named(ty, "Address") {
         return (quote!(#name: impl #address_arg), quote!(#name));
     }
+    // A narrower address type stays at the call site: which class
+    // belongs at a position is the package's business, and the package
+    // answered.
+    for family in [
+        "CallTarget",
+        "ComponentAddr",
+        "Denomination",
+        "PrincipalAddr",
+        "ResourceAddr",
+    ] {
+        if is_named(ty, family) {
+            let narrow = sdk(family);
+            return (
+                quote!(#name: impl ::core::convert::Into<#narrow>),
+                quote!(#name.into()),
+            );
+        }
+    }
     // An id list is a manifest list of `u64`, which no guest type binds
     // as. The slice is what a caller holds, and building the list here
     // is the last place a call site would otherwise reach for `Value`.

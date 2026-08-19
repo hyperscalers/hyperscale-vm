@@ -18,10 +18,10 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint(principals)]
 pub mod account {
-    use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{
         AuthBase, AuthCell, Bucket, Ids, NfBucket, Proposal, Quantity, RoleSet, clock_ms,
     };
+    use hyperscale_vm_sdk::{Address, Denomination};
 
     /// Funds left the account.
     #[event]
@@ -49,7 +49,7 @@ pub mod account {
         /// body ran, so there is no requested amount left to check it
         /// against and no way for the two to differ.
         #[guarded(self)]
-        pub fn withdraw(&mut self, resource: Address, amount: Quantity) -> Bucket {
+        pub fn withdraw(&mut self, resource: Denomination, amount: Quantity) -> Bucket {
             let funds = self.vault(resource).reserve(amount);
             Withdrawn {
                 amount: funds.quantity(),
@@ -97,7 +97,7 @@ pub mod account {
         /// trapping on one not held. The removal and the edge are one
         /// operation, so a body cannot hand on what it left where it was.
         #[guarded(self)]
-        pub fn withdraw_nf(&mut self, resource: Address, ids: Ids) -> NfBucket {
+        pub fn withdraw_nf(&mut self, resource: Denomination, ids: Ids) -> NfBucket {
             self.holdings(resource).all(64).take(ids)
         }
 

@@ -10,11 +10,11 @@ error[E0277]: the trait bound `u128: AddressArg` is not satisfied
              CallTarget
              ComponentAddr
              Denomination
+             NativeAddr
+             PackageAddr
              PrincipalAddr
              ResourceAddr
              hyperscale_vm_sdk::Address
-             hyperscale_vm_types::address::NativeAddr
-             hyperscale_vm_types::address::PackageAddr
 note: required by a bound in `contract::client::Contract::withdraw`
   --> tests/refusals/client_proof_omitted.rs:4:1
    |

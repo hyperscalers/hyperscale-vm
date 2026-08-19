@@ -96,7 +96,7 @@ pub fn method(
                 signature.push(quote!(#ident: &Issuer));
                 prologue.push(quote!(let __issuer = #ident.handle();));
             }
-            Carries::Value => match shape {
+            Carries::Value { narrow } => match shape {
                 Shape::Scalar => signature.push(quote!(#ident: u64)),
                 Shape::Flag => signature.push(quote!(#ident: bool)),
                 // Named through the world's own alias, so the generated
@@ -105,10 +105,17 @@ pub fn method(
                 // come out at the call site, where both are in scope.
                 Shape::Address => {
                     signature.push(quote!(#ident: KernelAddress));
-                    prologue.push(quote!(
-                        let #ident = ::hyperscale_vm_sdk::guest::address_of(
-                            #ident.a, #ident.b, #ident.c, #ident.d,
-                        );
+                    let rebuilt = quote!(::hyperscale_vm_sdk::guest::address_of(
+                        #ident.a, #ident.b, #ident.c, #ident.d,
+                    ));
+                    prologue.push(narrow.as_ref().map_or_else(
+                        || quote!(let #ident = #rebuilt;),
+                        |ty| {
+                            quote!(
+                                let #ident: #ty =
+                                    ::hyperscale_vm_sdk::guest::narrowed(#rebuilt);
+                            )
+                        },
                     ));
                 }
                 Shape::Cell(ty) => {

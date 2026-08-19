@@ -57,7 +57,7 @@ use hyperscale_vm_effects::MAX_AUTH_CELL_WIRE_DEPTH;
 /// binds and a cell holds, which is the same type in both positions, so a
 /// body that stores what it was handed converts nothing.
 pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, StoredRoles as RoleSet};
-use hyperscale_vm_types::Address;
+use hyperscale_vm_types::{Address, Denomination};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host;
@@ -406,7 +406,7 @@ impl Bucket {
     /// lowering resolves it to a value the export is handed, so a body
     /// that asks reads an argument rather than an edge.
     #[must_use]
-    pub fn resource(&self) -> Address {
+    pub fn resource(&self) -> Denomination {
         unimplemented!("{OFF_HOST}")
     }
 
@@ -583,7 +583,7 @@ impl NfBucket {
     /// Read by the authoring half and never by the executing one, on the
     /// terms [`Bucket::resource`] states.
     #[must_use]
-    pub fn resource(&self) -> Address {
+    pub fn resource(&self) -> Denomination {
         self.0.resource()
     }
 
@@ -751,7 +751,7 @@ impl Cell<Vault> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Keyed<T>(core::marker::PhantomData<fn() -> T>);
 
-impl<T> Keyed<T> {
+impl<T: Cellular> Keyed<T> {
     /// The leaf at `key`.
     ///
     /// The key is whatever material the declaration hashes under the
@@ -761,6 +761,20 @@ impl<T> Keyed<T> {
     #[must_use]
     #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
     pub fn at<K>(&self, key: K) -> Slot<T> {
+        let _ = key;
+        unimplemented!("{OFF_HOST}")
+    }
+}
+
+impl Keyed<Vault> {
+    /// The vault at `key`.
+    ///
+    /// A keyed vault's denomination is its key, so the key is the one
+    /// type a denomination has — which is what makes a family keyed by
+    /// a component address unwritable rather than merely refused.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
+    pub fn at(&self, key: impl Into<Denomination>) -> Slot<Vault> {
         let _ = key;
         unimplemented!("{OFF_HOST}")
     }
@@ -1350,7 +1364,7 @@ pub const fn pack(hi: u64, lo: u64) -> OrderKey {
 /// for anything beside it — a badge that operates the instance is the
 /// same derivation over different material.
 #[must_use]
-pub fn issued(mark: &[u8]) -> Address {
+pub fn issued(mark: &[u8]) -> Denomination {
     let _ = mark;
     unimplemented!("{OFF_HOST}")
 }

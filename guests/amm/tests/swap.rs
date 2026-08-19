@@ -16,8 +16,8 @@ fn pool() -> (Chain, Amm) {
     let mut chain = Chain::native();
     chain.publish(package!(amm_guest::amm));
     let pool = chain.instantiate::<Amm>(Settings {
-        x: X.address(),
-        y: Y.address(),
+        x: X.into(),
+        y: Y.into(),
         fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
     });
     chain.credit(ALICE, X, 600);
@@ -81,8 +81,8 @@ fn a_reserve_that_once_overflowed_the_curve_now_trades() {
     let mut chain = Chain::native();
     chain.publish(package!(amm_guest::amm));
     let pool = chain.instantiate::<Amm>(Settings {
-        x: X.address(),
-        y: Y.address(),
+        x: X.into(),
+        y: Y.into(),
         fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
     });
     chain.credit(ALICE, X, 600);

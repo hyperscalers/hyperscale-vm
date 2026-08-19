@@ -14,7 +14,7 @@ fn vault() -> (Chain, Shares) {
     let mut chain = Chain::native();
     chain.publish(package!(shares_guest::shares));
     let vault = chain.instantiate::<Shares>(Settings {
-        asset: ASSET.address(),
+        asset: ASSET.into(),
     });
     chain.credit(ALICE, ASSET, 10_000);
     chain.credit(MALLORY, ASSET, 10_000);

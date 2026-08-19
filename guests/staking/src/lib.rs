@@ -32,7 +32,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod staking {
-    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::Denomination;
     use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, burn, mint};
 
     /// The pool's creation-fixed configuration: what a delegation is
@@ -45,7 +45,7 @@ pub mod staking {
 
     #[config]
     struct Settings {
-        staked_resource: Address,
+        staked_resource: Denomination,
     }
 
     /// A delegation arrived.
