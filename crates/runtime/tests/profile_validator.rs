@@ -237,6 +237,33 @@ fn rejects_passive_data_and_its_operators() {
 }
 
 #[test]
+fn bounds_data_segments_by_the_memory_minimum() {
+    // A segment that ends exactly at the minimum is admitted; one byte
+    // further would trap every instantiation, so it never deploys.
+    let inside = component_with_core(r#"(memory 1 1) (data (i32.const 65533) "abc")"#);
+    validate_component(&inside).expect("a segment inside the minimum must be admitted");
+
+    let outside = component_with_core(r#"(memory 1 1) (data (i32.const 65534) "abc")"#);
+    assert_rejected(&outside, "memory minimum");
+}
+
+#[test]
+fn bounds_data_segments_by_an_imported_memory_minimum() {
+    let outside =
+        component_with_core(r#"(import "env" "mem" (memory 1 1)) (data (i32.const 65534) "abc")"#);
+    assert_rejected(&outside, "memory minimum");
+}
+
+#[test]
+fn bounds_element_segments_by_the_table_minimum() {
+    let inside = component_with_core("(table 2 2 funcref) (func $f) (elem (i32.const 1) func $f)");
+    validate_component(&inside).expect("a segment inside the minimum must be admitted");
+
+    let outside = component_with_core("(table 2 2 funcref) (func $f) (elem (i32.const 2) func $f)");
+    assert_rejected(&outside, "table minimum");
+}
+
+#[test]
 fn rejects_reference_typed_globals_and_initializers() {
     // The operator blocklist walks function bodies; a global initializer
     // is not one, and the spec's const-expression vocabulary is integers.

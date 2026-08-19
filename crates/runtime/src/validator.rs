@@ -408,8 +408,12 @@ fn core_structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
     let mut imported_functions = 0usize;
     let mut globals = 0usize;
     let mut module_blocks = 0usize;
-    let mut memories = 0usize;
-    let mut tables = 0usize;
+    // One minimum per memory or table, imported or declared; the per-module
+    // count limits hold each list to at most one entry, and segment bounds
+    // are judged against the front. Sections arrive in index order, so the
+    // minima are recorded before any segment reads them.
+    let mut memory_min_pages: Vec<u64> = Vec::new();
+    let mut table_min_elements: Vec<u64> = Vec::new();
 
     for payload in Parser::new(0).parse_all(bytes) {
         let payload = payload.map_err(|e| ProfileError::Feature(e.to_string()))?;
@@ -423,16 +427,20 @@ fn core_structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
                     check_import(
                         &import.ty,
                         &mut imported_functions,
-                        &mut memories,
-                        &mut tables,
+                        &mut memory_min_pages,
+                        &mut table_min_elements,
                     )?;
                 }
                 check(
-                    memories,
+                    memory_min_pages.len(),
                     profile::MAX_MEMORIES_PER_MODULE,
                     "memories per module",
                 )?;
-                check(tables, profile::MAX_TABLES_PER_MODULE, "tables per module")?;
+                check(
+                    table_min_elements.len(),
+                    profile::MAX_TABLES_PER_MODULE,
+                    "tables per module",
+                )?;
             }
             Payload::FunctionSection(reader) => {
                 check(
@@ -444,11 +452,11 @@ fn core_structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
             Payload::MemorySection(reader) => {
                 for memory in reader {
                     let memory = memory.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    memories += 1;
+                    memory_min_pages.push(memory.initial);
                     bounded_maximum(memory.maximum, profile::MAX_MEMORY_PAGES, "memory pages")?;
                 }
                 check(
-                    memories,
+                    memory_min_pages.len(),
                     profile::MAX_MEMORIES_PER_MODULE,
                     "memories per module",
                 )?;
@@ -456,14 +464,18 @@ fn core_structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
             Payload::TableSection(reader) => {
                 for table in reader {
                     let table = table.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    tables += 1;
+                    table_min_elements.push(table.ty.initial);
                     bounded_maximum(
                         table.ty.maximum,
                         profile::MAX_TABLE_ELEMENTS,
                         "table elements",
                     )?;
                 }
-                check(tables, profile::MAX_TABLES_PER_MODULE, "tables per module")?;
+                check(
+                    table_min_elements.len(),
+                    profile::MAX_TABLES_PER_MODULE,
+                    "tables per module",
+                )?;
             }
             Payload::GlobalSection(reader) => {
                 globals += check_globals(reader)?;
@@ -473,8 +485,12 @@ fn core_structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
                     "globals per module",
                 )?;
             }
-            Payload::DataSection(reader) => check_data_segments(reader)?,
-            Payload::ElementSection(reader) => check_element_segments(reader)?,
+            Payload::DataSection(reader) => {
+                check_data_segments(reader, memory_min_pages.first().copied().unwrap_or(0))?;
+            }
+            Payload::ElementSection(reader) => {
+                check_element_segments(reader, table_min_elements.first().copied().unwrap_or(0))?;
+            }
             Payload::StartSection { .. } => return Err(ProfileError::StartSection),
             Payload::CodeSectionEntry(body) => {
                 module_blocks += validate_function_body(&body)?;
@@ -522,23 +538,23 @@ fn check_types(
 }
 
 /// Counts one import into the per-kind totals; imported memories and tables
-/// carry the same maximum bounds as declared ones. A global or tag import
-/// has no executable-spec witness, so it is a profile violation rather
-/// than a counted item.
+/// carry the same maximum bounds as declared ones, and record their minima
+/// for the segment bounds. A global or tag import has no executable-spec
+/// witness, so it is a profile violation rather than a counted item.
 fn check_import(
     ty: &TypeRef,
     imported_functions: &mut usize,
-    memories: &mut usize,
-    tables: &mut usize,
+    memory_min_pages: &mut Vec<u64>,
+    table_min_elements: &mut Vec<u64>,
 ) -> Result<(), ProfileError> {
     match ty {
         TypeRef::Func(_) | TypeRef::FuncExact(_) => *imported_functions += 1,
         TypeRef::Memory(memory) => {
-            *memories += 1;
+            memory_min_pages.push(memory.initial);
             bounded_maximum(memory.maximum, profile::MAX_MEMORY_PAGES, "memory pages")?;
         }
         TypeRef::Table(table) => {
-            *tables += 1;
+            table_min_elements.push(table.initial);
             bounded_maximum(table.maximum, profile::MAX_TABLE_ELEMENTS, "table elements")?;
         }
         TypeRef::Global(_) | TypeRef::Tag(_) => {
@@ -636,9 +652,17 @@ fn check_globals(reader: GlobalSectionReader<'_>) -> Result<usize, ProfileError>
     Ok(globals)
 }
 
-/// Data segments are active with constant offsets: the spec applies them
-/// at instantiation and models no other form.
-fn check_data_segments(reader: DataSectionReader<'_>) -> Result<(), ProfileError> {
+/// Bytes per wasm linear-memory page.
+const WASM_PAGE_BYTES: u64 = 64 * 1024;
+
+/// Data segments are active, constant-offset, and land inside the memory
+/// minimum: the spec applies them at instantiation and models no other
+/// form, and a segment past the minimum would trap every instantiation.
+fn check_data_segments(
+    reader: DataSectionReader<'_>,
+    memory_min_pages: u64,
+) -> Result<(), ProfileError> {
+    let memory_bytes = memory_min_pages * WASM_PAGE_BYTES;
     for data in reader {
         let data = data.map_err(|e| ProfileError::Feature(e.to_string()))?;
         let DataKind::Active { offset_expr, .. } = &data.kind else {
@@ -646,13 +670,23 @@ fn check_data_segments(reader: DataSectionReader<'_>) -> Result<(), ProfileError
                 "passive data segments are outside the profile".to_string(),
             ));
         };
-        check_const_expr(offset_expr, "data segment")?;
+        let offset = check_const_expr(offset_expr, "data segment")?;
+        let end = offset.saturating_add(data.data.len() as u64);
+        if end > memory_bytes {
+            return Err(ProfileError::Structural(format!(
+                "data segment ends at byte {end}, past the {memory_bytes}-byte memory minimum"
+            )));
+        }
     }
     Ok(())
 }
 
-/// Element segments are active, constant-offset, and function-indexed.
-fn check_element_segments(reader: ElementSectionReader<'_>) -> Result<(), ProfileError> {
+/// Element segments are active, constant-offset, function-indexed, and
+/// land inside the table minimum, so applying them cannot trap.
+fn check_element_segments(
+    reader: ElementSectionReader<'_>,
+    table_min_elements: u64,
+) -> Result<(), ProfileError> {
     for element in reader {
         let element = element.map_err(|e| ProfileError::Feature(e.to_string()))?;
         let ElementKind::Active { offset_expr, .. } = &element.kind else {
@@ -660,37 +694,48 @@ fn check_element_segments(reader: ElementSectionReader<'_>) -> Result<(), Profil
                 "passive element segments are outside the profile".to_string(),
             ));
         };
-        check_const_expr(offset_expr, "element segment")?;
-        if !matches!(element.items, ElementItems::Functions(_)) {
+        let offset = check_const_expr(offset_expr, "element segment")?;
+        let ElementItems::Functions(functions) = &element.items else {
             return Err(ProfileError::Structural(
                 "expression element segments are outside the profile".to_string(),
             ));
+        };
+        let end = offset.saturating_add(u64::from(functions.count()));
+        if end > table_min_elements {
+            return Err(ProfileError::Structural(format!(
+                "element segment ends at index {end}, past the {table_min_elements}-element \
+                 table minimum"
+            )));
         }
     }
     Ok(())
 }
 
-/// A constant expression is exactly one integer constant and its `end`.
+/// A constant expression is exactly one integer constant and its `end`;
+/// returns the constant's unsigned value (an i32 reads as u32, which is
+/// how a segment offset consumes it).
 ///
 /// The operator blocklist walks function bodies, and a global initializer
 /// or a segment offset is neither — but the executable spec evaluates
 /// const expressions with the same integer-only vocabulary, so anything
 /// richer (a reference, an extended-const computation) is admitted here
 /// and unexecutable there.
-fn check_const_expr(expr: &ConstExpr<'_>, what: &str) -> Result<(), ProfileError> {
+fn check_const_expr(expr: &ConstExpr<'_>, what: &str) -> Result<u64, ProfileError> {
     let outside = || ProfileError::Structural(format!("{what} initializer is outside the profile"));
     let mut reader = expr.get_operators_reader();
-    let first = reader
+    let value = match reader
         .read()
-        .map_err(|e| ProfileError::Feature(e.to_string()))?;
-    if !matches!(first, Operator::I32Const { .. } | Operator::I64Const { .. }) {
-        return Err(outside());
-    }
+        .map_err(|e| ProfileError::Feature(e.to_string()))?
+    {
+        Operator::I32Const { value } => u64::from(value.cast_unsigned()),
+        Operator::I64Const { value } => value.cast_unsigned(),
+        _ => return Err(outside()),
+    };
     match reader
         .read()
         .map_err(|e| ProfileError::Feature(e.to_string()))?
     {
-        Operator::End => Ok(()),
+        Operator::End => Ok(value),
         _ => Err(outside()),
     }
 }
