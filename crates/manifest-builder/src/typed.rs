@@ -30,7 +30,7 @@ use hyperscale_vm_effects::{
     InstanceMeta, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MetadataCache,
     MethodSignature, PackageHash, ParamType, Value, evaluate_expr,
 };
-use hyperscale_vm_types::{Address, CallTarget, PrincipalAddr, ResourceRef};
+use hyperscale_vm_types::{Address, CallTarget, Denomination, PrincipalAddr};
 
 use crate::args::Args;
 use crate::builder::{Bucket, BuildError, GraphBuilder};
@@ -667,7 +667,7 @@ pub(crate) fn output_resources(
     known: &[bool],
     node_index: u32,
     hasher: &dyn Hasher,
-) -> Vec<Option<ResourceRef>> {
+) -> Vec<Option<Denomination>> {
     let inputs = EvalInputs {
         self_addr: target.address(),
         args: values,
@@ -683,8 +683,8 @@ pub(crate) fn output_resources(
                 return None;
             }
             match evaluate_expr(expr, &inputs, hasher) {
-                Ok(Value::Address(address)) => ResourceRef::try_from(address).ok(),
-                Ok(Value::Bucket { resource, .. }) => ResourceRef::try_from(resource).ok(),
+                Ok(Value::Address(address)) => Denomination::try_from(address).ok(),
+                Ok(Value::Bucket { resource, .. }) => Denomination::try_from(resource).ok(),
                 _ => None,
             }
         })
@@ -703,7 +703,7 @@ pub(crate) const fn unknown() -> Value {
 /// The resource a bound edge was typed with, read off the assertion it
 /// carries — which is where a typed handle put it, and where an author
 /// asserting one by hand puts it too.
-fn edge_resource(constraints: &[Constraint]) -> Option<ResourceRef> {
+fn edge_resource(constraints: &[Constraint]) -> Option<Denomination> {
     constraints.iter().find_map(|constraint| match constraint {
         Constraint::ResourceIs(resource) => Some(*resource),
         Constraint::MinAmount(_) | Constraint::MaxAmount(_) => None,

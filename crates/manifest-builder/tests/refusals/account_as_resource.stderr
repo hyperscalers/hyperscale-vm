@@ -1,12 +1,12 @@
-error[E0277]: the trait bound `ResourceRef: From<PrincipalAddr>` is not satisfied
+error[E0277]: the trait bound `Denomination: From<PrincipalAddr>` is not satisfied
   --> tests/refusals/account_as_resource.rs:14:56
    |
 14 |     let [] = b.call(BOB, "deposit", (funds.resource_is(ALICE),));
-   |                                            ----------- ^^^^^ the trait `From<PrincipalAddr>` is not implemented for `ResourceRef`
+   |                                            ----------- ^^^^^ the trait `From<PrincipalAddr>` is not implemented for `Denomination`
    |                                            |
    |                                            required by a bound introduced by this call
    |
-help: `ResourceRef` implements trait `From<T>`
+help: `Denomination` implements trait `From<T>`
   --> $WORKSPACE/crates/types/src/address.rs
    |
    |               impl From<$class> for $name {
@@ -22,10 +22,10 @@ help: `ResourceRef` implements trait `From<T>`
 ...  |
    | | }
    | |_- in this macro invocation
-   = note: required for `PrincipalAddr` to implement `Into<ResourceRef>`
+   = note: required for `PrincipalAddr` to implement `Into<Denomination>`
 note: required by a bound in `Bucket::resource_is`
   --> src/builder.rs
    |
-   |     pub fn resource_is(self, resource: impl Into<ResourceRef>) -> Self {
-   |                                             ^^^^^^^^^^^^^^^^^ required by this bound in `Bucket::resource_is`
+   |     pub fn resource_is(self, resource: impl Into<Denomination>) -> Self {
+   |                                             ^^^^^^^^^^^^^^^^^^ required by this bound in `Bucket::resource_is`
    = note: this error originates in the macro `position_addr` (in Nightly builds, run with -Z macro-backtrace for more info)

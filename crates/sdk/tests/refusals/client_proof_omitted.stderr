@@ -9,9 +9,9 @@ error[E0277]: the trait bound `u128: AddressArg` is not satisfied
    = help: the following other types implement trait `AddressArg`:
              CallTarget
              ComponentAddr
+             Denomination
              PrincipalAddr
              ResourceAddr
-             ResourceRef
              hyperscale_vm_sdk::Address
              hyperscale_vm_types::address::NativeAddr
              hyperscale_vm_types::address::PackageAddr

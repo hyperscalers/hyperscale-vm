@@ -34,7 +34,7 @@ use hyperscale_vm_effects::{
     Constraint, EdgeContent, EdgeRef, GraphArg, Hasher, InstanceRegistry, ManifestGraph,
     MetadataCache, ParamType, Value,
 };
-use hyperscale_vm_types::{Address, ResourceRef, SubstateKey, TextError};
+use hyperscale_vm_types::{Address, Denomination, SubstateKey, TextError};
 
 use crate::typed::{output_resources, unknown};
 
@@ -143,7 +143,7 @@ struct Printer<'a> {
     /// however often a graph names it.
     text: BTreeMap<Address, String>,
     /// The name and shown type of each bound edge.
-    bindings: BTreeMap<EdgeRef, (String, Option<ResourceRef>)>,
+    bindings: BTreeMap<EdgeRef, (String, Option<Denomination>)>,
     /// How many bindings have taken each base name.
     taken: BTreeMap<String, u32>,
 }
@@ -164,7 +164,7 @@ impl Printer<'_> {
 
     /// Name one output edge and answer its binding, typed where the type
     /// is not already what the name says.
-    fn bind(&mut self, edge: EdgeRef, resource: Option<ResourceRef>) -> Result<String, TextError> {
+    fn bind(&mut self, edge: EdgeRef, resource: Option<Denomination>) -> Result<String, TextError> {
         // A binding is named after what it carries, which is the closest
         // this system has to a name for a value: an edge is not addressed,
         // so nothing else about it could be looked up.
@@ -290,9 +290,9 @@ fn edge_types(
     cache: &MetadataCache,
     instances: &InstanceRegistry,
     hasher: &dyn Hasher,
-) -> BTreeMap<u32, Vec<Option<ResourceRef>>> {
+) -> BTreeMap<u32, Vec<Option<Denomination>>> {
     let consumed = consumed_slots(graph);
-    let mut types: BTreeMap<u32, Vec<Option<ResourceRef>>> = BTreeMap::new();
+    let mut types: BTreeMap<u32, Vec<Option<Denomination>>> = BTreeMap::new();
     for (index, node) in graph.nodes.iter().enumerate() {
         let producer = u32::try_from(index).unwrap_or(u32::MAX);
         let declared = instances

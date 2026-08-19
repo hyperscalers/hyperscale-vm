@@ -19,7 +19,7 @@ pub use hyperscale_vm_manifest_builder::{
     AddressArg, Arg, Args, Bucket, BucketArg, Outputs, Proof, TypedBuilder, TypedError,
 };
 pub use hyperscale_vm_types::{
-    Address, CallTarget, ComponentAddr, PrincipalAddr, ResourceAddr, ResourceRef,
+    Address, CallTarget, ComponentAddr, Denomination, PrincipalAddr, ResourceAddr,
 };
 
 use crate::num::{Quantity, UnitFixed};
@@ -132,7 +132,7 @@ address_slots!(
     ComponentAddr,
     PrincipalAddr,
     ResourceAddr,
-    ResourceRef
+    Denomination
 );
 
 /// A table fills its slot as the list of pairs the DSL's `Lookup` and

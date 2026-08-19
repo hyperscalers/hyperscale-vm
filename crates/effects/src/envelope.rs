@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
-    Address, Effect, EffectTarget, Mode, Presence, PrincipalAddr, ResourceRef, SubstateKey,
+    Address, Denomination, Effect, EffectTarget, Mode, Presence, PrincipalAddr, SubstateKey,
 };
 
 use crate::PACKAGE_SLOT_BASE;
@@ -58,7 +58,7 @@ const _: () = assert!(NULLIFIER_SLOT.0 > PACKAGE_SLOT_BASE);
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct YieldParam {
     /// The resource the yielded edge must carry.
-    pub resource: ResourceRef,
+    pub resource: Denomination,
     /// The declaring intent's constraints on the yielded edge — the same
     /// language that constrains ordinary graph edges.
     pub constraints: Vec<Constraint>,

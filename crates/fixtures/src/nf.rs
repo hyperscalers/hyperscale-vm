@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
     Value, holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
-use hyperscale_vm_types::{ComponentAddr, Presence, ResourceRef};
+use hyperscale_vm_types::{ComponentAddr, Denomination, Presence};
 
 /// The non-fungible surface end to end: an issuer that mints and burns,
 /// and holders whose instances are the entries of their per-resource
@@ -210,7 +210,7 @@ pub fn deposit(
 pub fn withdraw(
     builder: &mut TypedBuilder<'_>,
     holder: ComponentAddr,
-    resource: impl Into<ResourceRef>,
+    resource: impl Into<Denomination>,
     ids: &[u64],
 ) -> Result<Bucket, TypedError> {
     let ids = Value::List(ids.iter().copied().map(Value::U64).collect());

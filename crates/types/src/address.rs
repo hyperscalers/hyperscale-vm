@@ -624,7 +624,7 @@ position_addr! {
     /// is derived from the role it plays, its supply moving only with the
     /// protocol. Keeping them separate classes is what keeps one tag
     /// naming one derivation rule.
-    ResourceRef, NotAResource {
+    Denomination, NotAResource {
         /// A resource addressed by who may mint it.
         Resource(ResourceAddr),
         /// A protocol resource, addressed by the role it plays.
@@ -683,8 +683,8 @@ mod tests {
 
     use super::AddressClass::{Component, Native, Package, Principal, Resource};
     use super::{
-        Address, AddressClass, CallTarget, ComponentAddr, LocalKey, NativeAddr, PackageAddr,
-        PrincipalAddr, ResourceAddr, ResourceRef, SubstateKey,
+        Address, AddressClass, CallTarget, ComponentAddr, Denomination, LocalKey, NativeAddr,
+        PackageAddr, PrincipalAddr, ResourceAddr, SubstateKey,
     };
 
     fn owner(seed: u8) -> Address {
@@ -822,7 +822,7 @@ mod tests {
         assert_eq!(native, native.address());
         assert_eq!(native.address(), native);
         assert_ne!(native, Address::new([0x5A; 31], Resource));
-        let position = ResourceRef::from(native);
+        let position = Denomination::from(native);
         assert_eq!(position, native.address());
         assert_eq!(native.address(), position);
     }
@@ -855,12 +855,12 @@ mod tests {
     fn a_resource_reference_admits_the_classes_that_name_supply() {
         for class in [Resource, Native] {
             let address = Address::new([4; 31], class);
-            let resource = ResourceRef::try_from(address).unwrap();
+            let resource = Denomination::try_from(address).unwrap();
             assert_eq!(resource.address(), address);
             assert_eq!(resource.class(), class);
         }
         for class in [Principal, Component, Package] {
-            let err = ResourceRef::try_from(Address::new([4; 31], class)).unwrap_err();
+            let err = Denomination::try_from(Address::new([4; 31], class)).unwrap_err();
             assert_eq!(err.found, class);
         }
     }
@@ -873,7 +873,7 @@ mod tests {
         assert_eq!(from_slice::<CallTarget>(&encoded).unwrap(), target);
         assert_canonical(&target);
 
-        let resource = ResourceRef::Native(NativeAddr::new([7; 31]));
+        let resource = Denomination::Native(NativeAddr::new([7; 31]));
         assert_eq!(to_vec(&resource).unwrap(), resource.address().to_bytes());
         assert_canonical(&resource);
     }
@@ -888,7 +888,7 @@ mod tests {
             Err(DecodeError::InvalidDiscriminant(tag)) if tag == Package.tag()
         ));
         assert!(matches!(
-            from_slice::<ResourceRef>(&package),
+            from_slice::<Denomination>(&package),
             Err(DecodeError::InvalidDiscriminant(tag)) if tag == Package.tag()
         ));
         // And so is a class the position does admit, read as another.

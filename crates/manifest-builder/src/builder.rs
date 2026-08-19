@@ -16,7 +16,7 @@ use hyperscale_vm_effects::vocabulary::DEPOSIT_METHOD;
 use hyperscale_vm_effects::{
     Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, MAX_MANIFEST_NODES, ManifestGraph,
 };
-use hyperscale_vm_types::{CallTarget, PrincipalAddr, ResourceRef};
+use hyperscale_vm_types::{CallTarget, Denomination, PrincipalAddr};
 
 use crate::args::Args;
 
@@ -63,7 +63,7 @@ pub struct Bucket {
     /// [`Constraint::ResourceIs`] the author never had to write. The
     /// untyped path leaves it `None`, because a builder reading no
     /// metadata has nothing to derive it from.
-    pub(crate) resource: Option<ResourceRef>,
+    pub(crate) resource: Option<Denomination>,
     /// The consumer's constraints, in the order they were asserted.
     pub(crate) constraints: Vec<Constraint>,
 }
@@ -72,7 +72,7 @@ impl Bucket {
     /// The edge's static resource type, where the producing signature
     /// determined it.
     #[must_use]
-    pub const fn resource(&self) -> Option<ResourceRef> {
+    pub const fn resource(&self) -> Option<Denomination> {
         self.resource
     }
 
@@ -109,7 +109,7 @@ impl Bucket {
     /// else. Admission would refuse the assertion anyway; a handle that
     /// knows its own type can say so at the line that wrote it.
     #[must_use]
-    pub fn resource_is(self, resource: impl Into<ResourceRef>) -> Self {
+    pub fn resource_is(self, resource: impl Into<Denomination>) -> Self {
         let resource = resource.into();
         assert!(
             self.resource.is_none_or(|derived| derived == resource),
@@ -189,7 +189,7 @@ pub struct GraphBuilder {
 /// One minted output slot: what it carries, and whether anything took it.
 #[derive(Debug)]
 struct Output {
-    resource: Option<ResourceRef>,
+    resource: Option<Denomination>,
     consumed: bool,
 }
 
@@ -335,7 +335,7 @@ impl GraphBuilder {
         target: CallTarget,
         method: String,
         args: Vec<GraphArg>,
-        outputs: Vec<Option<ResourceRef>>,
+        outputs: Vec<Option<Denomination>>,
         evidence: BTreeSet<EvidenceRef>,
     ) -> u32 {
         let producer = u32::try_from(self.nodes.len()).expect("more nodes than an edge can name");

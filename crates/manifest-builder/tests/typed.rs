@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
-use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr, ResourceRef};
+use hyperscale_vm_types::{ComponentAddr, Denomination, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -67,7 +67,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
 
 /// The resource every edge argument of `node` asserts, in argument order —
 /// `None` for an argument that is not an edge or asserts no resource.
-fn asserted(graph: &ManifestGraph, node: usize) -> Vec<Option<ResourceRef>> {
+fn asserted(graph: &ManifestGraph, node: usize) -> Vec<Option<Denomination>> {
     graph.nodes[node]
         .args
         .iter()
