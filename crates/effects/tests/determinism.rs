@@ -169,8 +169,8 @@ proptest! {
             ],
         };
         let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
-        let first = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
-        let second = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let first = route(&admitted, &resolver()).unwrap();
+        let second = route(&admitted, &resolver()).unwrap();
         assert_eq!(first, second);
 
         let sender_set = &first.per_shard[&shard_of(sender)];
@@ -228,8 +228,8 @@ proptest! {
             ],
         };
         let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
-        let first = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
-        let second = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
+        let first = route(&admitted, &resolver()).unwrap();
+        let second = route(&admitted, &resolver()).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.frames.len(), 3, "one frame per manifest node");
         assert!(first.per_shard[&shard_of(recipient)].contains(&Effect {

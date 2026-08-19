@@ -231,7 +231,7 @@ pub fn preflight(
     network: &str,
 ) -> Result<Report, PreflightError> {
     let admitted = admit(graph, composer, cache, instances, hasher)?;
-    let routing = route(&admitted, cache, instances, hasher, shards)?;
+    let routing = route(&admitted, shards)?;
     report(admitted, routing, Vec::new(), network)
 }
 
@@ -252,7 +252,7 @@ pub fn preflight_tree(
 ) -> Result<Report, PreflightError> {
     let identity = tree.hash(hasher);
     let admitted = admit_tree(tree, composer, identity, cache, instances, hasher)?;
-    let routing = route_tree(&admitted, cache, instances, hasher, shards)?;
+    let routing = route_tree(&admitted, shards)?;
     report(admitted.admitted, routing, admitted.subintents, network)
 }
 

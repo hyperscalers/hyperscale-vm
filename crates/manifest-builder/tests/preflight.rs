@@ -84,7 +84,7 @@ fn a_report_is_what_the_chain_derives() {
     // Nothing new is computed here, so everything must equal the direct
     // call it composes.
     let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
-    let routing = route(&admitted, &cache, &instances, &TestHasher, &SHARDS).unwrap();
+    let routing = route(&admitted, &SHARDS).unwrap();
     assert_eq!(report.identity(), admitted.identity());
     assert_eq!(report.manifest(), admitted.manifest());
     assert_eq!(report.routing, routing);

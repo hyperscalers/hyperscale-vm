@@ -113,13 +113,7 @@ fn routed(world: &(MetadataCache, InstanceRegistry), from: PrincipalAddr) -> Res
     let (cache, instances) = world;
     let graph = transfer_graph(cache, instances, from);
     let admitted = admit(&graph, from, cache, instances, &TestHasher)?;
-    let routing = route(
-        &admitted,
-        cache,
-        instances,
-        &TestHasher,
-        &PrefixShardResolver { bits: 0 },
-    )?;
+    let routing = route(&admitted, &PrefixShardResolver { bits: 0 })?;
     Ok(Routed {
         declaration: routing.declaration().clone(),
         calls: routing.calls,
@@ -211,13 +205,7 @@ fn main() -> Result<()> {
                 &instances,
                 &TestHasher,
             )?;
-            std::hint::black_box(route(
-                &admitted,
-                &cache,
-                &instances,
-                &TestHasher,
-                &resolver,
-            )?);
+            std::hint::black_box(route(&admitted, &resolver)?);
         }
         let start = Instant::now();
         for (index, graph) in graphs.iter().enumerate() {
@@ -228,13 +216,7 @@ fn main() -> Result<()> {
                 &instances,
                 &TestHasher,
             )?;
-            std::hint::black_box(route(
-                &admitted,
-                &cache,
-                &instances,
-                &TestHasher,
-                &resolver,
-            )?);
+            std::hint::black_box(route(&admitted, &resolver)?);
         }
         println!(
             "admit + route                      {}",

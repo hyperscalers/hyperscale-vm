@@ -24,6 +24,7 @@ use hyperscale_vm_types::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
+const CAROL: PrincipalAddr = PrincipalAddr::new([0x30; 31]);
 const OPERATOR: PrincipalAddr = PrincipalAddr::new([0x30; 31]);
 const BASE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const QUOTE: ResourceAddr = ResourceAddr::new([0xE2; 31]);
@@ -60,6 +61,15 @@ fn pair_config() -> Vec<Value> {
     ]
 }
 
+/// The pair plus the fee slot the amm's signatures read.
+fn amm_config() -> Vec<Value> {
+    vec![
+        Value::Address(BASE.address()),
+        Value::Address(QUOTE.address()),
+        Value::U128(30 * (1_000_000_000_000_000_000 / 10_000)),
+    ]
+}
+
 fn world() -> (MetadataCache, InstanceRegistry) {
     let mut cache = MetadataCache::new();
     for (name, metadata) in stdlib() {
@@ -69,7 +79,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
     instances.serve_principals(pkg("account"));
     for (name, config) in [
         ("staking", pool_config()),
-        ("amm", pair_config()),
+        ("amm", amm_config()),
         ("book", pair_config()),
         ("nf", vec![]),
         ("nf", vec![Value::Address(BASE.address())]),
@@ -113,9 +123,13 @@ fn the_account_wrappers_match_their_signatures() {
         let alice = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice, BASE, 100)?;
         account::deposit(b, BOB, funds)?;
+        // Securify a third account: creating ALICE's stored authority in
+        // the same transaction that proposes against it would require the
+        // cell absent and present at once, which no execution satisfies.
+        let carol = account::authorize(b, CAROL)?;
         account::securify_uniform(
             b,
-            alice,
+            carol,
             StoredRule::Require(BOB.address().into()),
             86_400_000,
         )?;
@@ -128,7 +142,7 @@ fn the_account_wrappers_match_their_signatures() {
         account::cancel(b, ALICE)?;
         account::confirm(b, ALICE)
     });
-    assert_eq!(graph.nodes.len(), 7);
+    assert_eq!(graph.nodes.len(), 8);
 }
 
 /// A rule literal is judged by decoding it as the vocabulary — the same
@@ -206,17 +220,23 @@ fn the_staking_wrappers_match_their_signatures() {
         let alice = account::authorize(b, ALICE)?;
 
         // The delegation round trip: funds in, the pool's own units out
-        // and into an account, then units back to the pool.
+        // and into an account, then units back to the pool. The deposit
+        // lands at BOB while the return draws from ALICE: one vault
+        // created and drawn from in a single transaction would require
+        // its leaf absent and present at once.
         let funds = account::withdraw(b, alice, BASE, 100)?;
         let units = pool.stake(b, funds)?;
-        account::deposit(b, ALICE, units)?;
+        account::deposit(b, BOB, units)?;
         let returned = account::withdraw(b, alice, staking_units(pool), 40)?;
         pool.unstake(b, returned)?;
 
-        // The operator surface, which supplies no funds and produces none.
+        // The operator surface, which supplies no funds and produces
+        // none. Registration creates seat 7; the seat operated on is a
+        // different one, since a seat created and deactivated in a single
+        // transaction would require its leaf absent and present at once.
         pool.register_validator(b, alice, 7, vec![0xAA; 48], vec![0xBB; 96])?;
-        pool.deactivate_validator(b, alice, 7)?;
-        pool.unjail(b, alice, 7)?;
+        pool.deactivate_validator(b, alice, 8)?;
+        pool.unjail(b, alice, 8)?;
         pool.cast_param_vote(b, alice, 9_000, 30, 12)?;
         pool.clear_param_vote(b, alice)
     });
@@ -231,7 +251,7 @@ fn staking_units(pool: staking::Staking) -> ResourceAddr {
 
 #[test]
 fn the_amm_wrapper_matches_its_signature() {
-    let pool = amm::Amm::at(address("amm", pair_config()));
+    let pool = amm::Amm::at(address("amm", amm_config()));
     admits(|b| {
         // The pool's output is typed by its second configured resource,
         // so what comes back is quote against a base input.

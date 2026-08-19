@@ -145,7 +145,7 @@ fn a_well_formed_graph_lowers_and_routes() {
     let admitted = admit(&valid_graph(), ALICE, &cache, &instances, &TestHasher).expect("admits");
 
     // The lowered edges carry their static resource types.
-    let routing = route(&admitted, &cache, &instances, &TestHasher, &resolver()).unwrap();
+    let routing = route(&admitted, &resolver()).unwrap();
     let alice_set = &routing.per_shard[&shard_of(ALICE)];
     assert!(alice_set.contains(&Effect {
         target: EffectTarget::Point(vault(ALICE, RES_X)),
@@ -288,7 +288,7 @@ fn a_minted_proof_resolves_to_its_producers_target() {
         )))
     );
 
-    route(&admitted, &cache, &instances, &TestHasher, &resolver()).expect("routes");
+    route(&admitted, &resolver()).expect("routes");
 }
 
 /// A custodian fixture: an authorizing method minting whatever identity

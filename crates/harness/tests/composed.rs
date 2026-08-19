@@ -118,14 +118,7 @@ fn batch_entry(
     let identity = tree.hash(&TestHasher);
     let admitted =
         admit_tree(tree, ALICE, identity, cache, instances, &TestHasher).context("admission")?;
-    let routing = route_tree(
-        &admitted,
-        cache,
-        instances,
-        &TestHasher,
-        &PrefixShardResolver { bits: 0 },
-    )
-    .context("routing")?;
+    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 }).context("routing")?;
     // The null resolver puts every effect on one shard, so the whole
     // declaration is the sole entry — taken as that rather than by naming
     // an id the resolver is free to choose.

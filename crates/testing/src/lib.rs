@@ -382,14 +382,8 @@ impl Chain {
 
         let admitted = admit(&graph, signer, &self.cache, &self.instances, &TestHasher)
             .expect("the manifest admits");
-        let routing = route(
-            &admitted,
-            &self.cache,
-            &self.instances,
-            &TestHasher,
-            &PrefixShardResolver { bits: 0 },
-        )
-        .expect("the manifest routes");
+        let routing =
+            route(&admitted, &PrefixShardResolver { bits: 0 }).expect("the manifest routes");
         let declaration = routing.declaration().clone();
 
         self.sequence += 1;

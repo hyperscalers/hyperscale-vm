@@ -309,9 +309,9 @@ pub fn admit_tree(
             signer: Some(subintent.signer.address()),
         });
     }
-    let manifest = admit_intents(&views, identity, cache, instances, hasher)?;
+    let admitted = admit_intents(&views, identity, cache, instances, hasher)?;
     Ok(AdmittedTree {
-        admitted: Admitted::new(manifest, identity),
+        admitted,
         subintents: records,
     })
 }
@@ -331,14 +331,8 @@ pub fn admit_tree(
 ///
 /// Never: the only fallible insert folds reserve amounts, and a nullifier
 /// is declared as an exclusive write.
-pub fn route_tree(
-    tree: &AdmittedTree,
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
-    hasher: &dyn Hasher,
-    shards: &dyn ShardResolver,
-) -> Result<Routing, RouteError> {
-    let mut routing = route(&tree.admitted, cache, instances, hasher, shards)?;
+pub fn route_tree(tree: &AdmittedTree, shards: &dyn ShardResolver) -> Result<Routing, RouteError> {
+    let mut routing = route(&tree.admitted, shards)?;
     for record in &tree.subintents {
         let shard = shards.shard_of(record.signer.address());
         let effect = Effect {

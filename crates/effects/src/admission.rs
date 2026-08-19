@@ -14,21 +14,25 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
-use hyperscale_vm_types::{Address, AddressClass, PrincipalAddr};
+use hyperscale_vm_types::{Address, AddressClass, EffectConflict, PrincipalAddr};
 
-use crate::dsl::{EvalError, EvalInputs, evaluate_expr};
+use crate::dsl::{
+    Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr, materialized_kind,
+};
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
-use crate::invoke::EdgeKind;
+use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall};
 use crate::manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};
-use crate::metadata::MetadataCache;
+use crate::metadata::{MetadataCache, PackageHash};
 use crate::presented::Presented;
-use crate::resource::holdings_collection;
-use crate::route::MAX_MANIFEST_NODES;
-use crate::signature::{Accessibility, CustodyClaim, GateShape, MethodSignature, ParamType};
-use crate::types::{EdgeContent, MAX_VALUE_DEPTH, Value, child_key};
+use crate::resource::{holdings_collection, issued_resource};
+use crate::route::{FrameDeclaration, MAX_MANIFEST_NODES};
+use crate::signature::{
+    AbiParam, Accessibility, CustodyClaim, GateShape, MethodSignature, ParamType,
+};
+use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::VAULT;
 
 /// The bound on yield parameters one intent may declare.
@@ -327,8 +331,45 @@ pub enum AdmissionError {
         /// The output slot.
         output: u32,
     },
-    /// An output-type expression that failed to evaluate.
-    #[error("evaluating output types of node {node}")]
+    /// A frame declaring an effect on somebody else's prefix.
+    ///
+    /// An object's cells are reachable by calling it, never by naming
+    /// them: a package that could declare against another owner would
+    /// reach that owner's state with no method of theirs in the path.
+    ///
+    /// Judged on the evaluated effect rather than on the expression that
+    /// produced it. The publish gate refuses the expression, so an
+    /// author hears about it first; this cannot be outgrown by an
+    /// expression shape nobody anticipated, because an effect either
+    /// carries the frame's own owner or it does not.
+    #[error("node {node} declares effect {clause} on {owner:?}, which is not its own prefix")]
+    ForeignDeclaration {
+        /// The manifest node whose frame reached it.
+        node: u32,
+        /// Which of the frame's evaluated effects it is, in clause order.
+        clause: u32,
+        /// The prefix it reached for.
+        owner: Address,
+    },
+    /// The capability table outgrew the index a handle is named by.
+    #[error("the capability table exceeds the addressable handle space")]
+    TableOverflow,
+    /// An ABI argument the node's bound inputs cannot supply.
+    #[error("node {node} cannot bind ABI parameter {param}: {reason}")]
+    UnbindableAbiParam {
+        /// The offending node.
+        node: u32,
+        /// The parameter position.
+        param: u32,
+        /// Why nothing can supply it.
+        reason: String,
+    },
+    /// A conflict met while folding the transaction's declared effects
+    /// into one set.
+    #[error(transparent)]
+    Conflict(#[from] EffectConflict),
+    /// An expression that failed to evaluate during admission.
+    #[error("evaluating node {node}")]
     Eval {
         /// The offending node.
         node: u32,
@@ -418,13 +459,12 @@ pub(crate) fn check_value_depth(graph: &ManifestGraph) -> Result<(), AdmissionEr
 pub struct Admitted {
     manifest: Manifest,
     identity: ManifestHash,
+    frames: Vec<FrameDeclaration>,
+    calls: Vec<NodeCall>,
+    declaration: Declaration,
 }
 
 impl Admitted {
-    pub(crate) const fn new(manifest: Manifest, identity: ManifestHash) -> Self {
-        Self { manifest, identity }
-    }
-
     /// The lowered routing manifest.
     #[must_use]
     pub const fn manifest(&self) -> &Manifest {
@@ -436,6 +476,26 @@ impl Admitted {
     #[must_use]
     pub const fn identity(&self) -> ManifestHash {
         self.identity
+    }
+
+    /// Every evaluated frame's declaration, in node order.
+    #[must_use]
+    pub fn frames(&self) -> &[FrameDeclaration] {
+        &self.frames
+    }
+
+    /// One lowered invocation per manifest node, in node order.
+    #[must_use]
+    pub fn calls(&self) -> &[NodeCall] {
+        &self.calls
+    }
+
+    /// The transaction's whole declaration, both views: the folded set,
+    /// and every frame's clauses concatenated in preorder — the order
+    /// capability materialization builds its table in.
+    #[must_use]
+    pub const fn declaration(&self) -> &Declaration {
+        &self.declaration
     }
 }
 
@@ -461,7 +521,7 @@ pub fn admit(
 ) -> Result<Admitted, AdmissionError> {
     check_value_depth(graph)?;
     let identity = graph.hash(hasher);
-    let manifest = admit_intents(
+    admit_intents(
         &[IntentView {
             graph,
             params: &[],
@@ -472,8 +532,7 @@ pub fn admit(
         cache,
         instances,
         hasher,
-    )?;
-    Ok(Admitted::new(manifest, identity))
+    )
 }
 
 /// Check an edge's constraints against its static resource type and fold
@@ -596,7 +655,7 @@ pub(crate) fn admit_intents(
     cache: &MetadataCache,
     instances: &InstanceRegistry,
     hasher: &dyn Hasher,
-) -> Result<Manifest, AdmissionError> {
+) -> Result<Admitted, AdmissionError> {
     let total: usize = intents.iter().map(|view| view.graph.nodes.len()).sum();
     if total > MAX_MANIFEST_NODES {
         return Err(AdmissionError::TooManyNodes);
@@ -617,12 +676,21 @@ pub(crate) fn admit_intents(
         consumed: Vec::with_capacity(total),
         minted: Vec::with_capacity(total),
         lowered: Vec::with_capacity(total),
+        frames: Vec::with_capacity(total),
+        calls: Vec::with_capacity(total),
+        declaration: Declaration::default(),
+        table_len: 0,
     };
     for &(intent_index, local_index) in &order {
         lower.lower_node(intent_index, local_index)?;
     }
     let Lower {
-        consumed, lowered, ..
+        consumed,
+        lowered,
+        frames,
+        calls,
+        declaration,
+        ..
     } = lower;
 
     // Linearity: nothing dangles, yields included.
@@ -637,7 +705,13 @@ pub(crate) fn admit_intents(
         }
     }
 
-    Ok(Manifest { nodes: lowered })
+    Ok(Admitted {
+        manifest: Manifest { nodes: lowered },
+        identity,
+        frames,
+        calls,
+        declaration,
+    })
 }
 
 /// Bindings and parameter consumption, intent by intent: one binding
@@ -788,6 +862,14 @@ struct Lower<'a> {
     /// presents all of it.
     minted: Vec<Vec<Presented>>,
     lowered: Vec<Node>,
+    frames: Vec<FrameDeclaration>,
+    calls: Vec<NodeCall>,
+    /// The transaction's whole declaration, folded frame by frame.
+    declaration: Declaration,
+    /// Effects logged so far across every frame: the offset the next
+    /// frame's clause spans are relative to, and therefore the base of
+    /// every handle position that frame's binding resolves to.
+    table_len: u32,
 }
 
 impl Lower<'_> {
@@ -844,6 +926,52 @@ impl Lower<'_> {
         let (claims, authority) =
             judge_gate(gate, signature, node, &eval_inputs, self.hasher, node_index)?;
         let node_outputs = project_outputs(signature, &eval_inputs, self.hasher, node_index)?;
+
+        // The frame: this node's effect signature, evaluated over the
+        // same inputs everything above evaluated over. The one place the
+        // declaration comes into being.
+        let frame = evaluate_declaration(&signature.effects, &eval_inputs, self.hasher).map_err(
+            |source| AdmissionError::Eval {
+                node: node_index,
+                source,
+            },
+        )?;
+        own_prefix_only(&frame, node.target.address(), node_index)?;
+        // The frame's handles occupy the run of the capability table
+        // starting here, so the offset is taken before the frame is
+        // logged.
+        let offset = self.table_len;
+        self.calls.push(lower_call(
+            node_index,
+            signature,
+            &Lowering {
+                package: meta.package,
+                declaration: &frame,
+                offset,
+                target: node.target.address(),
+                method: &node.method,
+                node_inputs: &inputs,
+                node_outputs: &node_outputs,
+                evidence: &evidence,
+                authority: authority.as_ref(),
+                inputs: &eval_inputs,
+                hasher: self.hasher,
+            },
+        )?);
+        self.table_len = offset
+            .checked_add(u32::try_from(frame.ordered.len()).unwrap_or(u32::MAX))
+            .ok_or(AdmissionError::TableOverflow)?;
+        // The union is folded access by access, so reserve amounts two
+        // clauses declared on one target sum exactly as the set
+        // semantics say — and an overflow is this fold's refusal.
+        for access in &frame.ordered {
+            self.declaration.set.insert(access.effect)?;
+            self.declaration.ordered.push(*access);
+        }
+        self.frames.push(FrameDeclaration {
+            node: node_index,
+            ordered: frame.ordered,
+        });
 
         self.minted.push(claims);
         self.consumed.push(vec![0; node_outputs.len()]);
@@ -1221,4 +1349,248 @@ fn project_outputs(
         });
     }
     Ok(node_outputs)
+}
+
+/// Refuse a frame declaring an effect on a prefix that is not its own.
+///
+/// A declaration bounds what execution may touch; this bounds what a
+/// declaration may claim. Without it the two are the same sentence read
+/// twice, and a package reaches any cell it can name — a stranger's
+/// balance among them — with no method's accessibility in the path,
+/// because reaching for a cell is not calling the object that owns it.
+///
+/// Judged on the evaluated effect rather than on the expression that
+/// produced it. The publish gate refuses the expression, so an author
+/// hears about it first; this cannot be outgrown by an expression shape
+/// nobody anticipated, because an effect either carries the frame's own
+/// owner or it does not.
+///
+/// The nullifier a bound subintent spends is not judged here: it sits
+/// under its signer's prefix, no signature declared it, and it reaches
+/// the routing view as a kernel effect rather than through any frame.
+fn own_prefix_only(
+    declaration: &Declaration,
+    instance: Address,
+    node_index: u32,
+) -> Result<(), AdmissionError> {
+    for (position, access) in declaration.ordered.iter().enumerate() {
+        let owner = access.effect.target.owner();
+        if owner != instance {
+            return Err(AdmissionError::ForeignDeclaration {
+                node: node_index,
+                clause: u32::try_from(position).unwrap_or(u32::MAX),
+                owner,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// What lowering one frame's binding needs beyond the frame itself.
+struct Lowering<'a> {
+    package: PackageHash,
+    declaration: &'a Declaration,
+    offset: u32,
+    target: Address,
+    method: &'a str,
+    node_inputs: &'a [NodeInput],
+    node_outputs: &'a [(Address, EdgeContent)],
+    evidence: &'a [Presented],
+    authority: Option<&'a AuthorityGate>,
+    inputs: &'a EvalInputs<'a>,
+    hasher: &'a dyn Hasher,
+}
+
+/// The argument a handle binding lowers to: the capability at the
+/// clause's position, or the absence the guest is told about.
+///
+/// A span of one is the ordinary case. Zero is a clause that was guarded
+/// out, and the kind travels with the argument because nothing
+/// downstream can recover it — an engine reads a handle's type off the
+/// capability at its rep, and there is none. More than one is a
+/// `for-each`, whose width is the instance's rather than the signature's,
+/// so no fixed export parameter can name it.
+///
+/// A span is one or zero and never more: the ABI check has already
+/// refused a handle naming anything but a single access, and an access
+/// contributes one entry when it is declared and none when it is not.
+fn bind_handle(
+    signature: &MethodSignature,
+    declaration: &Declaration,
+    clause: u32,
+    offset: u32,
+) -> Option<CallArg> {
+    let index = usize::try_from(clause).ok()?;
+    let (start, len) = declaration.clause_spans.get(index).copied()?;
+    match len {
+        1 => start.checked_add(offset).map(CallArg::Handle),
+        0 => signature
+            .effects
+            .get(index)
+            .and_then(materialized_kind)
+            .map(CallArg::AbsentHandle),
+        _ => None,
+    }
+}
+
+/// Lower one node's ABI binding against the inputs bound to it.
+///
+/// Everything a binding names is settled here except a bucket's amount,
+/// which does not exist until its producer runs — that stays an edge for
+/// the walk to read. A handle resolves through the clause it names, which
+/// is why the binding names a clause rather than a table position: a
+/// guest's parameter list is a function of its own signature, and table
+/// positions past the first would depend on the instance configuration a
+/// `for-each` clause maps over.
+fn lower_call(
+    node_index: u32,
+    signature: &MethodSignature,
+    lowering: &Lowering<'_>,
+) -> Result<NodeCall, AdmissionError> {
+    let Lowering {
+        package,
+        declaration,
+        offset,
+        target,
+        method,
+        node_inputs,
+        node_outputs,
+        evidence,
+        authority,
+        inputs,
+        hasher,
+    } = *lowering;
+    let mut args = Vec::with_capacity(signature.abi.len());
+    for (position, binding) in signature.abi.iter().enumerate() {
+        let param = u32::try_from(position).unwrap_or(u32::MAX);
+        let unbindable = |reason: String| AdmissionError::UnbindableAbiParam {
+            node: node_index,
+            param,
+            reason,
+        };
+        args.push(match binding {
+            AbiParam::Handle(clause) => bind_handle(signature, declaration, *clause, offset)
+                .ok_or_else(|| unbindable(format!("clause {clause} binds no handle")))?,
+            AbiParam::Guard(clause) => {
+                let taken = usize::try_from(*clause)
+                    .ok()
+                    .and_then(|index| declaration.clause_taken.get(index))
+                    .copied()
+                    .ok_or_else(|| {
+                        unbindable(format!("no effect clause {clause} in the signature"))
+                    })?;
+                CallArg::Bool(taken)
+            }
+            AbiParam::Bucket(declared) => {
+                let input = usize::try_from(*declared)
+                    .ok()
+                    .and_then(|index| node_inputs.get(index))
+                    .ok_or_else(|| unbindable(format!("no bound input {declared}")))?;
+                match input {
+                    NodeInput::Edge { source, output, .. } => CallArg::Bucket {
+                        source: *source,
+                        output: *output,
+                    },
+                    NodeInput::Literal(_) => {
+                        return Err(unbindable(format!(
+                            "input {declared} is a literal, not a value edge"
+                        )));
+                    }
+                }
+            }
+            AbiParam::Issuer => CallArg::Issuer,
+            AbiParam::Derived(expr) => {
+                let value =
+                    evaluate_expr(expr, inputs, hasher).map_err(|source| AdmissionError::Eval {
+                        node: node_index,
+                        source,
+                    })?;
+                guest_arg(&value).ok_or_else(|| {
+                    unbindable(format!("a {} has no guest representation", value.kind()))
+                })?
+            }
+        });
+    }
+    Ok(NodeCall {
+        package,
+        target,
+        export: method.to_owned(),
+        args,
+        edges: edge_bounds(node_inputs),
+        // The declared cell shape of each produced edge, from the same
+        // output projections everything else evaluated against.
+        outputs: node_outputs
+            .iter()
+            .map(|(_, content)| EdgeKind::of(content))
+            .collect(),
+        issues: signature
+            .issues
+            .as_deref()
+            .map(|mark| issued_resource(hasher, target, mark).address()),
+        evidence: evidence.to_vec(),
+        authority: authority.cloned(),
+    })
+}
+
+/// Every value edge a node consumes, with the bound its consumer signed.
+///
+/// Taken from the node's bound inputs rather than from its ABI binding,
+/// because the two are not the same set: a method that forwards its
+/// funds to a callee reads no amount, so nothing in its own ABI carries
+/// the edge — and the signed bound is owed a check all the same.
+fn edge_bounds(node_inputs: &[NodeInput]) -> Vec<EdgeBound> {
+    node_inputs
+        .iter()
+        .enumerate()
+        .filter_map(|(position, input)| match input {
+            NodeInput::Edge {
+                source,
+                output,
+                content,
+                bounds,
+                ..
+            } => Some(EdgeBound {
+                source: *source,
+                output: *output,
+                kind: EdgeKind::of(content),
+                param: u32::try_from(position).unwrap_or(u32::MAX),
+                bounds: *bounds,
+            }),
+            NodeInput::Literal(_) => None,
+        })
+        .collect()
+}
+
+/// A derived value's guest form. Amounts and addresses cross as their
+/// canonical fixed-width bytes, and an id set crosses as the same
+/// count-prefixed cell an edge carries — one framing wherever ids move.
+/// The remaining compound kinds have no ABI shape and refuse rather than
+/// picking an encoding the two runtimes would have to agree on
+/// separately.
+fn guest_arg(value: &Value) -> Option<CallArg> {
+    match value {
+        Value::U64(scalar) => Some(CallArg::U64(*scalar)),
+        Value::U128(amount) => Some(CallArg::Bytes(amount.to_le_bytes().to_vec())),
+        Value::Address(address) => Some(CallArg::Address(*address)),
+        Value::Bytes(bytes) => Some(CallArg::Bytes(bytes.clone())),
+        Value::List(elements) => {
+            if elements.len() > MAX_IDS_PER_EDGE {
+                return None;
+            }
+            let ids = elements
+                .iter()
+                .map(|element| match element {
+                    Value::U64(id) => Some(*id),
+                    _ => None,
+                })
+                .collect::<Option<Vec<u64>>>()?;
+            Some(CallArg::Ids(ids))
+        }
+        // A judgment has no guest representation and no export takes
+        // one: a selection hands over the value it chose, and a body
+        // needing the comparison rebuilds it from operands that do
+        // cross. A derived parameter evaluating to a judgment is refused
+        // here like every other unrepresentable kind.
+        Value::Key(_) | Value::Bucket { .. } | Value::Tuple(_) | Value::Bool(_) => None,
+    }
 }
