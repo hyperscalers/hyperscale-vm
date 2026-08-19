@@ -20,15 +20,15 @@ use crate::dsl::{EvalError, EvalInputs, evaluate_expr};
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, ManifestGraph};
 use crate::hash::Hasher;
+use crate::instance::{InstanceMeta, InstanceRegistry};
 use crate::invoke::EdgeKind;
 use crate::manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};
-use crate::metadata::{
-    AbiError, Accessibility, CustodyClaim, GateShape, InstanceMeta, InstanceRegistry,
-    MetadataCache, PackageHash, ParamType,
-};
+use crate::metadata::{MetadataCache, PackageHash};
 use crate::presented::Presented;
+use crate::publish::AbiError;
 use crate::resource::holdings_collection;
 use crate::route::MAX_MANIFEST_NODES;
+use crate::signature::{Accessibility, CustodyClaim, GateShape, ParamType};
 use crate::types::{EdgeContent, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::VAULT;
 

@@ -24,13 +24,16 @@ pub mod envelope;
 pub mod footprint;
 pub mod graph;
 pub mod hash;
+pub mod instance;
 pub mod invoke;
 pub mod manifest;
 pub mod metadata;
 pub mod presented;
+pub mod publish;
 pub mod resource;
 pub mod route;
 pub mod rule;
+pub mod signature;
 pub mod types;
 pub mod vectors;
 pub mod vocabulary;
@@ -69,15 +72,16 @@ pub use hyperscale_vm_types::{
     MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, SettledWrites, StateWrites, TX_UNITS, TxHash,
     VERIFY_WEIGHT, declared_work, entry_leaf_key, signature_work, work_units,
 };
+pub use instance::{InstanceMeta, InstanceRegistry};
 pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, distinct_ids};
 pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};
 pub use metadata::{
-    AbiError, AbiParam, Accessibility, CustodyClaim, DeclarationError, GateShape, InstanceMeta,
-    InstanceRegistry, MetadataBoundsError, MetadataCache, MethodSignature, PACKAGE_SLOT,
-    PackageHash, PackageMetadata, ParamType, Totality, check_abi, check_declarations,
-    check_metadata, package_hash, package_key,
+    MetadataCache, PACKAGE_SLOT, PackageHash, PackageMetadata, package_hash, package_key,
 };
 pub use presented::Presented;
+pub use publish::{
+    AbiError, DeclarationError, MetadataBoundsError, check_abi, check_declarations, check_metadata,
+};
 pub use resource::{
     Fungibility, ResourceRecord, holdings_collection, holdings_entry, holdings_range,
     instance_data_key, resource_record_key,
@@ -88,6 +92,9 @@ pub use route::{
 };
 pub use rule::{
     MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, StoredRule,
+};
+pub use signature::{
+    AbiParam, Accessibility, CustodyClaim, GateShape, MethodSignature, ParamType, Totality,
 };
 pub use types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, NativeRole,

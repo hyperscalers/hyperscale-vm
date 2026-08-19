@@ -16,12 +16,12 @@ use crate::dsl::{
     evaluate_expr, materialized_kind,
 };
 use crate::hash::Hasher;
+use crate::instance::{InstanceMeta, InstanceRegistry};
 use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall};
 use crate::manifest::{Manifest, ManifestHash, Node, NodeInput};
-use crate::metadata::{
-    AbiError, AbiParam, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature,
-    PackageHash, Totality, check_abi,
-};
+use crate::metadata::{MetadataCache, PackageHash};
+use crate::publish::{AbiError, check_abi};
+use crate::signature::{AbiParam, MethodSignature, Totality};
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, ShardId, Value, resource_address};
 
 /// Resolves an owner prefix to the shard holding it.
@@ -1037,11 +1037,11 @@ mod tests {
     };
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::hash::{Hash32, Hasher, TestHasher};
+    use crate::instance::{InstanceMeta, InstanceRegistry};
     use crate::manifest::{Bounds, Manifest, ManifestHash, Node, NodeInput};
-    use crate::metadata::{
-        AbiError, InstanceMeta, InstanceRegistry, MetadataCache, MethodSignature, PackageHash,
-        PackageMetadata, ParamType, Totality,
-    };
+    use crate::metadata::{MetadataCache, PackageHash, PackageMetadata};
+    use crate::publish::AbiError;
+    use crate::signature::{MethodSignature, ParamType, Totality};
     use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, ShardId, SlotId, Value, child_key};
 
     fn pkg(name: &str) -> PackageHash {

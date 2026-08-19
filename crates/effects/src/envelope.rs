@@ -34,8 +34,9 @@ use crate::admission::{
 };
 use crate::graph::{Constraint, EdgeRef, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
+use crate::instance::{InstanceMeta, InstanceRegistry};
 use crate::manifest::ManifestHash;
-use crate::metadata::{InstanceMeta, InstanceRegistry, MetadataCache};
+use crate::metadata::MetadataCache;
 use crate::route::{MAX_MANIFEST_NODES, RouteError, Routing, ShardResolver, route};
 use crate::types::{SlotId, child_key};
 

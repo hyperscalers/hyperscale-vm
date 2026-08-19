@@ -13,7 +13,8 @@ use hyperscale_hbor::{from_slice_with_depth, to_vec_with_depth};
 
 use crate::dsl::{MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH};
 use crate::hash::Hasher;
-use crate::metadata::{PackageHash, PackageMetadata, check_metadata};
+use crate::metadata::{PackageHash, PackageMetadata};
+use crate::publish::check_metadata;
 use crate::types::MAX_VALUE_DEPTH;
 
 /// The custom section effect metadata rides in.
@@ -264,7 +265,8 @@ mod tests {
     };
     use crate::dsl::{Clause, Expr, MAX_EXPR_DEPTH, ModeExpr, TargetExpr};
     use crate::hash::TestHasher;
-    use crate::metadata::{MethodSignature, PackageMetadata, Totality, package_hash};
+    use crate::metadata::{PackageMetadata, package_hash};
+    use crate::signature::{MethodSignature, Totality};
 
     fn empty_component() -> Vec<u8> {
         let mut artifact = b"\0asm".to_vec();
