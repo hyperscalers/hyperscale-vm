@@ -37,6 +37,7 @@ pub use validator::{ProfileError, validate_component, validate_core_module};
 pub use {
     abort::{CallError, classify, exhausted, trap_reason},
     call::{Returned, call_export},
+    charges::instantiate_charged,
     engine::{blessed_config, blessed_engine},
     world::{
         AmountCell, AmountRead, Bucket, DeltaCell, HostRefusal, InstanceRange, Issuer, LockedCell,

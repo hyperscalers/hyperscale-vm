@@ -31,7 +31,8 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{CVal, ExecError, RefComponent, RefComponentInstance, Trap as RefTrap};
 use hyperscale_vm_runtime::{
-    Returned, add_kernel_to_linker, blessed_engine, call_export, check_method, classify, exhausted,
+    InstantiationCharges, Returned, add_kernel_to_linker, blessed_engine, call_export,
+    check_method, classify, exhausted, instantiate_charged, instantiation_charges,
     validate_component,
 };
 use hyperscale_vm_sdk::hbor::from_slice;
@@ -295,7 +296,7 @@ const PACKAGES: &[(&str, &str)] = &[
 /// being no part of it.
 struct Engines {
     engine: Engine,
-    blessed: BTreeMap<&'static str, Component>,
+    blessed: BTreeMap<&'static str, (Component, InstantiationCharges)>,
     reference: BTreeMap<&'static str, RefComponent>,
     guests: BTreeMap<PackageHash, &'static str>,
 }
@@ -310,7 +311,13 @@ impl Engines {
         ] {
             let bytes = build_guest(name)?;
             validate_component(&bytes).with_context(|| format!("profile validation of {name}"))?;
-            blessed.insert(name, Component::new(&engine, &bytes)?);
+            blessed.insert(
+                name,
+                (
+                    Component::new(&engine, &bytes)?,
+                    instantiation_charges(&bytes)?,
+                ),
+            );
             reference.insert(name, RefComponent::decode(&bytes)?);
         }
         let guests = PACKAGES
@@ -347,11 +354,11 @@ impl GuestBackend for BlessedBackend<'_> {
         let mut linker = Linker::<KernelSession>::new(&self.engines.engine);
         add_kernel_to_linker(&mut linker).expect("wiring");
         let mut store = Store::new(&self.engines.engine, session);
-        store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
-        let component = &self.engines.blessed[self.engines.guest_for(call.package)];
-        let instance = linker
-            .instantiate(&mut store, component)
-            .expect("instantiate");
+        let (component, charges) = &self.engines.blessed[self.engines.guest_for(call.package)];
+        let instance = instantiate_charged(&mut store, call.fuel_budget.min(FUEL), charges, |s| {
+            linker.instantiate(s, component)
+        })
+        .expect("instantiate");
         let outcome = call_export(&mut store, &instance, call.export, call.args);
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);
         let result = invoked(outcome);

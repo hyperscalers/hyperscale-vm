@@ -20,8 +20,8 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
 use hyperscale_vm_ref::{CVal, ExecError, RefComponent, RefComponentInstance, Trap as RefTrap};
 use hyperscale_vm_runtime::{
-    Returned, add_kernel_to_linker, blessed_engine, call_export, classify, exhausted,
-    validate_component,
+    InstantiationCharges, Returned, add_kernel_to_linker, blessed_engine, call_export, classify,
+    exhausted, instantiate_charged, instantiation_charges, validate_component,
 };
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_testing::Native;
@@ -148,6 +148,7 @@ fn batch_entry(
 struct BlessedComposed {
     engine: Engine,
     component: Component,
+    charges: InstantiationCharges,
 }
 
 impl GuestBackend for BlessedComposed {
@@ -155,9 +156,10 @@ impl GuestBackend for BlessedComposed {
         let mut linker = Linker::<KernelSession>::new(&self.engine);
         add_kernel_to_linker(&mut linker).expect("wiring");
         let mut store = Store::new(&self.engine, session);
-        store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
-        let instance = linker
-            .instantiate(&mut store, &self.component)
+        let instance =
+            instantiate_charged(&mut store, call.fuel_budget.min(FUEL), &self.charges, |s| {
+                linker.instantiate(s, &self.component)
+            })
             .expect("instantiate");
         let outcome = call_export(&mut store, &instance, call.export, call.args);
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);
@@ -301,6 +303,7 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<(BatchOutcome, Mem
     let engine = blessed_engine()?;
     let blessed = BlessedComposed {
         component: Component::new(&engine, &bytes)?,
+        charges: instantiation_charges(&bytes)?,
         engine,
     };
     let reference = RefComposed {

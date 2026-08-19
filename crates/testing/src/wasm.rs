@@ -11,8 +11,8 @@ use hyperscale_vm_cli::compile;
 use hyperscale_vm_effects::PackageHash;
 use hyperscale_vm_kernel::{GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession};
 use hyperscale_vm_runtime::{
-    Returned, add_kernel_to_linker, blessed_engine, call_export, classify, exhausted,
-    validate_component,
+    InstantiationCharges, Returned, add_kernel_to_linker, blessed_engine, call_export, classify,
+    exhausted, instantiate_charged, instantiation_charges, validate_component,
 };
 use hyperscale_vm_types::AbortReason;
 use wasmtime::component::{Component, Linker};
@@ -29,7 +29,7 @@ const FUEL: u64 = 1_000_000_000;
 /// Compiled packages, by the content address a call names them at.
 pub struct Blessed {
     engine: Engine,
-    components: BTreeMap<PackageHash, Component>,
+    components: BTreeMap<PackageHash, (Component, InstantiationCharges)>,
 }
 
 impl Blessed {
@@ -43,9 +43,13 @@ impl Blessed {
     /// Take a package whose component bytes are already to hand.
     pub fn seed(&mut self, package: PackageHash, component: &[u8]) {
         validate_component(component).expect("a seeded package clears the profile");
+        let charges = instantiation_charges(component).expect("a validated package derives");
         self.components.insert(
             package,
-            Component::new(&self.engine, component).expect("a seeded package compiles"),
+            (
+                Component::new(&self.engine, component).expect("a seeded package compiles"),
+                charges,
+            ),
         );
     }
 
@@ -61,8 +65,7 @@ impl Blessed {
 impl GuestBackend for Blessed {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
         let mut store = Store::new(&self.engine, session);
-        store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
-        let Some(component) = self.components.get(&call.package) else {
+        let Some((component, charges)) = self.components.get(&call.package) else {
             return InvokeResult {
                 session: store.into_data(),
                 fuel: 0,
@@ -72,8 +75,10 @@ impl GuestBackend for Blessed {
         };
         let mut linker = Linker::<KernelSession>::new(&self.engine);
         add_kernel_to_linker(&mut linker).expect("the kernel world wires");
-        let instance = linker
-            .instantiate(&mut store, component)
+        let instance =
+            instantiate_charged(&mut store, call.fuel_budget.min(FUEL), charges, |store| {
+                linker.instantiate(store, component)
+            })
             .expect("a published package instantiates");
         let outcome = call_export(&mut store, &instance, call.export, call.args);
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);

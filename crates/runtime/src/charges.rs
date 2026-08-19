@@ -14,6 +14,10 @@
 //! check this derivation against an independently maintained model.
 
 use wasmparser::{DataKind, ElementKind, Parser, Payload};
+#[cfg(feature = "engine")]
+use wasmtime::component::Instance;
+#[cfg(feature = "engine")]
+use wasmtime::{Result, Store, Trap};
 
 use crate::frames::{InstanceDef, instance_def};
 use crate::validator::ProfileError;
@@ -96,6 +100,46 @@ pub fn module_instantiation_charges(bytes: &[u8]) -> Result<InstantiationCharges
     let mut charges = Vec::new();
     push_module_charges(&facts, &mut charges);
     Ok(InstantiationCharges { charges })
+}
+
+/// Instantiates a component charging the derived sequence in place of the
+/// engine's own accounting.
+///
+/// The charge list is replayed charge-then-check against `budget` first —
+/// the order both engines charge in — so an under-budget call refuses
+/// before any instantiation work happens, with exactly the residue
+/// metering the work would have left: an exhaustion trap reports nothing
+/// remaining, so the whole budget is spent. The instantiation itself then
+/// runs under sentinel fuel, making the engine's internal accounting
+/// invisible, and the store is left holding `budget` minus the replayed
+/// charges for the call that follows.
+///
+/// # Errors
+///
+/// [`Trap::OutOfFuel`] when the budget dies in the replay; otherwise
+/// whatever `instantiate` itself returns.
+#[cfg(feature = "engine")]
+pub fn instantiate_charged<T, F>(
+    store: &mut Store<T>,
+    budget: u64,
+    charges: &InstantiationCharges,
+    instantiate: F,
+) -> Result<Instance>
+where
+    F: FnOnce(&mut Store<T>) -> Result<Instance>,
+{
+    let mut spent = 0u64;
+    for &charge in charges.charges() {
+        spent = spent.saturating_add(charge);
+        if spent >= budget {
+            store.set_fuel(0)?;
+            return Err(Trap::OutOfFuel.into());
+        }
+    }
+    store.set_fuel(u64::MAX)?;
+    let instance = instantiate(store)?;
+    store.set_fuel(budget - spent)?;
+    Ok(instance)
 }
 
 /// What the derivation reads off one core module.

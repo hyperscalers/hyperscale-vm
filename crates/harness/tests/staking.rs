@@ -33,8 +33,8 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{CVal, ExecError, RefComponent, RefComponentInstance, Trap as RefTrap};
 use hyperscale_vm_runtime::{
-    Returned, add_kernel_to_linker, blessed_engine, call_export, classify, exhausted,
-    validate_component,
+    InstantiationCharges, Returned, add_kernel_to_linker, blessed_engine, call_export, classify,
+    exhausted, instantiate_charged, instantiation_charges, validate_component,
 };
 use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, staking};
@@ -289,22 +289,22 @@ fn batch_entry(
 /// content address, so resolution is a lookup rather than an assumption.
 struct BlessedPackages {
     engine: Engine,
-    components: BTreeMap<PackageHash, Component>,
+    components: BTreeMap<PackageHash, (Component, InstantiationCharges)>,
 }
 
 impl GuestBackend for BlessedPackages {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
-        let component = self
+        let (component, charges) = self
             .components
             .get(&call.package)
             .expect("the call names a published package");
         let mut linker = Linker::<KernelSession>::new(&self.engine);
         add_kernel_to_linker(&mut linker).expect("wiring");
         let mut store = Store::new(&self.engine, session);
-        store.set_fuel(call.fuel_budget.min(FUEL)).expect("fuel");
-        let instance = linker
-            .instantiate(&mut store, component)
-            .expect("instantiate");
+        let instance = instantiate_charged(&mut store, call.fuel_budget.min(FUEL), charges, |s| {
+            linker.instantiate(s, component)
+        })
+        .expect("instantiate");
         let outcome = call_export(&mut store, &instance, call.export, call.args);
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);
         let result = invoked(outcome);
@@ -474,9 +474,13 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> Result<(BatchOutcome, Mem
         (staking_pkg(), STAKING_COMPONENT),
     ] {
         validate_component(bytes).context("profile validation")?;
-        blessed
-            .components
-            .insert(package, Component::new(&blessed.engine, bytes)?);
+        blessed.components.insert(
+            package,
+            (
+                Component::new(&blessed.engine, bytes)?,
+                instantiation_charges(bytes)?,
+            ),
+        );
         reference
             .components
             .insert(package, RefComponent::decode(bytes)?);
