@@ -24,5 +24,5 @@ mod call;
 mod host;
 pub mod meter;
 
-pub use call::{GuestArg, Invoked};
+pub use call::{GuestArg, Invocation, Invoked};
 pub use host::KernelHost;

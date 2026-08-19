@@ -11,8 +11,8 @@ use hyperscale_vm_cli::compile;
 use hyperscale_vm_effects::PackageHash;
 use hyperscale_vm_kernel::{GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession};
 use hyperscale_vm_runtime::{
-    InstantiationCharges, Returned, add_kernel_to_linker, blessed_engine, call_export, classify,
-    exhausted, instantiate_charged, instantiation_charges, validate_component,
+    InstantiationCharges, add_kernel_to_linker, blessed_engine, instantiate_charged,
+    instantiation_charges, invoke_export, validate_component,
 };
 use hyperscale_vm_types::AbortReason;
 use wasmtime::component::{Component, Linker};
@@ -80,19 +80,18 @@ impl GuestBackend for Blessed {
                 linker.instantiate(store, component)
             })
             .expect("a published package instantiates");
-        let outcome = call_export(&mut store, &instance, call.export, call.args);
-        let exhausted = outcome.as_ref().err().is_some_and(exhausted);
-        let result = match outcome {
-            Ok(Returned::Edges(reps)) => Invoked::Produced(reps),
-            Ok(Returned::Declined(code)) => Invoked::Declined(code),
-            Err(error) => Invoked::Aborted(classify(&error)),
-        };
-        let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
+        let end = invoke_export(
+            &mut store,
+            &instance,
+            call.export,
+            call.args,
+            call.fuel_budget.min(FUEL),
+        );
         InvokeResult {
             session: store.into_data(),
-            fuel,
-            result,
-            exhausted,
+            fuel: end.fuel,
+            result: end.result,
+            exhausted: end.exhausted,
         }
     }
 }

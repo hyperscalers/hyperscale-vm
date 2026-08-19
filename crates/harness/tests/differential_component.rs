@@ -367,7 +367,7 @@ fn run_ref(
         .map(|(rep, kind)| CVal::Borrow(rep, kind))
         .collect();
     let mut instance =
-        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
     let outcome = match instance.invoke(export, &args)? {
         Ok(values) => match values.as_slice() {
             [CVal::U64(v)] => LaneOutcome::Value(*v),
@@ -609,7 +609,7 @@ fn freed_handle_slots_reuse_most_recent_first_across_invokes() -> Result<()> {
             .collect()
     };
     let mut instance =
-        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
     instance
         .invoke("transfer", &to_cvals(&transfer_args))?
         .map_err(|e| format_err!("ref transfer failed: {e:?}"))?;

@@ -68,3 +68,20 @@ pub enum Invoked {
     /// environment would not reproduce.
     Unavailable(AbortReason),
 }
+
+/// How one invocation ended, as an engine reports it: the verdict, the
+/// fuel it consumed, and whether the budget exhausted.
+///
+/// Exhaustion is the engine's own flag, not an inference from the
+/// class: whether a trap was *caused by* the counter is a fact the
+/// engine knows and a class reader can only guess at, and two engines
+/// must agree on it exactly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Invocation {
+    /// The verdict.
+    pub result: Invoked,
+    /// Fuel consumed of the call's budget.
+    pub fuel: u64,
+    /// Whether the budget exhausted.
+    pub exhausted: bool,
+}

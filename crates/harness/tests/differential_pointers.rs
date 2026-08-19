@@ -141,8 +141,8 @@ fn both<T>(
     };
 
     let comp = RefComponent::decode(&bytes)?;
-    let mut interpreted =
-        RefComponentInstance::instantiate(&comp, session()).map_err(|(_, error)| error)?;
+    let mut interpreted = RefComponentInstance::instantiate(&comp, session(), u64::MAX)
+        .map_err(|(_, error)| error)?;
     let reference = match interpreted.invoke(export, args)? {
         Ok(_) => Verdict::Ran,
         Err(error) => Verdict::Aborted(format!("{:?}", error.abort_reason())),

@@ -297,7 +297,7 @@ impl GuestRunner for RefRunner {
                 )],
             ),
         };
-        let mut instance = RefComponentInstance::instantiate(&self.comp, session)
+        let mut instance = RefComponentInstance::instantiate(&self.comp, session, u64::MAX)
             .map_err(|(_, error)| error)
             .expect("decode");
         let answer = instance.invoke(export, &args).expect("invoke");

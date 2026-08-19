@@ -14,14 +14,13 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult,
-    Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Receipt, decode_amount,
-    execute_batch,
+    KernelSession, Locality, ManifestWalk, MemoryStore, Receipt, decode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
-use hyperscale_vm_ref::{CVal, ExecError, RefComponent, RefComponentInstance, Trap as RefTrap};
+use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{
-    InstantiationCharges, Returned, add_kernel_to_linker, blessed_engine, call_export, classify,
-    exhausted, instantiate_charged, instantiation_charges, validate_component,
+    InstantiationCharges, add_kernel_to_linker, blessed_engine, instantiate_charged,
+    instantiation_charges, invoke_export, validate_component,
 };
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_testing::Native;
@@ -161,15 +160,18 @@ impl GuestBackend for BlessedComposed {
                 linker.instantiate(s, &self.component)
             })
             .expect("instantiate");
-        let outcome = call_export(&mut store, &instance, call.export, call.args);
-        let exhausted = outcome.as_ref().err().is_some_and(exhausted);
-        let result = invoked(outcome);
-        let fuel = call.fuel_budget.min(FUEL) - store.get_fuel().expect("fuel");
+        let end = invoke_export(
+            &mut store,
+            &instance,
+            call.export,
+            call.args,
+            call.fuel_budget.min(FUEL),
+        );
         InvokeResult {
             session: store.into_data(),
-            fuel,
-            result,
-            exhausted,
+            fuel: end.fuel,
+            result: end.result,
+            exhausted: end.exhausted,
         }
     }
 }
@@ -182,54 +184,17 @@ struct RefComposed {
 impl GuestBackend for RefComposed {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
         let args: Vec<CVal> = call.args.iter().map(CVal::from).collect();
-        let mut instance = RefComponentInstance::instantiate(&self.component, session)
-            .map_err(|(_, error)| error)
-            .expect("instantiate");
-        instance.set_fuel_limit(call.fuel_budget.min(FUEL));
-        let outcome = instance.invoke(call.export, &args).expect("invoke");
-        let fuel = instance.fuel_consumed();
-        let exhausted = matches!(outcome, Err(ExecError::Trap(RefTrap::OutOfFuel)));
-        let result = match outcome {
-            Ok(values) => lifted(&values),
-            Err(error) => Invoked::Aborted(error.abort_reason()),
-        };
+        let mut instance =
+            RefComponentInstance::instantiate(&self.component, session, call.fuel_budget.min(FUEL))
+                .map_err(|(_, error)| error)
+                .expect("instantiate");
+        let end = instance.invoke_kernel(call.export, &args);
         InvokeResult {
             session: instance.into_host(),
-            fuel,
-            result,
-            exhausted,
+            fuel: end.fuel,
+            result: end.result,
+            exhausted: end.exhausted,
         }
-    }
-}
-
-/// The blessed engine's verdict as the kernel's.
-fn invoked(outcome: Result<Returned>) -> Invoked {
-    match outcome {
-        Ok(Returned::Edges(reps)) => Invoked::Produced(reps),
-        Ok(Returned::Declined(code)) => Invoked::Declined(code),
-        Err(error) => Invoked::Aborted(classify(&error)),
-    }
-}
-
-/// The reference interpreter's lifted results as the kernel's verdict.
-fn lifted(values: &[CVal]) -> Invoked {
-    match values {
-        [] => Invoked::Produced(Vec::new()),
-        // Every value is an edge, or the shape is one the convention
-        // does not fix.
-        edges if !edges.is_empty() && edges.iter().all(|v| matches!(v, CVal::Own(_))) => {
-            Invoked::Produced(
-                edges
-                    .iter()
-                    .map(|v| match v {
-                        CVal::Own(rep) => *rep,
-                        _ => unreachable!("every value is an owned edge"),
-                    })
-                    .collect(),
-            )
-        }
-        [CVal::Declined(code)] => Invoked::Declined(*code),
-        _ => Invoked::Aborted(AbortReason::BadReturnShape),
     }
 }
 

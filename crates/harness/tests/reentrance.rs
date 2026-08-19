@@ -56,8 +56,7 @@ fn run_blessed(bytes: &[u8]) -> Result<Error> {
 fn run_ref(bytes: &[u8]) -> Result<ExecError> {
     let comp = RefComponent::decode(bytes)?;
     let mut instance =
-        RefComponentInstance::instantiate(&comp, session()).map_err(|(_, error)| error)?;
-    instance.set_fuel_limit(FUEL);
+        RefComponentInstance::instantiate(&comp, session(), FUEL).map_err(|(_, error)| error)?;
     Ok(instance
         .invoke("draw", &[])?
         .expect_err("the re-entrant realloc must not return a value"))

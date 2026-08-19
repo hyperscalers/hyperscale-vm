@@ -31,6 +31,23 @@ pub enum DecodeError {
     ArgumentMismatch,
 }
 
+/// Why a component did not instantiate: the artifact would not decode,
+/// or core instantiation trapped — an out-of-bounds active segment, or
+/// a budget that died while segments were applied.
+///
+/// The trap arm is what makes exhaustion recognizable at this seam: an
+/// embedder maps [`Trap::OutOfFuel`] here to the sender's own
+/// deterministic abort, and everything else to a refused artifact.
+#[derive(Debug, Error)]
+pub enum InstantiateError {
+    /// The artifact would not decode.
+    #[error(transparent)]
+    Decode(#[from] DecodeError),
+    /// Core instantiation trapped.
+    #[error("instantiation trapped: {0}")]
+    Trap(Trap),
+}
+
 /// An execution trap. Variants mirror the trap kinds the blessed engine
 /// reports, so the differential harness compares them directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]

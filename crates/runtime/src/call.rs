@@ -11,12 +11,12 @@
 //! constructs are that world's, and because the mapping from a mode to
 //! its handle type is the same one the linker registers.
 
-use hyperscale_vm_embed::GuestArg;
+use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
 use hyperscale_vm_types::{Address, CellKind, ISSUER_REP};
 use wasmtime::component::{Instance, Resource, ResourceAny, Val};
-use wasmtime::{AsContextMut, Error, Result};
+use wasmtime::{AsContextMut, Error, Result, Store};
 
-use crate::abort::CallError;
+use crate::abort::{CallError, classify, exhausted};
 use crate::world::{
     AmountCell, AmountRead, Bucket, DeltaCell, InstanceRange, Issuer, LockedCell, RangeRead,
     RangeWrite, ReadCell, ReserveCell, WriteCell,
@@ -189,4 +189,39 @@ fn shape(export: &str, found: &str) -> Error {
         found: found.to_owned(),
     }
     .into()
+}
+
+/// Invoke `export` and fold how it ended into the protocol's vocabulary:
+/// the verdict, the fuel spent of `budget`, and whether the budget
+/// exhausted.
+///
+/// Infallible where [`call_export`] is not, because every way a call can
+/// end is a deterministic verdict — a trap is a class, an off-convention
+/// result is a class — so an embedder holds no error channel whose
+/// handling could drift from another embedder's.
+///
+/// # Panics
+///
+/// Panics if the store does not meter fuel, which the blessed config
+/// always enables.
+pub fn invoke_export<T: 'static>(
+    store: &mut Store<T>,
+    instance: &Instance,
+    export: &str,
+    args: &[GuestArg<'_>],
+    budget: u64,
+) -> Invocation {
+    let outcome = call_export(&mut *store, instance, export, args);
+    let exhausted = outcome.as_ref().err().is_some_and(exhausted);
+    let result = match outcome {
+        Ok(Returned::Edges(reps)) => Invoked::Produced(reps),
+        Ok(Returned::Declined(code)) => Invoked::Declined(code),
+        Err(error) => Invoked::Aborted(classify(&error)),
+    };
+    let fuel = budget - store.get_fuel().expect("fuel metering is enabled");
+    Invocation {
+        result,
+        fuel,
+        exhausted,
+    }
 }

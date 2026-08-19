@@ -192,7 +192,7 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
         },
     );
     let mut instance =
-        RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&component, host, FUEL).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(
         "withdraw",
         &[CVal::Borrow(sender_rep, ResourceKind::ReserveCell)],
@@ -208,7 +208,7 @@ fn reference_transfer() -> Result<(Receipt, u64)> {
 
     let recipient_rep = rep_of(&host, &Capability::Delta(recipient));
     let mut instance =
-        RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&component, host, FUEL).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(
         "deposit",
         &[
@@ -629,7 +629,7 @@ fn reference_round() -> Result<(Receipt, u64)> {
     let mut host = host;
     let funds = host.open_bucket(Held::Amount(AMOUNT), RESOURCE);
     let mut instance =
-        RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&component, host, FUEL).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(
         "enter",
         &[
@@ -656,7 +656,7 @@ fn reference_round() -> Result<(Receipt, u64)> {
         }),
     );
     let mut instance =
-        RefComponentInstance::instantiate(&component, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&component, host, FUEL).map_err(|(_, error)| error)?;
     let outcome = instance.invoke(
         "draw",
         &[

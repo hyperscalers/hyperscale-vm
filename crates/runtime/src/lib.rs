@@ -36,7 +36,7 @@ pub use validator::{ProfileError, validate_component, validate_core_module};
 #[cfg(feature = "engine")]
 pub use {
     abort::{CallError, classify, exhausted, trap_reason},
-    call::{Returned, call_export},
+    call::{Returned, call_export, invoke_export},
     charges::instantiate_charged,
     engine::{blessed_config, blessed_engine},
     world::{

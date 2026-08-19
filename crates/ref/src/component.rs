@@ -21,9 +21,9 @@ use std::collections::HashMap;
 use hyperscale_vm_embed::meter::{
     self, AMOUNT_BOUNDARY_BYTES, Exhausted, FuelSink, HostAccess, MeterError, WIDE_BOUNDARY_BYTES,
 };
-use hyperscale_vm_embed::{GuestArg, KernelHost};
+use hyperscale_vm_embed::{GuestArg, Invocation, Invoked, KernelHost};
 use hyperscale_vm_types::math::{Rounding, U256};
-use hyperscale_vm_types::{CellKind, ISSUER_REP};
+use hyperscale_vm_types::{AbortReason, CellKind, ISSUER_REP};
 use wasmparser::{
     CanonicalFunction, CanonicalOption, ComponentAlias, ComponentDefinedType,
     ComponentExternalKind, ComponentType, ComponentTypeRef, ComponentValType, ExternalKind,
@@ -31,7 +31,7 @@ use wasmparser::{
     TypeBounds,
 };
 
-use crate::error::{DecodeError, Trap};
+use crate::error::{DecodeError, InstantiateError, Trap};
 use crate::interp::{
     CanonDispatch, CanonError, ExecError, FuncAddr, Memory, Store, call, instantiate_module,
 };
@@ -959,21 +959,30 @@ pub struct RefComponentInstance<'c, H> {
 }
 
 impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
-    /// Instantiates the component against a host.
+    /// Instantiates the component against a host, bounded by `fuel`.
+    ///
+    /// The budget precedes segment application by signature: applying
+    /// active data segments is metered work, and a budget that dies
+    /// while it happens traps here — the same site the blessed engine
+    /// refuses at — rather than at first function entry.
     ///
     /// # Errors
     ///
-    /// [`DecodeError`] for unresolvable structure, or a trap at core
-    /// instantiation from an out-of-bounds active segment — with the
-    /// host handed back, since an embedder's session must survive a
-    /// refused instantiation.
+    /// [`InstantiateError`] for unresolvable structure or a trap at core
+    /// instantiation — an out-of-bounds active segment, or exhaustion —
+    /// with the host handed back, since an embedder's session must
+    /// survive a refused instantiation.
     ///
     /// # Panics
     ///
     /// Only on index-space overflow past `u32`, which the profile's
     /// structural limits exclude.
-    pub fn instantiate(comp: &'c RefComponent, host: H) -> Result<Self, (H, DecodeError)> {
-        let (store, resolved_core_funcs, resolved_memories) = match Self::resolve(comp) {
+    pub fn instantiate(
+        comp: &'c RefComponent,
+        host: H,
+        fuel: u64,
+    ) -> Result<Self, (H, InstantiateError)> {
+        let (store, resolved_core_funcs, resolved_memories) = match Self::resolve(comp, fuel) {
             Ok(parts) => parts,
             Err(error) => return Err((host, error)),
         };
@@ -994,11 +1003,17 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
     }
 
     /// The host-free half of instantiation: core instances built, index
-    /// spaces resolved, active segments applied.
+    /// spaces resolved, active segments applied against the budget.
     #[allow(clippy::too_many_lines)] // the instantiation walk is one pass over defs
-    fn resolve(comp: &'c RefComponent) -> Result<(Store, Vec<FuncAddr>, Vec<u32>), DecodeError> {
+    fn resolve(
+        comp: &'c RefComponent,
+        fuel: u64,
+    ) -> Result<(Store, Vec<FuncAddr>, Vec<u32>), InstantiateError> {
         let modules: Vec<&RefModule> = comp.modules.iter().collect();
-        let mut store = Store::default();
+        let mut store = Store {
+            fuel_limit: Some(fuel),
+            ..Store::default()
+        };
         // Core instance index -> resolved export map.
         let mut instance_exports: Vec<HashMap<String, ResolvedItem>> = Vec::new();
 
@@ -1034,7 +1049,8 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
                             _ => {
                                 return Err(DecodeError::Unsupported(
                                     "export instance kind".to_string(),
-                                ));
+                                )
+                                .into());
                             }
                         };
                         map.insert(name.clone(), resolved);
@@ -1075,7 +1091,8 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
                             _ => {
                                 return Err(DecodeError::Malformed(
                                     "import kind mismatch".to_string(),
-                                ));
+                                )
+                                .into());
                             }
                         }
                     }
@@ -1087,7 +1104,7 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
                         imported_memory,
                         imported_table,
                     )
-                    .map_err(|t| DecodeError::Malformed(format!("instantiation trap: {t}")))?;
+                    .map_err(InstantiateError::Trap)?;
                     // Expose this instance's exports for later definitions.
                     let mut map = HashMap::new();
                     for (name, func_idx) in &m.exports {
@@ -1449,10 +1466,43 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
             .ok_or(ExecError::Canon(CanonError::Internal("memory option")))
     }
 
-    /// Bounds execution to `limit` fuel: the instruction schedule plus the
-    /// boundary supplement, the same total the runtime meters.
-    pub const fn set_fuel_limit(&mut self, limit: u64) {
-        self.store.fuel_limit = Some(limit);
+    /// Invokes an export and folds how it ended into the protocol's
+    /// vocabulary: the verdict, total fuel consumed — instantiation
+    /// included — and whether the budget exhausted.
+    ///
+    /// The empty result, the declined code, and the all-edges run are
+    /// the only shapes the call convention fixes; anything else aborts
+    /// as [`AbortReason::BadReturnShape`]. A name outside the export
+    /// table aborts as [`AbortReason::ExportMissing`], the class the
+    /// blessed engine's dynamic lookup reports.
+    pub fn invoke_kernel(&mut self, export: &str, args: &[CVal]) -> Invocation {
+        let outcome = self.invoke(export, args);
+        let exhausted = matches!(outcome, Ok(Err(ExecError::Trap(Trap::OutOfFuel))));
+        let result = match outcome {
+            Ok(Ok(values)) => match values.as_slice() {
+                [] => Invoked::Produced(Vec::new()),
+                [CVal::Declined(code)] => Invoked::Declined(*code),
+                edges if edges.iter().all(|v| matches!(v, CVal::Own(_))) => Invoked::Produced(
+                    edges
+                        .iter()
+                        .map(|v| match v {
+                            CVal::Own(rep) => *rep,
+                            _ => unreachable!("every value is an owned edge"),
+                        })
+                        .collect(),
+                ),
+                _ => Invoked::Aborted(AbortReason::BadReturnShape),
+            },
+            Ok(Err(error)) => Invoked::Aborted(error.abort_reason()),
+            // The export is not in the component's table, which the
+            // publish gate admitted it against.
+            Err(_) => Invoked::Aborted(AbortReason::ExportMissing),
+        };
+        Invocation {
+            result,
+            fuel: self.fuel_consumed(),
+            exhausted,
+        }
     }
 
     /// Total fuel consumed: the spec instruction schedule plus the boundary

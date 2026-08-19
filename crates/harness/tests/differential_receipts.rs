@@ -78,9 +78,8 @@ fn blessed(bytes: &[u8], export: &str) -> Result<std::result::Result<u64, AbortR
 /// The same export's verdict on the reference interpreter.
 fn reference(bytes: &[u8], export: &str) -> Result<std::result::Result<u64, AbortReason>> {
     let component = RefComponent::decode(bytes).map_err(|e| engine_error(&e))?;
-    let mut instance =
-        RefComponentInstance::instantiate(&component, NoHost).map_err(|(_, e)| engine_error(&e))?;
-    instance.set_fuel_limit(1_000_000);
+    let mut instance = RefComponentInstance::instantiate(&component, NoHost, 1_000_000)
+        .map_err(|(_, e)| engine_error(&e))?;
     let outcome = instance.invoke(export, &[]).map_err(|e| engine_error(&e))?;
     Ok(match outcome {
         Ok(values) => match values.as_slice() {
@@ -143,9 +142,8 @@ fn both_engines_classify_exhaustion_as_exhaustion() -> Result<()> {
     let blessed = classify(&func.call(&mut store, ()).unwrap_err());
 
     let decoded = RefComponent::decode(&bytes).map_err(|e| engine_error(&e))?;
-    let mut interpreted =
-        RefComponentInstance::instantiate(&decoded, NoHost).map_err(|(_, e)| engine_error(&e))?;
-    interpreted.set_fuel_limit(50_000);
+    let mut interpreted = RefComponentInstance::instantiate(&decoded, NoHost, 50_000)
+        .map_err(|(_, e)| engine_error(&e))?;
     let reference = interpreted
         .invoke("spin", &[])
         .map_err(|e| engine_error(&e))?
@@ -213,9 +211,8 @@ fn both_engines_read_the_refusal_channel_the_same_way() -> Result<()> {
         let blessed = call_export(&mut store, &instance, export, &[])?;
 
         let decoded = RefComponent::decode(&bytes).map_err(|e| engine_error(&e))?;
-        let mut interpreted = RefComponentInstance::instantiate(&decoded, NoHost)
+        let mut interpreted = RefComponentInstance::instantiate(&decoded, NoHost, 1_000_000)
             .map_err(|(_, e)| engine_error(&e))?;
-        interpreted.set_fuel_limit(1_000_000);
         let reference = interpreted
             .invoke(export, &[])
             .map_err(|e| engine_error(&e))?

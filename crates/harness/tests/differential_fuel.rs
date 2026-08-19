@@ -17,10 +17,13 @@
 
 use hyperscale_vm_harness::fixtures::NoHost;
 use hyperscale_vm_ref::{
-    CVal, ExecError, RefComponent, RefComponentInstance, RefInstance, RefModule, Trap as RefTrap,
-    Value,
+    CVal, ExecError, InstantiateError, RefComponent, RefComponentInstance, RefInstance, RefModule,
+    Trap as RefTrap, Value,
 };
-use hyperscale_vm_runtime::{add_kernel_to_linker, blessed_engine};
+use hyperscale_vm_runtime::{
+    InstantiationCharges, add_kernel_to_linker, blessed_engine, instantiate_charged,
+    instantiation_charges,
+};
 use wasmtime::component::{Component, Linker as ComponentLinker};
 use wasmtime::{Engine, Instance, Module, Result, Store, Trap};
 use wat::parse_str;
@@ -186,14 +189,16 @@ const HOST_CALL_FIXTURE: &str = r#"(component
 fn blessed_component_verdict(
     engine: &Engine,
     component: &Component,
+    charges: &InstantiationCharges,
     arg: u32,
     fuel: u64,
 ) -> Result<Verdict> {
     let mut linker = ComponentLinker::<NoHost>::new(engine);
     add_kernel_to_linker(&mut linker)?;
     let mut store = Store::new(engine, NoHost);
-    store.set_fuel(fuel)?;
-    let instance = match linker.instantiate(&mut store, component) {
+    let instance = match instantiate_charged(&mut store, fuel, charges, |s| {
+        linker.instantiate(s, component)
+    }) {
         Ok(instance) => instance,
         Err(e) => {
             return Ok(match e.downcast_ref::<Trap>() {
@@ -213,9 +218,11 @@ fn blessed_component_verdict(
 }
 
 fn ref_component_verdict(comp: &RefComponent, arg: u32, fuel: u64) -> Result<Verdict> {
-    let mut instance =
-        RefComponentInstance::instantiate(comp, NoHost).map_err(|(_, error)| error)?;
-    instance.set_fuel_limit(fuel);
+    let mut instance = match RefComponentInstance::instantiate(comp, NoHost, fuel) {
+        Ok(instance) => instance,
+        Err((_, InstantiateError::Trap(RefTrap::OutOfFuel))) => return Ok(Verdict::OutOfFuel),
+        Err((_, error)) => return Err(error.into()),
+    };
     Ok(match instance.invoke("burn", &[CVal::U32(arg)])? {
         Ok(values) => match values.as_slice() {
             [CVal::U64(v)] => {
@@ -234,10 +241,11 @@ fn component_sweep(fixture: &str, arg: u32, range: std::ops::Range<u64>) -> Resu
     let bytes = parse_str(fixture)?;
     let engine = blessed_engine()?;
     let component = Component::new(&engine, &bytes)?;
+    let charges = instantiation_charges(&bytes)?;
     let comp = RefComponent::decode(&bytes)?;
     let mut first_completion = None;
     for fuel in range.clone() {
-        let blessed = blessed_component_verdict(&engine, &component, arg, fuel)?;
+        let blessed = blessed_component_verdict(&engine, &component, &charges, arg, fuel)?;
         let reference = ref_component_verdict(&comp, arg, fuel)?;
         assert_eq!(
             blessed, reference,

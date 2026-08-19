@@ -13,7 +13,7 @@ pub mod module;
 pub mod ops;
 
 pub use component::{CVal, RefComponent, RefComponentInstance, ResourceKind};
-pub use error::{DecodeError, Trap};
+pub use error::{DecodeError, InstantiateError, Trap};
 pub use interp::{CanonError, ExecError, MAX_CALL_DEPTH, RefInstance};
 pub use module::RefModule;
 pub use ops::Value;

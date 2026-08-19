@@ -298,7 +298,7 @@ fn run_ref(fx: &Fixture) -> Result<(Trace, u64)> {
     let (host, held, spent) = session(fx);
     let readable = rep_of(&host, fx.readable, Mode::Read);
     let mut instance =
-        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
 
     let scalar = |export: &str, values: Vec<CVal>| match values.as_slice() {
         [CVal::U64(v)] => Ok(*v),
@@ -506,7 +506,7 @@ fn take_ref(fx: &Fixture, take: Take) -> Result<(Took, KernelSession, u64)> {
     let mut args = vec![CVal::Borrow(rep, kind)];
     args.extend(take.amount().map(CVal::U64));
     let mut instance =
-        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
 
     let produced = instance.invoke(take.export(), &args)?;
     let fuel = instance.fuel_consumed();
@@ -689,7 +689,7 @@ fn put_ref(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<(Credi
         CVal::Own(funds),
     ];
     let mut instance =
-        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
     let called = instance.invoke(export, &args)?;
     let fuel = instance.fuel_consumed();
     let host = instance.into_host();
@@ -855,7 +855,7 @@ fn pair_ref(fx: &Fixture, a: u64, b: u64) -> Result<(Pair, u64)> {
         CVal::U64(b),
     ];
     let mut instance =
-        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
     let produced = invoke(&mut instance, "take-two", &args)?;
     let fuel = instance.fuel_consumed();
     let mut host = instance.into_host();
@@ -898,7 +898,7 @@ fn weighed(fx: &Fixture, held: u128) -> Result<(u64, u64)> {
     let funds = host.open_bucket(Held::Amount(held), RESOURCE);
     let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut instance =
-        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
     let args = [
         CVal::Own(funds),
         CVal::Borrow(ledger, ResourceKind::DeltaCell),
@@ -946,7 +946,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
     let funds = host.open_bucket(Held::Amount(held), RESOURCE);
     let ledger = rep_of(&host, fx.ledger, Mode::Delta);
     let mut instance =
-        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
     let args = [
         CVal::Own(funds),
         CVal::U64(off),
@@ -997,7 +997,7 @@ fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
     let host = materialize(fx);
     let held = rep_where(&host, |c| matches!(c, Capability::InstanceRange(..)));
     let mut instance =
-        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
     let args = [
         CVal::Borrow(held, ResourceKind::InstanceRange),
         CVal::Ids(ids.to_vec()),
@@ -1014,7 +1014,7 @@ fn lifted(fx: &Fixture, ids: &[u64]) -> Result<(u128, u64)> {
     let host = materialize(fx);
     let held = rep_where(&host, |c| matches!(c, Capability::InstanceRange(..)));
     let mut instance =
-        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
     let args = [
         CVal::Borrow(held, ResourceKind::InstanceRange),
         CVal::Ids(ids.to_vec()),
@@ -1132,7 +1132,8 @@ fn a_merge_of_a_bucket_into_itself_is_refused_by_both_engines() -> Result<()> {
     let comp = RefComponent::decode(&bytes)?;
     let mut host = materialize(&fx);
     let funds = host.open_bucket(Held::Amount(100), RESOURCE);
-    let mut instance = RefComponentInstance::instantiate(&comp, host).map_err(|(_, e)| e)?;
+    let mut instance =
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, e)| e)?;
     let reference = instance
         .invoke("self-merge", &[CVal::Own(funds)])?
         .expect_err("the interpreter refuses the same lift");
@@ -1296,7 +1297,7 @@ fn discard_ref(fx: &Fixture, held: u128) -> Result<(Option<AbortReason>, u64)> {
     let mut host = materialize(fx);
     let funds = host.open_bucket(Held::Amount(held), RESOURCE);
     let mut instance =
-        RefComponentInstance::instantiate(&comp, host).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, host, u64::MAX).map_err(|(_, error)| error)?;
     let called = instance.invoke("discard", &[CVal::Own(funds)])?;
     let fuel = instance.fuel_consumed();
     match called {
@@ -1406,8 +1407,8 @@ fn a_balance_read_agrees_between_the_engines() -> Result<()> {
         .call(&mut store, (Resource::new_borrow(0),))?;
 
     let comp = RefComponent::decode(&bytes)?;
-    let mut interpreted =
-        RefComponentInstance::instantiate(&comp, peeking()).map_err(|(_, error)| error)?;
+    let mut interpreted = RefComponentInstance::instantiate(&comp, peeking(), u64::MAX)
+        .map_err(|(_, error)| error)?;
     let reference = match invoke(
         &mut interpreted,
         "peek",

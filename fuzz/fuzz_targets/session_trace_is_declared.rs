@@ -405,9 +405,8 @@ fn run_ref(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, SessionHost, u64)>
     let rt = &*RUNTIME;
     let host = SessionHost(session(fx)?);
     let caps = host.0.capabilities().to_vec();
-    let mut instance =
-        RefComponentInstance::instantiate(&rt.reference, host).expect("fixture instantiates");
-    instance.set_fuel_limit(FUEL);
+    let mut instance = RefComponentInstance::instantiate(&rt.reference, host, FUEL)
+        .expect("fixture instantiates");
 
     let mut outcomes = Vec::new();
     for export in &plan.calls {

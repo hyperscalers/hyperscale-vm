@@ -282,7 +282,7 @@ fn run_ref(case: Call) -> Result<(LaneOutcome, u64)> {
         args.push(CVal::U32(tail));
     }
     let mut instance =
-        RefComponentInstance::instantiate(&comp, NoHost).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, NoHost, u64::MAX).map_err(|(_, error)| error)?;
     let outcome = match instance.invoke(case.export, &args)? {
         Ok(values) => match values.as_slice() {
             [CVal::U64(value)] => LaneOutcome::Value(*value),
@@ -353,7 +353,7 @@ fn an_out_of_range_discriminant_aborts_identically() -> Result<()> {
 
     let comp = RefComponent::decode(&bytes)?;
     let mut ref_instance =
-        RefComponentInstance::instantiate(&comp, NoHost).map_err(|(_, error)| error)?;
+        RefComponentInstance::instantiate(&comp, NoHost, u64::MAX).map_err(|(_, error)| error)?;
     let args = [CVal::U64(21), CVal::U64(2), CVal::U64(6), CVal::U32(2)];
     let reference = ref_instance
         .invoke("mul-div", &args)?
