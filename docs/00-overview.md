@@ -14,6 +14,24 @@ The recurring design move: wherever a property the host protocol already enforce
 - **Authority is presented, never ambient.** A gate mints a claim only after reading state that verifies it, and a node names exactly what it hands its callee — so there is no auth zone to leak through, no `msg.sender` to spoof, and no proof a caller can conjure ([06-authority.md](06-authority.md)).
 - **Execution parallelizes without speculation.** Conflict groups derive from the declared effects, application order is canonical, and receipts are byte-identical across serial, parallel, and adversarially permuted schedules (INV-VM-14, [04-execution-semantics.md](04-execution-semantics.md)).
 
+## The crate map
+
+The workspace layers strictly; every arrow points down and nothing reaches around a layer.
+
+| Layer | Crates | What lives there |
+|---|---|---|
+| Encoding | `hbor`, `hbor-macros` | The canonical codec (INV-VM-13) and its derives |
+| Vocabulary | `types` | Addresses, effects, modes, outcomes, receipts, the math — every type two layers share |
+| Boundary | `embed` | The engine seam: `KernelHost`, `GuestArg`, `Invoked`, the boundary charge table |
+| Declaration | `effects` | Signatures, the access DSL, admission, `route()`, the metadata cache |
+| Engines | `runtime` (blessed), `ref` (executable spec) | Each speaks `embed` and never `effects` |
+| Kernel | `kernel` | Sessions, capabilities, the manifest walk, receipts, supply accounting |
+| Gate | `gate` | The publish verdict, composed from the profile, the metadata codec, and the export judgment |
+| Authoring | `sdk`, `sdk-macros`, `manifest-builder` | `#[blueprint]`, the tracer, the client tier |
+| Tooling | `cli`, `stdlib`, `fixtures`, `testing`, `harness` | `cargo hyperscale`, the protocol packages, test guests, the author lanes, the differential harness |
+
+Two rules the graph obeys: **engines never see effects** — what a declaration means is the kernel's and admission's business, and an engine is handed materialized handles with no idea what declared them; and **the kernel drives engines only through embed** — one seam, so the blessed engine and the executable spec are substitutable behind it.
+
 ## Non-goals
 
 - **Optimistic concurrency / speculative execution** — determinism-by-declaration is the foundation; commit-time reconciliation reintroduces the agreement problem declaration exists to avoid.

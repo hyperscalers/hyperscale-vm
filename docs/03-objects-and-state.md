@@ -28,6 +28,8 @@ Acceptance test for the rule: a fungible transfer's provision carries the two ba
 
 ## 3. The storage bond
 
+**Deferred: the whole bond economy.** Everything in this section and the next is design, with no machinery behind it in either workspace — no bond is charged, no debt recorded, no refund paid. The design is kept here because state pricing constrains the substate layout and the accumulator vocabulary, and INV-VM-7 stands in the register as the target it must meet when built.
+
 Committed byte growth triggers shard splits; splits demand committees; committee demand moves the host's stake price. Unpriced state is therefore an attack on the validator supply, not a disk nuisance. The mechanism is a per-byte **bond**:
 
 - **Bond at write.** Every substate carries a bond, paid at creation at the fold-set per-byte rate and recorded with the substate — so bonds split and merge with the subtree by construction. No sweeps, no clocks, no expiry: accounting is O(write), never O(state). The liability is the bond's *time value*, not a payment stream.
@@ -37,7 +39,7 @@ Committed byte growth triggers shard splits; splits demand committees; committee
 - **Bond capital is inert.** Bonds are excluded from the host's stake pricing and governance tallies. There is no staked storage fund and no second staking system.
 - **The rate is fold-derived and attack-priced.** The per-byte rate scales as committee cost over split threshold: filling a shard to its split threshold locks capital on the order of the committee it conscripts. Every term is host consensus state, so pricing is deterministic on every replica, and it self-adjusts — state is cheap exactly when the network can afford growth.
 
-Bond and debt accounting is conserved end to end: totals change only by creation, debt settlement, deletion refund, and reshape composition (INV-VM-7).
+Bond and debt accounting is conserved end to end: totals change only by creation, debt settlement, deletion refund, and reshape composition (INV-VM-7, designed-not-implemented).
 
 ## 4. Onboarding: virtual accounts and deferred bonds
 
@@ -54,7 +56,7 @@ Bond-at-write must not make receiving assets the recipient's problem. Two mechan
 Any protocol- or ecosystem-wide cell — a total supply counter, a global registry, a network config object — lands on one shard and becomes a permanent hot key no scheduling lever can fix:
 
 - **Aggregates are per-shard accumulators.** Total supply is per-shard linear accounting (§6) composed at read time; registries are owner-sharded namespaces.
-- **Reshape-clean composition.** Every stdlib accumulator type defines its split and merge semantics, and those commute with the tree operation: composing two children's accumulators yields exactly the parent's (INV-VM-5). A reshape scenario per stdlib type holds the line.
+- **Reshape-clean composition.** An accumulator defines its split and merge semantics, and those commute with the tree operation: composing two children's accumulators yields exactly the parent's (INV-VM-5). The per-shard supply ledger is the accumulator with that law, compose-tested; any future accumulator joins by defining and testing its own.
 - **The compiler warns on singleton shapes.** A blueprint declaring a global-role object with write effects reachable from unbounded callers gets a deploy-time lint; the stdlib provides the sharded alternative for each common shape.
 - **A single owner's prefix is the sharding atom.** Owner-prefixed keying means a shard boundary never cuts through one owner, so an unbounded collection under a single global owner is an un-splittable mass no reshape can ever relieve — the singleton rule extended from cells to owners. Deploy lint: an unbounded collection on a global single-owner component warns; the alternative is the sharded-registry template ([07-stdlib-and-upgrades.md](07-stdlib-and-upgrades.md)) — N sub-registries under distinct owners, routed by key hash, each name's home computable statically by any client.
 
@@ -64,9 +66,9 @@ Value in the kernel is **linear**: it is split, merged, and moved, never duplica
 
 The cells value rests in carry the same statement. A cell holding value names the resource it holds, the name is the key's own material, and what the declaration says chooses the capability — so a vault is reached only through a handle that moves value, and the sixteen bytes it is stored as are no surface a body can write (INV-VM-18). That is what closes the gap a linear edge alone leaves open: without it a body could assign itself a balance and then debit it through the ordinary movement, producing an edge every rule above would find well-formed.
 
-Each shard maintains, per resource, an accumulator of total supply held under its prefix, updated by mint, burn, and cross-shard movement. Accumulators are the reshape-clean kind: children's parts compose to the parent's exactly.
+The engine's half of that statement is per receipt: every receipt carries the supply deltas its execution caused — mint, burn, and the movements its settlement attests — an aborted transaction's deltas are zero, and folding a batch's receipts into a per-shard, per-resource accumulator is associative and order-free. The accumulator is the reshape-clean kind: children's parts compose to the parent's exactly.
 
-Conservation is then a global statement with local enforcement: for every resource, the per-shard accumulators sum to minted-minus-burned supply, and no execution path changes a shard's accumulator except mint, burn, or an attested cross-shard movement (INV-VM-6). A fabricated deposit would need an attested movement its source's own accumulator history cannot support — detectable at admission against state the receiving shard already tracks, with no separate conservation-audit protocol. The attestation is cheap because the kernel maintains the quantity natively.
+Conservation is then a global statement with local enforcement: for every resource, the per-shard accumulators sum to minted-minus-burned supply, and no execution path changes a shard's accumulator except mint, burn, or an attested cross-shard movement (INV-VM-6). The global half is the host's to close — folding `receipt.supply` into a persisted ledger at its commit path and judging movements against it — and that wiring does not yet exist. Once it does, a fabricated deposit needs an attested movement its source's own accumulator history cannot support: detectable at admission against state the receiving shard already tracks, with no separate conservation-audit protocol, because the kernel maintains the quantity natively.
 
 ## 7. Kernel accounting across reshape
 
