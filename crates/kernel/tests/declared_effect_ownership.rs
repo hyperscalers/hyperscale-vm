@@ -25,8 +25,7 @@ use hyperscale_vm_effects::{
     SubstateKey, TargetExpr, TestHasher, Totality, Value, admit, child_key, route,
 };
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, WorkingStore,
-    encode_amount,
+    Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, encode_amount,
 };
 
 /// The role the stdlib account keeps its balances under.
@@ -135,7 +134,6 @@ fn a_package_cannot_declare_an_effect_on_a_cell_it_does_not_own() {
     let mut base = MemoryStore::new();
     base.write(vault_of(VICTIM), encode_amount(10_000).to_vec())
         .unwrap();
-    base.clear_log();
     let store = OverlayStore::new(Arc::new(base));
 
     let _ordered: Vec<_> = declaration.ordered.clone();
@@ -193,7 +191,6 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
     let mut base = MemoryStore::new();
     base.write(vault_of(VICTIM), encode_amount(10_000).to_vec())
         .unwrap();
-    base.clear_log();
     let store = OverlayStore::new(Arc::new(base));
 
     let _ordered: Vec<_> = declaration.ordered.clone();

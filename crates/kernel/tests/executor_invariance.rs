@@ -150,7 +150,6 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
     store.write(cell(0xB), encode_amount(100).to_vec()).unwrap();
     store.write(cell(0xE), vec![10]).unwrap();
     store.write(cell(0xF), vec![10]).unwrap();
-    store.clear_log();
 
     let batch = vec![
         // Two transfers into the shared recipient: delta-delta compatible,
@@ -389,7 +388,6 @@ fn each_transaction_sees_its_own_clock() {
     let mut store = MemoryStore::new();
     store.write(cell(0xE), vec![10]).unwrap();
     store.write(cell(0xF), vec![10]).unwrap();
-    store.clear_log();
 
     let early = BatchTx::new(
         tx(0x01),
@@ -448,7 +446,6 @@ fn each_transaction_sees_its_own_draw() {
     let mut store = MemoryStore::new();
     store.write(cell(0xE), vec![10]).unwrap();
     store.write(cell(0xF), vec![10]).unwrap();
-    store.clear_log();
 
     let first = BatchTx::new(
         tx(0x01),

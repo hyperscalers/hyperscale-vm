@@ -19,7 +19,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchTx, Capability, ExecutionMode, KernelSession, Locality, MemoryStore, Outcome,
-    RunResult, TxHash, WorkingStore, decode_amount, encode_amount, execute_batch,
+    RunResult, TxHash, decode_amount, encode_amount, execute_batch,
 };
 
 const CONFIG: u128 = 7;
@@ -88,7 +88,6 @@ fn store() -> MemoryStore {
             .unwrap();
     }
     store.lock(cell(LOCKED));
-    store.clear_log();
     store
 }
 

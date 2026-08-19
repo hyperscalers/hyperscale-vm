@@ -26,7 +26,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_embed::math::U256;
 use hyperscale_vm_kernel::{
     AbortReason, EnvInputs, ISSUER_REP, KernelSession, MaterializeError, MemoryStore, OverlayStore,
-    TxHash, WorkingStore, encode_amount,
+    TxHash, encode_amount,
 };
 
 const VAULT: SlotId = SlotId(1);
@@ -140,7 +140,6 @@ fn every_producer_stamps_what_its_source_held() {
     for key in [absolute, reserved] {
         store.write(key, encode_amount(100).to_vec()).expect("seed");
     }
-    store.clear_log();
 
     let mut session = KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
@@ -221,7 +220,6 @@ fn every_instance_producer_stamps_what_its_source_held() {
             .entry_write(POOL, held(X), order, vec![1])
             .expect("seed");
     }
-    store.clear_log();
 
     let mut session = KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),

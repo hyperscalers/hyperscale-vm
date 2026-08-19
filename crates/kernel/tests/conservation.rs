@@ -2,12 +2,14 @@
 //! equals the sum of its cells through same-shard transfers, and moves
 //! only on mint and cross-shard legs.
 
+use std::sync::Arc;
+
 use hyperscale_vm_effects::{
     Address, AddressClass, Hash32, SlotId, SubstateKey, TestHasher, Value, child_key,
 };
 use hyperscale_vm_kernel::{
-    AmountLedger, DeltaOp, MemoryStore, SupplyLedger, TxHash, WorkingStore, decode_amount,
-    encode_amount,
+    AmountLedger, Baseline, DeltaOp, MemoryStore, OverlayStore, Substates, SupplyLedger, TxHash,
+    WorkingStore, decode_amount, encode_amount,
 };
 
 const VAULT: SlotId = SlotId(1);
@@ -25,13 +27,12 @@ const fn tx(byte: u8) -> TxHash {
     TxHash(Hash32([byte; 32]))
 }
 
-fn cell_total(store: &mut MemoryStore, cells: &[SubstateKey]) -> u128 {
+fn cell_total(store: &impl Substates, cells: &[SubstateKey]) -> u128 {
     cells
         .iter()
         .map(|key| {
             store
-                .read(*key)
-                .unwrap()
+                .cell(*key)
                 .map_or(0, |cell| decode_amount(&cell).unwrap())
         })
         .sum()
@@ -44,13 +45,13 @@ fn supply_tracks_cells_through_transfers_and_cross_shard_legs() {
     let bob = vault(2, resource);
     let cells = [alice, bob];
 
-    let mut store = MemoryStore::new();
+    let mut store = OverlayStore::new(Arc::new(MemoryStore::new()) as Arc<dyn Baseline>);
     let mut supply = SupplyLedger::new();
 
     // Mint: the only same-shard event that credits supply.
     store.write(alice, encode_amount(100).to_vec()).unwrap();
     supply.credit(resource, 100).unwrap();
-    assert_eq!(cell_total(&mut store, &cells), supply.amount(resource));
+    assert_eq!(cell_total(&store, &cells), supply.amount(resource));
 
     // A same-shard transfer: reserve-settle out of one cell, delta into
     // the other. Supply is untouched and conservation holds.
@@ -59,7 +60,7 @@ fn supply_tracks_cells_through_transfers_and_cross_shard_legs() {
     store.settle(alice, tx(1)).unwrap();
     store.queue_delta(bob, DeltaOp::Add(30)).unwrap();
     store.commit_deltas().unwrap();
-    assert_eq!(cell_total(&mut store, &cells), 100);
+    assert_eq!(cell_total(&store, &cells), 100);
     assert_eq!(supply.amount(resource), 100);
 
     // An outbound cross-shard leg: the settled amount leaves the shard,
@@ -68,7 +69,7 @@ fn supply_tracks_cells_through_transfers_and_cross_shard_legs() {
     assert!(verdicts[&(tx(2), alice)].is_feasible());
     let outbound = store.settle(alice, tx(2)).unwrap();
     supply.debit(resource, outbound).unwrap();
-    assert_eq!(cell_total(&mut store, &cells), 80);
+    assert_eq!(cell_total(&store, &cells), 80);
     assert_eq!(supply.amount(resource), 80);
 
     // The matching inbound leg on another shard would credit 20 there:
@@ -90,7 +91,7 @@ mod through_the_session {
     use hyperscale_vm_effects::{Declaration, Effect, EffectSet, EffectTarget, Hasher, Mode};
     use hyperscale_vm_kernel::{
         AbortReason, EnvInputs, ISSUER_REP, KernelSession, Outcome, OverlayStore, SupplyDelta,
-        SupplyLedger, WorkingStore,
+        SupplyLedger,
     };
 
     use super::{
@@ -170,7 +171,6 @@ mod through_the_session {
         let mut held = MemoryStore::new();
         held.write(vault(1, UNIT), encode_amount(500).to_vec())
             .expect("seeded");
-        held.clear_log();
         let mut burning = session_over(held);
         let taken = burning.delta_take(0, 500).expect("the debit is queued");
         burning.burn(ISSUER_REP, taken).expect("the grant burns");

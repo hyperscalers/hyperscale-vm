@@ -24,7 +24,7 @@ use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, Event, Held, Interval, KernelSession, MemoryStore, Movement,
-    OverlayStore, Receipt, TxHash, WorkingStore, encode_amount,
+    OverlayStore, Receipt, TxHash, encode_amount,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{
@@ -86,7 +86,6 @@ fn session() -> KernelSession {
     store
         .write(sender, encode_amount(500).to_vec())
         .expect("seed sender balance");
-    store.clear_log();
     // Both cells the transfer moves between hold the same resource,
     // which is what makes the credit a transfer rather than a
     // conversion.

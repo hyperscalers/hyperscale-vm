@@ -11,7 +11,7 @@ use hyperscale_vm_effects::{
     PrefixShardResolver, Presence, PrincipalAddr, ShardResolver, SlotId, SubstateKey, TargetExpr,
     TestHasher, Totality, Value, admit, collection_id, fresh_id, fresh_local, route,
 };
-use hyperscale_vm_kernel::{MemoryStore, WorkingStore};
+use hyperscale_vm_kernel::MemoryStore;
 
 /// A package whose one method creates one object and inserts one
 /// collection entry at a fresh sequence.

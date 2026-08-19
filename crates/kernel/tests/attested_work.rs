@@ -30,8 +30,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, Capability, ExecutionMode, KernelSession, Locality,
-    MemoryStore, Outcome, Receipt, RunResult, TxHash, Work, WorkingStore, encode_amount,
-    execute_batch,
+    MemoryStore, Outcome, Receipt, RunResult, TxHash, Work, encode_amount, execute_batch,
 };
 
 /// What every cell these fixtures move value through holds.

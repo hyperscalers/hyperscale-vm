@@ -361,7 +361,6 @@ fn funded() -> MemoryStore {
             .entry_write(BOOK, ASKS, order, vec![u8::try_from(order).unwrap()])
             .unwrap();
     }
-    store.clear_log();
     store
 }
 

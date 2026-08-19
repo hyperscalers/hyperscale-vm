@@ -21,7 +21,7 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, GuestRunner,
     InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome,
-    OverlayStore, RunResult, TxHash, WorkingStore, encode_amount, execute_batch,
+    OverlayStore, RunResult, TxHash, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_runtime::{
@@ -141,7 +141,6 @@ fn funded_store(senders: u32) -> MemoryStore {
             .write(vault(sender(index)), encode_amount(1_000).to_vec())
             .unwrap();
     }
-    store.clear_log();
     store
 }
 

@@ -27,7 +27,7 @@ use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
 use hyperscale_vm_kernel::{
     AbortReason, BatchTx, EnvInputs, Event, GuestBackend, GuestCall, GuestRunner, InvokeResult,
     Invoked, KernelSession, ManifestWalk, MemoryStore, Outcome, OverlayStore, Receipt, RunResult,
-    TxHash, WorkingStore, decode_amount, encode_amount, multiply_held_ids,
+    Substates, TxHash, decode_amount, encode_amount, multiply_held_ids,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{CVal, ExecError, RefComponent, RefComponentInstance, Trap as RefTrap};
@@ -675,10 +675,9 @@ fn run_both_at(
     (blessed, blessed_store)
 }
 
-fn amount_of(store: &mut MemoryStore, key: SubstateKey) -> u128 {
+fn amount_of(store: &MemoryStore, key: SubstateKey) -> u128 {
     store
-        .read(key)
-        .unwrap()
+        .cell(key)
         .map_or(0, |cell| decode_amount(&cell).unwrap())
 }
 
@@ -766,7 +765,6 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() -> Result<
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
-    store.clear_log();
 
     let graph = {
         // Not a wrapper call: `dana` runs the mirror package, so its
@@ -821,7 +819,6 @@ fn a_missed_edge_bound_aborts_identically_on_both_runtimes() -> Result<()> {
     store
         .write(vault(ALICE, RES_X), encode_amount(500).to_vec())
         .unwrap();
-    store.clear_log();
 
     // The withdrawal is feasible and the guest is honest — it returns
     // exactly the 100 it reserved. What fails is the manifest's own
@@ -924,10 +921,9 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
-    store.clear_log();
 
     let graph = transfer_graph();
-    let (results, mut final_store) = run_both(
+    let (results, final_store) = run_both(
         &engines,
         &world,
         &store,
@@ -978,8 +974,8 @@ fn transfer_executes_end_to_end_on_both_runtimes() -> Result<()> {
             event.event_type,
         );
     }
-    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 50);
-    assert_eq!(amount_of(&mut final_store, vault(BOB, RES_X)), 100);
+    assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 50);
+    assert_eq!(amount_of(&final_store, vault(BOB, RES_X)), 100);
     Ok(())
 }
 
@@ -1004,10 +1000,9 @@ fn a_transfer_on_a_minted_proof_settles_like_one_on_the_signature() -> Result<()
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
-    store.clear_log();
 
     let graph = authorized_transfer_graph();
-    let (results, mut final_store) = run_both(
+    let (results, final_store) = run_both(
         &engines,
         &world,
         &store,
@@ -1028,8 +1023,8 @@ fn a_transfer_on_a_minted_proof_settles_like_one_on_the_signature() -> Result<()
             .credit,
         100
     );
-    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 50);
-    assert_eq!(amount_of(&mut final_store, vault(BOB, RES_X)), 100);
+    assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 50);
+    assert_eq!(amount_of(&final_store, vault(BOB, RES_X)), 100);
     Ok(())
 }
 
@@ -1041,7 +1036,6 @@ fn a_refused_authorization_takes_its_consumers_with_it() -> Result<()> {
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
-    store.clear_log();
 
     // Bob's signature behind Alice's sign-in: admission passes — the
     // evidence is present, and whether it satisfies the target is the
@@ -1050,7 +1044,7 @@ fn a_refused_authorization_takes_its_consumers_with_it() -> Result<()> {
     // makes the minted proof sound with nothing checking it later: the
     // withdrawal that would have spent on it never runs.
     let graph = authorized_transfer_graph();
-    let (results, mut final_store) = run_both_signed(
+    let (results, final_store) = run_both_signed(
         &engines,
         &world,
         &store,
@@ -1061,8 +1055,8 @@ fn a_refused_authorization_takes_its_consumers_with_it() -> Result<()> {
         results,
         vec![TxResult::Refused(Outcome::Unauthorized { node: 0 })]
     );
-    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 150);
-    assert_eq!(amount_of(&mut final_store, vault(BOB, RES_X)), 0);
+    assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 150);
+    assert_eq!(amount_of(&final_store, vault(BOB, RES_X)), 0);
     Ok(())
 }
 
@@ -1090,7 +1084,6 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
-    store.clear_log();
 
     // Alice's last act under the virtual rule: signing in for its
     // retirement. Everything she stores from here is governed by Bob.
@@ -1131,7 +1124,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
 
     // Bob's signature carries Bob's identity, the stored rule admits
     // it, and the minted proof opens Alice's guarded methods.
-    let (results, mut store) = run_both_signed(
+    let (results, store) = run_both_signed(
         &engines,
         &world,
         &store,
@@ -1143,8 +1136,8 @@ fn securify_retires_the_old_key_and_installs_the_rule() -> Result<()> {
         "the installed rule must govern; got {:?}",
         results[0]
     );
-    assert_eq!(amount_of(&mut store, vault(ALICE, RES_X)), 50);
-    assert_eq!(amount_of(&mut store, vault(BOB, RES_X)), 100);
+    assert_eq!(amount_of(&store, vault(ALICE, RES_X)), 50);
+    assert_eq!(amount_of(&store, vault(BOB, RES_X)), 100);
 
     // Nothing re-securifies, and the refusal is the protocol's rather
     // than the guest's: `securify` declares a write requiring the cell
@@ -1195,7 +1188,6 @@ fn chained_store() -> MemoryStore {
                 .unwrap(),
         )
         .unwrap();
-    store.clear_log();
     store
 }
 
@@ -1236,7 +1228,7 @@ fn a_chained_sign_in_acts_two_rules_deep() -> Result<()> {
         let funds = account::withdraw(b, maker, RES_X, 100)?;
         account::deposit(b, BOB, funds)
     });
-    let (results, mut store) = run_both_signed(
+    let (results, store) = run_both_signed(
         &engines,
         &world,
         &store,
@@ -1248,8 +1240,8 @@ fn a_chained_sign_in_acts_two_rules_deep() -> Result<()> {
         "the chain must open the maker's account; got {:?}",
         results[0]
     );
-    assert_eq!(amount_of(&mut store, vault(MAKER, RES_X)), 50);
-    assert_eq!(amount_of(&mut store, vault(BOB, RES_X)), 100);
+    assert_eq!(amount_of(&store, vault(MAKER, RES_X)), 50);
+    assert_eq!(amount_of(&store, vault(BOB, RES_X)), 100);
     Ok(())
 }
 
@@ -1264,7 +1256,6 @@ fn a_proof_opens_only_the_account_that_minted_it() -> Result<()> {
     store
         .write(vault(BOB, RES_X), encode_amount(150).to_vec())
         .unwrap();
-    store.clear_log();
 
     // Alice signs in as herself, then aims her proof at Bob's vault —
     // composable and admissible, and dead at Bob's gate.
@@ -1315,7 +1306,6 @@ fn recovered_store() -> MemoryStore {
     store
         .write(auth(ALICE), AuthCell::new(split_base()).to_bytes().unwrap())
         .unwrap();
-    store.clear_log();
     store
 }
 
@@ -1631,7 +1621,6 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() -> Result<()> {
     virtual_store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
-    virtual_store.clear_log();
     let own_propose = graph(|b| {
         account::propose(
             b,
@@ -1748,7 +1737,6 @@ fn swap_store() -> MemoryStore {
         .write(config_leaf(pool()), pool_meta().config_bytes().unwrap())
         .unwrap();
     store.lock(config_leaf(pool()));
-    store.clear_log();
     store
 }
 
@@ -1801,7 +1789,7 @@ fn swap_executes_with_real_pool_math_on_both_runtimes() -> Result<()> {
     let world = world();
     let engines = Engines::build()?;
     let graph = swap_graph(300);
-    let (results, mut final_store) = run_both(
+    let (results, final_store) = run_both(
         &engines,
         &world,
         &swap_store(),
@@ -1831,8 +1819,8 @@ fn swap_executes_with_real_pool_math_on_both_runtimes() -> Result<()> {
             .credit,
         332
     );
-    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_Y)), 332);
-    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 100);
+    assert_eq!(amount_of(&final_store, vault(ALICE, RES_Y)), 332);
+    assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 100);
     Ok(())
 }
 
@@ -1850,8 +1838,7 @@ fn the_pool_trades_both_directions_off_one_instance() -> Result<()> {
     store
         .write(vault(ALICE, RES_Y), encode_amount(600).to_vec())
         .unwrap();
-    store.clear_log();
-    let (results, mut final_store) = run_both(
+    let (results, final_store) = run_both(
         &engines,
         &world,
         &store,
@@ -1871,8 +1858,8 @@ fn the_pool_trades_both_directions_off_one_instance() -> Result<()> {
         receipt.delta.cells.get(&vault(pool(), RES_X)),
         Some(&Some(encode_amount(668).to_vec()))
     );
-    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 932);
-    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_Y)), 100);
+    assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 932);
+    assert_eq!(amount_of(&final_store, vault(ALICE, RES_Y)), 100);
     Ok(())
 }
 
@@ -1890,7 +1877,7 @@ fn a_violated_output_floor_declines_identically() -> Result<()> {
     let world = world();
     let engines = Engines::build()?;
     let graph = swap_graph(400);
-    let (results, mut final_store) = run_both(
+    let (results, final_store) = run_both(
         &engines,
         &world,
         &swap_store(),
@@ -1902,8 +1889,8 @@ fn a_violated_output_floor_declines_identically() -> Result<()> {
         "slippage-exceeded",
         "the code is an index into the table the package published",
     );
-    assert_eq!(amount_of(&mut final_store, vault(pool(), RES_X)), 1_000);
-    assert_eq!(amount_of(&mut final_store, vault(ALICE, RES_X)), 600);
+    assert_eq!(amount_of(&final_store, vault(pool(), RES_X)), 1_000);
+    assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 600);
     Ok(())
 }
 
@@ -2161,11 +2148,10 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
     store
         .write(vault(book(), BASE), encode_amount(10).to_vec())
         .unwrap();
-    store.clear_log();
 
     let place = place_graph();
     let fill = fill_graph();
-    let (results, mut final_store) = run_both(
+    let (results, final_store) = run_both(
         &engines,
         &world,
         &store,
@@ -2232,11 +2218,11 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() -> Result<()
         0
     );
 
-    assert_eq!(amount_of(&mut final_store, vault(TAKER, BASE)), 33);
-    assert_eq!(amount_of(&mut final_store, vault(TAKER, QUOTE)), 51);
-    assert_eq!(amount_of(&mut final_store, vault(book(), BASE)), 27);
-    assert_eq!(amount_of(&mut final_store, vault(book(), QUOTE)), 99);
-    assert_eq!(amount_of(&mut final_store, vault(MAKER, BASE)), 10);
+    assert_eq!(amount_of(&final_store, vault(TAKER, BASE)), 33);
+    assert_eq!(amount_of(&final_store, vault(TAKER, QUOTE)), 51);
+    assert_eq!(amount_of(&final_store, vault(book(), BASE)), 27);
+    assert_eq!(amount_of(&final_store, vault(book(), QUOTE)), 99);
+    assert_eq!(amount_of(&final_store, vault(MAKER, BASE)), 10);
     let entries: BTreeMap<_, _> = final_store
         .collection_entries()
         .map(|(k, v)| (k, v.to_vec()))
@@ -2875,7 +2861,6 @@ fn a_mint_onto_an_instance_already_there_is_refused() -> Result<()> {
 
     let mut store = MemoryStore::new();
     store.write(data, id.to_le_bytes().to_vec()).unwrap();
-    store.clear_log();
 
     let (results, _) = run_both_signed(
         &engines,
@@ -2914,20 +2899,18 @@ fn ticket_order(who: PrincipalAddr) -> u128 {
 /// The settled round, decoded through the package's own type — so what
 /// this reads back is what that package says it wrote, rather than a
 /// layout restated here.
-fn settled_round(store: &mut MemoryStore) -> Option<lottery::Outcome> {
+fn settled_round(store: &MemoryStore) -> Option<lottery::Outcome> {
     draw_cell(store)
         .map(|bytes| from_slice(&bytes).expect("the lottery writes its own outcome type"))
 }
 
-fn draw_cell(store: &mut MemoryStore) -> Option<Vec<u8>> {
-    store
-        .read(child_key(
-            &TestHasher,
-            lottery_addr(),
-            lottery::OUTCOME,
-            &[],
-        ))
-        .unwrap()
+fn draw_cell(store: &MemoryStore) -> Option<Vec<u8>> {
+    store.cell(child_key(
+        &TestHasher,
+        lottery_addr(),
+        lottery::OUTCOME,
+        &[],
+    ))
 }
 
 /// Randomness reaching a guest, on both runtimes: two entries and a
@@ -2953,7 +2936,6 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
     store
         .write(vault(BOB, RES_X), encode_amount(150).to_vec())
         .unwrap();
-    store.clear_log();
 
     let enter = |who: PrincipalAddr, stake: u128| {
         graph(move |b| {
@@ -2973,9 +2955,9 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
         &[(&draw, TxHash(Hash32([0x60; 32])))],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));
-    let mut empty_store = store.clone();
+    let empty_store = store.clone();
     assert_eq!(
-        settled_round(&mut empty_store),
+        settled_round(&empty_store),
         Some(lottery::Outcome {
             draw: env().randomness,
             winner: None,
@@ -2983,7 +2965,7 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
         "an unentered round records its draw and no winner"
     );
 
-    let (results, mut store) = run_both(
+    let (results, store) = run_both(
         &engines,
         &world,
         &store,
@@ -3011,7 +2993,7 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
         );
     }
     assert!(u32::try_from(entries.len()).unwrap() <= lottery::ROUND_CAP);
-    assert_eq!(amount_of(&mut store, vault(lottery_addr(), RES_X)), 140);
+    assert_eq!(amount_of(&store, vault(lottery_addr(), RES_X)), 140);
 
     // Ascending order is the index space the draw reduces into, so who
     // sits at which index is the hash order and nothing else.
@@ -3024,7 +3006,7 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() -> Result
     let expected = ascending[(seed % 2) as usize];
 
     assert_eq!(
-        settled_round(&mut store),
+        settled_round(&store),
         Some(lottery::Outcome {
             draw: env().randomness,
             winner: Some(expected.address()),
@@ -3058,7 +3040,6 @@ fn shares_store() -> MemoryStore {
         )
         .unwrap();
     store.lock(config_leaf(shares_vault()));
-    store.clear_log();
     store
 }
 
@@ -3117,7 +3098,7 @@ fn the_share_vault_rounds_toward_the_pool_on_both_runtimes() -> Result<()> {
         let assets = shares_vault().redeem(b, units)?;
         account::deposit(b, ALICE, assets)
     });
-    let (results, mut end) = run_both(
+    let (results, end) = run_both(
         &engines,
         &world,
         &store,
@@ -3132,8 +3113,8 @@ fn the_share_vault_rounds_toward_the_pool_on_both_runtimes() -> Result<()> {
         "the shares are destroyed rather than parked"
     );
 
-    assert_eq!(amount_of(&mut end, vault(ALICE, RES_X)), 999);
-    assert_eq!(amount_of(&mut end, vault(shares_vault(), RES_X)), 1_001);
-    assert_eq!(amount_of(&mut end, vault(ALICE, shares_unit())), 0);
+    assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 999);
+    assert_eq!(amount_of(&end, vault(shares_vault(), RES_X)), 1_001);
+    assert_eq!(amount_of(&end, vault(ALICE, shares_unit())), 0);
     Ok(())
 }

@@ -18,7 +18,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{
     AbortReason, Capability, EnvInputs, Held, ISSUER_REP, KernelSession, MemoryStore, Outcome,
-    OverlayStore, TxHash, WorkingStore, encode_amount,
+    OverlayStore, TxHash, encode_amount,
 };
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
@@ -110,7 +110,6 @@ fn fixture() -> Fixture {
     for order in INSTANCES {
         store.entry_write(holder, HOLDINGS, order, vec![1]).unwrap();
     }
-    store.clear_log();
 
     let mut declared = EffectSet::new();
     for effect in [

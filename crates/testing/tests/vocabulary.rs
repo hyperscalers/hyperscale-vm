@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
     Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key, collection_id,
 };
 use hyperscale_vm_kernel::{
-    EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, WorkingStore, encode_amount,
+    EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, encode_amount,
 };
 use hyperscale_vm_sdk::handle::Handle;
 use hyperscale_vm_sdk::host::{Refusal, with_kernel};
@@ -110,7 +110,6 @@ fn seeded() -> MemoryStore {
             .entry_write(OWNER, collection(), order, value.to_le_bytes().to_vec())
             .expect("the store takes an entry");
     }
-    store.clear_log();
     store
 }
 
@@ -156,7 +155,6 @@ fn value_taken_from_a_cell_is_the_value_in_hand() {
     store
         .write(vault, encode_amount(100).to_vec())
         .expect("the store takes it");
-    store.clear_log();
     let session = value_session(
         store,
         vec![point(
@@ -186,7 +184,6 @@ fn a_bucket_divides_into_what_comes_off_and_what_is_left() {
     store
         .write(vault, encode_amount(100).to_vec())
         .expect("the store takes it");
-    store.clear_log();
     let session = value_session(
         store,
         vec![point(

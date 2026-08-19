@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{
     AbortReason, Capability, EnvInputs, Held, KernelSession, MemoryStore, OverlayStore, TxHash,
-    WorkingStore, encode_amount,
+    encode_amount,
 };
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_sdk::host::{CellKind, GuestArg, Invoked};
@@ -87,7 +87,6 @@ fn session(mode: Mode, funded: u128) -> KernelSession {
             .write(vault(), encode_amount(funded).to_vec())
             .expect("the store takes a vault cell");
     }
-    store.clear_log();
 
     let mut declared = EffectSet::new();
     declared

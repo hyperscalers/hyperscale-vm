@@ -112,7 +112,6 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
     payer_store
         .write(cell(PAYER_BYTE), encode_amount(100).to_vec())
         .unwrap();
-    payer_store.clear_log();
     let payer = execute_batch(
         Arc::new(payer_store),
         &batch,
@@ -215,7 +214,6 @@ fn a_committed_nullifier_reads_the_same_on_both_shards() {
     payer_store
         .write(cell(PAYER_BYTE), encode_amount(100).to_vec())
         .unwrap();
-    payer_store.clear_log();
     let payer = execute_batch(
         Arc::new(payer_store),
         &batch,
@@ -276,7 +274,6 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
     payer_store
         .write(cell(PAYER_BYTE), encode_amount(100).to_vec())
         .unwrap();
-    payer_store.clear_log();
     let payer = execute_batch(
         Arc::new(payer_store),
         &batch,
@@ -469,7 +466,6 @@ fn only_the_owning_shard_judges_an_uncovered_reserve() {
     payer_store
         .write(cell(PAYER_BYTE), encode_amount(10).to_vec())
         .unwrap();
-    payer_store.clear_log();
     let payer = execute_batch(
         Arc::new(payer_store),
         &batch,

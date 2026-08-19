@@ -332,7 +332,12 @@ impl Baseline for MemoryStore {
     }
 }
 
-/// The in-memory, access-recording store.
+/// The in-memory base store: seeded and committed state.
+///
+/// Records nothing. Execution runs over an [`crate::OverlayStore`], which
+/// owns the access log the trace-subset oracle reads — so a base wrapped
+/// in one starts clean by construction, and seeding a fixture leaves no
+/// accesses to scrub.
 #[derive(Clone, Debug, Default)]
 pub struct MemoryStore {
     pub(crate) cells: BTreeMap<SubstateKey, Vec<u8>>,
@@ -340,7 +345,6 @@ pub struct MemoryStore {
     pub(crate) locked: BTreeSet<SubstateKey>,
     pub(crate) pending_deltas: BTreeMap<SubstateKey, Vec<DeltaOp>>,
     pub(crate) held: BTreeMap<SubstateKey, BTreeMap<TxHash, u128>>,
-    log: Vec<Access>,
 }
 
 impl MemoryStore {
@@ -353,19 +357,7 @@ impl MemoryStore {
             locked: BTreeSet::new(),
             pending_deltas: BTreeMap::new(),
             held: BTreeMap::new(),
-            log: Vec::new(),
         }
-    }
-
-    /// Every access recorded since the last [`Self::clear_log`].
-    #[must_use]
-    pub fn access_log(&self) -> &[Access] {
-        &self.log
-    }
-
-    /// Reset the access log; state is untouched.
-    pub fn clear_log(&mut self) {
-        self.log.clear();
     }
 
     /// Whether a substate is permanently locked.
@@ -419,10 +411,6 @@ impl MemoryStore {
                 })
             })
     }
-
-    fn record(&mut self, target: EffectTarget, kind: ModeKind) {
-        self.log.push(Access { target, kind });
-    }
 }
 
 impl AmountLedger for MemoryStore {
@@ -450,9 +438,7 @@ impl AmountLedger for MemoryStore {
         }
     }
 
-    fn note(&mut self, target: EffectTarget, kind: ModeKind) {
-        self.record(target, kind);
-    }
+    fn note(&mut self, _target: EffectTarget, _kind: ModeKind) {}
 
     fn queued(&self) -> BTreeMap<SubstateKey, Vec<DeltaOp>> {
         self.pending_deltas.clone()
@@ -463,125 +449,59 @@ impl AmountLedger for MemoryStore {
     }
 }
 
-impl WorkingStore for MemoryStore {
-    fn read(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
-        self.record(EffectTarget::Point(key), ModeKind::Read);
-        Ok(self.cells.get(&key).cloned())
-    }
-
-    fn locked(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
-        self.record(EffectTarget::Point(key), ModeKind::Locked);
-        Ok(self.cells.get(&key).cloned())
-    }
-
-    fn write(&mut self, key: SubstateKey, value: Vec<u8>) -> Result<(), StoreError> {
+/// The seed surface: what a fixture or a composed genesis writes into a
+/// base before anything executes. Unlogged, deliberately — these writes
+/// are the world's, not a transaction's.
+impl MemoryStore {
+    /// Seed a point cell.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Locked`] on a locked substate.
+    pub fn write(&mut self, key: SubstateKey, value: Vec<u8>) -> Result<(), StoreError> {
         self.reject_locked(key)?;
-        self.record(EffectTarget::Point(key), ModeKind::Write);
         self.cells.insert(key, value);
         Ok(())
     }
 
-    fn remove(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
-        self.reject_locked(key)?;
-        self.record(EffectTarget::Point(key), ModeKind::Write);
-        Ok(self.cells.remove(&key))
-    }
-
-    fn queue_delta(&mut self, key: SubstateKey, op: DeltaOp) -> Result<(), StoreError> {
-        self.reject_locked(key)?;
-        self.record(EffectTarget::Point(key), ModeKind::Delta);
-        self.pending_deltas.entry(key).or_default().push(op);
-        Ok(())
-    }
-
-    fn entry_write(
+    /// Seed an ordered-collection entry.
+    ///
+    /// # Errors
+    ///
+    /// None today; `Result` for symmetry with [`Self::write`].
+    pub fn entry_write(
         &mut self,
         owner: Address,
         collection: CollectionId,
         order: u128,
         value: Vec<u8>,
     ) -> Result<(), StoreError> {
-        self.record(
-            EffectTarget::Entry {
-                owner,
-                collection,
-                order,
-            },
-            ModeKind::Write,
-        );
         self.entries
             .entry((owner, collection))
             .or_default()
             .insert(order, value);
         Ok(())
     }
-
-    fn entry_remove(
-        &mut self,
-        owner: Address,
-        collection: CollectionId,
-        order: u128,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        self.record(
-            EffectTarget::Entry {
-                owner,
-                collection,
-                order,
-            },
-            ModeKind::Write,
-        );
-        Ok(self
-            .entries
-            .get_mut(&(owner, collection))
-            .and_then(|entries| entries.remove(&order)))
-    }
-
-    fn entries_in_range(
-        &mut self,
-        owner: Address,
-        collection: CollectionId,
-        lo: u128,
-        hi: u128,
-        cap: u32,
-    ) -> Result<Vec<(u128, Vec<u8>)>, StoreError> {
-        self.record(
-            EffectTarget::Range {
-                owner,
-                collection,
-                lo,
-                hi,
-                cap,
-            },
-            ModeKind::Read,
-        );
-        if lo > hi {
-            return Ok(Vec::new());
-        }
-        let limit = usize::try_from(cap).unwrap_or(usize::MAX);
-        Ok(self
-            .entries
-            .get(&(owner, collection))
-            .map(|entries| {
-                entries
-                    .range(lo..=hi)
-                    .take(limit)
-                    .map(|(order, value)| (*order, value.clone()))
-                    .collect()
-            })
-            .unwrap_or_default())
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use hyperscale_vm_effects::{
         Address, AddressClass, CollectionId, EffectTarget, Hash32, ModeKind, SlotId, SubstateKey,
         TestHasher, child_key,
     };
 
-    use super::{Access, MemoryStore, StoreError, WorkingStore};
+    use super::{Access, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
     use crate::ledger::AmountLedger;
     use crate::modes::{DeltaOp, Feasibility, ModeError, TxHash, decode_amount, encode_amount};
+    use crate::overlay::OverlayStore;
+
+    /// The production shape: execution runs over an overlay of the base.
+    fn over(base: MemoryStore) -> OverlayStore {
+        OverlayStore::new(Arc::new(base) as Arc<dyn Baseline>)
+    }
 
     fn key(byte: u8) -> SubstateKey {
         child_key(
@@ -623,10 +543,11 @@ mod tests {
 
     #[test]
     fn locked_substates_reject_every_mutation_and_read_back() {
-        let mut store = MemoryStore::new();
+        let mut base = MemoryStore::new();
         let config = key(1);
-        store.write(config, vec![7]).unwrap();
-        store.lock(config);
+        base.write(config, vec![7]).unwrap();
+        base.lock(config);
+        let mut store = over(base);
 
         assert_eq!(
             store.write(config, vec![8]),
@@ -642,8 +563,8 @@ mod tests {
             Err(StoreError::Locked(config))
         );
 
-        store.clear_log();
         assert_eq!(store.locked(config).unwrap(), Some(vec![7]));
+        // The refusals recorded nothing; the one read is the whole log.
         assert_eq!(
             store.access_log(),
             &[Access {
@@ -655,7 +576,7 @@ mod tests {
 
     #[test]
     fn deltas_fold_from_virtual_zero_and_commit_atomically() {
-        let mut store = MemoryStore::new();
+        let mut store = over(MemoryStore::new());
         let fresh = key(3);
         store.queue_delta(fresh, DeltaOp::Add(30)).unwrap();
         store.queue_delta(fresh, DeltaOp::Sub(10)).unwrap();
@@ -701,9 +622,9 @@ mod tests {
 
         // Settle decrements the cell; release does not.
         assert_eq!(store.settle(vault, tx(1)), Ok(60));
-        assert_eq!(decode_amount(&store.read(vault).unwrap().unwrap()), Ok(40));
+        assert_eq!(decode_amount(&store.cell(vault).unwrap()), Ok(40));
         assert_eq!(store.release(vault, tx(4)), Ok(40));
-        assert_eq!(decode_amount(&store.read(vault).unwrap().unwrap()), Ok(40));
+        assert_eq!(decode_amount(&store.cell(vault).unwrap()), Ok(40));
         assert_eq!(
             store.settle(vault, tx(1)),
             Err(StoreError::MissingReservation {
@@ -731,7 +652,7 @@ mod tests {
             Err(StoreError::HeldExceedsCommitted(vault))
         );
         assert_eq!(store.held_reservation(vault, tx(1)), Some(100));
-        assert_eq!(decode_amount(&store.read(vault).unwrap().unwrap()), Ok(10));
+        assert_eq!(decode_amount(&store.cell(vault).unwrap()), Ok(10));
         // And the hold is still releasable, which is the point.
         assert_eq!(store.release(vault, tx(1)), Ok(100));
     }
@@ -746,8 +667,8 @@ mod tests {
                 .entry_write(book, asks, order, vec![u8::try_from(order).unwrap()])
                 .unwrap();
         }
-        store.clear_log();
-        let hits = store.entries_in_range(book, asks, 5, 20, 3).unwrap();
+        let mut store = over(store);
+        let hits = WorkingStore::entries_in_range(&mut store, book, asks, 5, 20, 3).unwrap();
         assert_eq!(
             hits.iter().map(|(order, _)| *order).collect::<Vec<_>>(),
             vec![5, 10, 15]
@@ -767,7 +688,7 @@ mod tests {
         );
         // Inverted intervals are empty, not errors.
         assert_eq!(
-            store.entries_in_range(book, asks, 20, 5, 3).unwrap(),
+            WorkingStore::entries_in_range(&mut store, book, asks, 20, 5, 3).unwrap(),
             Vec::new()
         );
     }

@@ -433,7 +433,6 @@ impl OverlayStore {
                 }
             }
         }
-        store.clear_log();
         store
     }
 }
@@ -617,7 +616,7 @@ mod tests {
     use super::OverlayStore;
     use crate::ledger::AmountLedger;
     use crate::modes::{DeltaOp, ModeError, TxHash, decode_amount, encode_amount};
-    use crate::store::{MemoryStore, StoreError, WorkingStore};
+    use crate::store::{MemoryStore, StoreError, Substates, WorkingStore};
 
     fn key(byte: u8) -> SubstateKey {
         child_key(
@@ -640,7 +639,6 @@ mod tests {
         for (order, value) in entries {
             base.entry_write(BOOK, ASKS, *order, vec![*value]).unwrap();
         }
-        base.clear_log();
         OverlayStore::new(Arc::new(base))
     }
 
@@ -656,11 +654,11 @@ mod tests {
         // Effective entries: 10→99 (active over base), 15, 20; a removed
         // base entry and a removed committed-layer entry never surface,
         // and neither consumes the cap.
-        let hits = overlay.entries_in_range(BOOK, ASKS, 0, 100, 3).unwrap();
+        let hits = WorkingStore::entries_in_range(&mut overlay, BOOK, ASKS, 0, 100, 3).unwrap();
         assert_eq!(hits, vec![(10, vec![99]), (15, vec![15]), (20, vec![20])]);
         // Inverted intervals are empty, not errors.
         assert_eq!(
-            overlay.entries_in_range(BOOK, ASKS, 100, 0, 3).unwrap(),
+            WorkingStore::entries_in_range(&mut overlay, BOOK, ASKS, 100, 0, 3).unwrap(),
             Vec::new()
         );
     }
@@ -678,12 +676,12 @@ mod tests {
         overlay.merge_active();
         // Sixteen tombstones stand between the interval's start and the
         // first survivor, and the cap is two.
-        let hits = overlay.entries_in_range(BOOK, ASKS, 0, 100, 2).unwrap();
+        let hits = WorkingStore::entries_in_range(&mut overlay, BOOK, ASKS, 0, 100, 2).unwrap();
         assert_eq!(hits, vec![(16, vec![16]), (17, vec![17])]);
 
         // Deleting in the active layer over a merged one is the same.
         overlay.entry_remove(BOOK, ASKS, 16).unwrap();
-        let hits = overlay.entries_in_range(BOOK, ASKS, 0, 100, 2).unwrap();
+        let hits = WorkingStore::entries_in_range(&mut overlay, BOOK, ASKS, 0, 100, 2).unwrap();
         assert_eq!(hits, vec![(17, vec![17]), (18, vec![18])]);
     }
 
@@ -692,7 +690,6 @@ mod tests {
         let mut base = MemoryStore::new();
         let cell = key(1);
         base.write(cell, vec![1]).unwrap();
-        base.clear_log();
         let mut overlay = OverlayStore::new(Arc::new(base));
 
         overlay.write(cell, vec![2]).unwrap();
@@ -719,8 +716,7 @@ mod tests {
         overlay.discard_active();
         assert_eq!(overlay.read(cell).unwrap(), Some(vec![1]));
         assert_eq!(
-            overlay
-                .entries_in_range(BOOK, ASKS, 0, 10, 10)
+            WorkingStore::entries_in_range(&mut overlay, BOOK, ASKS, 0, 10, 10)
                 .unwrap()
                 .len(),
             1
@@ -758,7 +754,6 @@ mod tests {
         let vault = key(4);
         base.write(vault, encode_amount(100).to_vec()).unwrap();
         base.judge_and_hold(&[(tx(1), vault, 60)]).unwrap();
-        base.clear_log();
         let mut overlay = OverlayStore::new(Arc::new(base));
 
         // The base hold is visible and constrains a layered judge.
@@ -797,7 +792,6 @@ mod tests {
         let vault = key(4);
         base.write(vault, encode_amount(60).to_vec()).unwrap();
         base.judge_and_hold(&[(tx(1), vault, 50)]).unwrap();
-        base.clear_log();
 
         let overlay = OverlayStore::new(Arc::new(base.clone()));
         assert_eq!(overlay.judge_movement(vault, 0, 10), Ok(50));
@@ -820,7 +814,6 @@ mod tests {
         let vault = key(7);
         base.write(vault, encode_amount(100).to_vec()).unwrap();
         base.judge_and_hold(&[(tx(1), vault, 100)]).unwrap();
-        base.clear_log();
         let mut overlay = OverlayStore::new(Arc::new(base));
         overlay.write(vault, encode_amount(10).to_vec()).unwrap();
 
@@ -838,7 +831,6 @@ mod tests {
         let cell = key(5);
         base.write(cell, vec![7]).unwrap();
         base.lock(cell);
-        base.clear_log();
         let mut overlay = OverlayStore::new(Arc::new(base));
         assert!(overlay.is_locked(cell));
         assert_eq!(overlay.write(cell, vec![8]), Err(StoreError::Locked(cell)));
@@ -855,7 +847,6 @@ mod tests {
         for (order, value) in [(5u128, 5u8), (10, 10)] {
             base.entry_write(BOOK, ASKS, order, vec![value]).unwrap();
         }
-        base.clear_log();
         let mut overlay = OverlayStore::new(Arc::new(base.clone()));
         let cell = key(6);
         overlay.write(cell, vec![1]).unwrap();
@@ -864,10 +855,10 @@ mod tests {
         overlay.entry_write(BOOK, ASKS, 7, vec![7]).unwrap();
         overlay.remove(cell).unwrap();
 
-        let mut collapsed = overlay.collapse_onto(base);
-        assert_eq!(collapsed.read(cell).unwrap(), None);
+        let collapsed = overlay.collapse_onto(base);
+        assert_eq!(collapsed.cell(cell), None);
         assert_eq!(
-            collapsed.entries_in_range(BOOK, ASKS, 0, 100, 10).unwrap(),
+            Substates::entries_in_range(&collapsed, BOOK, ASKS, 0, 100, 10),
             vec![(7, vec![7]), (10, vec![10])]
         );
     }

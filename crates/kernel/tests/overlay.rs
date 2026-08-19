@@ -156,7 +156,6 @@ fn base_store(seed: &[(u8, u128)]) -> MemoryStore {
     if let Some((k, _)) = seed.last() {
         base.lock(cell(*k));
     }
-    base.clear_log();
     base
 }
 
@@ -168,7 +167,9 @@ proptest! {
         second in vec(arb_op(), 0..24),
     ) {
         let base = base_store(&seed);
-        let mut reference = base.clone();
+        // The reference never layers: one active layer over the same
+        // base, so what the merging overlay must match is flat history.
+        let mut reference = OverlayStore::new(Arc::new(base.clone()));
         let mut overlay = OverlayStore::new(Arc::new(base.clone()));
 
         for op in &first {
@@ -193,14 +194,12 @@ proptest! {
             }
         }
         let overlay_pending: Vec<_> = overlay.pending_deltas().collect();
-        let reference_pending: Vec<_> = reference
-            .pending_deltas()
-            .map(|(key, ops)| (key, ops.to_vec()))
-            .collect();
+        let reference_pending: Vec<_> = reference.pending_deltas().collect();
         assert_eq!(overlay_pending, reference_pending);
 
         // The collapsed overlay is the reference, state for state.
-        let collapsed = overlay.collapse_onto(base);
+        let collapsed = overlay.collapse_onto(base.clone());
+        let reference = reference.collapse_onto(base);
         let collapsed_cells: Vec<_> = collapsed
             .cells()
             .map(|(key, value)| (key, value.to_vec()))

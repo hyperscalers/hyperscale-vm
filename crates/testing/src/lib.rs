@@ -48,8 +48,8 @@ use hyperscale_vm_effects::{
     child_key, declaration_hash, resource_address, route,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, ExecutionMode, Locality, ManifestWalk, MemoryStore, Outcome as KernelOutcome, TxHash,
-    WorkingStore, decode_amount, encode_amount, execute_batch,
+    BatchTx, ExecutionMode, Locality, ManifestWalk, MemoryStore, Outcome as KernelOutcome,
+    Substates, TxHash, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 #[cfg(feature = "wasm")]
@@ -305,7 +305,6 @@ impl Chain {
             .write(leaf, bytes)
             .expect("the store takes a config leaf");
         self.store.lock(leaf);
-        self.store.clear_log();
         address
     }
 
@@ -349,7 +348,6 @@ impl Chain {
         self.store
             .write(key, encode_amount(amount).to_vec())
             .expect("the store takes a vault cell");
-        self.store.clear_log();
     }
 
     /// What `owner` holds of `resource`.
@@ -358,13 +356,10 @@ impl Chain {
     ///
     /// If the cell is there and is not an amount.
     #[must_use]
-    pub fn balance(&mut self, owner: impl Into<Address>, resource: impl Into<Address>) -> u128 {
-        self.store
-            .read(vault(owner, resource))
-            .expect("the store answers a vault read")
-            .map_or(0, |cell| {
-                decode_amount(&cell).expect("a vault cell is an amount")
-            })
+    pub fn balance(&self, owner: impl Into<Address>, resource: impl Into<Address>) -> u128 {
+        self.store.cell(vault(owner, resource)).map_or(0, |cell| {
+            decode_amount(&cell).expect("a vault cell is an amount")
+        })
     }
 
     /// Sign one transaction as `signer` and execute it.

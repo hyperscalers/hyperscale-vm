@@ -2,10 +2,12 @@
 //! are invariant under arrival permutation, at the pure-function level and
 //! through the store lifecycle.
 
+use std::sync::Arc;
+
 use hyperscale_vm_effects::{Address, AddressClass, Hash32, SlotId, TestHasher, child_key};
 use hyperscale_vm_kernel::{
-    AmountLedger, DeltaOp, MemoryStore, TxHash, WorkingStore, decode_amount, encode_amount,
-    fold_deltas, judge,
+    AmountLedger, Baseline, DeltaOp, MemoryStore, OverlayStore, TxHash, WorkingStore,
+    decode_amount, encode_amount, fold_deltas, judge,
 };
 use proptest::collection::vec;
 use proptest::prelude::{Just, Strategy, any, proptest};
@@ -77,7 +79,7 @@ proptest! {
         .prop_flat_map(|batch| (Just(batch.clone()), Just(batch).prop_shuffle())),
     ) {
         let run = |batch: &[(u8, TxHash, bool, u128)]| {
-            let mut store = MemoryStore::new();
+            let mut store = OverlayStore::new(Arc::new(MemoryStore::new()) as Arc<dyn Baseline>);
             let cell = |byte: u8| child_key(&TestHasher, Address::new([byte; 31], AddressClass::Component), SlotId(1), &[]);
             for byte in 0u8..4 {
                 store.write(cell(byte), encode_amount(1 << 40).to_vec()).unwrap();

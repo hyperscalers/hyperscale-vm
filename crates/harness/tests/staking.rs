@@ -28,7 +28,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall,
     InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, Receipt,
-    TxHash, WorkingStore, decode_amount, encode_amount, execute_batch,
+    TxHash, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_ref::{CVal, ExecError, RefComponent, RefComponentInstance, Trap as RefTrap};
@@ -76,7 +76,6 @@ fn operator_store() -> MemoryStore {
             vec![1],
         )
         .unwrap();
-    store.clear_log();
     store
 }
 /// The account holding the pool's owner badge: the operator surface
@@ -413,7 +412,6 @@ fn seeded_store(xrd: u128, units: u128) -> MemoryStore {
             .write(vault(ALICE, unit()), encode_amount(units).to_vec())
             .unwrap();
     }
-    store.clear_log();
     store
 }
 
@@ -701,7 +699,6 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
     // registration leaves behind.
     let mut store = operator_store();
     store.write(validator_leaf(pool(), VALIDATOR), registered_bytes())?;
-    store.clear_log();
 
     let (outcome, _) = run_both(&store, std::slice::from_ref(&entry))?;
     assert!(
@@ -740,7 +737,6 @@ fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
     let world = world();
     let mut store = operator_store();
     store.write(validator_leaf(pool(), VALIDATOR), registered_bytes())?;
-    store.clear_log();
 
     for (method, event_type) in [("deactivate-validator", 3), ("unjail", 4)] {
         let graph = operator_graph(method, VALIDATOR);
@@ -839,7 +835,6 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     let world = world();
     let mut store = operator_store();
     store.write(vote_leaf(pool()), cast_payload())?;
-    store.clear_log();
 
     let cleared = graph(|b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
@@ -869,7 +864,6 @@ fn a_second_cast_replaces_the_first() -> Result<()> {
     let world = world();
     let mut store = operator_store();
     store.write(vote_leaf(pool()), vec![0xAA; 24])?;
-    store.clear_log();
 
     let entry = batch_entry(&world, &single_intent(cast_graph()), OPERATOR)?;
     let (_, end) = run_both(&store, std::slice::from_ref(&entry))?;

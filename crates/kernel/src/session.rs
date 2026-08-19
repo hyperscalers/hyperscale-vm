@@ -2669,7 +2669,6 @@ mod tests {
         let vault = key(0xC7);
         let mut store = MemoryStore::new();
         store.write(vault, encode_amount(100).to_vec()).unwrap();
-        store.clear_log();
 
         let reserve = Effect {
             target: EffectTarget::Point(vault),
@@ -2710,7 +2709,6 @@ mod tests {
         let vault = key(0xC8);
         let mut store = MemoryStore::new();
         store.write(vault, encode_amount(100).to_vec()).unwrap();
-        store.clear_log();
 
         let reserve = |amount| Effect {
             target: EffectTarget::Point(vault),
@@ -3233,7 +3231,6 @@ mod tests {
         let collection = CollectionId([4; 16]);
         let mut store = MemoryStore::new();
         store.entry_write(owner, collection, 10, vec![1]).unwrap();
-        store.clear_log();
         let set = declared(&[Effect {
             target: EffectTarget::Range {
                 owner,
@@ -3349,7 +3346,6 @@ mod tests {
                 .entry_write(owner, collection, order, vec![u8::try_from(order).unwrap()])
                 .unwrap();
         }
-        store.clear_log();
         let set = declared(&[Effect {
             target: EffectTarget::Range {
                 owner,
@@ -3385,7 +3381,6 @@ mod tests {
                 .entry_write(owner, collection, order, vec![7; 10])
                 .unwrap();
         }
-        store.clear_log();
         let set = declared(&[Effect {
             target: EffectTarget::Range {
                 owner,
@@ -3445,7 +3440,6 @@ mod tests {
                 .entry_write(owner, collection, order, vec![1])
                 .unwrap();
         }
-        store.clear_log();
         let set = declared(&[Effect {
             target: EffectTarget::Range {
                 owner,
@@ -3543,7 +3537,6 @@ mod tests {
         // A batch judge already holds a different amount for this
         // transaction than the declaration asks for.
         store.judge_and_hold(&[(tx(1), vault, 40)]).unwrap();
-        store.clear_log();
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
             mode: Mode::Reserve { amount: 50 },
@@ -3702,7 +3695,6 @@ mod tests {
         let vault = key(0xB1);
         let mut store = MemoryStore::new();
         store.write(vault, encode_amount(100).to_vec()).unwrap();
-        store.clear_log();
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
             mode: Mode::Write {
@@ -3734,7 +3726,6 @@ mod tests {
         let vault = key(0xB2);
         let mut store = MemoryStore::new();
         store.write(vault, encode_amount(100).to_vec()).unwrap();
-        store.clear_log();
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
             mode: Mode::Write {
@@ -3771,7 +3762,6 @@ mod tests {
         let vault = key(0xB3);
         let mut store = MemoryStore::new();
         store.write(vault, encode_amount(100).to_vec()).unwrap();
-        store.clear_log();
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
             mode: Mode::Write {

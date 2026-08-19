@@ -20,7 +20,7 @@ use hyperscale_vm_effects::{
     Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, WorkingStore, encode_amount,
+    EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, encode_amount,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
 use hyperscale_vm_runtime::{

@@ -16,7 +16,7 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
     AbortReason, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall,
     InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, Outcome, Receipt,
-    TxHash, WorkingStore, decode_amount, encode_amount, execute_batch,
+    TxHash, decode_amount, encode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
 use hyperscale_vm_ref::{CVal, ExecError, RefComponent, RefComponentInstance, Trap as RefTrap};
@@ -252,7 +252,6 @@ fn seeded_store() -> MemoryStore {
     store
         .write(vault(BOB, RES_Y), encode_amount(30).to_vec())
         .unwrap();
-    store.clear_log();
     store
 }
 

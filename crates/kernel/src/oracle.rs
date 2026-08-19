@@ -170,7 +170,7 @@ mod tests {
     };
 
     use super::{multiply_held_ids, undeclared_accesses};
-    use crate::store::{Access, MemoryStore, WorkingStore};
+    use crate::store::{Access, MemoryStore};
 
     fn declared(effects: &[Effect]) -> EffectSet {
         let mut set = EffectSet::new();

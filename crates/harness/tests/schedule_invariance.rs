@@ -84,7 +84,6 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
             .unwrap();
     }
     store.write(rmw_cell(), vec![1, 2, 3]).unwrap();
-    store.clear_log();
 
     let mut batch = Vec::new();
     let mut shapes = BTreeMap::new();

@@ -124,7 +124,6 @@ fn a_debit_below_a_held_reservation_aborts_only_its_transaction() {
     // floor is zero, and its uncovered `Sub` is its own loss.
     let mut store = MemoryStore::new();
     store.write(cell(0xA), encode_amount(50).to_vec()).unwrap();
-    store.clear_log();
     let batch = vec![
         BatchTx::new(
             tx(0x01),
@@ -175,7 +174,6 @@ fn a_debit_below_a_held_reservation_aborts_only_its_transaction() {
 fn a_covered_debit_completes_beside_a_reservation() {
     let mut store = MemoryStore::new();
     store.write(cell(0xA), encode_amount(60).to_vec()).unwrap();
-    store.clear_log();
     let batch = vec![
         BatchTx::new(
             tx(0x01),
@@ -222,7 +220,6 @@ fn racing_debits_lose_deterministically_in_canonical_order() {
     // order or execution mode.
     let mut store = MemoryStore::new();
     store.write(cell(0xA), encode_amount(20).to_vec()).unwrap();
-    store.clear_log();
     let batch = vec![
         BatchTx::new(
             tx(0x01),
@@ -277,7 +274,6 @@ fn a_reserve_on_a_locked_or_malformed_cell_aborts_only_its_transaction() {
     store
         .write(cell(0xAD), encode_amount(100).to_vec())
         .unwrap();
-    store.clear_log();
     let batch = vec![
         BatchTx::new(
             tx(0x01),
@@ -414,7 +410,6 @@ fn a_drained_vault_leaves_no_cell() {
     // capability cannot remove, so draining is the only shrink there is.
     let mut store = MemoryStore::new();
     store.write(cell(0xA), encode_amount(50).to_vec()).unwrap();
-    store.clear_log();
 
     // Settling the whole balance away, and moving the whole balance away,
     // are the two ways a cell reaches zero.
@@ -624,7 +619,6 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
     let poisoned = cell(0xE);
     let mut store = MemoryStore::new();
     store.write(poisoned, encode_amount(100).to_vec()).unwrap();
-    store.clear_log();
 
     let writer = |_entry: &BatchTx, mut session: KernelSession| {
         let rep = session
@@ -700,7 +694,6 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
     let vault = cell(0xB);
     let mut store = MemoryStore::new();
     store.write(vault, encode_amount(100).to_vec()).unwrap();
-    store.clear_log();
 
     let scripted = |_entry: &BatchTx, mut session: KernelSession| {
         let caps: Vec<Capability> = session.capabilities().to_vec();
@@ -842,7 +835,6 @@ impl GuestRunner for Downed {
 fn an_unavailable_engine_refuses_the_batch() {
     let mut store = MemoryStore::new();
     store.write(cell(0xA), encode_amount(60).to_vec()).unwrap();
-    store.clear_log();
     let batch = vec![BatchTx::new(
         tx(0x01),
         moving(with_delta(
