@@ -240,7 +240,7 @@ fn the_handle_plan_matches_what_the_kernel_materializes() {
             let materialized: Vec<ModeKind> = declaration
                 .ordered
                 .iter()
-                .map(|effect| effect.mode.kind())
+                .map(|access| access.effect.mode.kind())
                 .collect();
             assert_eq!(
                 materialized, planned,

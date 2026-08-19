@@ -14,8 +14,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, Presence, SlotId,
-    SubstateKey, TestHasher, child_key,
+    Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
+    Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
@@ -94,7 +94,7 @@ fn store() -> MemoryStore {
 fn run(declared: EffectSet) -> Outcome {
     let batch = vec![BatchTx::new(
         tx(0x01),
-        declared,
+        Declaration::from_set(declared),
         EnvInputs {
             clock_ms: 1_000,
             randomness: [1; 32],
@@ -117,7 +117,7 @@ fn run(declared: EffectSet) -> Outcome {
 fn a_locked_read_of_a_locked_cell_reads_it() {
     let batch = vec![BatchTx::new(
         tx(0x01),
-        declare(&[
+        Declaration::from_set(declare(&[
             (cell(LOCKED), Mode::Locked),
             (
                 cell(LEDGER),
@@ -125,7 +125,7 @@ fn a_locked_read_of_a_locked_cell_reads_it() {
                     requires: Presence::Either,
                 },
             ),
-        ]),
+        ])),
         EnvInputs {
             clock_ms: 1_000,
             randomness: [1; 32],

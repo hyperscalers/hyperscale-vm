@@ -136,11 +136,10 @@ fn a_package_cannot_declare_an_effect_on_a_cell_it_does_not_own() {
         .unwrap();
     let store = OverlayStore::new(Arc::new(base));
 
-    let _ordered: Vec<_> = declaration.ordered.clone();
     let Ok(session) = KernelSession::materialize(
         store,
         &Declaration {
-            denominations: declaration.denominations,
+            ordered: declaration.ordered,
             ..Declaration::from_set(declaration.set)
         },
         TxHash(Hash32([0x01; 32])),
@@ -193,11 +192,10 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
         .unwrap();
     let store = OverlayStore::new(Arc::new(base));
 
-    let _ordered: Vec<_> = declaration.ordered.clone();
     let Ok(mut session) = KernelSession::materialize(
         store,
         &Declaration {
-            denominations: declaration.denominations,
+            ordered: declaration.ordered,
             ..Declaration::from_set(declaration.set)
         },
         TxHash(Hash32([0x01; 32])),

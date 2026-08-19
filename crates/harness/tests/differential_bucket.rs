@@ -12,8 +12,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Hash32,
-    Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
+    Address, AddressClass, CollectionId, Declaration, DeclaredAccess, Effect, EffectSet,
+    EffectTarget, Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{
@@ -185,8 +185,12 @@ fn materialize(fx: &Fixture) -> KernelSession {
         OverlayStore::new(Arc::new(fx.store.clone())),
         &Declaration {
             set: fx.declared.clone(),
-            ordered: fx.declared.iter().collect::<Vec<_>>(),
-            denominations: denominations(fx),
+            ordered: fx
+                .declared
+                .iter()
+                .zip(denominations(fx))
+                .map(|(effect, holds)| DeclaredAccess { effect, holds })
+                .collect(),
             ..Declaration::default()
         },
         tx(),
@@ -1369,8 +1373,10 @@ fn peeking() -> KernelSession {
         OverlayStore::new(Arc::new(store)),
         &Declaration {
             set: declared.clone(),
-            ordered: [read].to_vec(),
-            denominations: [Some(RESOURCE)].to_vec(),
+            ordered: vec![DeclaredAccess {
+                effect: read,
+                holds: Some(RESOURCE),
+            }],
             ..Declaration::default()
         },
         tx(),

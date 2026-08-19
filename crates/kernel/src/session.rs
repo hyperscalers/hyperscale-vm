@@ -203,23 +203,6 @@ pub enum MaterializeError {
     /// within one receipt.
     #[error("write and delta/reserve declared on the same cell {0:?}")]
     SelfConflicting(SubstateKey),
-    /// A declaration whose two ordered views are different lengths.
-    ///
-    /// The clause order and what each of those cells holds are one
-    /// evaluation read index for index, so a pair that disagrees is a
-    /// caller that did not build one — unreachable from routing, which
-    /// fills both in step. Surfaced rather than absorbed: reading the
-    /// shorter of the two would either shorten the capability table,
-    /// moving every rep after the gap, or read a cell that says nothing
-    /// as one holding no value. Both are quiet, and one of them hands a
-    /// guest the wrong handle.
-    #[error("a declaration of {ordered} clauses says what {denominations} of them hold")]
-    MalformedDeclaration {
-        /// How many clauses the declaration ordered.
-        ordered: usize,
-        /// How many of them it answered for.
-        denominations: usize,
-    },
     /// A commutative movement declared on a cell that denominates
     /// nothing.
     ///
@@ -765,15 +748,8 @@ impl KernelSession {
         let Declaration {
             set: declared,
             ordered,
-            denominations,
             ..
         } = declaration;
-        if ordered.len() != denominations.len() {
-            return Err(MaterializeError::MalformedDeclaration {
-                ordered: ordered.len(),
-                denominations: denominations.len(),
-            });
-        }
         store.clear_log();
 
         // Reservations are judged off the *set*, where `EffectSet::insert`
@@ -814,15 +790,15 @@ impl KernelSession {
         // intervals of one collection are one answer about its entries.
         let mut table = Vec::with_capacity(ordered.len());
         let mut holds: BTreeMap<Holds, bool> = BTreeMap::new();
-        for (effect, held) in ordered.iter().zip(denominations) {
-            let denominated = held.is_some();
+        for access in ordered {
+            let denominated = access.holds.is_some();
             if holds
-                .insert(holds_of(effect.target), denominated)
+                .insert(holds_of(access.effect.target), denominated)
                 .is_some_and(|held| held != denominated)
             {
-                return Err(MaterializeError::MixedContents(effect.target));
+                return Err(MaterializeError::MixedContents(access.effect.target));
             }
-            table.push(capability_for(&store, *effect, denominated)?);
+            table.push(capability_for(&store, access.effect, denominated)?);
         }
         // One transaction may not declare both an exclusive write and a
         // commutative mode on the same cell: the receipt records
@@ -861,7 +837,7 @@ impl KernelSession {
             invocation: None,
             events: Vec::new(),
             supply: SupplyDelta::default(),
-            cell_resources: denominations.clone(),
+            cell_resources: ordered.iter().map(|access| access.holds).collect(),
             bucket_resources: Vec::new(),
             buckets: Vec::new(),
             issuance: None,
@@ -2340,9 +2316,9 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Declaration, Effect,
-        EffectConflict, EffectSet, EffectTarget, Hash32, Mode, SlotId, SubstateKey, TestHasher,
-        child_key,
+        ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Declaration, DeclaredAccess,
+        Effect, EffectConflict, EffectSet, EffectTarget, Hash32, Mode, SlotId, SubstateKey,
+        TestHasher, child_key,
     };
     use hyperscale_vm_types::Presence;
 
@@ -2413,8 +2389,7 @@ mod tests {
             OverlayStore::new(Arc::new(store)),
             &Declaration {
                 set,
-                ordered: ordered.clone(),
-                denominations: holding(&ordered),
+                ordered: holding(&ordered),
                 ..Declaration::default()
             },
             tx(1),
@@ -2587,8 +2562,7 @@ mod tests {
             OverlayStore::new(Arc::new(MemoryStore::new())),
             &Declaration {
                 set,
-                ordered: reversed.clone(),
-                denominations: holding(&reversed),
+                ordered: holding(&reversed),
                 ..Declaration::default()
             },
             tx(1),
@@ -2627,8 +2601,7 @@ mod tests {
             OverlayStore::new(Arc::new(MemoryStore::new())),
             &Declaration {
                 set,
-                ordered: [write, write].to_vec(),
-                denominations: holding(&[write, write]),
+                ordered: holding(&[write, write]),
                 ..Declaration::default()
             },
             tx(1),
@@ -2663,8 +2636,7 @@ mod tests {
             OverlayStore::new(Arc::new(store)),
             &Declaration {
                 set,
-                ordered: [reserve, reserve].to_vec(),
-                denominations: holding(&[reserve, reserve]),
+                ordered: holding(&[reserve, reserve]),
                 ..Declaration::default()
             },
             tx(1),
@@ -2701,8 +2673,7 @@ mod tests {
             OverlayStore::new(Arc::new(store)),
             &Declaration {
                 set: declared(&[reserve(5), reserve(6)]),
-                ordered: [reserve(5), reserve(6)].to_vec(),
-                denominations: holding(&[reserve(5), reserve(6)]),
+                ordered: holding(&[reserve(5), reserve(6)]),
                 ..Declaration::default()
             },
             tx(1),
@@ -2729,7 +2700,7 @@ mod tests {
     /// shape of the fact: every clause reaching a cell some movement
     /// reaches says the same thing about it, which is what
     /// [`MaterializeError::MixedContents`] holds a signature to.
-    fn holding(ordered: &[Effect]) -> Vec<Option<Address>> {
+    fn holding(ordered: &[Effect]) -> Vec<DeclaredAccess> {
         let value: BTreeSet<Holds> = ordered
             .iter()
             .filter(|effect| matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }))
@@ -2737,7 +2708,10 @@ mod tests {
             .collect();
         ordered
             .iter()
-            .map(|effect| value.contains(&holds_of(effect.target)).then_some(RESOURCE))
+            .map(|effect| DeclaredAccess {
+                effect: *effect,
+                holds: value.contains(&holds_of(effect.target)).then_some(RESOURCE),
+            })
             .collect()
     }
 
@@ -2756,9 +2730,8 @@ mod tests {
     }
 
     fn session_over(store: MemoryStore, set: &EffectSet) -> KernelSession {
-        let holds = holding(&ord(set));
         let declaration = Declaration {
-            denominations: holds,
+            ordered: holding(&ord(set)),
             ..Declaration::from_set(set.clone())
         };
         KernelSession::materialize(
@@ -3028,53 +3001,6 @@ mod tests {
     /// capability table — moving every rep after the gap, and handing the
     /// guest a handle on the wrong cell — or read a cell that says
     /// nothing as one holding no value. Both are quiet.
-    #[test]
-    fn a_declaration_that_answers_for_fewer_clauses_than_it_orders_is_not_one() {
-        let write = Effect {
-            target: EffectTarget::Point(key(1)),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
-        };
-        let materialise = |denominations: Vec<Option<Address>>| {
-            KernelSession::materialize(
-                OverlayStore::new(Arc::new(MemoryStore::new())),
-                &Declaration {
-                    set: declared(&[write]),
-                    ordered: vec![write, write],
-                    denominations,
-                    ..Declaration::default()
-                },
-                tx(1),
-                env(),
-                hash,
-            )
-            .map(|session| session.capabilities().len())
-        };
-
-        for short in [vec![], vec![None]] {
-            assert_eq!(
-                materialise(short.clone()),
-                Err(MaterializeError::MalformedDeclaration {
-                    ordered: 2,
-                    denominations: short.len(),
-                })
-            );
-        }
-        // One answer too many is the same disagreement from the other
-        // side, and a table built off it would say what a clause nobody
-        // declared holds.
-        assert_eq!(
-            materialise(vec![None, None, None]),
-            Err(MaterializeError::MalformedDeclaration {
-                ordered: 2,
-                denominations: 3,
-            })
-        );
-        // Answered clause for clause, it materialises both.
-        assert_eq!(materialise(vec![None, None]), Ok(2));
-    }
-
     /// One cell holds one thing, judged where two expressions that
     /// evaluate onto it can no longer hide behind being different
     /// expressions.
@@ -3097,8 +3023,16 @@ mod tests {
                 OverlayStore::new(Arc::new(MemoryStore::new())),
                 &Declaration {
                     set: declared(&[write]),
-                    ordered: vec![write, write],
-                    denominations: holds,
+                    ordered: vec![
+                        DeclaredAccess {
+                            effect: write,
+                            holds: holds[0],
+                        },
+                        DeclaredAccess {
+                            effect: write,
+                            holds: holds[1],
+                        },
+                    ],
                     ..Declaration::default()
                 },
                 tx(1),
@@ -3146,8 +3080,16 @@ mod tests {
                 OverlayStore::new(Arc::new(MemoryStore::new())),
                 &Declaration {
                     set: declared(&[wide, narrow]),
-                    ordered: [wide, narrow].to_vec(),
-                    denominations: [Some(RESOURCE), None].to_vec(),
+                    ordered: vec![
+                        DeclaredAccess {
+                            effect: wide,
+                            holds: Some(RESOURCE),
+                        },
+                        DeclaredAccess {
+                            effect: narrow,
+                            holds: None,
+                        },
+                    ],
                     ..Declaration::default()
                 },
                 tx(1),
@@ -3499,8 +3441,7 @@ mod tests {
                 OverlayStore::new(Arc::new(MemoryStore::new())),
                 &Declaration {
                     set: set.clone(),
-                    ordered: ord(&set),
-                    denominations: holding(&ord(&set)),
+                    ordered: holding(&ord(&set)),
                     ..Declaration::default()
                 },
                 tx(1),
@@ -3529,8 +3470,7 @@ mod tests {
                 OverlayStore::new(Arc::new(store)),
                 &Declaration {
                     set: set.clone(),
-                    ordered: ord(&set),
-                    denominations: holding(&ord(&set)),
+                    ordered: holding(&ord(&set)),
                     ..Declaration::default()
                 },
                 tx(1),
@@ -3560,8 +3500,7 @@ mod tests {
                 OverlayStore::new(Arc::new(MemoryStore::new())),
                 &Declaration {
                     set: set.clone(),
-                    ordered: ord(&set),
-                    denominations: holding(&ord(&set)),
+                    ordered: holding(&ord(&set)),
                     ..Declaration::default()
                 },
                 tx(1),

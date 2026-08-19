@@ -121,7 +121,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
                 },
             })
             .unwrap();
-        batch.push(BatchTx::new(tx(id), declared, env()));
+        batch.push(BatchTx::new(tx(id), Declaration::from_set(declared), env()));
         shapes.insert(tx(id), Shape::Rmw { cell: rmw_cell() });
     }
     (store, batch, shapes)

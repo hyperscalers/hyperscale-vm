@@ -12,6 +12,7 @@ hyperscale-vm-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+hyperscale-vm-effects = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 
 [lints]

@@ -631,12 +631,6 @@ impl From<MaterializeError> for Outcome {
             MaterializeError::MixedContents(_) => Self::UserError {
                 reason: AbortReason::MixedContents,
             },
-            // Not the sender's defect, and not reachable from routing —
-            // but aborting is the safe direction for a declaration
-            // nothing can be materialized against.
-            MaterializeError::MalformedDeclaration { .. } => Self::UserError {
-                reason: AbortReason::AbiViolation,
-            },
             MaterializeError::Occupied(target) => Self::PresenceUnmet {
                 target,
                 required: Presence::Absent,
@@ -820,9 +814,9 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
         // consequence would be a transaction routed against one
         // declaration and handed capabilities for another.
         let mut folded = EffectSet::new();
-        for effect in &entry.declaration.ordered {
+        for access in &entry.declaration.ordered {
             folded
-                .insert(*effect)
+                .insert(access.effect)
                 .map_err(|_| BatchError::InconsistentDeclaration { tx: entry.tx })?;
         }
         if folded != entry.declaration.set {
@@ -1104,8 +1098,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use hyperscale_vm_effects::{
-        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Hash32, Mode,
-        Presence, SlotId, TestHasher, child_key,
+        Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Hash32,
+        Mode, Presence, SlotId, TestHasher, child_key,
     };
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
@@ -1235,7 +1229,7 @@ mod tests {
                     }
                     BatchTx::new(
                         TxHash(Hash32([u8::try_from(index).expect("small batch"); 32])),
-                        declared,
+                        Declaration::from_set(declared),
                         EnvInputs {
                             clock_ms: 0,
                             randomness: [0; 32],

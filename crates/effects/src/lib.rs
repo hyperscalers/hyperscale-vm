@@ -45,9 +45,9 @@ pub use auth::{
     RoleSet, StoredRoles,
 };
 pub use dsl::{
-    Clause, Declaration, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RANGE_CAP, ModeExpr, TargetExpr,
-    evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local,
+    Clause, Declaration, DeclaredAccess, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH,
+    MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RANGE_CAP, ModeExpr,
+    TargetExpr, evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local,
     materialized_kind, self_child,
 };
 pub use envelope::{

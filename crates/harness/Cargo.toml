@@ -8,7 +8,7 @@ description = "Differential lanes, corpora, and guest fixtures for vm-runtime vs
 [dependencies]
 # The guest build, so a test and `cargo hyperscale` compile one way.
 hyperscale-vm-cli.workspace = true
-hyperscale-vm-effects.workspace = true
+hyperscale-vm-effects = { workspace = true, features = ["testing"] }
 hyperscale-vm-embed.workspace = true
 hyperscale-vm-kernel.workspace = true
 hyperscale-vm-types.workspace = true

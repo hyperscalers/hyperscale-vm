@@ -15,9 +15,9 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Hash32,
-    Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, Value, child_key, collection_id,
-    order_key,
+    Address, AddressClass, CollectionId, Declaration, DeclaredAccess, Effect, EffectSet,
+    EffectTarget, Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, Value,
+    child_key, collection_id, order_key,
 };
 use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
 #[cfg(target_os = "linux")]
@@ -94,8 +94,11 @@ fn session() -> KernelSession {
         OverlayStore::new(Arc::new(store)),
         &Declaration {
             set: declared.clone(),
-            ordered: declared.iter().collect::<Vec<_>>(),
-            denominations,
+            ordered: declared
+                .iter()
+                .zip(denominations)
+                .map(|(effect, holds)| DeclaredAccess { effect, holds })
+                .collect(),
             ..Declaration::default()
         },
         TxHash(Hash32([0x77; 32])),
@@ -497,8 +500,11 @@ fn lottery_session() -> KernelSession {
         OverlayStore::new(Arc::new(MemoryStore::new())),
         &Declaration {
             set: declared.clone(),
-            ordered: declared.iter().collect::<Vec<_>>(),
-            denominations,
+            ordered: declared
+                .iter()
+                .zip(denominations)
+                .map(|(effect, holds)| DeclaredAccess { effect, holds })
+                .collect(),
             ..Declaration::default()
         },
         TxHash(Hash32([0x78; 32])),

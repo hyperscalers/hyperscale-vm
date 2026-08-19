@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::NF_VAULT;
 use hyperscale_vm_effects::{
-    Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    Presence, SlotId, SubstateKey, TestHasher, Value, child_key, collection_id,
+    Address, AddressClass, Declaration, DeclaredAccess, Effect, EffectSet, EffectTarget, Hash32,
+    Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, Value, child_key, collection_id,
 };
 use hyperscale_vm_kernel::{
     AbortReason, EnvInputs, ISSUER_REP, KernelSession, MaterializeError, MemoryStore, OverlayStore,
@@ -86,8 +86,14 @@ fn try_session(denominations: &[Option<Address>]) -> Result<KernelSession, Mater
         OverlayStore::new(Arc::new(MemoryStore::new())),
         &Declaration {
             set,
-            ordered,
-            denominations: denominations.to_vec(),
+            ordered: ordered
+                .iter()
+                .zip(denominations)
+                .map(|(effect, holds)| DeclaredAccess {
+                    effect: *effect,
+                    holds: *holds,
+                })
+                .collect(),
             ..Declaration::default()
         },
         TxHash(Hash32([1; 32])),
@@ -145,8 +151,14 @@ fn every_producer_stamps_what_its_source_held() {
         OverlayStore::new(Arc::new(store)),
         &Declaration {
             set: set.clone(),
-            ordered,
-            denominations: [Some(X), Some(X), Some(X), Some(Y)].to_vec(),
+            ordered: ordered
+                .iter()
+                .zip([Some(X), Some(X), Some(X), Some(Y)])
+                .map(|(effect, holds)| DeclaredAccess {
+                    effect: *effect,
+                    holds,
+                })
+                .collect(),
             ..Declaration::default()
         },
         TxHash(Hash32([2; 32])),
@@ -225,8 +237,14 @@ fn every_instance_producer_stamps_what_its_source_held() {
         OverlayStore::new(Arc::new(store)),
         &Declaration {
             set: set.clone(),
-            ordered,
-            denominations: [Some(X), Some(Y)].to_vec(),
+            ordered: ordered
+                .iter()
+                .zip([Some(X), Some(Y)])
+                .map(|(effect, holds)| DeclaredAccess {
+                    effect: *effect,
+                    holds,
+                })
+                .collect(),
             ..Declaration::default()
         },
         TxHash(Hash32([3; 32])),

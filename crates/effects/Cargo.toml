@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "Effect signatures, the access DSL evaluator, and the routing fold"
 
+[features]
+# Test-fixture constructors: a Declaration from a bare set, with no clause
+# order to evaluate. Production paths evaluate signatures.
+testing = []
+
 [dependencies]
 hyperscale-hbor.workspace = true
 hyperscale-vm-types.workspace = true

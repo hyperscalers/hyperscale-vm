@@ -6,8 +6,9 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, Declaration, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode,
-    Presence, SlotId, SubintentHash, SubstateKey, TestHasher, child_key, nullifier_key,
+    Address, AddressClass, Declaration, DeclaredAccess, Effect, EffectSet, EffectTarget, Hash32,
+    Hasher, Mode, Presence, SlotId, SubintentHash, SubstateKey, TestHasher, child_key,
+    nullifier_key,
 };
 use hyperscale_vm_kernel::{
     AbortReason, BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner,
@@ -509,8 +510,11 @@ fn declaration_views_that_disagree_refuse_the_batch() {
                 },
             )
             .iter()
+            .map(|effect| DeclaredAccess {
+                effect,
+                holds: None,
+            })
             .collect(),
-            denominations: Vec::new(),
             ..Declaration::default()
         },
         calls: Vec::new(),

@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::admission::Admitted;
 use crate::dsl::{
-    Clause, Declaration, EvalError, EvalInputs, ModeExpr, evaluate_declaration, evaluate_expr,
-    materialized_kind,
+    Clause, Declaration, DeclaredAccess, EvalError, EvalInputs, ModeExpr, evaluate_declaration,
+    evaluate_expr, materialized_kind,
 };
 use crate::hash::Hasher;
 use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall};
@@ -120,15 +120,13 @@ pub struct FrameDeclaration {
     pub node: u32,
     /// The method this frame evaluated.
     pub method: MethodRef,
-    /// This frame's effects in clause order — one entry per clause the
-    /// evaluation reached, `for-each` bodies expanded in place.
+    /// This frame's accesses in clause order — one entry per clause the
+    /// evaluation reached, `for-each` bodies expanded in place, each
+    /// carrying what its cell holds.
     ///
     /// A frame's handles occupy a contiguous run of the capability table,
     /// so a generated guest's positional parameters are this slice.
-    pub ordered: Vec<Effect>,
-    /// What each of those entries holds, where it holds value, aligned
-    /// index for index with `ordered`.
-    pub denominations: Vec<Option<Address>>,
+    pub ordered: Vec<DeclaredAccess>,
 }
 
 impl Routing {
@@ -154,27 +152,25 @@ impl Routing {
     pub fn declaration(&self) -> Result<Declaration, RouteError> {
         let mut set = EffectSet::new();
         let mut ordered = Vec::new();
-        let mut denominations = Vec::new();
         // The kernel's own effects are the fee reservation and its
         // settlement, which move value the payer's account already
         // denominates; nothing about them is a package's declaration, so
         // they carry no resource of their own.
-        let frame_effects = self.frames.iter().flat_map(|frame| {
-            frame
-                .ordered
-                .iter()
-                .zip(frame.denominations.iter().copied())
+        let frame_accesses = self
+            .frames
+            .iter()
+            .flat_map(|frame| frame.ordered.iter().copied());
+        let kernel_accesses = self.kernel_effects.iter().map(|effect| DeclaredAccess {
+            effect: *effect,
+            holds: None,
         });
-        let kernel_effects = self.kernel_effects.iter().map(|effect| (effect, None));
-        for (effect, held) in frame_effects.chain(kernel_effects) {
-            set.insert(*effect).map_err(RouteError::from)?;
-            ordered.push(*effect);
-            denominations.push(held);
+        for access in frame_accesses.chain(kernel_accesses) {
+            set.insert(access.effect).map_err(RouteError::from)?;
+            ordered.push(access);
         }
         Ok(Declaration {
             set,
             ordered,
-            denominations,
             // A clause index is a method's; this is every frame's clauses
             // concatenated, so there is no clause to index and no verdict
             // to bind.
@@ -686,8 +682,8 @@ fn own_prefix_only(
     node_index: u32,
     method: &str,
 ) -> Result<(), RouteError> {
-    for (position, effect) in declaration.ordered.iter().enumerate() {
-        let owner = effect.target.owner();
+    for (position, access) in declaration.ordered.iter().enumerate() {
+        let owner = access.effect.target.owner();
         if owner != instance {
             return Err(RouteError::ForeignDeclaration {
                 node: node_index,
@@ -1014,7 +1010,6 @@ impl Fold<'_> {
                 method: method.to_owned(),
             },
             ordered: declaration.ordered,
-            denominations: declaration.denominations,
         });
         for effect in declaration.set.iter() {
             let shard = self.shards.shard_of(effect.target.owner());
@@ -1640,7 +1635,11 @@ mod tests {
         }
         assert_eq!(declaration.set, union);
         assert_eq!(
-            declaration.ordered,
+            declaration
+                .ordered
+                .iter()
+                .map(|access| access.effect)
+                .collect::<Vec<_>>(),
             vec![
                 Effect {
                     target: point(instance_of("payer"), SlotId(1)),
@@ -2013,7 +2012,9 @@ mod tests {
             let declaration = routing.declaration().expect("one frame folds");
             assert_eq!(u64::from(rep), width);
             assert_eq!(
-                declaration.ordered[usize::try_from(rep).unwrap()].mode,
+                declaration.ordered[usize::try_from(rep).unwrap()]
+                    .effect
+                    .mode,
                 Mode::Write {
                     requires: Presence::Either
                 },

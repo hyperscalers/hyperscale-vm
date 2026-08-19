@@ -642,6 +642,23 @@ pub fn evaluate_effects(
     Ok(evaluate_declaration(clauses, inputs, hasher)?.set)
 }
 
+/// One declared access, in the clause order the author wrote: the
+/// effect, and what the cell it names holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeclaredAccess {
+    /// The access.
+    pub effect: Effect,
+    /// The resource the cell holds, where it holds value.
+    ///
+    /// On the entry rather than on [`Effect`] because an effect is what
+    /// the set is keyed by: two accesses on one cell are one target
+    /// whatever else is true of them, and a denomination riding the key
+    /// would split them. Riding the ordered entry is what lets a
+    /// capability's rep — its index here — answer what the cell it is
+    /// moving into holds.
+    pub holds: Option<Address>,
+}
+
 /// A signature evaluation's two views of the same declaration.
 ///
 /// They are not interchangeable, and which one a consumer wants is
@@ -666,19 +683,13 @@ pub struct Declaration {
     /// comparison over hash-derived keys, so it is stable but arbitrary,
     /// and folding makes its *length* depend on whether two clauses
     /// happened to evaluate to one target.
-    pub ordered: Vec<Effect>,
-    /// The resource each entry of [`Declaration::ordered`] holds, where it
-    /// holds value, aligned index for index with it.
-    ///
-    /// Parallel rather than folded into [`Effect`] because an effect is
-    /// what the set is keyed by: two accesses on one cell are one target
-    /// whatever else is true of them, and a denomination riding the key
-    /// would split them. Aligned with `ordered` because a capability's rep
-    /// is its index there, which is the one place a movement can ask what
-    /// the cell it is moving into holds.
-    pub denominations: Vec<Option<Address>>,
+    pub ordered: Vec<DeclaredAccess>,
     /// Where each top-level clause's effects sit in [`Declaration::ordered`],
     /// as `(start, len)` pairs in clause order.
+    ///
+    /// A different index space from `ordered` itself: these count
+    /// top-level clauses, whose `for-each` expansions occupy runs of the
+    /// flattened table.
     ///
     /// A clause contributes one entry unless it is a `for-each`, which
     /// expands in place — so the flattened order alone cannot say which
@@ -719,15 +730,21 @@ impl Declaration {
     /// two problems the split exists to fix, since folding has already
     /// discarded both the order and any coincident clauses.
     #[must_use]
+    #[cfg(any(test, feature = "testing"))]
     pub fn from_set(set: EffectSet) -> Self {
-        let ordered: Vec<Effect> = set.iter().collect();
+        // A set has already discarded which clause declared what, so
+        // there is nothing left to say a cell holds.
+        let ordered: Vec<DeclaredAccess> = set
+            .iter()
+            .map(|effect| DeclaredAccess {
+                effect,
+                holds: None,
+            })
+            .collect();
         let clause_spans = (0..u32::try_from(ordered.len()).unwrap_or(u32::MAX))
             .map(|index| (index, 1))
             .collect();
         Self {
-            // A set has already discarded which clause declared what, so
-            // there is nothing left to say a cell holds.
-            denominations: vec![None; ordered.len()],
             clause_taken: vec![true; ordered.len()],
             set,
             ordered,
@@ -746,18 +763,12 @@ impl Declaration {
     /// the difference between a fixture that transfers and one that does
     /// not.
     #[must_use]
+    #[cfg(any(test, feature = "testing"))]
     pub fn denominated(mut self, holds: impl Fn(&Effect) -> Option<Address>) -> Self {
-        self.denominations = self.ordered.iter().map(holds).collect();
+        for entry in &mut self.ordered {
+            entry.holds = holds(&entry.effect);
+        }
         self
-    }
-}
-
-impl From<EffectSet> for Declaration {
-    /// See [`Declaration::from_set`] — canonical order stands in for the
-    /// clause order, which is correct only where there was never a
-    /// signature to evaluate.
-    fn from(set: EffectSet) -> Self {
-        Self::from_set(set)
     }
 }
 
@@ -892,8 +903,10 @@ fn eval_clauses(
                 };
                 let effect = Effect { target, mode };
                 out.set.insert(effect)?;
-                out.ordered.push(effect);
-                out.denominations.push(held);
+                out.ordered.push(DeclaredAccess {
+                    effect,
+                    holds: held,
+                });
             }
             Clause::ForEach { list, body, .. } => {
                 let items = as_list(eval_expr(list, inputs, hasher, bindings, 0)?)?;

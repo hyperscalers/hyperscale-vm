@@ -16,8 +16,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Address, AddressClass, CollectionId, Declaration, Effect, EffectSet, EffectTarget, Hash32,
-    Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
+    Address, AddressClass, CollectionId, Declaration, DeclaredAccess, Effect, EffectSet,
+    EffectTarget, Hash32, Hasher, Mode, Presence, SlotId, SubstateKey, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     EnvInputs, KernelSession, MemoryStore, OverlayStore, TxHash, encode_amount,
@@ -98,8 +98,13 @@ fn session() -> KernelSession {
         OverlayStore::new(Arc::new(store)),
         &Declaration {
             set: declared.clone(),
-            ordered: effects.to_vec(),
-            denominations: [Some(RESOURCE), Some(RESOURCE)].to_vec(),
+            ordered: effects
+                .iter()
+                .map(|effect| DeclaredAccess {
+                    effect: *effect,
+                    holds: Some(RESOURCE),
+                })
+                .collect(),
             ..Declaration::default()
         },
         TxHash(Hash32([0x55; 32])),
