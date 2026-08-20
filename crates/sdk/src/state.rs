@@ -890,56 +890,6 @@ impl Record for ResourceRecord {
     const WIRE_DEPTH: usize = RECORD_WIRE_DEPTH;
 }
 
-/// A declared `#[resource]` struct's tie to its kind, emitted by the
-/// macro beside the mark constant.
-///
-/// What lets `resource(Name)` answer a handle whose surface matches the
-/// declaration: a fungible mark's record states a divisibility, a
-/// non-fungible mark's states nothing, and the type is where the two
-/// stop being one method.
-pub trait Mark {
-    /// The declared kind, as a marker type.
-    type Kind;
-}
-
-/// The kind marker of a `#[resource]` (fungible) declaration.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Fungible;
-
-/// The kind marker of a `#[resource(non_fungible)]` declaration.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NonFungible;
-
-/// One resource's record cell, reached by `resource(Name)`.
-///
-/// Creating the record is what brings the resource into existence as a
-/// declared, routed access: the write carries its one-way door as an
-/// `Absent` condition, so a second creation is refused by the shard
-/// holding the leaf before any body runs. The kind is the mark's own —
-/// the derivation folds it — which is why `create` states at most the
-/// one fact the address cannot carry.
-pub struct ResourceCell<K> {
-    _kind: core::marker::PhantomData<fn() -> K>,
-}
-
-impl ResourceCell<Fungible> {
-    /// Write the record, stating the display quantization. The leaf must
-    /// be absent: a record is written where the resource comes into
-    /// existence and not again.
-    pub fn create(&mut self, divisibility: u8) {
-        let _ = divisibility;
-        unimplemented!("{OFF_HOST}")
-    }
-}
-
-impl ResourceCell<NonFungible> {
-    /// Write the record. The leaf must be absent: a record is written
-    /// where the resource comes into existence and not again.
-    pub fn create(&mut self) {
-        unimplemented!("{OFF_HOST}")
-    }
-}
-
 /// As the unit entry: presence is the whole of what a holdings entry
 /// says, so there is nothing to write and nothing to decode.
 impl Cellular for NfVault {

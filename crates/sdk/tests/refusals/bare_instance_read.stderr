@@ -1,0 +1,5 @@
+error: `OwnerBadge` declares no fields, so its instance holds the presence byte and there is nothing to read — a mark carrying a schema is a struct with fields
+  --> tests/refusals/bare_instance_read.rs:17:34
+   |
+17 |             if let Some(badge) = OwnerBadge::filed(id) {
+   |                                  ^^^^^^^^^^

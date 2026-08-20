@@ -9,7 +9,7 @@ mod contract {
 
     impl Contract {
         pub fn seize(&mut self) {
-            self.resource::<Address>().create();
+            Address::create();
         }
     }
 }

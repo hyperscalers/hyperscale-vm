@@ -172,7 +172,7 @@ pub mod staking {
         /// cells directly, and is held to them byte for byte.
         #[requires(founder)]
         pub fn found(&mut self) -> NfBucket {
-            self.resource::<OwnerBadge>().create();
+            OwnerBadge::create();
             OwnerBadge::mint(0)
         }
 

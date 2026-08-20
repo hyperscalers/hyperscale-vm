@@ -1,0 +1,5 @@
+error: `Coupon` is fungible, and value carries no record of its own — a balance is what it holds and an instance is what has data
+  --> tests/refusals/fungible_instance_read.rs:17:35
+   |
+17 |             if let Some(coupon) = Coupon::filed(id) {
+   |                                   ^^^^^^

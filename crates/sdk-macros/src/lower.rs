@@ -710,27 +710,6 @@ impl<'a> Lowerer<'a> {
             .cloned()
     }
 
-    /// The resource a mark in type position names, as the key of the
-    /// record cell it opens.
-    fn mark_key(&mut self, call: &syn::ExprMethodCall) -> Option<Eval> {
-        let named = method_call_mark(call);
-        let at = named.as_ref().map_or_else(|| call.span(), Spanned::span);
-        let Some(declared) = named.and_then(|n| self.resource_named(&n)) else {
-            self.error(
-                at,
-                "`resource` names a declared `#[resource]` struct in type position — \
-                 `self.resource::<Name>()`. The record it creates states the mark's own \
-                 kind, which is the declaration's to know",
-            );
-            return None;
-        };
-        let term = Term::SelfResource(declared.kind, declared.mark);
-        Some(Eval {
-            val: Val::Term(term.clone()),
-            code: Code::Term(term),
-        })
-    }
-
     /// The key of a record-cell site — the mark-derived resource — where
     /// `site` is one, which is what makes `create` on it the record's.
     fn record_cell(&self, site: usize) -> Option<Term> {
@@ -1188,6 +1167,150 @@ impl<'a> Lowerer<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Lower `Name::mint(quantity)` — value with no cell debited behind
+    /// it, against the grant this method's declared outputs earn.
+    fn lower_mint(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
+        let amount = call.args.first().map_or(
+            Code::Absent(call.args.span(), "an issue with no amount"),
+            |a| self.expr(a).code,
+        );
+        let amount = self.value(amount);
+        let grant = self.issuer(ResourceKind::Fungible, &issued.mark);
+        Eval {
+            val: Val::Produced(Term::SelfResource(
+                ResourceKind::Fungible,
+                issued.mark.clone(),
+            )),
+            code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#grant, #amount))),
+        }
+    }
+
+    /// Lower `Name::create(..)` — the record cell, under the one-way door
+    /// its absence is.
+    ///
+    /// The record is the protocol's own encoding rather than anything the
+    /// body assembles, so what the call carries is the single fact the
+    /// address does not: a fungible resource's display quantization.
+    fn lower_record_create(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
+        let stated: Vec<_> = call
+            .args
+            .iter()
+            .map(|arg| {
+                let eval = self.expr(arg);
+                self.value(eval.code)
+            })
+            .collect();
+        let record = match issued.kind {
+            ResourceKind::Fungible => {
+                let Some(divisibility) = stated.first() else {
+                    self.error(
+                        call.span(),
+                        "a fungible record states its display quantization: \
+                         `create(<divisibility>)`",
+                    );
+                    return Eval::absent(call.span(), "a record with no divisibility");
+                };
+                quote!(::hyperscale_vm_sdk::state::ResourceRecord::Fungible {
+                    divisibility: #divisibility,
+                })
+            }
+            ResourceKind::NonFungible => {
+                if !stated.is_empty() {
+                    self.error(
+                        call.span(),
+                        "a non-fungible record has nothing to state — the kind is the \
+                         mark's and instances are whole by construction",
+                    );
+                }
+                quote!(::hyperscale_vm_sdk::state::ResourceRecord::NonFungible)
+            }
+        };
+        let site = self.open(
+            Target::Point {
+                slot: RESOURCE.0,
+                material: vec![Term::SelfResource(issued.kind, issued.mark.clone())],
+            },
+            Some(syn::parse_quote!(
+                ::core::option::Option<::hyperscale_vm_sdk::state::ResourceRecord>
+            )),
+            None,
+        );
+        self.record(site, Op::Create, None, call.span());
+        let leaf = self.value(Code::Handle {
+            site,
+            form: Form::Slot,
+            span: call.span(),
+        });
+        Eval::plain(quote!(#leaf.create(#record)))
+    }
+
+    /// Lower `Name::filed(id)` — the record one instance carries, read at
+    /// the cell its mint filed it in.
+    ///
+    /// Issuer-side by construction rather than by rule: the mark is the
+    /// package's own type, so there is no spelling for a foreign
+    /// instance's data, and reaching one is a call to whoever issues it.
+    fn lower_filed(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
+        if issued.kind != ResourceKind::NonFungible {
+            self.error(
+                call.func.span(),
+                &format!(
+                    "`{}` is fungible, and value carries no record of its own — a \
+                     balance is what it holds and an instance is what has data",
+                    issued.name
+                ),
+            );
+            return Eval::absent(call.func.span(), "a fungible instance read");
+        }
+        if !issued.schema {
+            self.error(
+                call.func.span(),
+                &format!(
+                    "`{}` declares no fields, so its instance holds the presence byte \
+                     and there is nothing to read — a mark carrying a schema is a \
+                     struct with fields",
+                    issued.name
+                ),
+            );
+            return Eval::absent(call.func.span(), "a bare instance read");
+        }
+        let Some(named) = call.args.first() else {
+            self.error(
+                call.args.span(),
+                "an instance is read at its id, and the id is part of the declaration",
+            );
+            return Eval::absent(call.args.span(), "an instance read with no id");
+        };
+        let eval = self.expr(named);
+        let Val::Term(id) = eval.val else {
+            self.error(
+                named.span(),
+                "this id is not derivable from the method's arguments — routing \
+                 evaluates the declaration before execution and never reads state",
+            );
+            return Eval::absent(named.span(), "an underivable instance id");
+        };
+        let mark = syn::Ident::new(&issued.name, call.func.span());
+        let site = self.open(
+            Target::Point {
+                slot: INSTANCE.0,
+                material: vec![
+                    Term::SelfResource(ResourceKind::NonFungible, issued.mark.clone()),
+                    id,
+                ],
+            },
+            Some(syn::parse_quote!(::core::option::Option<#mark>)),
+            None,
+        );
+        self.record(site, Op::Get, None, call.span());
+        let leaf = self.value(Code::Handle {
+            site,
+            form: Form::Slot,
+            span: call.span(),
+        });
+        Eval::plain(quote!(#leaf.get()))
     }
 
     /// Lower `Name::mint(id)` — the non-fungible mint, coupled to the
@@ -2509,19 +2632,26 @@ impl<'a> Lowerer<'a> {
             let Some(issued) = self.issuing_mark(call, "mint") else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
-            if issued.kind == ResourceKind::NonFungible {
-                return self.lower_mint_nf(&issued, call);
-            }
-            let amount = call.args.first().map_or(
-                Code::Absent(call.args.span(), "an issue with no amount"),
-                |a| self.expr(a).code,
-            );
-            let amount = self.value(amount);
-            let grant = self.issuer(ResourceKind::Fungible, &issued.mark);
-            return Eval {
-                val: Val::Produced(Term::SelfResource(ResourceKind::Fungible, issued.mark)),
-                code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#grant, #amount))),
+            return match issued.kind {
+                ResourceKind::NonFungible => self.lower_mint_nf(&issued, call),
+                ResourceKind::Fungible => self.lower_mint(&issued, call),
             };
+        }
+        // `Resource::create(..)` — the record cell, written where the
+        // resource comes into existence. The kind is the mark's, so the
+        // body states only what the address cannot carry.
+        if name == "create" {
+            let Some(issued) = self.issuing_mark(call, "create") else {
+                return Eval::absent(call.func.span(), "an undeclared resource");
+            };
+            return self.lower_record_create(&issued, call);
+        }
+        // `Resource::filed(id)` — the record one instance carries.
+        if name == "filed" {
+            let Some(issued) = self.issuing_mark(call, "filed") else {
+                return Eval::absent(call.func.span(), "an undeclared resource");
+            };
+            return self.lower_filed(&issued, call);
         }
         // `Resource::burn(funds)` — the inverse, under the same grant.
         // Fungible alone: an instance leaves existence by no vocabulary
@@ -3036,36 +3166,18 @@ impl<'a> Lowerer<'a> {
         // position — so the key comes off the turbofish and the argument
         // list is empty, where every other accessor takes its key as the
         // argument it was handed.
-        let evals: Vec<Eval> = if name == "resource" {
-            if !call.args.is_empty() {
-                self.error(
-                    call.args.span(),
-                    "`resource` takes its mark in type position and nothing else — \
-                     `self.resource::<Name>()`",
-                );
-                return Eval::absent(call.span(), "a record cell named with an argument");
-            }
-            self.mark_key(call).into_iter().collect()
-        } else {
-            let evals: Vec<Eval> = call.args.iter().map(|arg| self.expr(arg)).collect();
-            let arity = usize::from(!matches!(field.kind, FieldKind::Cell | FieldKind::Locked));
-            if evals.len() != arity {
-                self.error(call.span(), &format!("`{name}` takes {arity} argument(s)"));
-                return Eval::absent(call.span(), "a protocol cell named with the wrong arity");
-            }
-            evals
-        };
+        let evals: Vec<Eval> = call.args.iter().map(|arg| self.expr(arg)).collect();
+        let arity = usize::from(!matches!(field.kind, FieldKind::Cell | FieldKind::Locked));
+        if evals.len() != arity {
+            self.error(call.span(), &format!("`{name}` takes {arity} argument(s)"));
+            return Eval::absent(call.span(), "a protocol cell named with the wrong arity");
+        }
         match field.kind {
             // A leaf of the family, at the mark the accessor was handed.
             // The record cell's key is a declared resource and nothing
             // else: the kind the record states is the mark's, so a key
             // the declaration cannot see the kind of names no record.
-            FieldKind::Keyed => {
-                if evals.is_empty() {
-                    return Eval::absent(call.span(), "an undeclared resource");
-                }
-                self.on_field(&field, &[], "at", &evals, call)
-            }
+            FieldKind::Keyed => self.on_field(&field, &[], "at", &evals, call),
             // The sub-collection under the cell, which the body then
             // opens an interval on.
             FieldKind::Ordered => {
@@ -3483,21 +3595,6 @@ fn free_call_name(call: &syn::ExprCall) -> Option<String> {
     path.path.segments.last().map(|s| s.ident.to_string())
 }
 
-/// The one name a turbofish holds, where it holds exactly one.
-///
-/// A mark is a declaration's own name and nothing else, so a path, a
-/// lifetime or a second argument names no mark — and the caller says so
-/// at the span this returns, which is the name rather than the call.
-fn sole_type_argument(
-    args: &syn::punctuated::Punctuated<syn::GenericArgument, syn::Token![,]>,
-) -> Option<syn::Ident> {
-    let [syn::GenericArgument::Type(syn::Type::Path(path))] = args.iter().collect::<Vec<_>>()[..]
-    else {
-        return None;
-    };
-    path.path.get_ident().cloned()
-}
-
 /// What an operation says when the mark it was called on names no
 /// declaration — including the spelling, because an author reaching for
 /// the free-function form lands here.
@@ -3517,9 +3614,4 @@ fn free_call_mark(call: &syn::ExprCall) -> Option<syn::Ident> {
         return None;
     };
     mark.arguments.is_none().then(|| mark.ident.clone())
-}
-
-/// The mark a method call names in type position: `self.resource::<Name>()`.
-fn method_call_mark(call: &syn::ExprMethodCall) -> Option<syn::Ident> {
-    sole_type_argument(&call.turbofish.as_ref()?.args)
 }

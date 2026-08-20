@@ -1100,17 +1100,6 @@ fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
                 denomination: None,
             },
         ),
-        (
-            "resource".to_owned(),
-            Field {
-                slot: RESOURCE.0,
-                kind: FieldKind::Keyed,
-                element: Some(syn::parse_quote!(
-                    ::core::option::Option<::hyperscale_vm_sdk::state::ResourceRecord>
-                )),
-                denomination: None,
-            },
-        ),
     ]);
     // A package with no configuration struct has no configuration to
     // read, and `config()` is a name it never gets rather than one that
@@ -1760,14 +1749,6 @@ fn authoring_accessors(state: &syn::Ident, config: Option<&syn::Ident>) -> Token
             > {
                 ::core::unimplemented!("a contract body runs on the guest")
             }
-
-            /// The record cell of a resource this instance issues, named
-            /// by its declared `#[resource]` struct.
-            fn resource<K: ::hyperscale_vm_sdk::state::Mark>(
-                &self,
-            ) -> ::hyperscale_vm_sdk::state::ResourceCell<K::Kind> {
-                ::core::unimplemented!("a contract body runs on the guest")
-            }
         }
     )
 }
@@ -1957,28 +1938,8 @@ fn resource_marks(declared: &[Resource]) -> Vec<syn::Item> {
                     #[doc = #doc]
                     pub const #ident: &[u8] = #bytes;
                 );
-                // The declared kind, readable from the type: what lets the
-                // `resource` accessor answer a handle whose surface matches
-                // the declaration.
                 let struct_ident = syn::Ident::new(name, Span::call_site());
-                let kind_ty: syn::Type = match kind {
-                    ResourceKind::Fungible => {
-                        syn::parse_quote!(::hyperscale_vm_sdk::state::Fungible)
-                    }
-                    ResourceKind::NonFungible => {
-                        syn::parse_quote!(::hyperscale_vm_sdk::state::NonFungible)
-                    }
-                };
-                let mark_impl: syn::Item = syn::parse_quote!(
-                    impl ::hyperscale_vm_sdk::state::Mark for #struct_ident {
-                        type Kind = #kind_ty;
-                    }
-                );
-                [
-                    mark_const,
-                    mark_impl,
-                    issuance(name, *kind, *schema, &struct_ident),
-                ]
+                [mark_const, issuance(name, *kind, *schema, &struct_ident)]
             },
         )
         .collect()
@@ -2005,57 +1966,93 @@ fn resource_marks(declared: &[Resource]) -> Vec<syn::Item> {
 /// so what a guest build would compile here is an unreachable panic and
 /// whatever that drags in.
 fn issuance(name: &str, kind: ResourceKind, schema: bool, mark: &syn::Ident) -> syn::Item {
+    let stub = quote!(::core::unimplemented!("a contract body runs on the guest"));
+    let create_doc = format!("Bring `{name}` itself into existence, by writing its record.");
     let mint_doc = format!("Bring `{name}` into existence, as an edge.");
-    match kind {
-        ResourceKind::Fungible => {
-            let burn_doc = format!("Destroy `{name}`, which is `funds`' own resource.");
-            syn::parse_quote!(
-                #[cfg(not(target_arch = "wasm32"))]
-                impl #mark {
-                    #[doc = #mint_doc]
-                    #[must_use]
-                    pub fn mint(
-                        quantity: ::hyperscale_vm_sdk::state::Quantity,
-                    ) -> ::hyperscale_vm_sdk::state::Bucket {
-                        let _ = quantity;
-                        ::core::unimplemented!("a contract body runs on the guest")
-                    }
+    let burn_doc = format!("Destroy `{name}`, which is `funds`' own resource.");
+    let filed_doc = format!("The record filed for `{name}` instance `id`, where one was minted.");
+    let mut methods: Vec<syn::ImplItemFn> = Vec::new();
 
-                    #[doc = #burn_doc]
-                    pub fn burn(funds: ::hyperscale_vm_sdk::state::Bucket) {
-                        let _ = &funds;
-                        ::core::unimplemented!("a contract body runs on the guest")
-                    }
+    // The record states only what the address cannot carry, which for a
+    // fungible resource is its display quantization and for a
+    // non-fungible one is nothing at all.
+    methods.push(match kind {
+        ResourceKind::Fungible => syn::parse_quote!(
+            #[doc = #create_doc]
+            pub fn create(divisibility: u8) {
+                let _ = divisibility;
+                #stub
+            }
+        ),
+        ResourceKind::NonFungible => syn::parse_quote!(
+            #[doc = #create_doc]
+            pub fn create() {
+                #stub
+            }
+        ),
+    });
+
+    match kind {
+        // Value in, and value out under the same authority.
+        ResourceKind::Fungible => {
+            methods.push(syn::parse_quote!(
+                #[doc = #mint_doc]
+                #[must_use]
+                pub fn mint(
+                    quantity: ::hyperscale_vm_sdk::state::Quantity,
+                ) -> ::hyperscale_vm_sdk::state::Bucket {
+                    let _ = quantity;
+                    #stub
                 }
-            )
+            ));
+            methods.push(syn::parse_quote!(
+                #[doc = #burn_doc]
+                pub fn burn(funds: ::hyperscale_vm_sdk::state::Bucket) {
+                    let _ = &funds;
+                    #stub
+                }
+            ));
         }
         // A fielded mark's instance carries a record, so the mint takes
-        // one: the id keys the data cell and the value is what the cell
-        // holds. A bare mark's cell holds the presence byte and there is
-        // nothing to hand it.
-        ResourceKind::NonFungible if schema => syn::parse_quote!(
-            #[cfg(not(target_arch = "wasm32"))]
-            impl #mark {
+        // one and the mark can answer with it. A bare mark's cell holds
+        // the presence byte, which is nothing to hand over and nothing
+        // to read back.
+        ResourceKind::NonFungible if schema => {
+            methods.push(syn::parse_quote!(
                 #[doc = #mint_doc]
                 #[must_use]
                 pub fn mint(id: u64, data: Self) -> ::hyperscale_vm_sdk::state::NfBucket {
                     let _ = (id, data);
-                    ::core::unimplemented!("a contract body runs on the guest")
+                    #stub
                 }
-            }
-        ),
-        ResourceKind::NonFungible => syn::parse_quote!(
-            #[cfg(not(target_arch = "wasm32"))]
-            impl #mark {
+            ));
+            methods.push(syn::parse_quote!(
+                #[doc = #filed_doc]
+                #[must_use]
+                pub fn filed(id: u64) -> ::core::option::Option<Self> {
+                    let _ = id;
+                    #stub
+                }
+            ));
+        }
+        ResourceKind::NonFungible => {
+            methods.push(syn::parse_quote!(
                 #[doc = #mint_doc]
                 #[must_use]
                 pub fn mint(id: u64) -> ::hyperscale_vm_sdk::state::NfBucket {
                     let _ = id;
-                    ::core::unimplemented!("a contract body runs on the guest")
+                    #stub
                 }
-            }
-        ),
+            ));
+        }
     }
+
+    syn::parse_quote!(
+        #[cfg(not(target_arch = "wasm32"))]
+        impl #mark {
+            #(#methods)*
+        }
+    )
 }
 
 /// Everything a package declares by name, gathered once and read by the

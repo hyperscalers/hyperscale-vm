@@ -1,5 +1,5 @@
-error: `resource` names a declared `#[resource]` struct in type position — `self.resource::<Name>()`. The record it creates states the mark's own kind, which is the declaration's to know
-  --> tests/refusals/record_of_undeclared.rs:12:29
+error: `create` is called on a declared `#[resource]` struct — `Name::create(..)`. The derivation folds the resource's kind, and the declaration is where a kind is stated
+  --> tests/refusals/record_of_undeclared.rs:12:13
    |
-12 |             self.resource::<Address>().create();
-   |                             ^^^^^^^
+12 |             Address::create();
+   |             ^^^^^^^
