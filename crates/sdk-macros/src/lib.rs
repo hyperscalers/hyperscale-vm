@@ -1361,25 +1361,17 @@ fn lower_method(
     client::check_names(&idents, client::Shape::of(&gate), serves)?;
     let returns = !matches!(method.sig.output, syn::ReturnType::Default);
     let claims_total = total_attr(method).is_some();
-    let lowered = Lowerer::new(
-        declared.fields,
-        declared.accessors,
-        declared.config_fields,
-        declared.resources,
-        &params,
-        returns,
-        claims_total,
-    )
-    .run(&method.block)
-    .map_err(|errors| {
-        errors
-            .into_iter()
-            .reduce(|mut all, error| {
-                all.combine(error);
-                all
-            })
-            .unwrap_or_else(|| syn::Error::new(method.span(), "lowering failed"))
-    })?;
+    let lowered = Lowerer::new(declared, &params, returns, claims_total)
+        .run(&method.block)
+        .map_err(|errors| {
+            errors
+                .into_iter()
+                .reduce(|mut all, error| {
+                    all.combine(error);
+                    all
+                })
+                .unwrap_or_else(|| syn::Error::new(method.span(), "lowering failed"))
+        })?;
     check_gate_shape(&gate, &lowered, method)?;
 
     let declining = declines(method);
@@ -1475,13 +1467,7 @@ fn gate_calls(gate: &Gate, lowered: &lower::Lowered) -> TokenStream2 {
         // one cell is one clause, and two declarations of it would be a
         // self-conflict.
         Gate::TableGated { slot, role } => {
-            let body_owns = lowered.sites.iter().any(|site| {
-                matches!(
-                    &site.target,
-                    Target::Point { slot: s, material } if *s == *slot && material.is_empty()
-                )
-            });
-            if body_owns {
+            if lowered.point_site(*slot).is_some() {
                 quote!(__t.role_gated(::hyperscale_vm_sdk::package_role(#role));)
             } else {
                 quote!({
@@ -1587,13 +1573,7 @@ fn check_gate_shape(
         // — so an unfounded component's rotation refuses as the routed
         // absence rather than creating a table out of nowhere.
         Gate::TableGated { slot, .. } => {
-            let table = lowered.sites.iter().find(|site| {
-                matches!(
-                    &site.target,
-                    Target::Point { slot: s, material } if *s == *slot && material.is_empty()
-                )
-            });
-            let Some(site) = table else {
+            let Some(site) = lowered.point_site(*slot) else {
                 return Ok(());
             };
             if !site.ops.iter().any(|(op, _)| *op == Op::Existing) {

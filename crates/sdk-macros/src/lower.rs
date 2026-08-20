@@ -48,7 +48,7 @@ use syn::spanned::Spanned;
 
 use crate::mode::HandleMode;
 use crate::term::{Op, Slot, Term};
-use crate::{holds_role_table, is_named};
+use crate::{Declared, holds_role_table, is_named};
 
 /// What kind of state a component field holds, and under which slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -400,6 +400,24 @@ pub struct Lowered {
     pub refusal: Option<(Span, String)>,
 }
 
+impl Lowered {
+    /// The site reaching the component's own unkeyed cell at `slot`,
+    /// which is where a package's stored role table lives.
+    ///
+    /// Both halves of a table gate ask this one question: the shape
+    /// check holds a rewrite to reading what it rewrites, and the
+    /// emission rides the body's clause rather than declaring the read
+    /// beside it.
+    pub fn point_site(&self, slot: u16) -> Option<&Site> {
+        self.sites.iter().find(|site| {
+            matches!(
+                &site.target,
+                Target::Point { slot: at, material } if *at == slot && material.is_empty()
+            )
+        })
+    }
+}
+
 /// What a subexpression evaluated to.
 #[derive(Clone, Debug)]
 enum Val {
@@ -603,19 +621,14 @@ pub fn handle_ident(site: usize) -> syn::Ident {
 
 /// The lowering pass over one method body.
 pub struct Lowerer<'a> {
-    fields: &'a BTreeMap<String, Field>,
+    /// Everything the package declares by name — the same set the gate
+    /// parser reads, so a body and its gate resolve one name one way.
+    declared: &'a Declared<'a>,
     /// Whether the method claims totality, which is what turns a branch
     /// back into the superset it used to declare: a total leg runs with
     /// every declared handle materialized, and a guarded-out clause
     /// materializes none.
     total: bool,
-    /// The protocol's own cells, which exist under every owner and are
-    /// reached by accessor rather than declared as fields.
-    accessors: &'a BTreeMap<String, Field>,
-    config_fields: &'a [(String, syn::Type)],
-    /// The `#[resource]` structs the package declares, each with its mark
-    /// and its kind — what `issued(Name)` resolves against.
-    resources: &'a [(String, Vec<u8>, ResourceKind)],
     params: &'a [(String, syn::Type)],
     /// Whether the method yields anything at all, read off its return
     /// type. A body ending in a loop or a conditional has a tail
@@ -643,20 +656,14 @@ pub struct Lowerer<'a> {
 impl<'a> Lowerer<'a> {
     /// Start a pass over a method with these positional parameters.
     pub fn new(
-        fields: &'a BTreeMap<String, Field>,
-        accessors: &'a BTreeMap<String, Field>,
-        config_fields: &'a [(String, syn::Type)],
-        resources: &'a [(String, Vec<u8>, ResourceKind)],
+        declared: &'a Declared<'a>,
         params: &'a [(String, syn::Type)],
         returns: bool,
         total: bool,
     ) -> Self {
         Self {
-            fields,
+            declared,
             total,
-            accessors,
-            config_fields,
-            resources,
             params,
             returns,
             locals: vec![BTreeMap::new()],
@@ -672,15 +679,7 @@ impl<'a> Lowerer<'a> {
 
     /// A second lowerer over the same inputs, for the survey walk.
     fn twin(&self) -> Self {
-        Self::new(
-            self.fields,
-            self.accessors,
-            self.config_fields,
-            self.resources,
-            self.params,
-            self.returns,
-            self.total,
-        )
+        Self::new(self.declared, self.params, self.returns, self.total)
     }
 
     /// The mark a fungible issuance operation names, where the call's
@@ -699,7 +698,13 @@ impl<'a> Lowerer<'a> {
                 syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
                 _ => None,
             })
-            .and_then(|n| self.resources.iter().find(|(r, ..)| *r == n).cloned());
+            .and_then(|n| {
+                self.declared
+                    .resources
+                    .iter()
+                    .find(|(r, ..)| *r == n)
+                    .cloned()
+            });
         let Some((name, mark, kind)) = resolved else {
             self.error(
                 call.args.span(),
@@ -741,7 +746,7 @@ impl<'a> Lowerer<'a> {
             syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
             _ => None,
         })?;
-        let (_, mark, kind) = self.resources.iter().find(|(r, ..)| *r == name)?;
+        let (_, mark, kind) = self.declared.resources.iter().find(|(r, ..)| *r == name)?;
         Some(Term::SelfResource(*kind, mark.clone()))
     }
 
@@ -781,9 +786,10 @@ impl<'a> Lowerer<'a> {
     /// One lookup because a body cannot tell the two apart once it holds
     /// a handle — what differs is only how the name was reached.
     fn state(&self, name: &str) -> Option<Field> {
-        self.fields
+        self.declared
+            .fields
             .get(name)
-            .or_else(|| self.accessors.get(name))
+            .or_else(|| self.declared.accessors.get(name))
             .cloned()
     }
 
@@ -1103,7 +1109,12 @@ impl<'a> Lowerer<'a> {
                     return refuse(self);
                 }
                 let name = name.to_string();
-                let Some(index) = self.config_fields.iter().position(|(f, _)| *f == name) else {
+                let Some(index) = self
+                    .declared
+                    .config_fields
+                    .iter()
+                    .position(|(f, _)| *f == name)
+                else {
                     self.error(
                         expr.span(),
                         "not a field of the component's configuration struct",
@@ -1135,7 +1146,7 @@ impl<'a> Lowerer<'a> {
     /// rather than to a dump of the tracer's own model.
     fn describe(&self, term: &Term) -> String {
         match term {
-            Term::Config(slot) => self.config_fields.get(*slot as usize).map_or_else(
+            Term::Config(slot) => self.declared.config_fields.get(*slot as usize).map_or_else(
                 || format!("configuration slot {slot}"),
                 |(name, _)| format!("`config.{name}`"),
             ),
@@ -1143,6 +1154,7 @@ impl<'a> Lowerer<'a> {
             // what a reader goes back to — the mark itself is a spelling
             // no body writes.
             Term::SelfResource(_, mark) => self
+                .declared
                 .resources
                 .iter()
                 .find(|(_, declared, _)| declared == mark)
@@ -1187,7 +1199,13 @@ impl<'a> Lowerer<'a> {
                 syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
                 _ => None,
             })
-            .and_then(|n| self.resources.iter().find(|(r, ..)| *r == n).cloned());
+            .and_then(|n| {
+                self.declared
+                    .resources
+                    .iter()
+                    .find(|(r, ..)| *r == n)
+                    .cloned()
+            });
         let Some((resource_name, mark, kind)) = resolved else {
             self.error(
                 call.args.span(),
@@ -1809,7 +1827,8 @@ impl<'a> Lowerer<'a> {
             // one way and a scalar the other is a parameter no export
             // can declare. Refused here, where the selection was
             // written, rather than shaped by fallback at emission.
-            if crate::bind::derived_shape(&term, self.params, self.config_fields).is_none() {
+            if crate::bind::derived_shape(&term, self.params, self.declared.config_fields).is_none()
+            {
                 self.error(
                     branch.if_token.span,
                     "the arms of this selection cross the call boundary as different \
@@ -2340,7 +2359,7 @@ impl<'a> Lowerer<'a> {
         // A declared `#[resource]` struct in expression position is the
         // resource it names — the same derivation `issued(Name)` spells,
         // resolved here so an accessor takes the mark directly.
-        if let Some((_, mark, kind)) = self.resources.iter().find(|(r, ..)| *r == name) {
+        if let Some((_, mark, kind)) = self.declared.resources.iter().find(|(r, ..)| *r == name) {
             let term = Term::SelfResource(*kind, mark.clone());
             return Eval {
                 val: Val::Term(term.clone()),
@@ -2449,7 +2468,12 @@ impl<'a> Lowerer<'a> {
     /// decoding the leaf, so a pinned read and a consulted one differ in
     /// what they exclude and in nothing else.
     fn config_slot(&mut self, name: &str, field: &syn::ExprField) -> Eval {
-        let Some(index) = self.config_fields.iter().position(|(f, _)| f == name) else {
+        let Some(index) = self
+            .declared
+            .config_fields
+            .iter()
+            .position(|(f, _)| f == name)
+        else {
             self.error(
                 field.span(),
                 "not a field of the component's configuration struct",
@@ -2562,7 +2586,7 @@ impl<'a> Lowerer<'a> {
         // component, whose accesses cannot land in this declaration.
         if is_self(&call.receiver) {
             let name = call.method.to_string();
-            if self.accessors.contains_key(&name) {
+            if self.declared.accessors.contains_key(&name) {
                 return self.accessor(&name, call);
             }
             self.error(
@@ -3005,7 +3029,7 @@ impl<'a> Lowerer<'a> {
     /// author's chance to declare the cell wrongly, not a step in the
     /// lowering.
     fn accessor(&mut self, name: &str, call: &syn::ExprMethodCall) -> Eval {
-        let Some(field) = self.accessors.get(name).cloned() else {
+        let Some(field) = self.declared.accessors.get(name).cloned() else {
             return Eval::absent(call.span(), "an unknown protocol cell");
         };
         let evals: Vec<Eval> = call.args.iter().map(|arg| self.expr(arg)).collect();
