@@ -319,21 +319,21 @@ impl KernelSession {
     }
 }
 
-/// Judge what every declared write requires of the leaf it lands on.
+/// Judge the declared presence conditions against the committed store,
+/// before any body runs — the same instant a reservation's feasibility
+/// is judged, so a create that cannot create aborts rather than trapping
+/// inside a guest.
 ///
-/// Over the committed store and before the body runs, where a
-/// reservation's feasibility is already judged — so a create that cannot
-/// create aborts rather than trapping inside a guest.
+/// Every participant judges every condition rather than only the shard
+/// owning the leaf. A condition's target is also a declared read, which
+/// is what provisions the state wherever the transaction runs, so each
+/// participant reaches the verdict the owner reaches.
 ///
 /// # Errors
 ///
-/// [`MaterializeError::Occupied`] or [`MaterializeError::Absent`] for a
-/// requirement the leaf does not meet, and
-/// [`MaterializeError::Unsupported`] for a target that names no leaf for
-/// a requirement to be about.
-/// Judge the declared presence conditions against the same committed
-/// state a write's presence requirement is judged against — the shard
-/// holding the leaf, before anything runs.
+/// [`MaterializeError::ConditionUnmet`] for a leaf whose presence is not
+/// what the condition requires, and [`MaterializeError::Unsupported`]
+/// for a target that names no leaf for a presence to be about.
 fn judge_conditions(
     store: &mut OverlayStore,
     conditions: &[Condition],
@@ -387,8 +387,8 @@ impl LeafReadError {
 fn leaf_present(store: &mut OverlayStore, target: EffectTarget) -> Result<bool, LeafReadError> {
     match target {
         // The two shapes that name one leaf. An entry's presence is the
-        // same question a custody gate's possession read asks, over the
-        // same width-one interval.
+        // same question a possession condition asks, over the same
+        // width-one interval.
         EffectTarget::Point(key) => Ok(store.read(key).map_err(LeafReadError::Store)?.is_some()),
         EffectTarget::Entry {
             owner,
