@@ -1351,21 +1351,26 @@ pub fn mint_granted(grant: u32, quantity: Quantity) -> Bucket {
     return Bucket::at(host::mint(grant, quantity.subunits()));
 }
 
-/// Create the named instances of the granted resource, as an edge.
+/// Create the named instance of the granted resource, as an edge.
 ///
 /// Called by generated code, never by an author, on the terms
-/// [`mint_granted`] states — and always beside the instance-cell writes
+/// [`mint_granted`] states — and always beside the instance-cell write
 /// the same lowering emitted, so a minted instance's data cell is filed
 /// where the instance comes into existence.
+///
+/// One id, because one call is one declared cell. The kernel seats a
+/// batch and genesis uses that; a body asking for several says so by
+/// minting several and merging the edges, which is a line rather than a
+/// second spelling.
 #[doc(hidden)]
 #[must_use]
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
-pub fn mint_nf_granted(grant: u32, ids: &[u64]) -> NfBucket {
+pub fn mint_nf_granted(grant: u32, id: u64) -> NfBucket {
     #[cfg(target_arch = "wasm32")]
-    return NfBucket::held(crate::guest::mint_instances(grant, ids));
+    return NfBucket::held(crate::guest::mint_instances(grant, &[id]));
     #[cfg(not(target_arch = "wasm32"))]
-    return NfBucket::at(host::mint_instances(grant, ids));
+    return NfBucket::at(host::mint_instances(grant, &[id]));
 }
 
 /// File one minted instance's data cell: the presence marker, written
@@ -1383,30 +1388,6 @@ pub fn file_instance(handle: Handle) {
     return crate::guest::cell_set(handle, &[1]);
     #[cfg(not(target_arch = "wasm32"))]
     return host::cell_set(handle, &[1]);
-}
-
-/// File one minted instance's data cell: the record its mark declares,
-/// in the encoding that mark's own cell is read at.
-///
-/// Called by generated code, never by an author, at the same site and
-/// under the same absence requirement [`file_instance`] writes its byte
-/// at — so a fielded mark and a bare one create the same cell and differ
-/// only in what it holds.
-///
-/// # Panics
-///
-/// On a record whose encoding does not fit its own declared cap, which is
-/// a defect in the schema rather than in the call that minted against it.
-/// The same standing every record cell's write has.
-#[doc(hidden)]
-#[inline(always)] // one import behind a cfg both targets resolve at compile time
-#[allow(clippy::inline_always)]
-pub fn file_instance_data<T: Record>(handle: Handle, data: &T) {
-    let bytes = to_vec_with_depth(data, T::WIRE_DEPTH).expect("a record within its own cap");
-    #[cfg(target_arch = "wasm32")]
-    return crate::guest::cell_set(handle, &bytes);
-    #[cfg(not(target_arch = "wasm32"))]
-    return host::cell_set(handle, &bytes);
 }
 
 /// Destroy the value at `funds` against the grant at `grant`.

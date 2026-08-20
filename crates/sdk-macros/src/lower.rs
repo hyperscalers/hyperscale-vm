@@ -1292,18 +1292,7 @@ impl<'a> Lowerer<'a> {
             );
             return Eval::absent(named.span(), "an underivable instance id");
         };
-        let mark = syn::Ident::new(&issued.name, call.func.span());
-        let site = self.open(
-            Target::Point {
-                slot: INSTANCE.0,
-                material: vec![
-                    Term::SelfResource(ResourceKind::NonFungible, issued.mark.clone()),
-                    id,
-                ],
-            },
-            Some(syn::parse_quote!(::core::option::Option<#mark>)),
-            None,
-        );
+        let site = self.instance_site(issued, id, call.func.span());
         self.record(site, Op::Get, None, call.span());
         let leaf = self.value(Code::Handle {
             site,
@@ -1311,6 +1300,33 @@ impl<'a> Lowerer<'a> {
             span: call.span(),
         });
         Eval::plain(quote!(#leaf.get()))
+    }
+
+    /// The data cell of one instance, as every call that reaches it
+    /// opens it.
+    ///
+    /// A site is what its target names, and its element type is settled
+    /// where it is first opened — so a mint and a read that opened the
+    /// same cell separately would leave whichever came second reading
+    /// the other's answer. One opener is what makes the element the
+    /// mark's own statement: a fielded mark's cell holds the record it
+    /// declares, a bare mark's holds the presence byte and no type.
+    fn instance_site(&mut self, issued: &Resource, id: Term, span: Span) -> usize {
+        let mark = syn::Ident::new(&issued.name, span);
+        let element = issued
+            .schema
+            .then(|| syn::parse_quote!(::core::option::Option<#mark>));
+        self.open(
+            Target::Point {
+                slot: INSTANCE.0,
+                material: vec![
+                    Term::SelfResource(ResourceKind::NonFungible, issued.mark.clone()),
+                    id,
+                ],
+            },
+            element,
+            None,
+        )
     }
 
     /// Lower `Name::mint(id)` — the non-fungible mint, coupled to the
@@ -1368,20 +1384,23 @@ impl<'a> Lowerer<'a> {
             (false, None) => None,
         };
         let resource_term = Term::SelfResource(ResourceKind::NonFungible, issued.mark.clone());
-        let site = self.open(
-            Target::Point {
-                slot: INSTANCE.0,
-                material: vec![resource_term.clone(), id.clone()],
-            },
-            None,
-            None,
-        );
+        let site = self.instance_site(issued, id.clone(), call.func.span());
         self.record(site, Op::Create, None, call.span());
-        let handle = self.handle(site, call.span());
-        let file = data.map_or_else(
-            || quote!(::hyperscale_vm_sdk::state::file_instance(#handle);),
-            |data| quote!(::hyperscale_vm_sdk::state::file_instance_data(#handle, &#data);),
-        );
+        // A fielded mark's cell is the mark's own record, so the mint
+        // writes it as one — the same leaf, at the same absence
+        // requirement, that a read of this instance reaches. A bare mark
+        // has the presence byte and no element type to write it through.
+        let file = if let Some(data) = data {
+            let leaf = self.value(Code::Handle {
+                site,
+                form: Form::Slot,
+                span: call.span(),
+            });
+            quote!(#leaf.create(#data);)
+        } else {
+            let handle = self.handle(site, call.span());
+            quote!(::hyperscale_vm_sdk::state::file_instance(#handle);)
+        };
         let id_value = self.value(eval.code);
         let grant = self.issuer(ResourceKind::NonFungible, &issued.mark);
         let produced = Term::NfBucket {
@@ -1392,7 +1411,7 @@ impl<'a> Lowerer<'a> {
             val: Val::Produced(produced),
             code: Code::Rust(quote!({
                 #file
-                ::hyperscale_vm_sdk::state::mint_nf_granted(#grant, &[#id_value])
+                ::hyperscale_vm_sdk::state::mint_nf_granted(#grant, #id_value)
             })),
         }
     }

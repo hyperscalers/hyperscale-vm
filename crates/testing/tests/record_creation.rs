@@ -63,6 +63,23 @@ mod issuer {
             }
         }
 
+        /// Mint a seat and read its record back in the one body: the
+        /// cell the mint files and the cell the read reaches are one
+        /// site, whichever of the two the body names first.
+        pub fn seat_and_note(&mut self, id: u64, operator: u64) -> NfBucket {
+            let seated = Seat::mint(
+                id,
+                Seat {
+                    operator,
+                    label: "back-row".to_owned(),
+                },
+            );
+            if let Some(seat) = Seat::at(id) {
+                self.noted.set(seat.operator);
+            }
+            seated
+        }
+
         /// Seat an operator: the seat's record, and the one instance
         /// carrying who operates it.
         pub fn seat(&mut self, operator: u64) -> NfBucket {
@@ -302,5 +319,31 @@ fn an_unminted_id_reads_as_absent() {
         )),
         None,
         "nothing was noted, because there was no record to read",
+    );
+}
+
+/// A mint files the cell a read of the same instance reaches, and the
+/// body may name them in either order: one target is one site, so the
+/// record the mint writes is the record the read decodes.
+#[test]
+fn a_mint_and_a_read_of_one_instance_are_one_cell() {
+    let (mut chain, instance) = founded();
+    seated(&mut chain, instance);
+
+    chain
+        .transact(FOUNDER, |b| {
+            let seat = instance.seat_and_note(b, 9, 55)?;
+            account::deposit_nf(b, FOUNDER, seat)
+        })
+        .expect_completed();
+    assert_eq!(
+        chain.cell(child_key(
+            &TestHasher,
+            instance,
+            SlotId(PACKAGE_SLOT_BASE),
+            &[]
+        )),
+        Some(55_u64.to_le_bytes().to_vec()),
+        "the body read back the record it had just filed",
     );
 }
