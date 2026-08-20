@@ -740,7 +740,8 @@ fn resolvable(expr: &Expr, known: &[bool], depth: usize) -> bool {
         | Expr::Not(inner) => deeper(inner),
         Expr::Lookup { map, key } | Expr::Contains { map, key } => deeper(map) && deeper(key),
         Expr::Pack { hi, lo } => deeper(hi) && deeper(lo),
-        Expr::And(left, right)
+        Expr::Add(left, right)
+        | Expr::And(left, right)
         | Expr::Or(left, right)
         | Expr::Eq(left, right)
         | Expr::Lt(left, right) => deeper(left) && deeper(right),

@@ -1081,22 +1081,11 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
             material: material.into_iter().map(|m| rebind(m, depth)).collect(),
         },
         Expr::Not(inner) => Expr::Not(Box::new(rebind(*inner, depth))),
-        Expr::And(left, right) => Expr::And(
-            Box::new(rebind(*left, depth)),
-            Box::new(rebind(*right, depth)),
-        ),
-        Expr::Or(left, right) => Expr::Or(
-            Box::new(rebind(*left, depth)),
-            Box::new(rebind(*right, depth)),
-        ),
-        Expr::Eq(left, right) => Expr::Eq(
-            Box::new(rebind(*left, depth)),
-            Box::new(rebind(*right, depth)),
-        ),
-        Expr::Lt(left, right) => Expr::Lt(
-            Box::new(rebind(*left, depth)),
-            Box::new(rebind(*right, depth)),
-        ),
+        Expr::Add(left, right) => pair(Expr::Add, *left, *right, depth),
+        Expr::And(left, right) => pair(Expr::And, *left, *right, depth),
+        Expr::Or(left, right) => pair(Expr::Or, *left, *right, depth),
+        Expr::Eq(left, right) => pair(Expr::Eq, *left, *right, depth),
+        Expr::Lt(left, right) => pair(Expr::Lt, *left, *right, depth),
         Expr::Contains { map, key } => Expr::Contains {
             map: Box::new(rebind(*map, depth)),
             key: Box::new(rebind(*key, depth)),
@@ -1117,6 +1106,14 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
         | Expr::FreshId { .. }
         | Expr::FreshKey { .. }) => leaf,
     }
+}
+
+/// One two-operand variant, rebound operand by operand.
+fn pair(build: fn(Box<Expr>, Box<Expr>) -> Expr, left: Expr, right: Expr, depth: usize) -> Expr {
+    build(
+        Box::new(rebind(left, depth)),
+        Box::new(rebind(right, depth)),
+    )
 }
 
 #[cfg(test)]

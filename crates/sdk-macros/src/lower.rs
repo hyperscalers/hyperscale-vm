@@ -1287,6 +1287,7 @@ impl<'a> Lowerer<'a> {
             | Term::Len(_)
             | Term::OrderKey { .. }
             | Term::SelfResource(_)
+            | Term::Add(..)
             | Term::If { .. } => self.need(&Need::Derived(term.clone())),
             // A judgment has no guest representation, so what crosses is
             // its operands and the guest does the comparison — which is
@@ -1953,6 +1954,27 @@ impl<'a> Lowerer<'a> {
                 let right = self.value(right.code);
                 let op = binary.op;
                 Eval::plain(quote!(#left #op #right))
+            }
+            // A sum of two derivable values is derivable, and the guest
+            // reads the declaration's own sum rather than re-adding: the
+            // evaluator refuses overflow where Rust's `+` would panic or
+            // wrap, and one addition cannot disagree with itself.
+            syn::Expr::Binary(binary) if matches!(binary.op, syn::BinOp::Add(_)) => {
+                let left = self.expr(&binary.left);
+                let right = self.expr(&binary.right);
+                if let (Val::Term(l), Val::Term(r)) = (&left.val, &right.val)
+                    && !l.is_judgment()
+                    && !r.is_judgment()
+                {
+                    let term = Term::Add(Box::new(l.clone()), Box::new(r.clone()));
+                    return Eval {
+                        val: Val::Term(term.clone()),
+                        code: Code::Term(term),
+                    };
+                }
+                let left = self.value(left.code);
+                let right = self.value(right.code);
+                Eval::plain(quote!(#left + #right))
             }
             syn::Expr::Binary(binary) => {
                 let left = self.code(&binary.left);

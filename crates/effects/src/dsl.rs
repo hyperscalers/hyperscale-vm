@@ -188,6 +188,11 @@ pub enum Expr {
         /// The logical key, canonically encoded into the hash.
         material: Vec<Self>,
     },
+    /// A sum, over `u64` against `u64` and `u128` against `u128` and
+    /// nothing else, on [`Expr::Lt`]'s terms. Overflow refuses rather
+    /// than wraps: a declaration is a claim about keys and counts, and a
+    /// wrapped one would be a different claim made silently.
+    Add(Box<Self>, Box<Self>),
     /// Negation of a judgment.
     Not(Box<Self>),
     /// Conjunction, short-circuiting: a false left operand is the answer,
@@ -272,6 +277,7 @@ impl Expr {
                 resource: first,
                 ids: second,
             }
+            | Self::Add(first, second)
             | Self::And(first, second)
             | Self::Or(first, second)
             | Self::Eq(first, second)
@@ -615,6 +621,9 @@ pub enum EvalError {
     /// entries in.
     #[error("range cap {0} exceeds the u32 an interval counts entries in")]
     CapTooWide(u128),
+    /// A sum past its operands' width.
+    #[error("addition overflows the width of its operands")]
+    AddOverflow,
     /// A lookup key matching no pair.
     #[error("lookup key not present")]
     LookupMiss,
@@ -1332,6 +1341,7 @@ fn eval_expr(
             }
             Ok(Value::Bool(as_bool(sub(right)?)?))
         }
+        Expr::Add(left, right) => add(&sub(left)?, &sub(right)?),
         Expr::Eq(left, right) => equals(&sub(left)?, &sub(right)?),
         Expr::Lt(left, right) => less_than(&sub(left)?, &sub(right)?),
         Expr::Contains { map, key } => Ok(Value::Bool(
@@ -1412,6 +1422,33 @@ fn equals(left: &Value, right: &Value) -> Result<Value, EvalError> {
         });
     }
     Ok(Value::Bool(left == right))
+}
+
+/// A sum over the two integer widths, and nothing else, refusing
+/// overflow.
+fn add(left: &Value, right: &Value) -> Result<Value, EvalError> {
+    match (left, right) {
+        (Value::U64(left), Value::U64(right)) => left
+            .checked_add(*right)
+            .map(Value::U64)
+            .ok_or(EvalError::AddOverflow),
+        (Value::U128(left), Value::U128(right)) => left
+            .checked_add(*right)
+            .map(Value::U128)
+            .ok_or(EvalError::AddOverflow),
+        (Value::U64(_), other) => Err(EvalError::TypeMismatch {
+            expected: "u64",
+            found: other.kind(),
+        }),
+        (Value::U128(_), other) => Err(EvalError::TypeMismatch {
+            expected: "u128",
+            found: other.kind(),
+        }),
+        (other, _) => Err(EvalError::TypeMismatch {
+            expected: "u64 or u128",
+            found: other.kind(),
+        }),
+    }
 }
 
 /// Strict ordering over the two integer widths, and nothing else.
@@ -1653,6 +1690,7 @@ mod tests {
                 },
                 vec![1, 2],
             ),
+            (Expr::Add(boxed(1), boxed(2)), vec![1, 2]),
             (Expr::And(boxed(1), boxed(2)), vec![1, 2]),
             (Expr::Or(boxed(1), boxed(2)), vec![1, 2]),
             (Expr::Eq(boxed(1), boxed(2)), vec![1, 2]),
@@ -2357,6 +2395,27 @@ mod tests {
         // A bucket itself is not a list: the projection is spelled, not
         // implied.
         assert!(evaluate_expr(&Expr::Len(Box::new(Expr::Arg(1))), &ins, &TestHasher).is_err());
+    }
+
+    #[test]
+    fn addition_sums_one_width_and_refuses_mixing_and_overflow() {
+        let args = [Value::U64(7), Value::U128(9), Value::U64(u64::MAX)];
+        let ins = inputs(&args, &[]);
+        let sum = |left: Expr, right: Expr| {
+            evaluate_expr(
+                &Expr::Add(Box::new(left), Box::new(right)),
+                &ins,
+                &TestHasher,
+            )
+        };
+        assert_eq!(sum(Expr::Arg(0), Expr::Arg(0)), Ok(Value::U64(14)));
+        assert_eq!(sum(Expr::Arg(1), Expr::Arg(1)), Ok(Value::U128(18)));
+        // The widening that would let a u64 meet a u128 is an addition
+        // nobody wrote, exactly as `Lt` refuses to order them.
+        assert!(sum(Expr::Arg(0), Expr::Arg(1)).is_err());
+        // Overflow refuses rather than wraps: a wrapped count would be a
+        // different declaration made silently.
+        assert_eq!(sum(Expr::Arg(2), Expr::Arg(0)), Err(EvalError::AddOverflow));
     }
 
     #[test]

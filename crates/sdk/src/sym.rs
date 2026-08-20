@@ -273,6 +273,16 @@ pub fn len(list: &Sym<Seq>) -> Sym<Num> {
     Sym::new(Expr::Len(Box::new(list.expr.clone())))
 }
 
+/// A sum, over the two integer widths and refusing overflow — how a cap
+/// covering more than one count is spelled.
+#[must_use]
+pub fn add<A: Kind, B: Kind>(left: &Sym<A>, right: &Sym<B>) -> Sym<Num> {
+    Sym::new(Expr::Add(
+        Box::new(left.expr.clone()),
+        Box::new(right.expr.clone()),
+    ))
+}
+
 /// Negation.
 #[must_use]
 pub fn not(value: &Sym<Flag>) -> Sym<Flag> {
@@ -394,7 +404,8 @@ pub fn expr_depth(expr: &Expr) -> usize {
             expr_depth(map).max(expr_depth(key))
         }
         Expr::Pack { hi, lo } => expr_depth(hi).max(expr_depth(lo)),
-        Expr::And(left, right)
+        Expr::Add(left, right)
+        | Expr::And(left, right)
         | Expr::Or(left, right)
         | Expr::Eq(left, right)
         | Expr::Lt(left, right) => expr_depth(left).max(expr_depth(right)),

@@ -1167,6 +1167,13 @@ mod shelf {
             let entries = self.ledger.range(0, u128::MAX, ids.count());
             let _ = entries.count();
         }
+
+        /// A page sized by two counts at once: `+` over derivable
+        /// values is itself derivable.
+        pub fn window_both(&mut self, some: Ids, more: Ids) {
+            let entries = self.ledger.range(0, u128::MAX, some.count() + more.count());
+            let _ = entries.count();
+        }
     }
 }
 
@@ -1209,5 +1216,24 @@ fn a_spelled_count_lowers_to_the_length_projection() {
     assert!(matches!(
         target,
         TargetExpr::Range { cap, .. } if *cap == Expr::Len(Box::new(Expr::Arg(0)))
+    ));
+}
+
+/// `+` between two derivable counts lowers to the DSL's own sum, so a
+/// cap covering more than one move is spelled with the operator the
+/// body would have reached for anyway.
+#[test]
+fn a_spelled_sum_lowers_to_the_addition() {
+    use hyperscale_vm_effects::{Expr, TargetExpr};
+
+    let metadata = shelf::blueprint().metadata();
+    let effects = &metadata.methods["window-both"].effects;
+    let Clause::Effect { target, .. } = &effects[0] else {
+        panic!("window-both declares an access");
+    };
+    let count = |arg| Box::new(Expr::Len(Box::new(Expr::Arg(arg))));
+    assert!(matches!(
+        target,
+        TargetExpr::Range { cap, .. } if *cap == Expr::Add(count(0), count(1))
     ));
 }

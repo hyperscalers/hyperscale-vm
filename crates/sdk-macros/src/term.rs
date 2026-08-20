@@ -82,6 +82,8 @@ pub enum Term {
     LitU128(u128),
     /// The element of an enclosing `for`, by absolute nesting depth.
     Binding(usize),
+    /// A sum over one integer width, refusing overflow.
+    Add(Box<Self>, Box<Self>),
     /// Negation of a judgment.
     Not(Box<Self>),
     /// Conjunction, short-circuiting on a false left operand.
@@ -228,6 +230,10 @@ impl Term {
                 ::hyperscale_vm_sdk::sym::lit_u128(#value)
                     .cast::<::hyperscale_vm_sdk::Opaque>()
             ),
+            Self::Add(left, right) => {
+                let (left, right) = (left.emit(), right.emit());
+                opaque(quote!(::hyperscale_vm_sdk::sym::add(&#left, &#right)))
+            }
             Self::Not(inner) => {
                 let inner = flag(inner);
                 opaque(quote!(::hyperscale_vm_sdk::sym::not(&#inner)))
