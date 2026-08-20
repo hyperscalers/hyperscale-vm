@@ -91,10 +91,11 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
             stored(PRIMARY),
             vec![Expr::SelfAddr],
         ),
-        ("account", "cancel", stored(PRIMARY), vec![]),
+        ("account", "cancel", stored(RECOVERY), vec![]),
         ("account", "confirm", stored(CONFIRMATION), vec![]),
         ("account", "deposit", open(), vec![]),
         ("account", "deposit-nf", open(), vec![]),
+        ("account", "freeze", stored(RECOVERY), vec![]),
         (
             "account",
             "present-badge",

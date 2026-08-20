@@ -384,9 +384,9 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     assert_acts(&world, &store, BOB, at, true, 0x64);
     assert_acts(&world, &store, ALICE, at, false, 0x65);
 
-    // A later cancel by the new primary compacts the matured proposal
-    // into the base — it cannot cancel what already governs — and the
-    // old primary stays retired.
+    // A later cancel by the new holder — uniform, so recovery too —
+    // compacts the matured proposal into the base; it cannot cancel
+    // what already governs, and the old primary stays retired.
     let (results, store) = run_both_at(
         &world,
         &store,
@@ -405,11 +405,13 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     assert_acts(&world, &store, ALICE, at, false, 0x67);
 }
 
-/// Primary cancels an unmatured proposal, and every later verdict —
-/// however far past the would-be maturity — is under the old roles, as
-/// if nothing had been proposed.
+/// Recovery withdraws its own unmatured proposal — a proposal is its
+/// proposer's to cancel, and nobody else's: the compromised primary
+/// cannot veto its own replacement, so there is no cancel war for it to
+/// win. Every later verdict — however far past the would-be maturity —
+/// is under the old roles, as if nothing had been proposed.
 #[test]
-fn primary_cancels_an_unmatured_proposal() {
+fn recovery_withdraws_its_own_unmatured_proposal() {
     let world = world();
     let store = recovered_store();
     let t0 = env().clock_ms;
@@ -421,11 +423,27 @@ fn primary_cancels_an_unmatured_proposal() {
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    // The primary's cancel refuses at the gate: cancel is recovery's.
     let (results, store) = run_both_signed(
         &world,
         &store,
         &[(&cancel_graph(), TxHash(Hash32([0x69; 32])))],
         Some(ALICE),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 0 },
+        })],
+        "a proposal is not the primary's to veto"
+    );
+
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&cancel_graph(), TxHash(Hash32([0x6E; 32])))],
+        Some(BOB),
     );
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("cancel must complete; got {:?}", results[0]);
@@ -450,6 +468,117 @@ fn primary_cancels_an_unmatured_proposal() {
         Some(MAKER),
     );
     assert_eq!(results, vec![TxResult::Trapped(AbortReason::Unreachable)]);
+}
+
+/// A compromised primary cannot outlast its replacement: recovery
+/// freezes the acting power, proposes, and waits. The frozen key can
+/// neither act nor cancel, and the delay is how long the funds sat
+/// behind a freeze rather than how long the attacker had them —
+/// unfreezing is the rotation itself.
+#[test]
+fn recovery_rotates_a_hostile_primary_out() {
+    let world = world();
+    let store = recovered_store();
+    let t0 = env().clock_ms;
+
+    // Freeze first: the acting entry goes, everything else stands.
+    let freeze = graph(|b| account::freeze(b, ALICE));
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&freeze, TxHash(Hash32([0x90; 32])))],
+        Some(BOB),
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("freeze must complete; got {:?}", results[0]);
+    };
+    let mut frozen = split_roles();
+    frozen.remove(PRIMARY);
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(
+            AuthCell::new(AuthBase::new(DAY_MS, frozen))
+                .to_bytes()
+                .unwrap()
+        )),
+        "the freeze is one entry's removal"
+    );
+
+    // The frozen key neither acts nor cancels.
+    assert_acts(&world, &store, ALICE, t0, false, 0x91);
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&cancel_graph(), TxHash(Hash32([0x92; 32])))],
+        Some(ALICE),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 0 },
+        })]
+    );
+
+    // Recovery proposes its replacement and waits it out.
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&propose_graph(), TxHash(Hash32([0x93; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    let before = t0 + DAY_MS - 1;
+    let at = t0 + DAY_MS;
+    assert_acts(&world, &store, BOB, before, false, 0x94);
+    assert_acts(&world, &store, ALICE, at, false, 0x95);
+    assert_acts(&world, &store, BOB, at, true, 0x96);
+}
+
+/// A hostile recovery under an effectively infinite delay matures
+/// nothing on its own: the proposal waits forever, and enacting it is
+/// the confirmation role's deliberate co-signature — the dial an owner
+/// sets against the factor it trusts least.
+#[test]
+fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
+    let world = world();
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    store
+        .write(
+            auth(ALICE),
+            AuthCell::new(AuthBase::new(u64::MAX, split_roles()))
+                .to_bytes()
+                .unwrap(),
+        )
+        .unwrap();
+    let t0 = env().clock_ms;
+
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&propose_graph(), TxHash(Hash32([0x97; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    // However far out, the proposal has not matured and the old primary
+    // still acts alone.
+    let far = t0 + 100 * DAY_MS;
+    assert_acts(&world, &store, ALICE, far, true, 0x98);
+    assert_acts(&world, &store, BOB, far, false, 0x99);
+
+    // Enacting it takes the confirmation role's own signature.
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&confirm_graph(), TxHash(Hash32([0x9A; 32])))],
+        Some(MAKER),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    assert_acts(&world, &store, BOB, far, true, 0x9B);
+    assert_acts(&world, &store, ALICE, far, false, 0x9C);
 }
 
 /// Confirmation enacts a proposal early: the new roles govern from the

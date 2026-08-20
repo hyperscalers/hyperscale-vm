@@ -96,7 +96,7 @@ PackageMetadata {
                                     material: [],
                                 },
                                 role: RoleId(
-                                    0,
+                                    1,
                                 ),
                             },
                         ),
@@ -293,6 +293,68 @@ PackageMetadata {
                 ),
                 Bucket(
                     0,
+                ),
+            ],
+        },
+        "freeze": MethodSignature {
+            totality: Infallible,
+            issues: None,
+            params: [],
+            outputs: [],
+            denominations: [],
+            effects: [
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    4,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Present,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                4,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                    denomination: None,
+                },
+                Requires {
+                    guard: None,
+                    condition: Satisfies {
+                        rule: Require(
+                            Stored {
+                                cell: ChildKey {
+                                    owner: SelfAddr,
+                                    slot: SlotId(
+                                        4,
+                                    ),
+                                    material: [],
+                                },
+                                role: RoleId(
+                                    1,
+                                ),
+                            },
+                        ),
+                    },
+                },
+            ],
+            abi: [
+                Handle(
+                    1,
                 ),
             ],
         },

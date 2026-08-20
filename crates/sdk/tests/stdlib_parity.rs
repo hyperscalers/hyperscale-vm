@@ -18,7 +18,7 @@
 //! those tests without restating them.
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
-use hyperscale_vm_effects::{CONFIRMATION, PRIMARY, PackageMetadata, ParamType, RECOVERY, SlotId};
+use hyperscale_vm_effects::{CONFIRMATION, PackageMetadata, ParamType, RECOVERY, SlotId};
 use hyperscale_vm_fixtures::{
     amm as amm_package, book as book_package, splitter as splitter_package,
 };
@@ -98,7 +98,13 @@ fn account() -> Blueprint {
             let holder = t.self_addr();
             let cell = holder.child(AUTH, &[]);
             t.point(&cell).existing();
-            t.role_gated(PRIMARY);
+            t.role_gated(RECOVERY);
+        })
+        .method("freeze", &[], |t: &mut Trace| {
+            let holder = t.self_addr();
+            let cell = holder.child(AUTH, &[]);
+            t.point(&cell).existing();
+            t.role_gated(RECOVERY);
         })
         .method("confirm", &[], |t: &mut Trace| {
             let holder = t.self_addr();

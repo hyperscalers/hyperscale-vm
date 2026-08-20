@@ -21,7 +21,7 @@ pub mod account {
     use hyperscale_vm_sdk::state::{
         AuthBase, AuthCell, Bucket, Ids, NfBucket, Proposal, Quantity, RoleTable, clock_ms,
     };
-    use hyperscale_vm_sdk::{Address, Denomination};
+    use hyperscale_vm_sdk::{Address, Denomination, PRIMARY};
 
     /// Funds left the account.
     #[event]
@@ -165,7 +165,11 @@ pub mod account {
         /// Drop an unmatured proposal; a matured one is promoted instead
         /// — cancelling what already governs would be a rewrite, not a
         /// cancel.
-        #[role_gated(primary)]
+        ///
+        /// Withdrawn by the role that made it: a proposal is recovery's,
+        /// so a compromised primary cannot veto its own replacement, and
+        /// there is no cancel war for it to win.
+        #[role_gated(recovery)]
         pub fn cancel(&mut self) {
             let stored = self.auth().existing();
             let governing = stored.governing(clock_ms()).clone();
@@ -179,6 +183,30 @@ pub mod account {
             let stored = self.auth().existing();
             let proposal = stored.proposal.expect("nothing is pending");
             self.auth().set(Some(AuthCell::new(proposal.base)));
+        }
+
+        /// Strip the primary's acting power, now, keeping whatever
+        /// proposal is pending: what stops a compromised key draining
+        /// the account while its replacement matures. An absent entry
+        /// denies, so the freeze is a removal rather than a rule nobody
+        /// can write — and unfreezing is the rotation itself, since the
+        /// matured or confirmed proposal writes a table with a primary
+        /// in it.
+        #[role_gated(recovery)]
+        pub fn freeze(&mut self) {
+            let stored = self.auth().existing();
+            let mut base = stored.governing(clock_ms()).clone();
+            // A matured proposal was promoted by the governing read;
+            // only one still waiting stays pending.
+            let pending = match stored.proposal {
+                Some(proposal) if proposal.effective_at_ms > clock_ms() => Some(proposal),
+                _ => None,
+            };
+            base.roles.remove(PRIMARY);
+            self.auth().set(Some(AuthCell {
+                base,
+                proposal: pending,
+            }));
         }
     }
 }
