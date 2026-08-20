@@ -31,7 +31,7 @@ fn account() -> Blueprint {
     Blueprint::builder()
         .method(
             "withdraw",
-            &[ParamType::Address, ParamType::U128],
+            &[ParamType::Denomination, ParamType::U128],
             |t: &mut Trace| {
                 let resource: Sym<Addr> = t.arg(0);
                 let amount: Sym<Amount> = t.arg(1);

@@ -202,8 +202,12 @@ impl Trace {
             .get(index as usize)
             .unwrap_or_else(|| panic!("argument {index} is past the declared parameter list"));
         if let Some(claimed) = K::PARAM {
+            // The symbolic vocabulary has one address kind, so a claim of
+            // `Addr` is compatible with every declared narrowing of it.
+            let compatible =
+                claimed == declared || (claimed == ParamType::Address && declared.is_address());
             assert!(
-                claimed == declared,
+                compatible,
                 "argument {index} is declared {} but read as {}",
                 declared.name(),
                 K::NAME

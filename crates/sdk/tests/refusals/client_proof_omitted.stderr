@@ -7,14 +7,14 @@ error[E0277]: the trait bound `u128: AddressArg` is not satisfied
    |          required by a bound introduced by this call
    |
    = help: the following other types implement trait `AddressArg`:
-             CallTarget
              ComponentAddr
-             Denomination
              NativeAddr
              PackageAddr
              PrincipalAddr
              ResourceAddr
              hyperscale_vm_sdk::Address
+             hyperscale_vm_sdk::CallTarget
+             hyperscale_vm_sdk::Denomination
 note: required by a bound in `contract::client::Contract::withdraw`
   --> tests/refusals/client_proof_omitted.rs:4:1
    |

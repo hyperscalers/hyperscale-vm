@@ -596,6 +596,22 @@ fn every_malformed_mutation_rejects() {
             found: "u64",
         })
     );
+    // An address literal outside the classes the parameter declares: the
+    // account's withdraw names a denomination, and a component is not one.
+    let mut wrong_class = valid_graph();
+    wrong_class.nodes[1].args[0] = GraphArg::Literal(Value::Address(Address::new(
+        [0x77; 31],
+        AddressClass::Component,
+    )));
+    assert_eq!(
+        admit_it(&wrong_class),
+        Err(AdmissionError::ParamKind {
+            node: 1,
+            param: 0,
+            expected: "denomination",
+            found: "address",
+        })
+    );
     let mut literal_bucket = valid_graph();
     literal_bucket.nodes[3].args[0] = GraphArg::Literal(Value::U128(30));
     assert_eq!(

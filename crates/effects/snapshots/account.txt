@@ -438,7 +438,7 @@ PackageMetadata {
             totality: Infallible,
             issues: None,
             params: [
-                Address,
+                Denomination,
                 U128,
             ],
             outputs: [
@@ -490,7 +490,7 @@ PackageMetadata {
             totality: Infallible,
             issues: None,
             params: [
-                Address,
+                Denomination,
                 Ids,
             ],
             outputs: [

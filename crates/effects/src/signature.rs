@@ -2,6 +2,9 @@
 //! about its parameters, its accessibility, and its ABI binding.
 
 use hyperscale_hbor::Hbor;
+use hyperscale_vm_types::{
+    CallTarget, ComponentAddr, Denomination, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr,
+};
 
 use crate::auth::{AuthRole, RoleSet};
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
@@ -13,6 +16,11 @@ use crate::vocabulary::VAULT;
 
 /// A method parameter's admitted kind. Bucket parameters consume a value
 /// edge; every other kind binds a literal or envelope input.
+///
+/// An address parameter declares the classes it admits — the wide kind
+/// for any, a position or class kind for fewer — and admission refuses a
+/// literal outside them. That refusal is what lets a body read the
+/// parameter at the narrow type with no failure arm of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum ParamType {
     /// An unsigned 64-bit integer.
@@ -21,8 +29,23 @@ pub enum ParamType {
     U128,
     /// Opaque bytes.
     Bytes,
-    /// A global object's address.
+    /// A global object's address, of any class.
     Address,
+    /// An address a method may be invoked on: a principal or a component.
+    CallTarget,
+    /// An address naming a resource: an issued resource or a protocol
+    /// one.
+    Denomination,
+    /// A principal's address.
+    Principal,
+    /// A component instance's address.
+    Component,
+    /// A package's address.
+    Package,
+    /// An issued resource's address.
+    Resource,
+    /// A protocol role's address.
+    Native,
     /// A fungible value edge; its resource type is static, its amount
     /// dynamic.
     ///
@@ -78,6 +101,13 @@ impl ParamType {
             Self::U128 => "u128",
             Self::Bytes => "bytes",
             Self::Address => "address",
+            Self::CallTarget => "call-target",
+            Self::Denomination => "denomination",
+            Self::Principal => "principal-address",
+            Self::Component => "component-address",
+            Self::Package => "package-address",
+            Self::Resource => "resource-address",
+            Self::Native => "native-address",
             Self::Bucket => "bucket",
             Self::NfBucket => "nf-bucket",
             Self::Rule => "rule",
@@ -86,9 +116,26 @@ impl ParamType {
         }
     }
 
+    /// Whether this kind binds an address literal, of any narrowing.
+    #[must_use]
+    pub const fn is_address(self) -> bool {
+        matches!(
+            self,
+            Self::Address
+                | Self::CallTarget
+                | Self::Denomination
+                | Self::Principal
+                | Self::Component
+                | Self::Package
+                | Self::Resource
+                | Self::Native
+        )
+    }
+
     /// Whether a literal value has this kind. Buckets are never literals —
     /// they arrive only as edges, and a rule is bytes that decode as the
-    /// vocabulary.
+    /// vocabulary. A narrowed address kind admits only its own classes,
+    /// judged by the conversion the narrow type itself defines.
     #[must_use]
     pub fn admits(self, value: &Value) -> bool {
         match (self, value) {
@@ -96,6 +143,15 @@ impl ParamType {
             | (Self::U128, Value::U128(_))
             | (Self::Bytes, Value::Bytes(_))
             | (Self::Address, Value::Address(_)) => true,
+            (Self::CallTarget, Value::Address(address)) => CallTarget::try_from(*address).is_ok(),
+            (Self::Denomination, Value::Address(address)) => {
+                Denomination::try_from(*address).is_ok()
+            }
+            (Self::Principal, Value::Address(address)) => PrincipalAddr::try_from(*address).is_ok(),
+            (Self::Component, Value::Address(address)) => ComponentAddr::try_from(*address).is_ok(),
+            (Self::Package, Value::Address(address)) => PackageAddr::try_from(*address).is_ok(),
+            (Self::Resource, Value::Address(address)) => ResourceAddr::try_from(*address).is_ok(),
+            (Self::Native, Value::Address(address)) => NativeAddr::try_from(*address).is_ok(),
             (Self::Rule, Value::Bytes(bytes)) => StoredRule::from_slice(bytes).is_ok(),
             (Self::RoleSet, Value::Bytes(bytes)) => RoleSet::from_slice(bytes).is_ok(),
             (Self::Ids, Value::List(elements)) => {
@@ -564,5 +620,51 @@ mod tests {
             "an element that is not an id"
         );
         assert!(!ParamType::Ids.admits(&Value::U64(7)), "not a list at all");
+    }
+
+    #[test]
+    fn an_address_parameter_admits_exactly_its_declared_classes() {
+        use hyperscale_vm_types::{Address, AddressClass};
+
+        let of = |class: AddressClass| Value::Address(Address::new([7; 31], class));
+        let classes = [
+            AddressClass::Principal,
+            AddressClass::Component,
+            AddressClass::Package,
+            AddressClass::Resource,
+            AddressClass::Native,
+        ];
+        let admitted: &[(ParamType, &[AddressClass])] = &[
+            (ParamType::Address, &classes),
+            (
+                ParamType::CallTarget,
+                &[AddressClass::Principal, AddressClass::Component],
+            ),
+            (
+                ParamType::Denomination,
+                &[AddressClass::Resource, AddressClass::Native],
+            ),
+            (ParamType::Principal, &[AddressClass::Principal]),
+            (ParamType::Component, &[AddressClass::Component]),
+            (ParamType::Package, &[AddressClass::Package]),
+            (ParamType::Resource, &[AddressClass::Resource]),
+            (ParamType::Native, &[AddressClass::Native]),
+        ];
+        for (param, admits) in admitted {
+            assert!(param.is_address());
+            for class in classes {
+                assert_eq!(
+                    param.admits(&of(class)),
+                    admits.contains(&class),
+                    "{} against {class}",
+                    param.name()
+                );
+            }
+            assert!(
+                !param.admits(&Value::U64(7)),
+                "{} a non-address",
+                param.name()
+            );
+        }
     }
 }
