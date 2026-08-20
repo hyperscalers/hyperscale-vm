@@ -2081,6 +2081,34 @@ fn stub_allows(attrs: &mut Vec<syn::Attribute>) {
     ));
 }
 
+/// The lints an expanded module carries, each about the emission rather
+/// than about anything an author wrote.
+fn module_allows(attrs: &mut Vec<syn::Attribute>) {
+    // Nothing in a package constructs its own state: the struct names
+    // the slots the kernel materializes storage under, and the
+    // configuration record is an instance's, not the code's. On a guest
+    // build the authoring half is held back too, so the vocabulary those
+    // are written against is read by nothing there either.
+    attrs.push(syn::parse_quote!(#[allow(dead_code)]));
+    // `&mut self` is a contract's own statement that a method mutates
+    // component state, which is what the declaration is read from. That
+    // the host-side stubs it calls happen to take `&self` is an artifact
+    // of their being unimplemented off-guest, not a reason to narrow a
+    // signature the derivation depends on.
+    attrs.push(syn::parse_quote!(#[allow(clippy::needless_pass_by_ref_mut)]));
+    // Every struct field is re-emitted as `name: value`, because the
+    // value is the lowering's rewrite of the author's expression and not
+    // their token. Shorthand would be legible only where that rewrite is
+    // the identity, and reading a lint about the author's spelling back
+    // into the emitter is a carve-out for one case in a walk that has no
+    // others.
+    attrs.push(syn::parse_quote!(#[allow(clippy::redundant_field_names)]));
+    stub_allows(attrs);
+    attrs.push(syn::parse_quote!(
+        #[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
+    ));
+}
+
 fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<TokenStream2> {
     let span = module.span();
     let world = kebab(&module.ident.to_string());
@@ -2163,24 +2191,7 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     if let Some(config) = &config_name {
         publish_config(items, config);
     }
-    // Nothing in a package constructs its own state: the struct names
-    // the slots the kernel materializes storage under, and the
-    // configuration record is an instance's, not the code's. On a guest
-    // build the authoring half is held back too, so the vocabulary those
-    // are written against is read by nothing there either.
-    module.attrs.push(syn::parse_quote!(#[allow(dead_code)]));
-    // `&mut self` is a contract's own statement that a method mutates
-    // component state, which is what the declaration is read from. That
-    // the host-side stubs it calls happen to take `&self` is an artifact
-    // of their being unimplemented off-guest, not a reason to narrow a
-    // signature the derivation depends on.
-    module
-        .attrs
-        .push(syn::parse_quote!(#[allow(clippy::needless_pass_by_ref_mut)]));
-    stub_allows(&mut module.attrs);
-    module.attrs.push(syn::parse_quote!(
-        #[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
-    ));
+    module_allows(&mut module.attrs);
     items.extend(resource_marks(&declared_resources));
     items.extend(event_emitters(&events));
     items.push(syn::parse_quote!(
