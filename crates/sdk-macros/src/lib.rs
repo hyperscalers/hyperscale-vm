@@ -103,7 +103,7 @@ mod syntax;
 mod term;
 mod wit;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::vocabulary::{
     AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT,
@@ -1802,9 +1802,11 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
                     /// the event's own bound sizes. Nothing here
                     /// allocates, because a method marked total may not:
                     /// growing a heap buffer can fail, and the failure
-                    /// is the `unreachable` that costs the mark. So an
-                    /// event carrying a length does not compile, and the
-                    /// widths are the event's to state.
+                    /// is the `unreachable` that costs the mark. So
+                    /// nothing an event names may carry a length — the
+                    /// event itself, and every declaration reachable
+                    /// through its fields — and the widths are the
+                    /// event's to state.
                     pub fn emit(&self) {
                         use ::hyperscale_vm_sdk::hbor::HborInfallible as _;
                         let mut buf = [0u8; <Self as ::hyperscale_vm_sdk::hbor::HborInfallible>
@@ -2125,6 +2127,80 @@ fn screaming(name: &str) -> String {
     kebab(name).replace('-', "_").to_uppercase()
 }
 
+/// The declared structs an emit encodes: the events, and everything
+/// they name in turn.
+///
+/// The bound follows the payload rather than the attribute that declared
+/// it. An event composed of a record is the ordinary shape — the event
+/// *is* the thing just stored — so a record one names is written into
+/// the same stack buffer and is held to the same widths. A record no
+/// event reaches is only ever a cell, and a cell's encode allocates.
+fn emit_closure(items: &[syn::Item]) -> BTreeSet<String> {
+    let mut named: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut frontier: Vec<String> = Vec::new();
+    for item in items {
+        let syn::Item::Struct(item) = item else {
+            continue;
+        };
+        let marked = |name: &str| item.attrs.iter().any(|a| a.path().is_ident(name));
+        if !marked("record") && !marked("event") && !marked("resource") {
+            continue;
+        }
+        if marked("event") {
+            frontier.push(item.ident.to_string());
+        }
+        named.insert(
+            item.ident.to_string(),
+            item.fields.iter().flat_map(|f| type_names(&f.ty)).collect(),
+        );
+    }
+    let mut reached = BTreeSet::new();
+    while let Some(name) = frontier.pop() {
+        if !reached.insert(name.clone()) {
+            continue;
+        }
+        if let Some(fields) = named.get(&name) {
+            frontier.extend(fields.iter().cloned());
+        }
+    }
+    reached
+}
+
+/// Every type name a field's type mentions, generic arguments included.
+///
+/// Names rather than paths, because what this answers against is the
+/// module's own declarations, and a package names those unqualified.
+fn type_names(ty: &syn::Type) -> Vec<String> {
+    let mut found = Vec::new();
+    walk_type_names(ty, &mut found);
+    found
+}
+
+fn walk_type_names(ty: &syn::Type, found: &mut Vec<String>) {
+    match ty {
+        syn::Type::Path(path) => {
+            for segment in &path.path.segments {
+                found.push(segment.ident.to_string());
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    for arg in &args.args {
+                        if let syn::GenericArgument::Type(inner) = arg {
+                            walk_type_names(inner, found);
+                        }
+                    }
+                }
+            }
+        }
+        syn::Type::Array(array) => walk_type_names(&array.elem, found),
+        syn::Type::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                walk_type_names(elem, found);
+            }
+        }
+        syn::Type::Reference(reference) => walk_type_names(&reference.elem, found),
+        _ => {}
+    }
+}
+
 /// The codec every declared record and event carries.
 ///
 /// Pushed onto the author's own struct rather than asked for, on the same
@@ -2132,6 +2208,7 @@ fn screaming(name: &str) -> String {
 /// protocol's, so naming it is the protocol's job. The path routes
 /// through the SDK, which is the one crate a contract depends on.
 fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
+    let emitted = emit_closure(items);
     let mut records = Vec::new();
     for item in items {
         let syn::Item::Struct(item) = item else {
@@ -2143,7 +2220,8 @@ fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
         // schema, and its cell is read and written as the record it is.
         // A bare mark declares no fields and encodes nothing.
         let instance = marked("resource") && !item.fields.is_empty();
-        if !record && !event && !instance {
+        let stored = record || instance;
+        if !stored && !event {
             continue;
         }
         item.attrs.push(syn::parse_quote!(
@@ -2151,19 +2229,16 @@ fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
         ));
         item.attrs
             .push(syn::parse_quote!(#[derive(::hyperscale_vm_sdk::hbor::Hbor)]));
-        // Fixed width, claimed, for the two that need it: a record is
-        // stored and an event is emitted, and an emit especially wants an
-        // encoding with no error to handle, since a method marked total
-        // may not allocate and so writes its payload into a buffer sized
-        // from this bound. A field carrying a length refuses by name.
+        // Fixed width where an emit spends it. The payload goes into a
+        // buffer on the stack sized from this bound, because a method
+        // marked total may not allocate and a heap buffer that grows can
+        // fail — so nothing an event names may carry a length.
         //
-        // Instance data claims no such thing. Nothing encodes one off a
-        // total method — the publish gate refuses that mark from a
-        // published package, and a mint is gated where a total method
-        // admits everyone — so the cell is written through the same
-        // allocating encode every record cell is, and a schema is free to
-        // name an instance.
-        if record || event {
+        // A cell claims no such thing. Every one is written through an
+        // allocating encode whatever it holds, so a record no event
+        // reaches is held to what the encoding carries rather than to
+        // what a stack buffer could.
+        if emitted.contains(&item.ident.to_string()) {
             item.attrs.push(syn::parse_quote!(
                 #[hbor(crate = ::hyperscale_vm_sdk::hbor, infallible)]
             ));
@@ -2180,7 +2255,7 @@ fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
         for field in &mut item.fields {
             field.vis = syn::parse_quote!(pub);
         }
-        if record || instance {
+        if stored {
             let name = &item.ident;
             records.push(syn::parse_quote!(
                 impl ::hyperscale_vm_sdk::state::Record for #name {}
