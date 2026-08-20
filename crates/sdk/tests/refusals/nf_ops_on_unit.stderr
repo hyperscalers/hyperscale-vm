@@ -1,0 +1,14 @@
+error[E0599]: `hyperscale_vm_sdk::state::Interval<()>` is not an iterator
+  --> tests/refusals/nf_ops_on_unit.rs:17:39
+   |
+17 |             self.seen.of(7u64).all(8).take(ids)
+   |                                       ^^^^ `hyperscale_vm_sdk::state::Interval<()>` is not an iterator
+   |
+  ::: src/state.rs
+   |
+   | pub struct Interval<T> {
+   | ---------------------- doesn't satisfy `hyperscale_vm_sdk::state::Interval<()>: Iterator`
+   |
+   = note: the following trait bounds were not satisfied:
+           `hyperscale_vm_sdk::state::Interval<()>: Iterator`
+           which is required by `&mut hyperscale_vm_sdk::state::Interval<()>: Iterator`

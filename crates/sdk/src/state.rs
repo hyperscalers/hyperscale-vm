@@ -303,14 +303,13 @@ impl Cellular for Address {
 /// A collection whose entries carry nothing: the entry existing is the
 /// whole of what it says.
 ///
-/// A membership set, a holdings interval, an index of what has been
-/// seen — each is a collection where the order key names the thing and
-/// there is nothing else to store. Written as any other value would be,
-/// so a body that files one names no marker and a reader that would
-/// decode one has nothing to decode. Presence is read off the entry
-/// rather than out of it, which is what every consumer already does:
-/// the kernel's own custody check asks whether an entry is in range and
-/// never what it holds.
+/// A membership set, an index of what has been seen — each is a
+/// collection where the order key names the thing and there is nothing
+/// else to store. Presence is read off the entry rather than out of it,
+/// which is what every consumer already does: the kernel's own custody
+/// check asks whether an entry is in range and never what it holds. A
+/// unit collection holds no value, so the instance operations live on
+/// [`NfVault`] and not here.
 impl Cellular for () {
     fn to_cell(&self) -> Vec<u8> {
         Vec::new()
@@ -888,13 +887,28 @@ pub struct Vault;
 /// The element of a holder's non-fungible instances, reached by
 /// `holdings(resource)`.
 ///
-/// An alias of the unit entry rather than a marker struct: an instance's
-/// id is the entry's own order key, so the entry holds nothing, and the
-/// generated guest code must say so in bytes. The name exists for the
-/// derivation, which reads it to learn that the interval holds value and
-/// is therefore narrowed by a resource — a package's own field cannot
-/// declare it, so only the accessor's collections denominate by key.
-pub type NfVault = ();
+/// A marker type, not the unit it encodes as: an instance's id is the
+/// entry's own order key, so the entry holds nothing and writes nothing
+/// in bytes — but the instance operations live on this element alone,
+/// so a collection of anything else has no value surface to reach. The
+/// name is what the derivation reads to learn that the interval holds
+/// value and is therefore narrowed by a resource — a package's own field
+/// cannot declare it, so only the accessor's collections denominate by
+/// key.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NfVault;
+
+/// As the unit entry: presence is the whole of what a holdings entry
+/// says, so there is nothing to write and nothing to decode.
+impl Cellular for NfVault {
+    fn to_cell(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn from_cell(_: &[u8]) -> Self {
+        Self
+    }
+}
 
 #[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
 impl Slot<Vault> {
@@ -1114,11 +1128,37 @@ impl Interval<NfVault> {
     ///
     /// What a holdings entry says is that the holder holds it, and the
     /// instance's id is the entry's own order key — so there is no value
-    /// to name. On the presence-only interval alone, because it is the
-    /// only one with nothing to say.
+    /// to name. The filing is the kernel's, so a body hands the bucket
+    /// over rather than walking it, which is also what keeps it away
+    /// from the allocator and so eligible for the total mark.
     #[inline(always)]
+    #[allow(clippy::needless_pass_by_value)] // the filing consumes the edge; off host nothing runs
     pub fn file(&mut self, funds: NfBucket) {
-        self.put(funds, &[]);
+        let _ = &funds;
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::entry_put(self.handle, funds.into_handle(), &[]);
+        #[cfg(not(target_arch = "wasm32"))]
+        return host::entry_put(self.handle, funds.rep(), &[]);
+    }
+
+    /// Take the named instances out, as the edge they become.
+    ///
+    /// The removal and the edge are one operation, exactly as a debit and
+    /// its bucket are, so a body cannot hand on instances it left where
+    /// they were. An id the collection does not hold refuses here.
+    ///
+    /// On the holdings element alone, with `file`: moving instances is
+    /// what a value-bearing collection does, and this is the one element
+    /// that names one.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)] // the take consumes the ids it names
+    #[inline(always)]
+    pub fn take(&mut self, ids: Ids) -> NfBucket {
+        let _ = &ids;
+        #[cfg(target_arch = "wasm32")]
+        return NfBucket::held(crate::guest::entry_take(self.handle, ids.named()));
+        #[cfg(not(target_arch = "wasm32"))]
+        return NfBucket::at(host::entry_take(self.handle, ids.named()));
     }
 }
 
@@ -1260,43 +1300,6 @@ impl<T: Cellular> Interval<T> {
         return crate::guest::entry_remove(self.handle, index);
         #[cfg(not(target_arch = "wasm32"))]
         return host::entry_remove(self.handle, index);
-    }
-
-    /// File the instances a bucket carries, each at the order it was
-    /// taken under, holding `value`.
-    ///
-    /// The filing is the kernel's, so a body hands the bucket over rather
-    /// than walking it: an instance's id is its order key, and no
-    /// accessor hands one back.
-    ///
-    /// One value for the whole set, so it crosses as the bytes the kernel
-    /// stores rather than as a leaf encoded per instance — which is also
-    /// what keeps a body filing a marker away from the allocator, and so
-    /// eligible for the total mark.
-    #[inline(always)]
-    #[allow(clippy::needless_pass_by_value)] // the filing consumes the edge; off host nothing runs
-    pub fn put(&mut self, funds: NfBucket, value: &[u8]) {
-        let _ = (&funds, value);
-        #[cfg(target_arch = "wasm32")]
-        return crate::guest::entry_put(self.handle, funds.into_handle(), value);
-        #[cfg(not(target_arch = "wasm32"))]
-        return host::entry_put(self.handle, funds.rep(), value);
-    }
-
-    /// Take the named instances out, as the edge they become.
-    ///
-    /// The removal and the edge are one operation, exactly as a debit and
-    /// its bucket are, so a body cannot hand on instances it left where
-    /// they were. An id the collection does not hold refuses here.
-    #[must_use]
-    #[allow(clippy::needless_pass_by_value)] // the take consumes the ids it names
-    #[inline(always)]
-    pub fn take(&mut self, ids: Ids) -> NfBucket {
-        let _ = &ids;
-        #[cfg(target_arch = "wasm32")]
-        return NfBucket::held(crate::guest::entry_take(self.handle, ids.named()));
-        #[cfg(not(target_arch = "wasm32"))]
-        return NfBucket::at(host::entry_take(self.handle, ids.named()));
     }
 }
 
