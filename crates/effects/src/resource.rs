@@ -57,16 +57,16 @@ impl ResourceKind {
 /// The resource `instance` issues under `mark` — the material
 /// separating it from the instance's other issues.
 ///
-/// The one spelling of how a mark becomes derivation material. The
-/// authoring surface reaches the same address by evaluating
-/// `SelfResource` over the mark a `#[resource]` declaration carries, and
-/// the routed grant is lowered through this, so the two agree because
-/// they are one code path pinned by one test.
+/// The one spelling of how a mark becomes derivation material: one part,
+/// whatever the mark says. The authoring surface reaches the same
+/// address by evaluating `SelfResource` over the mark a `#[resource]`
+/// declaration carries, and the routed grant is lowered through this, so
+/// the two agree because they are one code path pinned by one test.
 ///
-/// An empty mark derives an address no package can name: every resource
-/// a guest issues is a declaration, and a declaration's mark is its own
-/// name. What is left there is the fee resource, whose minter runs no
-/// code at all.
+/// A mark is a resource's own name, which publish holds every issuance
+/// to — so there is no mark that folds to no material, and no address a
+/// package reaches by saying less. The fee resource sits where saying
+/// nothing would have landed, and its minter runs no code at all.
 #[must_use]
 pub fn issued_resource(
     hasher: &dyn Hasher,
@@ -74,11 +74,7 @@ pub fn issued_resource(
     kind: ResourceKind,
     mark: &[u8],
 ) -> ResourceAddr {
-    let material = if mark.is_empty() {
-        Vec::new()
-    } else {
-        vec![Value::Bytes(mark.to_vec()).canonical_bytes()]
-    };
+    let material = [Value::Bytes(mark.to_vec()).canonical_bytes()];
     resource_address(hasher, instance, kind, &material)
 }
 

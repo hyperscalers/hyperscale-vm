@@ -245,11 +245,7 @@ impl Trace {
     /// the same derivation over different material.
     #[must_use]
     pub fn self_resource(&self, kind: ResourceKind, mark: &[u8]) -> Sym<Addr> {
-        let material = if mark.is_empty() {
-            Vec::new()
-        } else {
-            vec![Expr::Literal(Value::Bytes(mark.to_vec()))]
-        };
+        let material = vec![Expr::Literal(Value::Bytes(mark.to_vec()))];
         Sym::new(Expr::SelfResource { kind, material })
     }
 

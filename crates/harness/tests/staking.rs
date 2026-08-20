@@ -21,7 +21,7 @@ use hyperscale_vm_effects::{
     AdmissionError, EnvelopeTree, Hash32, Hasher, InstanceMeta, InstanceRegistry, IntentDecl,
     ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, ResourceKind, ResourceRecord,
     TestHasher, Value, admit_tree, child_key, holdings_collection, instance_data_key,
-    resource_address, resource_record_key, route_tree,
+    issued_resource, resource_record_key, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
@@ -42,21 +42,21 @@ const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// pool, not configured, which is what the signature's `SelfResource`
 /// evaluates to.
 fn unit() -> ResourceAddr {
-    resource_address(
+    issued_resource(
         &TestHasher,
         pool(),
         ResourceKind::Fungible,
-        &[Value::Bytes(staking::STAKE_UNIT.to_vec()).canonical_bytes()],
+        staking::STAKE_UNIT,
     )
 }
 /// The pool's owner badge — the same derivation the operator gate
 /// evaluates.
 fn badge() -> ResourceAddr {
-    resource_address(
+    issued_resource(
         &TestHasher,
         pool(),
         ResourceKind::NonFungible,
-        &[Value::Bytes(staking::OWNER_BADGE.to_vec()).canonical_bytes()],
+        staking::OWNER_BADGE,
     )
 }
 /// The badge instance the operator holds in these tests.

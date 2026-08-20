@@ -353,6 +353,9 @@ pub enum DeclarationError {
         /// effects.
         clause: u32,
     },
+    /// An issuance whose mark names nothing.
+    #[error("the issued resource carries no mark, and a mark is a resource's own name")]
+    UnmarkedIssuance,
     /// A mint no condition justifies: minting one's own identity takes
     /// satisfying one's own stored rule, and letting a declaration mint
     /// without one would be forgeable identity.
@@ -929,87 +932,7 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // The tree is walked once; every judgment below reads this preorder,
     // which is the numbering a clause index names.
     let flat: Vec<&Clause> = signature.effects.iter().flat_map(Clause::effects).collect();
-    // Two presence conditions on one target that can both fire, each
-    // way, are a requirement nothing satisfies.
-    //
-    // Compared by target expression rather than by evaluated key,
-    // because this runs at publish where no arguments exist — which
-    // catches the contradiction an author wrote and leaves the one two
-    // different expressions happen to evaluate onto for the set to fold.
-    //
-    // Two clauses that cannot both fire are not a contradiction, and
-    // "create it if absent, otherwise update it" is exactly the shape
-    // that takes. So the comparison reads guards beside targets and lets
-    // complementary ones through — syntactically complementary, one the
-    // `Not` of the other, which is what an `if`/`else` emits and the
-    // same standard the target comparison beside it already holds to.
-    // The evaluated conflict in `EffectSet::insert` is untouched: two
-    // clauses that cannot both fire never both land.
-    //
-    // Grouped by target, and every pair within a group rather than a
-    // fold into one requirement per target, because co-firing is a
-    // relation between two clauses and not a property of the target they
-    // share: a clause complementary to one of the others still meets all
-    // the rest, and a fold that stopped at the first meeting would never
-    // ask about them. Nothing is lost by comparing originals — `Either`
-    // meets everything, so an accumulated requirement is only ever one
-    // of the two it came from, and a contradiction a fold could reach is
-    // one some pair already has.
-    let mut required: BTreeMap<&TargetExpr, Vec<(Option<&Expr>, Presence)>> = BTreeMap::new();
-    for clause in &flat {
-        if let Clause::Requires {
-            guard,
-            condition: ConditionExpr::Holds { target, presence },
-        } = clause
-        {
-            required
-                .entry(target)
-                .or_default()
-                .push((guard.as_deref(), *presence));
-        }
-    }
-    for shared in required.values() {
-        for (index, (guard, requires)) in shared.iter().enumerate() {
-            for (seen_guard, prior) in &shared[..index] {
-                if !complementary(*seen_guard, *guard) {
-                    prior
-                        .meet(*requires)
-                        .ok_or(DeclarationError::PresenceConflict)?;
-                }
-            }
-        }
-    }
-    // What a cell holds is a fact about the cell rather than about the
-    // clause that reached it, and the denomination is what chooses which
-    // handle a clause materializes — so a leaf one clause denominates
-    // and another does not is a leaf a body holds as a vault and as a
-    // byte cell at once. Writing a balance through the byte handle and
-    // debiting it through the value one is a balance nothing moved.
-    //
-    // Folded by container rather than by target: two intervals of one
-    // collection are two targets over one set of entries, and the
-    // disagreement is about the entries.
-    //
-    // No guard exemption, unlike the presence fold above. A presence is
-    // a question one execution answers, and complementary arms answer it
-    // differently on purpose; what a cell holds is not a question an
-    // execution answers at all.
-    let mut holds: BTreeMap<Contents<'_>, bool> = BTreeMap::new();
-    for (index, clause) in flat.iter().enumerate() {
-        let Clause::Effect {
-            target,
-            denomination,
-            ..
-        } = clause
-        else {
-            continue;
-        };
-        let clause = u32::try_from(index).unwrap_or(u32::MAX);
-        let value = denomination.is_some();
-        if *holds.entry(contents(target)).or_insert(value) != value {
-            return Err(DeclarationError::MixedContents { clause });
-        }
-    }
+    check_agreement(&flat)?;
     // Trap freedom for a total leg rests on every handle being
     // materialized from the declared effect set, and an absent
     // capability is precisely a change to that. Precision is what a
@@ -1076,12 +999,111 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
             return Err(DeclarationError::ParamNotAResource { param, found });
         }
     }
+    // A mark is the name a resource is declared under, and the
+    // derivation folds it as one part of the material. An empty one
+    // names nothing and folds to no material at all, which is an address
+    // reached by saying less rather than by saying something.
+    if signature
+        .issues
+        .as_ref()
+        .is_some_and(|issuance| issuance.mark.is_empty())
+    {
+        return Err(DeclarationError::UnmarkedIssuance);
+    }
     // And at the third position a signature names resources.
     judge_outputs(&signature.outputs)?;
     for (index, clause) in flat.iter().enumerate() {
         judge_access(u32::try_from(index).unwrap_or(u32::MAX), clause, &flat)?;
     }
     check_conditions(signature, &flat)
+}
+
+/// The agreement pass: two clauses reaching one target say the same
+/// thing about it — what has to be there, and whether it holds value —
+/// or the declaration names a leaf no execution has.
+fn check_agreement(flat: &[&Clause]) -> Result<(), DeclarationError> {
+    // Two presence conditions on one target that can both fire, each
+    // way, are a requirement nothing satisfies.
+    //
+    // Compared by target expression rather than by evaluated key,
+    // because this runs at publish where no arguments exist — which
+    // catches the contradiction an author wrote and leaves the one two
+    // different expressions happen to evaluate onto for the set to fold.
+    //
+    // Two clauses that cannot both fire are not a contradiction, and
+    // "create it if absent, otherwise update it" is exactly the shape
+    // that takes. So the comparison reads guards beside targets and lets
+    // complementary ones through — syntactically complementary, one the
+    // `Not` of the other, which is what an `if`/`else` emits and the
+    // same standard the target comparison beside it already holds to.
+    // The evaluated conflict in `EffectSet::insert` is untouched: two
+    // clauses that cannot both fire never both land.
+    //
+    // Grouped by target, and every pair within a group rather than a
+    // fold into one requirement per target, because co-firing is a
+    // relation between two clauses and not a property of the target they
+    // share: a clause complementary to one of the others still meets all
+    // the rest, and a fold that stopped at the first meeting would never
+    // ask about them. Nothing is lost by comparing originals — `Either`
+    // meets everything, so an accumulated requirement is only ever one
+    // of the two it came from, and a contradiction a fold could reach is
+    // one some pair already has.
+    let mut required: BTreeMap<&TargetExpr, Vec<(Option<&Expr>, Presence)>> = BTreeMap::new();
+    for clause in flat {
+        if let Clause::Requires {
+            guard,
+            condition: ConditionExpr::Holds { target, presence },
+        } = clause
+        {
+            required
+                .entry(target)
+                .or_default()
+                .push((guard.as_deref(), *presence));
+        }
+    }
+    for shared in required.values() {
+        for (index, (guard, requires)) in shared.iter().enumerate() {
+            for (seen_guard, prior) in &shared[..index] {
+                if !complementary(*seen_guard, *guard) {
+                    prior
+                        .meet(*requires)
+                        .ok_or(DeclarationError::PresenceConflict)?;
+                }
+            }
+        }
+    }
+    // What a cell holds is a fact about the cell rather than about the
+    // clause that reached it, and the denomination is what chooses which
+    // handle a clause materializes — so a leaf one clause denominates
+    // and another does not is a leaf a body holds as a vault and as a
+    // byte cell at once. Writing a balance through the byte handle and
+    // debiting it through the value one is a balance nothing moved.
+    //
+    // Folded by container rather than by target: two intervals of one
+    // collection are two targets over one set of entries, and the
+    // disagreement is about the entries.
+    //
+    // No guard exemption, unlike the presence fold above. A presence is
+    // a question one execution answers, and complementary arms answer it
+    // differently on purpose; what a cell holds is not a question an
+    // execution answers at all.
+    let mut holds: BTreeMap<Contents<'_>, bool> = BTreeMap::new();
+    for (index, clause) in flat.iter().enumerate() {
+        let Clause::Effect {
+            target,
+            denomination,
+            ..
+        } = clause
+        else {
+            continue;
+        };
+        let clause = u32::try_from(index).unwrap_or(u32::MAX);
+        let value = denomination.is_some();
+        if *holds.entry(contents(target)).or_insert(value) != value {
+            return Err(DeclarationError::MixedContents { clause });
+        }
+    }
+    Ok(())
 }
 
 /// The condition pass: every target a condition names is declared as
@@ -1478,8 +1500,8 @@ mod tests {
     use crate::auth::PRIMARY;
     use crate::envelope::NULLIFIER_SLOT;
     use crate::metadata::PACKAGE_SLOT;
-    use crate::resource::SealedBehaviour;
-    use crate::signature::{ParamType, Totality};
+    use crate::resource::{ResourceKind, SealedBehaviour};
+    use crate::signature::{Issuance, ParamType, Totality};
     use crate::types::{Value, package_slot};
 
     /// A signature whose only effect points at `expr`.
@@ -1965,6 +1987,26 @@ mod tests {
             declared(vec![sealed(Expr::Arg(0))]),
             Err(DeclarationError::SealedOverAnother { clause: 0 })
         );
+    }
+
+    /// A mark is a resource's own name, and the derivation folds it as
+    /// one part of the material. An unmarked issuance would fold to no
+    /// material at all — an address reached by saying less rather than
+    /// by naming something — so publish refuses it and the mark's
+    /// encoding stays one rule with no case in it.
+    #[test]
+    fn an_issuance_under_no_mark_is_refused() {
+        let issues = |mark: &[u8]| {
+            check_declarations(&MethodSignature {
+                issues: Some(Issuance {
+                    mark: mark.to_vec(),
+                    kind: ResourceKind::Fungible,
+                }),
+                ..MethodSignature::default()
+            })
+        };
+        assert_eq!(issues(b"unit"), Ok(()));
+        assert_eq!(issues(b""), Err(DeclarationError::UnmarkedIssuance));
     }
 
     /// A mint is justified by a condition the same declaration carries,

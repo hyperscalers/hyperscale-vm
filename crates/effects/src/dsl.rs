@@ -1933,19 +1933,16 @@ mod tests {
     }
 
     /// The routed grant is lowered through `issued_resource`, and a
-    /// body's `issued(mark)` evaluates `SelfResource` over the mark as a
-    /// byte literal — one address either way, because the mark's
-    /// encoding into derivation material is spelled once.
+    /// body's `issued(Resource)` evaluates `SelfResource` over that
+    /// declaration's mark as a byte literal — one address either way,
+    /// because the mark's encoding into derivation material is spelled
+    /// once, as the one part it always is.
     #[test]
     fn a_self_resource_over_a_mark_literal_is_the_issued_resource() {
         let context = inputs(&[], &[]);
         for kind in [ResourceKind::Fungible, ResourceKind::NonFungible] {
-            for mark in [&b""[..], b"unit"] {
-                let material = if mark.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![Expr::Literal(Value::Bytes(mark.to_vec()))]
-                };
+            for mark in [&b"unit"[..], b"owner-badge"] {
+                let material = vec![Expr::Literal(Value::Bytes(mark.to_vec()))];
                 assert_eq!(
                     evaluate_expr(
                         &Expr::SelfResource { kind, material },

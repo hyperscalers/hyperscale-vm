@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
     AuthBase, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
     MetadataCache, PackageHash, PrefixShardResolver, Presented, ResourceKind, RoleTable, Routing,
     ShardId, ShardResolver, StarShape, StoredRule, TestHasher, Value, admit, child_key,
-    classify as classify_star, collection_id, resource_address, route,
+    classify as classify_star, collection_id, issued_resource, route,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
 use hyperscale_vm_harness::driver::{Lanes, test_hash};
@@ -150,11 +150,11 @@ pub fn shares_vault() -> shares::Shares {
 
 /// The share the vault issues against deposits.
 pub fn shares_unit() -> ResourceAddr {
-    resource_address(
+    issued_resource(
         &TestHasher,
         Address::from(shares_vault()),
         ResourceKind::Fungible,
-        &[Value::Bytes(shares::UNIT.to_vec()).canonical_bytes()],
+        shares::UNIT,
     )
 }
 
@@ -200,13 +200,14 @@ pub fn nf_issuer() -> ComponentAddr {
     nf_issuer_meta().address(&TestHasher)
 }
 
-/// The resource the issuer mints: its own provenance, empty material.
+/// The resource the issuer mints: its own provenance, under its own
+/// declared mark.
 pub fn nf_resource() -> ResourceAddr {
-    resource_address(
+    issued_resource(
         &TestHasher,
         nf_issuer().address(),
         ResourceKind::NonFungible,
-        &[],
+        nf::BADGE,
     )
 }
 

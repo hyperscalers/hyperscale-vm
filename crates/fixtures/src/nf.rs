@@ -15,6 +15,10 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
 use hyperscale_vm_types::{ComponentAddr, Presence, ResourceAddr};
 
+/// The mark the issuer's one resource is declared under, and what
+/// separates it from anything else the instance might issue.
+pub const BADGE: &[u8] = b"badge";
+
 /// The mint's declaration: the instance-data write, and the one-way
 /// door beside it. A mint creates; it never lands on an instance that
 /// is already there. The fresh id makes that true in every ordinary
@@ -65,7 +69,7 @@ fn creating_instance(minted_resource: &Expr, minted_id: &Expr) -> Vec<Clause> {
 pub fn metadata() -> PackageMetadata {
     let minted_resource = Expr::SelfResource {
         kind: ResourceKind::NonFungible,
-        material: vec![],
+        material: vec![Expr::Literal(Value::Bytes(BADGE.to_vec()))],
     };
     let minted_id = Expr::FreshId { slot: 0 };
     let mut methods = PackageMetadata::default();
@@ -77,7 +81,7 @@ pub fn metadata() -> PackageMetadata {
             // the instance's others — which is what the grant is for and
             // what makes another issuer's inexpressible here.
             issues: Some(Issuance {
-                mark: Vec::new(),
+                mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
             }),
             params: vec![],
@@ -144,7 +148,7 @@ pub fn metadata() -> PackageMetadata {
             // Bringing value out of existence is as declared as bringing
             // it in, and under the same grant.
             issues: Some(Issuance {
-                mark: Vec::new(),
+                mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
             }),
             params: vec![ParamType::NfBucket],

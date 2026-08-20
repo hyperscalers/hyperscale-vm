@@ -20,6 +20,9 @@ const MINTER: PrincipalAddr = principal(0x41);
 /// The id every declaration below names.
 const DECLARED: u64 = 7;
 
+/// The mark the issuer's resource is declared under.
+const BADGE: &[u8] = b"badge";
+
 /// One mint method, declaring instance [`DECLARED`] as its output.
 fn issuer() -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
@@ -28,14 +31,14 @@ fn issuer() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             issues: Some(Issuance {
-                mark: Vec::new(),
+                mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
             }),
             abi: vec![AbiParam::Issuer],
             outputs: vec![Expr::NfBucket {
                 resource: Box::new(Expr::SelfResource {
                     kind: ResourceKind::NonFungible,
-                    material: vec![],
+                    material: vec![Expr::Literal(Value::Bytes(BADGE.to_vec()))],
                 }),
                 ids: Box::new(Expr::List(vec![Expr::Literal(Value::U64(DECLARED))])),
             }],
@@ -58,13 +61,13 @@ fn miscast_issuer() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             issues: Some(Issuance {
-                mark: Vec::new(),
+                mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
             }),
             abi: vec![AbiParam::Issuer],
             outputs: vec![Expr::SelfResource {
                 kind: ResourceKind::NonFungible,
-                material: vec![],
+                material: vec![Expr::Literal(Value::Bytes(BADGE.to_vec()))],
             }],
             ..MethodSignature::default()
         },
