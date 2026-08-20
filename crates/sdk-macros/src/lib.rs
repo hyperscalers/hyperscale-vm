@@ -115,7 +115,7 @@ use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 
 use crate::lower::{Field, FieldKind, Lowerer, Target};
-use crate::term::ResourceKind;
+use crate::term::{Op, ResourceKind};
 
 /// Derive a contract's package from its module: the declaration routing
 /// reads, and the component that executes it.
@@ -443,6 +443,7 @@ const OWN: &[&str] = &[
     "error",
     "record",
     "resource",
+    "roles",
     "requires",
     "proves",
     "total",
@@ -476,6 +477,13 @@ enum Gate {
     Authorizing(u16),
     /// One of the target's stored roles.
     RoleGated(TokenStream2),
+    /// One of the package's own stored roles, at a declared table field.
+    TableGated {
+        /// The slot of the state field holding the table.
+        slot: u16,
+        /// The role's package-band offset.
+        role: u16,
+    },
     /// The target's rule and its possession of the badge a parameter
     /// names: the field the rule is stored at, and the parameter's index.
     Custodial {
@@ -784,46 +792,84 @@ fn guarded_identity(
 /// or a rule over claims the declaration names.
 fn parse_requires(
     attr: &syn::Attribute,
-    config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>, ResourceKind)],
+    declared: &Declared<'_>,
     params: &[(String, syn::Type)],
 ) -> syn::Result<Gate> {
     let written: syn::Expr = attr.parse_args()?;
-    // The stored-rule form: `auth[primary]` names the protocol table and
-    // the role the caller must satisfy there.
+    // The stored-rule form: `auth[primary]` names the protocol table,
+    // `<field>[Role]` a package's own — each with the role the caller
+    // must satisfy there.
     if let syn::Expr::Index(index) = &written {
         let syn::Expr::Path(base) = index.expr.as_ref() else {
             return Err(syn::Error::new(
                 index.span(),
-                "a stored-rule condition is written `auth[role]`",
+                "a stored-rule condition is written `auth[role]` or `<field>[Role]`",
             ));
         };
-        if !base.path.is_ident("auth") {
-            return Err(syn::Error::new(
-                base.span(),
-                "the one stored table a method names today is `auth`",
-            ));
-        }
         let syn::Expr::Path(role) = index.index.as_ref() else {
             return Err(syn::Error::new(
                 index.index.span(),
-                "a stored role is `primary`, `recovery`, or `confirmation`",
+                "a stored role is named, not computed",
             ));
         };
-        let named = match role.path.get_ident().map(ToString::to_string).as_deref() {
-            Some("primary") => quote!(PRIMARY),
-            Some("recovery") => quote!(RECOVERY),
-            Some("confirmation") => quote!(CONFIRMATION),
-            _ => {
-                return Err(syn::Error::new(
-                    role.span(),
-                    "a stored role is `primary`, `recovery`, or `confirmation`",
-                ));
-            }
+        if base.path.is_ident("auth") {
+            let named = match role.path.get_ident().map(ToString::to_string).as_deref() {
+                Some("primary") => quote!(PRIMARY),
+                Some("recovery") => quote!(RECOVERY),
+                Some("confirmation") => quote!(CONFIRMATION),
+                _ => {
+                    return Err(syn::Error::new(
+                        role.span(),
+                        "a stored role is `primary`, `recovery`, or `confirmation`",
+                    ));
+                }
+            };
+            return Ok(Gate::RoleGated(quote!(::hyperscale_vm_sdk::#named)));
+        }
+        // A package's own table: the field holding it, indexed by a
+        // declared role name. The field's type is what says it holds a
+        // rule table, and the `#[roles]` enum is where the name gets its
+        // band offset.
+        let Some(field) = base
+            .path
+            .get_ident()
+            .and_then(|ident| declared.fields.get(&ident.to_string()))
+        else {
+            return Err(syn::Error::new(
+                base.span(),
+                "a stored table is `auth`, or a declared field holding the package's \
+                 own role table",
+            ));
         };
-        return Ok(Gate::RoleGated(quote!(::hyperscale_vm_sdk::#named)));
+        if !holds_role_table(field) {
+            return Err(syn::Error::new(
+                base.span(),
+                "this field does not hold a role table — a package's stored roles live \
+                 in a `Cell<Option<AuthCell>>` field",
+            ));
+        }
+        let named = role
+            .path
+            .get_ident()
+            .map(|ident| kebab(&ident.to_string()))
+            .and_then(|name| declared.roles.iter().position(|r| *r == name));
+        let Some(offset) = named else {
+            return Err(syn::Error::new(
+                role.span(),
+                "not a declared role — name a variant of the package's `#[roles]` enum",
+            ));
+        };
+        let slot = field.slot;
+        let role = u16::try_from(offset).expect("a role enum is shorter than u16");
+        return Ok(Gate::TableGated { slot, role });
     }
-    let (rule, on_self, threshold) = guarded_rule(&written, config_fields, resources, params, 0)?;
+    let (rule, on_self, threshold) = guarded_rule(
+        &written,
+        declared.config_fields,
+        declared.resources,
+        params,
+        0,
+    )?;
     Ok(Gate::Guarded {
         rule,
         on_self,
@@ -834,18 +880,16 @@ fn parse_requires(
 /// Read a method's gate off its attributes.
 fn parse_gate(
     method: &syn::ImplItemFn,
-    fields: &BTreeMap<String, Field>,
-    accessors: &BTreeMap<String, Field>,
-    config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>, ResourceKind)],
+    declared: &Declared<'_>,
     params: &[(String, syn::Type)],
 ) -> syn::Result<Gate> {
     // A gate names the cell its rule lives in the way a body would, and a
     // body reaches the protocol's own cells by accessor.
     let cell = |name: &syn::Ident| {
-        fields
+        declared
+            .fields
             .get(&name.to_string())
-            .or_else(|| accessors.get(&name.to_string()))
+            .or_else(|| declared.accessors.get(&name.to_string()))
             .map(|f| f.slot)
             .ok_or_else(|| {
                 syn::Error::new(
@@ -857,7 +901,7 @@ fn parse_gate(
     };
     for attr in &method.attrs {
         if attr.path().is_ident("requires") {
-            return parse_requires(attr, config_fields, resources, params);
+            return parse_requires(attr, declared, params);
         }
         if attr.path().is_ident("proves") {
             let claim: syn::Expr = attr.parse_args()?;
@@ -1196,10 +1240,7 @@ struct Lowered {
 #[allow(clippy::too_many_lines)] // one pass over a method: name, params, gate, body, export
 fn lower_method(
     method: &syn::ImplItemFn,
-    fields: &BTreeMap<String, Field>,
-    accessors: &BTreeMap<String, Field>,
-    config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>, ResourceKind)],
+    declared: &Declared<'_>,
     serves: client::Serves,
 ) -> syn::Result<Lowered> {
     let published = method_name(method)?;
@@ -1222,15 +1263,15 @@ fn lower_method(
         kinds.push(param_type(&arg.ty)?);
     }
 
-    let gate = parse_gate(method, fields, accessors, config_fields, resources, &params)?;
+    let gate = parse_gate(method, declared, &params)?;
     client::check_names(&idents, client::Shape::of(&gate), serves)?;
     let returns = !matches!(method.sig.output, syn::ReturnType::Default);
     let claims_total = total_attr(method).is_some();
     let lowered = Lowerer::new(
-        fields,
-        accessors,
-        config_fields,
-        resources,
+        declared.fields,
+        declared.accessors,
+        declared.config_fields,
+        declared.resources,
         &params,
         returns,
         claims_total,
@@ -1275,7 +1316,7 @@ fn lower_method(
         }
     }
     let total = claim.is_some();
-    let closure = emit::declaration(&lowered, &gate_calls(&gate), declining, total);
+    let closure = emit::declaration(&lowered, &gate_calls(&gate, &lowered), declining, total);
     let declaration = quote!(
         .method(#published, &[#(#kinds),*], #closure)
     );
@@ -1287,13 +1328,13 @@ fn lower_method(
                 &name,
                 &lowered,
                 &params,
-                config_fields,
+                declared.config_fields,
                 declining,
             ))
         },
         |(span, why)| Err(guest::refusal(&name, *span, why)),
     );
-    let host = host::arm(&name, &lowered, &params, config_fields, declining);
+    let host = host::arm(&name, &lowered, &params, declared.config_fields, declining);
     let client = client::Method {
         rust: method.sig.ident.clone(),
         published,
@@ -1320,7 +1361,7 @@ fn lower_method(
 /// An authorizing method's clause is the gate's, not the body's: the
 /// kernel reads the stored rule before the export runs, so the read is
 /// declared here and no handle is bound for it.
-fn gate_calls(gate: &Gate) -> TokenStream2 {
+fn gate_calls(gate: &Gate, lowered: &lower::Lowered) -> TokenStream2 {
     match gate {
         Gate::Public => quote!(),
         Gate::Guarded { rule, .. } => quote!({
@@ -1334,6 +1375,29 @@ fn gate_calls(gate: &Gate) -> TokenStream2 {
             __t.authorizing();
         }),
         Gate::RoleGated(role) => quote!(__t.role_gated(#role);),
+        // A package-table gate declares its own read — unless the body
+        // already reaches the table, in which case the gate rides the
+        // body's own clause exactly as the protocol table's rewrites do:
+        // one cell is one clause, and two declarations of it would be a
+        // self-conflict.
+        Gate::TableGated { slot, role } => {
+            let body_owns = lowered.sites.iter().any(|site| {
+                matches!(
+                    &site.target,
+                    Target::Point { slot: s, material } if *s == *slot && material.is_empty()
+                )
+            });
+            if body_owns {
+                quote!(__t.role_gated(::hyperscale_vm_sdk::package_role(#role));)
+            } else {
+                quote!({
+                    let __owner = __t.self_addr();
+                    let __key = __owner.child(::hyperscale_vm_sdk::SlotId(#slot), &[]);
+                    __t.point(&__key).read();
+                    __t.table_gated(::hyperscale_vm_sdk::package_role(#role));
+                })
+            }
+        }
         // A custody gate is two reads and neither is the body's: the
         // kernel judges the holder's stored rule and their possession of
         // the badge before the export runs, so what the clauses do is
@@ -1423,6 +1487,28 @@ fn check_gate_shape(
                  and it serializes role rewrites against concurrent sign-ins",
             ),
         },
+        // A table-gated method's body is its own: the gate declares the
+        // read it judges where the body does not reach the table. Where
+        // it does, the rewrite must read what it rewrites — `existing()`
+        // — so an unfounded component's rotation refuses as the routed
+        // absence rather than creating a table out of nowhere.
+        Gate::TableGated { slot, .. } => {
+            let table = lowered.sites.iter().find(|site| {
+                matches!(
+                    &site.target,
+                    Target::Point { slot: s, material } if *s == *slot && material.is_empty()
+                )
+            });
+            match table {
+                None => Ok(()),
+                Some(site) if site.ops.iter().any(|(op, _)| *op == Op::Existing) => Ok(()),
+                Some(_) => refuse(
+                    "a role-gated rewrite of its own table reads what it rewrites — \
+                     `existing()` — so an unfounded component refuses as the routed \
+                     absence rather than seeding a table its founding never wrote",
+                ),
+            }
+        }
         Gate::Custodial { .. } => {
             if lowered.sites.is_empty() {
                 Ok(())
@@ -1442,10 +1528,7 @@ fn check_gate_shape(
 fn lower_methods(
     items: &[syn::Item],
     state_name: &syn::Ident,
-    fields: &BTreeMap<String, Field>,
-    accessors: &BTreeMap<String, Field>,
-    config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>, ResourceKind)],
+    declared: &Declared<'_>,
     serves: client::Serves,
 ) -> syn::Result<Vec<Lowered>> {
     let mut lowered = Vec::new();
@@ -1461,14 +1544,7 @@ fn lower_methods(
                 continue;
             };
             if matches!(method.vis, syn::Visibility::Public(_)) {
-                lowered.push(lower_method(
-                    method,
-                    fields,
-                    accessors,
-                    config_fields,
-                    resources,
-                    serves,
-                )?);
+                lowered.push(lower_method(method, declared, serves)?);
             }
         }
     }
@@ -1499,6 +1575,12 @@ fn strip_macro_attrs(items: &mut [syn::Item], state_name: &syn::Ident) {
                 }
             }
             syn::Item::Enum(item) => {
+                // A `#[roles]` enum is names for the gates and the
+                // metadata table; nothing constructs a variant, and the
+                // lint would be describing the design.
+                if item.attrs.iter().any(|a| a.path().is_ident("roles")) {
+                    item.attrs.push(syn::parse_quote!(#[allow(dead_code)]));
+                }
                 strip(&mut item.attrs);
                 for variant in &mut item.variants {
                     strip(&mut variant.attrs);
@@ -1768,6 +1850,69 @@ fn resource_marks(declared: &[(String, Vec<u8>, ResourceKind)]) -> Vec<syn::Item
         .collect()
 }
 
+/// Everything a package declares by name, gathered once and read by the
+/// gate parser and the lowering alike.
+struct Declared<'a> {
+    /// The state fields, by name.
+    fields: &'a BTreeMap<String, Field>,
+    /// The protocol cells reached by accessor.
+    accessors: &'a BTreeMap<String, Field>,
+    /// The `#[roles]` enum's names, in band order.
+    roles: &'a [String],
+    /// The configuration struct's fields, in slot order.
+    config_fields: &'a [(String, syn::Type)],
+    /// The `#[resource]` structs: name, mark, kind.
+    resources: &'a [(String, Vec<u8>, ResourceKind)],
+}
+
+/// Whether a state field holds the package's own role table: the same
+/// cell shape the protocol auth cell has, at a package-band slot.
+fn holds_role_table(field: &Field) -> bool {
+    field.element.as_ref().is_some_and(|ty| {
+        let rendered = quote!(#ty).to_string();
+        rendered.contains("AuthCell") && rendered.contains("Option")
+    })
+}
+
+/// The package's role names, in the band order a `#[roles]` enum
+/// declares them.
+///
+/// One enum, because the band is one sequence: two enums would be two
+/// claims about where the numbering starts.
+fn role_names(items: &[syn::Item]) -> syn::Result<Vec<String>> {
+    let mut declared: Option<&syn::ItemEnum> = None;
+    for item in items {
+        let syn::Item::Enum(item) = item else {
+            continue;
+        };
+        if !item.attrs.iter().any(|a| a.path().is_ident("roles")) {
+            continue;
+        }
+        if declared.is_some() {
+            return Err(syn::Error::new(
+                item.ident.span(),
+                "a package declares one `#[roles]` enum — the band is one sequence, and                  a second enum would be a second claim about where it starts",
+            ));
+        }
+        declared = Some(item);
+    }
+    let Some(item) = declared else {
+        return Ok(Vec::new());
+    };
+    item.variants
+        .iter()
+        .map(|variant| {
+            if !matches!(variant.fields, syn::Fields::Unit) {
+                return Err(syn::Error::new(
+                    variant.ident.span(),
+                    "a role is a name — the rule it selects lives in the stored table",
+                ));
+            }
+            Ok(kebab(&variant.ident.to_string()))
+        })
+        .collect()
+}
+
 /// A Rust type name as the constant naming it: `OwnerBadge` is
 /// `OWNER_BADGE`.
 fn screaming(name: &str) -> String {
@@ -1857,16 +2002,16 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     let events = event_names(items);
     let errors = error_names(items);
     let declared_resources = resources(items)?;
+    let declared_roles = role_names(items)?;
     let accessors = accessors(config_name.as_ref());
-    let methods = lower_methods(
-        items,
-        &state_name,
-        &fields,
-        &accessors,
-        &config_fields,
-        &declared_resources,
-        serves,
-    )?;
+    let declared = Declared {
+        fields: &fields,
+        accessors: &accessors,
+        roles: &declared_roles,
+        config_fields: &config_fields,
+        resources: &declared_resources,
+    };
+    let methods = lower_methods(items, &state_name, &declared, serves)?;
     let calls: Vec<_> = methods.iter().map(|m| &m.client).collect();
     let slots: BTreeMap<String, u16> = fields
         .iter()
@@ -1884,6 +2029,7 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     let declarations = methods.iter().map(|m| &m.declaration);
     let event_table = events.iter().map(|(_, name)| quote!(.event(#name)));
     let error_table = errors.iter().map(|name| quote!(.error(#name)));
+    let role_table = declared_roles.iter().map(|name| quote!(.role(#name)));
 
     let (exports, refusals): (Vec<_>, Vec<_>) =
         methods
@@ -1954,6 +2100,7 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
                 #(#declarations)*
                 #(#event_table)*
                 #(#error_table)*
+                #(#role_table)*
                 .build()
         }
     ));

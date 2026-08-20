@@ -3278,6 +3278,27 @@ impl<'a> Lowerer<'a> {
             }
 
             (FieldKind::Cell, _) => {
+                // A role table is read whole where it is judged, and an
+                // absent one denies. A `get` would read the absence as an
+                // empty table and carry on — on a component nobody
+                // founded, silently — so the table is reached by
+                // `existing()`, whose presence condition makes that the
+                // routed refusal it should be.
+                if matches!(method, "get" | "peek")
+                    && field.element.as_ref().is_some_and(|ty| {
+                        let rendered = quote!(#ty).to_string();
+                        rendered.contains("AuthCell") && rendered.contains("Option")
+                    })
+                {
+                    self.error(
+                        call.span(),
+                        "a stored role table is read with `existing()` — a `get` reads an \
+                         absent table as an empty one, and on a component nobody founded \
+                         that silence is the defect. The presence condition `existing()` \
+                         carries is what turns it into a routed refusal",
+                    );
+                    return Eval::absent(call.span(), "a table read without its presence");
+                }
                 if let Some(op) = Op::from_method(method) {
                     let site = self.open(
                         Target::Point {

@@ -60,6 +60,7 @@ pub struct Blueprint {
     methods: BTreeMap<String, Method>,
     events: Vec<String>,
     errors: Vec<String>,
+    roles: Vec<String>,
 }
 
 impl Blueprint {
@@ -93,7 +94,7 @@ impl Blueprint {
                 .collect(),
             events: self.events.clone(),
             errors: self.errors.clone(),
-            roles: Vec::new(),
+            roles: self.roles.clone(),
         }
     }
 }
@@ -160,6 +161,14 @@ impl Builder {
     #[must_use]
     pub fn error(mut self, name: &str) -> Self {
         self.blueprint.errors.push(name.to_owned());
+        self
+    }
+
+    /// Name the package's `index`-th role, in the band order a stored
+    /// role table's entries refer to.
+    #[must_use]
+    pub fn role(mut self, name: &str) -> Self {
+        self.blueprint.roles.push(name.to_owned());
         self
     }
 

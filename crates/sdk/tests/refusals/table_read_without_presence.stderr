@@ -1,0 +1,5 @@
+error: a stored role table is read with `existing()` — a `get` reads an absent table as an empty one, and on a component nobody founded that silence is the defect. The presence condition `existing()` carries is what turns it into a routed refusal
+  --> tests/refusals/table_read_without_presence.rs:19:21
+   |
+19 |             let _ = self.roles.get();
+   |                     ^^^^

@@ -667,6 +667,32 @@ impl Trace {
         self.pending_role = Some(role);
     }
 
+    /// Record that naming this method requires satisfying `role` of the
+    /// package's own stored table — read through the cell the last
+    /// emitted clause declared — and that the table is there at all.
+    ///
+    /// The presence condition is the difference from the protocol table:
+    /// every method runs on a component nobody founded, a package cell
+    /// has no virtual rule to fall back to, and the condition is what
+    /// makes an unfounded component's gated call a routed refusal a
+    /// caller can read rather than a deny inside the gate.
+    pub fn table_gated(&mut self, role: RoleId) {
+        let cell = self.last_point_target();
+        self.emit(Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Holds {
+                target: Box::new(TargetExpr::Point(cell.clone())),
+                presence: Presence::Present,
+            },
+        });
+        self.emit(Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Satisfies {
+                rule: RuleExpr::Require(RuleLeaf::Stored { cell, role }),
+            },
+        });
+    }
+
     /// Record that naming this method requires the target's own rule and
     /// its possession of some of the fungible badge `badge`, and mints
     /// that badge's address.
