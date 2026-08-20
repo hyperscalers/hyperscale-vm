@@ -1174,6 +1174,14 @@ mod shelf {
             let entries = self.ledger.range(0, u128::MAX, some.count() + more.count());
             let _ = entries.count();
         }
+
+        /// Two moves through one capless interval: the derived cap is
+        /// the sum of what each walks.
+        pub fn restock(&mut self, out: Ids, back: NfBucket) -> NfBucket {
+            let mut holdings = self.holdings(back.resource()).all();
+            holdings.file(back);
+            holdings.take(out)
+        }
     }
 }
 
@@ -1235,5 +1243,25 @@ fn a_spelled_sum_lowers_to_the_addition() {
     assert!(matches!(
         target,
         TargetExpr::Range { cap, .. } if *cap == Expr::Add(count(0), count(1))
+    ));
+}
+
+/// A body that moves twice through one capless interval declares the
+/// sum: each move's count is derived where it lands, and the cap is
+/// what the two together walk.
+#[test]
+fn two_moves_through_one_interval_derive_the_summed_cap() {
+    use hyperscale_vm_effects::{Expr, TargetExpr};
+
+    let metadata = shelf::blueprint().metadata();
+    let effects = &metadata.methods["restock"].effects;
+    let Clause::Effect { target, .. } = &effects[0] else {
+        panic!("restock declares an access");
+    };
+    let filed = Box::new(Expr::Len(Box::new(Expr::IdsOf(Box::new(Expr::Arg(1))))));
+    let taken = Box::new(Expr::Len(Box::new(Expr::Arg(0))));
+    assert!(matches!(
+        target,
+        TargetExpr::Range { cap, .. } if *cap == Expr::Add(filed, taken)
     ));
 }

@@ -10,7 +10,7 @@ mod shelf {
     }
 
     impl Shelf {
-        // A capless interval derives its cap from the one move performed
+        // A capless interval derives its cap from the moves performed
         // through it, and a read moves nothing: it walks a page somebody
         // chose, so the page is named with `range` or nothing bounds it.
         pub fn peek(&mut self) {

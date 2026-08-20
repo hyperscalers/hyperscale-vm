@@ -1020,15 +1020,15 @@ impl<T> Ordered<T> {
         unimplemented!("{OFF_HOST}")
     }
 
-    /// The whole order-key space, capped implicitly at the count of the
-    /// one move performed through it.
+    /// The whole order-key space, capped implicitly at what the body's
+    /// own moves walk.
     ///
     /// The cap of a pure move is not a choice: a take walks the ids it
     /// names and a file walks the instances its edge carries, so the
-    /// lowering derives the cap from the move itself and the
-    /// declaration cannot under-state the walk. An interval that reads,
-    /// rewrites, or moves twice walks a page somebody chose — it names
-    /// that page with [`Self::range`].
+    /// lowering derives the cap from the moves themselves — summed,
+    /// where a body moves more than once — and the declaration cannot
+    /// under-state the walk. An interval that reads or rewrites walks a
+    /// page somebody chose — it names that page with [`Self::range`].
     #[must_use]
     pub fn all(&self) -> Interval<T> {
         unimplemented!("{OFF_HOST}")

@@ -162,8 +162,11 @@ pub struct Site {
     /// those places. Where they do not agree there is no such condition
     /// but the trivial one, which is what `None` says.
     pub guard: Option<Term>,
-    /// The cap derived from the one move performed through a capless
-    /// interval: the count of the ids it takes or files.
+    /// The cap derived from the moves performed through a capless
+    /// interval: the counts of the ids each take names and the
+    /// instances each filed edge carries, summed. Guarded moves sum
+    /// like the rest — the sum is an upper bound on the walk, and an
+    /// untaken branch over-declares only depth.
     ///
     /// Held beside the target rather than written into it, because the
     /// target is the site's identity — two opens of one capless interval
@@ -2500,42 +2503,54 @@ impl<'a> Lowerer<'a> {
                 }
                 self.record(site, op, param, call.span());
 
-                // A capless interval's cap is the count of the one move
-                // performed through it: the ids a take names, or the
-                // instances the edge a file consumes carries. Deriving
-                // it here is what makes the declaration correct by
-                // construction — a body cannot under-declare the walk
-                // its own move performs. Anything else through such a
-                // handle has no count to derive a cap from, so it names
-                // its page with `range` instead.
+                // A capless interval's cap is the count of what the
+                // moves through it walk: the ids each take names, the
+                // instances each filed edge carries, summed where a
+                // body moves more than once. Deriving it here is what
+                // makes the declaration correct by construction — a
+                // body cannot under-declare the walk its own moves
+                // perform. Anything else through such a handle has no
+                // count to derive a cap from, so it names its page with
+                // `range` instead.
                 if matches!(
                     self.out.sites.get(site).map(|s| &s.target),
                     Some(Target::Range { cap: None, .. })
                 ) {
-                    let filed = match args.first() {
-                        Some(Val::Term(term) | Val::Produced(term)) => Some(term.clone()),
-                        _ => None,
-                    };
-                    let counted = match (&call.method, filed) {
-                        (method, Some(ids)) if method == "take" => Some(Term::Len(Box::new(ids))),
-                        (method, Some(edge)) if method == "file" => {
-                            Some(Term::Len(Box::new(Term::IdsOf(Box::new(edge)))))
+                    let counted = if call.method == "take" {
+                        // A take whose ids are underivable is reported
+                        // once, where the produced edge is judged below.
+                        match args.first() {
+                            Some(Val::Term(ids)) => Some(Term::Len(Box::new(ids.clone()))),
+                            _ => None,
                         }
-                        _ => None,
+                    } else if call.method == "file" {
+                        if let Some(Val::Term(edge) | Val::Produced(edge)) = args.first() {
+                            Some(Term::Len(Box::new(Term::IdsOf(Box::new(edge.clone())))))
+                        } else {
+                            self.error(
+                                call.args.span(),
+                                "the instances this edge carries are what the interval's \
+                                 cap derives from, so the edge must be derivable from the \
+                                 method's arguments — routing evaluates the declaration \
+                                 before execution and never reads state",
+                            );
+                            None
+                        }
+                    } else {
+                        self.error(
+                            call.span(),
+                            "a capless interval derives its cap from the moves through \
+                             it, and this access moves nothing. An access that walks a \
+                             chosen page names it with `range`",
+                        );
+                        None
                     };
-                    match counted {
-                        Some(_) if self.out.sites[site].moved.is_some() => self.error(
-                            call.span(),
-                            "a second move through this interval has no single count to \
-                             derive its cap from — name the page it walks with `range`",
-                        ),
-                        Some(counted) => self.out.sites[site].moved = Some(counted),
-                        None => self.error(
-                            call.span(),
-                            "only a `take` or a `file` derives this interval's cap — the \
-                             count of the ids it moves. An access that walks a chosen \
-                             page names it with `range`",
-                        ),
+                    if let Some(counted) = counted {
+                        let moved = &mut self.out.sites[site].moved;
+                        *moved = Some(match moved.take() {
+                            None => counted,
+                            Some(walked) => Term::Add(Box::new(walked), Box::new(counted)),
+                        });
                     }
                 }
 
