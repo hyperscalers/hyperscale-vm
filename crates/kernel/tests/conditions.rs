@@ -62,16 +62,25 @@ fn declaring(key: SubstateKey, conditions: Vec<Condition>) -> Declaration {
 }
 
 fn run(store: &MemoryStore, batch: &[BatchTx]) -> Outcome {
+    run_at(store, batch, &Locality::All)
+}
+
+fn run_at(store: &MemoryStore, batch: &[BatchTx], locality: &Locality) -> Outcome {
     let outcome = execute_batch(
         Arc::new(store.clone()),
         batch,
         &ManifestWalk { backend: &Inert },
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
+        locality,
     )
     .unwrap();
     outcome.receipts[&batch[0].tx].outcome.clone()
+}
+
+/// A shard owning exactly the keys whose owner starts with `byte`.
+fn owned_by(byte: u8) -> Locality {
+    Locality::Owned(Arc::new(move |owner: Address| owner.to_bytes()[0] == byte))
 }
 
 /// A backend whose every invocation succeeds and produces nothing: the
@@ -435,5 +444,81 @@ fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
         let (outcome, reads) = judged(vec![evidence]);
         assert_eq!(matches!(outcome, Outcome::Completed { .. }), expected);
         assert_eq!(reads, 1);
+    }
+}
+
+/// A condition is judged at every participant, whichever shard owns the
+/// cell it reads.
+///
+/// This is what the whole design rests on: a condition's target is also
+/// a declared `Read`, so the state it reads is provisioned to every
+/// shard the transaction touches, and a shard owning none of it reaches
+/// the verdict the owner reaches rather than skipping the judgment.
+#[test]
+fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
+    let owner = principal(1);
+    let key = cell_of(owner);
+    // The materializing shard owns nothing under this owner; the cell
+    // reaches it as a provision.
+    let elsewhere = owned_by(2);
+    assert!(!elsewhere.is_local(owner));
+
+    let conditions = vec![Condition::Holds {
+        target: EffectTarget::Point(key),
+        presence: Presence::Present,
+    }];
+    let requires = vec![Rule::Require(JudgedLeaf::Stored {
+        cell: key,
+        role: PRIMARY,
+    })];
+
+    let mut securified = MemoryStore::new();
+    let roles = RoleTable::uniform(&StoredRule::Require(identity(2))).unwrap();
+    securified
+        .write(
+            key,
+            AuthCell::new(AuthBase::new(1_000, roles))
+                .to_bytes()
+                .unwrap(),
+        )
+        .unwrap();
+
+    let judged = |store: &MemoryStore, locality: &Locality, evidence: Vec<Presented>| {
+        let mut entry = BatchTx::new(tx(8), declaring(key, conditions.clone()), env());
+        entry.calls = vec![call(owner, evidence, requires.clone())];
+        run_at(store, &[entry], locality)
+    };
+
+    // Both conditions met, both localities: the presence at
+    // materialization and the stored rule at the call.
+    for locality in [&Locality::All, &elsewhere] {
+        assert!(matches!(
+            judged(&securified, locality, vec![identity(2)]),
+            Outcome::Completed { .. }
+        ));
+    }
+
+    // The presence, unmet on both — the shard that owns no part of the
+    // cell refuses exactly where the owner does.
+    for locality in [&Locality::All, &elsewhere] {
+        assert_eq!(
+            judged(&MemoryStore::new(), locality, vec![identity(2)]),
+            Outcome::ConditionUnmet {
+                condition: UnmetCondition::Holds {
+                    target: EffectTarget::Point(key),
+                    required: Presence::Present,
+                },
+            }
+        );
+    }
+
+    // And the stored rule, on the same terms.
+    for locality in [&Locality::All, &elsewhere] {
+        assert_eq!(
+            judged(&securified, locality, vec![identity(9)]),
+            Outcome::ConditionUnmet {
+                condition: UnmetCondition::Satisfies { node: 0 },
+            }
+        );
     }
 }

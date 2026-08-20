@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, vault};
-use hyperscale_vm_kernel::MemoryStore;
+use hyperscale_vm_kernel::{MemoryStore, Substates};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     EffectTarget, Outcome, Presence, PrincipalAddr, TxHash, UnmetCondition, encode_amount,
@@ -541,6 +541,109 @@ fn recovery_rotates_a_hostile_primary_out() {
     assert_acts(&world, &store, BOB, before, false, 0x94);
     assert_acts(&world, &store, ALICE, at, false, 0x95);
     assert_acts(&world, &store, BOB, at, true, 0x96);
+}
+
+/// Freeze after propose: the pending replacement survives the removal.
+///
+/// The order matters because freeze rewrites the whole cell. Its
+/// headline clause is that it keeps whatever is pending — the frozen
+/// account is still on its way to a new primary, and a freeze that
+/// dropped the proposal would restart the delay it was already serving.
+#[test]
+fn a_freeze_keeps_the_proposal_it_finds_pending() {
+    let world = world();
+    let store = recovered_store();
+    let t0 = env().clock_ms;
+
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&propose_graph(), TxHash(Hash32([0xA0; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    let freeze = graph(|b| account::freeze(b, ALICE));
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&freeze, TxHash(Hash32([0xA1; 32])))],
+        Some(BOB),
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("freeze must complete; got {:?}", results[0]);
+    };
+    let mut frozen = split_roles();
+    frozen.remove(PRIMARY);
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(
+            AuthCell {
+                base: AuthBase::new(DAY_MS, frozen),
+                proposal: Some(Proposal {
+                    effective_at_ms: t0 + DAY_MS,
+                    base: uniform_base(BOB),
+                }),
+            }
+            .to_bytes()
+            .unwrap()
+        )),
+        "the freeze strips the primary and leaves the proposal where it was"
+    );
+
+    // The instant the proposal was already serving is the instant it
+    // arrives: the freeze moved nothing.
+    let at = t0 + DAY_MS;
+    assert_acts(&world, &store, ALICE, at - 1, false, 0xA2);
+    assert_acts(&world, &store, BOB, at - 1, false, 0xA3);
+    assert_acts(&world, &store, BOB, at, true, 0xA4);
+}
+
+/// Freeze after maturity: the promoted base is what gets frozen.
+///
+/// A matured proposal already governs, so the read that finds it
+/// promotes it — and the primary the freeze strips is the promoted
+/// one's, not the base it replaced. What is left has no proposal,
+/// because there is no longer one waiting.
+#[test]
+fn a_freeze_after_maturity_strips_the_promoted_primary() {
+    let world = world();
+    let store = recovered_store();
+    let t0 = env().clock_ms;
+
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&propose_graph(), TxHash(Hash32([0xA5; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    // Past the instant, so Bob is primary by the read alone; his
+    // recovery entry is the same rule, so he freezes his own primary.
+    let at = t0 + DAY_MS;
+    let freeze = graph(|b| account::freeze(b, ALICE));
+    let (results, store) = run_both_at(
+        &world,
+        &store,
+        &[(&freeze, TxHash(Hash32([0xA6; 32])))],
+        Some(BOB),
+        at,
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("freeze must complete; got {:?}", results[0]);
+    };
+    let mut frozen = uniform_base(BOB);
+    frozen.roles.remove(PRIMARY);
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(AuthCell::new(frozen).to_bytes().unwrap())),
+        "a matured proposal is promoted by the read, then frozen"
+    );
+
+    // Neither key acts: the promoted primary is the one that went.
+    assert_acts(&world, &store, BOB, at, false, 0xA7);
+    assert_acts(&world, &store, ALICE, at, false, 0xA8);
 }
 
 /// A hostile recovery under an effectively infinite delay matures
@@ -1087,6 +1190,60 @@ fn a_fungible_badge_is_custody_while_the_vault_is_funded() {
         TxResult::Refused(Outcome::ConditionUnmet {
             condition: UnmetCondition::Holds {
                 target: EffectTarget::Point(vault(BOB, RES_X)),
+                required: Presence::Present,
+            },
+        })
+    );
+}
+
+/// Spending the last of a badge closes the custody it opened.
+///
+/// Fungible possession is leaf-presence, and what makes that the same
+/// question as "holds any of it" is delete-at-zero: a drained vault is
+/// absent, not a cell holding zero. A lingering leaf would keep the
+/// gate open for a holder who has nothing, so this pins the drain and
+/// the refusal it causes as one fact.
+#[test]
+fn a_drained_badge_vault_closes_the_custody_it_opened() {
+    let world = world();
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(1).to_vec())
+        .unwrap();
+
+    // Alice spends the whole of it, so the leaf is removed rather than
+    // written back as zero.
+    let drain = graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, RES_X, 1)?;
+        account::deposit(b, BOB, funds)
+    });
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&drain, TxHash(Hash32([0x7A; 32])))],
+        Some(ALICE),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    assert_eq!(
+        store.cell(vault(ALICE, RES_X)),
+        None,
+        "a drained value leaf is absent, not zero bytes"
+    );
+
+    // And the gate that her holding opened is shut, refused at the
+    // vault she no longer has.
+    let gated = gated_by(RES_X.address(), 10);
+    let operate = graph(|b| {
+        let held = account::present_badge(b, ALICE, RES_X)?;
+        nf::operate(b, gated, held)
+    });
+    let (results, _) = run_both(&world, &store, &[(&operate, TxHash(Hash32([0x7B; 32])))]);
+    assert_eq!(
+        results[0],
+        TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(vault(ALICE, RES_X)),
                 required: Presence::Present,
             },
         })
