@@ -18,8 +18,7 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Denomination, Effect, EffectSet,
-    EffectTarget, EntryKey, Mode, Movement, Presence, ResourceAddr, SubstateKey, TxHash,
-    encode_amount,
+    EffectTarget, EntryKey, Mode, Movement, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
 use wasmtime::error::{Context, format_err};
@@ -113,9 +112,7 @@ fn fixture() -> Fixture {
         },
         Effect {
             target: EffectTarget::Point(rmw),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         },
         Effect {
             target: EffectTarget::Point(readable),
@@ -139,9 +136,7 @@ fn fixture() -> Fixture {
                 hi: 100,
                 cap: 8,
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         },
     ] {
         declared.insert(effect).unwrap();

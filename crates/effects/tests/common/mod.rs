@@ -165,9 +165,7 @@ pub fn wide_account_metadata() -> PackageMetadata {
     effects.push(Clause::Effect {
         guard: None,
         target: TargetExpr::Point(self_child(SlotId(99), vec![])),
-        mode: ModeExpr::Write {
-            requires: Presence::Either,
-        },
+        mode: ModeExpr::Write,
         denomination: None,
     });
     methods.methods.insert(

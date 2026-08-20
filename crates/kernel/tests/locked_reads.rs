@@ -19,7 +19,7 @@ use hyperscale_vm_kernel::{
     decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome, Presence,
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome,
     SubstateKey, TxHash, encode_amount,
 };
 
@@ -120,12 +120,7 @@ fn a_locked_read_of_a_locked_cell_reads_it() {
         tx(0x01),
         Declaration::from_set(declare(&[
             (cell(LOCKED), Mode::Locked),
-            (
-                cell(LEDGER),
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            ),
+            (cell(LEDGER), Mode::Write),
         ])),
         EnvInputs {
             clock_ms: 1_000,
@@ -166,12 +161,7 @@ fn a_locked_read_of_a_locked_cell_reads_it() {
 fn a_locked_read_of_an_unlocked_cell_refuses() {
     let outcome = run(declare(&[
         (cell(MUTABLE), Mode::Locked),
-        (
-            cell(LEDGER),
-            Mode::Write {
-                requires: Presence::Either,
-            },
-        ),
+        (cell(LEDGER), Mode::Write),
     ]));
     assert!(
         matches!(
@@ -191,12 +181,7 @@ fn a_locked_read_of_an_unlocked_cell_refuses() {
 fn a_fresh_read_of_the_same_cell_is_admitted() {
     let outcome = run(declare(&[
         (cell(MUTABLE), Mode::Read),
-        (
-            cell(LEDGER),
-            Mode::Write {
-                requires: Presence::Either,
-            },
-        ),
+        (cell(LEDGER), Mode::Write),
     ]));
     assert!(
         matches!(outcome, Outcome::Completed { .. }),

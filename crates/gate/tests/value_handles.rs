@@ -14,7 +14,7 @@ use hyperscale_vm_effects::{
     Value, package_slot,
 };
 use hyperscale_vm_gate::{admit_package, attach_metadata};
-use hyperscale_vm_types::{Address, AddressClass, Presence};
+use hyperscale_vm_types::{Address, AddressClass};
 use wat::parse_str;
 
 /// A component whose one export borrows `resource`, named as the state
@@ -61,9 +61,7 @@ fn declaring(holds_value: bool) -> PackageMetadata {
                         vec![]
                     },
                 }),
-                mode: ModeExpr::Write {
-                    requires: Presence::Either,
-                },
+                mode: ModeExpr::Write,
                 denomination: holds_value.then(|| Box::new(resource())),
             }],
             ..MethodSignature::default()

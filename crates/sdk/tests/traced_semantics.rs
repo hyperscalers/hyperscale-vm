@@ -15,7 +15,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym, eq};
 use hyperscale_vm_sdk::{Blueprint, Trace};
 use hyperscale_vm_types::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, ModeKind, Presence, SubstateKey,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, ModeKind, SubstateKey,
 };
 
 const BASKET: Address = Address::new([0x50; 31], AddressClass::Component);
@@ -99,9 +99,7 @@ fn a_for_each_declares_one_effect_per_configured_element() {
         assert!(
             set.contains(&Effect {
                 target: EffectTarget::Point(vault(BASKET, resource)),
-                mode: Mode::Write {
-                    requires: Presence::Either
-                },
+                mode: Mode::Write,
             }),
             "no write declared on the {resource:?} vault"
         );
@@ -205,7 +203,7 @@ fn planned(clauses: &[Clause], depth: usize) -> Vec<Planned> {
                     ModeExpr::Locked => ModeKind::Locked,
                     ModeExpr::Delta => ModeKind::Delta,
                     ModeExpr::Reserve(_) => ModeKind::Reserve,
-                    ModeExpr::Write { .. } => ModeKind::Write,
+                    ModeExpr::Write => ModeKind::Write,
                 },
                 point: matches!(target, TargetExpr::Point(_)),
                 repeat_depth: depth,

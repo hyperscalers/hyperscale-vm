@@ -10,8 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{Condition, Declaration};
 use hyperscale_vm_types::{
-    Address, CellKind, CollectionId, Effect, EffectSet, EffectTarget, Mode, Presence, SubstateKey,
-    TxHash,
+    Address, CellKind, CollectionId, Effect, EffectTarget, Mode, Presence, SubstateKey, TxHash,
 };
 
 use super::buckets::Buckets;
@@ -132,7 +131,7 @@ pub enum MaterializeError {
     /// sound only where no version of the target differs.
     #[error("declared locked read of unlocked substate {0:?}")]
     UnlockedTarget(SubstateKey),
-    /// A write requiring the leaf absent, on a target the store holds.
+    /// A declared presence condition the committed leaf does not meet.
     ///
     /// The same class of verdict as an infeasible reservation, and at
     /// the same seam: a precondition on committed state, judged by the
@@ -140,20 +139,6 @@ pub enum MaterializeError {
     /// Carries the target rather than a key, because the two shapes that
     /// name one leaf are a cell and a collection entry, and only one of
     /// them is a key.
-    #[error("a write requiring an absent leaf lands on occupied {0:?}")]
-    Occupied(EffectTarget),
-    /// A write requiring the leaf there, on a target the store does not
-    /// hold.
-    #[error("a write requiring a present leaf lands on absent {0:?}")]
-    Absent(EffectTarget),
-    /// A declared presence condition the committed leaf does not meet.
-    ///
-    /// The same seam and the same verdict class as [`Occupied`] and
-    /// [`Absent`](Self::Absent): a precondition on committed state,
-    /// judged by the shard that holds the leaf, before any body observes
-    /// anything.
-    ///
-    /// [`Occupied`]: Self::Occupied
     #[error("a condition requiring the leaf {required:?} is unmet at {target:?}")]
     ConditionUnmet {
         /// The leaf the condition names.
@@ -299,7 +284,6 @@ impl KernelSession {
             return Err(MaterializeError::SelfConflicting(key));
         }
 
-        judge_presence(&mut store, declared)?;
         judge_conditions(&mut store, &declaration.conditions)?;
 
         let verdicts = store.judge_and_hold(&reservations)?;
@@ -347,30 +331,6 @@ impl KernelSession {
 /// requirement the leaf does not meet, and
 /// [`MaterializeError::Unsupported`] for a target that names no leaf for
 /// a requirement to be about.
-fn judge_presence(store: &mut OverlayStore, declared: &EffectSet) -> Result<(), MaterializeError> {
-    // Exhaustive over the target shapes, never skipping one it does not
-    // read: a requirement this cannot honour is refused, because a
-    // declaration that states a precondition nothing enforces is worse
-    // than one that never published.
-    for effect in declared.iter() {
-        let Mode::Write { requires } = effect.mode else {
-            continue;
-        };
-        if requires == Presence::Either {
-            continue;
-        }
-        let held = leaf_present(store, effect.target)
-            .map_err(|error| error.unsupported(Box::new(effect)))?;
-        match (requires, held) {
-            (Presence::Absent, true) => return Err(MaterializeError::Occupied(effect.target)),
-            (Presence::Present, false) => return Err(MaterializeError::Absent(effect.target)),
-            _ => {}
-        }
-    }
-
-    Ok(())
-}
-
 /// Judge the declared presence conditions against the same committed
 /// state a write's presence requirement is judged against — the shard
 /// holding the leaf, before anything runs.
@@ -543,7 +503,7 @@ fn capability_for(
         // What a cell holds chooses the handle. The two share no
         // operation, so a body reaching for the wrong one is holding a
         // type that does not have it rather than meeting a refusal.
-        (EffectTarget::Point(key), Mode::Write { .. }) => {
+        (EffectTarget::Point(key), Mode::Write) => {
             let key = locked_checked(key)?;
             Ok(if denominated {
                 Capability::Amount(key)
@@ -575,10 +535,10 @@ fn capability_for(
         // Point targets are spoken for above, so what is left is a
         // collection one — and the two spell the same interval, the mode
         // choosing only which capability carries it.
-        (target, mode @ (Mode::Read | Mode::Write { .. })) => interval_of(target)
+        (target, mode @ (Mode::Read | Mode::Write)) => interval_of(target)
             .map(|interval| match (mode, denominated) {
-                (Mode::Write { .. }, true) => Capability::InstanceRange(interval),
-                (Mode::Write { .. }, false) => Capability::RangeWrite(interval),
+                (Mode::Write, true) => Capability::InstanceRange(interval),
+                (Mode::Write, false) => Capability::RangeWrite(interval),
                 _ => Capability::RangeRead(interval),
             })
             .ok_or_else(|| MaterializeError::Unsupported(Box::new(effect))),
@@ -590,10 +550,10 @@ fn capability_for(
 mod tests {
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{Declaration, DeclaredAccess};
+    use hyperscale_vm_effects::{Condition, Declaration, DeclaredAccess};
     use hyperscale_vm_types::{
-        Address, AddressClass, CollectionId, Denomination, Effect, EffectConflict, EffectSet,
-        EffectTarget, Mode, Presence, encode_amount,
+        Address, AddressClass, CollectionId, Denomination, Effect, EffectTarget, Mode, Presence,
+        encode_amount,
     };
 
     use super::super::fixtures::{RESOURCE, declared, env, hash, holding, key, ord, tx};
@@ -602,7 +562,8 @@ mod tests {
     use crate::overlay::OverlayStore;
     use crate::store::MemoryStore;
 
-    /// Materialize one write over a store, for the presence tests.
+    /// Materialize one write with a presence condition beside it, for
+    /// the presence tests.
     fn presence_verdict(
         store: MemoryStore,
         target: EffectTarget,
@@ -610,14 +571,19 @@ mod tests {
     ) -> Result<(), MaterializeError> {
         let set = declared(&[Effect {
             target,
-            mode: Mode::Write { requires },
+            mode: Mode::Write,
         }]);
         let ordered = ord(&set);
+        let conditions = match requires {
+            Presence::Either => Vec::new(),
+            presence => vec![Condition::Holds { target, presence }],
+        };
         KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
             &Declaration {
                 set,
                 ordered: holding(&ordered),
+                conditions,
                 ..Declaration::default()
             },
             tx(1),
@@ -627,9 +593,9 @@ mod tests {
         .map(|_| ())
     }
 
-    /// A write says what it requires of the leaf, and the shard holding
-    /// the leaf judges it before the body runs — the same seam, and the
-    /// same class of verdict, as an infeasible reservation.
+    /// A declaration says what it requires of a leaf, and the shard
+    /// holding the leaf judges it before the body runs — the same seam,
+    /// and the same class of verdict, as an infeasible reservation.
     ///
     /// Both shapes that name one leaf answer, because the requirement is
     /// about the leaf rather than about how the target spells it: a cell
@@ -674,7 +640,10 @@ mod tests {
             );
             assert_eq!(
                 presence_verdict(occupied(target), target, Presence::Absent),
-                Err(MaterializeError::Occupied(target)),
+                Err(MaterializeError::ConditionUnmet {
+                    target,
+                    required: Presence::Absent,
+                }),
                 "{target:?}"
             );
 
@@ -686,7 +655,10 @@ mod tests {
             );
             assert_eq!(
                 presence_verdict(empty(target), target, Presence::Present),
-                Err(MaterializeError::Absent(target)),
+                Err(MaterializeError::ConditionUnmet {
+                    target,
+                    required: Presence::Present,
+                }),
                 "{target:?}"
             );
 
@@ -719,7 +691,7 @@ mod tests {
                 presence_verdict(MemoryStore::new(), range, requires),
                 Err(MaterializeError::Unsupported(Box::new(Effect {
                     target: range,
-                    mode: Mode::Write { requires },
+                    mode: Mode::Read,
                 }))),
                 "{requires:?}"
             );
@@ -731,43 +703,6 @@ mod tests {
         );
     }
 
-    /// Two clauses on one cell are one access, and what it requires is
-    /// what both require — unless they require opposite things, which is
-    /// a declaration nothing could satisfy.
-    #[test]
-    fn presence_requirements_on_one_cell_meet_or_refuse() {
-        let key = key(0xC2);
-        let write = |requires| Effect {
-            target: EffectTarget::Point(key),
-            mode: Mode::Write { requires },
-        };
-        let fold = |a, b| {
-            let mut set = EffectSet::new();
-            set.insert(write(a))?;
-            set.insert(write(b))?;
-            Ok::<_, EffectConflict>(set.iter().collect::<Vec<_>>())
-        };
-
-        // A named requirement wins over the indifferent one, in either
-        // order, and the set holds one access rather than two.
-        for named in [Presence::Absent, Presence::Present] {
-            for pair in [(Presence::Either, named), (named, Presence::Either)] {
-                assert_eq!(fold(pair.0, pair.1), Ok(vec![write(named)]));
-            }
-            assert_eq!(fold(named, named), Ok(vec![write(named)]));
-        }
-
-        // Opposite requirements are refused where the second is written.
-        assert_eq!(
-            fold(Presence::Absent, Presence::Present),
-            Err(EffectConflict::Presence)
-        );
-        assert_eq!(
-            fold(Presence::Present, Presence::Absent),
-            Err(EffectConflict::Presence)
-        );
-    }
-
     #[test]
     fn the_table_follows_the_clause_order_not_the_set_order() {
         // A handle's rep is its index here and a guest's parameters are
@@ -776,9 +711,7 @@ mod tests {
         let (first, second) = (key(0xA1), key(0xA2));
         let write = |k| Effect {
             target: EffectTarget::Point(k),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         };
         let set = declared(&[write(first), write(second)]);
 
@@ -818,9 +751,7 @@ mod tests {
         let cell = key(0xB4);
         let write = Effect {
             target: EffectTarget::Point(cell),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         };
         let set = declared(&[write, write]);
         assert_eq!(set.len(), 1, "the set folds them");
@@ -976,14 +907,7 @@ mod tests {
         let modes = [
             (ModeExpr::Read, Mode::Read),
             (ModeExpr::Locked, Mode::Locked),
-            (
-                ModeExpr::Write {
-                    requires: Presence::Either,
-                },
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            ),
+            (ModeExpr::Write, Mode::Write),
             (ModeExpr::Delta, Mode::Delta),
             (ModeExpr::Reserve(Expr::Arg(0)), Mode::Reserve { amount: 1 }),
         ];
@@ -1036,9 +960,7 @@ mod tests {
     fn one_cell_does_not_materialise_as_a_vault_and_a_byte_cell() {
         let write = Effect {
             target: EffectTarget::Point(key(1)),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         };
         let materialise = |holds: Vec<Option<Denomination>>| {
             KernelSession::materialize(
@@ -1091,9 +1013,7 @@ mod tests {
                 hi,
                 cap: 4,
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         };
         let wide = interval(u128::MAX);
         let narrow = interval(10);
@@ -1130,9 +1050,7 @@ mod tests {
         let set = declared(&[
             Effect {
                 target: EffectTarget::Point(cell),
-                mode: Mode::Write {
-                    requires: Presence::Either,
-                },
+                mode: Mode::Write,
             },
             Effect {
                 target: EffectTarget::Point(cell),

@@ -35,12 +35,12 @@ pub enum Mode {
         /// The statically evaluated amount feasibility is judged against.
         amount: u128,
     },
-    /// Exclusive read-modify-write, feasible iff the leaf's presence is
-    /// what the write requires of it.
-    Write {
-        /// What the leaf must be for the write to be feasible.
-        requires: Presence,
-    },
+    /// Exclusive read-modify-write.
+    ///
+    /// What the leaf must be for the write to be feasible is not the
+    /// mode's to say: a presence requirement is a condition the same
+    /// declaration states, judged at materialization beside this.
+    Write,
 }
 
 /// Which handle type a rep names — the mode lattice as the runtimes'
@@ -191,7 +191,7 @@ impl Mode {
             Self::Locked => ModeKind::Locked,
             Self::Delta => ModeKind::Delta,
             Self::Reserve { .. } => ModeKind::Reserve,
-            Self::Write { .. } => ModeKind::Write,
+            Self::Write => ModeKind::Write,
         }
     }
 }
@@ -207,7 +207,7 @@ pub enum ModeKind {
     Delta,
     /// See [`Mode::Reserve`].
     Reserve,
-    /// See [`Mode::Write`], whatever presence it requires.
+    /// See [`Mode::Write`].
     Write,
 }
 

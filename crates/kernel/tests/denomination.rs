@@ -27,7 +27,7 @@ use hyperscale_vm_kernel::{EnvInputs, KernelSession, MaterializeError, MemorySto
 use hyperscale_vm_types::math::U256;
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget, ISSUER_REP,
-    Mode, Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 const VAULT: SlotId = SlotId(1);
@@ -120,9 +120,7 @@ fn every_producer_stamps_what_its_source_held() {
     let ordered = vec![
         Effect {
             target: EffectTarget::Point(absolute),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         },
         Effect {
             target: EffectTarget::Point(commutative),
@@ -223,9 +221,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
             hi: u128::MAX,
             cap: 8,
         },
-        mode: Mode::Write {
-            requires: Presence::Either,
-        },
+        mode: Mode::Write,
     };
     let ordered = vec![interval(X), interval(Y)];
     let mut set = EffectSet::new();

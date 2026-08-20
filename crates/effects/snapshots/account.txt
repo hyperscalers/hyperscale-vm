@@ -37,6 +37,21 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    4,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Present,
+                    },
+                },
                 Effect {
                     guard: None,
                     target: Point(
@@ -48,15 +63,13 @@ PackageMetadata {
                             material: [],
                         },
                     ),
-                    mode: Write {
-                        requires: Present,
-                    },
+                    mode: Write,
                     denomination: None,
                 },
             ],
             abi: [
                 Handle(
-                    0,
+                    1,
                 ),
             ],
         },
@@ -72,6 +85,21 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    4,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Present,
+                    },
+                },
                 Effect {
                     guard: None,
                     target: Point(
@@ -83,15 +111,13 @@ PackageMetadata {
                             material: [],
                         },
                     ),
-                    mode: Write {
-                        requires: Present,
-                    },
+                    mode: Write,
                     denomination: None,
                 },
             ],
             abi: [
                 Handle(
-                    0,
+                    1,
                 ),
             ],
         },
@@ -203,9 +229,7 @@ PackageMetadata {
                         ),
                         cap: 64,
                     },
-                    mode: Write {
-                        requires: Either,
-                    },
+                    mode: Write,
                     denomination: Some(
                         ResourceOf(
                             Arg(
@@ -354,6 +378,21 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    4,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Present,
+                    },
+                },
                 Effect {
                     guard: None,
                     target: Point(
@@ -365,15 +404,13 @@ PackageMetadata {
                             material: [],
                         },
                     ),
-                    mode: Write {
-                        requires: Present,
-                    },
+                    mode: Write,
                     denomination: None,
                 },
             ],
             abi: [
                 Handle(
-                    0,
+                    1,
                 ),
                 Derived(
                     Arg(
@@ -404,6 +441,21 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    4,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Absent,
+                    },
+                },
                 Effect {
                     guard: None,
                     target: Point(
@@ -415,15 +467,13 @@ PackageMetadata {
                             material: [],
                         },
                     ),
-                    mode: Write {
-                        requires: Absent,
-                    },
+                    mode: Write,
                     denomination: None,
                 },
             ],
             abi: [
                 Handle(
-                    0,
+                    1,
                 ),
                 Derived(
                     Arg(
@@ -541,9 +591,7 @@ PackageMetadata {
                         ),
                         cap: 64,
                     },
-                    mode: Write {
-                        requires: Either,
-                    },
+                    mode: Write,
                     denomination: Some(
                         Arg(
                             0,

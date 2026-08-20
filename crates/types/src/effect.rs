@@ -29,11 +29,6 @@ pub enum EffectConflict {
     /// Summing declared reserve amounts overflowed `u128`.
     #[error("declared reserve amounts overflow")]
     ReserveOverflow,
-    /// Two writes on one cell requiring opposite presences: one wants the
-    /// leaf absent and the other wants it there, so their fold is a
-    /// requirement nothing can satisfy.
-    #[error("two writes on one cell require opposite presences")]
-    Presence,
 }
 
 /// A set of declared accesses with union semantics: identical effects
@@ -58,8 +53,8 @@ impl EffectSet {
     ///
     /// # Errors
     ///
-    /// [`EffectConflict`] where the fold has no answer — a reserve total
-    /// past `u128`, or two writes requiring opposite presences.
+    /// [`EffectConflict`] where the fold has no answer: a reserve total
+    /// past `u128`.
     pub fn insert(&mut self, effect: Effect) -> Result<(), EffectConflict> {
         let modes = self.by_target.entry(effect.target).or_default();
         if let Mode::Reserve { amount } = effect.mode {
@@ -73,21 +68,6 @@ impl EffectSet {
                     .ok_or(EffectConflict::ReserveOverflow)?;
                 modes.remove(&Mode::Reserve { amount: prior });
                 modes.insert(Mode::Reserve { amount: total });
-                return Ok(());
-            }
-        }
-        // Two writes on one cell are one write, and what it requires is
-        // what both require — [`Presence::meet`], the same lattice the
-        // publish check folds target expressions over.
-        if let Mode::Write { requires } = effect.mode {
-            let prior = modes.iter().find_map(|mode| match mode {
-                Mode::Write { requires } => Some(*requires),
-                _ => None,
-            });
-            if let Some(prior) = prior {
-                let met = prior.meet(requires).ok_or(EffectConflict::Presence)?;
-                modes.remove(&Mode::Write { requires: prior });
-                modes.insert(Mode::Write { requires: met });
                 return Ok(());
             }
         }
@@ -175,7 +155,7 @@ mod tests {
     use crate::address::{
         Address, AddressClass, CollectionId, EffectTarget, LocalKey, SubstateKey,
     };
-    use crate::mode::{Mode, Presence};
+    use crate::mode::Mode;
 
     /// Distinct point targets, with no derivation: what these tests need
     /// of a key is only that two differ.
@@ -196,12 +176,7 @@ mod tests {
         let mut set = EffectSet::new();
         for (byte, mode) in [
             (1, Mode::Read),
-            (
-                2,
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            ),
+            (2, Mode::Write),
             (3, Mode::Delta),
             (4, Mode::Reserve { amount: 5 }),
             (5, Mode::Locked),
@@ -256,18 +231,8 @@ mod tests {
         };
 
         for pair in [
-            [
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-                Mode::Delta,
-            ],
-            [
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-                Mode::Reserve { amount: 1 },
-            ],
+            [Mode::Write, Mode::Delta],
+            [Mode::Write, Mode::Reserve { amount: 1 }],
         ] {
             assert_eq!(set_of(&pair).self_conflicting(), Some(cell), "{pair:?}");
         }
@@ -279,15 +244,8 @@ mod tests {
             &[Mode::Delta, Mode::Reserve { amount: 1 }][..],
             &[Mode::Read, Mode::Delta],
             &[Mode::Locked, Mode::Reserve { amount: 1 }],
-            &[
-                Mode::Read,
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            ],
-            &[Mode::Write {
-                requires: Presence::Either,
-            }],
+            &[Mode::Read, Mode::Write],
+            &[Mode::Write],
         ] {
             assert_eq!(set_of(modes).self_conflicting(), None, "{modes:?}");
         }
@@ -295,12 +253,7 @@ mod tests {
         // A collection target is never one: it holds no amount, so the
         // pairing the check is about cannot arise.
         let mut ranges = EffectSet::new();
-        for mode in [
-            Mode::Write {
-                requires: Presence::Either,
-            },
-            Mode::Delta,
-        ] {
+        for mode in [Mode::Write, Mode::Delta] {
             ranges
                 .insert(Effect {
                     target: EffectTarget::Range {

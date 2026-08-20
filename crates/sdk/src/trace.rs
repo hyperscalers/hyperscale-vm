@@ -30,9 +30,9 @@
 //! published contract whose method can never be called.
 
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, Clause, CustodyClaim, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
-    MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, RoleId, RuleExpr, SlotId,
-    TargetExpr, Totality, Value, well_formed,
+    AbiParam, Accessibility, Clause, ConditionExpr, CustodyClaim, Expr, MAX_CLAUSE_DEPTH,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, RoleId, RuleExpr,
+    SlotId, TargetExpr, Totality, Value, well_formed,
 };
 use hyperscale_vm_types::Presence;
 
@@ -846,9 +846,7 @@ impl<Shape> Access<'_, Shape> {
     /// An exclusive read-modify-write, on a leaf that may or may not be
     /// there.
     pub fn write(self) {
-        self.declare(ModeExpr::Write {
-            requires: Presence::Either,
-        });
+        self.declare(ModeExpr::Write);
     }
 }
 
@@ -856,20 +854,31 @@ impl<Shape> Access<'_, Shape> {
 /// target names one. An interval offers neither, which is what makes a
 /// requirement nothing could judge a compile error rather than a publish
 /// refusal.
+///
+/// The requirement is a condition clause beside the write, not a mode
+/// parameter. It is emitted first, so the write stays the clause its
+/// site's handle binding names.
 impl Access<'_, Leaf> {
     /// The same write, feasible only where the leaf is absent: the
     /// creation a one-way door is made of.
     pub fn create(self) {
-        self.declare(ModeExpr::Write {
-            requires: Presence::Absent,
-        });
+        self.require(Presence::Absent);
     }
 
     /// The same write, feasible only where the leaf is there.
     pub fn existing(self) {
-        self.declare(ModeExpr::Write {
-            requires: Presence::Present,
+        self.require(Presence::Present);
+    }
+
+    fn require(self, presence: Presence) {
+        self.trace.emit(Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Holds {
+                target: self.target.clone(),
+                presence,
+            },
         });
+        self.declare(ModeExpr::Write);
     }
 }
 

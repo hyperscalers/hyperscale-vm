@@ -257,7 +257,6 @@ fn read_uleb128(bytes: &[u8], pos: &mut usize) -> Result<usize, ArtifactError> {
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::to_vec_with_depth;
-    use hyperscale_vm_types::Presence;
 
     use super::{
         ArtifactError, CUSTOM_SECTION_ID, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata,
@@ -359,9 +358,7 @@ mod tests {
                 effects: vec![Clause::Effect {
                     guard: None,
                     target: TargetExpr::Point(expr),
-                    mode: ModeExpr::Write {
-                        requires: Presence::Either,
-                    },
+                    mode: ModeExpr::Write,
                     denomination: None,
                 }],
                 ..MethodSignature::default()

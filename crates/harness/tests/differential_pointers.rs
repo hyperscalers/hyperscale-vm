@@ -26,7 +26,7 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Denomination, Effect, EffectSet, EffectTarget, Mode,
-    Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
 use wasmtime::{Result, Store};
@@ -71,9 +71,7 @@ fn session() -> KernelSession {
         .write(cell(), encode_amount(BALANCE).to_vec())
         .expect("the fixture seeds");
 
-    let write = Mode::Write {
-        requires: Presence::Either,
-    };
+    let write = Mode::Write;
     let effects = [
         Effect {
             target: EffectTarget::Range {

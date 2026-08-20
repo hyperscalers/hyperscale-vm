@@ -9,8 +9,8 @@
 use hyperscale_vm_effects::envelope::NULLIFIER_SLOT;
 use hyperscale_vm_effects::vocabulary::{AUTH, INSTANCE, RESOURCE};
 use hyperscale_vm_effects::{
-    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, SlotId,
-    TargetExpr, Value,
+    AbiParam, Clause, ConditionExpr, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType,
+    SlotId, TargetExpr, Value,
 };
 use hyperscale_vm_gate::{admit_package, attach_metadata};
 use hyperscale_vm_types::{Address, AddressClass, Presence};
@@ -46,18 +46,31 @@ fn writing(slot: SlotId, material: Vec<Expr>) -> PackageMetadata {
         MethodSignature {
             params: vec![ParamType::U64],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
-            effects: vec![Clause::Effect {
-                guard: None,
-                target: TargetExpr::Point(Expr::ChildKey {
-                    owner: Box::new(Expr::SelfAddr),
-                    slot,
-                    material,
-                }),
-                mode: ModeExpr::Write {
-                    requires: Presence::Absent,
+            effects: vec![
+                Clause::Effect {
+                    guard: None,
+                    target: TargetExpr::Point(Expr::ChildKey {
+                        owner: Box::new(Expr::SelfAddr),
+                        slot,
+                        material: material.clone(),
+                    }),
+                    mode: ModeExpr::Write,
+                    denomination: None,
                 },
-                denomination: None,
-            }],
+                // The one-way door the creating slots require, as the
+                // condition it now is.
+                Clause::Requires {
+                    guard: None,
+                    condition: ConditionExpr::Holds {
+                        target: TargetExpr::Point(Expr::ChildKey {
+                            owner: Box::new(Expr::SelfAddr),
+                            slot,
+                            material,
+                        }),
+                        presence: Presence::Absent,
+                    },
+                },
+            ],
             ..MethodSignature::default()
         },
     );

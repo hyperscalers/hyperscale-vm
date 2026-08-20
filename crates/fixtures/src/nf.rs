@@ -6,7 +6,7 @@
 //! wrappers a client calls it through. A signature and the wrapper
 //! mirroring it drift the moment they live apart.
 
-use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
+use hyperscale_vm_effects::dsl::{Clause, ConditionExpr, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::vocabulary::{INSTANCE, NF_MOVE_CAP};
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, Expr, MethodSignature, PackageMetadata, ParamType, RuleExpr, Totality,
@@ -14,6 +14,37 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
 use hyperscale_vm_types::{ComponentAddr, Denomination, Presence};
+
+/// The mint's declaration: the instance-data write, and the one-way
+/// door beside it. A mint creates; it never lands on an instance that
+/// is already there. The fresh id makes that true in every ordinary
+/// run, and the condition is what turns the one case where it is not —
+/// a collision — from a silent overwrite of somebody's instance into a
+/// refusal.
+fn creating_instance(minted_resource: &Expr, minted_id: &Expr) -> Vec<Clause> {
+    let target = || {
+        TargetExpr::Point(Expr::ChildKey {
+            owner: Box::new(Expr::SelfAddr),
+            slot: INSTANCE,
+            material: vec![minted_resource.clone(), minted_id.clone()],
+        })
+    };
+    vec![
+        Clause::Effect {
+            guard: None,
+            target: target(),
+            mode: ModeExpr::Write,
+            denomination: None,
+        },
+        Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Holds {
+                target: target(),
+                presence: Presence::Absent,
+            },
+        },
+    ]
+}
 
 /// The non-fungible surface end to end: an issuer that mints and burns,
 /// and holders whose instances are the entries of their per-resource
@@ -53,23 +84,7 @@ pub fn metadata() -> PackageMetadata {
                 resource: Box::new(minted_resource.clone()),
                 ids: Box::new(Expr::List(vec![minted_id.clone()])),
             }],
-            effects: vec![Clause::Effect {
-                guard: None,
-                target: TargetExpr::Point(Expr::ChildKey {
-                    owner: Box::new(Expr::SelfAddr),
-                    slot: INSTANCE,
-                    material: vec![minted_resource, minted_id],
-                }),
-                // A mint creates; it never lands on an instance that is
-                // already there. The fresh id makes that true in every
-                // ordinary run, and the requirement is what turns the
-                // one case where it is not — a collision — from a silent
-                // overwrite of somebody's instance into a refusal.
-                mode: ModeExpr::Write {
-                    requires: Presence::Absent,
-                },
-                denomination: None,
-            }],
+            effects: creating_instance(&minted_resource, &minted_id),
             ..MethodSignature::default()
         },
     );
@@ -84,9 +99,7 @@ pub fn metadata() -> PackageMetadata {
             effects: vec![Clause::Effect {
                 guard: None,
                 target: holdings_range(Expr::ResourceOf(Box::new(Expr::Arg(0))), NF_MOVE_CAP),
-                mode: ModeExpr::Write {
-                    requires: Presence::Either,
-                },
+                mode: ModeExpr::Write,
                 // The interval is one resource's holdings, and the
                 // resource is the key it is narrowed by: what an entry
                 // moving out of here carries is the same expression the
@@ -111,9 +124,7 @@ pub fn metadata() -> PackageMetadata {
             effects: vec![Clause::Effect {
                 guard: None,
                 target: holdings_range(Expr::Arg(0), NF_MOVE_CAP),
-                mode: ModeExpr::Write {
-                    requires: Presence::Either,
-                },
+                mode: ModeExpr::Write,
                 denomination: Some(Box::new(Expr::Arg(0))),
             }],
             ..MethodSignature::default()

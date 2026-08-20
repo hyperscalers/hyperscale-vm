@@ -59,9 +59,7 @@ PackageMetadata {
                         },
                         cap: 64,
                     },
-                    mode: Write {
-                        requires: Either,
-                    },
+                    mode: Write,
                     denomination: None,
                 },
                 Effect {
@@ -159,9 +157,7 @@ PackageMetadata {
                             },
                         },
                     },
-                    mode: Write {
-                        requires: Either,
-                    },
+                    mode: Write,
                     denomination: None,
                 },
                 Effect {

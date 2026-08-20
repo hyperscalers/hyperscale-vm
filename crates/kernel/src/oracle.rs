@@ -167,7 +167,6 @@ mod tests {
     use hyperscale_vm_effects::{SlotId, TestHasher, child_key, collection_id};
     use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, ModeKind,
-        Presence,
     };
 
     use super::{multiply_held_ids, undeclared_accesses};
@@ -188,9 +187,7 @@ mod tests {
         let set = declared(&[
             Effect {
                 target: EffectTarget::Point(cell),
-                mode: Mode::Write {
-                    requires: Presence::Either,
-                },
+                mode: Mode::Write,
             },
             Effect {
                 target: EffectTarget::Range {
@@ -200,9 +197,7 @@ mod tests {
                     hi: 20,
                     cap: 8,
                 },
-                mode: Mode::Write {
-                    requires: Presence::Either,
-                },
+                mode: Mode::Write,
             },
         ]);
 
@@ -265,9 +260,7 @@ mod tests {
         let set = declared(&[entry(Mode::Read)]);
         assert_eq!(undeclared_accesses(&[scan(15, 15, 1)], &set), Vec::new());
         // The write-implied read too.
-        let written = declared(&[entry(Mode::Write {
-            requires: Presence::Either,
-        })]);
+        let written = declared(&[entry(Mode::Write)]);
         assert_eq!(
             undeclared_accesses(&[scan(15, 15, 1)], &written),
             Vec::new()
@@ -299,9 +292,7 @@ mod tests {
                     hi: 20,
                     cap: 8,
                 },
-                mode: Mode::Write {
-                    requires: Presence::Either,
-                },
+                mode: Mode::Write,
             },
         ]);
 

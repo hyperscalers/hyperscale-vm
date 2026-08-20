@@ -31,7 +31,7 @@ use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Denomination, Effect, EffectSet, EffectTarget, Event,
-    Mode, Movement, Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Mode, Movement, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::Context;
@@ -383,9 +383,7 @@ fn lottery_session() -> KernelSession {
                 collection: ticket_collection(),
                 order: ticket_order(),
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         },
         Effect {
             target: EffectTarget::Point(child_key(&TestHasher, LOTTERY, VAULT, &[])),
@@ -393,9 +391,7 @@ fn lottery_session() -> KernelSession {
         },
         Effect {
             target: EffectTarget::Point(draw_key()),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         },
         Effect {
             target: EffectTarget::Range {

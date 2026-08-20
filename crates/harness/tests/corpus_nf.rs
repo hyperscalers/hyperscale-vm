@@ -9,7 +9,9 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_fixtures::{nf, registry};
 use hyperscale_vm_kernel::{MemoryStore, multiply_held_ids};
-use hyperscale_vm_types::{AbortReason, CollectionId, EffectTarget, Outcome, Presence, TxHash};
+use hyperscale_vm_types::{
+    AbortReason, CollectionId, EffectTarget, Outcome, Presence, TxHash, UnmetCondition,
+};
 
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
@@ -210,9 +212,11 @@ fn a_mint_onto_an_instance_already_there_is_refused() {
     );
     assert_eq!(
         results,
-        vec![TxResult::Refused(Outcome::PresenceUnmet {
-            target: EffectTarget::Point(data),
-            required: Presence::Absent,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(data),
+                required: Presence::Absent,
+            },
         })],
         "an instance already there is a refusal, never an overwrite"
     );

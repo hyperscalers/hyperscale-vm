@@ -26,7 +26,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, CollectionId, Denomination, Effect, EffectSet,
-    EffectTarget, EntryKey, Mode, Movement, Outcome, Presence, ResourceAddr, SubstateKey, TxHash,
+    EffectTarget, EntryKey, Mode, Movement, Outcome, ResourceAddr, SubstateKey, TxHash,
     encode_amount,
 };
 
@@ -190,9 +190,7 @@ fn declared_of(spec: &TxSpec) -> EffectSet {
                 exclusive.insert(k);
                 Effect {
                     target: EffectTarget::Point(cell(k)),
-                    mode: Mode::Write {
-                        requires: Presence::Either,
-                    },
+                    mode: Mode::Write,
                 }
             }
             Claim::Interval { lo, hi, write } => Effect {
@@ -203,13 +201,7 @@ fn declared_of(spec: &TxSpec) -> EffectSet {
                     hi,
                     cap: 8,
                 },
-                mode: if write {
-                    Mode::Write {
-                        requires: Presence::Either,
-                    }
-                } else {
-                    Mode::Read
-                },
+                mode: if write { Mode::Write } else { Mode::Read },
             },
         };
         set.insert(effect)

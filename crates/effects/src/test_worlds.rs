@@ -1,9 +1,7 @@
 //! Shared test worlds: small published packages, their instances, and
 //! the manifests that call them.
 
-use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, Denomination, Presence, ResourceAddr,
-};
+use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, Denomination, ResourceAddr};
 
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::hash::{Hash32, Hasher, TestHasher};
@@ -98,12 +96,7 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
         "swap".into(),
         MethodSignature {
             outputs: vec![Expr::SelfResource { material: vec![] }],
-            effects: vec![self_point(
-                SlotId(2),
-                ModeExpr::Write {
-                    requires: Presence::Either,
-                },
-            )],
+            effects: vec![self_point(SlotId(2), ModeExpr::Write)],
             ..MethodSignature::default()
         },
     );

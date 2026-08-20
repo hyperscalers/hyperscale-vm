@@ -32,7 +32,7 @@ use std::thread;
 use hyperscale_vm_effects::{Declaration, NodeCall};
 use hyperscale_vm_types::{
     AbortReason, Address, CollectionId, ConflictClass, Effect, EffectSet, EffectTarget, Mode,
-    ModeKind, Outcome, Presence, SubstateKey, TxHash, UnmetCondition,
+    ModeKind, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
 use crate::ledger::AmountLedger;
@@ -631,14 +631,6 @@ impl From<MaterializeError> for Outcome {
             MaterializeError::MixedContents(_) => Self::UserError {
                 reason: AbortReason::MixedContents,
             },
-            MaterializeError::Occupied(target) => Self::PresenceUnmet {
-                target,
-                required: Presence::Absent,
-            },
-            MaterializeError::Absent(target) => Self::PresenceUnmet {
-                target,
-                required: Presence::Present,
-            },
             MaterializeError::ConditionUnmet { target, required } => Self::ConditionUnmet {
                 condition: UnmetCondition::Holds { target, required },
             },
@@ -829,9 +821,7 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
         for key in &entry.nullifiers {
             if !entry.declaration.set.contains(&Effect {
                 target: EffectTarget::Point(*key),
-                mode: Mode::Write {
-                    requires: Presence::Either,
-                },
+                mode: Mode::Write,
             }) {
                 return Err(BatchError::UndeclaredNullifier {
                     tx: entry.tx,
@@ -1102,8 +1092,7 @@ mod tests {
 
     use hyperscale_vm_effects::{Declaration, Hash32, SlotId, TestHasher, child_key};
     use hyperscale_vm_types::{
-        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Presence,
-        TxHash,
+        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, TxHash,
     };
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
@@ -1123,9 +1112,7 @@ mod tests {
             1 => Mode::Locked,
             2 => Mode::Delta,
             3 => Mode::Reserve { amount: 1 },
-            _ => Mode::Write {
-                requires: Presence::Either,
-            },
+            _ => Mode::Write,
         }
     }
 

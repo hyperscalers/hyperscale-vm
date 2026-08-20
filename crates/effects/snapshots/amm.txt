@@ -96,9 +96,7 @@ PackageMetadata {
                             ],
                         },
                     ),
-                    mode: Write {
-                        requires: Either,
-                    },
+                    mode: Write,
                     denomination: Some(
                         If {
                             cond: Eq(
@@ -150,9 +148,7 @@ PackageMetadata {
                             ],
                         },
                     ),
-                    mode: Write {
-                        requires: Either,
-                    },
+                    mode: Write,
                     denomination: Some(
                         If {
                             cond: Eq(

@@ -381,6 +381,11 @@ pub enum DeclarationError {
     /// clause materializes none.
     #[error("a total method materialises every handle it declares, and a guard leaves one absent")]
     GuardedTotality,
+    /// A method claiming totality beside a precondition: a condition
+    /// clause, or a reservation. Either is a verdict some caller hears,
+    /// which is exactly what the mark promises cannot happen.
+    #[error("a total method admits every state, and this one declares a precondition")]
+    ConditionalTotality,
     /// Two writes on one target requiring opposite presences.
     ///
     /// Refused here as well as where the set is built, because metadata
@@ -684,6 +689,7 @@ fn protocol_shape(
     target: &TargetExpr,
     mode: &ModeExpr,
     denomination: Option<&Expr>,
+    requires_absent: bool,
 ) -> Result<(), DeclarationError> {
     let Some((slot, material)) = slot_of(target) else {
         return Ok(());
@@ -698,7 +704,8 @@ fn protocol_shape(
     if slot.0 >= PACKAGE_SLOT_BASE {
         return Ok(());
     }
-    let Some((shaped, wanted)) = vocabulary_shape(slot, target, material, mode, denomination)
+    let Some((shaped, wanted)) =
+        vocabulary_shape(slot, target, material, mode, denomination, requires_absent)
     else {
         return Err(reserved());
     };
@@ -726,6 +733,7 @@ fn vocabulary_shape(
     material: &[Expr],
     mode: &ModeExpr,
     denomination: Option<&Expr>,
+    requires_absent: bool,
 ) -> Option<(bool, &'static str)> {
     let point = matches!(target, TargetExpr::Point(_));
     // A value cell is keyed by what it holds, so where the declaration
@@ -743,13 +751,11 @@ fn vocabulary_shape(
         matches!((material, denomination), ([held], Some(named)) if named == held);
     let bare = material.is_empty() && denomination.is_none();
     let keyed = |terms: usize| material.len() == terms && denomination.is_none();
-    let creates = matches!(
-        mode,
-        ModeExpr::Read
-            | ModeExpr::Write {
-                requires: Presence::Absent
-            }
-    );
+    // A write that creates carries its one-way door as a condition
+    // beside it: a `Holds { .., Absent }` on the same target, firing
+    // whenever the write does — which is what `requires_absent` says.
+    let creates =
+        matches!(mode, ModeExpr::Read) || (matches!(mode, ModeExpr::Write) && requires_absent);
 
     let (shaped, wanted) = match slot {
         VAULT => (
@@ -757,10 +763,7 @@ fn vocabulary_shape(
                 && keyed_by_what_it_holds
                 && matches!(
                     mode,
-                    ModeExpr::Read
-                        | ModeExpr::Write { .. }
-                        | ModeExpr::Delta
-                        | ModeExpr::Reserve(_)
+                    ModeExpr::Read | ModeExpr::Write | ModeExpr::Delta | ModeExpr::Reserve(_)
                 ),
             "holds a fungible balance: one leaf, keyed by the resource it holds, \
              denominated in that resource, and never locked",
@@ -770,10 +773,7 @@ fn vocabulary_shape(
                 && keyed_by_what_it_holds
                 && matches!(
                     mode,
-                    ModeExpr::Read
-                        | ModeExpr::Write { .. }
-                        | ModeExpr::Delta
-                        | ModeExpr::Reserve(_)
+                    ModeExpr::Read | ModeExpr::Write | ModeExpr::Delta | ModeExpr::Reserve(_)
                 ),
             "is the delivery fallback beside a vault, and holds value on the same \
              terms: one leaf, keyed by the resource it holds and denominated in it",
@@ -781,9 +781,7 @@ fn vocabulary_shape(
         // Instances are a quantity too, and the interval they sit in is
         // the holdings of exactly one resource.
         NF_VAULT => (
-            !point
-                && keyed_by_what_it_holds
-                && matches!(mode, ModeExpr::Read | ModeExpr::Write { .. }),
+            !point && keyed_by_what_it_holds && matches!(mode, ModeExpr::Read | ModeExpr::Write),
             "holds a resource's instances: an interval or one of its entries, keyed by \
              that resource and denominated in it",
         ),
@@ -793,7 +791,7 @@ fn vocabulary_shape(
              nothing rewrites it",
         ),
         AUTH => (
-            point && bare && matches!(mode, ModeExpr::Read | ModeExpr::Write { .. }),
+            point && bare && matches!(mode, ModeExpr::Read | ModeExpr::Write),
             "is the stored authority cell: one leaf, no material, read or rewritten whole",
         ),
         // A record and an instance's data are written when the thing
@@ -879,12 +877,12 @@ fn judge_outputs(outputs: &[Expr]) -> Result<(), DeclarationError> {
 /// stranger's leaf is wrong about more than its shape, and a clause
 /// naming a protocol cell hears that cell's own sentence before the
 /// general rules the sentence is a special case of.
-fn judge_access(clause: u32, access: &Clause) -> Result<(), DeclarationError> {
+fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), DeclarationError> {
     let Clause::Effect {
+        guard,
         target,
         mode,
         denomination,
-        ..
     } = access
     else {
         return Ok(());
@@ -893,7 +891,22 @@ fn judge_access(clause: u32, access: &Clause) -> Result<(), DeclarationError> {
     if !targets_own_prefix(target) {
         return Err(DeclarationError::ForeignPrefix { clause });
     }
-    protocol_shape(clause, target, mode, denomination)?;
+    // Whether the one-way door stands beside this write: a `Holds { ..,
+    // Absent }` on the same target, firing whenever the write does.
+    let requires_absent = flat.iter().any(|beside| {
+        matches!(
+            beside,
+            Clause::Requires {
+                guard: condition_guard,
+                condition: ConditionExpr::Holds {
+                    target: required,
+                    presence: Presence::Absent,
+                },
+            } if required == target
+                && (condition_guard.is_none() || condition_guard.as_deref() == guard.as_deref())
+        )
+    });
+    protocol_shape(clause, target, mode, denomination, requires_absent)?;
     // And whether the world hands out anything for this pairing at all.
     // Asked of the clause through the same function an engine reads a
     // handle's type off, so publish refuses exactly what materialization
@@ -922,21 +935,6 @@ fn judge_access(clause: u32, access: &Clause) -> Result<(), DeclarationError> {
     {
         return Err(DeclarationError::NotAResource { clause, found });
     }
-    // A presence requirement is about the leaf a write lands on, and an
-    // interval has none. Refused here so an author hears about it, and
-    // again at materialization, which honours the requirement rather
-    // than reading past it.
-    if matches!(
-        (target, mode),
-        (
-            TargetExpr::Range { .. },
-            ModeExpr::Write {
-                requires: Presence::Absent | Presence::Present,
-            },
-        )
-    ) {
-        return Err(DeclarationError::PresenceOnInterval { clause });
-    }
     Ok(())
 }
 
@@ -960,8 +958,8 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // The tree is walked once; every judgment below reads this preorder,
     // which is the numbering a clause index names.
     let flat: Vec<&Clause> = signature.effects.iter().flat_map(Clause::effects).collect();
-    // Two writes on one target that can both fire are one write, and a
-    // presence requirement each way is a requirement nothing satisfies.
+    // Two presence conditions on one target that can both fire, each
+    // way, are a requirement nothing satisfies.
     //
     // Compared by target expression rather than by evaluated key,
     // because this runs at publish where no arguments exist — which
@@ -986,22 +984,20 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // meets everything, so an accumulated requirement is only ever one
     // of the two it came from, and a contradiction a fold could reach is
     // one some pair already has.
-    let mut writes: BTreeMap<&TargetExpr, Vec<(Option<&Expr>, Presence)>> = BTreeMap::new();
+    let mut required: BTreeMap<&TargetExpr, Vec<(Option<&Expr>, Presence)>> = BTreeMap::new();
     for clause in &flat {
-        if let Clause::Effect {
+        if let Clause::Requires {
             guard,
-            target,
-            mode: ModeExpr::Write { requires },
-            ..
+            condition: ConditionExpr::Holds { target, presence },
         } = clause
         {
-            writes
+            required
                 .entry(target)
                 .or_default()
-                .push((guard.as_deref(), *requires));
+                .push((guard.as_deref(), *presence));
         }
     }
-    for shared in writes.values() {
+    for shared in required.values() {
         for (index, (guard, requires)) in shared.iter().enumerate() {
             for (seen_guard, prior) in &shared[..index] {
                 if !complementary(*seen_guard, *guard) {
@@ -1065,6 +1061,23 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     {
         return Err(DeclarationError::GuardedTotality);
     }
+    // The mark promises a caller has nothing to hear back, and a
+    // precondition is a verdict some caller hears: a total method
+    // declares no condition and no reservation.
+    if signature.totality.is_total()
+        && flat.iter().any(|clause| {
+            matches!(clause, Clause::Requires { .. })
+                || matches!(
+                    clause,
+                    Clause::Effect {
+                        mode: ModeExpr::Reserve(_),
+                        ..
+                    }
+                )
+        })
+    {
+        return Err(DeclarationError::ConditionalTotality);
+    }
     // A denomination is read at the position it indexes, so a list that
     // does not cover the parameters is one whose entries name positions
     // nobody agrees on. An empty list is the method that denominates
@@ -1103,7 +1116,7 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // And at the third position a signature names resources.
     judge_outputs(&signature.outputs)?;
     for (index, clause) in flat.iter().enumerate() {
-        judge_access(u32::try_from(index).unwrap_or(u32::MAX), clause)?;
+        judge_access(u32::try_from(index).unwrap_or(u32::MAX), clause, &flat)?;
     }
     check_conditions(&flat)
 }
@@ -1132,7 +1145,7 @@ fn check_conditions(flat: &[&Clause]) -> Result<(), DeclarationError> {
                 )
             })
         };
-    let coherent = |mode: &ModeExpr| matches!(mode, ModeExpr::Read | ModeExpr::Write { .. });
+    let coherent = |mode: &ModeExpr| matches!(mode, ModeExpr::Read | ModeExpr::Write);
     for (index, clause) in flat.iter().enumerate() {
         let Clause::Requires { guard, condition } = clause else {
             continue;
@@ -1386,7 +1399,7 @@ fn check_target_bounds(target: &TargetExpr) -> Result<(), SignatureBoundsError> 
 
 fn check_mode_bounds(mode: &ModeExpr) -> Result<(), SignatureBoundsError> {
     match mode {
-        ModeExpr::Read | ModeExpr::Delta | ModeExpr::Write { .. } | ModeExpr::Locked => Ok(()),
+        ModeExpr::Read | ModeExpr::Delta | ModeExpr::Write | ModeExpr::Locked => Ok(()),
         ModeExpr::Reserve(amount) => check_expr_bounds(amount, 0),
     }
 }
@@ -1425,9 +1438,7 @@ mod tests {
             effects: vec![Clause::Effect {
                 guard: None,
                 target: TargetExpr::Point(expr),
-                mode: ModeExpr::Write {
-                    requires: Presence::Either,
-                },
+                mode: ModeExpr::Write,
                 denomination: None,
             }],
             ..MethodSignature::default()
@@ -1667,23 +1678,13 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            check_abi(&shaped(
-                Accessibility::RoleGated(RECOVERY),
-                ModeExpr::Write {
-                    requires: Presence::Either
-                }
-            )),
+            check_abi(&shaped(Accessibility::RoleGated(RECOVERY), ModeExpr::Write)),
             Ok(())
         );
 
         // The right clause under the wrong mode, and no clause at all.
         assert_eq!(
-            check_abi(&shaped(
-                Accessibility::Authorizing,
-                ModeExpr::Write {
-                    requires: Presence::Either
-                }
-            )),
+            check_abi(&shaped(Accessibility::Authorizing, ModeExpr::Write)),
             Err(AbiError::AuthorizingShape)
         );
         assert_eq!(
@@ -1705,12 +1706,7 @@ mod tests {
             sign_in.gate(),
             Ok(GateShape::Rule { role: PRIMARY, .. })
         ));
-        let confirm = shaped(
-            Accessibility::RoleGated(CONFIRMATION),
-            ModeExpr::Write {
-                requires: Presence::Either,
-            },
-        );
+        let confirm = shaped(Accessibility::RoleGated(CONFIRMATION), ModeExpr::Write);
         assert!(matches!(
             confirm.gate(),
             Ok(GateShape::Rule {
@@ -2229,14 +2225,23 @@ mod tests {
     /// reading past it.
     #[test]
     fn a_presence_requirement_needs_a_target_that_names_a_leaf() {
-        let declared = |target, requires| {
+        let declared = |target: TargetExpr, requires| {
             check_declarations(&MethodSignature {
-                effects: vec![Clause::Effect {
-                    guard: None,
-                    target,
-                    mode: ModeExpr::Write { requires },
-                    denomination: None,
-                }],
+                effects: vec![
+                    Clause::Effect {
+                        guard: None,
+                        target: target.clone(),
+                        mode: ModeExpr::Write,
+                        denomination: None,
+                    },
+                    Clause::Requires {
+                        guard: None,
+                        condition: ConditionExpr::Holds {
+                            target,
+                            presence: requires,
+                        },
+                    },
+                ],
                 ..MethodSignature::default()
             })
         };
@@ -2267,13 +2272,10 @@ mod tests {
             // An interval names none.
             assert_eq!(
                 declared(range.clone(), requires),
-                Err(DeclarationError::PresenceOnInterval { clause: 0 }),
+                Err(DeclarationError::PresenceOnInterval { clause: 1 }),
                 "{requires:?}"
             );
         }
-
-        // The indifferent requirement is what every range write carries.
-        assert_eq!(declared(range, Presence::Either), Ok(()));
     }
 
     /// "Create it if absent, otherwise update it" is two writes on one
@@ -2284,19 +2286,32 @@ mod tests {
     #[test]
     fn complementary_guards_carry_opposite_presences_and_nothing_else_does() {
         let cond = || Expr::Eq(Box::new(Expr::Arg(0)), Box::new(Expr::Config(0)));
-        let write = |guard: Option<Expr>, requires| Clause::Effect {
-            guard: guard.map(Box::new),
-            target: TargetExpr::Point(Expr::ChildKey {
+        let target = || {
+            TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
                 slot: SlotId(PACKAGE_SLOT_BASE),
                 material: vec![],
-            }),
-            mode: ModeExpr::Write { requires },
-            denomination: None,
+            })
         };
-        let declared = |clauses: Vec<Clause>| {
+        let write = |guard: Option<Expr>, presence| Clause::Requires {
+            guard: guard.map(Box::new),
+            condition: ConditionExpr::Holds {
+                target: target(),
+                presence,
+            },
+        };
+        // The one access every condition above is backed by: unguarded,
+        // so it fires whenever any of them does.
+        let declared = |conditions: Vec<Clause>| {
+            let mut effects = vec![Clause::Effect {
+                guard: None,
+                target: target(),
+                mode: ModeExpr::Write,
+                denomination: None,
+            }];
+            effects.extend(conditions);
             check_declarations(&MethodSignature {
-                effects: clauses,
+                effects,
                 ..MethodSignature::default()
             })
         };
@@ -2352,15 +2367,23 @@ mod tests {
     #[test]
     fn a_write_meets_every_other_write_it_can_fire_beside() {
         let cond = || Expr::Eq(Box::new(Expr::Arg(0)), Box::new(Expr::Config(0)));
-        let write = |guard: Option<Expr>, requires| Clause::Effect {
+        let write = |guard: Option<Expr>, presence| Clause::Requires {
             guard: guard.map(Box::new),
-            target: own_point(package_slot(0), vec![]),
-            mode: ModeExpr::Write { requires },
-            denomination: None,
+            condition: ConditionExpr::Holds {
+                target: own_point(package_slot(0), vec![]),
+                presence,
+            },
         };
-        let declared = |clauses: Vec<Clause>| {
+        let declared = |conditions: Vec<Clause>| {
+            let mut effects = vec![Clause::Effect {
+                guard: None,
+                target: own_point(package_slot(0), vec![]),
+                mode: ModeExpr::Write,
+                denomination: None,
+            }];
+            effects.extend(conditions);
             check_declarations(&MethodSignature {
-                effects: clauses,
+                effects,
                 ..MethodSignature::default()
             })
         };
@@ -2394,7 +2417,6 @@ mod tests {
             declared(vec![
                 write(Some(cond()), Presence::Absent),
                 write(Some(Expr::Not(Box::new(cond()))), Presence::Present),
-                write(None, Presence::Either),
             ]),
             Ok(())
         );
@@ -2447,13 +2469,7 @@ mod tests {
             // The two it does have.
             assert_eq!(declared(target.clone(), ModeExpr::Read, None), Ok(()));
             assert_eq!(
-                declared(
-                    target,
-                    ModeExpr::Write {
-                        requires: Presence::Either
-                    },
-                    Some(a_resource()),
-                ),
+                declared(target, ModeExpr::Write, Some(a_resource()),),
                 Ok(())
             );
         }
@@ -2513,15 +2529,24 @@ mod tests {
                 material,
             })
         };
-        let write = |requires| Clause::Effect {
+        let write = |presence| Clause::Requires {
             guard: None,
-            target: cell(vec![]),
-            mode: ModeExpr::Write { requires },
+            condition: ConditionExpr::Holds {
+                target: cell(vec![]),
+                presence,
+            },
+        };
+        let access = |material| Clause::Effect {
+            guard: None,
+            target: cell(material),
+            mode: ModeExpr::Write,
             denomination: None,
         };
-        let declared = |clauses: Vec<Clause>| {
+        let declared = |conditions: Vec<Clause>| {
+            let mut effects = vec![access(vec![])];
+            effects.extend(conditions);
             check_declarations(&MethodSignature {
-                effects: clauses,
+                effects,
                 ..MethodSignature::default()
             })
         };
@@ -2535,59 +2560,33 @@ mod tests {
             Err(DeclarationError::PresenceConflict)
         );
 
-        // The indifferent clause concedes rather than absorbing, so a
-        // requirement still meets its opposite across one written
-        // between them — in either order, and whichever side it sits.
-        for opposed in [
-            vec![
-                write(Presence::Either),
-                write(Presence::Absent),
-                write(Presence::Present),
-            ],
-            vec![
-                write(Presence::Present),
-                write(Presence::Either),
-                write(Presence::Absent),
-            ],
-            vec![
-                write(Presence::Absent),
-                write(Presence::Either),
-                write(Presence::Either),
-                write(Presence::Present),
-            ],
-        ] {
-            assert_eq!(declared(opposed), Err(DeclarationError::PresenceConflict));
-        }
-
-        // What is not a contradiction: a named requirement beside the
-        // indifferent one, the same requirement twice, and two named
-        // requirements on targets that are not the same expression.
-        assert_eq!(
-            declared(vec![write(Presence::Either), write(Presence::Absent)]),
-            Ok(())
-        );
+        // A requirement still meets its opposite across an agreeing one
+        // written between them.
         assert_eq!(
             declared(vec![
-                write(Presence::Either),
                 write(Presence::Absent),
                 write(Presence::Absent),
+                write(Presence::Present),
             ]),
-            Ok(())
+            Err(DeclarationError::PresenceConflict)
         );
+
+        // What is not a contradiction: the same requirement twice, and
+        // two requirements on targets that are not the same expression.
         assert_eq!(
             declared(vec![write(Presence::Absent), write(Presence::Absent)]),
             Ok(())
         );
         assert_eq!(
             declared(vec![
+                access(vec![Expr::Config(0)]),
                 write(Presence::Absent),
-                Clause::Effect {
+                Clause::Requires {
                     guard: None,
-                    target: cell(vec![Expr::Config(0)]),
-                    mode: ModeExpr::Write {
-                        requires: Presence::Present,
+                    condition: ConditionExpr::Holds {
+                        target: cell(vec![Expr::Config(0)]),
+                        presence: Presence::Present,
                     },
-                    denomination: None,
                 },
             ]),
             Ok(())
@@ -2721,9 +2720,7 @@ mod tests {
     #[test]
     fn a_value_cell_is_keyed_by_what_it_holds() {
         let moves = [
-            ModeExpr::Write {
-                requires: Presence::Either,
-            },
+            ModeExpr::Write,
             ModeExpr::Delta,
             ModeExpr::Reserve(Expr::Arg(0)),
         ];
@@ -2779,9 +2776,7 @@ mod tests {
         // Holdings are the same statement in collection form: one
         // resource's instances, in the interval narrowed by it.
         let holdings = || own_interval(NF_VAULT, vec![a_resource()]);
-        let write = || ModeExpr::Write {
-            requires: Presence::Either,
-        };
+        let write = || ModeExpr::Write;
         assert_eq!(
             check_declarations(&one_clause(holdings(), write(), Some(a_resource()))),
             Ok(())
@@ -2805,13 +2800,29 @@ mod tests {
     /// the value cells beside it.
     #[test]
     fn a_protocol_cell_holding_no_value_is_declared_in_its_own_shape() {
-        let write = || ModeExpr::Write {
-            requires: Presence::Either,
-        };
-        let creates = || ModeExpr::Write {
-            requires: Presence::Absent,
-        };
+        let write = || ModeExpr::Write;
         let plain = |target, mode| one_clause(target, mode, None);
+        // A write that creates: the access, and the one-way door beside
+        // it as the condition it now is.
+        let creating = |target: TargetExpr, denomination: Option<Expr>| MethodSignature {
+            totality: Totality::Fallible,
+            effects: vec![
+                Clause::Effect {
+                    guard: None,
+                    target: target.clone(),
+                    mode: ModeExpr::Write,
+                    denomination: denomination.map(Box::new),
+                },
+                Clause::Requires {
+                    guard: None,
+                    condition: ConditionExpr::Holds {
+                        target,
+                        presence: Presence::Absent,
+                    },
+                },
+            ],
+            ..MethodSignature::default()
+        };
 
         // A configuration leaf is read and never rewritten; a stored
         // authority cell is read or rewritten whole. Neither is keyed by
@@ -2823,12 +2834,16 @@ mod tests {
             );
         }
         assert!(misshapen(&plain(own_point(CONFIG, vec![]), write())));
-        for mode in [ModeExpr::Read, write(), creates()] {
+        for mode in [ModeExpr::Read, write()] {
             assert_eq!(
                 check_declarations(&plain(own_point(AUTH, vec![]), mode)),
                 Ok(())
             );
         }
+        assert_eq!(
+            check_declarations(&creating(own_point(AUTH, vec![]), None)),
+            Ok(())
+        );
         assert!(misshapen(&plain(own_point(AUTH, vec![]), ModeExpr::Delta)));
         assert!(misshapen(&plain(
             own_point(AUTH, vec![a_resource()]),
@@ -2843,7 +2858,7 @@ mod tests {
         ] {
             let keyed = || own_point(slot, material.clone());
             assert_eq!(
-                check_declarations(&plain(keyed(), creates())),
+                check_declarations(&creating(keyed(), None)),
                 Ok(()),
                 "{slot:?}"
             );
@@ -2854,18 +2869,14 @@ mod tests {
             );
             assert!(misshapen(&plain(keyed(), write())));
             // Nothing here holds value, so nothing here denominates.
-            assert!(misshapen(&one_clause(
-                keyed(),
-                creates(),
-                Some(a_resource())
-            )));
+            assert!(misshapen(&creating(keyed(), Some(a_resource()))));
         }
         // Keyed by the wrong number of terms: an instance is a resource
         // and an id, and a record is a resource.
-        assert!(misshapen(&plain(own_point(RESOURCE, vec![]), creates())));
-        assert!(misshapen(&plain(
+        assert!(misshapen(&creating(own_point(RESOURCE, vec![]), None)));
+        assert!(misshapen(&creating(
             own_point(INSTANCE, vec![a_resource()]),
-            creates()
+            None
         )));
     }
 
@@ -2892,9 +2903,7 @@ mod tests {
         for mode in [
             ModeExpr::Delta,
             ModeExpr::Reserve(Expr::Arg(0)),
-            ModeExpr::Write {
-                requires: Presence::Either,
-            },
+            ModeExpr::Write,
         ] {
             assert_eq!(
                 check_declarations(&one_clause(
@@ -2928,9 +2937,7 @@ mod tests {
         assert_eq!(
             check_declarations(&one_clause(
                 interval(vec![a_resource()]),
-                ModeExpr::Write {
-                    requires: Presence::Either
-                },
+                ModeExpr::Write,
                 Some(a_resource())
             )),
             Ok(())
@@ -2938,9 +2945,7 @@ mod tests {
         assert_eq!(
             check_declarations(&one_clause(
                 interval(vec![other()]),
-                ModeExpr::Write {
-                    requires: Presence::Either
-                },
+                ModeExpr::Write,
                 Some(a_resource())
             )),
             Err(DeclarationError::DenominationNotKeyed { clause: 0 })
@@ -2951,9 +2956,7 @@ mod tests {
         assert_eq!(
             check_declarations(&one_clause(
                 TargetExpr::Point(Expr::FreshKey { slot: 0 }),
-                ModeExpr::Write {
-                    requires: Presence::Either
-                },
+                ModeExpr::Write,
                 Some(a_resource())
             )),
             Err(DeclarationError::DenominationNotKeyed { clause: 0 })
@@ -2979,13 +2982,7 @@ mod tests {
         // A write is the mode a byte cell takes too, so it says nothing
         // by saying nothing — which is what makes it a byte cell.
         assert_eq!(
-            check_declarations(&one_clause(
-                own(vec![]),
-                ModeExpr::Write {
-                    requires: Presence::Either
-                },
-                None
-            )),
+            check_declarations(&one_clause(own(vec![]), ModeExpr::Write, None)),
             Ok(())
         );
         assert_eq!(
@@ -3122,9 +3119,7 @@ mod tests {
                 ..MethodSignature::default()
             })
         };
-        let write = || ModeExpr::Write {
-            requires: Presence::Either,
-        };
+        let write = || ModeExpr::Write;
         let effect = |target, mode, denomination: Option<Expr>| Clause::Effect {
             guard: None,
             target,
@@ -3315,9 +3310,7 @@ mod tests {
             material: vec![a_resource()],
             order: Expr::Literal(Value::U128(order)),
         };
-        let write = || ModeExpr::Write {
-            requires: Presence::Either,
-        };
+        let write = || ModeExpr::Write;
 
         // Its own prefix, however the key under it is derived.
         assert_eq!(

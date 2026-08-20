@@ -17,7 +17,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget, Mode, Movement, Outcome,
-    Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// What every cell these fixtures move value through holds.
@@ -191,9 +191,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
     declared
         .insert(Effect {
             target: EffectTarget::Point(signed_nullifier()),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         })
         .unwrap();
     BatchTx {

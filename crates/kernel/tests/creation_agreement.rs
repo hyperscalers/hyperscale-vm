@@ -12,7 +12,7 @@ use hyperscale_vm_effects::{
     route,
 };
 use hyperscale_vm_kernel::MemoryStore;
-use hyperscale_vm_types::{Effect, EffectTarget, Mode, Presence, PrincipalAddr, SubstateKey};
+use hyperscale_vm_types::{Effect, EffectTarget, Mode, PrincipalAddr, SubstateKey};
 
 /// A package whose one method creates one object and inserts one
 /// collection entry at a fresh sequence.
@@ -52,16 +52,12 @@ fn spawner() -> PackageMetadata {
 
 /// An ordinary declared write: on a leaf that may or may not be there.
 const fn declared_write() -> ModeExpr {
-    ModeExpr::Write {
-        requires: Presence::Either,
-    }
+    ModeExpr::Write
 }
 
 /// The same write, evaluated.
 const fn write() -> Mode {
-    Mode::Write {
-        requires: Presence::Either,
-    }
+    Mode::Write
 }
 
 #[test]
@@ -136,9 +132,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
             collection: collection_id(&TestHasher, creator.address(), SlotId(4), &[]),
             order: (u128::from(99u64) << 64) | u128::from(seq),
         },
-        mode: Mode::Write {
-            requires: Presence::Either
-        },
+        mode: Mode::Write,
     }));
 
     // Node 0's creation is a different key: the node index namespaces.
@@ -149,8 +143,6 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     assert_ne!(from_node_zero, created);
     assert!(declared.contains(&Effect {
         target: EffectTarget::Point(from_node_zero),
-        mode: Mode::Write {
-            requires: Presence::Either
-        },
+        mode: Mode::Write,
     }));
 }

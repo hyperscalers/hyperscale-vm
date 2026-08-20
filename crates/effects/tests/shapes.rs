@@ -16,7 +16,7 @@ use hyperscale_vm_effects::{
     InstanceRegistry, ManifestGraph, MetadataCache, ResolveError, TestHasher, Value, admit,
     collection_id, fresh_id, route,
 };
-use hyperscale_vm_types::{Effect, EffectTarget, Mode, Presence};
+use hyperscale_vm_types::{Effect, EffectTarget, Mode};
 
 /// One consumed output edge, unconstrained.
 const fn edge(producer: u32, output: u32) -> GraphArg {
@@ -28,9 +28,7 @@ const fn edge(producer: u32, output: u32) -> GraphArg {
 
 /// An ordinary write: on a leaf that may or may not be there.
 const fn write() -> Mode {
-    Mode::Write {
-        requires: Presence::Either,
-    }
+    Mode::Write
 }
 
 #[test]

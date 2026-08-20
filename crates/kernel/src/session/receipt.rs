@@ -442,7 +442,7 @@ fn diff(store: &OverlayStore) -> StateDelta {
 mod tests {
     use hyperscale_vm_types::{
         AbortReason, Address, AddressClass, CollectionId, Effect, EffectTarget, Event, Mode,
-        Outcome, Presence, encode_amount,
+        Outcome, encode_amount,
     };
 
     use super::super::fixtures::{declared, key, session_holding, session_over};
@@ -518,9 +518,7 @@ mod tests {
         store.write(vault, encode_amount(100).to_vec()).unwrap();
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         }]);
         let mut session = session_holding(store, &set);
 
@@ -554,9 +552,7 @@ mod tests {
         store.write(vault, encode_amount(100).to_vec()).unwrap();
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         }]);
         let mut session = session_holding(store, &set);
 
@@ -580,9 +576,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
         session.range_count(0).unwrap();

@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
-    Address, Denomination, Effect, EffectTarget, Mode, Presence, PrincipalAddr, SubstateKey,
+    Address, Denomination, Effect, EffectTarget, Mode, PrincipalAddr, SubstateKey,
 };
 
 use crate::PACKAGE_SLOT_BASE;
@@ -333,9 +333,7 @@ pub fn route_tree(tree: &AdmittedTree, shards: &dyn ShardResolver) -> Routing {
         let shard = shards.shard_of(record.signer.address());
         let effect = Effect {
             target: EffectTarget::Point(record.nullifier),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         };
         // No signature declared this, so it belongs to no frame.
         routing.push_kernel_effect(shard, effect);

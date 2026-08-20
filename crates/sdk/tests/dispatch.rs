@@ -13,7 +13,7 @@ use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_sdk::host::{CellKind, GuestArg, Invoked};
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget,
-    Mode, Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 const OWNER: Address = Address::new([0x21; 31], AddressClass::Component);
@@ -140,9 +140,7 @@ fn two_cells() -> KernelSession {
         declared
             .insert(Effect {
                 target: EffectTarget::Point(child_key(&TestHasher, OWNER, SlotId(slot), &[])),
-                mode: Mode::Write {
-                    requires: Presence::Either,
-                },
+                mode: Mode::Write,
             })
             .expect("the effect set takes it");
     }
@@ -275,12 +273,7 @@ fn an_edge_the_body_credits_lands_in_the_declared_cell() {
 
 #[test]
 fn an_edge_the_body_produces_comes_back_as_the_kernels_own() {
-    let session = session(
-        Mode::Write {
-            requires: Presence::Either,
-        },
-        100,
-    );
+    let session = session(Mode::Write, 100);
 
     let (mut session, invoked) = till::invoke(
         "withdraw",
@@ -303,12 +296,7 @@ fn an_edge_the_body_produces_comes_back_as_the_kernels_own() {
 
 #[test]
 fn the_error_arm_declines_rather_than_trapping() {
-    let session = session(
-        Mode::Write {
-            requires: Presence::Either,
-        },
-        10,
-    );
+    let session = session(Mode::Write, 10);
 
     let (_, invoked) = till::invoke(
         "withdraw",
@@ -362,12 +350,7 @@ fn a_read_of_a_vault_answers_a_quantity_and_not_bytes() {
 /// canonical ABI's mode escape, reached here by the same route.
 #[test]
 fn a_capability_at_the_wrong_mode_is_a_violation() {
-    let session = session(
-        Mode::Write {
-            requires: Presence::Either,
-        },
-        10,
-    );
+    let session = session(Mode::Write, 10);
 
     // `withdraw` reads and writes, so its clause materialized exclusive;
     // a rep arriving as a fresh read is a mode the export never declared.

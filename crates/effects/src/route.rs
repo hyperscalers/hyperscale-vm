@@ -179,7 +179,7 @@ mod tests {
 
     use hyperscale_vm_types::{
         Address, AddressClass, CallTarget, CellKind, Effect, EffectConflict, EffectSet,
-        EffectTarget, Mode, Presence, PrincipalAddr,
+        EffectTarget, Mode, PrincipalAddr,
     };
 
     use super::{PrefixShardResolver, Routing, ShardResolver, route};
@@ -542,18 +542,11 @@ mod tests {
                                 slot: package_slot(0),
                                 material: vec![Expr::Binding(0)],
                             }),
-                            mode: ModeExpr::Write {
-                                requires: Presence::Either,
-                            },
+                            mode: ModeExpr::Write,
                             denomination: None,
                         }],
                     },
-                    self_point(
-                        package_slot(1),
-                        ModeExpr::Write {
-                            requires: Presence::Either,
-                        },
-                    ),
+                    self_point(package_slot(1), ModeExpr::Write),
                 ],
                 ..MethodSignature::default()
             },
@@ -597,9 +590,7 @@ mod tests {
                 declaration.ordered[usize::try_from(rep).unwrap()]
                     .effect
                     .mode,
-                Mode::Write {
-                    requires: Presence::Either
-                },
+                Mode::Write,
                 "the bound clause's own effect, whatever the spread's width"
             );
         }
@@ -629,9 +620,7 @@ mod tests {
                         slot: SlotId(1),
                         material: vec![],
                     }),
-                    mode: ModeExpr::Write {
-                        requires: Presence::Either,
-                    },
+                    mode: ModeExpr::Write,
                     denomination: None,
                 }],
                 ..MethodSignature::default()
@@ -1060,12 +1049,7 @@ mod tests {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(0), AbiParam::Bucket(0)],
-                effects: vec![self_point(
-                    package_slot(0),
-                    ModeExpr::Write {
-                        requires: Presence::Either,
-                    },
-                )],
+                effects: vec![self_point(package_slot(0), ModeExpr::Write)],
                 ..MethodSignature::default()
             },
         );

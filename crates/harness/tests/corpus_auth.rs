@@ -12,7 +12,8 @@ use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    AbortReason, EffectTarget, Outcome, Presence, PrincipalAddr, TxHash, encode_amount,
+    AbortReason, EffectTarget, Outcome, Presence, PrincipalAddr, TxHash, UnmetCondition,
+    encode_amount,
 };
 use wasmtime::Result;
 
@@ -123,9 +124,11 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     );
     assert_eq!(
         results,
-        vec![TxResult::Refused(Outcome::PresenceUnmet {
-            target: EffectTarget::Point(auth(ALICE)),
-            required: Presence::Absent,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(auth(ALICE)),
+                required: Presence::Absent,
+            },
         })],
         "a one-way door is a declared precondition, not a guest panic — and \
          losing the race to it is priced as one"
@@ -562,9 +565,11 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     );
     assert_eq!(
         results,
-        vec![TxResult::Refused(Outcome::PresenceUnmet {
-            target: EffectTarget::Point(auth(ALICE)),
-            required: Presence::Present,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(auth(ALICE)),
+                required: Presence::Present,
+            },
         })]
     );
 }

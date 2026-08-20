@@ -322,18 +322,15 @@ pub enum ModeExpr {
     Delta,
     /// Conditional decrement of the evaluated amount.
     Reserve(Expr),
-    /// Exclusive read-modify-write, and what it requires of the leaf.
+    /// Exclusive read-modify-write.
     ///
-    /// The requirement travels with the routed declaration, so every
-    /// layer reads it off the signature rather than off a body: a caller
-    /// routes on it, a wallet can say "this call creates your authority
-    /// cell, and fails if you already have one", and the shard holding
-    /// the cell judges it where it already judges a reservation.
-    Write {
-        /// What the leaf must be. `Either` is what a declaration saying
-        /// nothing means.
-        requires: Presence,
-    },
+    /// What the leaf must be for the write to land is not the mode's to
+    /// say: a presence requirement is a `Requires` clause the same
+    /// declaration states — which is what a wallet reads to say "this
+    /// call creates your authority cell, and fails if you already have
+    /// one" — judged by the shard holding the cell, where it already
+    /// judges a reservation.
+    Write,
 }
 
 /// An access target expression.
@@ -409,7 +406,7 @@ pub const fn materialized_kind(clause: &Clause) -> Option<CellKind> {
             CellKind::Read
         }),
         (TargetExpr::Point(_), ModeExpr::Locked) => Some(CellKind::Locked),
-        (TargetExpr::Point(_), ModeExpr::Write { .. }) => Some(if holds_value {
+        (TargetExpr::Point(_), ModeExpr::Write) => Some(if holds_value {
             CellKind::Amount
         } else {
             CellKind::Write
@@ -419,7 +416,7 @@ pub const fn materialized_kind(clause: &Clause) -> Option<CellKind> {
         (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Read) => {
             Some(CellKind::RangeRead)
         }
-        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write { .. }) => {
+        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write) => {
             Some(if holds_value {
                 CellKind::InstanceRange
             } else {
@@ -1128,9 +1125,7 @@ fn eval_mode(
             let amount = as_u128(eval_expr(expr, inputs, hasher, bindings, 0)?)?;
             Ok(Mode::Reserve { amount })
         }
-        ModeExpr::Write { requires } => Ok(Mode::Write {
-            requires: *requires,
-        }),
+        ModeExpr::Write => Ok(Mode::Write),
     }
 }
 
@@ -1751,17 +1746,13 @@ mod tests {
             Clause::Effect {
                 guard: None,
                 target: point(0xF0),
-                mode: ModeExpr::Write {
-                    requires: Presence::Either,
-                },
+                mode: ModeExpr::Write,
                 denomination: None,
             },
             Clause::Effect {
                 guard: None,
                 target: point(0x0F),
-                mode: ModeExpr::Write {
-                    requires: Presence::Either,
-                },
+                mode: ModeExpr::Write,
                 denomination: None,
             },
             // The same target as the first clause: a degenerate instance
@@ -1769,9 +1760,7 @@ mod tests {
             Clause::Effect {
                 guard: None,
                 target: point(0xF0),
-                mode: ModeExpr::Write {
-                    requires: Presence::Either,
-                },
+                mode: ModeExpr::Write,
                 denomination: None,
             },
         ];
@@ -2067,9 +2056,7 @@ mod tests {
                     hi: Expr::Arg(1),
                     cap: 16,
                 },
-                mode: ModeExpr::Write {
-                    requires: Presence::Either,
-                },
+                mode: ModeExpr::Write,
                 denomination: None,
             },
             Clause::Effect {
@@ -2092,9 +2079,7 @@ mod tests {
                 hi: 110,
                 cap: 16,
             },
-            mode: Mode::Write {
-                requires: Presence::Either
-            },
+            mode: Mode::Write,
         }));
         assert!(set.contains(&Effect {
             target: EffectTarget::Point(child_key(&TestHasher, ins.self_addr, SlotId(9), &[])),
@@ -2111,9 +2096,7 @@ mod tests {
                 hi: Expr::Arg(0),
                 cap: 16,
             },
-            mode: ModeExpr::Write {
-                requires: Presence::Either,
-            },
+            mode: ModeExpr::Write,
             denomination: None,
         }];
         assert_eq!(
@@ -2139,9 +2122,7 @@ mod tests {
                 material: vec![Expr::Arg(slot)],
                 order: Expr::Literal(Value::U128(9)),
             },
-            mode: ModeExpr::Write {
-                requires: Presence::Either,
-            },
+            mode: ModeExpr::Write,
             denomination: None,
         };
         let set = evaluate_effects(&[entry_for(0), entry_for(1)], &ins, &TestHasher).unwrap();
@@ -2161,9 +2142,7 @@ mod tests {
                     collection: id_for(resource),
                     order: 9,
                 },
-                mode: Mode::Write {
-                    requires: Presence::Either
-                },
+                mode: Mode::Write,
             }));
         }
 
@@ -2199,9 +2178,7 @@ mod tests {
                     material: vec![Expr::Arg(slot)],
                 },
             },
-            mode: ModeExpr::Write {
-                requires: Presence::Either,
-            },
+            mode: ModeExpr::Write,
             denomination: None,
         };
         let set = evaluate_effects(&[entry_for(0), entry_for(1)], &ins, &TestHasher).unwrap();
@@ -2221,9 +2198,7 @@ mod tests {
                     collection: collection_id(&TestHasher, ins.self_addr, SlotId(2), &[]),
                     order: order_for(name),
                 },
-                mode: Mode::Write {
-                    requires: Presence::Either
-                },
+                mode: Mode::Write,
             }));
         }
 

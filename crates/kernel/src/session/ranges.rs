@@ -375,7 +375,6 @@ mod tests {
     use hyperscale_vm_effects::Declaration;
     use hyperscale_vm_types::{
         AMOUNT_CELL_BYTES, Address, AddressClass, CollectionId, Effect, EffectTarget, Mode,
-        Presence,
     };
 
     use super::super::fixtures::{declared, env, hash, holding, session_holding, session_over, tx};
@@ -397,9 +396,7 @@ mod tests {
                 hi: 15,
                 cap: 4,
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         }]);
         let mut session = session_over(store, &set);
 
@@ -438,9 +435,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 2,
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
@@ -472,9 +467,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 1,
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
@@ -512,9 +505,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         }]);
         let mut session = session_over(store, &set);
 
@@ -547,9 +538,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         }]);
         let mut session = session_over(store, &set);
 
@@ -582,9 +571,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         };
         // The clause order pins the reps: 0 reads the held collection,
         // 1 writes the other.
@@ -629,9 +616,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         }]);
         let mut session = session_holding(store, &set);
 

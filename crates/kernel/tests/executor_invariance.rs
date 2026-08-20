@@ -14,7 +14,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget, Mode,
-    Movement, Outcome, Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Movement, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// What every cell these fixtures move value through holds.
@@ -166,26 +166,8 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
         ),
         // Two writers of one cell: write-write conflict, one group,
         // canonical order.
-        BatchTx::new(
-            tx(0x03),
-            moving(point(
-                cell(0xE),
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            )),
-            env(),
-        ),
-        BatchTx::new(
-            tx(0x04),
-            moving(point(
-                cell(0xE),
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            )),
-            env(),
-        ),
+        BatchTx::new(tx(0x03), moving(point(cell(0xE), Mode::Write)), env()),
+        BatchTx::new(tx(0x04), moving(point(cell(0xE), Mode::Write)), env()),
         // Infeasible: the sender vault cannot cover it after tx 0x01.
         BatchTx::new(
             tx(0x05),
@@ -193,16 +175,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
             env(),
         ),
         // The doomed writer on its own cell.
-        BatchTx::new(
-            tx(0x66),
-            moving(point(
-                cell(0xF),
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            )),
-            env(),
-        ),
+        BatchTx::new(tx(0x66), moving(point(cell(0xF), Mode::Write)), env()),
     ];
     (store, batch)
 }
@@ -385,12 +358,7 @@ fn each_transaction_sees_its_own_clock() {
 
     let early = BatchTx::new(
         tx(0x01),
-        moving(point(
-            cell(0xE),
-            Mode::Write {
-                requires: Presence::Either,
-            },
-        )),
+        moving(point(cell(0xE), Mode::Write)),
         EnvInputs {
             clock_ms: 1_000,
             randomness: env().randomness,
@@ -398,12 +366,7 @@ fn each_transaction_sees_its_own_clock() {
     );
     let late = BatchTx::new(
         tx(0x02),
-        moving(point(
-            cell(0xF),
-            Mode::Write {
-                requires: Presence::Either,
-            },
-        )),
+        moving(point(cell(0xF), Mode::Write)),
         EnvInputs {
             clock_ms: 2_000,
             randomness: env().randomness,
@@ -447,12 +410,7 @@ fn each_transaction_sees_its_own_draw() {
 
     let first = BatchTx::new(
         tx(0x01),
-        moving(point(
-            cell(0xE),
-            Mode::Write {
-                requires: Presence::Either,
-            },
-        )),
+        moving(point(cell(0xE), Mode::Write)),
         EnvInputs {
             clock_ms: env().clock_ms,
             randomness: [7; 32],
@@ -460,12 +418,7 @@ fn each_transaction_sees_its_own_draw() {
     );
     let second = BatchTx::new(
         tx(0x02),
-        moving(point(
-            cell(0xF),
-            Mode::Write {
-                requires: Presence::Either,
-            },
-        )),
+        moving(point(cell(0xF), Mode::Write)),
         EnvInputs {
             clock_ms: env().clock_ms,
             randomness: [9; 32],

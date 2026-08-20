@@ -6,9 +6,7 @@ use hyperscale_vm_fixtures::{amm, shares};
 use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_stdlib::account;
-use hyperscale_vm_types::{
-    Address, EffectTarget, Mode, Presence, SubstateKey, TxHash, encode_amount,
-};
+use hyperscale_vm_types::{Address, EffectTarget, Mode, SubstateKey, TxHash, encode_amount};
 
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
@@ -109,18 +107,8 @@ fn swap_profile_and_provision_shape_are_exact() {
         *pool_set,
         set(&[
             point(config_leaf(pool()), Mode::Locked,),
-            point(
-                vault(pool(), RES_X),
-                Mode::Write {
-                    requires: Presence::Either
-                }
-            ),
-            point(
-                vault(pool(), RES_Y),
-                Mode::Write {
-                    requires: Presence::Either
-                }
-            ),
+            point(vault(pool(), RES_X), Mode::Write),
+            point(vault(pool(), RES_Y), Mode::Write),
         ])
     );
     // The pool-shard provision carries the two balance cells and nothing

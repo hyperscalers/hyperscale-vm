@@ -16,7 +16,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget, Mode,
-    Outcome, Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// What every cell these fixtures move value through holds.
@@ -317,12 +317,7 @@ fn nullifier() -> SubstateKey {
 fn nullifier_tx(id: u8) -> BatchTx {
     BatchTx {
         tx: tx(id),
-        declaration: Declaration::from_set(point(
-            nullifier(),
-            Mode::Write {
-                requires: Presence::Either,
-            },
-        )),
+        declaration: Declaration::from_set(point(nullifier(), Mode::Write)),
         calls: Vec::new(),
         nullifiers: vec![nullifier()],
         env: env(),
@@ -498,26 +493,16 @@ fn declaration_views_that_disagree_refuse_the_batch() {
     let mismatched = BatchTx {
         tx: tx(0x01),
         declaration: Declaration {
-            set: point(
-                cell(0xA),
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            ),
+            set: point(cell(0xA), Mode::Write),
             // A different cell entirely: folding this does not reproduce
             // the set beside it.
-            ordered: point(
-                cell(0xB),
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            )
-            .iter()
-            .map(|effect| DeclaredAccess {
-                effect,
-                holds: None,
-            })
-            .collect(),
+            ordered: point(cell(0xB), Mode::Write)
+                .iter()
+                .map(|effect| DeclaredAccess {
+                    effect,
+                    holds: None,
+                })
+                .collect(),
             ..Declaration::default()
         },
         calls: Vec::new(),
@@ -620,16 +605,7 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
     let outcome = execute_batch(
         Arc::new(store),
         &[
-            BatchTx::new(
-                tx(0x01),
-                moving(point(
-                    poisoned,
-                    Mode::Write {
-                        requires: Presence::Either,
-                    },
-                )),
-                env(),
-            ),
+            BatchTx::new(tx(0x01), moving(point(poisoned, Mode::Write)), env()),
             BatchTx::new(tx(0x02), moving(point(poisoned, Mode::Delta)), env()),
         ],
         &writer,
@@ -687,16 +663,7 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
     let outcome = execute_batch(
         Arc::new(store),
         &[
-            BatchTx::new(
-                tx(0x01),
-                moving(point(
-                    vault,
-                    Mode::Write {
-                        requires: Presence::Either,
-                    },
-                )),
-                env(),
-            ),
+            BatchTx::new(tx(0x01), moving(point(vault, Mode::Write)), env()),
             BatchTx::new(
                 tx(0x02),
                 moving(point(vault, Mode::Reserve { amount: 100 })),

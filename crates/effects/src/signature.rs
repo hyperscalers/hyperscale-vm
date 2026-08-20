@@ -582,7 +582,7 @@ impl MethodSignature {
                 })
                 .ok_or(GateError::AuthorizingShape),
             Accessibility::RoleGated(role) => self
-                .rule_point(&|mode| matches!(mode, ModeExpr::Write { .. }))
+                .rule_point(&|mode| matches!(mode, ModeExpr::Write))
                 .map(|cell| GateShape::Rule { cell, role: *role })
                 .ok_or(GateError::RoleGatedShape),
             Accessibility::Custodial(claim) => self.custody(claim).ok_or(GateError::CustodialShape),
@@ -599,22 +599,34 @@ impl MethodSignature {
     /// creates its own rule cell, or that requires one already there, is
     /// gated on the same cell in the same mode.
     fn rule_point(&self, admits: &dyn Fn(&ModeExpr) -> bool) -> Option<&Expr> {
-        match self.effects.as_slice() {
-            [
-                Clause::Effect {
+        let mut accesses = self.accesses();
+        match (accesses.next(), accesses.next()) {
+            (
+                Some(Clause::Effect {
                     target: TargetExpr::Point(cell),
                     mode: declared,
                     ..
-                },
-            ] if admits(declared) => Some(cell),
+                }),
+                None,
+            ) if admits(declared) => Some(cell),
             _ => None,
         }
+    }
+
+    /// The declared accesses alone: the shape pins are over what a
+    /// method touches, and a condition clause beside them is a judgment,
+    /// not an access.
+    fn accesses(&self) -> impl Iterator<Item = &Clause> {
+        self.effects
+            .iter()
+            .filter(|clause| matches!(clause, Clause::Effect { .. }))
     }
 
     /// The custody shape over `claim`: the holder's rule cell, and the
     /// one possession read the claim's shape names — the badge-keyed
     /// vault, or the badge's holdings entry at the id.
     fn custody<'a>(&'a self, claim: &'a CustodyClaim) -> Option<GateShape<'a>> {
+        let accesses: Vec<&Clause> = self.accesses().collect();
         let [
             Clause::Effect {
                 target: TargetExpr::Point(cell),
@@ -626,7 +638,7 @@ impl MethodSignature {
                 mode: ModeExpr::Read,
                 ..
             },
-        ] = self.effects.as_slice()
+        ] = accesses.as_slice()
         else {
             return None;
         };

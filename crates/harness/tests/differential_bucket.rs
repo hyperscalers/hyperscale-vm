@@ -18,8 +18,7 @@ use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemorySto
 use hyperscale_vm_ref::{CVal, ResourceKind};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, CollectionId, Denomination, Effect, EffectSet,
-    EffectTarget, ISSUER_REP, Mode, Outcome, Presence, ResourceAddr, SubstateKey, TxHash,
-    encode_amount,
+    EffectTarget, ISSUER_REP, Mode, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::{bail, format_err};
@@ -117,15 +116,11 @@ fn fixture() -> Fixture {
         },
         Effect {
             target: EffectTarget::Point(vault),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         },
         Effect {
             target: EffectTarget::Point(opaque),
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         },
         Effect {
             target: EffectTarget::Point(ledger),
@@ -143,9 +138,7 @@ fn fixture() -> Fixture {
                 hi: 100,
                 cap: 8,
             },
-            mode: Mode::Write {
-                requires: Presence::Either,
-            },
+            mode: Mode::Write,
         },
     ] {
         declared.insert(effect).unwrap();
@@ -186,12 +179,7 @@ fn session_of(fx: &Fixture) -> KernelSession {
 fn rep_of(host: &KernelSession, wanted: SubstateKey, mode: Mode) -> u32 {
     rep_where(host, |c| match (mode, c) {
         (Mode::Read, Capability::Read(key))
-        | (
-            Mode::Write {
-                requires: Presence::Either,
-            },
-            Capability::Amount(key),
-        )
+        | (Mode::Write, Capability::Amount(key))
         | (Mode::Delta, Capability::Delta(key))
         | (Mode::Reserve { .. }, Capability::Reserve { key, .. }) => *key == wanted,
         _ => false,
@@ -304,18 +292,8 @@ impl Take {
         match self {
             Self::Issue(_) | Self::IssueUngranted(_) => None,
             Self::Delta(_) => Some((fx.ledger, Mode::Delta)),
-            Self::Vault(_) => Some((
-                fx.vault,
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            )),
-            Self::Opaque(_) => Some((
-                fx.opaque,
-                Mode::Write {
-                    requires: Presence::Either,
-                },
-            )),
+            Self::Vault(_) => Some((fx.vault, Mode::Write)),
+            Self::Opaque(_) => Some((fx.opaque, Mode::Write)),
             Self::Reserve | Self::ReserveTwice => {
                 Some((fx.reserved, Mode::Reserve { amount: RESERVED }))
             }
@@ -368,7 +346,7 @@ fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
             rep_of(&probe, key, mode),
             match mode {
                 Mode::Delta => ResourceKind::DeltaCell,
-                Mode::Write { .. } => ResourceKind::AmountCell,
+                Mode::Write => ResourceKind::AmountCell,
                 _ => ResourceKind::ReserveCell,
             },
         ),
@@ -503,13 +481,7 @@ fn credited(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<Credi
     let (key, mode, kind) = if delta {
         (fx.ledger, Mode::Delta, ResourceKind::DeltaCell)
     } else {
-        (
-            fx.vault,
-            Mode::Write {
-                requires: Presence::Either,
-            },
-            ResourceKind::AmountCell,
-        )
+        (fx.vault, Mode::Write, ResourceKind::AmountCell)
     };
     let args = vec![
         CVal::Borrow(rep_of(&probe, key, mode), kind),
@@ -567,13 +539,7 @@ fn a_consumed_handle_cannot_be_dropped_again() -> Result<()> {
     };
     let mut probe = session_of(&fx);
     let funds = probe.open_bucket(Held::Amount(30), RESOURCE);
-    let rep = rep_of(
-        &probe,
-        fx.vault,
-        Mode::Write {
-            requires: Presence::Either,
-        },
-    );
+    let rep = rep_of(&probe, fx.vault, Mode::Write);
     let mut dual = GUEST.instantiate(FUEL, build)?;
     let refused = dual.invoke_both(
         "put-write-then-drop",
@@ -610,13 +576,7 @@ struct Pair {
 fn paired(fx: &Fixture, a: u64, b: u64) -> Result<Pair> {
     let probe = session_of(fx);
     let ledger = rep_of(&probe, fx.ledger, Mode::Delta);
-    let vault = rep_of(
-        &probe,
-        fx.vault,
-        Mode::Write {
-            requires: Presence::Either,
-        },
-    );
+    let vault = rep_of(&probe, fx.vault, Mode::Write);
     let mut dual = GUEST.instantiate(FUEL, || session_of(fx))?;
     let produced = dual.invoke_both(
         "take-two",
