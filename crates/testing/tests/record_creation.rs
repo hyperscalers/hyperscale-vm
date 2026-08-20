@@ -8,7 +8,7 @@
 //! and a genesis-seeded one have to be the same object.
 
 use hyperscale_vm_effects::{
-    Fungibility, ResourceKind, ResourceRecord, TestHasher, instance_data_key, issued_resource,
+    ResourceKind, ResourceRecord, TestHasher, instance_data_key, issued_resource,
     resource_record_key,
 };
 use hyperscale_vm_sdk::blueprint;
@@ -80,11 +80,9 @@ fn a_creating_call_writes_the_canonical_record() {
     assert_eq!(
         chain.cell(resource_record_key(&TestHasher, instance, badge)),
         Some(
-            ResourceRecord {
-                kind: Fungibility::NonFungible,
-            }
-            .to_cell()
-            .expect("a record encodes")
+            ResourceRecord::NonFungible
+                .to_cell()
+                .expect("a record encodes")
         ),
     );
 }
@@ -106,11 +104,9 @@ fn a_fungible_record_states_its_divisibility() {
     assert_eq!(
         chain.cell(resource_record_key(&TestHasher, instance, coupon)),
         Some(
-            ResourceRecord {
-                kind: Fungibility::Fungible { divisibility: 6 },
-            }
-            .to_cell()
-            .expect("a record encodes")
+            ResourceRecord::Fungible { divisibility: 6 }
+                .to_cell()
+                .expect("a record encodes")
         ),
     );
 }

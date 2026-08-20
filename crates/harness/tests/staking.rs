@@ -18,10 +18,10 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    AdmissionError, EnvelopeTree, Fungibility, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, ResourceKind,
-    ResourceRecord, TestHasher, Value, admit_tree, child_key, holdings_collection,
-    instance_data_key, resource_address, resource_record_key, route_tree,
+    AdmissionError, EnvelopeTree, Hash32, Hasher, InstanceMeta, InstanceRegistry, IntentDecl,
+    ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, ResourceKind, ResourceRecord,
+    TestHasher, Value, admit_tree, child_key, holdings_collection, instance_data_key,
+    resource_address, resource_record_key, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
@@ -266,9 +266,7 @@ fn batch_entry(
 }
 
 /// The record the pool's instantiation writes for the unit it issues.
-const UNIT_RECORD: ResourceRecord = ResourceRecord {
-    kind: Fungibility::Fungible { divisibility: 18 },
-};
+const UNIT_RECORD: ResourceRecord = ResourceRecord::Fungible { divisibility: 18 };
 
 fn seeded_store(xrd: u128, units: u128) -> MemoryStore {
     let mut store = MemoryStore::new();
@@ -476,9 +474,7 @@ fn found_graph() -> ManifestGraph {
 }
 
 /// The record the founding call writes for the badge it creates.
-const BADGE_RECORD: ResourceRecord = ResourceRecord {
-    kind: Fungibility::NonFungible,
-};
+const BADGE_RECORD: ResourceRecord = ResourceRecord::NonFungible;
 
 /// A pool instantiated outside genesis reaches its own operator surface:
 /// one founding call writes the badge's record and its instance, files

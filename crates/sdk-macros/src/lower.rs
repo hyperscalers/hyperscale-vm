@@ -2866,10 +2866,8 @@ impl<'a> Lowerer<'a> {
                                 );
                                 return Eval::absent(call.span(), "a record with no divisibility");
                             };
-                            quote!(::hyperscale_vm_sdk::state::ResourceRecord {
-                                kind: ::hyperscale_vm_sdk::state::Fungibility::Fungible {
-                                    divisibility: #divisibility,
-                                },
+                            quote!(::hyperscale_vm_sdk::state::ResourceRecord::Fungible {
+                                divisibility: #divisibility,
                             })
                         }
                         ResourceKind::NonFungible => {
@@ -2880,9 +2878,7 @@ impl<'a> Lowerer<'a> {
                                      is the mark's and instances are whole by construction",
                                 );
                             }
-                            quote!(::hyperscale_vm_sdk::state::ResourceRecord {
-                                kind: ::hyperscale_vm_sdk::state::Fungibility::NonFungible,
-                            })
+                            quote!(::hyperscale_vm_sdk::state::ResourceRecord::NonFungible)
                         }
                     };
                     return Eval::plain(quote!(#receiver_code.create(#record)));

@@ -77,17 +77,26 @@ pub fn issued_resource(
     resource_address(hasher, instance, kind, &material)
 }
 
-/// The decoder cap for a record cell: a flat two-field struct, one level
-/// of body over the frame.
+/// The decoder cap for a record cell: the one variant frame a record is,
+/// its scalar payload adding no level of its own.
 ///
-/// Public because the record crosses one boundary: the authoring surface
-/// writes the cell a client later decodes, and the two agree on the cap
-/// by reading it here.
-pub const RECORD_WIRE_DEPTH: usize = 4;
+/// Exactly what the shape takes, so a record that grows a nested field
+/// fails to encode until somebody raises this on purpose — which is what
+/// the fallible [`to_cell`](ResourceRecord::to_cell) is for. Public
+/// because the record crosses one boundary: the authoring surface writes
+/// the cell a client later decodes, and the two agree by reading it here.
+pub const RECORD_WIRE_DEPTH: usize = 1;
 
-/// What a record states about its resource, in the shape a client reads.
+/// One resource's record cell: what a client learns about a resource
+/// that its address cannot be read backwards to give them.
+///
+/// The kind is restated rather than stated — the address commits it, and
+/// nothing on-chain consults the record — and the divisibility rides the
+/// fungible arm because that is the only arm it means anything on:
+/// instances are whole by construction, so a non-fungible record has
+/// nothing to say beyond existing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub enum Fungibility {
+pub enum ResourceRecord {
     /// Linear amounts in vault cells; edges carry 16-byte quantities.
     Fungible {
         /// Display quantization: how many base-10 subunit digits a
@@ -96,17 +105,13 @@ pub enum Fungibility {
         divisibility: u8,
     },
     /// Named instances held as sub-collection entries; edges carry id
-    /// sets. Instances are whole by construction, so there is no
-    /// divisibility to state.
+    /// sets.
     NonFungible,
 }
 
-impl Fungibility {
-    /// The kind this record restates.
-    ///
-    /// Restates rather than states: the address already commits it, and
-    /// the record carries it because a hash cannot be read backwards —
-    /// a client learns a resource's kind here, never the kernel.
+impl ResourceRecord {
+    /// The kind this record restates, which is the one its resource's
+    /// address already commits.
     #[must_use]
     pub const fn kind(&self) -> ResourceKind {
         match self {
@@ -114,17 +119,7 @@ impl Fungibility {
             Self::NonFungible => ResourceKind::NonFungible,
         }
     }
-}
 
-/// One resource's record cell.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub struct ResourceRecord {
-    /// The resource's kind. What discriminates an amount edge from an id
-    /// edge, checked wherever a declaration types one.
-    pub kind: Fungibility,
-}
-
-impl ResourceRecord {
     /// The record's canonical cell bytes.
     ///
     /// # Errors
@@ -401,7 +396,7 @@ mod tests {
     use hyperscale_vm_types::{Address, AddressClass};
 
     use super::{
-        Fungibility, ResourceRecord, holdings_collection, instance_data_key, resource_record_key,
+        ResourceKind, ResourceRecord, holdings_collection, instance_data_key, resource_record_key,
     };
     use crate::hash::TestHasher;
     use crate::types::native_address;
@@ -410,16 +405,21 @@ mod tests {
     #[test]
     fn records_round_trip_canonically() {
         for record in [
-            ResourceRecord {
-                kind: Fungibility::Fungible { divisibility: 18 },
-            },
-            ResourceRecord {
-                kind: Fungibility::NonFungible,
-            },
+            ResourceRecord::Fungible { divisibility: 18 },
+            ResourceRecord::NonFungible,
         ] {
             assert_canonical(&record);
             let bytes = record.to_cell().unwrap();
             assert_eq!(ResourceRecord::from_cell(&bytes).unwrap(), record);
+            // The kind a client reads off the record is the kind its
+            // address was derived through.
+            assert_eq!(
+                record.kind(),
+                match record {
+                    ResourceRecord::Fungible { .. } => ResourceKind::Fungible,
+                    ResourceRecord::NonFungible => ResourceKind::NonFungible,
+                }
+            );
         }
     }
 

@@ -51,6 +51,12 @@
 use hyperscale_hbor::{
     DEFAULT_MAX_DEPTH, HborDecode, HborEncode, from_slice_with_depth, to_vec_with_depth,
 };
+/// The record a resource's cell holds, in the shape a client reads.
+///
+/// Named here for the code the macro emits: a body never constructs one —
+/// `create` on the record handle states at most a divisibility, and the
+/// kind comes from the mark's own declaration.
+pub use hyperscale_vm_effects::ResourceRecord;
 /// The stored-authority vocabulary, named where a body's words live.
 ///
 /// A role-table parameter is [`RoleTable`] — the same type a cell holds,
@@ -58,12 +64,6 @@ use hyperscale_hbor::{
 /// skeleton is legible here; each rule's bytes stay opaque, decoded only
 /// where a rule is judged.
 pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, RoleBytes, RoleTable};
-/// The record a resource's cell holds, in the shape a client reads.
-///
-/// Named here for the code the macro emits: a body never constructs one —
-/// `create` on the record handle states at most a divisibility, and the
-/// kind comes from the mark's own declaration.
-pub use hyperscale_vm_effects::{Fungibility, ResourceRecord};
 use hyperscale_vm_effects::{MAX_AUTH_CELL_WIRE_DEPTH, RECORD_WIRE_DEPTH};
 use hyperscale_vm_types::{Address, ResourceAddr};
 
