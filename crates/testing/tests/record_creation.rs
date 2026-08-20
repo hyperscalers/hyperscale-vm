@@ -8,16 +8,19 @@
 //! and a genesis-seeded one have to be the same object.
 
 use hyperscale_vm_effects::{
-    Fungibility, ResourceKind, ResourceRecord, TestHasher, issued_resource, resource_record_key,
+    Fungibility, ResourceKind, ResourceRecord, TestHasher, instance_data_key, issued_resource,
+    resource_record_key,
 };
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_testing::{Chain, PrincipalAddr, package, principal};
+use hyperscale_vm_testing::{Chain, PrincipalAddr, account, package, principal};
 use hyperscale_vm_types::{Outcome, Presence, UnmetCondition};
 
 const FOUNDER: PrincipalAddr = principal(0x31);
 
 #[blueprint]
 mod issuer {
+    use hyperscale_vm_sdk::state::{NfBucket, mint_nf};
+
     #[resource(non_fungible)]
     struct OwnerBadge;
 
@@ -28,9 +31,11 @@ mod issuer {
     struct Issuer {}
 
     impl Issuer {
-        /// Bring the badge into existence.
-        pub fn found(&mut self) {
+        /// Bring the badge into existence: its record, and its first
+        /// instance, handed back as an edge for the founder to keep.
+        pub fn found(&mut self) -> NfBucket {
             self.resource(OwnerBadge).create();
+            mint_nf(OwnerBadge, &[0])
         }
 
         /// Bring the coupon into existence, displayed at six digits.
@@ -47,15 +52,24 @@ fn founded() -> (Chain, issuer::client::Issuer) {
     (chain, instance)
 }
 
+/// Found the pool: create the badge's record, mint instance 0, and file
+/// the edge in the founder's own account.
+fn found(chain: &mut Chain, instance: issuer::client::Issuer) {
+    chain
+        .transact(FOUNDER, |b| {
+            let badge = instance.found(b)?;
+            account::deposit_nf(b, FOUNDER, badge)
+        })
+        .expect_completed();
+}
+
 /// The record a creating call writes is the record the protocol encodes:
 /// the same cell, the same bytes, under the issuer at the resource the
 /// mark derives.
 #[test]
 fn a_creating_call_writes_the_canonical_record() {
     let (mut chain, instance) = founded();
-    chain
-        .transact(FOUNDER, |b| instance.found(b))
-        .expect_completed();
+    found(&mut chain, instance);
 
     let badge = issued_resource(
         &TestHasher,
@@ -106,12 +120,13 @@ fn a_fungible_record_states_its_divisibility() {
 #[test]
 fn a_second_creation_is_refused_where_the_leaf_lives() {
     let (mut chain, instance) = founded();
-    chain
-        .transact(FOUNDER, |b| instance.found(b))
-        .expect_completed();
+    found(&mut chain, instance);
 
     let outcome = chain
-        .transact(FOUNDER, |b| instance.found(b))
+        .transact(FOUNDER, |b| {
+            let badge = instance.found(b)?;
+            account::deposit_nf(b, FOUNDER, badge)
+        })
         .refused()
         .cloned()
         .expect("the second creation is refused");
@@ -126,5 +141,25 @@ fn a_second_creation_is_refused_where_the_leaf_lives() {
             }
         ),
         "refused as the unmet absence, not as a trap: {outcome:?}",
+    );
+}
+
+/// The mint files the instance's data cell where the instance comes into
+/// existence: the presence byte, at the id the mint named, under the
+/// issuer — the cell genesis writes for a seated instance.
+#[test]
+fn a_mint_files_the_instance_cell_at_its_id() {
+    let (mut chain, instance) = founded();
+    found(&mut chain, instance);
+
+    let badge = issued_resource(
+        &TestHasher,
+        instance,
+        ResourceKind::NonFungible,
+        issuer::OWNER_BADGE,
+    );
+    assert_eq!(
+        chain.cell(instance_data_key(&TestHasher, instance, badge, 0)),
+        Some(vec![1]),
     );
 }

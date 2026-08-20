@@ -341,6 +341,15 @@ pub fn mint(rep: u32, value: u128) -> kernel::state::Bucket {
     kernel::state::mint(&issuer(rep), amount(value))
 }
 
+/// Create the named instances of what this invocation issues.
+///
+/// Never from the guest's side, on the terms [`mint`] states.
+#[must_use]
+#[inline(always)]
+pub fn mint_instances(rep: u32, ids: &[u64]) -> kernel::state::Bucket {
+    kernel::state::mint_instances(&issuer(rep), ids)
+}
+
 /// Destroy what a bucket carries, against this invocation's grant.
 pub fn burn(rep: u32, funds: kernel::state::Bucket) {
     kernel::state::burn(&issuer(rep), funds);

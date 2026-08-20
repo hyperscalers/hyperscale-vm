@@ -1431,6 +1431,54 @@ pub fn mint_granted(grant: u32, quantity: Quantity) -> Bucket {
     return Bucket::at(host::mint(grant, quantity.subunits()));
 }
 
+/// Create the named instances of the granted resource, as an edge.
+///
+/// Called by generated code, never by an author, on the terms
+/// [`mint_granted`] states — and always beside the instance-cell writes
+/// the same lowering emitted, so a minted instance's data cell is filed
+/// where the instance comes into existence.
+#[doc(hidden)]
+#[must_use]
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always)]
+pub fn mint_nf_granted(grant: u32, ids: &[u64]) -> NfBucket {
+    #[cfg(target_arch = "wasm32")]
+    return NfBucket::held(crate::guest::mint_instances(grant, ids));
+    #[cfg(not(target_arch = "wasm32"))]
+    return NfBucket::at(host::mint_instances(grant, ids));
+}
+
+/// File one minted instance's data cell: the presence marker, written
+/// where the declaration required absence.
+///
+/// Called by generated code, never by an author. One byte rather than
+/// nothing, so the cell reads as present wherever presence is asked; a
+/// genesis-seated instance writes the same byte, which is what holds a
+/// founded object and a seeded one to the same cells.
+#[doc(hidden)]
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always)]
+pub fn file_instance(handle: Handle) {
+    #[cfg(target_arch = "wasm32")]
+    return crate::guest::cell_set(handle, &[1]);
+    #[cfg(not(target_arch = "wasm32"))]
+    return host::cell_set(handle, &[1]);
+}
+
+/// Create the named instances of a resource this instance issues, as an
+/// edge.
+///
+/// The resource is a declared non-fungible `#[resource]` struct — the
+/// kind is the mark's, and the derivation folds it — and each id is part
+/// of the declaration: the lowering files each instance's data cell
+/// beside the mint, with the absence requirement that makes creating an
+/// instance and overwriting one different declarations.
+#[must_use]
+pub fn mint_nf<R: Mark<Kind = NonFungible>>(resource: R, ids: &[u64]) -> NfBucket {
+    let _ = (resource, ids);
+    unimplemented!("{OFF_HOST}")
+}
+
 /// Destroy the value at `funds` against the grant at `grant`.
 ///
 /// Called by generated code, never by an author, on the same terms

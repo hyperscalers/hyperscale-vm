@@ -244,7 +244,7 @@ impl Term {
                 quote!(
                     ::hyperscale_vm_sdk::sym::nf_bucket(
                         &#resource.cast::<::hyperscale_vm_sdk::Addr>(),
-                        &#ids,
+                        &#ids.cast::<::hyperscale_vm_sdk::Opaque>(),
                     )
                 )
             }

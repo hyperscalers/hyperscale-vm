@@ -11,16 +11,18 @@
 //! or an abort. An embedder can get engine embedding wrong; it cannot
 //! get manifest semantics wrong.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{AuthCell, CallArg, JudgedLeaf, NodeCall, PackageHash, RoleId, Rule};
+use hyperscale_vm_effects::{
+    AuthCell, CallArg, EdgeContent, JudgedLeaf, NodeCall, PackageHash, RoleId, Rule,
+};
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, MAX_ERROR_CODES, Outcome, SubstateKey, UnmetCondition,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult, Unavailable};
-use crate::session::{KernelSession, SessionTrap};
+use crate::session::{Held, KernelSession, SessionTrap};
 
 /// One export invocation, fully assembled.
 pub struct GuestCall<'a> {
@@ -209,8 +211,38 @@ fn settled(
     match invoked.result {
         // Edges come back as the buckets the kernel holds again, one per
         // declared output. A count that disagrees with the declaration is
-        // a package whose code and signature part company.
+        // a package whose code and signature part company — and so is a
+        // non-fungible edge carrying ids other than the declaration's,
+        // which are what admission keyed the instance cells by and what
+        // a consumer routed on.
         Invoked::Produced(reps) if reps.len() == call.outputs.len() => {
+            for (rep, expected) in reps.iter().zip(&call.outputs) {
+                let EdgeContent::NonFungible { ids } = expected else {
+                    continue;
+                };
+                let carried = match session.bucket(*rep) {
+                    Ok(Held::Instances(instances)) => instances,
+                    Ok(Held::Amount(_)) | Err(_) => {
+                        return Err(fail(
+                            session,
+                            Outcome::UserError {
+                                reason: AbortReason::BadReturnShape,
+                            },
+                            invoked.fuel,
+                        ));
+                    }
+                };
+                let declared: BTreeSet<u128> = ids.iter().copied().map(u128::from).collect();
+                if carried != declared {
+                    return Err(fail(
+                        session,
+                        Outcome::UserError {
+                            reason: AbortReason::WrongMintedIds,
+                        },
+                        invoked.fuel,
+                    ));
+                }
+            }
             Ok((session, reps, invoked.fuel))
         }
         Invoked::Produced(_) => Err(fail(

@@ -40,7 +40,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::vocabulary::RESOURCE;
+use hyperscale_vm_effects::vocabulary::{INSTANCE, RESOURCE};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
@@ -1153,6 +1153,90 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Lower `mint_nf(Name, &[id, ..])` — the non-fungible mint, coupled
+    /// to the instance-cell writes it implies: each named id is one data
+    /// cell created where absent, so a minted instance and its filed
+    /// cell are one declaration.
+    fn lower_mint_nf(&mut self, call: &syn::ExprCall) -> Eval {
+        let resolved = call
+            .args
+            .first()
+            .and_then(|arg| match arg {
+                syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
+                _ => None,
+            })
+            .and_then(|n| self.resources.iter().find(|(r, ..)| *r == n).cloned());
+        let Some((resource_name, mark, kind)) = resolved else {
+            self.error(
+                call.args.span(),
+                "`mint_nf` names a declared `#[resource]` struct — the derivation \
+                 folds the resource's kind, and the declaration is where a kind is \
+                 stated",
+            );
+            return Eval::absent(call.args.span(), "an undeclared resource");
+        };
+        if kind != ResourceKind::NonFungible {
+            self.error(
+                call.args.span(),
+                &format!(
+                    "`{resource_name}` is fungible — a fungible resource is minted \
+                     with `mint`, and its address is not the one instances would \
+                     sit under"
+                ),
+            );
+            return Eval::absent(call.args.span(), "a fungible resource minted as instances");
+        }
+        let Some(elements) = call.args.iter().nth(1).and_then(id_elements) else {
+            self.error(
+                call.args.span(),
+                "the ids a mint names are part of the declaration — each instance's \
+                 data cell is keyed by one — so they must be written as a literal \
+                 list: `&[fresh_id()]`, `&[0, 1]`",
+            );
+            return Eval::absent(call.args.span(), "an underivable id list");
+        };
+        let resource_term = Term::SelfResource(ResourceKind::NonFungible, mark.clone());
+        let mut id_terms = Vec::new();
+        let mut id_values = Vec::new();
+        let mut files = Vec::new();
+        for element in elements {
+            let eval = self.expr(element);
+            let Val::Term(id) = eval.val else {
+                self.error(
+                    element.span(),
+                    "this id is not derivable from the method's arguments — routing \
+                     evaluates the declaration before execution and never reads state",
+                );
+                return Eval::absent(element.span(), "an underivable instance id");
+            };
+            let site = self.open(
+                Target::Point {
+                    slot: INSTANCE.0,
+                    material: vec![resource_term.clone(), id.clone()],
+                },
+                None,
+                None,
+            );
+            self.record(site, Op::Create, None, call.span());
+            let handle = self.handle(site, call.span());
+            files.push(quote!(::hyperscale_vm_sdk::state::file_instance(#handle);));
+            id_terms.push(id);
+            id_values.push(self.value(eval.code));
+        }
+        let grant = self.issuer(ResourceKind::NonFungible, &mark);
+        let produced = Term::NfBucket {
+            resource: Box::new(resource_term),
+            ids: Box::new(Term::List(id_terms)),
+        };
+        Eval {
+            val: Val::Produced(produced),
+            code: Code::Rust(quote!({
+                #(#files)*
+                ::hyperscale_vm_sdk::state::mint_nf_granted(#grant, &[#(#id_values),*])
+            })),
+        }
+    }
+
     /// Lower `burn(mark, funds)`.
     ///
     /// What it destroys is the resource the mark derives, so an edge a
@@ -1427,6 +1511,13 @@ impl<'a> Lowerer<'a> {
     /// Bind this method's issuance grant as an export parameter, and
     /// answer the rep the issue call takes.
     fn issuer(&mut self, kind: ResourceKind, mark: &[u8]) -> TokenStream {
+        assert!(
+            self.out
+                .issues
+                .as_ref()
+                .is_none_or(|(k, m)| *k == kind && m == mark),
+            "a method holds one issuance grant, and two of its calls named two resources"
+        );
         self.out.issues = Some((kind, mark.to_vec()));
         quote!(__issuer)
     }
@@ -2402,6 +2493,9 @@ impl<'a> Lowerer<'a> {
                 code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#grant, #amount))),
             };
         }
+        if name == "mint_nf" {
+            return self.lower_mint_nf(call);
+        }
         // `burn(mark, funds)` — the inverse, under the same grant.
         if name == "burn" {
             let Some(mark) = call.args.first().and_then(byte_literal) else {
@@ -3335,4 +3429,16 @@ fn free_call_name(call: &syn::ExprCall) -> Option<String> {
         return None;
     };
     path.path.segments.last().map(|s| s.ident.to_string())
+}
+
+/// The elements of a literal id list expression: `&[a, b]` or `[a, b]`.
+fn id_elements(expr: &syn::Expr) -> Option<Vec<&syn::Expr>> {
+    let inner = match expr {
+        syn::Expr::Reference(reference) => &*reference.expr,
+        other => other,
+    };
+    match inner {
+        syn::Expr::Array(array) => Some(array.elems.iter().collect()),
+        _ => None,
+    }
 }

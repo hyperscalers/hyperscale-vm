@@ -261,6 +261,13 @@ pub fn mint(rep: u32, value: u128) -> u32 {
     settled(kernel(|k| k.mint(rep, value)))
 }
 
+/// Create the named instances of the resource this invocation was
+/// granted.
+#[must_use]
+pub fn mint_instances(rep: u32, ids: &[u64]) -> u32 {
+    settled(kernel(|k| k.mint_instances(rep, ids)))
+}
+
 /// Destroy what the bucket at `funds` carries, against the grant at `rep`.
 pub fn burn(rep: u32, funds: u32) {
     settled(kernel(|k| k.burn(rep, funds)));

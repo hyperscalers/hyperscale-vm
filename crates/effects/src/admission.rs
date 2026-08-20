@@ -1432,11 +1432,11 @@ fn lower_call(
         export: method.to_owned(),
         args,
         edges: edge_bounds(node_inputs),
-        // The declared cell shape of each produced edge, from the same
+        // The declared content of each produced edge, from the same
         // output projections everything else evaluated against.
         outputs: node_outputs
             .iter()
-            .map(|(_, content)| ResourceKind::of(content))
+            .map(|(_, content)| content.clone())
             .collect(),
         issues: signature.issues.as_ref().map(|issuance| {
             (

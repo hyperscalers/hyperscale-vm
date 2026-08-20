@@ -330,6 +330,15 @@ pub enum AbortReason {
     /// fungible amount of a non-fungible resource, or the reverse.
     #[hbor(discriminant = 59)]
     WrongIssuanceKind,
+    /// A produced non-fungible edge carrying ids other than the ones its
+    /// declaration named.
+    ///
+    /// The declared ids are what admission keyed the instance cells by
+    /// and what a consumer routed on, so an edge carrying any other set
+    /// is a guest whose code and signature part company — the same
+    /// standing a wrong-arity return has.
+    #[hbor(discriminant = 60)]
+    WrongMintedIds,
 }
 
 /// How execution ended: the abort taxonomy as the receipt records it.
@@ -538,6 +547,7 @@ mod tests {
             (57, AbortReason::InstantiationFailed),
             (58, AbortReason::CodeUnavailable),
             (59, AbortReason::WrongIssuanceKind),
+            (60, AbortReason::WrongMintedIds),
         ];
         for (byte, reason) in classes {
             assert_eq!(

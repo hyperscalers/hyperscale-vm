@@ -153,11 +153,12 @@ pub struct NodeCall {
     /// order, each with the bound its consumer signed. Checked before
     /// the invocation.
     pub edges: Vec<EdgeBound>,
-    /// The declared cell shape of each value edge the node produces, in
+    /// The declared content of each value edge the node produces, in
     /// output order. An export produces exactly one edge per entry: a
     /// fungible one as a bucket the kernel takes back, a non-fungible one
-    /// as the cell its ids frame.
-    pub outputs: Vec<ResourceKind>,
+    /// as the cell its ids frame — and the ids are the declaration's, so
+    /// the walk holds the produced edge to exactly them.
+    pub outputs: Vec<EdgeContent>,
     /// The resource this node's method may bring into being, where its
     /// declaration says it brings one, with the kind its derivation
     /// folded.

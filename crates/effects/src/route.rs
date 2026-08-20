@@ -843,7 +843,14 @@ mod tests {
             ],
         };
         let routing = routed(&graph, &cache, &instances);
-        assert_eq!(routing.calls[0].outputs, vec![ResourceKind::NonFungible]);
+        assert_eq!(
+            routing.calls[0]
+                .outputs
+                .iter()
+                .map(ResourceKind::of)
+                .collect::<Vec<_>>(),
+            vec![ResourceKind::NonFungible]
+        );
         assert_eq!(routing.calls[1].edges[0].kind, ResourceKind::NonFungible);
     }
 
