@@ -733,9 +733,11 @@ fn resolvable(expr: &Expr, known: &[bool], depth: usize) -> bool {
         // No `for-each` encloses an output expression, and no identity
         // exists to derive from yet.
         Expr::Binding(_) | Expr::FreshId { .. } | Expr::FreshKey { .. } => false,
-        Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) | Expr::Not(inner) => {
-            deeper(inner)
-        }
+        Expr::Field(inner, _)
+        | Expr::ResourceOf(inner)
+        | Expr::IdsOf(inner)
+        | Expr::Len(inner)
+        | Expr::Not(inner) => deeper(inner),
         Expr::Lookup { map, key } | Expr::Contains { map, key } => deeper(map) && deeper(key),
         Expr::Pack { hi, lo } => deeper(hi) && deeper(lo),
         Expr::And(left, right)

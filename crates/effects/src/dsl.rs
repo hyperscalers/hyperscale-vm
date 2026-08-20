@@ -93,6 +93,13 @@ pub enum Expr {
     ResourceOf(Box<Self>),
     /// The static id set of a non-fungible bucket edge, as a list.
     IdsOf(Box<Self>),
+    /// The length of a list, as a `u64`.
+    ///
+    /// What derives a bound from what a call names: a range cap over
+    /// the instances an edge carries, or the ids an argument lists, is
+    /// the count of them — so a move declares exactly the walk it
+    /// performs and pays for nothing wider.
+    Len(Box<Self>),
     /// A list built element by element — the dual of [`Expr::IdsOf`],
     /// for the producing side: a mint's id set is a list of fresh ids,
     /// each an expression of its own.
@@ -247,6 +254,7 @@ impl Expr {
             Self::Field(inner, _)
             | Self::ResourceOf(inner)
             | Self::IdsOf(inner)
+            | Self::Len(inner)
             | Self::Not(inner) => children.push(inner),
             Self::Lookup {
                 map: first,
@@ -1270,6 +1278,9 @@ fn eval_expr(
         Expr::Field(tuple, index) => field(&as_tuple(sub(tuple)?)?, *index),
         Expr::ResourceOf(bucket) => Ok(Value::Address(bucket_parts(sub(bucket)?)?.0.into())),
         Expr::IdsOf(bucket) => edge_ids(bucket_parts(sub(bucket)?)?.1),
+        Expr::Len(list) => Ok(Value::U64(
+            u64::try_from(as_list(sub(list)?)?.len()).unwrap_or(u64::MAX),
+        )),
         Expr::Lookup { map, key } => lookup(as_list(sub(map)?)?, &sub(key)?),
         Expr::SelfResource { material: parts } => Ok(Value::Address(
             resource_address(hasher, inputs.self_addr, &material(parts)?).into(),
@@ -1588,6 +1599,7 @@ mod tests {
             (Expr::Field(boxed(1), 0), vec![1]),
             (Expr::ResourceOf(boxed(1)), vec![1]),
             (Expr::IdsOf(boxed(1)), vec![1]),
+            (Expr::Len(boxed(1)), vec![1]),
             (Expr::Not(boxed(1)), vec![1]),
             (Expr::List(vec![leaf(1), leaf(2)]), vec![1, 2]),
             (Expr::Tuple(vec![leaf(1), leaf(2)]), vec![1, 2]),
@@ -2317,6 +2329,34 @@ mod tests {
         // A fungible edge refuses the id read: kind is structural,
         // never an empty answer.
         assert!(evaluate_expr(&Expr::IdsOf(Box::new(Expr::Arg(1))), &ins, &TestHasher).is_err());
+    }
+
+    #[test]
+    fn len_counts_a_list_and_refuses_anything_else() {
+        let list = Value::List(vec![Value::U64(7), Value::U64(9), Value::U64(11)]);
+        let bucket = Value::Bucket {
+            resource: ResourceAddr::new([0xE1; 31]).into(),
+            content: EdgeContent::NonFungible { ids: vec![7, 9] },
+        };
+        let args = [list, bucket];
+        let ins = inputs(&args, &[]);
+        assert_eq!(
+            evaluate_expr(&Expr::Len(Box::new(Expr::Arg(0))), &ins, &TestHasher),
+            Ok(Value::U64(3)),
+        );
+        // The count of an edge's instances is the length of its id
+        // projection — the composition a move's cap is derived through.
+        assert_eq!(
+            evaluate_expr(
+                &Expr::Len(Box::new(Expr::IdsOf(Box::new(Expr::Arg(1))))),
+                &ins,
+                &TestHasher,
+            ),
+            Ok(Value::U64(2)),
+        );
+        // A bucket itself is not a list: the projection is spelled, not
+        // implied.
+        assert!(evaluate_expr(&Expr::Len(Box::new(Expr::Arg(1))), &ins, &TestHasher).is_err());
     }
 
     #[test]

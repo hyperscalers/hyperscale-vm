@@ -29,6 +29,11 @@ pub enum Term {
     Config(u32),
     /// The static resource of a bucket parameter.
     ResourceOf(Box<Self>),
+    /// The static id set of a non-fungible bucket parameter, as a list.
+    IdsOf(Box<Self>),
+    /// The length of a list — the count of the instances an edge
+    /// carries, or the elements an argument names.
+    Len(Box<Self>),
     /// A keyed lookup over a configured table.
     Lookup {
         /// The table.
@@ -153,6 +158,20 @@ impl Term {
                     #inner
                         .cast::<::hyperscale_vm_sdk::Bucket>()
                         .resource()
+                        .cast::<::hyperscale_vm_sdk::Opaque>()
+                )
+            }
+            Self::IdsOf(inner) => {
+                let inner = inner.emit();
+                quote!(
+                    ::hyperscale_vm_sdk::sym::ids(&#inner.cast::<::hyperscale_vm_sdk::Bucket>())
+                        .cast::<::hyperscale_vm_sdk::Opaque>()
+                )
+            }
+            Self::Len(inner) => {
+                let inner = inner.emit();
+                quote!(
+                    ::hyperscale_vm_sdk::sym::len(&#inner.cast::<::hyperscale_vm_sdk::Seq>())
                         .cast::<::hyperscale_vm_sdk::Opaque>()
                 )
             }

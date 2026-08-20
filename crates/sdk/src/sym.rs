@@ -258,6 +258,21 @@ pub fn nf_bucket(resource: &Sym<Addr>, ids: &Sym<Opaque>) -> Sym<Opaque> {
     })
 }
 
+/// The instances a non-fungible edge carries, as a list.
+#[must_use]
+pub fn ids(bucket: &Sym<Bucket>) -> Sym<Seq> {
+    Sym::new(Expr::IdsOf(Box::new(bucket.expr.clone())))
+}
+
+/// The length of a list.
+///
+/// What a move's cap is derived from: the count of the instances an
+/// edge carries or an argument names is the walk the move performs.
+#[must_use]
+pub fn len(list: &Sym<Seq>) -> Sym<Num> {
+    Sym::new(Expr::Len(Box::new(list.expr.clone())))
+}
+
 /// Negation.
 #[must_use]
 pub fn not(value: &Sym<Flag>) -> Sym<Flag> {
@@ -370,9 +385,11 @@ pub fn expr_depth(expr: &Expr) -> usize {
         | Expr::SelfAddr
         | Expr::FreshId { .. }
         | Expr::FreshKey { .. } => 0,
-        Expr::Field(inner, _) | Expr::ResourceOf(inner) | Expr::IdsOf(inner) | Expr::Not(inner) => {
-            expr_depth(inner)
-        }
+        Expr::Field(inner, _)
+        | Expr::ResourceOf(inner)
+        | Expr::IdsOf(inner)
+        | Expr::Len(inner)
+        | Expr::Not(inner) => expr_depth(inner),
         Expr::Lookup { map, key } | Expr::Contains { map, key } => {
             expr_depth(map).max(expr_depth(key))
         }

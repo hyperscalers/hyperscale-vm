@@ -1031,6 +1031,7 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
         Expr::Field(inner, index) => Expr::Field(Box::new(rebind(*inner, depth)), index),
         Expr::ResourceOf(inner) => Expr::ResourceOf(Box::new(rebind(*inner, depth))),
         Expr::IdsOf(inner) => Expr::IdsOf(Box::new(rebind(*inner, depth))),
+        Expr::Len(inner) => Expr::Len(Box::new(rebind(*inner, depth))),
         Expr::Lookup { map, key } => Expr::Lookup {
             map: Box::new(rebind(*map, depth)),
             key: Box::new(rebind(*key, depth)),

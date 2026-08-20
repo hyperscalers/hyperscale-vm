@@ -1273,6 +1273,8 @@ impl<'a> Lowerer<'a> {
             | Term::Config(_)
             | Term::FreshId(_)
             | Term::ResourceOf(_)
+            | Term::IdsOf(_)
+            | Term::Len(_)
             | Term::OrderKey { .. }
             | Term::SelfResource(_)
             | Term::If { .. } => self.need(&Need::Derived(term.clone())),
@@ -2635,6 +2637,21 @@ impl<'a> Lowerer<'a> {
                     val: Val::Term(Term::ResourceOf(Box::new(term.clone()))),
                     code: Code::Term(Term::ResourceOf(Box::new(term))),
                 },
+                // The count of what the receiver names: an edge's
+                // instances, or a list argument's elements — which is
+                // what derives a move's cap from the move itself.
+                "count" => {
+                    let inner = if matches!(receiver.code, Code::Bucket(_)) {
+                        Term::IdsOf(Box::new(term))
+                    } else {
+                        term
+                    };
+                    let counted = Term::Len(Box::new(inner));
+                    Eval {
+                        val: Val::Term(counted.clone()),
+                        code: Code::Term(counted),
+                    }
+                }
                 "lookup" | "get" | "contains" if matches!(args.first(), Some(Val::Term(_))) => {
                     let Some(Val::Term(key)) = args.first() else {
                         return Eval::absent(call.span(), "a lookup with no key");
