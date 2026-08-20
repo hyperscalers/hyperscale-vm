@@ -1708,8 +1708,9 @@ impl<H: KernelHost> KernelCanon<'_, H> {
             AMOUNT_ALIGN,
         )?;
         let at = base.start + at_offset..base.end;
-        for (limb, chunk) in value.limbs().iter().zip(mem.data[at].chunks_exact_mut(8)) {
-            chunk.copy_from_slice(&limb.to_le_bytes());
+        let (chunks, _) = mem.data[at].as_chunks_mut::<8>();
+        for (limb, chunk) in value.limbs().iter().zip(chunks) {
+            *chunk = limb.to_le_bytes();
         }
         Ok(())
     }

@@ -1643,8 +1643,7 @@ impl<'a> Lowerer<'a> {
                 // name.
                 match unwrap_pat(&local.pat) {
                     syn::Pat::Tuple(tuple) if tuple.elems.len() == parts.len() => {
-                        let names: Vec<_> = tuple.elems.iter().cloned().collect();
-                        for (element, term) in names.into_iter().zip(parts) {
+                        for (element, term) in tuple.elems.iter().cloned().zip(parts) {
                             match unwrap_pat(&element) {
                                 syn::Pat::Ident(ident) => {
                                     self.bind(ident.ident.to_string(), Slot::Produced(term));

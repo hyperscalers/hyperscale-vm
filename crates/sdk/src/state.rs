@@ -249,8 +249,9 @@ impl<A, B> Cellular for Fixed<A, B> {
     /// it.
     fn from_cell(cell: &[u8]) -> Self {
         let mut limbs = [0u64; 4];
-        for (limb, chunk) in limbs.iter_mut().zip(cell.chunks_exact(8)) {
-            *limb = u64::from_le_bytes(chunk.try_into().expect("eight bytes"));
+        let (chunks, _) = cell.as_chunks::<8>();
+        for (limb, chunk) in limbs.iter_mut().zip(chunks) {
+            *limb = u64::from_le_bytes(*chunk);
         }
         Self::from_scaled(Wide::from_limbs(limbs))
     }
