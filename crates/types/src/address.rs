@@ -521,6 +521,13 @@ macro_rules! position_addr {
                 }
             }
 
+            /// Whether an address of `class` can fill this position — the
+            /// conversion's verdict, answerable from the class alone.
+            #[must_use]
+            pub fn admits_class(class: AddressClass) -> bool {
+                [$($class::CLASS),+].contains(&class)
+            }
+
             /// The address as its 32 bytes.
             #[must_use]
             pub const fn to_bytes(self) -> [u8; 32] {

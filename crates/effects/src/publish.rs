@@ -448,15 +448,36 @@ pub enum DeclarationError {
     /// no resource.
     ///
     /// Routing refuses every such denomination when it evaluates one;
-    /// this is the same verdict at publish, for the one case decidable
-    /// there — a literal — so an author hears it about their package
-    /// rather than a caller about their manifest.
+    /// this is the same verdict at publish, for the cases decidable
+    /// there — a literal, or the instance's own address, which is a
+    /// component's — so an author hears it about their package rather
+    /// than a caller about their manifest.
     #[error("effect clause {clause} denominates in a {found} address, which names no resource")]
     NotAResource {
         /// The clause's position in a preorder walk of the signature's
         /// effects.
         clause: u32,
-        /// The class the literal carries.
+        /// The class the expression is decided to carry.
+        found: AddressClass,
+    },
+    /// A parameter's denomination written down as an address of a class
+    /// that names no resource — [`DeclarationError::NotAResource`]'s
+    /// verdict, at the position a signature denominates an edge.
+    #[error("parameter {param}'s denomination is a {found} address, which names no resource")]
+    ParamNotAResource {
+        /// The parameter position the denomination indexes.
+        param: u32,
+        /// The class the expression is decided to carry.
+        found: AddressClass,
+    },
+    /// An output projection written down as an address of a class that
+    /// names no resource — the same verdict, at the position a signature
+    /// says what its edges carry.
+    #[error("output {output} projects a {found} address, which names no resource")]
+    OutputNotAResource {
+        /// The output's position in the signature's projection list.
+        output: u32,
+        /// The class the expression is decided to carry.
         found: AddressClass,
     },
     /// A clause naming a slot no cell is assigned: unassigned below
@@ -760,6 +781,44 @@ fn complementary(left: Option<&Expr>, right: Option<&Expr>) -> bool {
         || matches!(right, Expr::Not(inner) if inner.as_ref() == left)
 }
 
+/// The class a denomination-position expression is already known to
+/// carry at publish, if it is decidable there: a literal address carries
+/// its own class, and the declaring instance's address is a component's.
+/// Everything else is an expression over inputs, evaluated — and class
+/// checked — at admission and routing.
+const fn decided_class(expr: &Expr) -> Option<AddressClass> {
+    match expr {
+        Expr::Literal(Value::Address(address)) => Some(address.class()),
+        Expr::SelfAddr => Some(AddressClass::Component),
+        _ => None,
+    }
+}
+
+/// Refuse an output projection decided to carry a class that names no
+/// resource.
+///
+/// An output projects what an edge carries, so a projection of the wrong
+/// class is a method no manifest can consume — the same verdict admission
+/// reaches by evaluating it, where it is decidable at publish. A
+/// non-fungible projection is judged at the resource it names.
+fn judge_outputs(outputs: &[Expr]) -> Result<(), DeclarationError> {
+    for (slot, output) in outputs.iter().enumerate() {
+        let resource = match output {
+            Expr::NfBucket { resource, .. } => resource,
+            expr => expr,
+        };
+        if let Some(found) = decided_class(resource)
+            && !Denomination::admits_class(found)
+        {
+            return Err(DeclarationError::OutputNotAResource {
+                output: u32::try_from(slot).unwrap_or(u32::MAX),
+                found,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Judge one access clause: whose prefix it names, which cell under that
 /// prefix, whether the world hands out a handle for reaching it that way,
 /// what that cell holds, and what it requires of the leaf.
@@ -805,13 +864,11 @@ fn judge_access(clause: u32, access: &Clause) -> Result<(), DeclarationError> {
     // The class is decidable at publish only where the denomination is
     // written down; an expression over inputs meets the same refusal at
     // routing, where it is evaluated.
-    if let Some(Expr::Literal(Value::Address(address))) = denomination
-        && let Err(err) = Denomination::try_from(*address)
+    if let Some(expr) = denomination
+        && let Some(found) = decided_class(expr)
+        && !Denomination::admits_class(found)
     {
-        return Err(DeclarationError::NotAResource {
-            clause,
-            found: err.found,
-        });
+        return Err(DeclarationError::NotAResource { clause, found });
     }
     // A presence requirement is about the leaf a write lands on, and an
     // interval has none. Refused here so an author hears about it, and
@@ -981,7 +1038,18 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
                 kind: kind.name(),
             });
         }
+        // The class verdict a clause denomination gets, at this position:
+        // admission refuses the evaluated expression, and one already
+        // written down is that refusal decidable where the author is.
+        if let Some(expr) = denomination
+            && let Some(found) = decided_class(expr)
+            && !Denomination::admits_class(found)
+        {
+            return Err(DeclarationError::ParamNotAResource { param, found });
+        }
     }
+    // And at the third position a signature names resources.
+    judge_outputs(&signature.outputs)?;
     for (index, clause) in flat.iter().enumerate() {
         judge_access(u32::try_from(index).unwrap_or(u32::MAX), clause)?;
     }
@@ -2603,6 +2671,82 @@ mod tests {
             )),
             Ok(())
         );
+        // The instance's own address is decided without evaluating
+        // anything: a component names no resource, so a self-addressed
+        // denomination is a method every call would be refused at.
+        assert_eq!(
+            check_declarations(&one_clause(
+                own_point(package_slot(0), vec![Expr::SelfAddr]),
+                ModeExpr::Delta,
+                Some(Expr::SelfAddr)
+            )),
+            Err(DeclarationError::NotAResource {
+                clause: 0,
+                found: AddressClass::Component
+            })
+        );
+    }
+
+    /// The same class verdict at the other two positions a signature
+    /// names resources: a parameter's denomination and an output
+    /// projection.
+    #[test]
+    fn a_decided_non_resource_is_refused_at_every_denominating_position() {
+        let component = || {
+            Expr::Literal(Value::Address(Address::new(
+                [7; 31],
+                AddressClass::Component,
+            )))
+        };
+        let resource = || {
+            Expr::Literal(Value::Address(Address::new(
+                [8; 31],
+                AddressClass::Resource,
+            )))
+        };
+
+        let denominated = |expr: Expr| MethodSignature {
+            totality: Totality::Fallible,
+            params: vec![ParamType::Bucket],
+            denominations: vec![Some(expr)],
+            ..MethodSignature::default()
+        };
+        assert_eq!(
+            check_declarations(&denominated(component())),
+            Err(DeclarationError::ParamNotAResource {
+                param: 0,
+                found: AddressClass::Component
+            })
+        );
+        assert_eq!(check_declarations(&denominated(resource())), Ok(()));
+
+        let projecting = |expr: Expr| MethodSignature {
+            totality: Totality::Fallible,
+            outputs: vec![expr],
+            ..MethodSignature::default()
+        };
+        assert_eq!(
+            check_declarations(&projecting(Expr::SelfAddr)),
+            Err(DeclarationError::OutputNotAResource {
+                output: 0,
+                found: AddressClass::Component
+            })
+        );
+        // A non-fungible projection is judged at the resource it names.
+        assert_eq!(
+            check_declarations(&projecting(Expr::NfBucket {
+                resource: Box::new(component()),
+                ids: Box::new(Expr::Arg(0)),
+            })),
+            Err(DeclarationError::OutputNotAResource {
+                output: 0,
+                found: AddressClass::Component
+            })
+        );
+        assert_eq!(check_declarations(&projecting(resource())), Ok(()));
+        // An expression over inputs waits for admission, which evaluates
+        // it.
+        assert_eq!(check_declarations(&projecting(Expr::Arg(0))), Ok(()));
     }
 
     /// One cell holds one thing, and a signature says so once.
