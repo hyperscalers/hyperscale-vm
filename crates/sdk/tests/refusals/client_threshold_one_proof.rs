@@ -19,7 +19,7 @@ mod contract {
     }
 
     impl Contract {
-        #[guarded(n_of(2, chair, deputy, third))]
+        #[requires(n_of(2, chair, deputy, third))]
         pub fn set_fee(&mut self, fee: Quantity) {
             self.fee.set(fee);
         }

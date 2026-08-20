@@ -152,7 +152,7 @@ pub mod staking {
         }
 
         /// Take on a validator, recording the key the pool registered.
-        #[guarded(OwnerBadge)]
+        #[requires(OwnerBadge)]
         pub fn register_validator(
             &mut self,
             validator_id: u64,
@@ -182,7 +182,7 @@ pub mod staking {
         }
 
         /// Stand a validator down.
-        #[guarded(OwnerBadge)]
+        #[requires(OwnerBadge)]
         pub fn deactivate_validator(&mut self, validator_id: u64) {
             // Holding the leaf is the whole of the access: the
             // declaration says the pool operates this validator, and the
@@ -192,14 +192,14 @@ pub mod staking {
         }
 
         /// Ask for a validator to be unjailed.
-        #[guarded(OwnerBadge)]
+        #[requires(OwnerBadge)]
         pub fn unjail(&mut self, validator_id: u64) {
             self.validators.at(validator_id).exclusive();
             ValidatorUnjailed { validator_id }.emit();
         }
 
         /// Cast the pool's governance vote, replacing any it held.
-        #[guarded(OwnerBadge)]
+        #[requires(OwnerBadge)]
         pub fn cast_param_vote(&mut self, split_bytes: u64, impound_epochs: u64, activate_at: u64) {
             // The pool holds one vote, so a cast replaces rather than
             // adds. What it keeps is what it voted for, which is the only
@@ -214,7 +214,7 @@ pub mod staking {
         }
 
         /// Withdraw the pool's governance vote.
-        #[guarded(OwnerBadge)]
+        #[requires(OwnerBadge)]
         pub fn clear_param_vote(&mut self) {
             self.vote.set(None);
             ParamVoteCleared.emit();

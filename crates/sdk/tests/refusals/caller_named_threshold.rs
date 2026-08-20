@@ -19,7 +19,7 @@ mod contract {
         // The same refusal from inside an explicit threshold, and from
         // a position that is neither first nor last: the walk reaches
         // every leaf rather than the root alone.
-        #[guarded(n_of(2, chair, whoever, chair))]
+        #[requires(n_of(2, chair, whoever, chair))]
         pub fn set_fee(&mut self, whoever: Address, fee: Quantity) {
             let _ = whoever;
             self.fee.set(fee);

@@ -274,7 +274,7 @@ mod issuer {
         }
 
         /// The operator surface, gated on the badge the pool issues.
-        #[guarded(issued(b"owner-badge"))]
+        #[requires(issued(b"owner-badge"))]
         pub fn retire(&mut self) {
             self.staked.set(Quantity::ZERO);
         }
@@ -669,7 +669,7 @@ mod board {
 
     impl Board {
         /// Either officer alone.
-        #[guarded(chair || deputy)]
+        #[requires(chair || deputy)]
         pub fn set_fee(&mut self, fee: Quantity) {
             self.fee.set(fee);
         }
@@ -680,13 +680,13 @@ mod board {
         /// what a package publishes outlives the identifier that
         /// happened to name it, so the rename is stated once.
         #[name("reset")]
-        #[guarded(n_of(2, chair, deputy, third))]
+        #[requires(n_of(2, chair, deputy, third))]
         pub fn clear_fee(&mut self) {
             self.fee.set(Quantity::ZERO);
         }
 
         /// Both officers, and the chain flattens rather than nesting.
-        #[guarded(chair && deputy && third)]
+        #[requires(chair && deputy && third)]
         pub fn dissolve(&mut self) {
             self.fee.set(Quantity::ZERO);
         }

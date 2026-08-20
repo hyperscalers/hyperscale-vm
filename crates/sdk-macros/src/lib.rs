@@ -444,16 +444,14 @@ const OWN: &[&str] = &[
     "error",
     "record",
     "resource",
-    "guarded",
-    "authorizing",
-    "role_gated",
-    "custodial",
+    "requires",
+    "proves",
     "total",
 ];
 
 /// The attributes that name a gate, whose method may have no body of
 /// its own.
-const GATES: &[&str] = &["guarded", "authorizing", "role_gated", "custodial"];
+const GATES: &[&str] = &["requires", "proves"];
 
 fn strip(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| !OWN.iter().any(|own| attr.path().is_ident(own)));
@@ -682,6 +680,18 @@ fn guarded_identity(
     resources: &[(String, Vec<u8>)],
     params: &[(String, syn::Type)],
 ) -> syn::Result<(TokenStream2, bool)> {
+    // Possession is a condition of its own, conjoined beside the rule;
+    // inside one — under a disjunction or a threshold — it would make
+    // authority a predicate engine, which is the fence this grammar
+    // keeps.
+    if let syn::Expr::Call(call) = identity
+        && matches!(call.func.as_ref(), syn::Expr::Path(path) if path.path.is_ident("holds"))
+    {
+        return Err(syn::Error::new(
+            identity.span(),
+            "possession conjoins as its own condition; it cannot sit inside a rule",
+        ));
+    }
     let refuse = || {
         syn::Error::new(
             identity.span(),
@@ -746,6 +756,57 @@ fn guarded_identity(
     }
 }
 
+/// The `#[requires(<rule>)]` grammar: the stored-rule form `auth[role]`,
+/// or a rule over claims the declaration names.
+fn parse_requires(
+    attr: &syn::Attribute,
+    config_fields: &[(String, syn::Type)],
+    resources: &[(String, Vec<u8>)],
+    params: &[(String, syn::Type)],
+) -> syn::Result<Gate> {
+    let written: syn::Expr = attr.parse_args()?;
+    // The stored-rule form: `auth[primary]` names the protocol table and
+    // the role the caller must satisfy there.
+    if let syn::Expr::Index(index) = &written {
+        let syn::Expr::Path(base) = index.expr.as_ref() else {
+            return Err(syn::Error::new(
+                index.span(),
+                "a stored-rule condition is written `auth[role]`",
+            ));
+        };
+        if !base.path.is_ident("auth") {
+            return Err(syn::Error::new(
+                base.span(),
+                "the one stored table a method names today is `auth`",
+            ));
+        }
+        let syn::Expr::Path(role) = index.index.as_ref() else {
+            return Err(syn::Error::new(
+                index.index.span(),
+                "a stored role is `primary`, `recovery`, or `confirmation`",
+            ));
+        };
+        let named = match role.path.get_ident().map(ToString::to_string).as_deref() {
+            Some("primary") => quote!(PRIMARY),
+            Some("recovery") => quote!(RECOVERY),
+            Some("confirmation") => quote!(CONFIRMATION),
+            _ => {
+                return Err(syn::Error::new(
+                    role.span(),
+                    "a stored role is `primary`, `recovery`, or `confirmation`",
+                ));
+            }
+        };
+        return Ok(Gate::RoleGated(quote!(::hyperscale_vm_sdk::#named)));
+    }
+    let (rule, on_self, threshold) = guarded_rule(&written, config_fields, resources, params, 0)?;
+    Ok(Gate::Guarded {
+        rule,
+        on_self,
+        threshold,
+    })
+}
+
 /// Read a method's gate off its attributes.
 fn parse_gate(
     method: &syn::ImplItemFn,
@@ -771,54 +832,21 @@ fn parse_gate(
             })
     };
     for attr in &method.attrs {
-        if attr.path().is_ident("guarded") {
-            let written: syn::Expr = attr.parse_args()?;
-            let (rule, on_self, threshold) =
-                guarded_rule(&written, config_fields, resources, params, 0)?;
-            return Ok(Gate::Guarded {
-                rule,
-                on_self,
-                threshold,
-            });
+        if attr.path().is_ident("requires") {
+            return parse_requires(attr, config_fields, resources, params);
         }
-        if attr.path().is_ident("authorizing") {
-            let field: syn::Ident = attr.parse_args()?;
-            return Ok(Gate::Authorizing(cell(&field)?));
-        }
-        if attr.path().is_ident("role_gated") {
-            let role: syn::Ident = attr.parse_args()?;
-            let named = match role.to_string().as_str() {
-                "primary" => quote!(PRIMARY),
-                "recovery" => quote!(RECOVERY),
-                "confirmation" => quote!(CONFIRMATION),
-                _ => {
-                    return Err(syn::Error::new(
-                        role.span(),
-                        "a stored role is `primary`, `recovery`, or `confirmation`",
-                    ));
-                }
-            };
-            return Ok(Gate::RoleGated(quote!(::hyperscale_vm_sdk::#named)));
-        }
-        if attr.path().is_ident("custodial") {
-            let named = attr.parse_args_with(
-                syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
-            )?;
-            let listed = named.iter().collect::<Vec<_>>();
-            let (field, badge, id) = match listed[..] {
-                [field, badge] => (field, badge, None),
-                [field, badge, id] => (field, badge, Some(id)),
-                _ => {
-                    return Err(syn::Error::new(
-                        attr.span(),
-                        "a custodial gate names the field its holder's stored rule lives in \
-                         and the parameter naming the badge, plus the parameter naming which \
-                         instance where the badge is non-fungible: `#[custodial(auth, badge)]` \
-                         or `#[custodial(auth, badge, id)]`",
-                    ));
-                }
-            };
-            let rule = cell(field)?;
+        if attr.path().is_ident("proves") {
+            let claim: syn::Expr = attr.parse_args()?;
+            // `proves(self)`: satisfying one's own stored rule, minting
+            // one's own identity.
+            if let syn::Expr::Path(path) = &claim
+                && path.path.is_ident("self")
+            {
+                let auth = syn::Ident::new("auth", claim.span());
+                return Ok(Gate::Authorizing(cell(&auth)?));
+            }
+            let auth = syn::Ident::new("auth", claim.span());
+            let rule = cell(&auth)?;
             let position = |named: &syn::Ident| {
                 params
                     .iter()
@@ -828,11 +856,38 @@ fn parse_gate(
                     })
                     .ok_or_else(|| syn::Error::new(named.span(), "not a parameter of this method"))
             };
-            return Ok(Gate::Custodial {
-                rule,
-                badge: position(badge)?,
-                id: id.map(position).transpose()?,
-            });
+            // `proves(badge)` and `proves(badge[id])`: the stored rule,
+            // possession of the badge, and the badge's mint.
+            return match &claim {
+                syn::Expr::Path(badge) => {
+                    let badge = badge.path.require_ident()?;
+                    Ok(Gate::Custodial {
+                        rule,
+                        badge: position(badge)?,
+                        id: None,
+                    })
+                }
+                syn::Expr::Index(index) => {
+                    let (syn::Expr::Path(badge), syn::Expr::Path(id)) =
+                        (index.expr.as_ref(), index.index.as_ref())
+                    else {
+                        return Err(syn::Error::new(
+                            index.span(),
+                            "an instance claim is written `badge[id]`, both parameters of \
+                             this method",
+                        ));
+                    };
+                    Ok(Gate::Custodial {
+                        rule,
+                        badge: position(badge.path.require_ident()?)?,
+                        id: Some(position(id.path.require_ident()?)?),
+                    })
+                }
+                _ => Err(syn::Error::new(
+                    claim.span(),
+                    "a call proves `self`, a badge parameter, or `badge[id]`",
+                )),
+            };
         }
     }
     Ok(Gate::Public)

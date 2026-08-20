@@ -36,7 +36,7 @@ mod contract {
         // bounds what evaluating a stored rule can cost, and a threshold
         // past it would never decode. Refused on the line rather than at
         // the tracer, where the shape is all that is left.
-        #[guarded(n_of(
+        #[requires(n_of(
             1, k01, k02, k03, k04, k05, k06, k07, k08, k09, k10, k11, k12, k13, k14, k15, k16, k17
         ))]
         pub fn set_fee(&mut self, fee: Quantity) {

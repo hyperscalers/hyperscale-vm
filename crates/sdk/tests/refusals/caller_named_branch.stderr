@@ -1,5 +1,5 @@
 error: the authority this method requires is one its caller names, so the gate would admit everyone — name `self`, a badge it issues, or a configuration field instead
-  --> tests/refusals/caller_named_branch.rs:22:28
+  --> tests/refusals/caller_named_branch.rs:22:29
    |
-22 |         #[guarded(chair || whoever)]
-   |                            ^^^^^^^
+22 |         #[requires(chair || whoever)]
+   |                             ^^^^^^^

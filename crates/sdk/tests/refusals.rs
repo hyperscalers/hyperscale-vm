@@ -82,6 +82,7 @@ fn the_lowering_refuses_a_mark_it_can_see_is_wrong() {
 fn the_lowering_refuses_authority_a_caller_names() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/caller_named_branch.rs");
+    refuse.compile_fail("tests/refusals/holds_in_a_rule.rs");
     refuse.compile_fail("tests/refusals/caller_named_threshold.rs");
 }
 

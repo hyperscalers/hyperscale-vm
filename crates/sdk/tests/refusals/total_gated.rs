@@ -12,7 +12,7 @@ mod contract {
         // A gate turns callers away before the body runs, which is the one
         // refusal a total method promises cannot happen.
         #[total]
-        #[guarded(self)]
+        #[requires(self)]
         pub fn deposit(&mut self, funds: Bucket) {
             self.vault(funds.resource()).put(funds);
         }

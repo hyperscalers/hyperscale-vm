@@ -14,7 +14,7 @@ mod contract {
             self.vault(funds.resource()).put(funds);
         }
 
-        #[guarded(self)]
+        #[requires(self)]
         pub fn withdraw(&mut self, resource: hyperscale_vm_sdk::Address, amount: Quantity) -> Bucket {
             self.vault(resource).reserve(amount)
         }

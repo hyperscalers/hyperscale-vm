@@ -19,7 +19,7 @@ mod contract {
         // One branch of a threshold the caller names is one branch the
         // caller satisfies for free, so the whole gate admits everyone.
         // Every leaf answers, whichever position it sits in.
-        #[guarded(chair || whoever)]
+        #[requires(chair || whoever)]
         pub fn set_fee(&mut self, whoever: Address, fee: Quantity) {
             let _ = whoever;
             self.fee.set(fee);

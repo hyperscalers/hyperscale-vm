@@ -1,0 +1,5 @@
+error: possession conjoins as its own condition; it cannot sit inside a rule
+  --> tests/refusals/holds_in_a_rule.rs:22:20
+   |
+22 |         #[requires(holds(badge) || owner)]
+   |                    ^^^^^

@@ -19,7 +19,7 @@ mod contract {
     impl Contract {
         // And a count of nothing, which admits everyone: the same
         // refusal from the other end of the range.
-        #[guarded(n_of(0, chair, deputy))]
+        #[requires(n_of(0, chair, deputy))]
         pub fn set_fee(&mut self, fee: Quantity) {
             self.fee.set(fee);
         }

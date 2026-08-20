@@ -48,7 +48,7 @@ pub mod account {
         /// reservation against this method's own declaration before the
         /// body ran, so there is no requested amount left to check it
         /// against and no way for the two to differ.
-        #[guarded(self)]
+        #[requires(self)]
         pub fn withdraw(&mut self, resource: Denomination, amount: Quantity) -> Bucket {
             let funds = self.vault(resource).reserve(amount);
             Withdrawn {
@@ -82,7 +82,7 @@ pub mod account {
         /// Nothing but its own gate: the kernel judges the stored rule
         /// before the export runs, so the body has nothing to say and
         /// the read the gate performs is the gate's to declare.
-        #[authorizing(auth)]
+        #[proves(self)]
         pub fn authorize(&mut self) {}
 
         /// File the instances the edge carries as holdings entries.
@@ -96,7 +96,7 @@ pub mod account {
         /// Take the named instances out of the holdings interval,
         /// trapping on one not held. The removal and the edge are one
         /// operation, so a body cannot hand on what it left where it was.
-        #[guarded(self)]
+        #[requires(self)]
         pub fn withdraw_nf(&mut self, resource: Denomination, ids: Ids) -> NfBucket {
             self.holdings(resource).all(64).take(ids)
         }
@@ -107,7 +107,7 @@ pub mod account {
         ///
         /// For a fungible badge, where holding any of it is the whole
         /// claim. One instance of a non-fungible one is `present-instance`.
-        #[custodial(auth, badge)]
+        #[proves(badge)]
         pub fn present_badge(&mut self, badge: Address) {}
 
         /// The same gate over one instance: the kernel judges the
@@ -120,14 +120,14 @@ pub mod account {
         /// the instance admits its holder alone. Which is what makes one
         /// badge resource with one instance per admin expressible:
         /// rotate by issuing, revoke by burning.
-        #[custodial(auth, badge, id)]
+        #[proves(badge[id])]
         pub fn present_instance(&mut self, badge: Address, id: u64) {}
 
         /// Create the stored-authority cell: the caller's roles and
         /// recovery delay, with nothing pending. The cell existing is
         /// this body's own refusal, which is what makes the transition
         /// off the address-derived rule one-way.
-        #[guarded(self)]
+        #[requires(self)]
         pub fn securify(&mut self, roles: RoleTable, delay_ms: u64) {
             // The one-way door is the declaration's, judged against
             // committed state before this runs: the write requires the
@@ -142,7 +142,7 @@ pub mod account {
         /// Append a pending replacement for the whole cell, maturing
         /// after the stored recovery delay; an unmatured proposal is
         /// replaced, a matured one first promoted.
-        #[role_gated(recovery)]
+        #[requires(auth[recovery])]
         pub fn propose(&mut self, roles: RoleTable, delay_ms: u64) {
             let stored = self.auth().existing();
             // The wait comes from the delay that governs now, never from
@@ -169,7 +169,7 @@ pub mod account {
         /// Withdrawn by the role that made it: a proposal is recovery's,
         /// so a compromised primary cannot veto its own replacement, and
         /// there is no cancel war for it to win.
-        #[role_gated(recovery)]
+        #[requires(auth[recovery])]
         pub fn cancel(&mut self) {
             let stored = self.auth().existing();
             let governing = stored.governing(clock_ms()).clone();
@@ -178,7 +178,7 @@ pub mod account {
 
         /// Promote the pending proposal now, matured or not: early
         /// enactment and compaction are one operation.
-        #[role_gated(confirmation)]
+        #[requires(auth[confirmation])]
         pub fn confirm(&mut self) {
             let stored = self.auth().existing();
             let proposal = stored.proposal.expect("nothing is pending");
@@ -192,7 +192,7 @@ pub mod account {
         /// can write — and unfreezing is the rotation itself, since the
         /// matured or confirmed proposal writes a table with a primary
         /// in it.
-        #[role_gated(recovery)]
+        #[requires(auth[recovery])]
         pub fn freeze(&mut self) {
             let stored = self.auth().existing();
             let mut base = stored.governing(clock_ms()).clone();
