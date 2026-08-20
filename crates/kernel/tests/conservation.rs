@@ -95,16 +95,9 @@ mod through_the_session {
         AbortReason, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome, ResourceAddr,
     };
 
-    use super::{
-        Address, AddressClass, Hash32, MemoryStore, TestHasher, TxHash, encode_amount, vault,
-    };
+    use super::{Hash32, MemoryStore, TestHasher, TxHash, encode_amount, vault};
 
-    const UNIT: Address = Address::new([0xA1; 31], AddressClass::Resource);
-
-    /// The grant's own view of the fixture: what has a minter.
-    fn unit() -> ResourceAddr {
-        ResourceAddr::try_from(UNIT).expect("a resource-class address")
-    }
+    const UNIT: ResourceAddr = ResourceAddr::new([0xA1; 31]);
 
     fn hash(data: &[u8]) -> [u8; 32] {
         TestHasher.hash(b"crypto", &[data]).0
@@ -118,12 +111,12 @@ mod through_the_session {
     /// The same, over a store that already holds something.
     fn session_over(store: MemoryStore) -> KernelSession {
         let moving = Effect {
-            target: EffectTarget::Point(vault(1, UNIT)),
+            target: EffectTarget::Point(vault(1, UNIT.address())),
             mode: Mode::Delta,
         };
         let mut set = EffectSet::new();
         set.insert(moving).expect("one cell");
-        let declaration = Declaration::from_set(set).denominated(|_| Some(unit().into()));
+        let declaration = Declaration::from_set(set).denominated(|_| Some(UNIT.into()));
         let mut session = KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
             &declaration,
@@ -135,7 +128,7 @@ mod through_the_session {
             hash,
         )
         .expect("one unheld delta cell materializes");
-        session.grant_issuance(unit());
+        session.grant_issuance(UNIT);
         session
     }
 
@@ -152,12 +145,12 @@ mod through_the_session {
         session.delta_put(0, minted).expect("into its own vault");
 
         let supply = completed(session);
-        assert_eq!(supply.minted(unit()), 500);
-        assert_eq!(supply.burned(unit()), 0);
+        assert_eq!(supply.minted(UNIT), 500);
+        assert_eq!(supply.burned(UNIT), 0);
 
         let mut ledger = SupplyLedger::new();
         supply.apply(&mut ledger).expect("the shard takes it");
-        assert_eq!(ledger.amount(unit()), 500);
+        assert_eq!(ledger.amount(UNIT), 500);
     }
 
     /// A burn debits it by what it destroyed, and the round trip leaves
@@ -175,16 +168,16 @@ mod through_the_session {
         // the cell rather than threaded through, because what is under
         // test is the accumulator and not the store.
         let mut held = MemoryStore::new();
-        held.write(vault(1, UNIT), encode_amount(500).to_vec())
+        held.write(vault(1, UNIT.address()), encode_amount(500).to_vec())
             .expect("seeded");
         let mut burning = session_over(held);
         let taken = burning.delta_take(0, 500).expect("the debit is queued");
         burning.burn(ISSUER_REP, taken).expect("the grant burns");
         let supply = completed(burning);
-        assert_eq!(supply.burned(unit()), 500);
+        assert_eq!(supply.burned(UNIT), 500);
         supply.apply(&mut ledger).expect("debited");
 
-        assert_eq!(ledger.amount(unit()), 0);
+        assert_eq!(ledger.amount(UNIT), 0);
     }
 
     /// Both halves are reported, because they are two facts.
@@ -199,12 +192,12 @@ mod through_the_session {
         session.burn(ISSUER_REP, minted).expect("the grant burns");
 
         let supply = completed(session);
-        assert_eq!((supply.minted(unit()), supply.burned(unit())), (500, 500));
+        assert_eq!((supply.minted(UNIT), supply.burned(UNIT)), (500, 500));
         assert!(!supply.is_empty(), "two movements, not a net of nothing");
 
         let mut ledger = SupplyLedger::new();
         supply.apply(&mut ledger).expect("both applied");
-        assert_eq!(ledger.amount(unit()), 0);
+        assert_eq!(ledger.amount(UNIT), 0);
     }
 
     /// An abort brings nothing into existence, whatever it ran: a body
@@ -241,6 +234,6 @@ mod through_the_session {
 
         // The mint is the only movement; the two cell operations cancel.
         let supply = completed(session);
-        assert_eq!((supply.minted(unit()), supply.burned(unit())), (500, 0));
+        assert_eq!((supply.minted(UNIT), supply.burned(UNIT)), (500, 0));
     }
 }

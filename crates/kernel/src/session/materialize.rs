@@ -528,7 +528,7 @@ mod tests {
         EffectTarget, Mode, Presence, encode_amount,
     };
 
-    use super::super::fixtures::{RESOURCE, declared, env, hash, held, holding, key, ord, tx};
+    use super::super::fixtures::{RESOURCE, declared, env, hash, holding, key, ord, tx};
     use super::{Capability, KernelSession, MaterializeError, capability_for};
     use crate::ledger::AmountLedger;
     use crate::overlay::OverlayStore;
@@ -864,7 +864,7 @@ mod tests {
         let store = OverlayStore::new(Arc::new(MemoryStore::new()));
         let owner = Address::new([3; 31], AddressClass::Component);
         let collection = CollectionId([4; 16]);
-        let resource = || Expr::Literal(Value::Address(RESOURCE));
+        let resource = || Expr::Literal(Value::Address(RESOURCE.address()));
         let targets = [
             (
                 TargetExpr::Point(Expr::ChildKey {
@@ -999,16 +999,16 @@ mod tests {
         // Two clauses on one leaf, one saying it holds value and one
         // saying nothing: the pair no handle is built for.
         assert_eq!(
-            materialise(vec![Some(held()), None]),
+            materialise(vec![Some(RESOURCE), None]),
             Err(MaterializeError::MixedContents(write.target))
         );
         assert_eq!(
-            materialise(vec![None, Some(held())]),
+            materialise(vec![None, Some(RESOURCE)]),
             Err(MaterializeError::MixedContents(write.target))
         );
         // Agreeing clauses are what a body that reads and writes one cell
         // declares, and both directions stand.
-        assert!(materialise(vec![Some(held()), Some(held())]).is_ok());
+        assert!(materialise(vec![Some(RESOURCE), Some(RESOURCE)]).is_ok());
         assert!(materialise(vec![None, None]).is_ok());
 
         // A collection is the same statement over its entries: two
@@ -1037,7 +1037,7 @@ mod tests {
                     ordered: vec![
                         DeclaredAccess {
                             effect: wide,
-                            holds: Some(held()),
+                            holds: Some(RESOURCE),
                         },
                         DeclaredAccess {
                             effect: narrow,

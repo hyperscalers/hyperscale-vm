@@ -17,12 +17,12 @@ use hyperscale_vm_sdk::host::{Refusal, with_kernel};
 use hyperscale_vm_sdk::state::{self, Bucket, Entry, Interval, OrderKey, Quantity, Slot, Vault};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Denomination, Effect, EffectSet, EffectTarget, EntryKey,
-    Mode, Presence, SubstateKey, TxHash, encode_amount,
+    Mode, Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 const OWNER: Address = Address::new([0x11; 31], AddressClass::Component);
 /// What the value cells in these fixtures hold.
-const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
 const CLOCK_MS: u64 = 4_000;
 
 fn hash(data: &[u8]) -> [u8; 32] {
@@ -67,8 +67,7 @@ fn value_session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
     for effect in effects {
         declared.insert(effect).expect("the effect set takes it");
     }
-    let declaration = Declaration::from_set(declared)
-        .denominated(|_| Some(Denomination::try_from(RESOURCE).expect("a resource-class address")));
+    let declaration = Declaration::from_set(declared).denominated(|_| Some(RESOURCE));
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &declaration,

@@ -27,8 +27,8 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_stdlib::{account_artifact, staking_artifact};
 use hyperscale_vm_types::{
-    Address, AddressClass, CellKind, Denomination, Effect, EffectSet, EffectTarget, Mode, TxHash,
-    encode_amount,
+    Address, AddressClass, CellKind, Denomination, Effect, EffectSet, EffectTarget, Mode,
+    ResourceAddr, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, InstancePre, Linker};
 use wasmtime::{Engine, InstanceAllocationStrategy, PoolingAllocationConfig, Result, Store};
@@ -100,7 +100,7 @@ fn one_instantiation(
 /// sender's balance slot, a delta on the recipient's.
 const SENDER: Address = Address::new([1; 31], AddressClass::Component);
 const RECIPIENT: Address = Address::new([2; 31], AddressClass::Component);
-const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
 const AMOUNT: u128 = 100;
 
 /// A funded transfer session: sender reserved, recipient open for credit.
@@ -127,10 +127,7 @@ fn transfer_session() -> KernelSession {
     let mut session = materialize(
         &store,
         &declared,
-        &[
-            Some(Denomination::try_from(RESOURCE).expect("a resource-class address")),
-            Some(Denomination::try_from(RESOURCE).expect("a resource-class address")),
-        ],
+        &[Some(RESOURCE), Some(RESOURCE)],
         TxHash(Hash32([0x77; 32])),
         EnvInputs {
             clock_ms: 77,

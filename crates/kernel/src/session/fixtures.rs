@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{Declaration, DeclaredAccess, Hash32, SlotId, TestHasher, child_key};
 use hyperscale_vm_types::{
-    Address, AddressClass, Denomination, Effect, EffectSet, Mode, SubstateKey, TxHash,
+    Address, AddressClass, Denomination, Effect, EffectSet, Mode, ResourceAddr, SubstateKey, TxHash,
 };
 
 use super::materialize::{Holds, holds_of};
@@ -56,12 +56,7 @@ pub(super) fn ord(set: &EffectSet) -> Vec<Effect> {
 }
 
 /// What every cell these fixtures move value through holds.
-pub(super) const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
-
-/// The same fixture, as the denomination a declaration states.
-pub(super) fn held() -> Denomination {
-    Denomination::try_from(RESOURCE).expect("a resource-class address")
-}
+pub(super) const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
 
 /// What each entry of an ordered declaration holds.
 ///
@@ -85,7 +80,7 @@ pub(super) fn holding(ordered: &[Effect]) -> Vec<DeclaredAccess> {
         .iter()
         .map(|effect| DeclaredAccess {
             effect: *effect,
-            holds: value.contains(&holds_of(effect.target)).then(held),
+            holds: value.contains(&holds_of(effect.target)).then_some(RESOURCE),
         })
         .collect()
 }
@@ -93,7 +88,7 @@ pub(super) fn holding(ordered: &[Effect]) -> Vec<DeclaredAccess> {
 /// A session over cells that all hold value — what a fixture wants
 /// when the write it declares is a debit rather than a byte write.
 pub(super) fn session_holding(store: MemoryStore, set: &EffectSet) -> KernelSession {
-    let declaration = Declaration::from_set(set.clone()).denominated(|_| Some(held()));
+    let declaration = Declaration::from_set(set.clone()).denominated(|_| Some(RESOURCE));
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &declaration,

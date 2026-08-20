@@ -1,7 +1,9 @@
 //! Shared test worlds: small published packages, their instances, and
 //! the manifests that call them.
 
-use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, Denomination, Presence};
+use hyperscale_vm_types::{
+    Address, AddressClass, ComponentAddr, Denomination, Presence, ResourceAddr,
+};
 
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::hash::{Hash32, Hasher, TestHasher};
@@ -42,8 +44,11 @@ pub fn issued_by(package: &str) -> Denomination {
 }
 
 /// A resource-class literal, for a fixture that names one directly.
-pub fn resource(byte: u8) -> Address {
-    Address::new([byte; 31], AddressClass::Resource)
+///
+/// Typed at the class the constructor settles, so a denomination position
+/// takes it infallibly and an address position forgets it.
+pub const fn resource(byte: u8) -> ResourceAddr {
+    ResourceAddr::new([byte; 31])
 }
 
 pub fn self_point(slot: SlotId, mode: ModeExpr) -> Clause {
@@ -164,7 +169,7 @@ pub fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Address, ParamType::U128],
-            outputs: vec![Expr::Literal(Value::Address(resource(0xE1)))],
+            outputs: vec![Expr::Literal(Value::Address(resource(0xE1).address()))],
             effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
             ..MethodSignature::default()
         },
@@ -211,7 +216,7 @@ pub fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
                 inputs: vec![NodeInput::Edge {
                     source: 0,
                     output: 0,
-                    resource: Denomination::try_from(resource(0xE1)).expect("resource class"),
+                    resource: resource(0xE1).into(),
                     content: EdgeContent::Fungible,
                     bounds: Bounds::default(),
                 }],

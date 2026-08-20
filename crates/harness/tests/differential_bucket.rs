@@ -51,13 +51,13 @@ const BALANCE: u128 = 100;
 /// The instance whose invocation the take lane runs inside, and the
 /// resource it issues.
 const ISSUER: Address = Address::new([0x80; 31], AddressClass::Component);
+/// What the issuer's grant names: the one resource the lane moves.
+const ISSUED: ResourceAddr = ResourceAddr::new([0x80; 31]);
 /// What every value cell in the fixture holds.
 ///
 /// One resource across the fixture, because what this lane is about is
 /// ownership and numbering rather than denomination: a second would make
 /// every credit a resource comparison as well as a transfer.
-/// What the issuer's grant names: the one resource the lane moves.
-const ISSUED: ResourceAddr = ResourceAddr::new([0x80; 31]);
 const RESOURCE: Denomination = Denomination::Resource(ISSUED);
 
 /// The collection whose entries the instance lane moves.

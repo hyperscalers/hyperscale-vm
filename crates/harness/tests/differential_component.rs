@@ -18,7 +18,8 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Denomination, Effect, EffectSet,
-    EffectTarget, EntryKey, Mode, Movement, Presence, SubstateKey, TxHash, encode_amount,
+    EffectTarget, EntryKey, Mode, Movement, Presence, ResourceAddr, SubstateKey, TxHash,
+    encode_amount,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
 use wasmtime::error::{Context, format_err};
@@ -29,7 +30,7 @@ const CLOCK_MS: u64 = 424_242;
 const FUEL: u64 = 1_000_000_000;
 const ASKS: CollectionId = CollectionId([4; 16]);
 /// What the two cells the transfer moves between hold.
-const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
 
 const fn tx() -> TxHash {
     TxHash(Hash32([0x33; 32]))
@@ -158,11 +159,6 @@ fn fixture() -> Fixture {
     }
 }
 
-/// The declared denomination, from the resource-class fixture.
-fn held() -> Denomination {
-    Denomination::try_from(RESOURCE).expect("a resource-class address")
-}
-
 /// What each declared cell holds, aligned with the order the capability
 /// table is built in.
 ///
@@ -173,7 +169,7 @@ fn denominations(fx: &Fixture) -> Vec<Option<Denomination>> {
     fx.declared
         .iter()
         .map(|effect| match effect.target {
-            EffectTarget::Point(key) if key == fx.sender || key == fx.recipient => Some(held()),
+            EffectTarget::Point(key) if key == fx.sender || key == fx.recipient => Some(RESOURCE),
             _ => None,
         })
         .collect()

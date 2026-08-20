@@ -178,8 +178,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_types::{
-        Address, AddressClass, CallTarget, CellKind, Denomination, Effect, EffectConflict,
-        EffectSet, EffectTarget, Mode, Presence, PrincipalAddr,
+        Address, AddressClass, CallTarget, CellKind, Effect, EffectConflict, EffectSet,
+        EffectTarget, Mode, Presence, PrincipalAddr,
     };
 
     use super::{PrefixShardResolver, Routing, ShardResolver, route};
@@ -831,7 +831,7 @@ mod tests {
             MethodSignature {
                 totality: Totality::Fallible,
                 outputs: vec![Expr::Literal(Value::Bucket {
-                    resource: Denomination::try_from(resource(0xE1)).expect("resource class"),
+                    resource: resource(0xE1).into(),
                     content: EdgeContent::NonFungible { ids },
                 })],
                 ..MethodSignature::default()
@@ -870,8 +870,8 @@ mod tests {
             MethodSignature {
                 totality: Totality::Fallible,
                 outputs: vec![
-                    Expr::Literal(Value::Address(resource(0xE1))),
-                    Expr::Literal(Value::Address(resource(0xE1))),
+                    Expr::Literal(Value::Address(resource(0xE1).address())),
+                    Expr::Literal(Value::Address(resource(0xE1).address())),
                 ],
                 ..MethodSignature::default()
             },
@@ -938,7 +938,7 @@ mod tests {
             "make".into(),
             MethodSignature {
                 totality: Totality::Fallible,
-                outputs: vec![Expr::Literal(Value::Address(resource(0xE1)))],
+                outputs: vec![Expr::Literal(Value::Address(resource(0xE1).address()))],
                 ..MethodSignature::default()
             },
         );

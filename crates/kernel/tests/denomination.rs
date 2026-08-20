@@ -32,26 +32,16 @@ use hyperscale_vm_types::{
 
 const VAULT: SlotId = SlotId(1);
 const POOL: Address = Address::new([0x70; 31], AddressClass::Component);
-const X: Address = Address::new([0xE1; 31], AddressClass::Resource);
-const Y: Address = Address::new([0xE2; 31], AddressClass::Resource);
+const X: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+const Y: ResourceAddr = ResourceAddr::new([0xE2; 31]);
 
-fn vault(resource: Address) -> SubstateKey {
+fn vault(resource: ResourceAddr) -> SubstateKey {
     child_key(
         &TestHasher,
         POOL,
         VAULT,
-        &[Value::Address(resource).canonical_bytes()],
+        &[Value::Address(resource.address()).canonical_bytes()],
     )
-}
-
-/// A declared denomination, from the resource-class fixture that fills it.
-fn d(resource: Address) -> Denomination {
-    Denomination::try_from(resource).expect("a resource-class address")
-}
-
-/// The same fixture as a grant names it: what has a minter.
-fn issuer(resource: Address) -> ResourceAddr {
-    ResourceAddr::try_from(resource).expect("a resource-class address")
 }
 
 fn hash(data: &[u8]) -> [u8; 32] {
@@ -164,7 +154,12 @@ fn every_producer_stamps_what_its_source_held() {
             set: set.clone(),
             ordered: ordered
                 .iter()
-                .zip([Some(d(X)), Some(d(X)), Some(d(X)), Some(d(Y))])
+                .zip([
+                    Some(X.into()),
+                    Some(X.into()),
+                    Some(X.into()),
+                    Some(Y.into()),
+                ])
                 .map(|(effect, holds)| DeclaredAccess {
                     effect: *effect,
                     holds,
@@ -212,15 +207,15 @@ fn every_producer_stamps_what_its_source_held() {
 /// shape — not a different rule.
 #[test]
 fn every_instance_producer_stamps_what_its_source_held() {
-    let held = |resource: Address| {
+    let held = |resource: ResourceAddr| {
         collection_id(
             &TestHasher,
             POOL,
             NF_VAULT,
-            &[Value::Address(resource).canonical_bytes()],
+            &[Value::Address(resource.address()).canonical_bytes()],
         )
     };
-    let interval = |resource: Address| Effect {
+    let interval = |resource: ResourceAddr| Effect {
         target: EffectTarget::Range {
             owner: POOL,
             collection: held(resource),
@@ -250,7 +245,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
             set: set.clone(),
             ordered: ordered
                 .iter()
-                .zip([Some(d(X)), Some(d(Y))])
+                .zip([Some(X.into()), Some(Y.into())])
                 .map(|(effect, holds)| DeclaredAccess {
                     effect: *effect,
                     holds,
@@ -265,7 +260,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
     .expect("two denominated intervals materialize");
 
     let taken = session.range_take(0, &[10]).expect("the holder has it");
-    session.grant_issuance(issuer(X));
+    session.grant_issuance(X);
     let minted = session
         .mint_instances(ISSUER_REP, &[99])
         .expect("the grant mints");
@@ -288,7 +283,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
 /// execution has anything to judge.
 #[test]
 fn value_debited_from_one_vault_cannot_be_credited_to_another() {
-    let mut session = session(&[Some(d(X)), Some(d(Y))]);
+    let mut session = session(&[Some(X.into()), Some(Y.into())]);
     let funds = session.delta_take(0, 100).expect("the debit is queued");
 
     assert_eq!(
@@ -301,7 +296,7 @@ fn value_debited_from_one_vault_cannot_be_credited_to_another() {
 /// The same movement back into the cell it came from completes.
 #[test]
 fn value_returns_to_the_vault_that_holds_it() {
-    let mut session = session(&[Some(d(X)), Some(d(Y))]);
+    let mut session = session(&[Some(X.into()), Some(Y.into())]);
     let funds = session.delta_take(0, 100).expect("the debit is queued");
     assert_eq!(session.delta_put(0, funds), Ok(()));
 }
@@ -314,7 +309,7 @@ fn value_returns_to_the_vault_that_holds_it() {
 /// take value it does not hold.
 #[test]
 fn two_edges_of_different_resources_do_not_merge() {
-    let mut session = session(&[Some(d(X)), Some(d(Y))]);
+    let mut session = session(&[Some(X.into()), Some(Y.into())]);
     let held_x = session.delta_take(0, 100).expect("the X debit is queued");
     let held_y = session.delta_take(1, 100).expect("the Y debit is queued");
 
@@ -342,7 +337,7 @@ fn a_cell_that_denominates_nothing_moves_nothing() {
 
     // One end saying nothing is enough: the pair is judged cell by cell.
     assert_eq!(
-        try_session(&[Some(d(X)), None]).expect_err("the second says nothing"),
+        try_session(&[Some(X.into()), None]).expect_err("the second says nothing"),
         MaterializeError::UndenominatedMovement(vault(Y))
     );
 }
@@ -354,9 +349,9 @@ fn a_cell_that_denominates_nothing_moves_nothing() {
 /// value this invocation was never given authority over.
 #[test]
 fn a_grant_burns_only_what_it_issues() {
-    let mut session = session(&[Some(d(X)), Some(d(Y))]);
+    let mut session = session(&[Some(X.into()), Some(Y.into())]);
     let foreign = session.delta_take(0, 100).expect("the debit is queued");
-    session.grant_issuance(issuer(Y));
+    session.grant_issuance(Y);
 
     let issued = session.mint(ISSUER_REP, 5).expect("the grant mints");
     assert_eq!(session.burn(ISSUER_REP, issued), Ok(()));
@@ -370,8 +365,8 @@ fn a_grant_burns_only_what_it_issues() {
 /// cell holding that resource and no other.
 #[test]
 fn minted_value_lands_only_in_its_own_cell() {
-    let mut session = session(&[Some(d(X)), Some(d(Y))]);
-    session.grant_issuance(issuer(Y));
+    let mut session = session(&[Some(X.into()), Some(Y.into())]);
+    session.grant_issuance(Y);
     let minted = session.mint(ISSUER_REP, 5).expect("the grant mints");
 
     assert_eq!(
@@ -386,7 +381,7 @@ fn minted_value_lands_only_in_its_own_cell() {
 /// half fits a cell the whole did not.
 #[test]
 fn a_split_carries_the_resource_into_both_halves() {
-    let mut session = session(&[Some(d(X)), Some(d(Y))]);
+    let mut session = session(&[Some(X.into()), Some(Y.into())]);
     let funds = session.delta_take(0, 100).expect("the debit is queued");
     let part = session
         .bucket_take(funds, 40)
@@ -403,7 +398,7 @@ fn a_split_carries_the_resource_into_both_halves() {
 /// land somewhere, and a resource tag does not excuse dropping it.
 #[test]
 fn a_denominated_edge_still_has_to_be_disposed_of() {
-    let mut session = session(&[Some(d(X)), Some(d(Y))]);
+    let mut session = session(&[Some(X.into()), Some(Y.into())]);
     let funds = session.delta_take(0, 100).expect("the debit is queued");
     assert_eq!(
         session.drop_bucket(funds).map_err(AbortReason::from),

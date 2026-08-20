@@ -16,11 +16,11 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget, Mode,
-    Outcome, Presence, SubstateKey, TxHash, encode_amount,
+    Outcome, Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// What every cell these fixtures move value through holds.
-const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
 
 /// The declaration a hand-built set stands for.
 ///
@@ -30,8 +30,7 @@ const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
 /// body runs.
 fn moving(set: EffectSet) -> Declaration {
     Declaration::from_set(set).denominated(|effect| {
-        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. })
-            .then(|| Denomination::try_from(RESOURCE).expect("a resource-class address"))
+        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
     })
 }
 

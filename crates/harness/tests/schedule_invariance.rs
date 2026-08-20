@@ -21,7 +21,7 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget, Mode,
-    Outcome, Presence, SubstateKey, TxHash, encode_amount,
+    Outcome, Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Engine, Result, Store};
@@ -29,7 +29,7 @@ use wat::parse_str;
 
 const FUEL: u64 = 1_000_000_000;
 /// What the vaults in this batch hold.
-const RESOURCE: Address = Address::new([0xE1; 31], AddressClass::Resource);
+const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
@@ -107,9 +107,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
             tx(id),
             // Both ends of a transfer hold the one resource this batch
             // moves; a cell that said nothing would move nothing.
-            Declaration::from_set(declared).denominated(|_| {
-                Some(Denomination::try_from(RESOURCE).expect("a resource-class address"))
-            }),
+            Declaration::from_set(declared).denominated(|_| Some(RESOURCE)),
             env(),
         ));
         shapes.insert(tx(id), Shape::Transfer { sender, recipient });
