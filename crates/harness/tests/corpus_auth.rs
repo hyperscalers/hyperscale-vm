@@ -12,8 +12,7 @@ use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    AbortReason, EffectTarget, Outcome, Presence, PrincipalAddr, TxHash, UnmetCondition,
-    encode_amount,
+    EffectTarget, Outcome, Presence, PrincipalAddr, TxHash, UnmetCondition, encode_amount,
 };
 use wasmtime::Result;
 
@@ -460,14 +459,24 @@ fn recovery_withdraws_its_own_unmatured_proposal() {
     assert_acts(&world, &store, ALICE, long_after, true, 0x6A);
     assert_acts(&world, &store, BOB, long_after, false, 0x6B);
 
-    // With nothing pending, confirm is the guest's own refusal.
-    let (results, _) = run_both_signed(
+    // With nothing pending, a confirmation reaches a clean verdict:
+    // one base and no proposal is what it would have written anyway,
+    // so it completes and leaves the cell where it stands.
+    let (results, after) = run_both_signed(
         &world,
         &store,
         &[(&confirm_graph(), TxHash(Hash32([0x6C; 32])))],
         Some(MAKER),
     );
-    assert_eq!(results, vec![TxResult::Trapped(AbortReason::Unreachable)]);
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("confirm must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        None,
+        "nothing pending is nothing to promote"
+    );
+    assert_acts(&world, &after, ALICE, long_after, true, 0x6D);
 }
 
 /// A compromised primary cannot outlast its replacement: recovery

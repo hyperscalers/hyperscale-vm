@@ -179,11 +179,15 @@ pub mod account {
 
         /// Promote the pending proposal now, matured or not: early
         /// enactment and compaction are one operation.
+        ///
+        /// Nothing pending is already what a confirmation leaves behind
+        /// — one base and no proposal — so the write is the promotion
+        /// and its absence is the same cell.
         #[requires(auth[confirmation])]
         pub fn confirm(&mut self) {
-            let stored = self.auth().existing();
-            let proposal = stored.proposal.expect("nothing is pending");
-            self.auth().set(Some(AuthCell::new(proposal.base)));
+            if let Some(proposal) = self.auth().existing().proposal {
+                self.auth().set(Some(AuthCell::new(proposal.base)));
+            }
         }
 
         /// Strip the primary's acting power, now, keeping whatever
