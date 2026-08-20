@@ -10,7 +10,7 @@ use hyperscale_vm_kernel::{
     WorkingStore, decode_amount,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, Denomination, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 const VAULT: SlotId = SlotId(1);
@@ -41,7 +41,7 @@ fn cell_total(store: &impl Substates, cells: &[SubstateKey]) -> u128 {
 
 #[test]
 fn supply_tracks_cells_through_transfers_and_cross_shard_legs() {
-    let resource = Denomination::Resource(ResourceAddr::new([0xEE; 31]));
+    let resource = ResourceAddr::new([0xEE; 31]);
     let alice = vault(1, resource.into());
     let bob = vault(2, resource.into());
     let cells = [alice, bob];
@@ -157,7 +157,7 @@ mod through_the_session {
 
         let mut ledger = SupplyLedger::new();
         supply.apply(&mut ledger).expect("the shard takes it");
-        assert_eq!(ledger.amount(unit().into()), 500);
+        assert_eq!(ledger.amount(unit()), 500);
     }
 
     /// A burn debits it by what it destroyed, and the round trip leaves
@@ -184,7 +184,7 @@ mod through_the_session {
         assert_eq!(supply.burned(unit()), 500);
         supply.apply(&mut ledger).expect("debited");
 
-        assert_eq!(ledger.amount(unit().into()), 0);
+        assert_eq!(ledger.amount(unit()), 0);
     }
 
     /// Both halves are reported, because they are two facts.
@@ -204,7 +204,7 @@ mod through_the_session {
 
         let mut ledger = SupplyLedger::new();
         supply.apply(&mut ledger).expect("both applied");
-        assert_eq!(ledger.amount(unit().into()), 0);
+        assert_eq!(ledger.amount(unit()), 0);
     }
 
     /// An abort brings nothing into existence, whatever it ran: a body
