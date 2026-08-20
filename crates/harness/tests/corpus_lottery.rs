@@ -162,3 +162,41 @@ fn the_same_draw_at_two_caps_is_priced_apart() {
     let (page, larger) = (declared(64), declared(640));
     assert_eq!(larger - page, DEPTH_UNITS * (640 - 64));
 }
+
+/// No constant stands between a caller and the page a draw reads: a cap
+/// past the old publish-time ceiling admits, executes on both runtimes,
+/// and settles on the same entrant a page-sized draw would have —
+/// bounded by what the caller paid for, not by a number nobody chose.
+#[test]
+fn a_draw_buys_a_page_past_any_ceiling() {
+    let world = world();
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+
+    let enter = graph(|b| {
+        let proof = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, proof, RES_X, 100)?;
+        lottery_addr().enter(b, ALICE, funds)
+    });
+    let draw = graph(|b| lottery_addr().draw(b, 5_000));
+
+    let (results, store) = run_both(
+        &world,
+        &store,
+        &[
+            (&enter, TxHash(Hash32([0x70; 32]))),
+            (&draw, TxHash(Hash32([0x71; 32]))),
+        ],
+    );
+    assert!(results.iter().all(|r| matches!(r, TxResult::Completed(_))));
+    assert_eq!(
+        settled_round(&store),
+        Some(lottery::Outcome {
+            draw: env().randomness,
+            winner: Some(ALICE.address()),
+        }),
+        "one entrant under a five-thousand-entry page still wins their own round"
+    );
+}
