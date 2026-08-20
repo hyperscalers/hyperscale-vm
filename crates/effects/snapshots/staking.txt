@@ -223,6 +223,247 @@ PackageMetadata {
                 ),
             ],
         },
+        "found": MethodSignature {
+            totality: Infallible,
+            issues: Some(
+                Issuance {
+                    mark: [
+                        111,
+                        119,
+                        110,
+                        101,
+                        114,
+                        45,
+                        98,
+                        97,
+                        100,
+                        103,
+                        101,
+                    ],
+                    kind: NonFungible,
+                },
+            ),
+            params: [],
+            outputs: [
+                NfBucket {
+                    resource: SelfResource {
+                        kind: NonFungible,
+                        material: [
+                            Literal(
+                                Bytes(
+                                    [
+                                        111,
+                                        119,
+                                        110,
+                                        101,
+                                        114,
+                                        45,
+                                        98,
+                                        97,
+                                        100,
+                                        103,
+                                        101,
+                                    ],
+                                ),
+                            ),
+                        ],
+                    },
+                    ids: List(
+                        [
+                            Literal(
+                                U64(
+                                    0,
+                                ),
+                            ),
+                        ],
+                    ),
+                },
+            ],
+            denominations: [],
+            effects: [
+                Requires {
+                    guard: None,
+                    condition: Satisfies {
+                        rule: Require(
+                            Claim(
+                                Config(
+                                    1,
+                                ),
+                            ),
+                        ),
+                    },
+                },
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    5,
+                                ),
+                                material: [
+                                    SelfResource {
+                                        kind: NonFungible,
+                                        material: [
+                                            Literal(
+                                                Bytes(
+                                                    [
+                                                        111,
+                                                        119,
+                                                        110,
+                                                        101,
+                                                        114,
+                                                        45,
+                                                        98,
+                                                        97,
+                                                        100,
+                                                        103,
+                                                        101,
+                                                    ],
+                                                ),
+                                            ),
+                                        ],
+                                    },
+                                ],
+                            },
+                        ),
+                        presence: Absent,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                5,
+                            ),
+                            material: [
+                                SelfResource {
+                                    kind: NonFungible,
+                                    material: [
+                                        Literal(
+                                            Bytes(
+                                                [
+                                                    111,
+                                                    119,
+                                                    110,
+                                                    101,
+                                                    114,
+                                                    45,
+                                                    98,
+                                                    97,
+                                                    100,
+                                                    103,
+                                                    101,
+                                                ],
+                                            ),
+                                        ),
+                                    ],
+                                },
+                            ],
+                        },
+                    ),
+                    mode: Write,
+                    denomination: None,
+                },
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    7,
+                                ),
+                                material: [
+                                    SelfResource {
+                                        kind: NonFungible,
+                                        material: [
+                                            Literal(
+                                                Bytes(
+                                                    [
+                                                        111,
+                                                        119,
+                                                        110,
+                                                        101,
+                                                        114,
+                                                        45,
+                                                        98,
+                                                        97,
+                                                        100,
+                                                        103,
+                                                        101,
+                                                    ],
+                                                ),
+                                            ),
+                                        ],
+                                    },
+                                    Literal(
+                                        U64(
+                                            0,
+                                        ),
+                                    ),
+                                ],
+                            },
+                        ),
+                        presence: Absent,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                7,
+                            ),
+                            material: [
+                                SelfResource {
+                                    kind: NonFungible,
+                                    material: [
+                                        Literal(
+                                            Bytes(
+                                                [
+                                                    111,
+                                                    119,
+                                                    110,
+                                                    101,
+                                                    114,
+                                                    45,
+                                                    98,
+                                                    97,
+                                                    100,
+                                                    103,
+                                                    101,
+                                                ],
+                                            ),
+                                        ),
+                                    ],
+                                },
+                                Literal(
+                                    U64(
+                                        0,
+                                    ),
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Write,
+                    denomination: None,
+                },
+            ],
+            abi: [
+                Handle(
+                    2,
+                ),
+                Handle(
+                    4,
+                ),
+                Issuer,
+            ],
+        },
         "register-validator": MethodSignature {
             totality: Infallible,
             issues: None,

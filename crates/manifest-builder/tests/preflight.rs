@@ -32,7 +32,10 @@ fn pkg(name: &str) -> PackageHash {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("staking"),
-        config: vec![Value::Address(RES_X.address())],
+        config: vec![
+            Value::Address(RES_X.address()),
+            Value::Address(OPERATOR.address()),
+        ],
         salt: Hash32([2; 32]),
     }
 }

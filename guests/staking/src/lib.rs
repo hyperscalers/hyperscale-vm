@@ -32,8 +32,8 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod staking {
-    use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, burn, mint};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, NfBucket, Quantity, burn, mint, mint_nf};
+    use hyperscale_vm_sdk::{Address, ResourceAddr};
 
     /// The pool's creation-fixed configuration: what a delegation is
     /// denominated in.
@@ -46,6 +46,11 @@ pub mod staking {
     #[config]
     struct Settings {
         staked_resource: ResourceAddr,
+        /// Who may found the pool: the one caller `found` admits, fixed
+        /// where the address is derived — so whoever names an address
+        /// names its founder, and the race an open founding call would
+        /// be is decided before any transaction exists.
+        founder: Address,
     }
 
     /// A delegation arrived.
@@ -152,6 +157,20 @@ pub mod staking {
         }
 
         /// Take on a validator, recording the key the pool registered.
+        /// Bring the pool's operator surface into existence: the owner
+        /// badge's record, and its one instance, handed back for the
+        /// founder to keep.
+        ///
+        /// The record's absence is the one-way door — a second founding
+        /// is refused by the shard holding the leaf before any body
+        /// runs. Genesis seats its own pools by writing these same
+        /// cells directly, and is held to them byte for byte.
+        #[requires(founder)]
+        pub fn found(&mut self) -> NfBucket {
+            self.resource(OwnerBadge).create();
+            mint_nf(OwnerBadge, &[0])
+        }
+
         #[requires(OwnerBadge)]
         pub fn register_validator(
             &mut self,

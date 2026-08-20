@@ -21,15 +21,16 @@ use hyperscale_vm_effects::{
     AdmissionError, EnvelopeTree, Fungibility, Hash32, Hasher, InstanceMeta, InstanceRegistry,
     IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, ResourceKind,
     ResourceRecord, TestHasher, Value, admit_tree, child_key, holdings_collection,
-    resource_address, resource_record_key, route_tree,
+    instance_data_key, resource_address, resource_record_key, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
-use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
+use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, staking};
 use hyperscale_vm_types::{
-    Address, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, Outcome, Presence, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, UnmetCondition,
+    encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::{Context, ensure};
@@ -54,7 +55,7 @@ fn badge() -> ResourceAddr {
     )
 }
 /// The badge instance the operator holds in these tests.
-const BADGE_ID: u64 = 1;
+const BADGE_ID: u64 = 0;
 
 /// A store where [`OPERATOR`] holds the pool's owner badge — what every
 /// operator-surface test starts from.
@@ -65,7 +66,7 @@ fn operator_store() -> MemoryStore {
             OPERATOR.address(),
             holdings_collection(&TestHasher, OPERATOR, badge()),
             u128::from(BADGE_ID),
-            vec![1],
+            Vec::new(),
         )
         .unwrap();
     store
@@ -116,7 +117,10 @@ fn world() -> (MetadataCache, InstanceRegistry) {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: staking_pkg(),
-        config: vec![Value::Address(XRD.address())],
+        config: vec![
+            Value::Address(XRD.address()),
+            Value::Address(OPERATOR.address()),
+        ],
         salt: Hash32([2; 32]),
     }
 }
@@ -458,6 +462,98 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
             Outcome::Completed { .. }
         ),
         "a validator id this pool already took on is spent",
+    );
+    Ok(())
+}
+
+fn found_graph() -> ManifestGraph {
+    graph(|b| {
+        let founder = account::authorize(b, OPERATOR)?;
+        let badge = pool().found(b, founder)?;
+        account::deposit_nf(b, OPERATOR, badge)
+    })
+}
+
+/// The record the founding call writes for the badge it creates.
+const BADGE_RECORD: ResourceRecord = ResourceRecord {
+    kind: Fungibility::NonFungible,
+};
+
+/// A pool instantiated outside genesis reaches its own operator surface:
+/// one founding call writes the badge's record and its instance, files
+/// the badge in the founder's account, and the surface opens to whoever
+/// presents it — the cells a seated pool holds, written by the
+/// vocabulary instead of by genesis.
+#[test]
+fn a_pool_founds_itself_and_reaches_its_operator_surface() -> Result<()> {
+    let world = world();
+    let mut store = MemoryStore::new();
+    store.write(
+        resource_record_key(&TestHasher, pool(), unit()),
+        UNIT_RECORD.to_cell().unwrap(),
+    )?;
+
+    let found = batch_entry(&world, &single_intent(found_graph()), OPERATOR)?;
+    let (outcome, after_found) = run_both(&store, std::slice::from_ref(&found));
+    assert!(matches!(
+        outcome.receipts[&found.tx].outcome,
+        Outcome::Completed { .. }
+    ));
+
+    // The cells genesis writes for a seated pool, byte for byte: the
+    // record, the instance's data cell, and the holdings entry.
+    assert_eq!(
+        after_found.cell(resource_record_key(&TestHasher, pool(), badge())),
+        Some(BADGE_RECORD.to_cell().unwrap()),
+    );
+    assert_eq!(
+        after_found.cell(instance_data_key(&TestHasher, pool(), badge(), BADGE_ID)),
+        Some(vec![1]),
+    );
+    let holdings: Vec<_> = after_found
+        .collection_entries()
+        .filter(|(key, _)| key.collection == holdings_collection(&TestHasher, OPERATOR, badge()))
+        .map(|(key, held)| (key.order, held.to_vec()))
+        .collect();
+    assert_eq!(holdings, vec![(u128::from(BADGE_ID), Vec::new())]);
+
+    // And the surface is open: the founder registers a validator with
+    // the badge the founding minted.
+    let register = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
+    let (outcome, end) = run_both(&after_found, std::slice::from_ref(&register));
+    assert!(matches!(
+        outcome.receipts[&register.tx].outcome,
+        Outcome::Completed { .. }
+    ));
+    assert_eq!(
+        registered(&end, VALIDATOR),
+        Some(staking::Validator { pubkey: PUBKEY }),
+    );
+    Ok(())
+}
+
+/// The one-way door: a second founding is refused as the record's unmet
+/// absence, judged where the leaf lives, before any body runs.
+#[test]
+fn a_second_founding_is_refused_where_the_record_lives() -> Result<()> {
+    let world = world();
+    let found = batch_entry(&world, &single_intent(found_graph()), OPERATOR)?;
+    let (_, after_found) = run_both(&MemoryStore::new(), std::slice::from_ref(&found));
+
+    let again = batch_entry(&world, &single_intent(found_graph()), OPERATOR)?;
+    let (outcome, _) = run_both(&after_found, std::slice::from_ref(&again));
+    assert!(
+        matches!(
+            outcome.receipts[&again.tx].outcome,
+            Outcome::ConditionUnmet {
+                condition: UnmetCondition::Holds {
+                    required: Presence::Absent,
+                    ..
+                },
+            }
+        ),
+        "refused as the unmet absence: {:?}",
+        outcome.receipts[&again.tx].outcome,
     );
     Ok(())
 }
