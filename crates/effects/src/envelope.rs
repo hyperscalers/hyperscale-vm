@@ -32,11 +32,13 @@ use crate::admission::{
     AdmissionError, Admitted, IntentView, MAX_YIELD_PARAMS, admit_intents, check_instance_values,
     check_value_depth,
 };
+use crate::dsl::SealedResources;
 use crate::graph::{Constraint, EdgeRef, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
 use crate::instance::{InstanceMeta, InstanceRegistry};
 use crate::manifest::ManifestHash;
 use crate::metadata::MetadataCache;
+use crate::resource::ResourceMeta;
 use crate::route::{MAX_MANIFEST_NODES, Routing, ShardResolver, route};
 use crate::types::{SlotId, child_key};
 
@@ -163,6 +165,15 @@ pub struct EnvelopeTree {
     /// dead weight its composer paid to carry, not a refusal.
     #[hbor(max = MAX_MANIFEST_NODES)]
     pub instances: Vec<InstanceMeta>,
+    /// The sealed-rule records of the resources the tree's gates name —
+    /// each registered, at derivation, at exactly the address it
+    /// derives, on the terms `instances` states.
+    ///
+    /// Inside the signed tree for the same reason: what a sealed leaf
+    /// resolves against is covered by the envelope's identity, and the
+    /// composer pays the record's bytes.
+    #[hbor(max = MAX_MANIFEST_NODES)]
+    pub resources: Vec<ResourceMeta>,
 }
 
 impl EnvelopeTree {
@@ -189,6 +200,7 @@ impl EnvelopeTree {
         // What the tree's calls resolve against is part of what was
         // composed, so two trees differing only here are two identities.
         parts.push(to_vec(&self.instances).expect("instance records are wire-bounded values"));
+        parts.push(to_vec(&self.resources).expect("resource records are wire-bounded values"));
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
         ManifestHash(hasher.hash(DOMAIN_ENVELOPE_TREE, &refs))
     }
@@ -309,7 +321,8 @@ pub fn admit_tree(
             signer: Some(subintent.signer),
         });
     }
-    let admitted = admit_intents(&views, identity, cache, instances, hasher)?;
+    let sealed = SealedResources::from_presented(hasher, &tree.resources);
+    let admitted = admit_intents(&views, identity, cache, instances, &sealed, hasher)?;
     Ok(AdmittedTree {
         admitted,
         subintents: records,

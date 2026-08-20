@@ -23,7 +23,7 @@ use hyperscale_vm_fixtures::{
     amm as amm_package, book as book_package, splitter as splitter_package,
 };
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Num, Sym, eq, lit_u64, pack, select};
-use hyperscale_vm_sdk::{Blueprint, Trace};
+use hyperscale_vm_sdk::{Blueprint, SealedBehaviour, Trace};
 use hyperscale_vm_stdlib::account as account_package;
 
 /// The fungible account.
@@ -42,6 +42,23 @@ fn account() -> Blueprint {
                 t.guarded_by(rule);
                 let vault = holder.child(VAULT, &[resource.clone().cast()]);
                 t.point(&vault).holding(&resource).reserve(&amount);
+                t.output(&resource);
+            },
+        )
+        .method(
+            "recall",
+            &[ParamType::Resource, ParamType::U128],
+            |t: &mut Trace| {
+                let resource: Sym<Addr> = t.arg(0);
+                let _amount: Sym<Amount> = t.arg(1);
+                let holder = t.self_addr();
+
+                // The gate is the resource's own sealed rule, resolved
+                // at admission from the presented record.
+                let rule = t.sealed(SealedBehaviour::Recall, &resource);
+                t.guarded_by(rule);
+                let vault = holder.child(VAULT, &[resource.clone().cast()]);
+                t.point(&vault).holding(&resource).delta();
                 t.output(&resource);
             },
         )

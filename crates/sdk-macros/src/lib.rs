@@ -581,6 +581,28 @@ fn guarded_rule(
                 true,
             ))
         }
+        // `recalls(resource)` — the rule the resource's own address
+        // seals for recall, resolved at admission from the presented
+        // record. The other sealed behaviours get their spellings when
+        // something consumes them.
+        syn::Expr::Call(call) if named(&call.func, "recalls") => {
+            let Some(arg) = call.args.first() else {
+                return Err(syn::Error::new(
+                    call.span(),
+                    "`recalls` names the resource whose sealed recall rule governs",
+                ));
+            };
+            // A caller may name the resource, unlike an authority: the
+            // rule is the address's own commitment, so naming the
+            // resource chooses which sealed rule governs and can never
+            // choose what it says.
+            let resource = sealed_subject(arg, config_fields, params)?;
+            Ok((
+                quote!(__t.sealed(::hyperscale_vm_sdk::SealedBehaviour::Recall, &#resource)),
+                false,
+                true,
+            ))
+        }
         leaf => {
             let (identity, on_self) = guarded_identity(leaf, config_fields, resources, params)?;
             Ok((quote!(__t.claim(&#identity)), on_self, false))
@@ -681,6 +703,42 @@ fn count_literal(expr: &syn::Expr) -> Option<u8> {
 /// it, so a gate over an argument reads as guarded and admits everyone —
 /// which is the refusal `check_abi` makes at publish, made here on the
 /// line that wrote it.
+/// The resource a sealed leaf governs by: a parameter or a configured
+/// field, resolved to the expression admission evaluates.
+///
+/// Caller-named on purpose, where an authority never may be: the sealed
+/// rule is the address's own commitment, verified by re-derivation, so
+/// the namer picks which resource's rule applies and nothing about what
+/// it admits.
+fn sealed_subject(
+    subject: &syn::Expr,
+    config_fields: &[(String, syn::Type)],
+    params: &[(String, syn::Type)],
+) -> syn::Result<TokenStream2> {
+    let refuse = || {
+        syn::Error::new(
+            subject.span(),
+            "a sealed rule's resource is a method parameter or one of the component's \
+             configuration fields",
+        )
+    };
+    let syn::Expr::Path(path) = subject else {
+        return Err(refuse());
+    };
+    let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+        return Err(refuse());
+    };
+    if let Some(index) = params.iter().position(|(p, _)| *p == name) {
+        let index = u32::try_from(index).expect("a parameter list is shorter than u32");
+        return Ok(quote!(__t.arg::<::hyperscale_vm_sdk::Addr>(#index)));
+    }
+    if let Some(slot) = config_fields.iter().position(|(f, _)| *f == name) {
+        let slot = u32::try_from(slot).unwrap_or(u32::MAX);
+        return Ok(quote!(__t.config::<::hyperscale_vm_sdk::Addr>(#slot)));
+    }
+    Err(refuse())
+}
+
 fn guarded_identity(
     identity: &syn::Expr,
     config_fields: &[(String, syn::Type)],

@@ -28,7 +28,7 @@ use std::collections::BTreeSet;
 use hyperscale_vm_effects::{
     Constraint, EdgeContent, EdgeRef, EvalInputs, EvidenceRef, Expr, GraphArg, Hash32, Hasher,
     InstanceMeta, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MetadataCache,
-    MethodSignature, PackageHash, ParamType, Value, evaluate_expr,
+    MethodSignature, PackageHash, ParamType, SealedResources, Value, evaluate_expr,
 };
 use hyperscale_vm_types::{Address, CallTarget, PrincipalAddr, ResourceAddr};
 
@@ -674,6 +674,7 @@ pub(crate) fn output_resources(
         config,
         node_index,
         identity: UNBOUND,
+        sealed: SealedResources::none(),
     };
     signature
         .outputs

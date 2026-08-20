@@ -8,7 +8,7 @@
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
     CONFIRMATION, Clause, ConditionExpr, Expr, PRIMARY, PackageMetadata, RECOVERY, ResourceKind,
-    RuleExpr, RuleLeaf, Value, check_abi, check_declarations,
+    RuleExpr, RuleLeaf, SealedBehaviour, Value, check_abi, check_declarations,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_stdlib::staking::OWNER_BADGE;
@@ -110,6 +110,15 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
             vec![Expr::Tuple(vec![Expr::Arg(0), Expr::Arg(1)])],
         ),
         ("account", "propose", stored(RECOVERY), vec![]),
+        (
+            "account",
+            "recall",
+            vec![RuleExpr::Require(RuleLeaf::Sealed {
+                resource: Expr::Arg(0),
+                behaviour: SealedBehaviour::Recall,
+            })],
+            vec![],
+        ),
         ("account", "securify", this(), vec![]),
         ("account", "withdraw", this(), vec![]),
         ("account", "withdraw-nf", this(), vec![]),

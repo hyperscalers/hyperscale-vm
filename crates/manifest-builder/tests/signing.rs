@@ -120,6 +120,7 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
         root_bindings: Vec::new(),
         subintents: Vec::new(),
         instances: Vec::new(),
+        resources: Vec::new(),
     };
 
     let key = TestSigner(7);
@@ -155,6 +156,7 @@ fn the_signature_covers_what_the_envelope_says() {
         root_bindings: Vec::new(),
         subintents: Vec::new(),
         instances: Vec::new(),
+        resources: Vec::new(),
     };
 
     let key = TestSigner(7);

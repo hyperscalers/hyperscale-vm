@@ -9,8 +9,8 @@
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Clause, Declaration, EvalInputs, Hash32, MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature,
-    ModeExpr, ParamType, TargetExpr, TestHasher, Value, child_key, evaluate_declaration,
-    evaluate_effects,
+    ModeExpr, ParamType, SealedResources, TargetExpr, TestHasher, Value, child_key,
+    evaluate_declaration, evaluate_effects,
 };
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym, eq};
 use hyperscale_vm_sdk::{Blueprint, Trace};
@@ -44,6 +44,7 @@ fn declared(signature: &MethodSignature, args: &[Value], config: &[Value]) -> Ef
         config,
         node_index: 0,
         identity: identity(),
+        sealed: SealedResources::none(),
     };
     evaluate_effects(&signature.effects, &inputs, &TestHasher)
         .expect("the traced signature evaluates")
@@ -58,6 +59,7 @@ fn evaluated(signature: &MethodSignature, args: &[Value], config: &[Value]) -> D
         config,
         node_index: 0,
         identity: identity(),
+        sealed: SealedResources::none(),
     };
     evaluate_declaration(&signature.effects, &inputs, &TestHasher)
         .expect("the traced signature evaluates")

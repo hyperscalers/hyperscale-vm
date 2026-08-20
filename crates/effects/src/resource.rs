@@ -6,12 +6,17 @@
 //! Minting and burning stay the issuer's own declared effects on vaults;
 //! the record says what they issue, never how much of it exists.
 
-use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
+use hyperscale_hbor::{
+    DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec, to_vec_with_depth,
+};
 use hyperscale_vm_types::{Address, CollectionId, ResourceAddr, SubstateKey};
 
+use crate::auth::RoleBytes;
 use crate::dsl::{Expr, TargetExpr};
-use crate::hash::Hasher;
-use crate::types::{Value, child_key, collection_id, native_address, resource_address};
+use crate::hash::{Hash32, Hasher};
+use crate::types::{
+    Value, child_key, collection_id, native_address, resource_address, sealed_resource_address,
+};
 use crate::vocabulary::GENESIS_PUBLISHER;
 pub use crate::vocabulary::{INSTANCE, NF_VAULT, RESOURCE};
 
@@ -138,6 +143,131 @@ impl ResourceRecord {
     /// [`DecodeError`] on trailing bytes or a non-canonical form.
     pub fn from_cell(bytes: &[u8]) -> Result<Self, DecodeError> {
         from_slice_with_depth(bytes, RECORD_WIRE_DEPTH)
+    }
+}
+
+/// A behaviour a resource's sealed rules govern.
+///
+/// The set the address cannot answer by arithmetic: who may mint is the
+/// derivation's, and these are the rest. Closed like the role band — a
+/// behaviour is assigned or it is not one, and adding one is a protocol
+/// version change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+pub enum SealedBehaviour {
+    /// Reaching the resource out of a holder's own account, through
+    /// that account's own method and no other way.
+    #[hbor(discriminant = 0)]
+    Recall,
+    /// Halting the resource's movement.
+    #[hbor(discriminant = 1)]
+    Freeze,
+    /// Restricting where a deposit lands — a destination, never a
+    /// refusal: a deposit the rule declines lands in the claims cell.
+    #[hbor(discriminant = 2)]
+    Deposit,
+}
+
+/// The decoder cap for a sealed-rules list: the entries, one entry's
+/// pair, and the byte string holding one rule — the same three levels a
+/// role table decodes under, for the same reason.
+pub const MAX_SEALED_RULES_WIRE_DEPTH: usize = 3;
+
+/// The sealed rules a resource's address commits to: rules by
+/// behaviour, each as the bytes it was handed.
+///
+/// The same sorted-list discipline the role table keeps, and the same
+/// opacity: a rule's bytes decode where the rule is judged, under the
+/// vocabulary's own caps. **An absent entry denies.** Immutability is
+/// the derivation rather than a promise — the commitment rides the
+/// address, so a rule that changed would be a different resource.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
+#[hbor(transparent, validate = ascending_behaviours)]
+pub struct ResourceRules(Vec<(SealedBehaviour, RoleBytes)>);
+
+/// The list's canonical-order rule: behaviours strictly ascending.
+fn ascending_behaviours(rules: &ResourceRules) -> Result<(), &'static str> {
+    rules
+        .0
+        .windows(2)
+        .all(|pair| pair[0].0 < pair[1].0)
+        .then_some(())
+        .ok_or("sealed behaviours must be ascending and distinct")
+}
+
+impl ResourceRules {
+    /// The empty set, which seals nothing and denies every behaviour.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    /// The rule sealed for `behaviour`, where one is.
+    #[must_use]
+    pub fn rule(&self, behaviour: SealedBehaviour) -> Option<&RoleBytes> {
+        self.0
+            .binary_search_by_key(&behaviour, |(b, _)| *b)
+            .ok()
+            .map(|index| &self.0[index].1)
+    }
+
+    /// Seal `bytes` for `behaviour`, replacing what was there.
+    pub fn set(&mut self, behaviour: SealedBehaviour, bytes: RoleBytes) {
+        match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
+            Ok(index) => self.0[index].1 = bytes,
+            Err(index) => self.0.insert(index, (behaviour, bytes)),
+        }
+    }
+
+    /// The commitment the address folds: a domain-separated hash of the
+    /// canonical encoding, the empty set committed like any other so a
+    /// sealed resource and an unsealed one can never collide.
+    ///
+    /// # Panics
+    ///
+    /// Only on an encoder failure no well-formed list can reach — the
+    /// same standing every wire-bounded value has.
+    #[must_use]
+    pub fn commitment(&self, hasher: &dyn Hasher) -> Hash32 {
+        let bytes = to_vec(self).expect("a sealed-rules list is a wire-bounded value");
+        hasher.hash(DOMAIN_SEALED_RULES, &[&bytes])
+    }
+}
+
+const DOMAIN_SEALED_RULES: &[u8] = b"hyperscale-vm/sealed-rules";
+
+/// A presented resource record: the address preimage, carried in the
+/// envelope and verified by re-derivation.
+///
+/// The same standing an instance's record has — a presented claim
+/// rather than trusted state. The address is the hash of exactly these
+/// four, so a holder checks a resource's sealed rules by recomputing
+/// the derivation, with no cell read anywhere in the path; a false
+/// record derives a different address, and the resource it lied about
+/// stays exactly what it was.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub struct ResourceMeta {
+    /// The instance whose provenance the address commits.
+    pub minter: Address,
+    /// The kind the derivation folds.
+    pub kind: ResourceKind,
+    /// The material separating the minter's resources, as the canonical
+    /// byte parts the derivation hashes.
+    #[hbor(max = MAX_RESOURCE_MATERIAL_PARTS)]
+    pub material: Vec<Vec<u8>>,
+    /// The sealed rules whose commitment the address folds.
+    pub rules: ResourceRules,
+}
+
+/// The material parts one resource derivation may fold — a wire bound
+/// on a presented record's list, matching the one part a mark occupies
+/// with room for compound material.
+pub const MAX_RESOURCE_MATERIAL_PARTS: usize = 4;
+
+impl ResourceMeta {
+    /// The address these four derive.
+    #[must_use]
+    pub fn address(&self, hasher: &dyn Hasher) -> ResourceAddr {
+        sealed_resource_address(hasher, self.minter, self.kind, &self.rules, &self.material)
     }
 }
 

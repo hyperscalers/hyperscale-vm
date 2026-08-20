@@ -633,6 +633,67 @@ PackageMetadata {
                 ),
             ],
         },
+        "recall": MethodSignature {
+            totality: Infallible,
+            issues: None,
+            params: [
+                Resource,
+                U128,
+            ],
+            outputs: [
+                Arg(
+                    0,
+                ),
+            ],
+            denominations: [],
+            effects: [
+                Requires {
+                    guard: None,
+                    condition: Satisfies {
+                        rule: Require(
+                            Sealed {
+                                resource: Arg(
+                                    0,
+                                ),
+                                behaviour: Recall,
+                            },
+                        ),
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                1,
+                            ),
+                            material: [
+                                Arg(
+                                    0,
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Delta,
+                    denomination: Some(
+                        Arg(
+                            0,
+                        ),
+                    ),
+                },
+            ],
+            abi: [
+                Handle(
+                    1,
+                ),
+                Derived(
+                    Arg(
+                        1,
+                    ),
+                ),
+            ],
+        },
         "securify": MethodSignature {
             totality: Infallible,
             issues: None,

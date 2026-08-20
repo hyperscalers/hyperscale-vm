@@ -53,8 +53,8 @@ pub use auth::{
 pub use dsl::{
     Clause, ConditionExpr, Declaration, DeclaredAccess, EvalError, EvalInputs, Expr,
     MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr,
-    TargetExpr, evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local,
-    materialized_kind, self_child,
+    SealedResources, TargetExpr, evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id,
+    fresh_local, materialized_kind, self_child,
 };
 pub use envelope::{
     AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_SLOT, Subintent,
@@ -89,8 +89,10 @@ pub use publish::{
     SignatureError, check_abi, check_declarations, check_metadata, check_signature,
 };
 pub use resource::{
-    Fungibility, RECORD_WIRE_DEPTH, ResourceKind, ResourceRecord, holdings_collection,
-    holdings_entry, holdings_range, instance_data_key, issued_resource, resource_record_key, xrd,
+    Fungibility, MAX_RESOURCE_MATERIAL_PARTS, MAX_SEALED_RULES_WIRE_DEPTH, RECORD_WIRE_DEPTH,
+    ResourceKind, ResourceMeta, ResourceRecord, ResourceRules, SealedBehaviour,
+    holdings_collection, holdings_entry, holdings_range, instance_data_key, issued_resource,
+    resource_record_key, xrd,
 };
 pub use route::{
     FrameDeclaration, MAX_MANIFEST_NODES, PrefixShardResolver, Routing, ShardResolver, route,
@@ -105,5 +107,5 @@ pub use types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, NativeRole,
     PACKAGE_SLOT_BASE, ShardId, SlotId, Value, child_key, collection_id, component_address,
     config_hash, native_address, order_key, package_address, package_slot, principal_address,
-    resource_address,
+    resource_address, sealed_resource_address,
 };

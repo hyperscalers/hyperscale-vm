@@ -8,6 +8,8 @@
 //! and a hasher, and nothing else, so evaluation is pure by construction
 //! and identical on every node.
 
+use std::collections::BTreeMap;
+
 use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{
     Address, CellKind, CollectionId, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey,
@@ -17,8 +19,8 @@ use hyperscale_vm_types::{
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::{Condition, JudgedLeaf, ManifestHash};
 use crate::presented::Presented;
-use crate::resource::ResourceKind;
-use crate::rule::{RuleExpr, RuleLeaf};
+use crate::resource::{ResourceKind, ResourceMeta, ResourceRules, SealedBehaviour};
+use crate::rule::{Rule, RuleExpr, RuleLeaf};
 use crate::types::{
     EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
     resource_address,
@@ -616,6 +618,19 @@ pub enum EvalError {
     /// resource.
     #[error(transparent)]
     NotAResource(#[from] WrongClass),
+    /// A sealed leaf naming a resource whose record the envelope never
+    /// presented — there is nothing to verify a rule against.
+    #[error("the sealed rules of {0:?} were not presented")]
+    SealedUnpresented(ResourceAddr),
+    /// A sealed leaf naming a behaviour the resource never sealed. An
+    /// absent entry denies, and the deny is spoken here where a caller
+    /// can read it.
+    #[error("the resource seals no {0:?} rule, which denies")]
+    SealedDenies(SealedBehaviour),
+    /// A presented sealed rule that does not decode under the
+    /// vocabulary's caps, or a grafted tree past them.
+    #[error("a sealed rule does not decode within the vocabulary's caps")]
+    SealedRuleMalformed,
     /// A tuple projection past the tuple's arity.
     #[error("tuple field {index} out of range (arity {arity})")]
     FieldOutOfRange {
@@ -689,6 +704,44 @@ pub struct EvalInputs<'a> {
     /// The transaction's identity — the signed graph's hash; the one root
     /// of every fresh-ID derivation.
     pub identity: ManifestHash,
+    /// The sealed rules the envelope presented, each verified at the
+    /// address its own record derives. Not state: a presented claim, on
+    /// the terms an instance's record is.
+    pub sealed: &'a SealedResources,
+}
+
+/// The sealed rules an envelope presented, by the address each record
+/// derives — first registration wins, and a false record registers a
+/// different resource.
+#[derive(Clone, Debug, Default)]
+pub struct SealedResources(BTreeMap<ResourceAddr, ResourceRules>);
+
+impl SealedResources {
+    /// No records presented: what every plain graph evaluates over.
+    #[must_use]
+    pub fn none() -> &'static Self {
+        static NONE: SealedResources = SealedResources(BTreeMap::new());
+        &NONE
+    }
+
+    /// The presented records, each registered at exactly the address it
+    /// derives.
+    #[must_use]
+    pub fn from_presented(hasher: &dyn Hasher, records: &[ResourceMeta]) -> Self {
+        let mut sealed = BTreeMap::new();
+        for record in records {
+            sealed
+                .entry(record.address(hasher))
+                .or_insert_with(|| record.rules.clone());
+        }
+        Self(sealed)
+    }
+
+    /// The sealed rules of `resource`, where its record was presented.
+    #[must_use]
+    pub fn rules(&self, resource: ResourceAddr) -> Option<&ResourceRules> {
+        self.0.get(&resource)
+    }
 }
 
 impl EvalInputs<'_> {
@@ -1113,21 +1166,54 @@ fn eval_condition(
             presence: *presence,
         }),
         ConditionExpr::Satisfies { rule } => {
-            let rule = rule.map_leaves(&mut |leaf| match leaf {
+            let rule = rule.try_graft(&mut |leaf| match leaf {
                 RuleLeaf::Claim(expr) => {
                     let value = eval_expr(expr, inputs, hasher, bindings, 0)?;
-                    Presented::of(&value).map(JudgedLeaf::Claim).ok_or_else(|| {
-                        EvalError::TypeMismatch {
+                    Presented::of(&value)
+                        .map(|claim| Rule::Require(JudgedLeaf::Claim(claim)))
+                        .ok_or_else(|| EvalError::TypeMismatch {
                             expected: "claim",
                             found: value.kind(),
-                        }
-                    })
+                        })
                 }
-                RuleLeaf::Stored { cell, role } => Ok(JudgedLeaf::Stored {
+                RuleLeaf::Stored { cell, role } => Ok(Rule::Require(JudgedLeaf::Stored {
                     cell: as_key(eval_expr(cell, inputs, hasher, bindings, 0)?)?,
                     role: *role,
-                }),
+                })),
+                // The sealed leaf stands for the tree its resource
+                // commits to: resolve the address, read the rule off the
+                // presented record the address verifies, and graft it in
+                // place — no cell read anywhere in the path.
+                RuleLeaf::Sealed {
+                    resource,
+                    behaviour,
+                } => {
+                    let value = eval_expr(resource, inputs, hasher, bindings, 0)?;
+                    let Value::Address(address) = value else {
+                        return Err(EvalError::TypeMismatch {
+                            expected: "resource address",
+                            found: value.kind(),
+                        });
+                    };
+                    let address =
+                        ResourceAddr::try_from(address).map_err(EvalError::NotAResource)?;
+                    let rules = inputs
+                        .sealed
+                        .rules(address)
+                        .ok_or(EvalError::SealedUnpresented(address))?;
+                    let sealed = rules
+                        .rule(*behaviour)
+                        .ok_or(EvalError::SealedDenies(*behaviour))?
+                        .decode()
+                        .map_err(|_| EvalError::SealedRuleMalformed)?;
+                    sealed.map_leaves(&mut |claim| Ok::<_, EvalError>(JudgedLeaf::Claim(*claim)))
+                }
             })?;
+            // A graft can deepen what a map never could, so the spliced
+            // tree meets the vocabulary's caps again here.
+            if !rule.within_caps(0) {
+                return Err(EvalError::SealedRuleMalformed);
+            }
             Ok(Condition::Satisfies { rule })
         }
     }
@@ -1733,6 +1819,7 @@ mod tests {
             config,
             node_index: 3,
             identity: ManifestHash(Hash32([9; 32])),
+            sealed: super::SealedResources::none(),
         }
     }
 

@@ -1271,7 +1271,9 @@ fn check_rule_bounds(rule: &RuleExpr) -> Result<(), SignatureBoundsError> {
     }
     match rule {
         RuleExpr::Require(RuleLeaf::Claim(claim)) => check_expr_bounds(claim, 0),
-        RuleExpr::Require(RuleLeaf::Stored { cell, .. }) => check_expr_bounds(cell, 0),
+        RuleExpr::Require(
+            RuleLeaf::Stored { cell, .. } | RuleLeaf::Sealed { resource: cell, .. },
+        ) => check_expr_bounds(cell, 0),
         RuleExpr::CountOf { rules, .. } => rules.iter().try_for_each(check_rule_bounds),
     }
 }

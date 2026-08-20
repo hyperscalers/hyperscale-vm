@@ -84,11 +84,12 @@ fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
 fn batch_entry(
     world: &(MetadataCache, InstanceRegistry),
     tree: &EnvelopeTree,
+    composer: PrincipalAddr,
 ) -> Result<(BatchTx, AdmittedTree)> {
     let (cache, instances) = world;
     let identity = tree.hash(&TestHasher);
     let admitted =
-        admit_tree(tree, ALICE, identity, cache, instances, &TestHasher).context("admission")?;
+        admit_tree(tree, composer, identity, cache, instances, &TestHasher).context("admission")?;
     let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
     // The null resolver puts every effect on one shard, so the whole
     // declaration is the sole entry — taken as that rather than by naming
@@ -140,7 +141,7 @@ fn seeded_store() -> MemoryStore {
 fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     let world = world();
     let tree = composed_tree(ALICE, 100);
-    let (entry, admitted) = batch_entry(&world, &tree)?;
+    let (entry, admitted) = batch_entry(&world, &tree, ALICE)?;
     let nullifier = admitted.subintents[0].nullifier;
 
     let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&entry));
@@ -167,8 +168,8 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     // Two composers carry the same signed subintent: same nullifier,
     // one conflict group, canonical order picks the winner.
     let world = world();
-    let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100))?;
-    let (carol_entry, carol_admitted) = batch_entry(&world, &composed_tree(CAROL, 120))?;
+    let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100), ALICE)?;
+    let (carol_entry, carol_admitted) = batch_entry(&world, &composed_tree(CAROL, 120), CAROL)?;
     assert_eq!(
         alice_admitted.subintents[0].nullifier,
         carol_admitted.subintents[0].nullifier
@@ -182,10 +183,14 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     } else {
         (&carol_entry, &alice_entry, 120)
     };
-    assert!(matches!(
+    assert!(
+        matches!(
+            outcome.receipts[&winner.tx].outcome,
+            Outcome::Completed { .. }
+        ),
+        "winner: {:?}",
         outcome.receipts[&winner.tx].outcome,
-        Outcome::Completed { .. }
-    ));
+    );
     // A lost race, not a defect: canonical order picked the winner and
     // the loser could not have known which it would be.
     assert_eq!(
@@ -217,8 +222,8 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
 #[test]
 fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
     let world = world();
-    let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100))?;
-    let (carol_entry, _) = batch_entry(&world, &composed_tree(CAROL, 120))?;
+    let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100), ALICE)?;
+    let (carol_entry, _) = batch_entry(&world, &composed_tree(CAROL, 120), CAROL)?;
     let nullifier = alice_admitted.subintents[0].nullifier;
 
     let (_, committed) = run_both(&seeded_store(), std::slice::from_ref(&alice_entry));
@@ -245,7 +250,7 @@ fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
 #[test]
 fn a_transaction_that_spends_its_gas_limit_aborts_on_both_runtimes() -> Result<()> {
     let world = world();
-    let (entry, _) = batch_entry(&world, &composed_tree(ALICE, 100))?;
+    let (entry, _) = batch_entry(&world, &composed_tree(ALICE, 100), ALICE)?;
 
     // Enough to enter the guest and not enough to leave it. The figure
     // is between the two and moves with the code: below it the walk

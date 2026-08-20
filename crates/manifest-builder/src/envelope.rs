@@ -34,8 +34,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
     Constraint, EdgeRef, EnvelopeTree, GraphArg, Hasher, InstanceMeta, InstanceRegistry,
-    IntentDecl, MAX_YIELD_PARAMS, ManifestGraph, MetadataCache, Subintent, YieldBinding,
-    YieldParam,
+    IntentDecl, MAX_YIELD_PARAMS, ManifestGraph, MetadataCache, ResourceMeta, Subintent,
+    YieldBinding, YieldParam,
 };
 use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
@@ -261,6 +261,9 @@ pub struct EnvelopeBuilder<'a> {
     /// The creation-fixed records the tree carries for targets beyond
     /// the genesis registry.
     presented: Vec<InstanceMeta>,
+    /// The sealed-rule records this envelope presents, in the order the
+    /// composer added them.
+    sealed: Vec<ResourceMeta>,
 }
 
 impl<'a> EnvelopeBuilder<'a> {
@@ -282,6 +285,7 @@ impl<'a> EnvelopeBuilder<'a> {
             intents: vec![None],
             bindings: BTreeMap::new(),
             presented: Vec::new(),
+            sealed: Vec::new(),
         };
         let root = IntentBuilder {
             graph: TypedBuilder::new(cache, instances, hasher),
@@ -301,6 +305,13 @@ impl<'a> EnvelopeBuilder<'a> {
     /// will compose identically.
     pub fn instance(&mut self, meta: InstanceMeta) {
         self.presented.push(meta);
+    }
+
+    /// Present a resource's sealed-rule record, registered at the
+    /// address its own content derives — what a sealed gate in this
+    /// envelope resolves against, on the terms `instance` states.
+    pub fn resource(&mut self, meta: ResourceMeta) {
+        self.sealed.push(meta);
     }
 
     /// A separately signed subintent, whose signer owns the nullifier
@@ -481,6 +492,7 @@ impl<'a> EnvelopeBuilder<'a> {
             root_bindings,
             subintents,
             instances: self.presented,
+            resources: self.sealed,
         })
     }
 }

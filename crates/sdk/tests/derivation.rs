@@ -878,8 +878,8 @@ mod selection {
 #[test]
 fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() {
     use hyperscale_vm_effects::{
-        EvalInputs, Expr, Hash32, ManifestHash, SlotId, TargetExpr, TestHasher, Value, child_key,
-        evaluate_effects,
+        EvalInputs, Expr, Hash32, ManifestHash, SealedResources, SlotId, TargetExpr, TestHasher,
+        Value, child_key, evaluate_effects,
     };
     use hyperscale_vm_sdk::VAULT;
     use hyperscale_vm_types::{Address, AddressClass, EffectTarget};
@@ -913,6 +913,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
             config: &config,
             node_index: 0,
             identity: ManifestHash(Hash32([9; 32])),
+            sealed: SealedResources::none(),
         };
         let set = evaluate_effects(&effects("either"), &inputs, &TestHasher).unwrap();
         let vaults: Vec<_> = [left, right, address(0x33)]
@@ -940,6 +941,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
         config: &config,
         node_index: 0,
         identity: ManifestHash(Hash32([9; 32])),
+        sealed: SealedResources::none(),
     };
     let set = evaluate_effects(&effects("routed"), &inputs, &TestHasher).unwrap();
     let fallback = EffectTarget::Point(child_key(

@@ -129,6 +129,19 @@ pub mod account {
         #[proves(badge[id])]
         pub fn present_instance(&mut self, badge: Address, id: u64) {}
 
+        /// Hand `amount` of `resource` out of this account, to whoever
+        /// the resource's own sealed recall rule admits.
+        ///
+        /// The one way a recall reaches a holder's vault: the holder's
+        /// own method, declared under the holder's own prefix, gated on
+        /// a rule the resource's address commits to — so ownership
+        /// holds, the kernel gains nothing, and a holder sees the power
+        /// before accepting the asset.
+        #[requires(recalls(resource))]
+        pub fn recall(&mut self, resource: ResourceAddr, amount: Quantity) -> Bucket {
+            self.vault(resource).take(amount)
+        }
+
         /// Create the stored-authority cell: the caller's roles and
         /// recovery delay, with nothing pending. The cell existing is
         /// this body's own refusal, which is what makes the transition

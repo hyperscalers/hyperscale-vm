@@ -104,6 +104,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
             }],
         }],
         instances: Vec::new(),
+        resources: Vec::new(),
     }
 }
 
@@ -313,6 +314,7 @@ fn a_yielded_edge_is_judged_by_its_kind() {
             }],
         }],
         instances: Vec::new(),
+        resources: Vec::new(),
     };
 
     // Named instances into the fungible `deposit`: refused by kind, the

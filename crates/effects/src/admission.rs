@@ -17,7 +17,8 @@
 use hyperscale_vm_types::{Address, EffectConflict, PrincipalAddr, ResourceAddr};
 
 use crate::dsl::{
-    Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr, materialized_kind,
+    Declaration, EvalError, EvalInputs, SealedResources, evaluate_declaration, evaluate_expr,
+    materialized_kind,
 };
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
@@ -529,6 +530,7 @@ pub fn admit(
         identity,
         cache,
         instances,
+        SealedResources::none(),
         hasher,
     )
 }
@@ -652,6 +654,7 @@ pub(crate) fn admit_intents(
     identity: ManifestHash,
     cache: &MetadataCache,
     instances: &InstanceRegistry,
+    sealed: &SealedResources,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
     let total: usize = intents.iter().map(|view| view.graph.nodes.len()).sum();
@@ -668,6 +671,7 @@ pub(crate) fn admit_intents(
         identity,
         cache,
         instances,
+        sealed,
         hasher,
         flat_of: &flat_of,
         outputs: Vec::with_capacity(total),
@@ -846,6 +850,7 @@ struct Lower<'a> {
     identity: ManifestHash,
     cache: &'a MetadataCache,
     instances: &'a InstanceRegistry,
+    sealed: &'a SealedResources,
     hasher: &'a dyn Hasher,
     /// Flattened position per (intent, local node).
     flat_of: &'a [Vec<u32>],
@@ -917,6 +922,7 @@ impl Lower<'_> {
             config: &meta.config,
             node_index,
             identity: self.identity,
+            sealed: self.sealed,
         };
         check_denominations(signature, &bound, &eval_inputs, self.hasher, node_index)?;
         let node_outputs = project_outputs(signature, &eval_inputs, self.hasher, node_index)?;

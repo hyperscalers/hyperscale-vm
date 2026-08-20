@@ -242,6 +242,7 @@ const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
         root_bindings: Vec::new(),
         subintents: Vec::new(),
         instances: Vec::new(),
+        resources: Vec::new(),
     }
 }
 

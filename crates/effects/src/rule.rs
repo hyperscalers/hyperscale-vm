@@ -25,6 +25,7 @@ use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_
 use crate::auth::RoleId;
 use crate::dsl::Expr;
 use crate::presented::Presented;
+use crate::resource::SealedBehaviour;
 
 /// The bound on a rule's nesting depth: a lone identity is one, a
 /// threshold one more than its deepest branch.
@@ -121,6 +122,20 @@ pub enum RuleLeaf {
         /// The role selecting the stored rule. An absent entry denies.
         role: RoleId,
     },
+    /// The rule a resource's own address seals for one behaviour,
+    /// resolved at admission from the presented record whose derivation
+    /// the address commits — no cell read anywhere in the path.
+    ///
+    /// An unpresented record refuses the call, and so does an absent
+    /// behaviour: the sealed set is the address's own claim, and a
+    /// behaviour it never sealed is one nobody holds.
+    Sealed {
+        /// The resource whose sealed rules govern, evaluated over the
+        /// method's own inputs.
+        resource: Expr,
+        /// The behaviour selecting the sealed rule.
+        behaviour: SealedBehaviour,
+    },
 }
 
 impl RuleLeaf {
@@ -130,6 +145,12 @@ impl RuleLeaf {
         match self {
             Self::Claim(expr) => expr.reads_call_inputs(),
             Self::Stored { cell, .. } => cell.reads_call_inputs(),
+            // A caller may name the resource: the rule is the address's
+            // own commitment, verified by re-derivation, so the namer
+            // chooses which sealed rule governs and never what it says
+            // — unlike a named claim, which its namer can present, or a
+            // named cell, which holds whatever admits them.
+            Self::Sealed { .. } => false,
         }
     }
 }
@@ -232,6 +253,33 @@ impl<L> Rule<L> {
                 rules: rules
                     .iter()
                     .map(|rule| rule.map_leaves(map))
+                    .collect::<Result<_, _>>()?,
+            },
+        })
+    }
+
+    /// Replace every leaf with a whole rule, keeping the tree above it.
+    ///
+    /// What a leaf that *names* a rule resolves through: a sealed leaf
+    /// stands for the tree its resource commits to, and grafting is how
+    /// that tree takes the leaf's place under whatever threshold held
+    /// it. The caller re-checks the grafted tree against the caps — a
+    /// graft can deepen what a map never could.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `graft` refuses a leaf with, unchanged.
+    pub fn try_graft<T, E>(
+        &self,
+        graft: &mut impl FnMut(&L) -> Result<Rule<T>, E>,
+    ) -> Result<Rule<T>, E> {
+        Ok(match self {
+            Self::Require(leaf) => graft(leaf)?,
+            Self::CountOf { count, rules } => Rule::CountOf {
+                count: *count,
+                rules: rules
+                    .iter()
+                    .map(|rule| rule.try_graft(graft))
                     .collect::<Result<_, _>>()?,
             },
         })
