@@ -693,6 +693,101 @@ fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
     assert_acts(&world, &store, ALICE, far, false, 0x9C);
 }
 
+/// The freeze trade, made visible: a hostile recovery under an
+/// effectively infinite delay locks the account and there is no way
+/// back.
+///
+/// `freeze` is deliberately immediate and outside the delay dial —
+/// protecting funds from a compromised key is worth nothing if it has
+/// to wait — and its inverse is the rotation, which under this delay
+/// only the confirmation role can bring about. So a recovery factor in
+/// the wrong hands can freeze with nothing pending and leave a base
+/// with no primary and no proposal: the funds are locked, not stolen,
+/// and they stay locked. A change that gave the primary a way back
+/// without a rotation would break this test, which is the point of it.
+#[test]
+fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
+    let world = world();
+    let mut store = MemoryStore::new();
+    store
+        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
+        .unwrap();
+    store
+        .write(
+            auth(ALICE),
+            AuthCell::new(AuthBase::new(u64::MAX, split_roles()))
+                .to_bytes()
+                .unwrap(),
+        )
+        .unwrap();
+    let t0 = env().clock_ms;
+
+    // Nothing pending, and the freeze lands anyway.
+    let freeze = graph(|b| account::freeze(b, ALICE));
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&freeze, TxHash(Hash32([0xB0; 32])))],
+        Some(BOB),
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("freeze must complete; got {:?}", results[0]);
+    };
+    let mut frozen = split_roles();
+    frozen.remove(PRIMARY);
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(
+            AuthCell::new(AuthBase::new(u64::MAX, frozen))
+                .to_bytes()
+                .unwrap()
+        )),
+        "an unmet delay gates a takeover, never the freeze"
+    );
+
+    // However far out, nobody acts: the primary entry is gone and no
+    // proposal is on its way to restoring one.
+    let far = t0 + 1_000 * DAY_MS;
+    assert_acts(&world, &store, ALICE, far, false, 0xB1);
+    assert_acts(&world, &store, BOB, far, false, 0xB2);
+    assert_acts(&world, &store, MAKER, far, false, 0xB3);
+
+    // No method restores a primary. `confirm` has nothing to promote,
+    // `securify` refuses a cell that is present, and the recovery-gated
+    // moves are the attacker's.
+    let (results, store) = run_both_at(
+        &world,
+        &store,
+        &[(&confirm_graph(), TxHash(Hash32([0xB4; 32])))],
+        Some(MAKER),
+        far,
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    assert_acts(&world, &store, ALICE, far, false, 0xB5);
+
+    let securify = securify_graph(&StoredRule::Require(Presented::Identity(ALICE.into())));
+    let (results, store) = run_both_at(
+        &world,
+        &store,
+        &[(&securify, TxHash(Hash32([0xB6; 32])))],
+        Some(ALICE),
+        far,
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(auth(ALICE)),
+                required: Presence::Absent,
+            },
+        })],
+        "securify is a one-way door and the cell is on the far side of it"
+    );
+
+    // And the funds are still there, which is what the freeze is for.
+    assert_eq!(amount_of(&store, vault(ALICE, RES_X)), 150);
+}
+
 /// Confirmation enacts a proposal early: the new roles govern from the
 /// confirm, a day before the instant would have arrived on its own.
 #[test]

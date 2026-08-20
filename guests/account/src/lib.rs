@@ -194,9 +194,17 @@ pub mod account {
         /// proposal is pending: what stops a compromised key draining
         /// the account while its replacement matures. An absent entry
         /// denies, so the freeze is a removal rather than a rule nobody
-        /// can write — and unfreezing is the rotation itself, since the
-        /// matured or confirmed proposal writes a table with a primary
-        /// in it.
+        /// can write.
+        ///
+        /// Unfreezing is the rotation itself, and only that: a primary
+        /// comes back when a proposal naming one matures or is
+        /// confirmed. Nothing here requires a proposal to be pending or
+        /// to name a primary, so a freeze is immediate and one-way, and
+        /// the recovery delay governs takeover rather than this. A
+        /// recovery factor in the wrong hands can therefore lock the
+        /// account for good; the dial against that is the confirmation
+        /// rule, which every rotation must satisfy once the delay is
+        /// long enough not to arrive.
         #[requires(auth[recovery])]
         pub fn freeze(&mut self) {
             let stored = self.auth().existing();
