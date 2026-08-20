@@ -217,12 +217,19 @@ fn settled(
         // a consumer routed on.
         Invoked::Produced(reps) if reps.len() == call.outputs.len() => {
             for (rep, expected) in reps.iter().zip(&call.outputs) {
-                let EdgeContent::NonFungible { ids } = expected else {
-                    continue;
-                };
-                let carried = match session.bucket(*rep) {
-                    Ok(Held::Instances(instances)) => instances,
-                    Ok(Held::Amount(_)) | Err(_) => {
+                let carried = session.bucket(*rep);
+                let (declared_ids, carried_ids) = match (expected, carried) {
+                    // A fungible edge's quantity is dynamic, so the
+                    // declaration says only that one crosses; what it
+                    // carries is the consumer's signed bound to judge.
+                    (EdgeContent::Fungible, Ok(Held::Amount(_))) => continue,
+                    (EdgeContent::NonFungible { ids }, Ok(Held::Instances(carried))) => {
+                        (ids, carried)
+                    }
+                    // A bucket of the other shape than the output
+                    // projected is a package whose code and signature
+                    // part company, on the terms a wrong arity has.
+                    _ => {
                         return Err(fail(
                             session,
                             Outcome::UserError {
@@ -232,8 +239,9 @@ fn settled(
                         ));
                     }
                 };
-                let declared: BTreeSet<u128> = ids.iter().copied().map(u128::from).collect();
-                if carried != declared {
+                let declared: BTreeSet<u128> =
+                    declared_ids.iter().copied().map(u128::from).collect();
+                if carried_ids != declared {
                     return Err(fail(
                         session,
                         Outcome::UserError {

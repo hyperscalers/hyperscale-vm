@@ -1,10 +1,12 @@
-//! A produced non-fungible edge carries the ids its declaration named.
+//! A produced edge is the edge its declaration projected: the shape it
+//! carries, and for a non-fungible one the ids it names.
 //!
-//! The declared ids are what admission keys the instance cells by and
-//! what a consumer routes on. The macro couples the mint to the ids by
-//! construction; a hand-written guest is not so held, and this is the
-//! walk holding it: a body minting any other set is refused where the
-//! edge comes back, before anything downstream can file it.
+//! The declared content is what admission keys the instance cells by,
+//! what a consumer binds its parameter against, and what a signed bound
+//! is judged in the terms of. The macro couples the mint to the
+//! declaration by construction; a hand-written guest is not so held, and
+//! this is the walk holding it — both refusals landing where the edge
+//! comes back, before anything downstream can file or consume it.
 
 use hyperscale_vm_effects::{
     AbiParam, Expr, Issuance, MethodSignature, PackageMetadata, ResourceKind, Totality, Value,
@@ -36,6 +38,33 @@ fn issuer() -> PackageMetadata {
                     material: vec![],
                 }),
                 ids: Box::new(Expr::List(vec![Expr::Literal(Value::U64(DECLARED))])),
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    metadata
+}
+
+/// One mint method declaring a *fungible* output, over a non-fungible
+/// issuance grant.
+///
+/// A shape publish admits — an output's projection is judged at the
+/// resource it names, not against the grant beside it — so the guest is
+/// free to hand back a bucket of the other shape entirely.
+fn miscast_issuer() -> PackageMetadata {
+    let mut metadata = PackageMetadata::default();
+    metadata.methods.insert(
+        "mint".into(),
+        MethodSignature {
+            totality: Totality::Infallible,
+            issues: Some(Issuance {
+                mark: Vec::new(),
+                kind: ResourceKind::NonFungible,
+            }),
+            abi: vec![AbiParam::Issuer],
+            outputs: vec![Expr::SelfResource {
+                kind: ResourceKind::NonFungible,
+                material: vec![],
             }],
             ..MethodSignature::default()
         },
@@ -93,4 +122,26 @@ fn a_minted_set_other_than_the_declared_one_is_refused() {
         account::deposit_nf(b, MINTER, edge)
     });
     assert_eq!(outcome.aborted(), Some(AbortReason::WrongMintedIds));
+}
+
+/// The other half of the same rule: a declaration projecting a fungible
+/// edge, and a body handing back the instances its grant let it mint.
+///
+/// Nothing downstream would read the bucket as the declaration did — a
+/// consumer bound a quantity and would meet an id set — so the walk
+/// refuses it where the edge comes back, on the terms a wrong arity has.
+#[test]
+fn an_edge_of_another_shape_than_the_declaration_is_refused() {
+    let mut chain = Chain::native();
+    let hash = chain.publish(Package::new(
+        miscast_issuer(),
+        env!("CARGO_MANIFEST_DIR"),
+        body::<DECLARED>,
+    ));
+    let instance = chain.instantiate_raw(hash, ());
+    let outcome = chain.transact(MINTER, |b| {
+        let edge = b.call(instance, "mint", ())?.one()?;
+        account::deposit(b, MINTER, edge)
+    });
+    assert_eq!(outcome.aborted(), Some(AbortReason::BadReturnShape));
 }
