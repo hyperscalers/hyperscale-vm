@@ -77,7 +77,7 @@ pub fn arm(
                         || quote!(let #ident = #rebuilt;),
                         |ty| {
                             quote!(
-                                let #ident: #ty = ::hyperscale_vm_sdk::guest::narrowed(#rebuilt);
+                                let #ident: #ty = ::hyperscale_vm_sdk::narrowed(#rebuilt);
                             )
                         },
                     )

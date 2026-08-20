@@ -1032,6 +1032,103 @@ fn a_valueless_narrowing_is_a_key_not_a_denomination() {
     }
 }
 
+/// A parameter the body reads as a value at its declared narrow type —
+/// carried into an event rather than spent as a key. Both generated
+/// prologues narrow the rebuilt address, so this binary compiling is the
+/// native half of the pin and the derived kind below is the declared
+/// half.
+#[blueprint]
+mod noted {
+    use hyperscale_vm_sdk::Denomination;
+    use hyperscale_vm_sdk::state::{Bucket, Quantity};
+
+    /// Funds moved, and what they were.
+    #[event]
+    struct Moved {
+        resource: Denomination,
+        amount: Quantity,
+    }
+
+    #[state]
+    struct Noted {}
+
+    impl Noted {
+        /// Bank the edge and say what it carried.
+        pub fn note(&mut self, funds: Bucket, resource: Denomination) {
+            let amount = funds.quantity();
+            self.vault(resource).put(funds);
+            Moved { resource, amount }.emit();
+        }
+    }
+}
+
+#[test]
+fn a_narrow_parameter_declares_its_classes_in_its_kind() {
+    use hyperscale_vm_effects::ParamType;
+
+    let metadata = noted::blueprint().metadata();
+    assert_eq!(
+        metadata.methods["note"].params,
+        vec![ParamType::Bucket, ParamType::Denomination],
+    );
+}
+
+/// The whole address family, each type at its own kind. The derivation
+/// maps a declared type to the classes it admits, and the generated
+/// client widens every narrow one — so this module compiling is the
+/// wrapper half of the pin.
+#[blueprint]
+mod family {
+    use hyperscale_vm_sdk::{
+        Address, CallTarget, ComponentAddr, Denomination, NativeAddr, PackageAddr, PrincipalAddr,
+        ResourceAddr,
+    };
+
+    #[state]
+    struct Family {}
+
+    impl Family {
+        /// The wide type and the two position kinds.
+        pub fn positions(&mut self, _any: Address, _target: CallTarget, _held: Denomination) {}
+
+        /// The five single-class kinds.
+        pub fn classes(
+            &mut self,
+            _component: ComponentAddr,
+            _native: NativeAddr,
+            _package: PackageAddr,
+            _principal: PrincipalAddr,
+            _resource: ResourceAddr,
+        ) {
+        }
+    }
+}
+
+#[test]
+fn every_address_type_declares_its_own_kind() {
+    use hyperscale_vm_effects::ParamType;
+
+    let metadata = family::blueprint().metadata();
+    assert_eq!(
+        metadata.methods["positions"].params,
+        vec![
+            ParamType::Address,
+            ParamType::CallTarget,
+            ParamType::Denomination,
+        ],
+    );
+    assert_eq!(
+        metadata.methods["classes"].params,
+        vec![
+            ParamType::Component,
+            ParamType::Native,
+            ParamType::Package,
+            ParamType::Principal,
+            ParamType::Resource,
+        ],
+    );
+}
+
 /// The holdings interval is the value-bearing collection, and its
 /// narrowing is its denomination: one expression names the sub-collection
 /// and the resource its entries are instances of.

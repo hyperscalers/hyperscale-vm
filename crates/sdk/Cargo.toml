@@ -35,6 +35,8 @@ hyperscale-vm-embed.workspace = true
 hyperscale-vm-manifest-builder.workspace = true
 
 [dev-dependencies]
+# The tests build declarations by hand, which is the testing surface.
+hyperscale-vm-effects = { workspace = true, features = ["testing"] }
 hyperscale-vm-fixtures.workspace = true
 # A session to dispatch against: what the generated native half is called
 # with, and the one thing the SDK itself deliberately cannot name.

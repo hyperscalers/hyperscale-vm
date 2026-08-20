@@ -12,6 +12,7 @@ use crate::lower::{Lowered, Need, flag_ident, handle_ident, value_ident};
 use crate::mode::HandleMode;
 use crate::term::Term;
 use crate::wit::{Param, Shape};
+use crate::{is_address, is_named};
 
 /// What one export parameter carries.
 pub enum Carries {
@@ -70,18 +71,14 @@ fn value_shape(
     }
 }
 
-/// The address vocabulary: the wide type and every class or position
-/// newtype that crosses the boundary as the world's own address record.
-const ADDRESS_FAMILY: [&str; 8] = [
-    "Address",
-    "CallTarget",
-    "ComponentAddr",
-    "Denomination",
-    "NativeAddr",
-    "PackageAddr",
-    "PrincipalAddr",
-    "ResourceAddr",
-];
+/// The family name a type narrows as: its last path segment, which is
+/// the identity the whole walk matches the address vocabulary by.
+fn family_name(ty: &syn::Type) -> Option<&syn::Ident> {
+    match ty {
+        syn::Type::Path(path) => path.path.segments.last().map(|s| &s.ident),
+        _ => None,
+    }
+}
 
 /// The class-typed form the body reads an address-shaped term as, where
 /// the type it was declared at — or the accessor it came from — names one
@@ -91,16 +88,7 @@ fn narrow_type(
     params: &[(String, syn::Type)],
     config: &[(String, syn::Type)],
 ) -> Option<syn::Type> {
-    let named = |ty: &syn::Type| match ty {
-        syn::Type::Path(p)
-            if p.path.segments.last().is_some_and(|s| {
-                s.ident != "Address" && ADDRESS_FAMILY.contains(&s.ident.to_string().as_str())
-            }) =>
-        {
-            Some(ty.clone())
-        }
-        _ => None,
-    };
+    let named = |ty: &syn::Type| (!is_named(ty, "Address") && is_address(ty)).then(|| ty.clone());
     match term {
         // A resource is a denomination however it was derived, which is
         // the type `issued()` and `Bucket::resource()` hand the body.
@@ -116,15 +104,15 @@ fn narrow_type(
                 .and_then(|value| named(&value)),
             _ => None,
         },
-        // A selection narrows only where both arms read at one type,
-        // which the author's own text has already required.
+        // A selection narrows only where both arms read at one type. The
+        // arms may spell it under different paths, so the comparison is
+        // by family name — the same identity the vocabulary matches by.
         Term::If {
             then, otherwise, ..
         } => {
             let taken = narrow_type(then, params, config)?;
             let untaken = narrow_type(otherwise, params, config)?;
-            (quote::quote!(#taken).to_string() == quote::quote!(#untaken).to_string())
-                .then_some(taken)
+            (family_name(&taken) == family_name(&untaken)).then_some(taken)
         }
         _ => None,
     }
@@ -140,11 +128,7 @@ pub fn derived_shape(
     config: &[(String, syn::Type)],
 ) -> Option<Shape> {
     let scalar = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.is_ident("u64"));
-    let address = |ty: &syn::Type| {
-        matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| {
-            ADDRESS_FAMILY.contains(&s.ident.to_string().as_str())
-        }))
-    };
+    let address = is_address;
     let id_set = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Ids"));
     let named = |ty: &syn::Type| {
         if scalar(ty) {
@@ -291,7 +275,7 @@ pub fn bindings(
                 name: param_ident(*param, params),
                 nf: params
                     .get(*param as usize)
-                    .is_some_and(|(_, ty)| crate::is_named(ty, "NfBucket")),
+                    .is_some_and(|(_, ty)| is_named(ty, "NfBucket")),
             },
             Need::Derived(term) => Carries::Value {
                 narrow: matches!(shape, Shape::Address)

@@ -113,7 +113,7 @@ pub fn method(
                         |ty| {
                             quote!(
                                 let #ident: #ty =
-                                    ::hyperscale_vm_sdk::guest::narrowed(#rebuilt);
+                                    ::hyperscale_vm_sdk::narrowed(#rebuilt);
                             )
                         },
                     ));

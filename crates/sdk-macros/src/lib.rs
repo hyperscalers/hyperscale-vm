@@ -110,7 +110,7 @@ use hyperscale_vm_effects::vocabulary::{
 use hyperscale_vm_effects::{MAX_RULE_DEPTH, PACKAGE_SLOT_BASE, Rule, SlotId, well_formed};
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 
 use crate::lower::{Field, FieldKind, Lowerer, Target};
@@ -336,11 +336,44 @@ pub(crate) fn is_named(ty: &syn::Type, name: &str) -> bool {
         if path.path.segments.last().is_some_and(|s| s.ident == name))
 }
 
+/// The address vocabulary: every Rust type that crosses the boundary as
+/// the world's own address record, paired with the [`ParamType`] variant
+/// naming the classes it admits.
+///
+/// The one spelling of the family. The binding walk narrows by
+/// membership, the signature derivation declares by the paired kind, and
+/// the client wrapper widens everything past the wide type — so a class
+/// newtype added here is added everywhere at once.
+///
+/// [`ParamType`]: hyperscale_vm_effects::ParamType
+pub(crate) const ADDRESS_FAMILY: [(&str, &str); 8] = [
+    ("Address", "Address"),
+    ("CallTarget", "CallTarget"),
+    ("ComponentAddr", "Component"),
+    ("Denomination", "Denomination"),
+    ("NativeAddr", "Native"),
+    ("PackageAddr", "Package"),
+    ("PrincipalAddr", "Principal"),
+    ("ResourceAddr", "Resource"),
+];
+
+/// Whether a type is one of the address family's.
+pub(crate) fn is_address(ty: &syn::Type) -> bool {
+    ADDRESS_FAMILY.iter().any(|(name, _)| is_named(ty, name))
+}
+
 /// The parameter kind a Rust type binds as in a manifest.
 fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
     let syn::Type::Path(path) = ty else {
         return Err(syn::Error::new(ty.span(), "unsupported parameter type"));
     };
+    // An address type declares its classes in the kind, so a wrong-class
+    // argument is admission's refusal — which is what lets the generated
+    // prologue narrow with no failure arm.
+    if let Some((_, kind)) = ADDRESS_FAMILY.iter().find(|(name, _)| is_named(ty, name)) {
+        let kind = format_ident!("{kind}");
+        return Ok(quote!(::hyperscale_vm_sdk::ParamType::#kind));
+    }
     let name = path
         .path
         .segments
@@ -355,17 +388,6 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         // guest's and erases here, where a manifest binds a number.
         "u128" | "Quantity" => quote!(U128),
         "u64" => quote!(U64),
-        // A narrower address type declares its classes in the kind, so a
-        // wrong-class argument is admission's refusal — which is what
-        // lets the generated prologue narrow with no failure arm.
-        "Address" => quote!(Address),
-        "CallTarget" => quote!(CallTarget),
-        "ComponentAddr" => quote!(Component),
-        "Denomination" => quote!(Denomination),
-        "NativeAddr" => quote!(Native),
-        "PackageAddr" => quote!(Package),
-        "PrincipalAddr" => quote!(Principal),
-        "ResourceAddr" => quote!(Resource),
         "Vec" | "Bytes" => quote!(Bytes),
         "Rule" => quote!(Rule),
         "RoleSet" => quote!(RoleSet),

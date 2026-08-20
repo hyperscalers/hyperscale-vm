@@ -88,24 +88,6 @@ pub fn address_of(a: u64, b: u64, c: u64, d: u64) -> Address {
     Address::from_bytes(bytes).expect("an address names a class")
 }
 
-/// Narrow a rebuilt address to the class-typed form a parameter names.
-///
-/// Routing evaluated the declaration and refused any class the position
-/// does not admit, so the failure arm cannot arrive. It traps bare
-/// rather than panicking, because a formatting path linked into every
-/// package would price an impossibility.
-#[inline(always)]
-#[must_use]
-pub fn narrowed<T: TryFrom<Address>>(address: Address) -> T {
-    match T::try_from(address) {
-        Ok(narrow) => narrow,
-        #[cfg(target_arch = "wasm32")]
-        Err(_) => ::core::arch::wasm32::unreachable(),
-        #[cfg(not(target_arch = "wasm32"))]
-        Err(_) => unreachable!("routing admits only the classes the position names"),
-    }
-}
-
 /// The `u128` an `amount` carries.
 const fn whole(value: kernel::state::Amount) -> u128 {
     (value.low as u128) | ((value.high as u128) << 64)

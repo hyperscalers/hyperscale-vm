@@ -157,14 +157,8 @@ fn widen(name: &syn::Ident, ty: &syn::Type) -> (TokenStream2, TokenStream2) {
     // A narrower address type stays at the call site: which class
     // belongs at a position is the package's business, and the package
     // answered.
-    for family in [
-        "CallTarget",
-        "ComponentAddr",
-        "Denomination",
-        "PrincipalAddr",
-        "ResourceAddr",
-    ] {
-        if is_named(ty, family) {
+    for (family, _) in crate::ADDRESS_FAMILY {
+        if family != "Address" && is_named(ty, family) {
             let narrow = sdk(family);
             return (
                 quote!(#name: impl ::core::convert::Into<#narrow>),

@@ -159,3 +159,28 @@ pub use hyperscale_vm_types::{
 };
 pub use sym::{Addr, Amount, Blob, Bucket, Flag, Key, Kind, Num, Opaque, Seq, Sym};
 pub use trace::{Access, Interval, Leaf, Requirement, Trace};
+
+/// Narrow a rebuilt address to the class-typed form a parameter names.
+///
+/// Called by generated prologues on both targets. A parameter's kind
+/// declares the classes it admits and admission refuses an argument
+/// outside them, so for an argument the failure arm cannot arrive. A
+/// configured address reaches a body on the word of the record that
+/// wrote it, so a wrong class there is a defect of the instantiation and
+/// the trap is the deterministic answer to it.
+///
+/// # Panics
+///
+/// Natively, on that wrong-class configured address. The wasm arm traps
+/// bare instead, because a formatting path linked into every package
+/// would price an impossibility.
+#[inline]
+#[must_use]
+pub fn narrowed<T: TryFrom<Address>>(address: Address) -> T {
+    T::try_from(address).unwrap_or_else(|_| {
+        #[cfg(target_arch = "wasm32")]
+        ::core::arch::wasm32::unreachable();
+        #[cfg(not(target_arch = "wasm32"))]
+        panic!("a wrong-class address reached a narrowed binding")
+    })
+}
