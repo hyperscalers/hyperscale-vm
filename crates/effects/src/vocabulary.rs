@@ -40,16 +40,6 @@ pub const NF_VAULT: SlotId = SlotId(6);
 /// resource and the instance's id: written at mint, immutable after.
 pub const INSTANCE: SlotId = SlotId(7);
 
-/// The entry cap a holdings interval declares: enough for every id one
-/// edge can carry, since [`MAX_IDS_PER_EDGE`](crate::types::MAX_IDS_PER_EDGE)
-/// fits it.
-///
-/// A price, not a ceiling: the cap is charged as depth like any range
-/// cap, so a move of more instances declares a deeper interval and pays
-/// for it. What this constant fixes is the figure the vocabulary's own
-/// holdings declarations file at.
-pub const NF_MOVE_CAP: u32 = 64;
-
 /// The method a rest policy deposits through.
 ///
 /// Every principal is answered by an account, and `deposit` is the
@@ -59,25 +49,8 @@ pub const DEPOSIT_METHOD: &str = "deposit";
 
 #[cfg(test)]
 mod tests {
-    use super::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_MOVE_CAP, NF_VAULT, RESOURCE, VAULT};
-    use crate::types::{MAX_IDS_PER_EDGE, PACKAGE_SLOT_BASE};
-
-    /// The cap's own claim, which is a relation rather than a number.
-    ///
-    /// [`NF_MOVE_CAP`] says it is "enough for every id one edge can
-    /// carry", and that is true of 64 only because
-    /// [`MAX_IDS_PER_EDGE`] is 64. Raising the edge bound would make the
-    /// doc false and every holdings interval silently short of what a
-    /// deposit hands it, so the sentence is held here rather than read
-    /// and believed.
-    #[test]
-    fn a_holdings_interval_admits_every_id_an_edge_can_carry() {
-        assert!(
-            usize::try_from(NF_MOVE_CAP).is_ok_and(|cap| cap >= MAX_IDS_PER_EDGE),
-            "a holdings interval caps {NF_MOVE_CAP} entries and an edge carries \
-             {MAX_IDS_PER_EDGE}, so a full edge would not fit the interval filing it"
-        );
-    }
+    use super::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
+    use crate::types::PACKAGE_SLOT_BASE;
 
     /// The band, held from the one side that can drift.
     ///

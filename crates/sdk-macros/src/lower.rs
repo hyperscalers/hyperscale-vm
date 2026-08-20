@@ -114,8 +114,10 @@ pub enum Target {
         lo: Term,
         /// Inclusive upper bound.
         hi: Term,
-        /// The entry cap, derivable like the bounds beside it.
-        cap: Term,
+        /// The entry cap, derivable like the bounds beside it — or
+        /// absent, for an interval whose cap is the count of the one
+        /// move performed through it ([`Site::moved`]).
+        cap: Option<Term>,
     },
     /// One unordered-collection entry, at the hash of a logical key.
     KeyedEntry {
@@ -160,6 +162,13 @@ pub struct Site {
     /// those places. Where they do not agree there is no such condition
     /// but the trivial one, which is what `None` says.
     pub guard: Option<Term>,
+    /// The cap derived from the one move performed through a capless
+    /// interval: the count of the ids it takes or files.
+    ///
+    /// Held beside the target rather than written into it, because the
+    /// target is the site's identity — two opens of one capless interval
+    /// must stay one site whether or not a move has landed yet.
+    pub moved: Option<Term>,
 }
 
 impl Site {
@@ -929,6 +938,7 @@ impl<'a> Lowerer<'a> {
             element,
             denomination,
             guard,
+            moved: None,
         });
         self.push_node(Node::Site(index));
         index
@@ -2108,6 +2118,8 @@ impl<'a> Lowerer<'a> {
             {
                 ["u64", "MAX"] => Val::Term(Term::LitU64(u64::MAX)),
                 ["u64", "MIN"] => Val::Term(Term::LitU64(0)),
+                ["u128", "MAX"] => Val::Term(Term::LitU128(u128::MAX)),
+                ["u128", "MIN"] => Val::Term(Term::LitU128(0)),
                 _ => Val::Opaque,
             };
             return Eval {
@@ -2465,6 +2477,45 @@ impl<'a> Lowerer<'a> {
                     );
                 }
                 self.record(site, op, param, call.span());
+
+                // A capless interval's cap is the count of the one move
+                // performed through it: the ids a take names, or the
+                // instances the edge a file consumes carries. Deriving
+                // it here is what makes the declaration correct by
+                // construction — a body cannot under-declare the walk
+                // its own move performs. Anything else through such a
+                // handle has no count to derive a cap from, so it names
+                // its page with `range` instead.
+                if matches!(
+                    self.out.sites.get(site).map(|s| &s.target),
+                    Some(Target::Range { cap: None, .. })
+                ) {
+                    let filed = match args.first() {
+                        Some(Val::Term(term) | Val::Produced(term)) => Some(term.clone()),
+                        _ => None,
+                    };
+                    let counted = match (&call.method, filed) {
+                        (method, Some(ids)) if method == "take" => Some(Term::Len(Box::new(ids))),
+                        (method, Some(edge)) if method == "file" => {
+                            Some(Term::Len(Box::new(Term::IdsOf(Box::new(edge)))))
+                        }
+                        _ => None,
+                    };
+                    match counted {
+                        Some(_) if self.out.sites[site].moved.is_some() => self.error(
+                            call.span(),
+                            "a second move through this interval has no single count to \
+                             derive its cap from — name the page it walks with `range`",
+                        ),
+                        Some(counted) => self.out.sites[site].moved = Some(counted),
+                        None => self.error(
+                            call.span(),
+                            "only a `take` or a `file` derives this interval's cap — the \
+                             count of the ids it moves. An access that walks a chosen \
+                             page names it with `range`",
+                        ),
+                    }
+                }
 
                 // A declared movement the body does not make binds no
                 // handle: the clause is what the kernel provisions and
@@ -2907,7 +2958,7 @@ impl<'a> Lowerer<'a> {
                             material: material.to_vec(),
                             lo: lo.clone(),
                             hi: hi.clone(),
-                            cap: cap.clone(),
+                            cap: Some(cap.clone()),
                         },
                         field.element.clone(),
                         declared,
@@ -2924,16 +2975,18 @@ impl<'a> Lowerer<'a> {
                 }
             }
 
-            // The whole of a collection's order-key space.
+            // The whole of a collection's order-key space, with no cap
+            // of its own: the cap is the count of the one move performed
+            // through the handle, derived where that move lands.
             (FieldKind::Ordered, "all") => {
-                if let Some(Val::Term(cap)) = vals.first() {
+                if vals.is_empty() {
                     let site = self.open(
                         Target::Range {
                             slot,
                             material: material.to_vec(),
                             lo: Term::LitU128(0),
                             hi: Term::LitU128(u128::MAX),
-                            cap: cap.clone(),
+                            cap: None,
                         },
                         field.element.clone(),
                         declared,
@@ -2942,11 +2995,11 @@ impl<'a> Lowerer<'a> {
                 } else {
                     self.error(
                         call.args.span(),
-                        "an interval's entry cap must be derivable from the method's \
-                     arguments or the component's configuration — routing evaluates the \
-                     declaration before execution and never reads state",
+                        "`all` takes no cap — the interval's cap is the count of the one \
+                     move performed through it. An interval that walks a chosen page \
+                     names it with `range`",
                     );
-                    Eval::absent(call.args.span(), "an underivable interval")
+                    Eval::absent(call.args.span(), "an interval with a spurious cap")
                 }
             }
 

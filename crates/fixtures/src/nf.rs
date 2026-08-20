@@ -7,7 +7,7 @@
 //! mirroring it drift the moment they live apart.
 
 use hyperscale_vm_effects::dsl::{Clause, ConditionExpr, ModeExpr, TargetExpr};
-use hyperscale_vm_effects::vocabulary::{INSTANCE, NF_MOVE_CAP};
+use hyperscale_vm_effects::vocabulary::INSTANCE;
 use hyperscale_vm_effects::{
     AbiParam, Expr, MethodSignature, PackageMetadata, ParamType, RuleExpr, Totality, Value,
     holdings_range,
@@ -57,9 +57,10 @@ fn creating_instance(minted_resource: &Expr, minted_id: &Expr) -> Vec<Clause> {
 /// arriving edge's ids as entries at their ids; `withdraw` removes named
 /// ids — one not held is a trap — and produces their edge; `burn`
 /// consumes an edge outright.
-/// Holdings are declared as the whole `(NF_VAULT, resource)` interval at
-/// [`NF_MOVE_CAP`], the guest reaching each id's entry through the one
-/// range capability.
+/// Holdings are declared as the whole `(NF_VAULT, resource)` interval
+/// capped at the count of ids the call itself names, the guest reaching
+/// each id's entry through the one range capability — so a move
+/// declares exactly the walk it performs.
 #[must_use]
 pub fn metadata() -> PackageMetadata {
     let minted_resource = Expr::SelfResource { material: vec![] };
@@ -96,7 +97,10 @@ pub fn metadata() -> PackageMetadata {
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
             effects: vec![Clause::Effect {
                 guard: None,
-                target: holdings_range(Expr::ResourceOf(Box::new(Expr::Arg(0))), NF_MOVE_CAP),
+                target: holdings_range(
+                    Expr::ResourceOf(Box::new(Expr::Arg(0))),
+                    Expr::Len(Box::new(Expr::IdsOf(Box::new(Expr::Arg(0))))),
+                ),
                 mode: ModeExpr::Write,
                 // The interval is one resource's holdings, and the
                 // resource is the key it is narrowed by: what an entry
@@ -120,7 +124,7 @@ pub fn metadata() -> PackageMetadata {
             }],
             effects: vec![Clause::Effect {
                 guard: None,
-                target: holdings_range(Expr::Arg(0), NF_MOVE_CAP),
+                target: holdings_range(Expr::Arg(0), Expr::Len(Box::new(Expr::Arg(1)))),
                 mode: ModeExpr::Write,
                 denomination: Some(Box::new(Expr::Arg(0))),
             }],

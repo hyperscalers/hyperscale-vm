@@ -89,8 +89,8 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     }
 }
 
-fn target(target: &Target) -> TokenStream {
-    match target {
+fn target(site: &Site) -> TokenStream {
+    match &site.target {
         Target::Point { slot, material } => {
             let material = material.iter().map(Term::emit);
             quote!(
@@ -158,7 +158,15 @@ fn target(target: &Target) -> TokenStream {
             let material = material.iter().map(Term::emit);
             let lo = lo.emit();
             let hi = hi.emit();
-            let cap = cap.emit();
+            // An authored cap, or the one the site's move derived. The
+            // lowering refuses a capless interval nothing moves through,
+            // so the fallback stands only beside an error already
+            // reported.
+            let cap = cap
+                .clone()
+                .or_else(|| site.moved.clone())
+                .unwrap_or(Term::LitU64(0))
+                .emit();
             quote!(
                 let __owner = __t.self_addr();
                 let __material = [#(#material),*];
@@ -187,7 +195,7 @@ fn node(node: &Node, lowered: &Lowered) -> TokenStream {
             let Some((prelude, call)) = mode(site) else {
                 return quote!();
             };
-            let target = target(&site.target);
+            let target = target(site);
             // What the cell holds, stated on the clause that names it, so
             // execution can refuse a movement across two resources without
             // consulting anything a caller wrote. Resolved before the

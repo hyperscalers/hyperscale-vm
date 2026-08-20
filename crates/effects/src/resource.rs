@@ -134,16 +134,20 @@ pub fn holdings_collection(
 ///
 /// Every holdings declaration is this one shape — deposit and withdraw
 /// range over it — so a declaration that spells the fold any other way
-/// is refused rather than silently unmatched.
+/// is refused rather than silently unmatched. The cap is ordinarily the
+/// count of the ids the call itself names — `Len` over the argument or
+/// the edge's id projection — so a move declares exactly the walk it
+/// performs, and a full edge always fits the interval filing it by
+/// construction.
 #[must_use]
-pub fn holdings_range(resource: Expr, cap: u32) -> TargetExpr {
+pub fn holdings_range(resource: Expr, cap: Expr) -> TargetExpr {
     TargetExpr::Range {
         owner: Expr::SelfAddr,
         collection: NF_VAULT,
         material: vec![resource],
         lo: Expr::Literal(Value::U128(0)),
         hi: Expr::Literal(Value::U128(u128::MAX)),
-        cap: Expr::Literal(Value::U64(u64::from(cap))),
+        cap,
     }
 }
 

@@ -192,19 +192,20 @@ fn every_authored_method_declares_who_may_call_it() {
 /// The literal a holdings interval is declared at, held against the
 /// constant it restates.
 ///
-/// A guest names no constant from this crate — the account's declaration
-/// spells its entry cap itself — which leaves the vocabulary's
-/// [`NF_MOVE_CAP`] and the account's `64` two copies of one bound with
-/// nothing between them. This is what is between them.
+/// A holdings interval's cap is the count of the ids the call itself
+/// names — the argument list a withdrawal takes, the edge's id
+/// projection a deposit files — so an account's move declares exactly
+/// the walk it performs, and a full edge always fits the interval
+/// filing it by construction rather than by a constant agreeing with
+/// the edge bound.
 #[test]
-fn the_account_files_at_the_cap_the_vocabulary_names() {
-    use hyperscale_vm_effects::vocabulary::NF_MOVE_CAP;
-    use hyperscale_vm_effects::{Clause, Expr, TargetExpr, Value};
+fn the_account_files_at_the_count_it_moves() {
+    use hyperscale_vm_effects::{Clause, Expr, TargetExpr};
     use hyperscale_vm_stdlib::account;
 
     let metadata = account::metadata();
-    for method in ["deposit-nf", "withdraw-nf"] {
-        let declared = metadata.methods[method]
+    let declared_cap = |method: &str| {
+        metadata.methods[method]
             .effects
             .iter()
             .find_map(|clause| match clause {
@@ -214,11 +215,16 @@ fn the_account_files_at_the_cap_the_vocabulary_names() {
                 } => Some(cap.clone()),
                 _ => None,
             })
-            .unwrap_or_else(|| panic!("{method} declares a holdings interval"));
-        assert_eq!(
-            declared,
-            Expr::Literal(Value::U64(u64::from(NF_MOVE_CAP))),
-            "{method} files at {declared:?} where the vocabulary names {NF_MOVE_CAP}"
-        );
-    }
+            .unwrap_or_else(|| panic!("{method} declares a holdings interval"))
+    };
+    assert_eq!(
+        declared_cap("deposit-nf"),
+        Expr::Len(Box::new(Expr::IdsOf(Box::new(Expr::Arg(0))))),
+        "a deposit files at the count the edge carries"
+    );
+    assert_eq!(
+        declared_cap("withdraw-nf"),
+        Expr::Len(Box::new(Expr::Arg(1))),
+        "a withdrawal takes at the count the argument names"
+    );
 }

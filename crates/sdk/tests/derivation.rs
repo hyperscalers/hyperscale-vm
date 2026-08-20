@@ -1026,7 +1026,7 @@ mod roster {
 
         /// Every seat filed for `validator`, up to the cap.
         pub fn page(&mut self, validator: Address) {
-            let entries = self.seats.of(validator).all(8);
+            let entries = self.seats.of(validator).range(0, u128::MAX, 8);
             let _ = entries.count();
         }
     }
@@ -1148,15 +1148,24 @@ fn every_address_type_declares_its_own_kind() {
 #[blueprint]
 mod shelf {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Ids, NfBucket};
+    use hyperscale_vm_sdk::state::{Ids, NfBucket, Ordered};
 
     #[state]
-    struct Shelf {}
+    struct Shelf {
+        ledger: Ordered<u64>,
+    }
 
     impl Shelf {
         /// Take the named instances out of the caller's holdings.
         pub fn pull(&mut self, resource: Address, ids: Ids) -> NfBucket {
-            self.holdings(resource).all(8).take(ids)
+            self.holdings(resource).all().take(ids)
+        }
+
+        /// A page whose size is spelled rather than derived: the count
+        /// of the ids, as an explicit cap on a chosen interval.
+        pub fn window(&mut self, ids: Ids) {
+            let entries = self.ledger.range(0, u128::MAX, ids.count());
+            let _ = entries.count();
         }
     }
 }
@@ -1176,6 +1185,29 @@ fn a_holdings_interval_is_denominated_by_its_narrowing() {
     else {
         panic!("pull declares an access");
     };
-    assert!(matches!(target, TargetExpr::Range { .. }));
+    // The cap is the count of the ids the take names — derived from the
+    // move itself, so the declaration cannot under-state the walk.
+    assert!(matches!(
+        target,
+        TargetExpr::Range { cap, .. } if *cap == Expr::Len(Box::new(Expr::Arg(1)))
+    ));
     assert_eq!(denomination.as_deref(), Some(&Expr::Arg(0)));
+}
+
+/// `.count()` is the explicit spelling of the same projection the
+/// capless interval derives: the length of what an argument names,
+/// usable wherever a cap is.
+#[test]
+fn a_spelled_count_lowers_to_the_length_projection() {
+    use hyperscale_vm_effects::{Expr, TargetExpr};
+
+    let metadata = shelf::blueprint().metadata();
+    let effects = &metadata.methods["window"].effects;
+    let Clause::Effect { target, .. } = &effects[0] else {
+        panic!("window declares an access");
+    };
+    assert!(matches!(
+        target,
+        TargetExpr::Range { cap, .. } if *cap == Expr::Len(Box::new(Expr::Arg(0)))
+    ));
 }

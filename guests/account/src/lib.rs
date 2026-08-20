@@ -89,17 +89,22 @@ pub mod account {
         /// File the instances the edge carries as holdings entries.
         ///
         /// The filing is the kernel's: each instance lands at the order
-        /// it was taken under, so the body names no id at all.
+        /// it was taken under, so the body names no id at all — and the
+        /// interval's cap is the edge's own count, derived from the
+        /// move, so a deposit declares exactly the walk it performs and
+        /// pays for nothing wider.
         pub fn deposit_nf(&mut self, instances: NfBucket) {
-            self.holdings(instances.resource()).all(64).file(instances);
+            self.holdings(instances.resource()).all().file(instances);
         }
 
         /// Take the named instances out of the holdings interval,
         /// trapping on one not held. The removal and the edge are one
-        /// operation, so a body cannot hand on what it left where it was.
+        /// operation, so a body cannot hand on what it left where it
+        /// was. The cap is the count of ids named, on `deposit_nf`'s
+        /// terms.
         #[requires(self)]
         pub fn withdraw_nf(&mut self, resource: Denomination, ids: Ids) -> NfBucket {
-            self.holdings(resource).all(64).take(ids)
+            self.holdings(resource).all().take(ids)
         }
 
         /// Nothing but its own gate, like `authorize`: the kernel judges

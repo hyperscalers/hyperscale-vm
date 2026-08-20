@@ -430,8 +430,9 @@ impl Value {
 /// edge's boundary cell crossing is sized by.
 ///
 /// A wire bound, not a price: the work of moving the ids is charged as
-/// depth on the holdings interval they move through, whose cap
-/// ([`NF_MOVE_CAP`](crate::vocabulary::NF_MOVE_CAP)) covers a full edge.
+/// depth on the holdings interval they move through, whose cap is the
+/// count of the ids themselves — so a full edge fits the interval
+/// filing it by construction, at this bound or any other.
 pub const MAX_IDS_PER_EDGE: usize = 64;
 
 /// What a value edge carries besides its resource. Structural rather

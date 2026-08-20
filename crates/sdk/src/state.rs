@@ -592,6 +592,15 @@ impl NfBucket {
     pub fn put(&mut self, other: Self) {
         self.0.put(other.0);
     }
+
+    /// How many instances this edge carries, on the terms
+    /// [`Bucket::resource`] states: read by the authoring half and
+    /// never by the executing one. The natural cap for the interval a
+    /// move files into — a move declares exactly the walk it performs.
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        unimplemented!("{OFF_HOST}")
+    }
 }
 
 /// Mint `amount` of the resource this instance derives from `mark`.
@@ -1011,13 +1020,17 @@ impl<T> Ordered<T> {
         unimplemented!("{OFF_HOST}")
     }
 
-    /// The whole order-key space, at most `cap` entries of it.
+    /// The whole order-key space, capped implicitly at the count of the
+    /// one move performed through it.
     ///
-    /// `cap` bounds the entries execution may touch, on the same terms
-    /// [`Self::range`] states.
+    /// The cap of a pure move is not a choice: a take walks the ids it
+    /// names and a file walks the instances its edge carries, so the
+    /// lowering derives the cap from the move itself and the
+    /// declaration cannot under-state the walk. An interval that reads,
+    /// rewrites, or moves twice walks a page somebody chose — it names
+    /// that page with [`Self::range`].
     #[must_use]
-    pub fn all(&self, cap: u64) -> Interval<T> {
-        let _ = cap;
+    pub fn all(&self) -> Interval<T> {
         unimplemented!("{OFF_HOST}")
     }
 
@@ -1433,6 +1446,14 @@ impl Ids {
     #[must_use]
     pub fn named(&self) -> &[u64] {
         &self.0
+    }
+
+    /// How many ids the argument names — the natural cap for the
+    /// interval a withdrawal takes them from, so a move declares
+    /// exactly the walk it performs.
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        u64::try_from(self.0.len()).unwrap_or(u64::MAX)
     }
 }
 

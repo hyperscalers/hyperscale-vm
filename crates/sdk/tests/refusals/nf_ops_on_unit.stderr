@@ -1,8 +1,8 @@
 error[E0599]: `hyperscale_vm_sdk::state::Interval<()>` is not an iterator
-  --> tests/refusals/nf_ops_on_unit.rs:17:39
+  --> tests/refusals/nf_ops_on_unit.rs:17:38
    |
-17 |             self.seen.of(7u64).all(8).take(ids)
-   |                                       ^^^^ `hyperscale_vm_sdk::state::Interval<()>` is not an iterator
+17 |             self.seen.of(7u64).all().take(ids)
+   |                                      ^^^^ `hyperscale_vm_sdk::state::Interval<()>` is not an iterator
    |
   ::: src/state.rs
    |

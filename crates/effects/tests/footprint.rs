@@ -190,32 +190,41 @@ proptest! {
 }
 
 /// A move of more instances prices above a move of fewer, through the
-/// vocabulary's own shape: a holdings interval's cap is the entries a
-/// deposit or withdrawal may file, and the cap is charged as depth.
+/// vocabulary's own shape: a holdings interval's cap is the count of
+/// the ids the call names, and the cap is charged as depth — so the
+/// price of a withdrawal is a function of the instances it moves.
 #[test]
 fn a_move_of_more_instances_prices_above_fewer() {
     use hyperscale_vm_effects::dsl::{Clause, ModeExpr};
     use hyperscale_vm_effects::{
-        EvalInputs, Expr, Hash32, ManifestHash, TestHasher, Value, evaluate_effects, holdings_range,
+        DEPTH_UNITS, EvalInputs, Expr, Hash32, ManifestHash, TestHasher, Value, evaluate_effects,
+        holdings_range,
     };
 
     let holder = Address::new([3; 31], AddressClass::Component);
     let resource = Address::new([4; 31], AddressClass::Resource);
-    let moved = |cap: u32| {
+    // The withdrawal's shape: the resource and the ids are arguments,
+    // and the cap is the count of the ids named.
+    let moved = |ids: &[u64]| {
         let clauses = [Clause::Effect {
             guard: None,
-            target: holdings_range(Expr::Literal(Value::Address(resource)), cap),
+            target: holdings_range(Expr::Arg(0), Expr::Len(Box::new(Expr::Arg(1)))),
             mode: ModeExpr::Write,
             denomination: None,
         }];
+        let args = [
+            Value::Address(resource),
+            Value::List(ids.iter().copied().map(Value::U64).collect()),
+        ];
         let inputs = EvalInputs {
             self_addr: holder,
-            args: &[],
+            args: &args,
             config: &[],
             node_index: 0,
             identity: ManifestHash(Hash32([7; 32])),
         };
         footprint(&evaluate_effects(&clauses, &inputs, &TestHasher).unwrap())
     };
-    assert!(moved(64) > moved(8), "more instances, same interval");
+    let (few, many) = (moved(&[1, 2]), moved(&[1, 2, 3, 4, 5]));
+    assert_eq!(many - few, DEPTH_UNITS * 3, "three more instances walked");
 }

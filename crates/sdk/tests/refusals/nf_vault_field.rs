@@ -11,7 +11,7 @@ mod contract {
 
     impl Contract {
         pub fn count(&mut self) {
-            let entries = self.instances.all(8);
+            let entries = self.instances.range(0, u128::MAX, 8);
             let _ = entries.count();
         }
     }
