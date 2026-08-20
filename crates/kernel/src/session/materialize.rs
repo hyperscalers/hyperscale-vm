@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::Declaration;
+use hyperscale_vm_effects::{Condition, Declaration};
 use hyperscale_vm_types::{
     Address, CellKind, CollectionId, Effect, EffectSet, EffectTarget, Mode, Presence, SubstateKey,
     TxHash,
@@ -146,6 +146,21 @@ pub enum MaterializeError {
     /// hold.
     #[error("a write requiring a present leaf lands on absent {0:?}")]
     Absent(EffectTarget),
+    /// A declared presence condition the committed leaf does not meet.
+    ///
+    /// The same seam and the same verdict class as [`Occupied`] and
+    /// [`Absent`](Self::Absent): a precondition on committed state,
+    /// judged by the shard that holds the leaf, before any body observes
+    /// anything.
+    ///
+    /// [`Occupied`]: Self::Occupied
+    #[error("a condition requiring the leaf {required:?} is unmet at {target:?}")]
+    ConditionUnmet {
+        /// The leaf the condition names.
+        target: EffectTarget,
+        /// What it required. Never `Either`, which is refused at publish.
+        required: Presence,
+    },
     /// A declared reservation the committed balance cannot cover.
     #[error("reservation of {amount} on {key:?} is infeasible")]
     Infeasible {
@@ -285,6 +300,7 @@ impl KernelSession {
         }
 
         judge_presence(&mut store, declared)?;
+        judge_conditions(&mut store, &declaration.conditions)?;
 
         let verdicts = store.judge_and_hold(&reservations)?;
         for ((verdict_tx, key), feasibility) in verdicts {
@@ -343,27 +359,8 @@ fn judge_presence(store: &mut OverlayStore, declared: &EffectSet) -> Result<(), 
         if requires == Presence::Either {
             continue;
         }
-        let held = match effect.target {
-            // The two shapes that name one leaf. An entry's presence
-            // is the same question a custody gate's possession read
-            // asks, over the same width-one interval.
-            EffectTarget::Point(key) => store.read(key)?.is_some(),
-            EffectTarget::Entry {
-                owner,
-                collection,
-                order,
-            } => !store
-                .entries_in_range(owner, collection, order, order, 1)?
-                .is_empty(),
-            // An interval names no leaf for a requirement to be
-            // about — it stays valid whatever enters or leaves it,
-            // which is the property that makes it declarable at all.
-            // Refused at publish, and again here, because metadata
-            // can be authored rather than derived.
-            EffectTarget::Range { .. } => {
-                return Err(MaterializeError::Unsupported(Box::new(effect)));
-            }
-        };
+        let held = leaf_present(store, effect.target)
+            .map_err(|error| error.unsupported(Box::new(effect)))?;
         match (requires, held) {
             (Presence::Absent, true) => return Err(MaterializeError::Occupied(effect.target)),
             (Presence::Present, false) => return Err(MaterializeError::Absent(effect.target)),
@@ -372,6 +369,77 @@ fn judge_presence(store: &mut OverlayStore, declared: &EffectSet) -> Result<(), 
     }
 
     Ok(())
+}
+
+/// Judge the declared presence conditions against the same committed
+/// state a write's presence requirement is judged against — the shard
+/// holding the leaf, before anything runs.
+fn judge_conditions(
+    store: &mut OverlayStore,
+    conditions: &[Condition],
+) -> Result<(), MaterializeError> {
+    for condition in conditions {
+        // An authority condition's raw material is a call's presented
+        // evidence, so it is judged at the node's call rather than here.
+        let Condition::Holds { target, presence } = condition else {
+            continue;
+        };
+        let held = leaf_present(store, *target).map_err(|error| {
+            error.unsupported(Box::new(Effect {
+                target: *target,
+                mode: Mode::Read,
+            }))
+        })?;
+        match (presence, held) {
+            (Presence::Absent, true) | (Presence::Present, false) => {
+                return Err(MaterializeError::ConditionUnmet {
+                    target: *target,
+                    required: *presence,
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Whether the leaf `target` names is there. The one presence read,
+/// shared by the requirement a write carries and the condition a clause
+/// states.
+enum LeafReadError {
+    Store(StoreError),
+    /// An interval names no leaf for a presence to be about — it stays
+    /// valid whatever enters or leaves it, which is the property that
+    /// makes it declarable at all. Refused at publish, and again here,
+    /// because metadata can be authored rather than derived.
+    Interval,
+}
+
+impl LeafReadError {
+    fn unsupported(self, effect: Box<Effect>) -> MaterializeError {
+        match self {
+            Self::Store(error) => MaterializeError::Store(error),
+            Self::Interval => MaterializeError::Unsupported(effect),
+        }
+    }
+}
+
+fn leaf_present(store: &mut OverlayStore, target: EffectTarget) -> Result<bool, LeafReadError> {
+    match target {
+        // The two shapes that name one leaf. An entry's presence is the
+        // same question a custody gate's possession read asks, over the
+        // same width-one interval.
+        EffectTarget::Point(key) => Ok(store.read(key).map_err(LeafReadError::Store)?.is_some()),
+        EffectTarget::Entry {
+            owner,
+            collection,
+            order,
+        } => Ok(!store
+            .entries_in_range(owner, collection, order, order, 1)
+            .map_err(LeafReadError::Store)?
+            .is_empty()),
+        EffectTarget::Range { .. } => Err(LeafReadError::Interval),
+    }
 }
 
 /// What a target names as the thing whose contents are one fact: the

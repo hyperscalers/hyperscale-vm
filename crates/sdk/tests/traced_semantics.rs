@@ -211,6 +211,7 @@ fn planned(clauses: &[Clause], depth: usize) -> Vec<Planned> {
                 repeat_depth: depth,
             }),
             Clause::ForEach { body, .. } => shapes.extend(planned(body, depth + 1)),
+            Clause::Requires { .. } => {}
         }
     }
     shapes

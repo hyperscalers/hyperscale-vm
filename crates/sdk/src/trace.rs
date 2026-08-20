@@ -159,6 +159,7 @@ impl Trace {
                 denomination,
             },
             Clause::ForEach { list, body, .. } => Clause::ForEach { guard, list, body },
+            Clause::Requires { condition, .. } => Clause::Requires { guard, condition },
         }
     }
 
@@ -582,7 +583,7 @@ impl Trace {
     /// presented.
     #[must_use]
     pub fn claim(&self, identity: &Sym<Addr>) -> Requirement {
-        Requirement(RuleExpr::Require(self.lower(identity.expr().clone())))
+        Requirement(RuleExpr::claim(self.lower(identity.expr().clone())))
     }
 
     /// The requirement that `count` of `branches` are met.
@@ -1038,7 +1039,7 @@ mod tests {
         assert_eq!(
             rules,
             (0..3)
-                .map(|slot| RuleExpr::Require(Expr::Config(slot)))
+                .map(|slot| RuleExpr::claim(Expr::Config(slot)))
                 .collect::<Vec<_>>(),
             "the branches keep the order they were named in"
         );
@@ -1055,7 +1056,7 @@ mod tests {
         trace.guarded_by(rule);
         assert_eq!(
             trace.finish().accessibility,
-            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr))
+            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr))
         );
     }
 

@@ -153,11 +153,11 @@ pub fn metadata() -> PackageMetadata {
 /// One config slot names the badge; the slots after it name the
 /// instances an admin set is written as.
 fn consumer_gates() -> [(&'static str, RuleExpr); 3] {
-    let instance = |slot| RuleExpr::Require(Expr::Tuple(vec![Expr::Config(0), Expr::Config(slot)]));
+    let instance = |slot| RuleExpr::claim(Expr::Tuple(vec![Expr::Config(0), Expr::Config(slot)]));
     [
         // Opens for whoever presents the identity the configured badge
         // resource names.
-        ("operate", RuleExpr::Require(Expr::Config(0))),
+        ("operate", RuleExpr::claim(Expr::Config(0))),
         // The same at instance resolution: the configured resource and
         // the configured id name one instance, and holding any other
         // instance of that resource opens nothing.

@@ -173,7 +173,7 @@ mod tests {
     /// call site, and a deep literal.
     fn every_authored_shape() -> MethodSignature {
         MethodSignature {
-            accessibility: Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
+            accessibility: Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr)),
             totality: Totality::Fallible,
             issues: None,
             abi: vec![AbiParam::Guard(0)],

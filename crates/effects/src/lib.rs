@@ -51,10 +51,10 @@ pub use auth::{
     PACKAGE_ROLE_BASE, PRIMARY, Proposal, RECOVERY, RoleBytes, RoleId, RoleTable, package_role,
 };
 pub use dsl::{
-    Clause, Declaration, DeclaredAccess, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH,
-    MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RANGE_CAP, ModeExpr,
-    TargetExpr, evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local,
-    materialized_kind, self_child,
+    Clause, ConditionExpr, Declaration, DeclaredAccess, EvalError, EvalInputs, Expr,
+    MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS,
+    MAX_RANGE_CAP, ModeExpr, TargetExpr, evaluate_declaration, evaluate_effects, evaluate_expr,
+    fresh_id, fresh_local, materialized_kind, self_child,
 };
 pub use envelope::{
     AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_SLOT, Subintent,
@@ -75,7 +75,10 @@ pub use hyperscale_vm_types::{
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, distinct_ids};
-pub use manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};
+pub use manifest::{
+    AuthorityGate, Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput,
+    Possession,
+};
 pub use metadata::{
     MetadataCache, PACKAGE_SLOT, PackageHash, PackageMetadata, PublishRefusal, package_hash,
     package_key,
@@ -93,7 +96,8 @@ pub use route::{
     FrameDeclaration, MAX_MANIFEST_NODES, PrefixShardResolver, Routing, ShardResolver, route,
 };
 pub use rule::{
-    MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, StoredRule, well_formed,
+    MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, RuleLeaf, StoredRule,
+    well_formed,
 };
 pub use signature::{
     AbiParam, Accessibility, CustodyClaim, GateError, GateShape, MethodSignature, ParamType,

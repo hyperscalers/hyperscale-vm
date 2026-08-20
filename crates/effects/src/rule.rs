@@ -22,6 +22,7 @@
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 
+use crate::auth::RoleId;
 use crate::dsl::Expr;
 use crate::presented::Presented;
 
@@ -91,8 +92,48 @@ pub enum Rule<L> {
 /// A rule as it is stored and judged, its leaves the claims themselves.
 pub type StoredRule = Rule<Presented>;
 
-/// A rule as a signature declares it, its leaves expressions over a
-/// method's own inputs.
+/// A declared rule's leaf: a claim the declaration names, or the rule
+/// stored at a cell under a role.
+///
+/// The second is what lets a declared rule reach mutable authority — and
+/// the type is what bounds the reach: a stored rule is
+/// [`Rule<Presented>`], which cannot hold a `Stored` leaf, so a declared
+/// rule reads stored rules exactly one level deep and no chain of cell
+/// reads is expressible. Mixing follows for free — "the configured
+/// owner, or two of the stored admins" is one rule with leaves of both
+/// kinds — and the cost is legible in the same clause: a claim over
+/// configuration reads no state, a stored leaf is a provisioned read of
+/// a mutable cell.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub enum RuleLeaf {
+    /// A claim the declaration names, evaluated over the method's own
+    /// inputs into the claim a caller must present.
+    Claim(Expr),
+    /// The rule stored at this cell under this role, judged where the
+    /// cell lives.
+    Stored {
+        /// The cell expression the stored table lives at. Declared as an
+        /// access by the same signature, which is what provisions it to
+        /// every participant.
+        cell: Expr,
+        /// The role selecting the stored rule. An absent entry denies.
+        role: RoleId,
+    },
+}
+
+impl RuleLeaf {
+    /// Whether the leaf reads what the caller supplies — the claim's own
+    /// expression, or the cell a stored rule is read from.
+    pub(crate) fn reads_call_inputs(&self) -> bool {
+        match self {
+            Self::Claim(expr) => expr.reads_call_inputs(),
+            Self::Stored { cell, .. } => cell.reads_call_inputs(),
+        }
+    }
+}
+
+/// A rule as a signature declares it, its leaves over a method's own
+/// inputs.
 ///
 /// Authored as its own tree rather than an expression evaluating to a
 /// rule: a rule-valued expression would let a rule's *shape* depend on
@@ -102,7 +143,7 @@ pub type StoredRule = Rule<Presented>;
 /// the decode gate holds a stored one to.
 ///
 /// [`check_metadata`]: crate::metadata::check_metadata
-pub type RuleExpr = Rule<Expr>;
+pub type RuleExpr = Rule<RuleLeaf>;
 
 /// The threshold rule one node meets, wherever the rule came from.
 ///
@@ -157,6 +198,19 @@ impl<L> Rule<L> {
                 well_formed(self).is_ok() && rules.iter().all(|rule| rule.within_caps(depth + 1))
             }
         }
+    }
+
+    /// Every leaf, in preorder.
+    pub fn leaves(&self) -> impl Iterator<Item = &L> {
+        let mut stack = vec![self];
+        std::iter::from_fn(move || {
+            loop {
+                match stack.pop()? {
+                    Self::Require(leaf) => return Some(leaf),
+                    Self::CountOf { rules, .. } => stack.extend(rules.iter().rev()),
+                }
+            }
+        })
     }
 
     /// The same tree with every leaf replaced by what `map` makes of it.
@@ -238,16 +292,24 @@ impl StoredRule {
 }
 
 impl RuleExpr {
+    /// A rule requiring one claim the declaration names.
+    #[must_use]
+    pub const fn claim(expr: Expr) -> Self {
+        Self::Require(RuleLeaf::Claim(expr))
+    }
+
     /// Whether any leaf reads what the caller supplies.
     ///
     /// A caller who names the claim they must present can always present
-    /// it, so the method reads as guarded and admits everyone. Every
-    /// leaf answers, because one caller-named branch of a threshold is
-    /// one branch the caller satisfies for free.
+    /// it — and a caller who names the cell a rule is read from names
+    /// one holding whatever admits them — so the method reads as guarded
+    /// and admits everyone. Every leaf answers, because one caller-named
+    /// branch of a threshold is one branch the caller satisfies for
+    /// free.
     #[must_use]
     pub(crate) fn reads_call_inputs(&self) -> bool {
         match self {
-            Self::Require(claim) => claim.reads_call_inputs(),
+            Self::Require(leaf) => leaf.reads_call_inputs(),
             Self::CountOf { rules, .. } => rules.iter().any(Self::reads_call_inputs),
         }
     }

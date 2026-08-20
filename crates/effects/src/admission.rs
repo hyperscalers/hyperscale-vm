@@ -24,11 +24,15 @@ use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
 use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall};
-use crate::manifest::{AuthorityGate, Bounds, Manifest, ManifestHash, Node, NodeInput, Possession};
+use crate::manifest::{
+    AuthorityGate, Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput,
+    Possession,
+};
 use crate::metadata::{MetadataCache, PackageHash};
 use crate::presented::Presented;
 use crate::resource::{holdings_collection, issued_resource};
 use crate::route::{FrameDeclaration, MAX_MANIFEST_NODES};
+use crate::rule::{Rule, RuleLeaf};
 use crate::signature::{
     AbiParam, Accessibility, CustodyClaim, GateShape, MethodSignature, ParamType,
 };
@@ -940,10 +944,22 @@ impl Lower<'_> {
         // starting here, so the offset is taken before the frame is
         // logged.
         let offset = self.table_len;
+        // A frame's conditions split by where each kind is judged: an
+        // authority condition rides the node's call, judged with that
+        // call's evidence; a presence condition joins the union
+        // declaration, judged at materialization beside the presence a
+        // write requires.
+        let mut requires = Vec::new();
+        for condition in &frame.conditions {
+            match condition {
+                Condition::Satisfies { rule } => requires.push(rule.clone()),
+                Condition::Holds { .. } => self.declaration.conditions.push(condition.clone()),
+            }
+        }
         self.calls.push(lower_call(
             node_index,
             signature,
-            &Lowering {
+            Lowering {
                 package: meta.package,
                 declaration: &frame,
                 offset,
@@ -953,6 +969,7 @@ impl Lower<'_> {
                 node_outputs: &node_outputs,
                 evidence: &evidence,
                 authority: authority.as_ref(),
+                requires,
                 inputs: &eval_inputs,
                 hasher: self.hasher,
             },
@@ -1118,7 +1135,7 @@ impl Lower<'_> {
         // nothing. Whether what it presents satisfies the target's rule
         // is the target's own business, answered where the target's
         // state is.
-        if signature.accessibility.requires_evidence() {
+        if signature.requires_evidence() {
             if node.evidence.is_empty() {
                 return Err(AdmissionError::MissingEvidence { node: node_index });
             }
@@ -1134,7 +1151,7 @@ impl Lower<'_> {
                     // authority is the account's rule, so the only
                     // gates it may reach are the ones that read a rule
                     // — the sign-in, and the recovery surface.
-                    if !signature.accessibility.reads_a_rule() {
+                    if !signature.reads_a_rule() {
                         return Err(AdmissionError::SignatureForGuarded { node: node_index });
                     }
                     let signer = intent
@@ -1296,7 +1313,13 @@ fn judge_gate(
             // Every leaf, over the same inputs the output types
             // evaluate against — the shape is the declaration's and
             // only the claims are computed.
-            let rule = rule.map_leaves(&mut |expr| {
+            let rule = rule.map_leaves(&mut |leaf| {
+                // A guarded gate judges presented claims alone; the
+                // publish check refuses a stored leaf here, so the arm
+                // is a backstop rather than a verdict anyone reaches.
+                let RuleLeaf::Claim(expr) = leaf else {
+                    return Err(AdmissionError::AuthorityType { node: node_index });
+                };
                 let value = evaluate_expr(expr, eval_inputs, hasher).map_err(|source| {
                     AdmissionError::Eval {
                         node: node_index,
@@ -1407,6 +1430,7 @@ struct Lowering<'a> {
     node_outputs: &'a [(Denomination, EdgeContent)],
     evidence: &'a [Presented],
     authority: Option<&'a AuthorityGate>,
+    requires: Vec<Rule<JudgedLeaf>>,
     inputs: &'a EvalInputs<'a>,
     hasher: &'a dyn Hasher,
 }
@@ -1455,7 +1479,7 @@ fn bind_handle(
 fn lower_call(
     node_index: u32,
     signature: &MethodSignature,
-    lowering: &Lowering<'_>,
+    lowering: Lowering<'_>,
 ) -> Result<NodeCall, AdmissionError> {
     let Lowering {
         package,
@@ -1467,9 +1491,10 @@ fn lower_call(
         node_outputs,
         evidence,
         authority,
+        requires,
         inputs,
         hasher,
-    } = *lowering;
+    } = lowering;
     let mut args = Vec::with_capacity(signature.abi.len());
     for (position, binding) in signature.abi.iter().enumerate() {
         let param = u32::try_from(position).unwrap_or(u32::MAX);
@@ -1539,6 +1564,7 @@ fn lower_call(
             .map(|mark| issued_resource(hasher, target, mark)),
         evidence: evidence.to_vec(),
         authority: authority.cloned(),
+        requires,
     })
 }
 

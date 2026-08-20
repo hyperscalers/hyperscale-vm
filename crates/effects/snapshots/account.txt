@@ -390,7 +390,9 @@ PackageMetadata {
         "securify": MethodSignature {
             accessibility: Guarded(
                 Require(
-                    SelfAddr,
+                    Claim(
+                        SelfAddr,
+                    ),
                 ),
             ),
             totality: Infallible,
@@ -438,7 +440,9 @@ PackageMetadata {
         "withdraw": MethodSignature {
             accessibility: Guarded(
                 Require(
-                    SelfAddr,
+                    Claim(
+                        SelfAddr,
+                    ),
                 ),
             ),
             totality: Infallible,
@@ -490,7 +494,9 @@ PackageMetadata {
         "withdraw-nf": MethodSignature {
             accessibility: Guarded(
                 Require(
-                    SelfAddr,
+                    Claim(
+                        SelfAddr,
+                    ),
                 ),
             ),
             totality: Infallible,

@@ -441,13 +441,57 @@ pub enum Outcome {
         /// The deterministic reason class.
         reason: AbortReason,
     },
+    /// A declared condition the committed state or the presented
+    /// evidence does not meet.
+    ///
+    /// Priced with [`Outcome::Infeasible`] rather than as a defect, for
+    /// the reason the taxonomy gives [`Outcome::PresenceUnmet`] and
+    /// [`Outcome::Unauthorized`]: a condition is a precondition on
+    /// committed state, the world moved between signing and execution,
+    /// and the protocol cannot tell an honest loser of that race from a
+    /// careless caller.
+    #[hbor(discriminant = 9)]
+    ConditionUnmet {
+        /// The condition that went unmet.
+        condition: UnmetCondition,
+    },
+}
+
+/// Which declared condition went unmet, shaped by where each kind is
+/// judged.
+///
+/// A presence condition is judged where the leaf lives, against the
+/// folded declaration, so it names its target; an authority condition is
+/// judged at the calling node with that call's evidence, so it names the
+/// node. The rule itself is not carried: the declaration is
+/// content-addressed with the package, so the verdict points and the
+/// metadata says what was asked.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub enum UnmetCondition {
+    /// The leaf the condition names does not have the presence it
+    /// requires.
+    Holds {
+        /// The target whose leaf did not meet it.
+        target: EffectTarget,
+        /// What the condition required of it. Never [`Presence::Either`],
+        /// which requires nothing and so cannot go unmet.
+        required: Presence,
+    },
+    /// The presented claims do not satisfy a rule the calling node's
+    /// declaration requires.
+    Satisfies {
+        /// The calling node.
+        node: u32,
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
 
-    use super::{AbortReason, Address, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome, SubstateKey};
+    use super::{
+        AbortReason, Address, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome, SubstateKey, UnmetCondition,
+    };
     use crate::address::{AddressClass, EffectTarget, LocalKey};
     use crate::mode::Presence;
 
@@ -569,6 +613,12 @@ mod tests {
                     reason: AbortReason::Unreachable,
                 },
             ),
+            (
+                9,
+                Outcome::ConditionUnmet {
+                    condition: UnmetCondition::Satisfies { node: 0 },
+                },
+            ),
         ];
         for (byte, outcome) in outcomes {
             assert_eq!(
@@ -596,6 +646,15 @@ mod tests {
         });
         assert_canonical(&Outcome::UserError {
             reason: AbortReason::Unreachable,
+        });
+        assert_canonical(&Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(SubstateKey {
+                    owner: Address::new([2; 31], AddressClass::Component),
+                    local: LocalKey([3; 16]),
+                }),
+                required: Presence::Absent,
+            },
         });
     }
 

@@ -493,7 +493,7 @@ impl<'a> TypedBuilder<'a> {
         // signature; everything guarded presents proofs minted earlier —
         // more than one where the gate is a threshold, since satisfying
         // two of three means presenting two.
-        let evidence = match (signature.accessibility.requires_evidence(), proofs) {
+        let evidence = match (signature.requires_evidence(), proofs) {
             (false, []) => BTreeSet::new(),
             (false, _) => {
                 return Err(TypedError::UnexpectedEvidence {
@@ -504,7 +504,7 @@ impl<'a> TypedBuilder<'a> {
                 // A signature signs in, so it reaches only a gate that
                 // reads a rule; a claim a declaration names takes a
                 // proof.
-                if !signature.accessibility.reads_a_rule() {
+                if !signature.reads_a_rule() {
                     return Err(TypedError::SignatureForGuarded {
                         method: method.to_owned(),
                     });

@@ -298,7 +298,7 @@ fn treasury() -> PackageMetadata {
     metadata.methods.insert(
         "payout".into(),
         MethodSignature {
-            accessibility: Accessibility::Guarded(RuleExpr::Require(Expr::Config(0))),
+            accessibility: Accessibility::Guarded(RuleExpr::claim(Expr::Config(0))),
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
             outputs: vec![Expr::Config(1)],

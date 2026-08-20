@@ -15,9 +15,10 @@
 
 use hyperscale_vm_types::{Address, CellKind, ResourceAddr};
 
-use crate::manifest::{AuthorityGate, Bounds};
+use crate::manifest::{AuthorityGate, Bounds, JudgedLeaf};
 use crate::metadata::PackageHash;
 use crate::presented::Presented;
+use crate::rule::Rule;
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE};
 
 /// What kind of value an edge carries.
@@ -186,6 +187,10 @@ pub struct NodeCall {
     /// a method admitting anyone, and then the presented set is empty
     /// too.
     pub authority: Option<AuthorityGate>,
+    /// The authority conditions this node's declaration requires, each a
+    /// judged rule over the call's presented evidence and the stored
+    /// rules its cells hold. All must be satisfied.
+    pub requires: Vec<Rule<JudgedLeaf>>,
 }
 
 #[cfg(test)]

@@ -12,10 +12,12 @@
 //! get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
-    AuthCell, AuthorityGate, CallArg, NodeCall, PRIMARY, PackageHash, Possession,
+    AuthCell, AuthorityGate, CallArg, JudgedLeaf, NodeCall, PRIMARY, PackageHash, Possession, Rule,
 };
 use hyperscale_vm_embed::{GuestArg, Invoked};
-use hyperscale_vm_types::{ABSENT_REP, AbortReason, Address, MAX_ERROR_CODES, Outcome};
+use hyperscale_vm_types::{
+    ABSENT_REP, AbortReason, Address, MAX_ERROR_CODES, Outcome, UnmetCondition,
+};
 
 use crate::executor::{BatchTx, GuestRunner, RunResult, Unavailable};
 use crate::modes::decode_amount;
@@ -303,12 +305,74 @@ fn gated(
     mut session: KernelSession,
 ) -> Result<KernelSession, NodeFailure> {
     match authorized(call, &mut session) {
-        Ok(true) => Ok(session),
-        Ok(false) => Err(fail(session, Outcome::Unauthorized { node }, 0)),
-        Err(_) => Err(composition_defect(
-            session,
-            AbortReason::AuthorityCellUnreadable,
-        )),
+        Ok(true) => {}
+        Ok(false) => return Err(fail(session, Outcome::Unauthorized { node }, 0)),
+        Err(_) => {
+            return Err(composition_defect(
+                session,
+                AbortReason::AuthorityCellUnreadable,
+            ));
+        }
+    }
+    for rule in &call.requires {
+        match satisfies(rule, call, &mut session) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(fail(
+                    session,
+                    Outcome::ConditionUnmet {
+                        condition: UnmetCondition::Satisfies { node },
+                    },
+                    0,
+                ));
+            }
+            Err(_) => {
+                return Err(composition_defect(
+                    session,
+                    AbortReason::AuthorityCellUnreadable,
+                ));
+            }
+        }
+    }
+    Ok(session)
+}
+
+/// Whether the call's presented claims satisfy a required rule.
+///
+/// A claim leaf is a pure match against the presented set. A stored
+/// leaf reads the cell the declaration provisioned and judges the rule
+/// the named role selects there — [`AuthCell::admits`], the same
+/// verdict a stored-rule gate reaches — so a declared rule reaches
+/// stored rules exactly one level deep, which is what `Rule<Presented>`
+/// guarantees by construction. Recursion is bounded by the rule caps
+/// the publish check held the tree to.
+fn satisfies(
+    rule: &Rule<JudgedLeaf>,
+    call: &NodeCall,
+    session: &mut KernelSession,
+) -> Result<bool, SessionTrap> {
+    match rule {
+        Rule::Require(JudgedLeaf::Claim(claim)) => Ok(call.evidence.contains(claim)),
+        Rule::Require(JudgedLeaf::Stored { cell, role }) => {
+            let bytes = session.declared_cell(*cell)?;
+            let clock = session.clock_ms();
+            Ok(AuthCell::admits(
+                &bytes,
+                call.target,
+                *role,
+                &call.evidence,
+                clock,
+            ))
+        }
+        Rule::CountOf { count, rules } => {
+            let mut met = 0usize;
+            for rule in rules {
+                if satisfies(rule, call, session)? {
+                    met += 1;
+                }
+            }
+            Ok(met >= usize::from(*count))
+        }
     }
 }
 

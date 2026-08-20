@@ -41,7 +41,7 @@ pub use envelope::{
 };
 pub use execution::{
     ABSENT_REP, AbortReason, Event, ISSUER_REP, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES,
-    MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome,
+    MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, UnmetCondition,
 };
 pub use mode::{CellKind, ConflictClass, Mode, ModeKind, Presence, compatible};
 pub use scheme::{

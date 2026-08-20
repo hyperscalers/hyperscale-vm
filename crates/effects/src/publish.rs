@@ -10,11 +10,11 @@ use std::collections::BTreeMap;
 use hyperscale_vm_types::{AddressClass, Denomination, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
 
 use crate::dsl::{
-    Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_RANGE_CAP,
-    ModeExpr, TargetExpr, materialized_kind,
+    Clause, ConditionExpr, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH,
+    MAX_RANGE_CAP, ModeExpr, TargetExpr, materialized_kind,
 };
 use crate::metadata::PackageMetadata;
-use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr};
+use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
 use crate::signature::{
     AbiParam, Accessibility, CustodyClaim, GateError, GateShape, MethodSignature,
 };
@@ -192,6 +192,12 @@ pub enum AbiError {
     /// one branch the caller satisfies for free.
     #[error("the authority this method requires is one its caller names")]
     CallerNamedAuthority,
+    /// A guarded gate holding a stored-rule leaf.
+    ///
+    /// A gate fixed at publish judges presented claims alone; a rule the
+    /// target stores is a condition, judged where the cell lives.
+    #[error("a guarded gate judges presented claims alone; a stored rule is a condition")]
+    StoredRuleInGate,
     /// A custodial method whose declaration is not the pinned custody
     /// shape: the holder's rule cell read, and the one possession read
     /// its claim names, keyed by exactly the expressions the gate mints.
@@ -249,10 +255,18 @@ impl From<GateError> for AbiError {
 /// Any [`AbiError`]; verdicts are deterministic and identical on every
 /// node.
 pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
-    if let Accessibility::Guarded(rule) = &signature.accessibility
-        && rule.reads_call_inputs()
-    {
-        return Err(AbiError::CallerNamedAuthority);
+    if let Accessibility::Guarded(rule) = &signature.accessibility {
+        if rule.reads_call_inputs() {
+            return Err(AbiError::CallerNamedAuthority);
+        }
+        // A gate fixed at publish judges presented claims alone; a rule
+        // the target stores is a condition, judged where the cell lives.
+        if rule
+            .leaves()
+            .any(|leaf| matches!(leaf, RuleLeaf::Stored { .. }))
+        {
+            return Err(AbiError::StoredRuleInGate);
+        }
     }
     // A gated method's whole declaration is what its gate judges at, in
     // the shape its accessibility pins.
@@ -385,6 +399,44 @@ pub enum DeclarationError {
     /// carries only the indifferent one.
     #[error("effect clause {clause} requires a presence of an interval, which names no leaf")]
     PresenceOnInterval {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+    },
+    /// A condition naming a target no access declares under a mode that
+    /// can carry the judgment.
+    ///
+    /// The one check that replaces recovering a gate's cell by shape:
+    /// what a condition reads is declared, and therefore provisioned to
+    /// every participating shard, by a clause that fires whenever the
+    /// condition does.
+    #[error("condition clause {clause} names a target no access declares under `Read` or `Write`")]
+    ConditionUndeclared {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+    },
+    /// A stored-rule condition whose cell is declared through a locked
+    /// read. A rule cell is mutable by definition, so the read would
+    /// judge a rule a concurrent transaction may be rewriting.
+    #[error("condition clause {clause} reads a stored rule through a locked read")]
+    ConditionOnLocked {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+    },
+    /// A presence condition requiring `Either`, which nothing can fail.
+    #[error("condition clause {clause} requires `Either` of a leaf, which requires nothing")]
+    VacuousCondition {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+    },
+    /// A condition whose rule reads what the caller supplies.
+    #[error(
+        "condition clause {clause} requires authority the caller names, and would admit everyone"
+    )]
+    CallerNamedCondition {
         /// The clause's position in a preorder walk of the signature's
         /// effects.
         clause: u32,
@@ -1053,6 +1105,81 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     for (index, clause) in flat.iter().enumerate() {
         judge_access(u32::try_from(index).unwrap_or(u32::MAX), clause)?;
     }
+    check_conditions(&flat)
+}
+
+/// The condition pass: every target a condition names is declared as
+/// an access — under `Read` or `Write`, which is what makes the
+/// judgment coherent, by a clause that fires whenever the condition
+/// does. The one check that replaces recovering a gate's cell by
+/// shape. Guards compare syntactically, the same standard the
+/// presence pass holds to: an unguarded access backs any condition, a
+/// guarded one backs a condition under the same guard.
+fn check_conditions(flat: &[&Clause]) -> Result<(), DeclarationError> {
+    let declares =
+        |target: &TargetExpr, under: Option<&Expr>, admits: &dyn Fn(&ModeExpr) -> bool| {
+            flat.iter().any(|clause| {
+                matches!(
+                    clause,
+                    Clause::Effect {
+                        guard,
+                        target: declared,
+                        mode,
+                        ..
+                    } if declared == target
+                        && admits(mode)
+                        && (guard.is_none() || guard.as_deref() == under)
+                )
+            })
+        };
+    let coherent = |mode: &ModeExpr| matches!(mode, ModeExpr::Read | ModeExpr::Write { .. });
+    for (index, clause) in flat.iter().enumerate() {
+        let Clause::Requires { guard, condition } = clause else {
+            continue;
+        };
+        let clause = u32::try_from(index).unwrap_or(u32::MAX);
+        let under = guard.as_deref();
+        match condition {
+            ConditionExpr::Holds { target, presence } => {
+                if *presence == Presence::Either {
+                    return Err(DeclarationError::VacuousCondition { clause });
+                }
+                // A presence is about the leaf it names, and an interval
+                // has none — the same refusal a presence-requiring write
+                // meets.
+                if matches!(target, TargetExpr::Range { .. }) {
+                    return Err(DeclarationError::PresenceOnInterval { clause });
+                }
+                if !declares(target, under, &coherent) {
+                    return Err(DeclarationError::ConditionUndeclared { clause });
+                }
+            }
+            ConditionExpr::Satisfies { rule } => {
+                // An identity a caller names is one that caller can
+                // always present, and a caller-named cell is one holding
+                // whatever admits them.
+                if rule.reads_call_inputs() {
+                    return Err(DeclarationError::CallerNamedCondition { clause });
+                }
+                for leaf in rule.leaves() {
+                    let RuleLeaf::Stored { cell, .. } = leaf else {
+                        continue;
+                    };
+                    let point = TargetExpr::Point(cell.clone());
+                    if declares(&point, under, &coherent) {
+                        continue;
+                    }
+                    // A rule cell is mutable by definition, so a locked
+                    // read of one is a sign-in judged against a rule a
+                    // concurrent transaction may be rewriting.
+                    if declares(&point, under, &|mode| matches!(mode, ModeExpr::Locked)) {
+                        return Err(DeclarationError::ConditionOnLocked { clause });
+                    }
+                    return Err(DeclarationError::ConditionUndeclared { clause });
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1136,7 +1263,8 @@ fn check_rule_bounds(rule: &RuleExpr) -> Result<(), SignatureBoundsError> {
         return Err(SignatureBoundsError::RuleCaps);
     }
     match rule {
-        RuleExpr::Require(claim) => check_expr_bounds(claim, 0),
+        RuleExpr::Require(RuleLeaf::Claim(claim)) => check_expr_bounds(claim, 0),
+        RuleExpr::Require(RuleLeaf::Stored { cell, .. }) => check_expr_bounds(cell, 0),
         RuleExpr::CountOf { rules, .. } => rules.iter().try_for_each(check_rule_bounds),
     }
 }
@@ -1201,6 +1329,19 @@ fn check_clause_bounds(
                 }
                 check_expr_bounds(list, 0)?;
                 check_clause_bounds(body, depth + 1, declared)?;
+            }
+            Clause::Requires { guard, condition } => {
+                if let Some(cond) = guard {
+                    check_expr_bounds(cond, 0)?;
+                }
+                *declared += 1;
+                if *declared > MAX_EFFECTS_PER_SIGNATURE {
+                    return Err(SignatureBoundsError::TooManyEffects);
+                }
+                match condition {
+                    ConditionExpr::Holds { target, .. } => check_target_bounds(target)?,
+                    ConditionExpr::Satisfies { rule } => check_rule_bounds(rule)?,
+                }
             }
         }
     }
@@ -1590,7 +1731,7 @@ mod tests {
             accessibility: Accessibility::Guarded(rule),
             ..MethodSignature::default()
         };
-        let require = |expr| guarded(RuleExpr::Require(expr));
+        let require = |expr| guarded(RuleExpr::claim(expr));
         assert_eq!(check_abi(&require(Expr::SelfAddr)), Ok(()));
         assert_eq!(check_abi(&require(Expr::Config(0))), Ok(()));
         assert_eq!(
@@ -1612,12 +1753,232 @@ mod tests {
             check_abi(&guarded(RuleExpr::CountOf {
                 count: 2,
                 rules: vec![
-                    RuleExpr::Require(Expr::Config(0)),
-                    RuleExpr::Require(Expr::Config(1)),
-                    RuleExpr::Require(Expr::Arg(0)),
+                    RuleExpr::claim(Expr::Config(0)),
+                    RuleExpr::claim(Expr::Config(1)),
+                    RuleExpr::claim(Expr::Arg(0)),
                 ],
             })),
             Err(AbiError::CallerNamedAuthority)
+        );
+    }
+
+    /// A gate fixed at publish judges presented claims alone; a rule the
+    /// target stores is a condition, judged where the cell lives.
+    #[test]
+    fn a_stored_leaf_in_a_guarded_gate_is_refused() {
+        let stored = RuleExpr::Require(RuleLeaf::Stored {
+            cell: Expr::SelfAddr,
+            role: PRIMARY,
+        });
+        let guarded = |rule: RuleExpr| MethodSignature {
+            totality: Totality::Fallible,
+            accessibility: Accessibility::Guarded(rule),
+            ..MethodSignature::default()
+        };
+        assert_eq!(
+            check_abi(&guarded(stored.clone())),
+            Err(AbiError::StoredRuleInGate)
+        );
+        assert_eq!(
+            check_abi(&guarded(RuleExpr::CountOf {
+                count: 1,
+                rules: vec![RuleExpr::claim(Expr::Config(0)), stored],
+            })),
+            Err(AbiError::StoredRuleInGate)
+        );
+    }
+
+    /// A condition names its own target, and one check replaces the gate
+    /// shapes: every target it names is declared as an access under
+    /// `Read` or `Write`, by a clause that fires whenever the condition
+    /// does.
+    #[test]
+    fn a_condition_over_an_undeclared_or_incoherent_target_is_refused() {
+        let cell = || {
+            TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: SlotId(PACKAGE_SLOT_BASE),
+                material: vec![],
+            })
+        };
+        let access = |guard: Option<Expr>, mode| Clause::Effect {
+            guard: guard.map(Box::new),
+            target: cell(),
+            mode,
+            denomination: None,
+        };
+        let requires = |guard: Option<Expr>, condition| Clause::Requires {
+            guard: guard.map(Box::new),
+            condition,
+        };
+        let holds = |presence| ConditionExpr::Holds {
+            target: cell(),
+            presence,
+        };
+        let satisfies = || ConditionExpr::Satisfies {
+            rule: RuleExpr::Require(RuleLeaf::Stored {
+                cell: match cell() {
+                    TargetExpr::Point(expr) => expr,
+                    _ => unreachable!(),
+                },
+                role: PRIMARY,
+            }),
+        };
+        let declared = |clauses: Vec<Clause>| {
+            check_declarations(&MethodSignature {
+                effects: clauses,
+                ..MethodSignature::default()
+            })
+        };
+        let guard = || Expr::Eq(Box::new(Expr::Arg(0)), Box::new(Expr::Config(0)));
+        let other = || Expr::Eq(Box::new(Expr::Arg(0)), Box::new(Expr::Config(1)));
+
+        // Backed under a coherent mode: admitted, guarded or not — an
+        // unguarded access fires whenever the condition does, and one
+        // under the same guard fires exactly when it does.
+        assert_eq!(
+            declared(vec![
+                access(None, ModeExpr::Read),
+                requires(None, holds(Presence::Present)),
+            ]),
+            Ok(())
+        );
+        assert_eq!(
+            declared(vec![
+                access(None, ModeExpr::Read),
+                requires(Some(guard()), satisfies()),
+            ]),
+            Ok(())
+        );
+        assert_eq!(
+            declared(vec![
+                access(Some(guard()), ModeExpr::Read),
+                requires(Some(guard()), holds(Presence::Absent)),
+            ]),
+            Ok(())
+        );
+
+        // Nothing declares the target, a mode that cannot carry the
+        // judgment declares it, or the access is guarded where the
+        // condition is not: all one refusal.
+        assert_eq!(
+            declared(vec![requires(None, holds(Presence::Present))]),
+            Err(DeclarationError::ConditionUndeclared { clause: 0 })
+        );
+        assert_eq!(
+            declared(vec![
+                access(None, ModeExpr::Locked),
+                requires(None, holds(Presence::Present)),
+            ]),
+            Err(DeclarationError::ConditionUndeclared { clause: 1 })
+        );
+        assert_eq!(
+            declared(vec![
+                access(Some(guard()), ModeExpr::Read),
+                requires(None, satisfies()),
+            ]),
+            Err(DeclarationError::ConditionUndeclared { clause: 1 })
+        );
+        assert_eq!(
+            declared(vec![
+                access(Some(other()), ModeExpr::Read),
+                requires(Some(guard()), holds(Presence::Present)),
+            ]),
+            Err(DeclarationError::ConditionUndeclared { clause: 1 })
+        );
+
+        // A rule cell is mutable by definition, so a locked read of one
+        // would judge a rule a concurrent transaction may be rewriting.
+        assert_eq!(
+            declared(vec![
+                access(None, ModeExpr::Locked),
+                requires(None, satisfies()),
+            ]),
+            Err(DeclarationError::ConditionOnLocked { clause: 1 })
+        );
+    }
+
+    /// A condition that requires nothing, names an interval, or names
+    /// authority its own caller supplies is refused on its own terms.
+    #[test]
+    fn a_degenerate_or_caller_named_condition_is_refused() {
+        let cell = || {
+            TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: SlotId(PACKAGE_SLOT_BASE),
+                material: vec![],
+            })
+        };
+        let access = |guard: Option<Expr>, mode| Clause::Effect {
+            guard: guard.map(Box::new),
+            target: cell(),
+            mode,
+            denomination: None,
+        };
+        let requires = |guard: Option<Expr>, condition| Clause::Requires {
+            guard: guard.map(Box::new),
+            condition,
+        };
+        let holds = |presence| ConditionExpr::Holds {
+            target: cell(),
+            presence,
+        };
+        let declared = |clauses: Vec<Clause>| {
+            check_declarations(&MethodSignature {
+                effects: clauses,
+                ..MethodSignature::default()
+            })
+        };
+
+        // A condition requiring nothing, and one about an interval,
+        // which names no leaf.
+        assert_eq!(
+            declared(vec![
+                access(None, ModeExpr::Read),
+                requires(None, holds(Presence::Either)),
+            ]),
+            Err(DeclarationError::VacuousCondition { clause: 1 })
+        );
+        assert_eq!(
+            declared(vec![requires(
+                None,
+                ConditionExpr::Holds {
+                    target: TargetExpr::Range {
+                        owner: Expr::SelfAddr,
+                        collection: SlotId(PACKAGE_SLOT_BASE),
+                        material: vec![],
+                        lo: Expr::Literal(Value::U128(0)),
+                        hi: Expr::Literal(Value::U128(10)),
+                        cap: 4,
+                    },
+                    presence: Presence::Present,
+                },
+            )]),
+            Err(DeclarationError::PresenceOnInterval { clause: 0 })
+        );
+
+        // Authority the caller names admits everyone — at a claim leaf
+        // and at a stored leaf's cell alike.
+        assert_eq!(
+            declared(vec![requires(
+                None,
+                ConditionExpr::Satisfies {
+                    rule: RuleExpr::claim(Expr::Arg(0)),
+                },
+            )]),
+            Err(DeclarationError::CallerNamedCondition { clause: 0 })
+        );
+        assert_eq!(
+            declared(vec![requires(
+                None,
+                ConditionExpr::Satisfies {
+                    rule: RuleExpr::Require(RuleLeaf::Stored {
+                        cell: Expr::Arg(0),
+                        role: PRIMARY,
+                    }),
+                },
+            )]),
+            Err(DeclarationError::CallerNamedCondition { clause: 0 })
         );
     }
 
@@ -1636,7 +1997,7 @@ mod tests {
             )]),
             ..PackageMetadata::default()
         };
-        let leaf = || RuleExpr::Require(Expr::Config(0));
+        let leaf = || RuleExpr::claim(Expr::Config(0));
         let nest = |levels: usize| {
             let mut rule = leaf();
             for _ in 0..levels {
@@ -1846,7 +2207,7 @@ mod tests {
 
         // Every gate is a caller this method can turn away.
         for accessibility in [
-            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
+            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr)),
             Accessibility::Authorizing,
             Accessibility::Custodial(CustodyClaim::Fungible(Expr::Arg(0))),
             Accessibility::RoleGated(PRIMARY),

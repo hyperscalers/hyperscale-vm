@@ -86,17 +86,17 @@ fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> 
         (
             "account",
             "securify",
-            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
+            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr)),
         ),
         (
             "account",
             "withdraw",
-            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
+            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr)),
         ),
         (
             "account",
             "withdraw-nf",
-            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
+            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr)),
         ),
         ("amm", "swap", Accessibility::Public),
         ("book", "fill-asks", Accessibility::Public),
@@ -109,12 +109,12 @@ fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> 
         (
             "nf",
             "operate",
-            Accessibility::Guarded(RuleExpr::Require(Expr::Config(0))),
+            Accessibility::Guarded(RuleExpr::claim(Expr::Config(0))),
         ),
         (
             "nf",
             "operate-instance",
-            Accessibility::Guarded(RuleExpr::Require(Expr::Tuple(vec![
+            Accessibility::Guarded(RuleExpr::claim(Expr::Tuple(vec![
                 Expr::Config(0),
                 Expr::Config(1),
             ]))),
@@ -126,7 +126,7 @@ fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> 
                 count: 2,
                 rules: (1..=3)
                     .map(|slot| {
-                        RuleExpr::Require(Expr::Tuple(vec![Expr::Config(0), Expr::Config(slot)]))
+                        RuleExpr::claim(Expr::Tuple(vec![Expr::Config(0), Expr::Config(slot)]))
                     })
                     .collect(),
             }),
@@ -139,28 +139,28 @@ fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> 
         (
             "staking",
             "cast-param-vote",
-            Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
+            Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
                 material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
             })),
         ),
         (
             "staking",
             "clear-param-vote",
-            Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
+            Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
                 material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
             })),
         ),
         (
             "staking",
             "deactivate-validator",
-            Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
+            Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
                 material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
             })),
         ),
         (
             "staking",
             "register-validator",
-            Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
+            Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
                 material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
             })),
         ),
@@ -168,7 +168,7 @@ fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> 
         (
             "staking",
             "unjail",
-            Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
+            Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
                 material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
             })),
         ),

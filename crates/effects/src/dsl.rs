@@ -15,7 +15,9 @@ use hyperscale_vm_types::{
 };
 
 use crate::hash::{Hash32, Hasher};
-use crate::manifest::ManifestHash;
+use crate::manifest::{Condition, JudgedLeaf, ManifestHash};
+use crate::presented::Presented;
+use crate::rule::{RuleExpr, RuleLeaf};
 use crate::types::{
     EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
     resource_address,
@@ -428,6 +430,32 @@ pub const fn materialized_kind(clause: &Clause) -> Option<CellKind> {
     }
 }
 
+/// A precondition a declaration states, its expressions unevaluated.
+///
+/// A condition names its own target — the leaf a `Holds` is about, the
+/// cell a `Stored` rule leaf is read from — and every target it names is
+/// also declared as an access by the same signature, under `Read` or
+/// `Write`. That one check, stated in `check_declarations`, is what
+/// guarantees the state a condition reads is provisioned to every
+/// participating shard.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub enum ConditionExpr {
+    /// The leaf this target names is there, or is not.
+    Holds {
+        /// The leaf the condition is about.
+        target: TargetExpr,
+        /// What must be true of it. Never [`Presence::Either`], which
+        /// requires nothing and is refused at publish.
+        presence: Presence,
+    },
+    /// The presented claims satisfy this rule.
+    Satisfies {
+        /// The rule, over claims the declaration names and rules the
+        /// target stores.
+        rule: RuleExpr,
+    },
+}
+
 /// One clause of an effect signature.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 #[allow(clippy::large_enum_variant)] // an access carries a target; a loop carries none
@@ -472,6 +500,18 @@ pub enum Clause {
         /// The clauses evaluated per element.
         body: Vec<Self>,
     },
+    /// A precondition, contributing no access of its own.
+    ///
+    /// Judged where its state lives: a presence condition at
+    /// materialization, by the shard holding the leaf; an authority
+    /// condition at the declaring node's call, with its presented
+    /// evidence.
+    Requires {
+        /// When this clause is declared at all, or always where absent.
+        guard: Option<Box<Expr>>,
+        /// The precondition.
+        condition: ConditionExpr,
+    },
 }
 
 impl Clause {
@@ -479,7 +519,9 @@ impl Clause {
     #[must_use]
     pub const fn guard(&self) -> Option<&Expr> {
         match self {
-            Self::Effect { guard, .. } | Self::ForEach { guard, .. } => match guard {
+            Self::Effect { guard, .. }
+            | Self::ForEach { guard, .. }
+            | Self::Requires { guard, .. } => match guard {
                 Some(cond) => Some(cond),
                 None => None,
             },
@@ -732,6 +774,13 @@ pub struct Declaration {
     /// concatenating frames leaves it empty: the ABI binding is a
     /// method's, so the walk resolves it against that method's frame.
     pub clause_spans: Vec<(u32, u32)>,
+    /// The evaluated conditions, in clause-evaluation order: every
+    /// `Requires` clause the evaluation reached and whose guard held.
+    ///
+    /// Contributing nothing to [`Declaration::set`] or
+    /// [`Declaration::ordered`] — a condition is a judgment, not an
+    /// access — and judged where each kind's state lives.
+    pub conditions: Vec<Condition>,
     /// Whether each top-level clause was declared at all, in clause order.
     ///
     /// True where the clause carries no guard, and where its guard held.
@@ -774,6 +823,7 @@ impl Declaration {
             .collect();
         Self {
             clause_taken: vec![true; ordered.len()],
+            conditions: Vec::new(),
             set,
             ordered,
             clause_spans,
@@ -936,6 +986,11 @@ fn eval_clauses(
                     holds: held,
                 });
             }
+            Clause::Requires { condition, .. } => {
+                budget.charge()?;
+                let condition = eval_condition(condition, inputs, hasher, bindings)?;
+                out.conditions.push(condition);
+            }
             Clause::ForEach { list, body, .. } => {
                 let items = as_list(eval_expr(list, inputs, hasher, bindings, 0)?)?;
                 if items.len() > MAX_FOREACH_ELEMENTS {
@@ -957,6 +1012,38 @@ fn eval_clauses(
         }
     }
     Ok(())
+}
+
+fn eval_condition(
+    condition: &ConditionExpr,
+    inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    bindings: &[Value],
+) -> Result<Condition, EvalError> {
+    match condition {
+        ConditionExpr::Holds { target, presence } => Ok(Condition::Holds {
+            target: eval_target(target, inputs, hasher, bindings)?,
+            presence: *presence,
+        }),
+        ConditionExpr::Satisfies { rule } => {
+            let rule = rule.map_leaves(&mut |leaf| match leaf {
+                RuleLeaf::Claim(expr) => {
+                    let value = eval_expr(expr, inputs, hasher, bindings, 0)?;
+                    Presented::of(&value).map(JudgedLeaf::Claim).ok_or_else(|| {
+                        EvalError::TypeMismatch {
+                            expected: "claim",
+                            found: value.kind(),
+                        }
+                    })
+                }
+                RuleLeaf::Stored { cell, role } => Ok(JudgedLeaf::Stored {
+                    cell: as_key(eval_expr(cell, inputs, hasher, bindings, 0)?)?,
+                    role: *role,
+                }),
+            })?;
+            Ok(Condition::Satisfies { rule })
+        }
+    }
 }
 
 fn eval_target(
@@ -1397,7 +1484,7 @@ mod tests {
     };
 
     use super::{
-        Clause, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
+        Clause, ConditionExpr, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
         MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, evaluate_declaration, evaluate_effects,
         evaluate_expr, fresh_id, fresh_local,
     };
@@ -1514,6 +1601,115 @@ mod tests {
             node_index: 3,
             identity: ManifestHash(Hash32([9; 32])),
         }
+    }
+
+    /// A `Requires` clause evaluates into the declaration's condition
+    /// list and contributes no access: its span is empty, its guard is
+    /// honoured, and its leaves resolve to the claims and cells the
+    /// kernel judges.
+    #[test]
+    fn a_requires_clause_evaluates_to_a_condition_and_no_access() {
+        use hyperscale_vm_types::CallTarget;
+
+        use crate::auth::PRIMARY;
+        use crate::manifest::{Condition, JudgedLeaf};
+        use crate::presented::Presented;
+        use crate::rule::{Rule, RuleExpr, RuleLeaf};
+
+        let context = inputs(&[Value::Bool(false)], &[]);
+        let key = child_key(&TestHasher, context.self_addr, SlotId(4), &[]);
+        let target = || TargetExpr::Point(Expr::Literal(Value::Key(key)));
+        let clauses = vec![
+            Clause::Effect {
+                guard: None,
+                target: target(),
+                mode: ModeExpr::Read,
+                denomination: None,
+            },
+            Clause::Requires {
+                guard: None,
+                condition: ConditionExpr::Holds {
+                    target: target(),
+                    presence: Presence::Present,
+                },
+            },
+            Clause::Requires {
+                guard: None,
+                condition: ConditionExpr::Satisfies {
+                    rule: RuleExpr::CountOf {
+                        count: 1,
+                        rules: vec![
+                            RuleExpr::claim(Expr::SelfAddr),
+                            RuleExpr::Require(RuleLeaf::Stored {
+                                cell: Expr::Literal(Value::Key(key)),
+                                role: PRIMARY,
+                            }),
+                        ],
+                    },
+                },
+            },
+            // Guarded out: evaluated conditions carry only what fired.
+            Clause::Requires {
+                guard: Some(Box::new(Expr::Arg(0))),
+                condition: ConditionExpr::Holds {
+                    target: target(),
+                    presence: Presence::Absent,
+                },
+            },
+        ];
+        let declaration = evaluate_declaration(&clauses, &context, &TestHasher).unwrap();
+
+        // One access; the conditions contribute nothing to either view.
+        assert_eq!(declaration.set.len(), 1);
+        assert_eq!(declaration.ordered.len(), 1);
+        assert_eq!(
+            declaration.clause_spans,
+            vec![(0, 1), (1, 0), (1, 0), (1, 0)]
+        );
+        assert_eq!(declaration.clause_taken, vec![true, true, true, false]);
+
+        let identity = Presented::Identity(CallTarget::try_from(context.self_addr).unwrap());
+        assert_eq!(
+            declaration.conditions,
+            vec![
+                Condition::Holds {
+                    target: EffectTarget::Point(key),
+                    presence: Presence::Present,
+                },
+                Condition::Satisfies {
+                    rule: Rule::CountOf {
+                        count: 1,
+                        rules: vec![
+                            Rule::Require(JudgedLeaf::Claim(identity)),
+                            Rule::Require(JudgedLeaf::Stored {
+                                cell: key,
+                                role: PRIMARY,
+                            }),
+                        ],
+                    },
+                },
+            ]
+        );
+
+        // A claim leaf must evaluate to a claim; a number is refused
+        // with the evaluator's own mismatch.
+        let refused = evaluate_declaration(
+            &[Clause::Requires {
+                guard: None,
+                condition: ConditionExpr::Satisfies {
+                    rule: RuleExpr::claim(Expr::Literal(Value::U64(7))),
+                },
+            }],
+            &context,
+            &TestHasher,
+        );
+        assert_eq!(
+            refused,
+            Err(EvalError::TypeMismatch {
+                expected: "claim",
+                found: "u64",
+            })
+        );
     }
 
     /// The routed grant is lowered through `issued_resource`, and a

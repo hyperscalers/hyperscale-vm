@@ -7,12 +7,14 @@
 //! reads only what signatures evaluate over: each node's target, method, and
 //! bound inputs. Amounts are dynamic; types are static.
 
-use hyperscale_vm_types::{Address, CollectionId, Denomination, SubstateKey};
+use hyperscale_vm_types::{
+    Address, CollectionId, Denomination, EffectTarget, Presence, SubstateKey,
+};
 
 use crate::auth::RoleId;
 use crate::hash::Hash32;
 use crate::presented::Presented;
-use crate::rule::StoredRule;
+use crate::rule::{Rule, StoredRule};
 use crate::types::{EdgeContent, Value};
 
 /// A consumer's signed amount bounds on an edge, folded to their
@@ -135,6 +137,51 @@ pub enum AuthorityGate {
         cell: SubstateKey,
         /// What the holder must hold.
         possession: Possession,
+    },
+}
+
+/// A judged rule's leaf: the evaluated twin of
+/// [`RuleLeaf`](crate::rule::RuleLeaf), every expression resolved to the
+/// claim a caller must present or the cell a stored rule is read from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JudgedLeaf {
+    /// A claim the presented set must contain.
+    Claim(Presented),
+    /// The rule stored at this cell under this role, judged where the
+    /// cell lives — or, while the cell is absent, the virtual rule: the
+    /// identity the cell's owner derives. An absent entry denies.
+    Stored {
+        /// The cell the stored table lives in. The declaring method's
+        /// own declared access, so it is provisioned wherever the call
+        /// runs.
+        cell: SubstateKey,
+        /// The stored rule the presented set must satisfy.
+        role: RoleId,
+    },
+}
+
+/// A declared condition with its expressions evaluated: what the kernel
+/// judges, against committed state and the calling node's evidence.
+///
+/// The two kinds are judged where their raw material lives. A presence
+/// condition is judged at materialization, by the shard holding the
+/// leaf, beside the presence a write requires; an authority condition is
+/// judged at the calling node, with that call's presented evidence,
+/// where a gate is judged today.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Condition {
+    /// The leaf this target names is there, or is not.
+    Holds {
+        /// The leaf the condition is about.
+        target: EffectTarget,
+        /// What must be true of it. Never [`Presence::Either`], which
+        /// requires nothing.
+        presence: Presence,
+    },
+    /// The presented claims satisfy this rule.
+    Satisfies {
+        /// The rule, its leaves evaluated.
+        rule: Rule<JudgedLeaf>,
     },
 }
 

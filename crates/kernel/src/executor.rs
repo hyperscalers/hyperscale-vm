@@ -32,7 +32,7 @@ use std::thread;
 use hyperscale_vm_effects::{Declaration, NodeCall};
 use hyperscale_vm_types::{
     AbortReason, Address, CollectionId, ConflictClass, Effect, EffectSet, EffectTarget, Mode,
-    ModeKind, Outcome, Presence, SubstateKey, TxHash,
+    ModeKind, Outcome, Presence, SubstateKey, TxHash, UnmetCondition,
 };
 
 use crate::ledger::AmountLedger;
@@ -638,6 +638,9 @@ impl From<MaterializeError> for Outcome {
             MaterializeError::Absent(target) => Self::PresenceUnmet {
                 target,
                 required: Presence::Present,
+            },
+            MaterializeError::ConditionUnmet { target, required } => Self::ConditionUnmet {
+                condition: UnmetCondition::Holds { target, required },
             },
         }
     }

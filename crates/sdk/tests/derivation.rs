@@ -293,7 +293,9 @@ fn a_stored_rate_folds_to_an_exclusive_write_never_a_movement() {
         .iter()
         .map(|clause| match clause {
             Clause::Effect { mode, .. } => mode.clone(),
-            Clause::ForEach { .. } => panic!("the accrual maps over nothing"),
+            Clause::ForEach { .. } | Clause::Requires { .. } => {
+                panic!("the accrual maps over nothing and requires nothing")
+            }
         })
         .collect();
     // A rate is not value: nothing moves into or out of the cell, so the
@@ -321,7 +323,7 @@ fn an_instance_issues_resources_its_own_address_derives() {
     // The badge is the same derivation over the mark that separates it.
     assert_eq!(
         metadata.methods["retire"].accessibility,
-        Accessibility::Guarded(RuleExpr::Require(Expr::SelfResource {
+        Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
             material: vec![Expr::Literal(Value::Bytes(b"owner-badge".to_vec()))],
         })),
     );
@@ -701,7 +703,7 @@ fn a_declared_gate_carries_the_whole_threshold_algebra() {
     use hyperscale_vm_effects::{Accessibility, Expr};
 
     let metadata = board::blueprint().metadata();
-    let slot = |index| RuleExpr::Require(Expr::Config(index));
+    let slot = |index| RuleExpr::claim(Expr::Config(index));
 
     // `||` is a count of one.
     assert_eq!(

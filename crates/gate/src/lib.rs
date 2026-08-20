@@ -477,13 +477,13 @@ mod tests {
             .methods
             .get_mut("withdraw")
             .expect("declared")
-            .accessibility = Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr));
+            .accessibility = Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr));
         let artifact = attach_metadata(&component, &metadata).expect("attaches");
 
         let admitted = admit_package(&artifact).expect("admits");
         assert_eq!(
             admitted.methods["withdraw"].accessibility,
-            Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr))
+            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr))
         );
         assert_eq!(
             admitted.methods["deposit"].accessibility,

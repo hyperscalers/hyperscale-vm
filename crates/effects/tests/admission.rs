@@ -17,7 +17,7 @@ use hyperscale_vm_effects::{
     TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, ResourceAddr,
+    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -336,7 +336,7 @@ fn custodian_world(
         "operate".into(),
         MethodSignature {
             totality: Totality::Fallible,
-            accessibility: Accessibility::Guarded(RuleExpr::Require(Expr::Config(0))),
+            accessibility: Accessibility::Guarded(RuleExpr::claim(Expr::Config(0))),
             ..MethodSignature::default()
         },
     );
@@ -937,4 +937,110 @@ proptest! {
             assert!(verdict.is_ok());
         }
     }
+}
+
+/// A `Requires` clause rides admission's single walk: the evaluated
+/// authority condition lands on the node's lowered call, the presence
+/// condition joins the union declaration, and the evidence policy reads
+/// the conditions — a stored leaf is what admits a signature as
+/// evidence, exactly as a stored-rule gate is.
+#[test]
+fn a_condition_lowers_to_the_call_and_the_union_declaration() {
+    use hyperscale_vm_effects::{Condition, ConditionExpr, JudgedLeaf, Rule, RuleLeaf};
+
+    let auth_cell = || Expr::ChildKey {
+        owner: Box::new(Expr::SelfAddr),
+        slot: AUTH,
+        material: vec![],
+    };
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "act".into(),
+        MethodSignature {
+            totality: Totality::Fallible,
+            effects: vec![
+                Clause::Effect {
+                    guard: None,
+                    target: TargetExpr::Point(auth_cell()),
+                    mode: ModeExpr::Read,
+                    denomination: None,
+                },
+                Clause::Requires {
+                    guard: None,
+                    condition: ConditionExpr::Holds {
+                        target: TargetExpr::Point(auth_cell()),
+                        presence: Presence::Present,
+                    },
+                },
+                Clause::Requires {
+                    guard: None,
+                    condition: ConditionExpr::Satisfies {
+                        rule: RuleExpr::CountOf {
+                            count: 1,
+                            rules: vec![
+                                RuleExpr::claim(Expr::Config(0)),
+                                RuleExpr::Require(RuleLeaf::Stored {
+                                    cell: auth_cell(),
+                                    role: PRIMARY,
+                                }),
+                            ],
+                        },
+                    },
+                },
+            ],
+            abi: vec![AbiParam::Handle(0)],
+            ..MethodSignature::default()
+        },
+    );
+    let (mut cache, mut instances) = setup();
+    // Through the checked door: the composed signature check admits the
+    // condition-carrying shape.
+    cache
+        .publish(pkg("conditional"), package)
+        .expect("publishes");
+    let meta = InstanceMeta {
+        package: pkg("conditional"),
+        config: vec![Value::Address(ALICE.address())],
+        salt: Hash32([4; 32]),
+    };
+    let target = meta.address(&TestHasher);
+    instances.create(&TestHasher, meta);
+
+    let graph = ManifestGraph {
+        nodes: vec![GraphNode {
+            target: target.into(),
+            method: "act".into(),
+            args: vec![],
+            evidence: [EvidenceRef::IntentSignature].into(),
+        }],
+    };
+    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
+
+    let key = child_key(&TestHasher, target, AUTH, &[]);
+    assert_eq!(
+        admitted.declaration().conditions,
+        vec![Condition::Holds {
+            target: EffectTarget::Point(key),
+            presence: Presence::Present,
+        }]
+    );
+    assert_eq!(
+        admitted.calls()[0].requires,
+        vec![Rule::CountOf {
+            count: 1,
+            rules: vec![
+                Rule::Require(JudgedLeaf::Claim(Presented::Identity(ALICE.into()))),
+                Rule::Require(JudgedLeaf::Stored {
+                    cell: key,
+                    role: PRIMARY,
+                }),
+            ],
+        }]
+    );
+    // The signature was admissible as evidence because the declaration
+    // reads a stored rule; the presented identity is the signer's.
+    assert_eq!(
+        admitted.calls()[0].evidence,
+        vec![Presented::Identity(ALICE.into())]
+    );
 }

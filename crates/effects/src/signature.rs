@@ -7,10 +7,10 @@ use hyperscale_vm_types::{
 };
 
 use crate::auth::{PRIMARY, RoleId, RoleTable};
-use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
+use crate::dsl::{Clause, ConditionExpr, Expr, ModeExpr, TargetExpr};
 use crate::invoke::EdgeKind;
 use crate::resource::holdings_entry;
-use crate::rule::{RuleExpr, StoredRule};
+use crate::rule::{RuleExpr, RuleLeaf, StoredRule};
 use crate::types::{MAX_IDS_PER_EDGE, Value};
 use crate::vocabulary::VAULT;
 
@@ -513,6 +513,42 @@ pub enum GateShape<'a> {
 }
 
 impl MethodSignature {
+    /// Whether a call to this method must present evidence: its
+    /// accessibility gate, or any authority condition its declaration
+    /// requires.
+    #[must_use]
+    pub fn requires_evidence(&self) -> bool {
+        self.accessibility.requires_evidence() || self.required_rules().next().is_some()
+    }
+
+    /// Whether judging this method reads a stored rule — which is what
+    /// admits a signature as evidence: a signature signs in, and whether
+    /// the key behind it still holds its account's authority is the
+    /// stored rule's own question.
+    #[must_use]
+    pub fn reads_a_rule(&self) -> bool {
+        self.accessibility.reads_a_rule()
+            || self
+                .required_rules()
+                .flat_map(RuleExpr::leaves)
+                .any(|leaf| matches!(leaf, RuleLeaf::Stored { .. }))
+    }
+
+    /// Every rule a `Requires` clause of this declaration states, in
+    /// preorder.
+    fn required_rules(&self) -> impl Iterator<Item = &RuleExpr> {
+        self.effects
+            .iter()
+            .flat_map(Clause::effects)
+            .filter_map(|clause| match clause {
+                Clause::Requires {
+                    condition: ConditionExpr::Satisfies { rule },
+                    ..
+                } => Some(rule),
+                _ => None,
+            })
+    }
+
     /// The gate's whole shape: what a caller must present, and what the
     /// declaration reads to judge it.
     ///

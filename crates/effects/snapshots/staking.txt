@@ -3,27 +3,29 @@ PackageMetadata {
         "cast-param-vote": MethodSignature {
             accessibility: Guarded(
                 Require(
-                    SelfResource {
-                        material: [
-                            Literal(
-                                Bytes(
-                                    [
-                                        111,
-                                        119,
-                                        110,
-                                        101,
-                                        114,
-                                        45,
-                                        98,
-                                        97,
-                                        100,
-                                        103,
-                                        101,
-                                    ],
+                    Claim(
+                        SelfResource {
+                            material: [
+                                Literal(
+                                    Bytes(
+                                        [
+                                            111,
+                                            119,
+                                            110,
+                                            101,
+                                            114,
+                                            45,
+                                            98,
+                                            97,
+                                            100,
+                                            103,
+                                            101,
+                                        ],
+                                    ),
                                 ),
-                            ),
-                        ],
-                    },
+                            ],
+                        },
+                    ),
                 ),
             ),
             totality: Infallible,
@@ -77,27 +79,29 @@ PackageMetadata {
         "clear-param-vote": MethodSignature {
             accessibility: Guarded(
                 Require(
-                    SelfResource {
-                        material: [
-                            Literal(
-                                Bytes(
-                                    [
-                                        111,
-                                        119,
-                                        110,
-                                        101,
-                                        114,
-                                        45,
-                                        98,
-                                        97,
-                                        100,
-                                        103,
-                                        101,
-                                    ],
+                    Claim(
+                        SelfResource {
+                            material: [
+                                Literal(
+                                    Bytes(
+                                        [
+                                            111,
+                                            119,
+                                            110,
+                                            101,
+                                            114,
+                                            45,
+                                            98,
+                                            97,
+                                            100,
+                                            103,
+                                            101,
+                                        ],
+                                    ),
                                 ),
-                            ),
-                        ],
-                    },
+                            ],
+                        },
+                    ),
                 ),
             ),
             totality: Infallible,
@@ -132,27 +136,29 @@ PackageMetadata {
         "deactivate-validator": MethodSignature {
             accessibility: Guarded(
                 Require(
-                    SelfResource {
-                        material: [
-                            Literal(
-                                Bytes(
-                                    [
-                                        111,
-                                        119,
-                                        110,
-                                        101,
-                                        114,
-                                        45,
-                                        98,
-                                        97,
-                                        100,
-                                        103,
-                                        101,
-                                    ],
+                    Claim(
+                        SelfResource {
+                            material: [
+                                Literal(
+                                    Bytes(
+                                        [
+                                            111,
+                                            119,
+                                            110,
+                                            101,
+                                            114,
+                                            45,
+                                            98,
+                                            97,
+                                            100,
+                                            103,
+                                            101,
+                                        ],
+                                    ),
                                 ),
-                            ),
-                        ],
-                    },
+                            ],
+                        },
+                    ),
                 ),
             ),
             totality: Infallible,
@@ -195,27 +201,29 @@ PackageMetadata {
         "register-validator": MethodSignature {
             accessibility: Guarded(
                 Require(
-                    SelfResource {
-                        material: [
-                            Literal(
-                                Bytes(
-                                    [
-                                        111,
-                                        119,
-                                        110,
-                                        101,
-                                        114,
-                                        45,
-                                        98,
-                                        97,
-                                        100,
-                                        103,
-                                        101,
-                                    ],
+                    Claim(
+                        SelfResource {
+                            material: [
+                                Literal(
+                                    Bytes(
+                                        [
+                                            111,
+                                            119,
+                                            110,
+                                            101,
+                                            114,
+                                            45,
+                                            98,
+                                            97,
+                                            100,
+                                            103,
+                                            101,
+                                        ],
+                                    ),
                                 ),
-                            ),
-                        ],
-                    },
+                            ],
+                        },
+                    ),
                 ),
             ),
             totality: Infallible,
@@ -328,27 +336,29 @@ PackageMetadata {
         "unjail": MethodSignature {
             accessibility: Guarded(
                 Require(
-                    SelfResource {
-                        material: [
-                            Literal(
-                                Bytes(
-                                    [
-                                        111,
-                                        119,
-                                        110,
-                                        101,
-                                        114,
-                                        45,
-                                        98,
-                                        97,
-                                        100,
-                                        103,
-                                        101,
-                                    ],
+                    Claim(
+                        SelfResource {
+                            material: [
+                                Literal(
+                                    Bytes(
+                                        [
+                                            111,
+                                            119,
+                                            110,
+                                            101,
+                                            114,
+                                            45,
+                                            98,
+                                            97,
+                                            100,
+                                            103,
+                                            101,
+                                        ],
+                                    ),
                                 ),
-                            ),
-                        ],
-                    },
+                            ],
+                        },
+                    ),
                 ),
             ),
             totality: Infallible,
