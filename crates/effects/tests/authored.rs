@@ -6,8 +6,8 @@
 //! defining the rules.
 
 use hyperscale_vm_effects::{
-    Accessibility, AuthRole, CustodyClaim, Expr, PackageMetadata, RuleExpr, Value, check_abi,
-    check_declarations,
+    Accessibility, CONFIRMATION, CustodyClaim, Expr, PRIMARY, PackageMetadata, RECOVERY, RuleExpr,
+    Value, check_abi, check_declarations,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_stdlib::staking::OWNER_BADGE;
@@ -65,16 +65,8 @@ fn every_authored_signature_is_well_formed() {
 fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> {
     vec![
         ("account", "authorize", Accessibility::Authorizing),
-        (
-            "account",
-            "cancel",
-            Accessibility::RoleGated(AuthRole::Primary),
-        ),
-        (
-            "account",
-            "confirm",
-            Accessibility::RoleGated(AuthRole::Confirmation),
-        ),
+        ("account", "cancel", Accessibility::RoleGated(PRIMARY)),
+        ("account", "confirm", Accessibility::RoleGated(CONFIRMATION)),
         ("account", "deposit", Accessibility::Public),
         ("account", "deposit-nf", Accessibility::Public),
         (
@@ -90,11 +82,7 @@ fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> 
                 id: Expr::Arg(1),
             }),
         ),
-        (
-            "account",
-            "propose",
-            Accessibility::RoleGated(AuthRole::Recovery),
-        ),
+        ("account", "propose", Accessibility::RoleGated(RECOVERY)),
         (
             "account",
             "securify",

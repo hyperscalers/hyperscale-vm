@@ -71,7 +71,7 @@ fn account() -> Blueprint {
         // a recovery is a write onto one that is there.
         .method(
             "securify",
-            &[ParamType::RoleSet, ParamType::U64],
+            &[ParamType::RoleTable, ParamType::U64],
             |t: &mut Trace| {
                 let holder = t.self_addr();
                 let cell = holder.child(AUTH, &[]);
@@ -80,7 +80,7 @@ fn account() -> Blueprint {
         )
         .method(
             "propose",
-            &[ParamType::RoleSet, ParamType::U64],
+            &[ParamType::RoleTable, ParamType::U64],
             |t: &mut Trace| {
                 let holder = t.self_addr();
                 let cell = holder.child(AUTH, &[]);

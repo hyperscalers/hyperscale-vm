@@ -390,7 +390,7 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         "u64" => quote!(U64),
         "Vec" | "Bytes" => quote!(Bytes),
         "Rule" => quote!(Rule),
-        "RoleSet" => quote!(RoleSet),
+        "RoleTable" => quote!(RoleTable),
         _ => {
             return Err(syn::Error::new(
                 ty.span(),
@@ -787,10 +787,10 @@ fn parse_gate(
         }
         if attr.path().is_ident("role_gated") {
             let role: syn::Ident = attr.parse_args()?;
-            let variant = match role.to_string().as_str() {
-                "primary" => quote!(Primary),
-                "recovery" => quote!(Recovery),
-                "confirmation" => quote!(Confirmation),
+            let named = match role.to_string().as_str() {
+                "primary" => quote!(PRIMARY),
+                "recovery" => quote!(RECOVERY),
+                "confirmation" => quote!(CONFIRMATION),
                 _ => {
                     return Err(syn::Error::new(
                         role.span(),
@@ -798,9 +798,7 @@ fn parse_gate(
                     ));
                 }
             };
-            return Ok(Gate::RoleGated(
-                quote!(::hyperscale_vm_sdk::AuthRole::#variant),
-            ));
+            return Ok(Gate::RoleGated(quote!(::hyperscale_vm_sdk::#named)));
         }
         if attr.path().is_ident("custodial") {
             let named = attr.parse_args_with(

@@ -12,7 +12,7 @@
 //! get manifest semantics wrong.
 
 use hyperscale_vm_effects::{
-    AuthCell, AuthRole, AuthorityGate, CallArg, NodeCall, PackageHash, Possession,
+    AuthCell, AuthorityGate, CallArg, NodeCall, PRIMARY, PackageHash, Possession,
 };
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_types::{ABSENT_REP, AbortReason, Address, MAX_ERROR_CODES, Outcome};
@@ -345,13 +345,7 @@ fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, Sess
             // grants nothing.
             let bytes = session.declared_cell(cell)?;
             let clock = session.clock_ms();
-            if !AuthCell::admits(
-                &bytes,
-                call.target,
-                AuthRole::Primary,
-                &call.evidence,
-                clock,
-            ) {
+            if !AuthCell::admits(&bytes, call.target, PRIMARY, &call.evidence, clock) {
                 return Ok(false);
             }
             match possession {

@@ -6,7 +6,7 @@ use hyperscale_vm_types::{
     CallTarget, ComponentAddr, Denomination, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
 
-use crate::auth::{AuthRole, RoleSet};
+use crate::auth::{PRIMARY, RoleId, RoleTable};
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::invoke::EdgeKind;
 use crate::resource::holdings_entry;
@@ -59,9 +59,10 @@ pub enum ParamType {
     /// the vocabulary at admission — so a rule past a cap, or with a
     /// degenerate threshold, is refused before anything signs.
     Rule,
-    /// A full role set — three rules, canonical bytes — decoded as the
-    /// vocabulary at admission, for the same reason.
-    RoleSet,
+    /// A whole role table — rules by role number, each entry canonical
+    /// rule bytes — decoded as the vocabulary at admission, for the same
+    /// reason.
+    RoleTable,
     /// A set of non-fungible instance ids: a list of distinct `u64`s
     /// within the per-edge cap. Signed manifest content — a transfer
     /// names the ids it moves; nothing about an instance is resolved at
@@ -111,7 +112,7 @@ impl ParamType {
             Self::Bucket => "bucket",
             Self::NfBucket => "nf-bucket",
             Self::Rule => "rule",
-            Self::RoleSet => "role-set",
+            Self::RoleTable => "role-table",
             Self::Ids => "ids",
         }
     }
@@ -153,7 +154,9 @@ impl ParamType {
             (Self::Resource, Value::Address(address)) => ResourceAddr::try_from(*address).is_ok(),
             (Self::Native, Value::Address(address)) => NativeAddr::try_from(*address).is_ok(),
             (Self::Rule, Value::Bytes(bytes)) => StoredRule::from_slice(bytes).is_ok(),
-            (Self::RoleSet, Value::Bytes(bytes)) => RoleSet::from_slice(bytes).is_ok(),
+            (Self::RoleTable, Value::Bytes(bytes)) => {
+                RoleTable::from_slice(bytes).is_ok_and(|table| table.decodes())
+            }
             (Self::Ids, Value::List(elements)) => {
                 elements.len() <= MAX_IDS_PER_EDGE
                     && elements.iter().enumerate().all(|(position, element)| {
@@ -257,7 +260,7 @@ pub enum Accessibility {
     /// the role set that governs at the transaction clock, but a
     /// role-gated node is never a proof, so recovery authority opens
     /// recovery methods and nothing else.
-    RoleGated(AuthRole),
+    RoleGated(RoleId),
     /// Naming this method requires satisfying the target's own rule
     /// *and* the target holding what this claim names — and doing so
     /// mints that badge as evidence.
@@ -497,7 +500,7 @@ pub enum GateShape<'a> {
         /// The cell expression the stored rules live at.
         cell: &'a Expr,
         /// The role the presented set must satisfy.
-        role: AuthRole,
+        role: RoleId,
     },
     /// The holder's stored primary, and the badge the declaration reads
     /// possession of and the gate mints.
@@ -539,7 +542,7 @@ impl MethodSignature {
                 .rule_point(&|mode| matches!(mode, ModeExpr::Read))
                 .map(|cell| GateShape::Rule {
                     cell,
-                    role: AuthRole::Primary,
+                    role: PRIMARY,
                 })
                 .ok_or(GateError::AuthorizingShape),
             Accessibility::RoleGated(role) => self

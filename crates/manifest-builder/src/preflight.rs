@@ -23,9 +23,9 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, AuthRole, AuthorityGate, EnvelopeTree, Hasher, InstanceRegistry,
-    Manifest, ManifestGraph, ManifestHash, MetadataCache, Presented, Routing, ShardId,
-    ShardResolver, StoredRule, SubintentRecord, admit, admit_tree, footprint, route, route_tree,
+    AdmissionError, Admitted, AuthorityGate, EnvelopeTree, Hasher, InstanceRegistry, Manifest,
+    ManifestGraph, ManifestHash, MetadataCache, Presented, RoleId, Routing, ShardId, ShardResolver,
+    StoredRule, SubintentRecord, admit, admit_tree, footprint, route, route_tree,
 };
 use hyperscale_vm_types::{
     Address, CallTarget, NetworkWord, PrincipalAddr, ResourceAddr, SchemeId, TextError,
@@ -60,7 +60,7 @@ pub enum Authority {
     /// that is the identity the target's address derives — its own
     /// signature — but once the target is securified the stored role
     /// set governs, and only state knows its shape.
-    StoredRule(AuthRole),
+    StoredRule(RoleId),
     /// An identity no key derives — an instance's own address, or a
     /// configured slot holding one. Nothing signs for a hash of what an
     /// object is, so a method requiring one cannot be named by anyone.

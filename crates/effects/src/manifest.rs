@@ -9,7 +9,7 @@
 
 use hyperscale_vm_types::{Address, CollectionId, Denomination, SubstateKey};
 
-use crate::auth::AuthRole;
+use crate::auth::RoleId;
 use crate::hash::Hash32;
 use crate::presented::Presented;
 use crate::rule::StoredRule;
@@ -122,7 +122,7 @@ pub enum AuthorityGate {
         /// The cell the target's rules live in.
         cell: SubstateKey,
         /// The stored rule the presented set must satisfy.
-        role: AuthRole,
+        role: RoleId,
     },
     /// The presented set must satisfy the target's stored primary at
     /// `cell` — the holder acts, nobody else presents its badges — and

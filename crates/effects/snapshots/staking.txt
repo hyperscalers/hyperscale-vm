@@ -424,4 +424,5 @@ PackageMetadata {
         "param-vote-cleared",
     ],
     errors: [],
+    roles: [],
 }

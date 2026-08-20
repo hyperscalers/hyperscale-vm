@@ -13,7 +13,7 @@
 //!
 //! [`PrincipalAddr`]: hyperscale_vm_effects::PrincipalAddr
 
-use hyperscale_vm_effects::{PackageMetadata, RoleSet, StoredRule};
+use hyperscale_vm_effects::{PackageMetadata, RoleTable, StoredRule};
 use hyperscale_vm_manifest_builder::{Proof, TypedBuilder, TypedError};
 
 // The package, read from the crate the artifact is built from rather
@@ -47,16 +47,22 @@ pub fn metadata() -> PackageMetadata {
     package::account::blueprint().metadata()
 }
 
-/// Securify with one rule as all three roles.
+/// Securify with one rule as all three reserved roles.
 ///
 /// # Errors
 ///
 /// Any refusal the call does not type against `securify`.
+///
+/// # Panics
+///
+/// On a rule past the vocabulary's own caps, which no admission path
+/// would accept; the compose site is where its author can fix it.
 pub fn securify_uniform(
     b: &mut TypedBuilder<'_>,
     proof: Proof,
-    rule: StoredRule,
+    rule: &StoredRule,
     recovery_delay_ms: u64,
 ) -> Result<(), TypedError> {
-    securify(b, proof, RoleSet::uniform(rule), recovery_delay_ms)
+    let roles = RoleTable::uniform(rule).expect("a rule within the caps encodes");
+    securify(b, proof, roles, recovery_delay_ms)
 }

@@ -53,10 +53,11 @@ use hyperscale_hbor::{
 use hyperscale_vm_effects::MAX_AUTH_CELL_WIRE_DEPTH;
 /// The stored-authority vocabulary, named where a body's words live.
 ///
-/// A role-set parameter is [`RoleSet`] — the canonical bytes a signature
-/// binds and a cell holds, which is the same type in both positions, so a
-/// body that stores what it was handed converts nothing.
-pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, StoredRoles as RoleSet};
+/// A role-table parameter is [`RoleTable`] — the same type a cell holds,
+/// so a body that stores what it was handed converts nothing. The table's
+/// skeleton is legible here; each rule's bytes stay opaque, decoded only
+/// where a rule is judged.
+pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, RoleBytes, RoleTable};
 use hyperscale_vm_types::{Address, Denomination};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1458,13 +1459,13 @@ impl Cellular for Rule {
     }
 }
 
-/// A role-set parameter crosses the boundary as the bytes it is.
-impl Cellular for RoleSet {
+/// A role-table parameter crosses the boundary as its canonical bytes.
+impl Cellular for RoleTable {
     fn from_cell(cell: &[u8]) -> Self {
-        Self(cell.to_vec())
+        Self::from_slice(cell).expect("the write path admits only a canonical table")
     }
 
     fn to_cell(&self) -> Vec<u8> {
-        self.bytes().to_vec()
+        self.to_bytes().expect("the table cap is the codec's own")
     }
 }

@@ -13,7 +13,7 @@
 
 use hyperscale_vm_effects::Value;
 pub use hyperscale_vm_effects::{
-    PackageMetadata, RoleSet, SlotId, StoredRule, Value as ManifestValue,
+    PackageMetadata, RoleTable, SlotId, StoredRule, Value as ManifestValue,
 };
 pub use hyperscale_vm_manifest_builder::{
     AddressArg, Arg, Args, Bucket, BucketArg, Outputs, Proof, TypedBuilder, TypedError,

@@ -30,8 +30,8 @@
 //! published contract whose method can never be called.
 
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, AuthRole, Clause, CustodyClaim, Expr, MAX_CLAUSE_DEPTH,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, RuleExpr, SlotId,
+    AbiParam, Accessibility, Clause, CustodyClaim, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
+    MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, RoleId, RuleExpr, SlotId,
     TargetExpr, Totality, Value, well_formed,
 };
 use hyperscale_vm_types::Presence;
@@ -631,8 +631,8 @@ impl Trace {
     }
 
     /// Record that naming this method requires satisfying `role` of the
-    /// target's stored role set.
-    pub fn role_gated(&mut self, role: AuthRole) {
+    /// target's stored role table.
+    pub fn role_gated(&mut self, role: RoleId) {
         self.accessibility = Accessibility::RoleGated(role);
     }
 

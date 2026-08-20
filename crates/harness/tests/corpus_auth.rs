@@ -3,8 +3,9 @@
 //! gates badges open.
 
 use hyperscale_vm_effects::{
-    AuthBase, AuthCell, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
-    Presented, Proposal, RoleSet, StoredRule, TestHasher, Value, holdings_collection,
+    AuthBase, AuthCell, CONFIRMATION, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph,
+    MetadataCache, PRIMARY, Presented, Proposal, RECOVERY, RoleBytes, RoleTable, StoredRule,
+    TestHasher, Value, holdings_collection,
 };
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, vault};
@@ -49,7 +50,7 @@ fn a_refused_authorization_takes_its_consumers_with_it() {
 }
 
 /// Sign in and hand the account to Bob's rule, uniformly.
-fn securify_graph(rule: StoredRule) -> ManifestGraph {
+fn securify_graph(rule: &StoredRule) -> ManifestGraph {
     graph(|b| {
         let alice = account::authorize(b, ALICE)?;
         account::securify_uniform(b, alice, rule, DAY_MS)
@@ -70,7 +71,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
 
     // Alice's last act under the virtual rule: signing in for its
     // retirement. Everything she stores from here is governed by Bob.
-    let securify = securify_graph(StoredRule::Require(Presented::Identity(BOB.into())));
+    let securify = securify_graph(&StoredRule::Require(Presented::Identity(BOB.into())));
     let (results, store) = run_both(&world, &store, &[(&securify, TxHash(Hash32([0x51; 32])))]);
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("securify must complete; got {:?}", results[0]);
@@ -113,7 +114,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     // than the guest's: `securify` declares a write requiring the cell
     // to be absent, so the shard holding it judges the door against
     // committed state and the body never runs.
-    let again = securify_graph(StoredRule::Require(Presented::Identity(BOB.into())));
+    let again = securify_graph(&StoredRule::Require(Presented::Identity(BOB.into())));
     let (results, _) = run_both_signed(
         &world,
         &store,
@@ -241,16 +242,20 @@ fn a_proof_opens_only_the_account_that_minted_it() {
 /// The split-role setup every recovery test starts from: Alice holds
 /// primary, Bob recovery, the maker confirmation, and the corpus delay
 /// separates a proposal from its maturity.
-fn split_roles() -> RoleSet {
-    RoleSet {
-        primary: StoredRule::Require(Presented::Identity(ALICE.into())),
-        recovery: StoredRule::Require(Presented::Identity(BOB.into())),
-        confirmation: StoredRule::Require(Presented::Identity(MAKER.into())),
-    }
+fn split_roles() -> RoleTable {
+    let rule = |who: PrincipalAddr| {
+        RoleBytes::try_from(&StoredRule::Require(Presented::Identity(who.into())))
+            .expect("a rule within the vocabulary caps")
+    };
+    RoleTable::from_iter([
+        (PRIMARY, rule(ALICE)),
+        (RECOVERY, rule(BOB)),
+        (CONFIRMATION, rule(MAKER)),
+    ])
 }
 
 fn split_base() -> AuthBase {
-    AuthBase::new(DAY_MS, &split_roles()).expect("a rule within the vocabulary caps")
+    AuthBase::new(DAY_MS, split_roles())
 }
 
 /// A store holding Alice's funds and her securified split-role cell,
@@ -504,7 +509,8 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(StoredRule::Require(Presented::Identity(MAKER.into()))),
+            RoleTable::uniform(&StoredRule::Require(Presented::Identity(MAKER.into())))
+                .expect("a rule within the vocabulary caps"),
             DAY_MS,
         )
     });
@@ -543,7 +549,8 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(StoredRule::Require(Presented::Identity(BOB.into()))),
+            RoleTable::uniform(&StoredRule::Require(Presented::Identity(BOB.into())))
+                .expect("a rule within the vocabulary caps"),
             DAY_MS,
         )
     });

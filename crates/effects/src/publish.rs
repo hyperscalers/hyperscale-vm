@@ -1270,7 +1270,7 @@ mod tests {
     use hyperscale_vm_types::{Address, AddressClass};
 
     use super::*;
-    use crate::auth::AuthRole;
+    use crate::auth::{CONFIRMATION, PRIMARY, RECOVERY};
     use crate::envelope::NULLIFIER_SLOT;
     use crate::metadata::PACKAGE_SLOT;
     use crate::resource::{holdings_entry, holdings_range};
@@ -1527,7 +1527,7 @@ mod tests {
         );
         assert_eq!(
             check_abi(&shaped(
-                Accessibility::RoleGated(AuthRole::Recovery),
+                Accessibility::RoleGated(RECOVERY),
                 ModeExpr::Write {
                     requires: Presence::Either
                 }
@@ -1546,10 +1546,7 @@ mod tests {
             Err(AbiError::AuthorizingShape)
         );
         assert_eq!(
-            check_abi(&shaped(
-                Accessibility::RoleGated(AuthRole::Primary),
-                ModeExpr::Read
-            )),
+            check_abi(&shaped(Accessibility::RoleGated(PRIMARY), ModeExpr::Read)),
             Err(AbiError::RoleGatedShape)
         );
         assert_eq!(
@@ -1565,13 +1562,10 @@ mod tests {
         let sign_in = shaped(Accessibility::Authorizing, ModeExpr::Read);
         assert!(matches!(
             sign_in.gate(),
-            Ok(GateShape::Rule {
-                role: AuthRole::Primary,
-                ..
-            })
+            Ok(GateShape::Rule { role: PRIMARY, .. })
         ));
         let confirm = shaped(
-            Accessibility::RoleGated(AuthRole::Confirmation),
+            Accessibility::RoleGated(CONFIRMATION),
             ModeExpr::Write {
                 requires: Presence::Either,
             },
@@ -1579,7 +1573,7 @@ mod tests {
         assert!(matches!(
             confirm.gate(),
             Ok(GateShape::Rule {
-                role: AuthRole::Confirmation,
+                role: CONFIRMATION,
                 ..
             })
         ));
@@ -1855,7 +1849,7 @@ mod tests {
             Accessibility::Guarded(RuleExpr::Require(Expr::SelfAddr)),
             Accessibility::Authorizing,
             Accessibility::Custodial(CustodyClaim::Fungible(Expr::Arg(0))),
-            Accessibility::RoleGated(AuthRole::Primary),
+            Accessibility::RoleGated(PRIMARY),
         ] {
             assert_eq!(
                 check_declarations(&total(MethodSignature {

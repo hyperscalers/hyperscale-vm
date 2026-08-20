@@ -1,10 +1,10 @@
-//! The account's stored-authority cell: three rules, a recovery delay,
-//! and at most one timed proposal.
+//! The stored-authority cell: a table of rules by role, a recovery
+//! delay, and at most one timed proposal.
 //!
 //! One encoded record, read and written through this module by everyone
-//! who touches it — the account guest that stores it, the kernel's gate,
-//! and the payer shard's binding verdict. There is no second
-//! implementation to agree with.
+//! who touches it — the guest that stores it, the kernel's gate, and the
+//! payer shard's binding verdict. There is no second implementation to
+//! agree with.
 //!
 //! Nothing applies a matured proposal: every reader compares its
 //! instant against the transaction clock through [`AuthCell::governing`]
@@ -16,84 +16,46 @@ use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_
 use hyperscale_vm_types::{Address, CallTarget};
 
 use crate::presented::Presented;
-use crate::rule::{MAX_RULE_WIRE_DEPTH, StoredRule};
+use crate::rule::StoredRule;
 
-/// The decoder cap that admits exactly the role sets within the rule
-/// vocabulary's caps.
+/// Which stored rule a role-gated method is judged against: a banded
+/// number, like [`SlotId`](crate::SlotId).
 ///
-/// The struct's field body costs one decoder level over the deepest
-/// rule. The relation is pinned by test at both boundaries.
-pub const MAX_ROLESET_WIRE_DEPTH: usize = MAX_RULE_WIRE_DEPTH + 1;
+/// The account's three roles hold the reserved numbers; a package's own
+/// roles count up from [`PACKAGE_ROLE_BASE`]. The kernel bounds a number
+/// without resolving it — a wallet renders a package role's name from
+/// the metadata table beside the ones for events and errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[hbor(transparent)]
+pub struct RoleId(pub u16);
 
-/// Which stored rule a role-gated method is judged against.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub enum AuthRole {
-    /// Governs `authorize`, and so everything the account does.
-    Primary,
-    /// May propose a replacement for all three rules.
-    Recovery,
-    /// May enact a proposal before it matures.
-    Confirmation,
-}
+/// Governs `authorize`, and so everything a principal does — including
+/// paying, at the payer shard's binding verdict.
+pub const PRIMARY: RoleId = RoleId(0);
+/// May propose a replacement for the whole base, and withdraw it.
+pub const RECOVERY: RoleId = RoleId(1);
+/// May enact a proposal before it matures.
+pub const CONFIRMATION: RoleId = RoleId(2);
 
-/// The three stored rules of a securified account.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-pub struct RoleSet {
-    /// Governs `authorize`, and so everything the account does —
-    /// including paying, at the payer shard's binding verdict.
-    pub primary: StoredRule,
-    /// Governs `propose`.
-    pub recovery: StoredRule,
-    /// Governs `confirm`.
-    pub confirmation: StoredRule,
-}
-
-impl RoleSet {
-    /// One rule as all three roles.
-    #[must_use]
-    pub fn uniform(rule: StoredRule) -> Self {
-        Self {
-            primary: rule.clone(),
-            recovery: rule.clone(),
-            confirmation: rule,
-        }
-    }
-
-    /// The rule `role` selects.
-    #[must_use]
-    pub const fn rule(&self, role: AuthRole) -> &StoredRule {
-        match role {
-            AuthRole::Primary => &self.primary,
-            AuthRole::Recovery => &self.recovery,
-            AuthRole::Confirmation => &self.confirmation,
-        }
-    }
-
-    /// The role set's canonical wire bytes, under the same caps the
-    /// decoder enforces.
-    ///
-    /// # Errors
-    ///
-    /// [`EncodeError`] on a rule past the vocabulary caps.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
-        to_vec_with_depth(self, MAX_ROLESET_WIRE_DEPTH)
-    }
-
-    /// One whole role set from its canonical wire bytes.
-    ///
-    /// # Errors
-    ///
-    /// [`DecodeError`] on trailing bytes, a non-canonical form, a rule
-    /// past either vocabulary cap, or a degenerate threshold.
-    pub fn from_slice(bytes: &[u8]) -> Result<Self, DecodeError> {
-        from_slice_with_depth(bytes, MAX_ROLESET_WIRE_DEPTH)
-    }
-}
-
-/// A role set as it is stored and carried: the canonical bytes, not the
-/// tree.
+/// Where a package's own role numbers start.
 ///
-/// The one thing in the cell that stays opaque, and for a reason the
+/// Above the reserved roles with room left over, so a role added to the
+/// reserved set later is not a renumbering of every package that ever
+/// stored a table.
+pub const PACKAGE_ROLE_BASE: u16 = 16;
+
+const _: () = assert!(PACKAGE_ROLE_BASE > CONFIRMATION.0);
+
+/// The `n`th role of a package's own band.
+#[must_use]
+pub const fn package_role(n: u16) -> RoleId {
+    RoleId(PACKAGE_ROLE_BASE + n)
+}
+
+/// One stored rule as it is stored and carried: the canonical bytes, not
+/// the tree.
+///
+/// The one thing in the table that stays opaque, and for a reason the
 /// runtime fixes rather than a preference. A [`StoredRule`] is
 /// recursive, so its decoder is; the deterministic profile requires an
 /// acyclic call graph — the runtime's frame-bound check — because a
@@ -105,9 +67,9 @@ impl RoleSet {
 /// happens.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 #[hbor(transparent)]
-pub struct StoredRoles(pub Vec<u8>);
+pub struct RoleBytes(pub Vec<u8>);
 
-impl StoredRoles {
+impl RoleBytes {
     /// The canonical bytes, which is all a body may do with one: what
     /// they mean was settled where they were decoded.
     #[must_use]
@@ -115,34 +77,166 @@ impl StoredRoles {
         &self.0
     }
 
-    /// The role set these bytes encode.
+    /// The rule these bytes encode.
     ///
     /// # Errors
     ///
-    /// [`DecodeError`] on bytes that are not a role set within the
+    /// [`DecodeError`] on bytes that are not a rule within the
     /// vocabulary's caps.
-    pub fn decode(&self) -> Result<RoleSet, DecodeError> {
-        RoleSet::from_slice(&self.0)
+    pub fn decode(&self) -> Result<StoredRule, DecodeError> {
+        StoredRule::from_slice(&self.0)
     }
 }
 
-impl TryFrom<&RoleSet> for StoredRoles {
+impl TryFrom<&StoredRule> for RoleBytes {
     type Error = EncodeError;
 
-    fn try_from(roles: &RoleSet) -> Result<Self, EncodeError> {
-        roles.to_bytes().map(Self)
+    fn try_from(rule: &StoredRule) -> Result<Self, EncodeError> {
+        rule.to_bytes().map(Self)
+    }
+}
+
+/// The decoder cap that admits exactly the tables this module writes:
+/// the table's entries, one entry's pair, and the byte string holding
+/// one rule. Pinned by test at both boundaries.
+///
+/// A rule's own depth is not in here — an entry is a byte string at this
+/// layer, decoded at the rule vocabulary's cap wherever one is judged.
+/// Nor is an entry count: an entry costs bytes, so the count is bounded
+/// by what the input paid for, and the roles that mean anything are the
+/// ones some method names.
+pub const MAX_ROLE_TABLE_WIRE_DEPTH: usize = 3;
+
+/// The stored role table: rules by role number, each as the bytes it
+/// was handed.
+///
+/// The skeleton is legible — a guest decodes the entries, moves or
+/// removes one, and re-encodes them — while each rule's bytes stay
+/// opaque for the reason [`RoleBytes`] states. **An absent entry
+/// denies**: a miss is the one expressible "deny", since the rule
+/// vocabulary refuses a degenerate threshold, and it is what makes
+/// stripping a role a removal rather than a rule nobody can write.
+///
+/// A sorted list rather than a `BTreeMap`, because this type crosses
+/// into guests and the deterministic profile requires an acyclic call
+/// graph: a tree's clone is recursive where a list's is a loop. The map
+/// semantics stand — ascending, duplicate-free role numbers — held by
+/// the decode-time validation, so an unsorted payload is refused as a
+/// second byte string for a value that already has one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
+#[hbor(transparent, validate = ascending)]
+pub struct RoleTable(Vec<(RoleId, RoleBytes)>);
+
+/// The table's canonical-order rule: role numbers strictly ascending.
+fn ascending(table: &RoleTable) -> Result<(), &'static str> {
+    table
+        .0
+        .windows(2)
+        .all(|pair| pair[0].0 < pair[1].0)
+        .then_some(())
+        .ok_or("role numbers must be ascending and distinct")
+}
+
+impl RoleTable {
+    /// An empty table, which admits nobody under any role.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    /// One rule as all three reserved roles.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError`] on a rule past the vocabulary caps.
+    pub fn uniform(rule: &StoredRule) -> Result<Self, EncodeError> {
+        let bytes = RoleBytes::try_from(rule)?;
+        Ok(Self(vec![
+            (PRIMARY, bytes.clone()),
+            (RECOVERY, bytes.clone()),
+            (CONFIRMATION, bytes),
+        ]))
+    }
+
+    fn position(&self, role: RoleId) -> Result<usize, usize> {
+        self.0.binary_search_by_key(&role, |entry| entry.0)
+    }
+
+    /// The stored bytes of the rule `role` selects, if the table holds
+    /// one.
+    #[must_use]
+    pub fn rule(&self, role: RoleId) -> Option<&RoleBytes> {
+        self.position(role).ok().map(|at| &self.0[at].1)
+    }
+
+    /// Store `bytes` under `role`, replacing what was there.
+    pub fn set(&mut self, role: RoleId, bytes: RoleBytes) {
+        match self.position(role) {
+            Ok(at) => self.0[at].1 = bytes,
+            Err(at) => self.0.insert(at, (role, bytes)),
+        }
+    }
+
+    /// Remove `role`'s entry, leaving every other entry's bytes exactly
+    /// as they were. An absent entry denies, so this is how a role's
+    /// power is stripped.
+    pub fn remove(&mut self, role: RoleId) -> Option<RoleBytes> {
+        self.position(role).ok().map(|at| self.0.remove(at).1)
+    }
+
+    /// Whether every entry decodes as a rule within the vocabulary's
+    /// caps — the write path's refusal, so bytes behind a stored table
+    /// are a rule or the table was never admitted.
+    #[must_use]
+    pub fn decodes(&self) -> bool {
+        self.0.iter().all(|(_, bytes)| bytes.decode().is_ok())
+    }
+
+    /// The table's canonical wire bytes, under the same cap the decoder
+    /// enforces.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError`] is unreachable at this cap; the signature is the
+    /// codec's.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
+        to_vec_with_depth(self, MAX_ROLE_TABLE_WIRE_DEPTH)
+    }
+
+    /// One whole table from its canonical wire bytes.
+    ///
+    /// The skeleton alone: whether every entry decodes as a rule is
+    /// [`decodes`](Self::decodes), asked where a table is admitted
+    /// rather than wherever one is moved.
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError`] on trailing bytes, unsorted or duplicate roles,
+    /// or a non-canonical form.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, DecodeError> {
+        from_slice_with_depth(bytes, MAX_ROLE_TABLE_WIRE_DEPTH)
+    }
+}
+
+impl FromIterator<(RoleId, RoleBytes)> for RoleTable {
+    fn from_iter<I: IntoIterator<Item = (RoleId, RoleBytes)>>(entries: I) -> Self {
+        let mut table = Self::new();
+        for (role, bytes) in entries {
+            table.set(role, bytes);
+        }
+        table
     }
 }
 
 /// The decoder nesting bound for a whole cell.
 ///
-/// Five levels to the deepest field, and constant: the cell's own body,
-/// the `Option` around a proposal, the proposal's body, the base's body
-/// inside it, and the byte string holding the roles. What nests
-/// unboundedly is a rule, and no rule is in here — the roles are one
-/// opaque field, decoded at their own cap wherever one is judged. Pinned
-/// by test at both boundaries.
-pub const MAX_AUTH_CELL_WIRE_DEPTH: usize = 5;
+/// Seven levels to the deepest field, and constant: the cell's own
+/// body, the `Option` around a proposal, the proposal's body, the
+/// base's body inside it, the table's entries, one entry's pair, and
+/// the byte string holding one rule. What nests unboundedly is a rule, and no rule is in here — an
+/// entry is opaque bytes, decoded at their own cap wherever one is
+/// judged. Pinned by test at both boundaries.
+pub const MAX_AUTH_CELL_WIRE_DEPTH: usize = 7;
 
 /// The cell's persistent half: the delay a proposal must wait, and the
 /// roles that govern while none has matured.
@@ -151,21 +245,18 @@ pub struct AuthBase {
     /// How long a proposal waits before it governs, in weighted-time
     /// milliseconds.
     pub recovery_delay_ms: u64,
-    /// The three stored rules, as the bytes they were decoded from.
-    pub roles: StoredRoles,
+    /// The stored rules, each as the bytes it was handed.
+    pub roles: RoleTable,
 }
 
 impl AuthBase {
-    /// The base holding `roles`, encoded.
-    ///
-    /// # Errors
-    ///
-    /// [`EncodeError`] on a rule past the vocabulary caps.
-    pub fn new(recovery_delay_ms: u64, roles: &RoleSet) -> Result<Self, EncodeError> {
-        Ok(Self {
+    /// The base holding `roles`.
+    #[must_use]
+    pub const fn new(recovery_delay_ms: u64, roles: RoleTable) -> Self {
+        Self {
             recovery_delay_ms,
-            roles: StoredRoles::try_from(roles)?,
-        })
+            roles,
+        }
     }
 }
 
@@ -204,7 +295,7 @@ impl AuthCell {
     /// # Errors
     ///
     /// [`DecodeError`] on a truncated or non-canonical encoding, trailing
-    /// bytes, or a role set past either vocabulary cap.
+    /// bytes, or a malformed table.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, DecodeError> {
         from_slice_with_depth(bytes, MAX_AUTH_CELL_WIRE_DEPTH)
     }
@@ -214,7 +305,8 @@ impl AuthCell {
     ///
     /// # Errors
     ///
-    /// [`EncodeError`] on a rule past the vocabulary caps.
+    /// [`EncodeError`] is unreachable at this cap; the signature is the
+    /// codec's.
     pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
         to_vec_with_depth(self, MAX_AUTH_CELL_WIRE_DEPTH)
     }
@@ -235,17 +327,19 @@ impl AuthCell {
     /// This is the one judgment both readers share — the kernel's gate
     /// asks it with a call's evidence, the payer shard's binding verdict
     /// with the envelope signer alone and the primary, since paying is
-    /// governed by whatever governs `authorize`. An empty `stored` is an
-    /// account that never securified: the virtual rule, the identity the
-    /// target's address derives, whichever role asks. Stored bytes that
-    /// do not decode admit nobody — the write path refuses such bytes,
-    /// so these are not a rule, and a cell that cannot be read fails
-    /// closed.
+    /// governed by whatever governs `authorize`. An empty `stored` is a
+    /// cell nobody wrote: the virtual rule, the identity the target's
+    /// address derives, whichever role asks — satisfiable only where a
+    /// key derives the address, so an unwritten package table denies. A
+    /// stored table whose entry for `role` is absent denies: a map miss
+    /// is the one expressible "deny". Stored bytes that do not decode
+    /// admit nobody — the write path refuses such bytes, so these are
+    /// not a rule, and a cell that cannot be read fails closed.
     #[must_use]
     pub fn admits(
         stored: &[u8],
         target: Address,
-        role: AuthRole,
+        role: RoleId,
         evidence: &[Presented],
         clock_ms: u64,
     ) -> bool {
@@ -258,49 +352,125 @@ impl AuthCell {
         Self::from_slice(stored).is_ok_and(|cell| {
             cell.governing(clock_ms)
                 .roles
-                .decode()
-                .is_ok_and(|roles| roles.rule(role).satisfied_by(evidence))
+                .rule(role)
+                .is_some_and(|bytes| bytes.decode().is_ok_and(|rule| rule.satisfied_by(evidence)))
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{Hbor, from_slice_with_depth, to_vec, to_vec_with_depth};
+    use hyperscale_hbor::{from_slice_with_depth, to_vec, to_vec_with_depth};
 
     use super::{
-        AuthBase, AuthCell, AuthRole, MAX_AUTH_CELL_WIRE_DEPTH, Proposal, RoleSet, StoredRoles,
+        AuthBase, AuthCell, CONFIRMATION, MAX_AUTH_CELL_WIRE_DEPTH, MAX_ROLE_TABLE_WIRE_DEPTH,
+        PRIMARY, Proposal, RECOVERY, RoleBytes, RoleId, RoleTable, package_role,
     };
-    use crate::rule::testing::{WideRule, chain, identity, principal, wide_chain};
+    use crate::rule::testing::{chain, identity, principal, wide_chain};
     use crate::rule::{MAX_RULE_DEPTH, StoredRule};
 
+    fn table(byte: u8) -> RoleTable {
+        RoleTable::uniform(&StoredRule::Require(identity(byte))).unwrap()
+    }
+
     fn base(byte: u8, delay: u64) -> AuthBase {
-        AuthBase::new(
-            delay,
-            &RoleSet::uniform(StoredRule::Require(identity(byte))),
-        )
-        .unwrap()
+        AuthBase::new(delay, table(byte))
     }
 
     #[test]
-    fn a_role_selects_its_rule() {
-        let roles = RoleSet {
-            primary: StoredRule::Require(identity(1)),
-            recovery: StoredRule::Require(identity(2)),
-            confirmation: StoredRule::Require(identity(3)),
+    fn a_role_selects_its_rule_and_an_absent_entry_holds_none() {
+        let rule = |byte| RoleBytes::try_from(&StoredRule::Require(identity(byte))).unwrap();
+        let roles = RoleTable::from_iter([
+            (PRIMARY, rule(1)),
+            (RECOVERY, rule(2)),
+            (CONFIRMATION, rule(3)),
+        ]);
+        assert_eq!(roles.rule(PRIMARY), Some(&rule(1)));
+        assert_eq!(roles.rule(RECOVERY), Some(&rule(2)));
+        assert_eq!(roles.rule(CONFIRMATION), Some(&rule(3)));
+        assert_eq!(roles.rule(package_role(0)), None);
+    }
+
+    /// Removing one entry is a map operation: no rule is decoded, and
+    /// every other entry's bytes are exactly what they were — which is
+    /// what lets a guest strip a role while the rules stay opaque to it.
+    #[test]
+    fn removal_touches_no_other_entry_and_decodes_no_rule() {
+        // Bytes that are not a rule at all: a decode anywhere would
+        // refuse, so the operations below provably never look.
+        let opaque = |byte| RoleBytes(vec![byte; 3]);
+        let mut roles = RoleTable::from_iter([
+            (PRIMARY, opaque(1)),
+            (RECOVERY, opaque(2)),
+            (package_role(4), opaque(3)),
+        ]);
+        assert!(!roles.decodes());
+        assert_eq!(roles.remove(PRIMARY), Some(opaque(1)));
+        assert_eq!(roles.rule(PRIMARY), None);
+        let bytes = roles.to_bytes().unwrap();
+        let reread = RoleTable::from_slice(&bytes).unwrap();
+        assert_eq!(reread.rule(RECOVERY), Some(&opaque(2)));
+        assert_eq!(reread.rule(package_role(4)), Some(&opaque(3)));
+    }
+
+    /// A table with package-band roles round-trips under the caps, with
+    /// every rule held to the rule vocabulary's own bounds where it is
+    /// judged.
+    #[test]
+    fn a_package_band_table_round_trips_under_the_caps() {
+        let deepest = RoleBytes::try_from(&chain(MAX_RULE_DEPTH - 1)).unwrap();
+        let mut roles = table(1);
+        roles.set(package_role(0), deepest.clone());
+        roles.set(package_role(7), deepest);
+        let bytes = roles.to_bytes().unwrap();
+        let reread = RoleTable::from_slice(&bytes).unwrap();
+        assert_eq!(reread, roles);
+        assert!(reread.decodes());
+
+        // One level past the rule cap is refused where the rule encodes,
+        // and bytes produced through the uncapped twin are not a rule.
+        assert!(RoleBytes::try_from(&chain(MAX_RULE_DEPTH)).is_err());
+        let over = RoleBytes(to_vec(&wide_chain(MAX_RULE_DEPTH)).unwrap());
+        assert!(over.decode().is_err());
+        let mut wide = table(1);
+        wide.set(package_role(0), over);
+        assert!(!wide.decodes());
+        // The skeleton still round-trips: what refuses such an entry is
+        // the write path's `decodes`, not the map codec.
+        let bytes = wide.to_bytes().unwrap();
+        assert_eq!(RoleTable::from_slice(&bytes).unwrap(), wide);
+    }
+
+    /// The table's own bound is exact: the deepest field sits at it, and
+    /// one level short does not reach.
+    #[test]
+    fn the_table_wire_depth_is_exact() {
+        let roles = table(1);
+        let bytes = roles.to_bytes().unwrap();
+        assert_eq!(RoleTable::from_slice(&bytes).unwrap(), roles);
+        assert!(to_vec_with_depth(&roles, MAX_ROLE_TABLE_WIRE_DEPTH - 1).is_err());
+        assert!(from_slice_with_depth::<RoleTable>(&bytes, MAX_ROLE_TABLE_WIRE_DEPTH - 1).is_err());
+    }
+
+    #[test]
+    fn unsorted_or_duplicate_roles_are_refused() {
+        let entry = |role: u16, byte: u8| {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&to_vec(&RoleId(role)).unwrap());
+            bytes.extend_from_slice(&to_vec(&RoleBytes(vec![byte])).unwrap());
+            bytes
         };
-        assert_eq!(
-            roles.rule(AuthRole::Primary),
-            &StoredRule::Require(identity(1))
-        );
-        assert_eq!(
-            roles.rule(AuthRole::Recovery),
-            &StoredRule::Require(identity(2))
-        );
-        assert_eq!(
-            roles.rule(AuthRole::Confirmation),
-            &StoredRule::Require(identity(3))
-        );
+        let framed = |entries: &[Vec<u8>]| {
+            let mut bytes = vec![u8::try_from(entries.len()).unwrap()];
+            bytes.extend(entries.concat());
+            bytes
+        };
+        let sorted = framed(&[entry(0, 1), entry(1, 2)]);
+        assert!(RoleTable::from_slice(&sorted).is_ok());
+        let unsorted = framed(&[entry(1, 2), entry(0, 1)]);
+        assert!(RoleTable::from_slice(&unsorted).is_err());
+        let duplicate = framed(&[entry(0, 1), entry(0, 2)]);
+        assert!(RoleTable::from_slice(&duplicate).is_err());
     }
 
     #[test]
@@ -326,12 +496,11 @@ mod tests {
     /// with.
     #[test]
     fn the_cell_is_its_own_encoding() {
-        let roles = RoleSet::uniform(StoredRule::Require(identity(7)));
         let pending = AuthCell {
-            base: AuthBase::new(5000, &roles).unwrap(),
+            base: base(7, 5000),
             proposal: Some(Proposal {
                 effective_at_ms: 99_000,
-                base: AuthBase::new(7000, &roles).unwrap(),
+                base: base(7, 7000),
             }),
         };
         let bytes = pending.to_bytes().unwrap();
@@ -374,7 +543,7 @@ mod tests {
         let mut bytes = AuthCell::new(base(1, 0)).to_bytes().unwrap();
         bytes.extend_from_slice(&[0; 4]);
         assert!(AuthCell::from_slice(&bytes).is_err());
-        // A cell truncated inside its own role set.
+        // A cell truncated inside its own table.
         let whole = AuthCell::new(base(1, 0)).to_bytes().unwrap();
         assert!(AuthCell::from_slice(&whole[..whole.len() - 1]).is_err());
         // Bare rule bytes are not a cell.
@@ -382,86 +551,45 @@ mod tests {
         assert!(AuthCell::from_slice(&rule).is_err());
     }
 
-    /// The same wire form as [`RoleSet`], with no caps: the source of
-    /// bytes a compliant encoder refuses to produce.
-    #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-    struct WideSet {
-        primary: WideRule,
-        recovery: WideRule,
-        confirmation: WideRule,
-    }
-
-    /// The role-set cap admits exactly the rules the rule vocabulary
-    /// admits, at both boundaries — the struct costs one decoder level,
-    /// no more.
-    #[test]
-    fn the_roleset_wire_depth_tracks_the_rule_caps() {
-        let deepest = RoleSet::uniform(chain(MAX_RULE_DEPTH - 1));
-        let bytes = deepest.to_bytes().unwrap();
-        assert_eq!(RoleSet::from_slice(&bytes).unwrap(), deepest);
-
-        // One level past the rule cap is refused at encode, and its
-        // bytes — produced through the uncapped twin — at decode.
-        assert!(RoleSet::uniform(chain(MAX_RULE_DEPTH)).to_bytes().is_err());
-        let wide = WideSet {
-            primary: wide_chain(MAX_RULE_DEPTH),
-            recovery: WideRule::Require(identity(1)),
-            confirmation: WideRule::Require(identity(1)),
-        };
-        assert!(RoleSet::from_slice(&to_vec(&wide).unwrap()).is_err());
-    }
-
-    /// A stored role set is judged at the rule vocabulary's own cap
-    /// wherever it sits, because it sits in the cell as bytes: what
-    /// decodes them is [`StoredRoles::decode`], at one cap, and the cell
-    /// around them nests nothing.
+    /// A stored rule is judged at the rule vocabulary's own cap wherever
+    /// it sits, because it sits in the table as bytes: what decodes them
+    /// is [`RoleBytes::decode`], at one cap, and the cell around them
+    /// nests nothing.
     ///
     /// So an over-deep rule is refused in either position for the same
     /// reason rather than by an arithmetic relation between two caps —
     /// and a cell carrying one admits nobody rather than trapping.
     #[test]
     fn a_stored_rule_past_the_caps_is_refused_wherever_it_sits() {
-        let deepest = RoleSet::uniform(chain(MAX_RULE_DEPTH - 1));
+        let deepest = RoleTable::uniform(&chain(MAX_RULE_DEPTH - 1)).unwrap();
         let cell = AuthCell {
-            base: AuthBase::new(1, &deepest).unwrap(),
+            base: AuthBase::new(1, deepest.clone()),
             proposal: Some(Proposal {
                 effective_at_ms: 7,
-                base: AuthBase::new(1, &deepest).unwrap(),
+                base: AuthBase::new(1, deepest.clone()),
             }),
         };
         let bytes = cell.to_bytes().unwrap();
         assert_eq!(AuthCell::from_slice(&bytes).unwrap(), cell);
-        assert_eq!(cell.base.roles.decode().unwrap(), deepest);
+        assert!(cell.base.roles.decodes());
 
         // One level past the cap is refused at encode, and the bytes the
-        // uncapped twin produces are refused at decode.
-        assert!(AuthBase::new(1, &RoleSet::uniform(chain(MAX_RULE_DEPTH))).is_err());
-        let over = StoredRoles(
-            to_vec(&WideSet {
-                primary: wide_chain(MAX_RULE_DEPTH),
-                recovery: WideRule::Require(identity(1)),
-                confirmation: WideRule::Require(identity(1)),
-            })
-            .unwrap(),
-        );
-        assert!(over.decode().is_err());
+        // uncapped twin produces are refused where a rule is decoded.
+        assert!(RoleTable::uniform(&chain(MAX_RULE_DEPTH)).is_err());
+        let over = RoleBytes(to_vec(&wide_chain(MAX_RULE_DEPTH)).unwrap());
+        let mut wide = deepest.clone();
+        wide.set(PRIMARY, over);
 
         // In either position, the cell still decodes — the bytes are a
         // byte string here — and the verdict it answers is nobody.
         let target = principal(1);
         for cell in [
-            AuthCell::new(AuthBase {
-                recovery_delay_ms: 1,
-                roles: over.clone(),
-            }),
+            AuthCell::new(AuthBase::new(1, wide.clone())),
             AuthCell {
-                base: AuthBase::new(1, &deepest).unwrap(),
+                base: AuthBase::new(1, deepest),
                 proposal: Some(Proposal {
                     effective_at_ms: 0,
-                    base: AuthBase {
-                        recovery_delay_ms: 1,
-                        roles: over,
-                    },
+                    base: AuthBase::new(1, wide.clone()),
                 }),
             },
         ] {
@@ -470,7 +598,7 @@ mod tests {
             assert!(!AuthCell::admits(
                 &stored,
                 target,
-                AuthRole::Primary,
+                PRIMARY,
                 &[identity(1)],
                 u64::MAX,
             ));
@@ -479,48 +607,36 @@ mod tests {
 
     /// The verdict both readers share, whole: absent is the virtual
     /// rule for every role, stored is the named role's rule from the
-    /// base the clock picks, and bytes that are not a cell admit
-    /// nobody.
+    /// base the clock picks, an absent entry denies, and bytes that are
+    /// not a cell admit nobody.
     #[test]
     fn the_shared_verdict_dispatches_on_presence_role_and_clock() {
         let target = principal(1);
 
         // Absent: the identity the target's address derives, whichever
         // role asks, whatever the clock says.
+        assert!(AuthCell::admits(&[], target, PRIMARY, &[identity(1)], 0));
         assert!(AuthCell::admits(
             &[],
             target,
-            AuthRole::Primary,
-            &[identity(1)],
-            0
-        ));
-        assert!(AuthCell::admits(
-            &[],
-            target,
-            AuthRole::Recovery,
+            RECOVERY,
             &[identity(1)],
             u64::MAX
         ));
-        assert!(!AuthCell::admits(
-            &[],
-            target,
-            AuthRole::Primary,
-            &[identity(2)],
-            0
-        ));
+        assert!(!AuthCell::admits(&[], target, PRIMARY, &[identity(2)], 0));
 
         // Stored, with a proposal pending: each role selects its own
         // rule, the target's own identity is no longer one of them, and
         // the verdict flips at the instant with nothing applying it.
+        let rule = |byte| RoleBytes::try_from(&StoredRule::Require(identity(byte))).unwrap();
         let cell = AuthCell {
             base: AuthBase {
                 recovery_delay_ms: 1_000,
-                roles: StoredRoles::try_from(&RoleSet {
-                    primary: StoredRule::Require(identity(2)),
-                    recovery: StoredRule::Require(identity(3)),
-                    confirmation: StoredRule::Require(identity(4)),
-                })
-                .unwrap(),
+                roles: RoleTable::from_iter([
+                    (PRIMARY, rule(2)),
+                    (RECOVERY, rule(3)),
+                    (CONFIRMATION, rule(4)),
+                ]),
             },
             proposal: Some(Proposal {
                 effective_at_ms: 500,
@@ -531,19 +647,42 @@ mod tests {
         .unwrap();
         let admits =
             |role, who: u8, clock| AuthCell::admits(&cell, target, role, &[identity(who)], clock);
-        assert!(admits(AuthRole::Primary, 2, 499));
-        assert!(!admits(AuthRole::Primary, 1, 499));
-        assert!(admits(AuthRole::Recovery, 3, 499));
-        assert!(!admits(AuthRole::Recovery, 2, 499));
-        assert!(admits(AuthRole::Confirmation, 4, 499));
-        assert!(admits(AuthRole::Primary, 5, 500));
-        assert!(!admits(AuthRole::Primary, 2, 500));
+        assert!(admits(PRIMARY, 2, 499));
+        assert!(!admits(PRIMARY, 1, 499));
+        assert!(admits(RECOVERY, 3, 499));
+        assert!(!admits(RECOVERY, 2, 499));
+        assert!(admits(CONFIRMATION, 4, 499));
+        assert!(admits(PRIMARY, 5, 500));
+        assert!(!admits(PRIMARY, 2, 500));
+
+        // A role the stored table has no entry for denies, whoever asks
+        // — a map miss is the one expressible "deny".
+        let stripped = AuthCell::new(AuthBase {
+            recovery_delay_ms: 1_000,
+            roles: RoleTable::from_iter([(RECOVERY, rule(3))]),
+        })
+        .to_bytes()
+        .unwrap();
+        assert!(!AuthCell::admits(
+            &stripped,
+            target,
+            PRIMARY,
+            &[identity(1), identity(2), identity(3)],
+            0
+        ));
+        assert!(AuthCell::admits(
+            &stripped,
+            target,
+            RECOVERY,
+            &[identity(3)],
+            0
+        ));
 
         // Bytes no cell decodes from admit nobody.
         assert!(!AuthCell::admits(
             &[0xFF, 0xFF],
             target,
-            AuthRole::Primary,
+            PRIMARY,
             &[identity(1)],
             0
         ));

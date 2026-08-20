@@ -30,7 +30,7 @@ pub struct ShardId(pub u64);
 ///
 /// The slot says which child — a vault, a claims cell, a field group, an
 /// ordered collection — a canonical address refers to. The word is a
-/// storage one and nothing else: authority is [`AuthRole`] and its role
+/// storage one and nothing else: authority is [`RoleId`] and its role
 /// set, and the two share no vocabulary.
 ///
 /// A slot is hashed with its owner, and an owner belongs to one package,
@@ -50,7 +50,7 @@ pub struct ShardId(pub u64);
 /// address as their own, which is the whole reason the third band has to
 /// clear the second. It never has to clear another package's.
 ///
-/// [`AuthRole`]: crate::AuthRole
+/// [`RoleId`]: crate::RoleId
 /// [`NULLIFIER_SLOT`]: crate::NULLIFIER_SLOT
 /// [`PACKAGE_SLOT`]: crate::PACKAGE_SLOT
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]

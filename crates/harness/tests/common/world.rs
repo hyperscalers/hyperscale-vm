@@ -7,7 +7,7 @@ use std::sync::{Arc, LazyLock};
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG};
 use hyperscale_vm_effects::{
     AuthBase, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
-    MetadataCache, PackageHash, PrefixShardResolver, Presented, RoleSet, Routing, ShardId,
+    MetadataCache, PackageHash, PrefixShardResolver, Presented, RoleTable, Routing, ShardId,
     ShardResolver, StarShape, StoredRule, TestHasher, Value, admit, child_key,
     classify as classify_star, collection_id, resource_address, route,
 };
@@ -83,9 +83,9 @@ pub fn auth(owner: impl Into<Address>) -> SubstateKey {
 pub fn uniform_base(identity: PrincipalAddr) -> AuthBase {
     AuthBase::new(
         DAY_MS,
-        &RoleSet::uniform(StoredRule::Require(Presented::Identity(identity.into()))),
+        RoleTable::uniform(&StoredRule::Require(Presented::Identity(identity.into())))
+            .expect("a rule within the vocabulary caps"),
     )
-    .expect("a rule within the vocabulary caps")
 }
 
 pub fn world() -> (MetadataCache, InstanceRegistry) {
@@ -587,7 +587,8 @@ pub fn propose_graph() -> ManifestGraph {
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(StoredRule::Require(Presented::Identity(BOB.into()))),
+            RoleTable::uniform(&StoredRule::Require(Presented::Identity(BOB.into())))
+                .expect("a rule within the vocabulary caps"),
             DAY_MS,
         )
     })

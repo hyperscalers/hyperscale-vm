@@ -6,7 +6,7 @@
 //! checked against the same call made directly.
 
 use hyperscale_vm_effects::{
-    AuthRole, Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache,
+    Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PRIMARY,
     PackageHash, PrefixShardResolver, TestHasher, Value, admit, footprint, resource_address, route,
 };
 use hyperscale_vm_manifest_builder::{
@@ -133,7 +133,7 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
     // to the withdrawal as its proof.
     assert_eq!(
         report.authority[0].authority,
-        Authority::StoredRule(AuthRole::Primary)
+        Authority::StoredRule(PRIMARY)
     );
     assert_eq!(report.authority[1].authority, Authority::Signature(ALICE));
     assert_eq!(report.authority[2].authority, Authority::Anyone);

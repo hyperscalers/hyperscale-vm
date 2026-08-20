@@ -186,8 +186,8 @@ fn widen(name: &syn::Ident, ty: &syn::Type) -> (TokenStream2, TokenStream2) {
         let rule = sdk("Rule");
         return (quote!(#name: #rule), quote!(#name));
     }
-    if is_named(ty, "RoleSet") {
-        let roles = sdk("RoleSet");
+    if is_named(ty, "RoleTable") {
+        let roles = sdk("RoleTable");
         return (quote!(#name: #roles), quote!(#name));
     }
     // `u64`, `u128` and the byte vectors bind as themselves.

@@ -8,7 +8,7 @@
 //! caller's, and growing it is a change to this crate rather than an impl
 //! away.
 
-use hyperscale_vm_effects::{GraphArg, RoleSet, StoredRule, Value};
+use hyperscale_vm_effects::{GraphArg, RoleTable, StoredRule, Value};
 use hyperscale_vm_types::{
     Address, CallTarget, ComponentAddr, Denomination, NativeAddr, PackageAddr, PrincipalAddr,
     ResourceAddr,
@@ -130,7 +130,7 @@ macro_rules! canonical_bytes_arg {
     };
 }
 
-canonical_bytes_arg!(StoredRule, RoleSet);
+canonical_bytes_arg!(StoredRule, RoleTable);
 
 impl sealed::Sealed for Bucket {}
 impl Arg for Bucket {

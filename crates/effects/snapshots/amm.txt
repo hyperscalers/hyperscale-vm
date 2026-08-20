@@ -203,4 +203,5 @@ PackageMetadata {
         "slippage-exceeded",
         "empty-pool",
     ],
+    roles: [],
 }

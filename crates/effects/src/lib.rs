@@ -47,8 +47,8 @@ pub use artifact::{
     decode_metadata, encode_metadata, extract_metadata, metadata_section,
 };
 pub use auth::{
-    AuthBase, AuthCell, AuthRole, MAX_AUTH_CELL_WIRE_DEPTH, MAX_ROLESET_WIRE_DEPTH, Proposal,
-    RoleSet, StoredRoles,
+    AuthBase, AuthCell, CONFIRMATION, MAX_AUTH_CELL_WIRE_DEPTH, MAX_ROLE_TABLE_WIRE_DEPTH,
+    PACKAGE_ROLE_BASE, PRIMARY, Proposal, RECOVERY, RoleBytes, RoleId, RoleTable, package_role,
 };
 pub use dsl::{
     Clause, Declaration, DeclaredAccess, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH,

@@ -24,7 +24,7 @@
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT, XRD};
 use hyperscale_vm_effects::{
     AbiParam, Accessibility, AuthBase, AuthCell, Clause, CustodyClaim, Expr, MethodSignature,
-    ModeExpr, PackageMetadata, ParamType, Presented, RoleSet, RuleExpr, SlotId, StoredRule,
+    ModeExpr, PackageMetadata, ParamType, Presented, RoleTable, RuleExpr, SlotId, StoredRule,
     TargetExpr, TestHasher, Totality, Value, native_address,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
@@ -272,13 +272,11 @@ fn impostor_body(
             };
             // The stored primary is the package's own business and writes
             // as bytes like any record.
-            let cell = AuthCell::new(
-                AuthBase::new(
-                    0,
-                    &RoleSet::uniform(StoredRule::Require(Presented::Identity(ATTACKER.into()))),
-                )
-                .expect("a rule within the caps"),
-            );
+            let cell = AuthCell::new(AuthBase::new(
+                0,
+                RoleTable::uniform(&StoredRule::Require(Presented::Identity(ATTACKER.into())))
+                    .expect("a rule within the caps"),
+            ));
             if let Err(trap) = session.write_cell_set(*auth, cell.to_bytes().expect("encodes")) {
                 return (session, Invoked::Aborted(trap.into()));
             }

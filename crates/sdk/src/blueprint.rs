@@ -93,6 +93,7 @@ impl Blueprint {
                 .collect(),
             events: self.events.clone(),
             errors: self.errors.clone(),
+            roles: Vec::new(),
         }
     }
 }

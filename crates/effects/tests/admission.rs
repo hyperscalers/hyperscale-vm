@@ -10,10 +10,10 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world};
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, AdmissionError, AuthRole, AuthorityGate, Clause, Constraint,
-    CustodyClaim, EdgeKind, EdgeRef, EvalError, EvidenceRef, Expr, GraphArg, GraphNode, Hash32,
-    InstanceMeta, InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature,
-    ModeExpr, PackageMetadata, ParamType, Possession, Presented, RuleExpr, StoredRule, TargetExpr,
+    AbiParam, Accessibility, AdmissionError, AuthorityGate, Clause, Constraint, CustodyClaim,
+    EdgeKind, EdgeRef, EvalError, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta,
+    InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature, ModeExpr,
+    PRIMARY, PackageMetadata, ParamType, Possession, Presented, RuleExpr, StoredRule, TargetExpr,
     TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
 };
 use hyperscale_vm_types::{
@@ -269,7 +269,7 @@ fn a_minted_proof_resolves_to_its_producers_target() {
         authorize.authority,
         Some(AuthorityGate::StoredRule {
             cell: child_key(&TestHasher, ALICE, AUTH, &[]),
-            role: AuthRole::Primary,
+            role: PRIMARY,
         })
     );
 

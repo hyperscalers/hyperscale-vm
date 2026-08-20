@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
     EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
-    PackageHash, PackageMetadata, Presented, RoleSet, StoredRule, TestHasher, Value, admit,
+    PackageHash, PackageMetadata, Presented, RoleTable, StoredRule, TestHasher, Value, admit,
     resource_address,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
@@ -131,13 +131,14 @@ fn the_account_wrappers_match_their_signatures() {
         account::securify_uniform(
             b,
             carol,
-            StoredRule::Require(Presented::Identity(BOB.into())),
+            &StoredRule::Require(Presented::Identity(BOB.into())),
             86_400_000,
         )?;
         account::propose(
             b,
             ALICE,
-            RoleSet::uniform(StoredRule::Require(Presented::Identity(BOB.into()))),
+            RoleTable::uniform(&StoredRule::Require(Presented::Identity(BOB.into())))
+                .expect("a rule within the vocabulary caps"),
             86_400_000,
         )?;
         account::cancel(b, ALICE)?;
@@ -158,7 +159,7 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
     let refused = account::securify_uniform(
         &mut b,
         alice,
-        StoredRule::CountOf {
+        &StoredRule::CountOf {
             count: 0,
             rules: vec![],
         },
@@ -167,7 +168,7 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
     assert!(matches!(
         refused,
         Err(TypedError::ParamKind {
-            expected: "role-set",
+            expected: "role-table",
             ..
         })
     ));

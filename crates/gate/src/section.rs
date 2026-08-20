@@ -334,6 +334,7 @@ mod tests {
             methods: Vec<(String, MethodSignature)>,
             events: Vec<String>,
             errors: Vec<String>,
+            roles: Vec<String>,
         }
 
         let mut metadata = PackageMetadata::default();
@@ -352,6 +353,7 @@ mod tests {
                         .collect(),
                     events: Vec::new(),
                     errors: Vec::new(),
+                    roles: Vec::new(),
                 },
                 METADATA_WIRE_DEPTH,
             )

@@ -19,7 +19,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint(principals)]
 pub mod account {
     use hyperscale_vm_sdk::state::{
-        AuthBase, AuthCell, Bucket, Ids, NfBucket, Proposal, Quantity, RoleSet, clock_ms,
+        AuthBase, AuthCell, Bucket, Ids, NfBucket, Proposal, Quantity, RoleTable, clock_ms,
     };
     use hyperscale_vm_sdk::{Address, Denomination};
 
@@ -128,7 +128,7 @@ pub mod account {
         /// this body's own refusal, which is what makes the transition
         /// off the address-derived rule one-way.
         #[guarded(self)]
-        pub fn securify(&mut self, roles: RoleSet, delay_ms: u64) {
+        pub fn securify(&mut self, roles: RoleTable, delay_ms: u64) {
             // The one-way door is the declaration's, judged against
             // committed state before this runs: the write requires the
             // cell to be absent, so a second securify is refused by the
@@ -143,7 +143,7 @@ pub mod account {
         /// after the stored recovery delay; an unmatured proposal is
         /// replaced, a matured one first promoted.
         #[role_gated(recovery)]
-        pub fn propose(&mut self, roles: RoleSet, delay_ms: u64) {
+        pub fn propose(&mut self, roles: RoleTable, delay_ms: u64) {
             let stored = self.auth().existing();
             // The wait comes from the delay that governs now, never from
             // the proposer: the proposal's own delay only starts
