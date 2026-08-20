@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::distinct_ids;
+use hyperscale_vm_effects::{SCAN_SEEK_ENTRIES, distinct_ids};
 use hyperscale_vm_types::{AMOUNT_CELL_BYTES, Address, CollectionId};
 
 use super::{Capability, Held, Interval, KernelSession, SessionTrap};
@@ -12,11 +12,13 @@ use crate::store::WorkingStore;
 /// What one interval scan costs before any entry is counted, in the
 /// boundary-byte terms the fuel schedule prices.
 ///
-/// A placeholder like the footprint weights, and structural for the same
-/// reason: the seek walks both overlay layers and the base whether or not
-/// the interval holds anything, so a page's cost is not proportional to
-/// what it returns and an empty one is not free.
-pub const SCAN_SEEK_BYTES: usize = 64;
+/// The declared seek floor at the per-entry byte floor, so the fuel
+/// schedule and the declared footprint price the same seek from one
+/// figure. Structural for the reason [`SCAN_SEEK_ENTRIES`] states: the
+/// seek walks both overlay layers and the base whether or not the
+/// interval holds anything, so a page's cost is not proportional to what
+/// it returns and an empty one is not free.
+pub const SCAN_SEEK_BYTES: usize = SCAN_SEEK_ENTRIES * AMOUNT_CELL_BYTES;
 
 /// The session's interval state: what scans have materialized, what they
 /// still owe, and what each write interval has spent of its cap.

@@ -1,19 +1,30 @@
 //! The declared footprint: what a declaration claims, in units a fee
 //! schedule can price.
 //!
-//! Two axes, multiplied. The **span** is how much key space a target names
-//! — one leaf for a point or an entry, and for a range the order-key
-//! magnitude of its interval. The **weight** is how much of the mode
-//! lattice the claim excludes, counted off [`compatible`] itself rather
-//! than tabulated beside it, so a change to the lattice moves the price
-//! with it instead of leaving a table to drift.
+//! Three axes. The **span** is how much key space a target names — one
+//! leaf for a point or an entry, and for a range the order-key magnitude
+//! of its interval. The **weight** is how much of the mode lattice the
+//! claim excludes, counted off [`compatible`] itself rather than
+//! tabulated beside it, so a change to the lattice moves the price with
+//! it instead of leaving a table to drift. The **depth** is how much
+//! execution the claim buys: the entries a body may walk through it.
+//!
+//! Span and weight multiply; depth adds. The first two together price
+//! *exclusion* — what a declaration stops others doing, a property of
+//! the interval whatever it holds — and depth prices *work*, a property
+//! of what the body walks. A claim that excludes the whole order-key
+//! space and reads one entry is expensive on one axis and cheap on the
+//! other, and both are true.
 //!
 //! Width is the axis a per-effect price misses, and missing it is not
 //! neutral: conflict on a collection is interval overlap
 //! (`vm-kernel`'s `targets_overlap`), so an interval spanning the whole
 //! order-key space excludes every other declaration on that collection
 //! while costing exactly what a single-entry interval costs. Charging the
-//! span is what stops one effect buying that.
+//! span is what stops one effect buying that. Depth is the axis span
+//! misses in turn: a narrow interval with a large cap excludes almost
+//! nothing and scans as far as its cap allows, so the cap is charged as
+//! the work it buys.
 //!
 //! Nothing here reads state, so a footprint is computable wherever
 //! [`crate::route`]'s output is — which is what lets the fee payer's shard
@@ -33,6 +44,20 @@ pub const TARGET_UNITS: u64 = 1;
 
 /// Units charged per order-key bit of a range's span.
 pub const WIDTH_UNITS: u64 = 1;
+
+/// Units charged per entry a declaration lets execution touch.
+pub const DEPTH_UNITS: u64 = 1;
+
+/// The entries-worth of work one interval seek costs before any entry
+/// comes back — the declared floor of a scan.
+///
+/// The seek walks both overlay layers and the base whether or not the
+/// interval holds anything, so a page is not free because it is empty.
+/// The fuel schedule states the same floor in boundary bytes:
+/// `vm-kernel`'s `SCAN_SEEK_BYTES` is this figure at the per-entry byte
+/// floor, so the two schedules price one seek from one constant rather
+/// than agreeing by inspection.
+pub const SCAN_SEEK_ENTRIES: usize = 4;
 
 /// The weight of a mode that excludes nothing — the floor every mode
 /// weight is measured up from.
@@ -105,11 +130,31 @@ const fn span_units(target: &EffectTarget) -> u64 {
     }
 }
 
-/// One effect's footprint: the key space it claims, weighted by how much
-/// of the lattice the claim excludes.
+/// The execution work `target` lets a body walk: one entry for a point
+/// or an entry access, and for a range the seek floor plus the cap's
+/// worth of entries.
+///
+/// Charged whatever the mode: a read walks the same page a write does,
+/// and how much of the lattice the claim excludes is the other axes'
+/// business.
+#[must_use]
+const fn depth_units(target: &EffectTarget) -> u64 {
+    match target {
+        EffectTarget::Point(_) | EffectTarget::Entry { .. } => DEPTH_UNITS,
+        EffectTarget::Range { cap, .. } => {
+            DEPTH_UNITS.saturating_mul((SCAN_SEEK_ENTRIES as u64).saturating_add(*cap as u64))
+        }
+    }
+}
+
+/// One effect's footprint: the key space it claims weighted by how much
+/// of the lattice the claim excludes, plus the depth its execution may
+/// walk.
 #[must_use]
 pub const fn effect_units(effect: Effect) -> u64 {
-    span_units(&effect.target).saturating_mul(mode_weight(effect.mode.kind()))
+    span_units(&effect.target)
+        .saturating_mul(mode_weight(effect.mode.kind()))
+        .saturating_add(depth_units(&effect.target))
 }
 
 /// A declaration's total footprint.
@@ -141,7 +186,10 @@ mod tests {
         ModeKind, SubstateKey, compatible,
     };
 
-    use super::{EXCLUSIVITY_FLOOR, effect_units, footprint, mode_weight, order_bits};
+    use super::{
+        DEPTH_UNITS, EXCLUSIVITY_FLOOR, SCAN_SEEK_ENTRIES, depth_units, effect_units, footprint,
+        mode_weight, order_bits, span_units,
+    };
 
     const KINDS: [ModeKind; 5] = [
         ModeKind::Read,
@@ -230,10 +278,74 @@ mod tests {
     }
 
     #[test]
-    fn a_degenerate_range_costs_what_its_point_costs() {
+    fn a_degenerate_range_spans_what_its_point_spans() {
+        // One key is one leaf on the span axis; what still separates the
+        // two is the depth axis, where an interval buys a scan and a
+        // point buys one entry.
         assert_eq!(
-            effect_units(effect(range(42, 42), Mode::Write)),
-            effect_units(effect(point(1), Mode::Write)),
+            span_units(&range(42, 42)),
+            span_units(&point(1)),
+            "one key spans one leaf either way",
+        );
+        assert_eq!(
+            effect_units(effect(range(42, 42), Mode::Write)) - depth_units(&range(42, 42)),
+            effect_units(effect(point(1), Mode::Write)) - depth_units(&point(1)),
+        );
+    }
+
+    /// A cap is execution work, and the price moves with it: two
+    /// declarations differing only in their cap price apart, by exactly
+    /// the entries the larger one may walk.
+    #[test]
+    fn two_declarations_differing_only_in_cap_price_apart() {
+        let capped = |cap| EffectTarget::Range {
+            owner: OWNER,
+            collection: CollectionId([4; 16]),
+            lo: 100,
+            hi: 200,
+            cap,
+        };
+        let (small, large) = (
+            effect_units(effect(capped(8), Mode::Write)),
+            effect_units(effect(capped(64), Mode::Write)),
+        );
+        assert_eq!(large - small, DEPTH_UNITS * (64 - 8));
+    }
+
+    /// The two axes price different claims: a full-space interval
+    /// reading one entry is expensive on span (exclusion) and cheap on
+    /// depth (work), and a narrow interval walking a large page is the
+    /// reverse. Each figure below is computed off its own axis.
+    #[test]
+    fn span_prices_exclusion_and_depth_prices_the_walk() {
+        let wide_shallow = EffectTarget::Range {
+            owner: OWNER,
+            collection: CollectionId([4; 16]),
+            lo: 0,
+            hi: u128::MAX,
+            cap: 1,
+        };
+        let narrow_deep = EffectTarget::Range {
+            owner: OWNER,
+            collection: CollectionId([4; 16]),
+            lo: 100,
+            hi: 200,
+            cap: 1024,
+        };
+        // Span: the wide claim excludes the whole order-key space.
+        assert!(span_units(&wide_shallow) > span_units(&narrow_deep));
+        // Depth: the deep claim buys the larger walk.
+        assert!(depth_units(&narrow_deep) > depth_units(&wide_shallow));
+    }
+
+    /// An empty page is not free: the seek floor is charged before any
+    /// entry, so even a cap of zero prices above nothing.
+    #[test]
+    fn a_scan_charges_its_seek_before_any_entry() {
+        assert_eq!(
+            depth_units(&range(100, 200)) - DEPTH_UNITS * 8,
+            DEPTH_UNITS * SCAN_SEEK_ENTRIES as u64,
+            "the fixture's cap of 8 rides above the seek floor",
         );
     }
 

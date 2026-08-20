@@ -61,7 +61,10 @@ pub use envelope::{
     SubintentHash, SubintentRecord, YieldBinding, YieldParam, admit_tree, encode_tree,
     nullifier_key, route_tree,
 };
-pub use footprint::{EXCLUSIVITY_FLOOR, TARGET_UNITS, WIDTH_UNITS, effect_units, footprint};
+pub use footprint::{
+    DEPTH_UNITS, EXCLUSIVITY_FLOOR, SCAN_SEEK_ENTRIES, TARGET_UNITS, WIDTH_UNITS, effect_units,
+    footprint,
+};
 pub use graph::{
     Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, MAX_EVIDENCE_PER_NODE, ManifestGraph,
 };

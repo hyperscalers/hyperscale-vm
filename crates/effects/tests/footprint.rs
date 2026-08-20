@@ -79,45 +79,51 @@ fn set_of(effects: &[Effect]) -> EffectSet {
 /// This is what ties the price to [`compatible`] rather than to a table
 /// beside it — a lattice change that reordered exclusivity without moving
 /// the weights would fail here.
-/// The inversion the quantity exists to foreclose: an interval over the
+/// The inversion the span axis exists to foreclose: an interval over the
 /// whole order-key space conflicts with every declaration on its
-/// collection, so it must never price at what a narrow one prices at.
+/// collection, so at any given cap it must never price at what a narrow
+/// one prices at. The comparison holds the cap fixed because the cap
+/// buys a different thing — a narrow interval walking a large page may
+/// out-price a wide one reading a single entry, and that is the depth
+/// axis working rather than this property failing.
 #[test]
 fn the_whole_order_key_space_is_the_most_expensive_interval() {
     for kind in [Mode::Read, Mode::Delta, Mode::Write] {
-        let whole = effect_units(Effect {
-            target: EffectTarget::Range {
-                owner: Address::new([1; 31], AddressClass::Component),
-                collection: CollectionId([1; 16]),
-                lo: 0,
-                hi: u128::MAX,
-                cap: 1,
-            },
-            mode: kind,
-        });
-        for (lo, hi) in [(0, 0), (5, 5), (0, 1023), (1 << 100, (1 << 100) + 4096)] {
-            let narrower = effect_units(Effect {
+        for cap in [0, 1, 1024, u32::MAX] {
+            let whole = effect_units(Effect {
                 target: EffectTarget::Range {
                     owner: Address::new([1; 31], AddressClass::Component),
                     collection: CollectionId([1; 16]),
-                    lo,
-                    hi,
-                    cap: u32::MAX,
+                    lo: 0,
+                    hi: u128::MAX,
+                    cap,
                 },
                 mode: kind,
             });
-            assert!(
-                whole > narrower,
-                "{kind:?}: [0, MAX] priced {whole}, [{lo}, {hi}] priced {narrower}",
-            );
+            for (lo, hi) in [(0, 0), (5, 5), (0, 1023), (1 << 100, (1 << 100) + 4096)] {
+                let narrower = effect_units(Effect {
+                    target: EffectTarget::Range {
+                        owner: Address::new([1; 31], AddressClass::Component),
+                        collection: CollectionId([1; 16]),
+                        lo,
+                        hi,
+                        cap,
+                    },
+                    mode: kind,
+                });
+                assert!(
+                    whole > narrower,
+                    "{kind:?}: [0, MAX] priced {whole}, [{lo}, {hi}] priced {narrower} at cap {cap}",
+                );
+            }
         }
     }
 }
 
 proptest! {
-    /// Widening an interval never lowers its price. The cap moves with it
-    /// and must not matter: a cap bounds execution, which fuel already
-    /// meters, never the key space the declaration excludes.
+    /// Widening an interval, raising its cap, or both, never lowers its
+    /// price: the two axes are each monotone, so no sender lowers their
+    /// footprint by asking for more of either.
     #[test]
     fn widening_an_interval_never_lowers_its_price(
         lo in any::<u128>(),
@@ -125,7 +131,7 @@ proptest! {
         growth in any::<u128>(),
         mode in arb_mode(),
         cap in any::<u32>(),
-        wider_cap in any::<u32>(),
+        cap_growth in any::<u32>(),
     ) {
         let hi = lo.saturating_add(span);
         let range = |hi, cap| Effect {
@@ -139,7 +145,10 @@ proptest! {
             mode,
         };
         let narrow = effect_units(range(hi, cap));
-        let wide = effect_units(range(hi.saturating_add(growth), wider_cap));
+        let wide = effect_units(range(
+            hi.saturating_add(growth),
+            cap.saturating_add(cap_growth),
+        ));
         assert!(wide >= narrow, "widening priced {wide} against {narrow}");
     }
 
