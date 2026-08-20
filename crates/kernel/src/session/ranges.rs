@@ -20,6 +20,17 @@ use crate::store::WorkingStore;
 /// it returns and an empty one is not free.
 pub const SCAN_SEEK_BYTES: usize = SCAN_SEEK_ENTRIES * AMOUNT_CELL_BYTES;
 
+/// One materialized page, and what has been learned about it.
+#[derive(Debug)]
+struct Scan {
+    /// The entries the page holds, ascending.
+    entries: Vec<(u128, Vec<u8>)>,
+    /// Whether the page covers its interval, once asked. Memoized here
+    /// rather than beside the page so the answer cannot outlive the
+    /// entries it describes: whatever drops the page drops it.
+    covered: Option<bool>,
+}
+
 /// The session's interval state: what scans have materialized, what they
 /// still owe, and what each write interval has spent of its cap.
 #[derive(Debug, Default)]
@@ -29,7 +40,7 @@ pub(super) struct Ranges {
     /// length and then each entry in turn; re-scanning per question makes
     /// that walk quadratic in the interval and floods the access log with
     /// one record per step.
-    scans: BTreeMap<u32, Vec<(u128, Vec<u8>)>>,
+    scans: BTreeMap<u32, Scan>,
     /// What the scans above lifted out of the store, in boundary-byte
     /// terms, since whoever holds the fuel budget last drained it.
     ///
@@ -144,7 +155,13 @@ impl KernelSession {
             interval.hi,
             interval.cap,
         )?;
-        self.ranges.scans.insert(rep, entries);
+        self.ranges.scans.insert(
+            rep,
+            Scan {
+                entries,
+                covered: None,
+            },
+        );
         Ok(())
     }
 
@@ -202,7 +219,7 @@ impl KernelSession {
     /// Any [`SessionTrap`].
     pub fn range_count(&mut self, rep: u32) -> Result<u32, SessionTrap> {
         self.scan(rep)?;
-        Ok(u32::try_from(self.ranges.scans[&rep].len()).unwrap_or(u32::MAX))
+        Ok(u32::try_from(self.ranges.scans[&rep].entries.len()).unwrap_or(u32::MAX))
     }
 
     /// Whether the materialized page holds every entry the interval
@@ -215,7 +232,8 @@ impl KernelSession {
     /// and the page covered the interval exactly when nothing is there.
     /// Under a cap of zero the page is empty and the probe runs from
     /// the interval's own floor, so coverage is the interval's
-    /// emptiness.
+    /// emptiness. Memoized with the page, so a repeated ask answers
+    /// like a repeated count: from what was already paid for.
     ///
     /// # Errors
     ///
@@ -224,17 +242,26 @@ impl KernelSession {
         self.scan(rep)?;
         let interval = self.interval(rep)?;
         let page = &self.ranges.scans[&rep];
-        if page.len() < usize::try_from(interval.cap).unwrap_or(usize::MAX) {
-            return Ok(true);
+        if let Some(covered) = page.covered {
+            return Ok(covered);
         }
-        let resume = match page.last() {
-            Some((last, _)) if *last == interval.hi => return Ok(true),
-            Some((last, _)) => last + 1,
-            None => interval.lo,
+        let short = page.entries.len() < usize::try_from(interval.cap).unwrap_or(usize::MAX);
+        let resume = match page.entries.last() {
+            _ if short => None,
+            Some((last, _)) if *last == interval.hi => None,
+            Some((last, _)) => Some(last + 1),
+            None => Some(interval.lo),
         };
-        Ok(self
-            .lift(interval.owner, interval.collection, resume, interval.hi, 1)?
-            .is_empty())
+        let covered = match resume {
+            None => true,
+            Some(resume) => self
+                .lift(interval.owner, interval.collection, resume, interval.hi, 1)?
+                .is_empty(),
+        };
+        if let Some(page) = self.ranges.scans.get_mut(&rep) {
+            page.covered = Some(covered);
+        }
+        Ok(covered)
     }
 
     /// The order key at `index`, ascending.
@@ -244,7 +271,7 @@ impl KernelSession {
     /// Any [`SessionTrap`].
     pub fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, SessionTrap> {
         self.scan(rep)?;
-        indexed(&self.ranges.scans[&rep], index).map(|(order, _)| *order)
+        indexed(&self.ranges.scans[&rep].entries, index).map(|(order, _)| *order)
     }
 
     /// The entry value at `index`, ascending.
@@ -254,7 +281,7 @@ impl KernelSession {
     /// Any [`SessionTrap`].
     pub fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, SessionTrap> {
         self.scan(rep)?;
-        indexed(&self.ranges.scans[&rep], index).map(|(_, value)| value.clone())
+        indexed(&self.ranges.scans[&rep].entries, index).map(|(_, value)| value.clone())
     }
 
     /// Replace the entry value at `index` through a write interval.
@@ -265,7 +292,7 @@ impl KernelSession {
     pub fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), SessionTrap> {
         let interval = self.write_interval(rep)?;
         self.scan(rep)?;
-        let order = *indexed(&self.ranges.scans[&rep], index).map(|(order, _)| order)?;
+        let order = *indexed(&self.ranges.scans[&rep].entries, index).map(|(order, _)| order)?;
         self.charge_write(rep, order, interval.cap)?;
         self.store
             .entry_write(interval.owner, interval.collection, order, value)?;
@@ -304,7 +331,7 @@ impl KernelSession {
     pub fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), SessionTrap> {
         let interval = self.write_interval(rep)?;
         self.scan(rep)?;
-        let order = *indexed(&self.ranges.scans[&rep], index).map(|(order, _)| order)?;
+        let order = *indexed(&self.ranges.scans[&rep].entries, index).map(|(order, _)| order)?;
         self.charge_write(rep, order, interval.cap)?;
         self.store
             .entry_remove(interval.owner, interval.collection, order)?;
@@ -711,6 +738,44 @@ mod tests {
         // A cap of zero materializes nothing, so coverage is the
         // interval's emptiness — and this one holds entries.
         assert!(!covered(0));
+    }
+
+    /// A repeated coverage ask answers from the memo — the probe is
+    /// paid once per page — and a write drops the memo with the page
+    /// it describes, so the next ask sees the new truth.
+    #[test]
+    fn coverage_is_memoized_with_its_page() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let mut store = MemoryStore::new();
+        for order in 0..4u128 {
+            store
+                .entry_write(owner, collection, order, vec![1])
+                .unwrap();
+        }
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 4,
+            },
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(store, &set);
+
+        // A full page: the answer costs a page and a probe.
+        assert!(session.range_covered(0).unwrap());
+        assert!(session.take_scan_debt() > 0);
+        // Asked again, it answers from the memo and lifts nothing.
+        assert!(session.range_covered(0).unwrap());
+        assert_eq!(session.take_scan_debt(), 0);
+        // A write drops the page and the memo with it: a fifth entry
+        // past the cap turns the same question false.
+        assert_eq!(session.range_insert(0, 10, vec![2]), Ok(()));
+        assert!(!session.range_covered(0).unwrap());
+        assert!(session.take_scan_debt() > 0, "the new page was paid for");
     }
 
     /// A full page whose last entry sits on the interval's own upper
