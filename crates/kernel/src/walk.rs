@@ -11,10 +11,12 @@
 //! or an abort. An embedder can get engine embedding wrong; it cannot
 //! get manifest semantics wrong.
 
-use hyperscale_vm_effects::{AuthCell, CallArg, JudgedLeaf, NodeCall, PackageHash, Rule};
+use std::collections::BTreeMap;
+
+use hyperscale_vm_effects::{AuthCell, CallArg, JudgedLeaf, NodeCall, PackageHash, RoleId, Rule};
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, MAX_ERROR_CODES, Outcome, UnmetCondition,
+    ABSENT_REP, AbortReason, Address, MAX_ERROR_CODES, Outcome, SubstateKey, UnmetCondition,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult, Unavailable};
@@ -301,8 +303,13 @@ fn gated(
     node: u32,
     mut session: KernelSession,
 ) -> Result<KernelSession, NodeFailure> {
+    // One decode per (cell, role) across the node's whole judgment: a
+    // rule may name the same cell at every one of its leaves, and the
+    // cells a gate reads are committed state no body has run against
+    // yet, so the verdict cannot move between two leaves asking for it.
+    let mut judged: BTreeMap<(SubstateKey, RoleId), bool> = BTreeMap::new();
     for rule in &call.requires {
-        match satisfies(rule, call, &mut session) {
+        match satisfies(rule, call, &mut session, &mut judged) {
             Ok(true) => {}
             Ok(false) => {
                 return Err(fail(
@@ -333,28 +340,34 @@ fn gated(
 /// stored rules exactly one level deep, which is what `Rule<Presented>`
 /// guarantees by construction. Recursion is bounded by the rule caps
 /// the publish check held the tree to.
+///
+/// `judged` carries the verdicts already reached in this node's
+/// judgment. A rule the caps admit has far more leaves than the cells
+/// they can name, and each leaf's cost is a decode of the whole stored
+/// table, which is what the footprint charges for once as a single
+/// read.
 fn satisfies(
     rule: &Rule<JudgedLeaf>,
     call: &NodeCall,
     session: &mut KernelSession,
+    judged: &mut BTreeMap<(SubstateKey, RoleId), bool>,
 ) -> Result<bool, SessionTrap> {
     match rule {
         Rule::Require(JudgedLeaf::Claim(claim)) => Ok(call.evidence.contains(claim)),
         Rule::Require(JudgedLeaf::Stored { cell, role }) => {
+            if let Some(verdict) = judged.get(&(*cell, *role)) {
+                return Ok(*verdict);
+            }
             let bytes = session.declared_cell(*cell)?;
             let clock = session.clock_ms();
-            Ok(AuthCell::admits(
-                &bytes,
-                call.target,
-                *role,
-                &call.evidence,
-                clock,
-            ))
+            let verdict = AuthCell::admits(&bytes, call.target, *role, &call.evidence, clock);
+            judged.insert((*cell, *role), verdict);
+            Ok(verdict)
         }
         Rule::CountOf { count, rules } => {
             let mut met = 0usize;
             for rule in rules {
-                if satisfies(rule, call, session)? {
+                if satisfies(rule, call, session, judged)? {
                     met += 1;
                 }
             }

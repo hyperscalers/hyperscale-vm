@@ -2,19 +2,21 @@
 //! condition at materialization by the shard holding the leaf, an
 //! authority condition at the calling node with that call's evidence.
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use hyperscale_vm_effects::{
-    AuthBase, AuthCell, Condition, Declaration, Hash32, Hasher, JudgedLeaf, NodeCall, PRIMARY,
-    PackageHash, Presented, RoleTable, Rule, SlotId, StoredRule, TestHasher, child_key,
+    AuthBase, AuthCell, Condition, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES,
+    MAX_RULE_DEPTH, NodeCall, PRIMARY, PackageHash, Presented, RoleTable, Rule, SlotId, StoredRule,
+    TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
-    KernelSession, Locality, ManifestWalk, MemoryStore, execute_batch,
+    Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
+    KernelSession, Locality, ManifestWalk, MemoryStore, Substates, execute_batch,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, CallTarget, Effect, EffectSet, EffectTarget, Mode, Outcome, Presence,
-    ResourceAddr, SubstateKey, TxHash, UnmetCondition,
+    Address, AddressClass, CallTarget, CollectionId, Effect, EffectSet, EffectTarget, Mode,
+    Outcome, Presence, ResourceAddr, SubstateKey, TxHash, UnmetCondition,
 };
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
@@ -307,4 +309,131 @@ fn a_rule_mixes_claim_and_stored_leaves() {
             condition: UnmetCondition::Satisfies { node: 0 },
         }
     );
+}
+
+/// A store that answers from `MemoryStore` and counts what was asked.
+///
+/// Reads are the observable of the decode: nothing caches a point read
+/// between the layers and the base, so one `cell` call is one decode of
+/// the stored table.
+#[derive(Debug)]
+struct Counting {
+    inner: MemoryStore,
+    reads: Mutex<BTreeMap<SubstateKey, usize>>,
+}
+
+impl Counting {
+    const fn over(inner: MemoryStore) -> Self {
+        Self {
+            inner,
+            reads: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn reads_of(&self, key: SubstateKey) -> usize {
+        self.reads.lock().unwrap().get(&key).copied().unwrap_or(0)
+    }
+}
+
+impl Substates for Counting {
+    fn cell(&self, key: SubstateKey) -> Option<Vec<u8>> {
+        *self.reads.lock().unwrap().entry(key).or_default() += 1;
+        self.inner.cell(key)
+    }
+
+    fn entries_in_range(
+        &self,
+        owner: Address,
+        collection: CollectionId,
+        lo: u128,
+        hi: u128,
+        limit: usize,
+    ) -> Vec<(u128, Vec<u8>)> {
+        self.inner
+            .entries_in_range(owner, collection, lo, hi, limit)
+    }
+}
+
+impl Baseline for Counting {
+    fn is_locked(&self, key: SubstateKey) -> bool {
+        self.inner.is_locked(key)
+    }
+
+    fn holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128> {
+        self.inner.holds(key)
+    }
+}
+
+/// The widest rule the caps admit, every leaf naming one cell: the
+/// judgment is priced as the single read the declaration made, so it
+/// costs one — the verdict a leaf reaches cannot move under it, because
+/// a gate is judged against committed state before any body runs.
+#[test]
+fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
+    let target = principal(1);
+    let key = cell_of(target);
+
+    // MAX_RULE_BRANCHES^(MAX_RULE_DEPTH - 1) stored leaves, all the
+    // same cell and role.
+    let leaf = Rule::Require(JudgedLeaf::Stored {
+        cell: key,
+        role: PRIMARY,
+    });
+    let widest = (1..MAX_RULE_DEPTH).fold(leaf, |inner: Rule<JudgedLeaf>, _| Rule::CountOf {
+        count: u8::try_from(MAX_RULE_BRANCHES).unwrap(),
+        rules: vec![inner; MAX_RULE_BRANCHES],
+    });
+    assert_eq!(
+        widest.leaves().count(),
+        MAX_RULE_BRANCHES.pow(u32::try_from(MAX_RULE_DEPTH - 1).unwrap())
+    );
+
+    let mut securified = MemoryStore::new();
+    let roles = RoleTable::uniform(&StoredRule::Require(identity(2))).unwrap();
+    securified
+        .write(
+            key,
+            AuthCell::new(AuthBase::new(1_000, roles))
+                .to_bytes()
+                .unwrap(),
+        )
+        .unwrap();
+
+    let judged = |evidence: Vec<Presented>| {
+        let store = Arc::new(Counting::over(securified.clone()));
+        let mut entry = BatchTx::new(tx(7), declaring(key, Vec::new()), env());
+        entry.calls = vec![call(target, evidence, vec![widest.clone()])];
+        let outcome = execute_batch(
+            store.clone(),
+            &[entry],
+            &ManifestWalk { backend: &Inert },
+            test_hash,
+            ExecutionMode::Serial,
+            &Locality::All,
+        )
+        .unwrap();
+        (
+            outcome.receipts[&tx(7)].outcome.clone(),
+            store.reads_of(key),
+        )
+    };
+
+    // The verdict the uncached judgment reaches, both ways, and one read
+    // of the cell to reach either.
+    let cell = securified.cell(key).unwrap();
+    for (evidence, expected) in [(identity(2), true), (identity(1), false)] {
+        assert_eq!(
+            AuthCell::admits(
+                &cell,
+                target,
+                PRIMARY,
+                std::slice::from_ref(&evidence),
+                env().clock_ms,
+            ),
+            expected
+        );
+        let (outcome, reads) = judged(vec![evidence]);
+        assert_eq!(matches!(outcome, Outcome::Completed { .. }), expected);
+        assert_eq!(reads, 1);
+    }
 }
