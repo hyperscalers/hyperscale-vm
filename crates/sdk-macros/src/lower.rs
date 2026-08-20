@@ -45,10 +45,10 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
 
-use crate::is_named;
 use crate::mode::HandleMode;
 use crate::syntax::byte_literal;
 use crate::term::{Op, ResourceKind, Slot, Term};
+use crate::{holds_role_table, is_named};
 
 /// What kind of state a component field holds, and under which slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3284,12 +3284,7 @@ impl<'a> Lowerer<'a> {
                 // founded, silently — so the table is reached by
                 // `existing()`, whose presence condition makes that the
                 // routed refusal it should be.
-                if matches!(method, "get" | "peek")
-                    && field.element.as_ref().is_some_and(|ty| {
-                        let rendered = quote!(#ty).to_string();
-                        rendered.contains("AuthCell") && rendered.contains("Option")
-                    })
-                {
+                if matches!(method, "get" | "peek") && holds_role_table(field) {
                     self.error(
                         call.span(),
                         "a stored role table is read with `existing()` — a `get` reads an \

@@ -1,0 +1,5 @@
+error: `owner-badge` already names one of this package's resources, and a band resolves by position — so this one is an entry nothing can reach
+  --> tests/refusals/colliding_marks.rs:11:12
+   |
+11 |     struct Owner_badge;
+   |            ^^^^^^^^^^^

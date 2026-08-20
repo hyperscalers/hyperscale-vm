@@ -178,6 +178,36 @@ fn kebab(name: &str) -> String {
     out
 }
 
+/// The names one declared band spells, refused where two of them
+/// collide.
+///
+/// Every band resolves by position and renders by name — an event's
+/// index, an error's code, a role's band offset, a resource's mark — so
+/// two entries spelling one name are two claims on one number, and the
+/// second is the one nothing reaches. [`kebab`] maps more than one
+/// identifier onto a name, which is what makes this something an author
+/// can write without seeing it.
+fn distinct_band<'a>(
+    band: &str,
+    declared: impl IntoIterator<Item = &'a syn::Ident>,
+) -> syn::Result<Vec<String>> {
+    let mut names: Vec<String> = Vec::new();
+    for ident in declared {
+        let name = kebab(&ident.to_string());
+        if names.contains(&name) {
+            return Err(syn::Error::new(
+                ident.span(),
+                format!(
+                    "`{name}` already names one of this package's {band}, and a band \
+                     resolves by position — so this one is an entry nothing can reach"
+                ),
+            ));
+        }
+        names.push(name);
+    }
+    Ok(names)
+}
+
 /// The single type argument of a generic state field, which is the value
 /// its leaves hold.
 fn element_of(ty: &syn::Type) -> Option<syn::Type> {
@@ -1221,32 +1251,36 @@ fn config_slots(items: &[syn::Item], config_name: Option<&syn::Ident>) -> Vec<(S
 
 /// The package's event names, in the declaration order an emitted index
 /// refers to.
-fn event_names(items: &[syn::Item]) -> Vec<(syn::Ident, String)> {
-    items
+fn event_names(items: &[syn::Item]) -> syn::Result<Vec<(syn::Ident, String)>> {
+    let declared: Vec<&syn::Ident> = items
         .iter()
         .filter_map(|item| match item {
             syn::Item::Struct(item) if item.attrs.iter().any(|a| a.path().is_ident("event")) => {
-                Some((item.ident.clone(), kebab(&item.ident.to_string())))
+                Some(&item.ident)
             }
             _ => None,
         })
-        .collect()
+        .collect();
+    let names = distinct_band("events", declared.iter().copied())?;
+    Ok(declared.into_iter().cloned().zip(names).collect())
 }
 
 /// The package's error names, in the order a declined invocation's code
 /// refers to.
-fn error_names(items: &[syn::Item]) -> Vec<String> {
-    items
-        .iter()
-        .filter_map(|item| match item {
-            syn::Item::Enum(item) if item.attrs.iter().any(|a| a.path().is_ident("error")) => {
-                Some(&item.variants)
-            }
-            _ => None,
-        })
-        .flatten()
-        .map(|variant| kebab(&variant.ident.to_string()))
-        .collect()
+fn error_names(items: &[syn::Item]) -> syn::Result<Vec<String>> {
+    distinct_band(
+        "errors",
+        items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Enum(item) if item.attrs.iter().any(|a| a.path().is_ident("error")) => {
+                    Some(&item.variants)
+                }
+                _ => None,
+            })
+            .flatten()
+            .map(|variant| &variant.ident),
+    )
 }
 
 /// The `#[total]` attribute, where a method claims the mark the publish
@@ -1557,15 +1591,33 @@ fn check_gate_shape(
                     Target::Point { slot: s, material } if *s == *slot && material.is_empty()
                 )
             });
-            match table {
-                None => Ok(()),
-                Some(site) if site.ops.iter().any(|(op, _)| *op == Op::Existing) => Ok(()),
-                Some(_) => refuse(
+            let Some(site) = table else {
+                return Ok(());
+            };
+            if !site.ops.iter().any(|(op, _)| *op == Op::Existing) {
+                return refuse(
                     "a role-gated rewrite of its own table reads what it rewrites — \
                      `existing()` — so an unfounded component refuses as the routed \
                      absence rather than seeding a table its founding never wrote",
-                ),
+                );
             }
+            // Where the body reaches the table the gate rides the body's
+            // own clause, and the cell it reads the rule from is the one
+            // write it finds — so a second write beside it would leave
+            // two cells answering for one role.
+            let writes = lowered
+                .sites
+                .iter()
+                .filter(|site| site.resource() == Some(HandleMode::WriteCell))
+                .count();
+            if writes > 1 {
+                return refuse(
+                    "a method gated on its own stored table rewrites that table and \
+                     nothing else: the gate reads its rule from the body's own write, \
+                     so a second write leaves two cells answering for one role",
+                );
+            }
+            Ok(())
         }
         Gate::Custodial { .. } => {
             if lowered.sites.is_empty() {
@@ -1823,7 +1875,7 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
 /// what an author reads in a gate and what a consumer reads off the
 /// emitted constant are one string derived once.
 fn resources(items: &[syn::Item]) -> syn::Result<Vec<(String, Vec<u8>, ResourceKind)>> {
-    let mut declared = Vec::new();
+    let mut structs = Vec::new();
     for item in items {
         let syn::Item::Struct(item) = item else {
             continue;
@@ -1831,12 +1883,14 @@ fn resources(items: &[syn::Item]) -> syn::Result<Vec<(String, Vec<u8>, ResourceK
         let Some(attr) = item.attrs.iter().find(|a| a.path().is_ident("resource")) else {
             continue;
         };
-        let kind = resource_kind(attr)?;
-        let name = item.ident.to_string();
-        let mark = kebab(&name).into_bytes();
-        declared.push((name, mark, kind));
+        structs.push((&item.ident, resource_kind(attr)?));
     }
-    Ok(declared)
+    let marks = distinct_band("resources", structs.iter().map(|(ident, _)| *ident))?;
+    Ok(structs
+        .into_iter()
+        .zip(marks)
+        .map(|((ident, kind), mark)| (ident.to_string(), mark.into_bytes(), kind))
+        .collect())
 }
 
 /// The kind a `#[resource]` attribute states: fungible unless it says
@@ -1925,10 +1979,13 @@ struct Declared<'a> {
 
 /// Whether a state field holds the package's own role table: the same
 /// cell shape the protocol auth cell has, at a package-band slot.
-fn holds_role_table(field: &Field) -> bool {
+///
+/// The absence is what the shape turns on, so the `Option` is read as
+/// well as the element under it — a table that cannot be absent has no
+/// founding door to be behind.
+pub(crate) fn holds_role_table(field: &Field) -> bool {
     field.element.as_ref().is_some_and(|ty| {
-        let rendered = quote!(#ty).to_string();
-        rendered.contains("AuthCell") && rendered.contains("Option")
+        is_named(ty, "Option") && element_of(ty).is_some_and(|held| is_named(&held, "AuthCell"))
     })
 }
 
@@ -1949,7 +2006,8 @@ fn role_names(items: &[syn::Item]) -> syn::Result<Vec<String>> {
         if declared.is_some() {
             return Err(syn::Error::new(
                 item.ident.span(),
-                "a package declares one `#[roles]` enum — the band is one sequence, and                  a second enum would be a second claim about where it starts",
+                "a package declares one `#[roles]` enum — the band is one sequence, and \
+                 a second enum would be a second claim about where it starts",
             ));
         }
         declared = Some(item);
@@ -1957,18 +2015,15 @@ fn role_names(items: &[syn::Item]) -> syn::Result<Vec<String>> {
     let Some(item) = declared else {
         return Ok(Vec::new());
     };
-    item.variants
-        .iter()
-        .map(|variant| {
-            if !matches!(variant.fields, syn::Fields::Unit) {
-                return Err(syn::Error::new(
-                    variant.ident.span(),
-                    "a role is a name — the rule it selects lives in the stored table",
-                ));
-            }
-            Ok(kebab(&variant.ident.to_string()))
-        })
-        .collect()
+    for variant in &item.variants {
+        if !matches!(variant.fields, syn::Fields::Unit) {
+            return Err(syn::Error::new(
+                variant.ident.span(),
+                "a role is a name — the rule it selects lives in the stored table",
+            ));
+        }
+    }
+    distinct_band("roles", item.variants.iter().map(|variant| &variant.ident))
 }
 
 /// A Rust type name as the constant naming it: `OwnerBadge` is
@@ -2057,8 +2112,8 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
 
     let (state_name, fields, config_name) = parse_state(items, span)?;
     let config_fields = config_slots(items, config_name.as_ref());
-    let events = event_names(items);
-    let errors = error_names(items);
+    let events = event_names(items)?;
+    let errors = error_names(items)?;
     let declared_resources = resources(items)?;
     let declared_roles = role_names(items)?;
     let accessors = accessors(config_name.as_ref());

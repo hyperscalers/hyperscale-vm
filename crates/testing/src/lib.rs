@@ -355,8 +355,6 @@ impl Chain {
             .expect("the store takes a vault cell");
     }
 
-    /// What `owner` holds of `resource`.
-    ///
     /// One committed cell's bytes, or nothing where no cell is.
     ///
     /// The raw read a test uses to hold a written cell to the exact
@@ -366,6 +364,8 @@ impl Chain {
         self.store.cell(key)
     }
 
+    /// What `owner` holds of `resource`.
+    ///
     /// # Panics
     ///
     /// If the cell is there and is not an amount.
