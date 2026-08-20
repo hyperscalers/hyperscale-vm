@@ -46,7 +46,7 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
     assert!(
         matches!(
             refused(&wrong_ask, MAKER),
-            AdmissionError::Denomination { param: 1, expected, found, .. }
+            AdmissionError::WrongDenomination { param: 1, expected, found, .. }
                 if expected == BASE.address() && found == QUOTE.address()
         ),
         "an ask escrows the base side"
@@ -63,7 +63,7 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
     assert!(
         matches!(
             refused(&wrong_fill, TAKER),
-            AdmissionError::Denomination { param: 2, expected, found, .. }
+            AdmissionError::WrongDenomination { param: 2, expected, found, .. }
                 if expected == QUOTE.address() && found == BASE.address()
         ),
         "a fill pays the quote side"

@@ -20,8 +20,8 @@ use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, WriteCell, add_kernel_to_linker, blessed_engine,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget, Mode,
-    Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Engine, Result, Store};
@@ -29,7 +29,7 @@ use wat::parse_str;
 
 const FUEL: u64 = 1_000_000_000;
 /// What the vaults in this batch hold.
-const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
+const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0

@@ -13,12 +13,12 @@ use hyperscale_vm_types::{Address, AddressClass, SchemeId};
 
 use crate::hash::{Hash32, Hasher};
 use crate::metadata::PackageHash;
-use crate::resource::ResourceKind;
+use crate::resource::{ResourceKind, xrd};
 use crate::types::{
     component_address, config_hash, native_address, package_address, principal_address,
     resource_address,
 };
-use crate::vocabulary::XRD;
+use crate::vocabulary::GENESIS_PUBLISHER;
 
 /// The configuration leaf bytes the component vector commits to.
 pub const CONFIG_LEAF: &[u8] = b"hyperscale-vm/vectors/config-leaf";
@@ -63,7 +63,11 @@ pub fn address_vectors(hasher: &dyn Hasher) -> Vec<(&'static str, Address)> {
             )
             .into(),
         ),
-        ("native/xrd", native_address(hasher, XRD).into()),
+        (
+            "native/genesis-publisher",
+            native_address(hasher, GENESIS_PUBLISHER).into(),
+        ),
+        ("resource/xrd", xrd(hasher).into()),
     ]
 }
 
@@ -100,6 +104,7 @@ pub fn expected_classes() -> Vec<(&'static str, AddressClass)> {
         ("package/content", AddressClass::Package),
         ("resource/minted", AddressClass::Resource),
         ("resource/minted-nf", AddressClass::Resource),
-        ("native/xrd", AddressClass::Native),
+        ("native/genesis-publisher", AddressClass::Native),
+        ("resource/xrd", AddressClass::Resource),
     ]
 }

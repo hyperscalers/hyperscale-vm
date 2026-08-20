@@ -2,9 +2,7 @@
 //! about its parameters and its ABI binding.
 
 use hyperscale_hbor::Hbor;
-use hyperscale_vm_types::{
-    CallTarget, ComponentAddr, Denomination, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr,
-};
+use hyperscale_vm_types::{CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr};
 
 use crate::auth::RoleTable;
 use crate::dsl::{Clause, ConditionExpr, Expr};
@@ -31,19 +29,14 @@ pub enum ParamType {
     Address,
     /// An address a method may be invoked on: a principal or a component.
     CallTarget,
-    /// An address naming a resource: an issued resource or a protocol
-    /// one.
-    Denomination,
     /// A principal's address.
     Principal,
     /// A component instance's address.
     Component,
     /// A package's address.
     Package,
-    /// An issued resource's address.
+    /// A resource's address: what an amount is denominated in.
     Resource,
-    /// A protocol role's address.
-    Native,
     /// A fungible value edge; its resource type is static, its amount
     /// dynamic.
     ///
@@ -101,12 +94,10 @@ impl ParamType {
             Self::Bytes => "bytes",
             Self::Address => "address",
             Self::CallTarget => "call-target",
-            Self::Denomination => "denomination",
             Self::Principal => "principal-address",
             Self::Component => "component-address",
             Self::Package => "package-address",
             Self::Resource => "resource-address",
-            Self::Native => "native-address",
             Self::Bucket => "bucket",
             Self::NfBucket => "nf-bucket",
             Self::Rule => "rule",
@@ -122,12 +113,10 @@ impl ParamType {
             self,
             Self::Address
                 | Self::CallTarget
-                | Self::Denomination
                 | Self::Principal
                 | Self::Component
                 | Self::Package
                 | Self::Resource
-                | Self::Native
         )
     }
 
@@ -143,14 +132,10 @@ impl ParamType {
             | (Self::Bytes, Value::Bytes(_))
             | (Self::Address, Value::Address(_)) => true,
             (Self::CallTarget, Value::Address(address)) => CallTarget::try_from(*address).is_ok(),
-            (Self::Denomination, Value::Address(address)) => {
-                Denomination::try_from(*address).is_ok()
-            }
             (Self::Principal, Value::Address(address)) => PrincipalAddr::try_from(*address).is_ok(),
             (Self::Component, Value::Address(address)) => ComponentAddr::try_from(*address).is_ok(),
             (Self::Package, Value::Address(address)) => PackageAddr::try_from(*address).is_ok(),
             (Self::Resource, Value::Address(address)) => ResourceAddr::try_from(*address).is_ok(),
-            (Self::Native, Value::Address(address)) => NativeAddr::try_from(*address).is_ok(),
             (Self::Rule, Value::Bytes(bytes)) => StoredRule::from_slice(bytes).is_ok(),
             (Self::RoleTable, Value::Bytes(bytes)) => {
                 RoleTable::from_slice(bytes).is_ok_and(|table| table.decodes())
@@ -413,15 +398,10 @@ mod tests {
                 ParamType::CallTarget,
                 &[AddressClass::Principal, AddressClass::Component],
             ),
-            (
-                ParamType::Denomination,
-                &[AddressClass::Resource, AddressClass::Native],
-            ),
             (ParamType::Principal, &[AddressClass::Principal]),
             (ParamType::Component, &[AddressClass::Component]),
             (ParamType::Package, &[AddressClass::Package]),
             (ParamType::Resource, &[AddressClass::Resource]),
-            (ParamType::Native, &[AddressClass::Native]),
         ];
         for (param, admits) in admitted {
             assert!(param.is_address());

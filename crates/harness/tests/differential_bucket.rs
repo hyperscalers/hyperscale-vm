@@ -17,8 +17,8 @@ use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore};
 use hyperscale_vm_ref::{CVal, HandleKind};
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, CollectionId, Denomination, Effect, EffectSet,
-    EffectTarget, ISSUER_REP, Mode, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, ISSUER_REP,
+    Mode, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::{bail, format_err};
@@ -57,7 +57,7 @@ const ISSUED: ResourceAddr = ResourceAddr::new([0x80; 31]);
 /// One resource across the fixture, because what this lane is about is
 /// ownership and numbering rather than denomination: a second would make
 /// every credit a resource comparison as well as a transfer.
-const RESOURCE: Denomination = Denomination::Resource(ISSUED);
+const RESOURCE: ResourceAddr = ISSUED;
 
 /// The collection whose entries the instance lane moves.
 const HOLDINGS: CollectionId = CollectionId([9; 16]);
@@ -161,7 +161,7 @@ fn fixture() -> Fixture {
 /// Everything but the read cell: a cell that denominates nothing is one
 /// no value moves through, and every cell here but that one is moved
 /// through.
-fn denominations(fx: &Fixture) -> Vec<Option<Denomination>> {
+fn denominations(fx: &Fixture) -> Vec<Option<ResourceAddr>> {
     fx.declared
         .iter()
         .map(|effect| match effect.target {

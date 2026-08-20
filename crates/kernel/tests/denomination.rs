@@ -26,8 +26,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MaterializeError, MemoryStore, OverlayStore};
 use hyperscale_vm_types::math::U256;
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget, ISSUER_REP,
-    Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 const VAULT: SlotId = SlotId(1);
@@ -63,12 +63,12 @@ const fn env() -> EnvInputs {
 /// On a declaration that does not materialize, which is a fixture's own
 /// defect wherever the test is about what a movement does rather than
 /// about whether one is granted.
-fn session(denominations: &[Option<Denomination>]) -> KernelSession {
+fn session(denominations: &[Option<ResourceAddr>]) -> KernelSession {
     try_session(denominations).expect("the declaration materializes")
 }
 
 /// The same, with the materialization verdict left to the caller.
-fn try_session(denominations: &[Option<Denomination>]) -> Result<KernelSession, MaterializeError> {
+fn try_session(denominations: &[Option<ResourceAddr>]) -> Result<KernelSession, MaterializeError> {
     let ordered = vec![
         Effect {
             target: EffectTarget::Point(vault(X)),
@@ -152,12 +152,7 @@ fn every_producer_stamps_what_its_source_held() {
             set: set.clone(),
             ordered: ordered
                 .iter()
-                .zip([
-                    Some(X.into()),
-                    Some(X.into()),
-                    Some(X.into()),
-                    Some(Y.into()),
-                ])
+                .zip([Some(X), Some(X), Some(X), Some(Y)])
                 .map(|(effect, holds)| DeclaredAccess {
                     effect: *effect,
                     holds,
@@ -241,7 +236,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
             set: set.clone(),
             ordered: ordered
                 .iter()
-                .zip([Some(X.into()), Some(Y.into())])
+                .zip([Some(X), Some(Y)])
                 .map(|(effect, holds)| DeclaredAccess {
                     effect: *effect,
                     holds,
@@ -279,7 +274,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
 /// execution has anything to judge.
 #[test]
 fn value_debited_from_one_vault_cannot_be_credited_to_another() {
-    let mut session = session(&[Some(X.into()), Some(Y.into())]);
+    let mut session = session(&[Some(X), Some(Y)]);
     let funds = session.delta_take(0, 100).expect("the debit is queued");
 
     assert_eq!(
@@ -292,7 +287,7 @@ fn value_debited_from_one_vault_cannot_be_credited_to_another() {
 /// The same movement back into the cell it came from completes.
 #[test]
 fn value_returns_to_the_vault_that_holds_it() {
-    let mut session = session(&[Some(X.into()), Some(Y.into())]);
+    let mut session = session(&[Some(X), Some(Y)]);
     let funds = session.delta_take(0, 100).expect("the debit is queued");
     assert_eq!(session.delta_put(0, funds), Ok(()));
 }
@@ -305,7 +300,7 @@ fn value_returns_to_the_vault_that_holds_it() {
 /// take value it does not hold.
 #[test]
 fn two_edges_of_different_resources_do_not_merge() {
-    let mut session = session(&[Some(X.into()), Some(Y.into())]);
+    let mut session = session(&[Some(X), Some(Y)]);
     let held_x = session.delta_take(0, 100).expect("the X debit is queued");
     let held_y = session.delta_take(1, 100).expect("the Y debit is queued");
 
@@ -333,7 +328,7 @@ fn a_cell_that_denominates_nothing_moves_nothing() {
 
     // One end saying nothing is enough: the pair is judged cell by cell.
     assert_eq!(
-        try_session(&[Some(X.into()), None]).expect_err("the second says nothing"),
+        try_session(&[Some(X), None]).expect_err("the second says nothing"),
         MaterializeError::UndenominatedMovement(vault(Y))
     );
 }
@@ -345,7 +340,7 @@ fn a_cell_that_denominates_nothing_moves_nothing() {
 /// value this invocation was never given authority over.
 #[test]
 fn a_grant_burns_only_what_it_issues() {
-    let mut session = session(&[Some(X.into()), Some(Y.into())]);
+    let mut session = session(&[Some(X), Some(Y)]);
     let foreign = session.delta_take(0, 100).expect("the debit is queued");
     session.grant_issuance(Y, ResourceKind::Fungible);
 
@@ -361,7 +356,7 @@ fn a_grant_burns_only_what_it_issues() {
 /// the other shape is an operation on a resource never granted.
 #[test]
 fn a_grant_mints_only_its_own_kind() {
-    let mut fungible = session(&[Some(X.into()), Some(Y.into())]);
+    let mut fungible = session(&[Some(X), Some(Y)]);
     fungible.grant_issuance(Y, ResourceKind::Fungible);
     assert_eq!(
         fungible
@@ -370,7 +365,7 @@ fn a_grant_mints_only_its_own_kind() {
         Err(AbortReason::WrongIssuanceKind)
     );
 
-    let mut non_fungible = session(&[Some(X.into()), Some(Y.into())]);
+    let mut non_fungible = session(&[Some(X), Some(Y)]);
     non_fungible.grant_issuance(X, ResourceKind::NonFungible);
     assert_eq!(
         non_fungible.mint(ISSUER_REP, 5).map_err(AbortReason::from),
@@ -383,7 +378,7 @@ fn a_grant_mints_only_its_own_kind() {
 /// cell holding that resource and no other.
 #[test]
 fn minted_value_lands_only_in_its_own_cell() {
-    let mut session = session(&[Some(X.into()), Some(Y.into())]);
+    let mut session = session(&[Some(X), Some(Y)]);
     session.grant_issuance(Y, ResourceKind::Fungible);
     let minted = session.mint(ISSUER_REP, 5).expect("the grant mints");
 
@@ -399,7 +394,7 @@ fn minted_value_lands_only_in_its_own_cell() {
 /// half fits a cell the whole did not.
 #[test]
 fn a_split_carries_the_resource_into_both_halves() {
-    let mut session = session(&[Some(X.into()), Some(Y.into())]);
+    let mut session = session(&[Some(X), Some(Y)]);
     let funds = session.delta_take(0, 100).expect("the debit is queued");
     let part = session
         .bucket_take(funds, 40)
@@ -416,7 +411,7 @@ fn a_split_carries_the_resource_into_both_halves() {
 /// land somewhere, and a resource tag does not excuse dropping it.
 #[test]
 fn a_denominated_edge_still_has_to_be_disposed_of() {
-    let mut session = session(&[Some(X.into()), Some(Y.into())]);
+    let mut session = session(&[Some(X), Some(Y)]);
     let funds = session.delta_take(0, 100).expect("the debit is queued");
     assert_eq!(
         session.drop_bucket(funds).map_err(AbortReason::from),

@@ -1,7 +1,7 @@
 //! Shared test worlds: small published packages, their instances, and
 //! the manifests that call them.
 
-use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, Denomination, ResourceAddr};
+use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, ResourceAddr};
 
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::hash::{Hash32, Hasher, TestHasher};
@@ -38,14 +38,13 @@ pub fn instance_of(package: &str) -> ComponentAddr {
 
 /// The resource an instance of `package` issues from empty material —
 /// what a fixture producer's `SelfResource` output evaluates to.
-pub fn issued_by(package: &str) -> Denomination {
+pub fn issued_by(package: &str) -> ResourceAddr {
     resource_address(
         &TestHasher,
         instance_of(package),
         ResourceKind::Fungible,
         &[],
     )
-    .into()
 }
 
 /// A resource-class literal, for a fixture that names one directly.
@@ -130,7 +129,7 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
         instances.create(&TestHasher, meta_of(name));
     }
 
-    let edge = |source: u32, resource: Denomination| NodeInput::Edge {
+    let edge = |source: u32, resource: ResourceAddr| NodeInput::Edge {
         source,
         output: 0,
         resource,
@@ -218,7 +217,7 @@ pub fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
                 inputs: vec![NodeInput::Edge {
                     source: 0,
                     output: 0,
-                    resource: resource(0xE1).into(),
+                    resource: resource(0xE1),
                     content: EdgeContent::Fungible,
                     bounds: Bounds::default(),
                 }],

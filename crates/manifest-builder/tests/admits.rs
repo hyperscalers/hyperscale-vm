@@ -139,7 +139,7 @@ proptest! {
             for arg in &node.args {
                 if let GraphArg::Edge { constraints, .. } = arg {
                     prop_assert!(
-                        constraints.contains(&Constraint::ResourceIs(RES.into())),
+                        constraints.contains(&Constraint::ResourceIs(RES)),
                         "every edge in this world resolves to one resource, and says so"
                     );
                 }

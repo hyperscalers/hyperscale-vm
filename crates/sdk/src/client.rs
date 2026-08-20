@@ -19,8 +19,7 @@ pub use hyperscale_vm_manifest_builder::{
     AddressArg, Arg, Args, Bucket, BucketArg, Outputs, Proof, TypedBuilder, TypedError,
 };
 pub use hyperscale_vm_types::{
-    Address, CallTarget, ComponentAddr, Denomination, NativeAddr, PackageAddr, PrincipalAddr,
-    ResourceAddr,
+    Address, CallTarget, ComponentAddr, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
 
 use crate::num::{Quantity, UnitFixed};
@@ -128,13 +127,7 @@ macro_rules! address_slots {
     };
 }
 
-address_slots!(
-    Address,
-    ComponentAddr,
-    PrincipalAddr,
-    ResourceAddr,
-    Denomination
-);
+address_slots!(Address, ComponentAddr, PrincipalAddr, ResourceAddr);
 
 /// A table fills its slot as the list of pairs the DSL's `Lookup` and
 /// `Contains` walk — one slot, whatever the row count.

@@ -26,7 +26,7 @@ use hyperscale_vm_runtime::{
     add_kernel_to_linker, blessed_engine, classify, instantiate_charged, instantiation_charges,
     validate_component,
 };
-use hyperscale_vm_types::{ADDRESS_WORDS, AbortReason, Denomination, EffectSet, TxHash};
+use hyperscale_vm_types::{ADDRESS_WORDS, AbortReason, EffectSet, ResourceAddr, TxHash};
 use wasmtime::component::{Component, Instance, Linker, Resource, ResourceAny, Val};
 use wasmtime::error::{bail, ensure, format_err};
 use wasmtime::{Engine, Result, Store};
@@ -389,7 +389,7 @@ fn lift(store: &mut Store<KernelSession>, value: Val, out: &mut Vec<CVal>) -> Re
 pub fn materialize(
     store: &MemoryStore,
     declared: &EffectSet,
-    denominations: &[Option<Denomination>],
+    denominations: &[Option<ResourceAddr>],
     tx: TxHash,
     env: EnvInputs,
 ) -> KernelSession {

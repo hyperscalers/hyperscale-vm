@@ -193,7 +193,7 @@ mod tests {
                     }),
                     Value::Bucket {
                         content: EdgeContent::Fungible,
-                        resource: ResourceAddr::new([5; 31]).into(),
+                        resource: ResourceAddr::new([5; 31]),
                     },
                     Value::U128(u128::MAX),
                     Value::Address(Address::new([6; 31], AddressClass::Component)),

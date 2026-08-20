@@ -1,31 +1,14 @@
-error[E0277]: the trait bound `Denomination: From<PrincipalAddr>` is not satisfied
+error[E0277]: the trait bound `ResourceAddr: From<PrincipalAddr>` is not satisfied
   --> tests/refusals/account_as_resource.rs:14:56
    |
 14 |     let [] = b.call(BOB, "deposit", (funds.resource_is(ALICE),));
-   |                                            ----------- ^^^^^ the trait `From<PrincipalAddr>` is not implemented for `Denomination`
+   |                                            ----------- ^^^^^ the trait `From<PrincipalAddr>` is not implemented for `ResourceAddr`
    |                                            |
    |                                            required by a bound introduced by this call
    |
-help: `Denomination` implements trait `From<T>`
-  --> $WORKSPACE/crates/types/src/address.rs
-   |
-   |               impl From<$class> for $name {
-   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |               |
-   |               `From<NativeAddr>`
-   |               `From<ResourceAddr>`
-...
-   | / position_addr! {
-   | |     /// An address naming the resource an amount is denominated in.
-   | |     ///
-   | |     /// Two classes name resources, because the protocol's own resource
-...  |
-   | | }
-   | |_- in this macro invocation
-   = note: required for `PrincipalAddr` to implement `Into<Denomination>`
+   = note: required for `PrincipalAddr` to implement `Into<ResourceAddr>`
 note: required by a bound in `Bucket::resource_is`
   --> src/builder.rs
    |
-   |     pub fn resource_is(self, resource: impl Into<Denomination>) -> Self {
+   |     pub fn resource_is(self, resource: impl Into<ResourceAddr>) -> Self {
    |                                             ^^^^^^^^^^^^^^^^^^ required by this bound in `Bucket::resource_is`
-   = note: this error originates in the macro `position_addr` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -37,7 +37,7 @@ use hyperscale_vm_effects::{
     IntentDecl, MAX_YIELD_PARAMS, ManifestGraph, MetadataCache, Subintent, YieldBinding,
     YieldParam,
 };
-use hyperscale_vm_types::{Denomination, MAX_SUBINTENTS, PrincipalAddr};
+use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
 use crate::builder::{Bucket, Param};
 use crate::typed::{TypedBuilder, TypedError};
@@ -180,7 +180,7 @@ impl<'a> IntentBuilder<'a> {
     /// which [`EnvelopeBuilder::seal`] enforces as an error.
     pub fn declare(
         &mut self,
-        resource: impl Into<Denomination>,
+        resource: impl Into<ResourceAddr>,
         constraints: impl IntoIterator<Item = Constraint>,
     ) -> Param {
         let position =

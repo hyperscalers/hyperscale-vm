@@ -69,7 +69,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
                 ],
             },
             params: vec![YieldParam {
-                resource: RES_Y.into(),
+                resource: RES_Y,
                 constraints: vec![Constraint::MinAmount(10)],
             }],
         },
@@ -90,7 +90,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
                     ],
                 },
                 params: vec![YieldParam {
-                    resource: RES_X.into(),
+                    resource: RES_X,
                     constraints: vec![Constraint::MinAmount(100)],
                 }],
             },
@@ -143,7 +143,7 @@ fn a_composed_tree_flattens_deterministically() {
         vec![NodeInput::Edge {
             source: 3,
             output: 0,
-            resource: RES_Y.into(),
+            resource: RES_Y,
             content: EdgeContent::Fungible,
             bounds: Bounds {
                 min: Some(10),
@@ -156,7 +156,7 @@ fn a_composed_tree_flattens_deterministically() {
         vec![NodeInput::Edge {
             source: 1,
             output: 0,
-            resource: RES_X.into(),
+            resource: RES_X,
             content: EdgeContent::Fungible,
             bounds: Bounds {
                 min: Some(100),
@@ -227,7 +227,7 @@ fn the_declaration_hash_covers_params_and_constraints() {
     reconstrained.params[0].constraints = vec![Constraint::MinAmount(101)];
     assert_ne!(decl.hash(&TestHasher), reconstrained.hash(&TestHasher));
     let mut retyped = decl.clone();
-    retyped.params[0].resource = RES_Y.into();
+    retyped.params[0].resource = RES_Y;
     assert_ne!(decl.hash(&TestHasher), retyped.hash(&TestHasher));
 }
 
@@ -246,7 +246,7 @@ fn mutual_yields_with_no_order_are_a_cycle() {
 #[test]
 fn a_yielded_resource_must_match_the_declared_type() {
     let mut tree = composed_tree(100);
-    tree.subintents[0].decl.params[0].resource = RES_Y.into();
+    tree.subintents[0].decl.params[0].resource = RES_Y;
     assert_eq!(
         admit_composed(&tree),
         Err(AdmissionError::YieldResourceMismatch {
@@ -278,7 +278,7 @@ fn a_yielded_edge_is_judged_by_its_kind() {
                 nodes: vec![authorize(ALICE), withdraw(ALICE, RES_X, 100), consumer],
             },
             params: vec![YieldParam {
-                resource: RES_Y.into(),
+                resource: RES_Y,
                 constraints: vec![],
             }],
         },
@@ -299,7 +299,7 @@ fn a_yielded_edge_is_judged_by_its_kind() {
                     ],
                 },
                 params: vec![YieldParam {
-                    resource: RES_X.into(),
+                    resource: RES_X,
                     constraints: vec![],
                 }],
             },

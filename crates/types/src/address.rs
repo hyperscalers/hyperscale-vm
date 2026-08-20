@@ -224,14 +224,6 @@ pub struct NotCallable {
     pub found: AddressClass,
 }
 
-/// An address of a class that denominates no supply.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-#[error("a {found} address names no resource")]
-pub struct NotAResource {
-    /// The class the address carries.
-    pub found: AddressClass,
-}
-
 /// A global object's address: 31 bytes of domain-separated hash followed
 /// by the byte naming its class.
 ///
@@ -622,23 +614,6 @@ position_addr! {
     }
 }
 
-position_addr! {
-    /// An address naming the resource an amount is denominated in.
-    ///
-    /// Two classes name resources, because the protocol's own resource
-    /// has no minter to commit to. An ordinary resource address commits
-    /// its provenance — who may mint it — while the native fee resource
-    /// is derived from the role it plays, its supply moving only with the
-    /// protocol. Keeping them separate classes is what keeps one tag
-    /// naming one derivation rule.
-    Denomination, NotAResource {
-        /// A resource addressed by who may mint it.
-        Resource(ResourceAddr),
-        /// A protocol resource, addressed by the role it plays.
-        Native(NativeAddr),
-    }
-}
-
 /// One declared access target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 pub enum EffectTarget {
@@ -690,8 +665,8 @@ mod tests {
 
     use super::AddressClass::{Component, Native, Package, Principal, Resource};
     use super::{
-        Address, AddressClass, CallTarget, ComponentAddr, Denomination, LocalKey, NativeAddr,
-        PackageAddr, PrincipalAddr, ResourceAddr, SubstateKey,
+        Address, AddressClass, CallTarget, ComponentAddr, LocalKey, NativeAddr, PackageAddr,
+        PrincipalAddr, ResourceAddr, SubstateKey,
     };
 
     fn owner(seed: u8) -> Address {
@@ -829,9 +804,6 @@ mod tests {
         assert_eq!(native, native.address());
         assert_eq!(native.address(), native);
         assert_ne!(native, Address::new([0x5A; 31], Resource));
-        let position = Denomination::from(native);
-        assert_eq!(position, native.address());
-        assert_eq!(native.address(), position);
     }
 
     #[test]
@@ -859,30 +831,12 @@ mod tests {
     }
 
     #[test]
-    fn a_resource_reference_admits_the_classes_that_name_supply() {
-        for class in [Resource, Native] {
-            let address = Address::new([4; 31], class);
-            let resource = Denomination::try_from(address).unwrap();
-            assert_eq!(resource.address(), address);
-            assert_eq!(resource.class(), class);
-        }
-        for class in [Principal, Component, Package] {
-            let err = Denomination::try_from(Address::new([4; 31], class)).unwrap_err();
-            assert_eq!(err.found, class);
-        }
-    }
-
-    #[test]
     fn a_position_is_its_address_bytes_on_the_wire() {
         let target = CallTarget::Component(ComponentAddr::new([6; 31]));
         let encoded = to_vec(&target).unwrap();
         assert_eq!(encoded, target.address().to_bytes());
         assert_eq!(from_slice::<CallTarget>(&encoded).unwrap(), target);
         assert_canonical(&target);
-
-        let resource = Denomination::Native(NativeAddr::new([7; 31]));
-        assert_eq!(to_vec(&resource).unwrap(), resource.address().to_bytes());
-        assert_canonical(&resource);
     }
 
     #[test]
@@ -892,10 +846,6 @@ mod tests {
         let package = to_vec(&Address::new([9; 31], Package)).unwrap();
         assert!(matches!(
             from_slice::<CallTarget>(&package),
-            Err(DecodeError::InvalidDiscriminant(tag)) if tag == Package.tag()
-        ));
-        assert!(matches!(
-            from_slice::<Denomination>(&package),
             Err(DecodeError::InvalidDiscriminant(tag)) if tag == Package.tag()
         ));
         // And so is a class the position does admit, read as another.

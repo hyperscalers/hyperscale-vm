@@ -12,12 +12,12 @@ use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemorySto
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_sdk::host::{CellKind, GuestArg, Invoked};
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, AddressClass, Denomination, Effect, EffectSet, EffectTarget,
-    Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 const OWNER: Address = Address::new([0x21; 31], AddressClass::Component);
-const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
+const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
 #[blueprint]
 mod till {

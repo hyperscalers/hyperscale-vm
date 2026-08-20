@@ -116,7 +116,7 @@ mod through_the_session {
         };
         let mut set = EffectSet::new();
         set.insert(moving).expect("one cell");
-        let declaration = Declaration::from_set(set).denominated(|_| Some(UNIT.into()));
+        let declaration = Declaration::from_set(set).denominated(|_| Some(UNIT));
         let mut session = KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
             &declaration,

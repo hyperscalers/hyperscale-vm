@@ -90,7 +90,7 @@ pub use publish::{
 };
 pub use resource::{
     Fungibility, ResourceKind, ResourceRecord, holdings_collection, holdings_entry, holdings_range,
-    instance_data_key, issued_resource, resource_record_key,
+    instance_data_key, issued_resource, resource_record_key, xrd,
 };
 pub use route::{
     FrameDeclaration, MAX_MANIFEST_NODES, PrefixShardResolver, Routing, ShardResolver, route,

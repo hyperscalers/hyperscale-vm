@@ -16,13 +16,13 @@ use hyperscale_vm_sdk::handle::Handle;
 use hyperscale_vm_sdk::host::{Refusal, with_kernel};
 use hyperscale_vm_sdk::state::{self, Bucket, Entry, Interval, OrderKey, Quantity, Slot, Vault};
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Denomination, Effect, EffectSet, EffectTarget, EntryKey,
-    Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Mode,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 const OWNER: Address = Address::new([0x11; 31], AddressClass::Component);
 /// What the value cells in these fixtures hold.
-const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
+const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const CLOCK_MS: u64 = 4_000;
 
 fn hash(data: &[u8]) -> [u8; 32] {

@@ -15,8 +15,6 @@
 
 use crate::types::{NativeRole, SlotId};
 
-/// The native fee and transfer resource.
-pub const XRD: NativeRole = NativeRole(1);
 /// The publisher the protocol's own packages sit under.
 pub const GENESIS_PUBLISHER: NativeRole = NativeRole(2);
 

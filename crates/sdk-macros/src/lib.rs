@@ -347,12 +347,10 @@ pub(crate) fn is_named(ty: &syn::Type, name: &str) -> bool {
 /// newtype added here is added everywhere at once.
 ///
 /// [`ParamType`]: hyperscale_vm_effects::ParamType
-pub(crate) const ADDRESS_FAMILY: [(&str, &str); 8] = [
+pub(crate) const ADDRESS_FAMILY: [(&str, &str); 6] = [
     ("Address", "Address"),
     ("CallTarget", "CallTarget"),
     ("ComponentAddr", "Component"),
-    ("Denomination", "Denomination"),
-    ("NativeAddr", "Native"),
     ("PackageAddr", "Package"),
     ("PrincipalAddr", "Principal"),
     ("ResourceAddr", "Resource"),

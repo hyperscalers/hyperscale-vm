@@ -1059,13 +1059,13 @@ fn a_valueless_narrowing_is_a_key_not_a_denomination() {
 /// half.
 #[blueprint]
 mod noted {
-    use hyperscale_vm_sdk::Denomination;
+    use hyperscale_vm_sdk::ResourceAddr;
     use hyperscale_vm_sdk::state::{Bucket, Quantity};
 
     /// Funds moved, and what they were.
     #[event]
     struct Moved {
-        resource: Denomination,
+        resource: ResourceAddr,
         amount: Quantity,
     }
 
@@ -1074,7 +1074,7 @@ mod noted {
 
     impl Noted {
         /// Bank the edge and say what it carried.
-        pub fn note(&mut self, funds: Bucket, resource: Denomination) {
+        pub fn note(&mut self, funds: Bucket, resource: ResourceAddr) {
             let amount = funds.quantity();
             self.vault(resource).put(funds);
             Moved { resource, amount }.emit();
@@ -1089,7 +1089,7 @@ fn a_narrow_parameter_declares_its_classes_in_its_kind() {
     let metadata = noted::blueprint().metadata();
     assert_eq!(
         metadata.methods["note"].params,
-        vec![ParamType::Bucket, ParamType::Denomination],
+        vec![ParamType::Bucket, ParamType::Resource],
     );
 }
 
@@ -1100,22 +1100,20 @@ fn a_narrow_parameter_declares_its_classes_in_its_kind() {
 #[blueprint]
 mod family {
     use hyperscale_vm_sdk::{
-        Address, CallTarget, ComponentAddr, Denomination, NativeAddr, PackageAddr, PrincipalAddr,
-        ResourceAddr,
+        Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
     };
 
     #[state]
     struct Family {}
 
     impl Family {
-        /// The wide type and the two position kinds.
-        pub fn positions(&mut self, _any: Address, _target: CallTarget, _held: Denomination) {}
+        /// The wide type and the position kind.
+        pub fn positions(&mut self, _any: Address, _target: CallTarget) {}
 
-        /// The five single-class kinds.
+        /// The four single-class kinds.
         pub fn classes(
             &mut self,
             _component: ComponentAddr,
-            _native: NativeAddr,
             _package: PackageAddr,
             _principal: PrincipalAddr,
             _resource: ResourceAddr,
@@ -1131,17 +1129,12 @@ fn every_address_type_declares_its_own_kind() {
     let metadata = family::blueprint().metadata();
     assert_eq!(
         metadata.methods["positions"].params,
-        vec![
-            ParamType::Address,
-            ParamType::CallTarget,
-            ParamType::Denomination,
-        ],
+        vec![ParamType::Address, ParamType::CallTarget],
     );
     assert_eq!(
         metadata.methods["classes"].params,
         vec![
             ParamType::Component,
-            ParamType::Native,
             ParamType::Package,
             ParamType::Principal,
             ParamType::Resource,

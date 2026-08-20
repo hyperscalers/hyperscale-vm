@@ -8,7 +8,7 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_vm_types::Denomination;
+use hyperscale_vm_types::ResourceAddr;
 use hyperscale_vm_types::math::{MathError, Rounding, U256, mul_div};
 
 use super::{KernelSession, SessionTrap};
@@ -72,7 +72,7 @@ pub(super) struct Buckets {
     /// authority over one resource, and a split inherits from what it
     /// came off. A bucket that could carry nothing in particular would
     /// be one every destination had to admit.
-    resources: Vec<Denomination>,
+    resources: Vec<ResourceAddr>,
 }
 
 impl Buckets {
@@ -83,7 +83,7 @@ impl Buckets {
     /// Only past `u32` buckets in one transaction. Reps are minted per
     /// take and split, so the bound is the fuel budget — four billion
     /// host calls — not any declared count.
-    pub(super) fn open(&mut self, held: Held, resource: Denomination) -> u32 {
+    pub(super) fn open(&mut self, held: Held, resource: ResourceAddr) -> u32 {
         let rep = u32::try_from(self.slots.len()).expect("bounded");
         self.slots.push(Some(held));
         self.resources.push(resource);
@@ -124,7 +124,7 @@ impl Buckets {
     /// # Errors
     ///
     /// [`SessionTrap::UnknownHandle`] for a rep past the table.
-    pub(super) fn resource_of(&self, rep: u32) -> Result<Denomination, SessionTrap> {
+    pub(super) fn resource_of(&self, rep: u32) -> Result<ResourceAddr, SessionTrap> {
         usize::try_from(rep)
             .ok()
             .and_then(|index| self.resources.get(index))
@@ -312,7 +312,7 @@ impl KernelSession {
     /// Only past `u32` buckets in one transaction. Reps are minted per
     /// take and split, so the bound is the fuel budget — four billion
     /// host calls — not any declared count.
-    pub fn open_bucket(&mut self, held: Held, resource: Denomination) -> u32 {
+    pub fn open_bucket(&mut self, held: Held, resource: ResourceAddr) -> u32 {
         self.buckets.open(held, resource)
     }
 
@@ -404,11 +404,11 @@ impl KernelSession {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_types::{Denomination, ResourceAddr};
+    use hyperscale_vm_types::ResourceAddr;
 
     use super::{Buckets, Held, MathError, SessionTrap, U256};
 
-    const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
+    const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
     /// A deterministic generator: the property is exact, so the corpus
     /// only has to be wide and reproducible.

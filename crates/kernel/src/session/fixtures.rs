@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{Declaration, DeclaredAccess, Hash32, SlotId, TestHasher, child_key};
 use hyperscale_vm_types::{
-    Address, AddressClass, Denomination, Effect, EffectSet, Mode, ResourceAddr, SubstateKey, TxHash,
+    Address, AddressClass, Effect, EffectSet, Mode, ResourceAddr, SubstateKey, TxHash,
 };
 
 use super::materialize::{Holds, holds_of};
@@ -56,7 +56,7 @@ pub(super) fn ord(set: &EffectSet) -> Vec<Effect> {
 }
 
 /// What every cell these fixtures move value through holds.
-pub(super) const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
+pub(super) const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
 /// What each entry of an ordered declaration holds.
 ///

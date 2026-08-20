@@ -17,8 +17,8 @@ use hyperscale_vm_runtime::{
     add_kernel_to_linker, blessed_engine, validate_component,
 };
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Denomination, Effect, EffectSet,
-    EffectTarget, EntryKey, Mode, Movement, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget,
+    EntryKey, Mode, Movement, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
 use wasmtime::error::{Context, format_err};
@@ -29,7 +29,7 @@ const CLOCK_MS: u64 = 424_242;
 const FUEL: u64 = 1_000_000_000;
 const ASKS: CollectionId = CollectionId([4; 16]);
 /// What the two cells the transfer moves between hold.
-const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
+const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
 const fn tx() -> TxHash {
     TxHash(Hash32([0x33; 32]))
@@ -160,7 +160,7 @@ fn fixture() -> Fixture {
 /// The two the transfer moves between, and nothing else: the
 /// read-modify-write cell and the ask ladder are written as bytes and as
 /// entries, which is what a cell denominating nothing is for.
-fn denominations(fx: &Fixture) -> Vec<Option<Denomination>> {
+fn denominations(fx: &Fixture) -> Vec<Option<ResourceAddr>> {
     fx.declared
         .iter()
         .map(|effect| match effect.target {

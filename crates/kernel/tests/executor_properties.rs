@@ -25,13 +25,12 @@ use hyperscale_vm_kernel::{
     MemoryStore, RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, CollectionId, Denomination, Effect, EffectSet,
-    EffectTarget, EntryKey, Mode, Movement, Outcome, ResourceAddr, SubstateKey, TxHash,
-    encode_amount,
+    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey,
+    Mode, Movement, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// What every cell these fixtures move value through holds.
-const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
+const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
 /// The declaration a hand-built set stands for.
 ///

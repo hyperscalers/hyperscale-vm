@@ -31,21 +31,26 @@ fn the_catalogue_routes_to_pinned_vectors() {
         ("fill", fill_graph(), PIN_FILL),
         ("propose", propose_graph(), PIN_PROPOSE),
     ];
+    let mut drifted = Vec::new();
     for (name, graph, pin) in pinned {
         let routing = sharded_routing(&world, &graph);
-        assert_eq!(
-            routing_fingerprint(&routing),
-            pin,
-            "{name}: routing drifted"
-        );
+        let fingerprint = routing_fingerprint(&routing);
+        if fingerprint != pin {
+            drifted.push(format!("{name} = {fingerprint}"));
+        }
     }
+    assert!(
+        drifted.is_empty(),
+        "routing drifted:\n{}",
+        drifted.join("\n")
+    );
 }
 
-const PIN_TRANSFER: &str = "89c23875ab52cabcea2d11f28d9a857c3d7a8cc1e6363e2d164d5274ebe9fb2a";
+const PIN_TRANSFER: &str = "938a7137a560769606635bf6984c4241253e8428f6597ef9fe43f87210bbaed8";
 
-const PIN_SWAP: &str = "4cdcbc7e004fbab58a943de6e38dac0bf4f24d010be6212b22f404878063cc09";
+const PIN_SWAP: &str = "c1dc375e92311148cad222940ea077e6aed5fbe4ed778878f034f2bc752a8ac6";
 
-const PIN_FILL: &str = "c4d6a6574e8d4ec41b9e31c15fb90588a6d638e9abe2142e961cfc6246a03398";
+const PIN_FILL: &str = "14862d650b986450524d679c336849c2eb24376a6659485f9f276457be8ef82d";
 
 const PIN_PROPOSE: &str = "15155b4205c3c1c16e7f5f940ff8df7ee6c69afcddb99a1ce5dca4dffc805a79";
 

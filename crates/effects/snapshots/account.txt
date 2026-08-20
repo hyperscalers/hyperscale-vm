@@ -703,7 +703,7 @@ PackageMetadata {
             totality: Infallible,
             issues: None,
             params: [
-                Denomination,
+                Resource,
                 U128,
             ],
             outputs: [
@@ -760,7 +760,7 @@ PackageMetadata {
             totality: Infallible,
             issues: None,
             params: [
-                Denomination,
+                Resource,
                 Ids,
             ],
             outputs: [

@@ -105,7 +105,7 @@ fn valid_graph() -> ManifestGraph {
                             producer: 1,
                             output: 0,
                         },
-                        constraints: vec![Constraint::ResourceIs(RES_X.into())],
+                        constraints: vec![Constraint::ResourceIs(RES_X)],
                     },
                     GraphArg::Literal(Value::U128(30)),
                 ],
@@ -674,7 +674,7 @@ fn every_malformed_mutation_rejects() {
         Err(AdmissionError::ParamKind {
             node: 1,
             param: 0,
-            expected: "denomination",
+            expected: "resource-address",
             found: "address",
         })
     );
@@ -747,7 +747,7 @@ fn every_malformed_mutation_rejects() {
             producer: 1,
             output: 0,
         },
-        constraints: vec![Constraint::ResourceIs(common::RES_Y.into())],
+        constraints: vec![Constraint::ResourceIs(common::RES_Y)],
     };
     assert_eq!(
         admit_it(&wrong_resource),
@@ -885,7 +885,7 @@ fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
             &instances,
             &TestHasher
         ),
-        Err(AdmissionError::Denomination {
+        Err(AdmissionError::WrongDenomination {
             node: 2,
             param: 0,
             ..

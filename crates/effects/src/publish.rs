@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_types::{AddressClass, Denomination, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
+use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
 
 use crate::dsl::{
     Clause, ConditionExpr, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH,
@@ -794,7 +794,7 @@ fn judge_outputs(outputs: &[Expr]) -> Result<(), DeclarationError> {
             expr => expr,
         };
         if let Some(found) = decided_class(resource)
-            && !Denomination::admits_class(found)
+            && found != AddressClass::Resource
         {
             return Err(DeclarationError::OutputNotAResource {
                 output: u32::try_from(slot).unwrap_or(u32::MAX),
@@ -867,7 +867,7 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     // routing, where it is evaluated.
     if let Some(expr) = denomination
         && let Some(found) = decided_class(expr)
-        && !Denomination::admits_class(found)
+        && found != AddressClass::Resource
     {
         return Err(DeclarationError::NotAResource { clause, found });
     }
@@ -1036,7 +1036,7 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
         // written down is that refusal decidable where the author is.
         if let Some(expr) = denomination
             && let Some(found) = decided_class(expr)
-            && !Denomination::admits_class(found)
+            && found != AddressClass::Resource
         {
             return Err(DeclarationError::ParamNotAResource { param, found });
         }

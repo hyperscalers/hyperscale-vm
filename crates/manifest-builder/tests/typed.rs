@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
-use hyperscale_vm_types::{ComponentAddr, Denomination, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -67,7 +67,7 @@ fn world() -> (MetadataCache, InstanceRegistry) {
 
 /// The resource every edge argument of `node` asserts, in argument order —
 /// `None` for an argument that is not an edge or asserts no resource.
-fn asserted(graph: &ManifestGraph, node: usize) -> Vec<Option<Denomination>> {
+fn asserted(graph: &ManifestGraph, node: usize) -> Vec<Option<ResourceAddr>> {
     graph.nodes[node]
         .args
         .iter()
@@ -97,7 +97,7 @@ fn a_typed_edge_asserts_its_own_resource() {
         .unwrap();
     b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
-    assert_eq!(asserted(&graph, 2), vec![Some(RES.into())]);
+    assert_eq!(asserted(&graph, 2), vec![Some(RES)]);
     admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
@@ -118,8 +118,8 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
         .unwrap()
         .into_array()
         .unwrap();
-    assert_eq!(taken.resource(), Some(RES.into()));
-    assert_eq!(rest.resource(), Some(RES.into()));
+    assert_eq!(taken.resource(), Some(RES));
+    assert_eq!(rest.resource(), Some(RES));
     b.call(BOB, "deposit", (taken,)).unwrap().none().unwrap();
     b.call(ALICE, "deposit", (rest.min(1),))
         .unwrap()
@@ -134,7 +134,7 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
                 producer: 2,
                 output: 1
             },
-            constraints: vec![Constraint::ResourceIs(RES.into()), Constraint::MinAmount(1)],
+            constraints: vec![Constraint::ResourceIs(RES), Constraint::MinAmount(1)],
         }]
     );
     admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
@@ -153,10 +153,10 @@ fn a_pool_types_its_units_by_itself() {
     // The units derive from the pool's own address rather than from its
     // configuration or its input, so the target alone determines them.
     let units = b.call(pool(), "stake", (funds,)).unwrap().one().unwrap();
-    assert_eq!(units.resource(), Some(unit().into()));
+    assert_eq!(units.resource(), Some(unit()));
     b.call(ALICE, "deposit", (units,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
-    assert_eq!(asserted(&graph, 3), vec![Some(unit().into())]);
+    assert_eq!(asserted(&graph, 3), vec![Some(unit())]);
     admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 
@@ -204,8 +204,8 @@ fn an_asserted_type_carries_through_the_untyped_path() {
         .unwrap()
         .into_array()
         .unwrap();
-    assert_eq!(taken.resource(), Some(RES.into()));
-    assert_eq!(rest.resource(), Some(RES.into()));
+    assert_eq!(taken.resource(), Some(RES));
+    assert_eq!(rest.resource(), Some(RES));
 }
 
 #[test]

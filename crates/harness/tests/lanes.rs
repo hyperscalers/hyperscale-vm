@@ -39,8 +39,8 @@ fn amm() -> Package {
 fn pool(mut chain: Chain) -> (Chain, amm::Amm) {
     chain.publish(amm());
     let pool = chain.instantiate::<amm::Amm>(Settings {
-        x: X.into(),
-        y: Y.into(),
+        x: X,
+        y: Y,
         fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
     });
     chain.credit(ALICE, X, 600);

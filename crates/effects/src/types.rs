@@ -3,8 +3,8 @@
 
 use hyperscale_hbor::{Hbor, to_vec};
 use hyperscale_vm_types::{
-    Address, CollectionId, ComponentAddr, Denomination, LocalKey, NativeAddr, PackageAddr,
-    PrincipalAddr, ResourceAddr, SchemeId, SubstateKey,
+    Address, CollectionId, ComponentAddr, LocalKey, NativeAddr, PackageAddr, PrincipalAddr,
+    ResourceAddr, SchemeId, SubstateKey,
 };
 
 use crate::hash::{Hash32, Hasher};
@@ -356,7 +356,7 @@ pub enum Value {
     /// and what it carries besides.
     Bucket {
         /// The resource the edge carries.
-        resource: Denomination,
+        resource: ResourceAddr,
         /// What crosses the edge: a dynamic amount, or named instances.
         content: EdgeContent,
     },
@@ -492,11 +492,11 @@ mod tests {
         assert_eq!(value.canonical_bytes(), to_vec(&value).unwrap());
         assert_canonical(&value);
         assert_canonical(&Value::Bucket {
-            resource: ResourceAddr::new([7; 31]).into(),
+            resource: ResourceAddr::new([7; 31]),
             content: EdgeContent::Fungible,
         });
         assert_canonical(&Value::Bucket {
-            resource: ResourceAddr::new([7; 31]).into(),
+            resource: ResourceAddr::new([7; 31]),
             content: EdgeContent::NonFungible { ids: vec![3, 9] },
         });
     }
@@ -581,7 +581,8 @@ mod tests {
                 "package/content = 94cb538bce2c0a6cf61a9fff32d805fb229e1db7174679c17d404686430e4103",
                 "resource/minted = 3c02dce7351c22599c33fe4dbb7952f15067c91c5f367ea7b55d8a5f68743d04",
                 "resource/minted-nf = 1c9ab560ba43abd7f4086e6b612dd21f1702df45dcf37ed00945103f07c85c04",
-                "native/xrd = 6d533c845b52439ae3b1b23e2b1c40e96e9c96ec0c67c70c9b238f1b860d1a05",
+                "native/genesis-publisher = dca99635de8cbff5c1f6b5fccaaa14489bdf24ac9f2b1be31e576da9a31c5305",
+                "resource/xrd = a7f02555ce87f089a18b700864c35942704cc093b6b5c93076e032763bc20604",
             ]
         );
     }

@@ -51,7 +51,7 @@ fn a_swap_paid_in_a_resource_the_pool_does_not_trade_is_refused() {
     let refused = admit(&graph, ALICE, &cache, &instances, &TestHasher)
         .expect_err("the pool trades a pair and this manifest pays neither side");
 
-    let AdmissionError::Denomination {
+    let AdmissionError::WrongDenomination {
         param,
         expected,
         found,

@@ -88,7 +88,7 @@ impl Presented {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_types::{Address, AddressClass, CallTarget, Denomination, ResourceAddr};
+    use hyperscale_vm_types::{Address, AddressClass, CallTarget, ResourceAddr};
 
     use super::Presented;
     use crate::types::{EdgeContent, Value};
@@ -162,7 +162,7 @@ mod tests {
             Value::Tuple(vec![Value::Address(badge)]),
             Value::List(vec![Value::Address(badge)]),
             Value::Bucket {
-                resource: Denomination::try_from(badge).expect("resource class"),
+                resource: ResourceAddr::try_from(badge).expect("resource class"),
                 content: EdgeContent::Fungible,
             },
         ] {

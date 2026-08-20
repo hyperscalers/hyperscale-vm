@@ -83,7 +83,7 @@ fn a_policy_deposits_what_nothing_claimed() {
     };
     assert_eq!(edge.producer, 2);
     assert_eq!(edge.output, 1);
-    assert_eq!(constraints, &vec![Constraint::ResourceIs(RES.into())]);
+    assert_eq!(constraints, &vec![Constraint::ResourceIs(RES)]);
     admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
 }
 

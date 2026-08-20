@@ -10,8 +10,7 @@
 
 use hyperscale_vm_effects::{GraphArg, RoleTable, StoredRule, Value};
 use hyperscale_vm_types::{
-    Address, CallTarget, ComponentAddr, Denomination, NativeAddr, PackageAddr, PrincipalAddr,
-    ResourceAddr,
+    Address, CallTarget, ComponentAddr, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
 
 use crate::builder::{Bucket, GraphBuilder, Param};
@@ -78,7 +77,6 @@ address_arg!(
     ResourceAddr,
     NativeAddr,
     CallTarget,
-    Denomination
 );
 
 impl sealed::Sealed for Vec<u8> {}
@@ -182,7 +180,6 @@ address_args!(
     ResourceAddr,
     NativeAddr,
     CallTarget,
-    Denomination
 );
 
 /// A tuple of [`Arg`]s, bound in parameter order.

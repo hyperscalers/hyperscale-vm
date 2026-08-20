@@ -7,7 +7,7 @@
 //! reads only what signatures evaluate over: each node's target, method, and
 //! bound inputs. Amounts are dynamic; types are static.
 
-use hyperscale_vm_types::{Address, Denomination, EffectTarget, Presence, SubstateKey};
+use hyperscale_vm_types::{Address, EffectTarget, Presence, ResourceAddr, SubstateKey};
 
 use crate::auth::RoleId;
 use crate::hash::Hash32;
@@ -59,7 +59,7 @@ pub enum NodeInput {
         /// right cell to the consumer.
         output: u32,
         /// The resource type the edge carries.
-        resource: Denomination,
+        resource: ResourceAddr,
         /// What the edge carries besides: a dynamic amount, or the named
         /// instances the producer's evaluated projection declares.
         content: EdgeContent,

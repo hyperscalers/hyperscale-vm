@@ -22,7 +22,7 @@ pub mod account {
     use hyperscale_vm_sdk::state::{
         AuthBase, AuthCell, Bucket, Ids, NfBucket, Proposal, Quantity, RoleTable, clock_ms,
     };
-    use hyperscale_vm_sdk::{Address, Denomination, PRIMARY};
+    use hyperscale_vm_sdk::{Address, PRIMARY, ResourceAddr};
 
     /// Funds left the account.
     #[event]
@@ -50,7 +50,7 @@ pub mod account {
         /// body ran, so there is no requested amount left to check it
         /// against and no way for the two to differ.
         #[requires(self)]
-        pub fn withdraw(&mut self, resource: Denomination, amount: Quantity) -> Bucket {
+        pub fn withdraw(&mut self, resource: ResourceAddr, amount: Quantity) -> Bucket {
             let funds = self.vault(resource).reserve(amount);
             Withdrawn {
                 amount: funds.quantity(),
@@ -103,7 +103,7 @@ pub mod account {
         /// was. The cap is the count of ids named, on `deposit_nf`'s
         /// terms.
         #[requires(self)]
-        pub fn withdraw_nf(&mut self, resource: Denomination, ids: Ids) -> NfBucket {
+        pub fn withdraw_nf(&mut self, resource: ResourceAddr, ids: Ids) -> NfBucket {
             self.holdings(resource).all().take(ids)
         }
 

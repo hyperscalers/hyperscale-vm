@@ -59,7 +59,7 @@ use hyperscale_vm_effects::MAX_AUTH_CELL_WIRE_DEPTH;
 /// skeleton is legible here; each rule's bytes stay opaque, decoded only
 /// where a rule is judged.
 pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, RoleBytes, RoleTable};
-use hyperscale_vm_types::{Address, Denomination};
+use hyperscale_vm_types::{Address, ResourceAddr};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host;
@@ -407,7 +407,7 @@ impl Bucket {
     /// lowering resolves it to a value the export is handed, so a body
     /// that asks reads an argument rather than an edge.
     #[must_use]
-    pub fn resource(&self) -> Denomination {
+    pub fn resource(&self) -> ResourceAddr {
         unimplemented!("{OFF_HOST}")
     }
 
@@ -584,7 +584,7 @@ impl NfBucket {
     /// Read by the authoring half and never by the executing one, on the
     /// terms [`Bucket::resource`] states.
     #[must_use]
-    pub fn resource(&self) -> Denomination {
+    pub fn resource(&self) -> ResourceAddr {
         self.0.resource()
     }
 
@@ -784,7 +784,7 @@ impl Keyed<Vault> {
     /// a component address unwritable rather than merely refused.
     #[must_use]
     #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
-    pub fn at(&self, key: impl Into<Denomination>) -> Slot<Vault> {
+    pub fn at(&self, key: impl Into<ResourceAddr>) -> Slot<Vault> {
         let _ = key;
         unimplemented!("{OFF_HOST}")
     }

@@ -34,8 +34,8 @@ pub use buckets::Held;
 use hyperscale_vm_effects::{ResourceKind, distinct_ids};
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, Denomination, EffectSet, ISSUER_REP, ResourceAddr,
-    SubstateKey, TxHash, encode_amount,
+    ABSENT_REP, AbortReason, Address, EffectSet, ISSUER_REP, ResourceAddr, SubstateKey, TxHash,
+    encode_amount,
 };
 pub use materialize::{Capability, Interval, MaterializeError};
 use ranges::Ranges;
@@ -76,9 +76,9 @@ pub enum SessionTrap {
     #[error("a cell holding {cell:?} was credited with {carried:?}")]
     WrongResource {
         /// What the cell is denominated in.
-        cell: Denomination,
+        cell: ResourceAddr,
         /// What the value going into it carries.
-        carried: Denomination,
+        carried: ResourceAddr,
     },
     /// Value moved through a handle on a cell that denominates nothing.
     ///
@@ -273,7 +273,7 @@ pub struct KernelSession {
     /// trusting anything the transaction said about which parameter went
     /// where — so a package whose metadata was authored rather than
     /// derived is held to the same rule as one the tracer wrote.
-    cell_resources: Vec<Option<Denomination>>,
+    cell_resources: Vec<Option<ResourceAddr>>,
     /// The linearity ledger for value in flight; see [`buckets`].
     buckets: Buckets,
     /// What this transaction brought into and out of existence, by
@@ -317,7 +317,7 @@ impl KernelSession {
     }
 
     /// What the cell behind a capability holds, where it holds value.
-    fn cell_resource(&self, rep: u32) -> Option<Denomination> {
+    fn cell_resource(&self, rep: u32) -> Option<ResourceAddr> {
         usize::try_from(rep)
             .ok()
             .and_then(|index| self.cell_resources.get(index))
@@ -331,7 +331,7 @@ impl KernelSession {
     /// The check and the answer are one lookup: a movement needs the
     /// resource, and a cell that does not name one is a cell no value
     /// moves through.
-    fn value_of(&self, rep: u32) -> Result<Denomination, SessionTrap> {
+    fn value_of(&self, rep: u32) -> Result<ResourceAddr, SessionTrap> {
         self.cell_resource(rep)
             .ok_or(SessionTrap::BytesAsValue(rep))
     }
@@ -600,7 +600,7 @@ impl KernelSession {
     pub fn mint(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
         let resource = self.issued(rep, ResourceKind::Fungible)?;
         self.supply.mint(resource, amount)?;
-        Ok(self.open_bucket(Held::Amount(amount), resource.into()))
+        Ok(self.open_bucket(Held::Amount(amount), resource))
     }
 
     /// Create the named instances of what this invocation issues.
@@ -616,7 +616,7 @@ impl KernelSession {
         // An instance's supply is its existence: what a non-fungible
         // mints is a count, which is what its holdings are measured in.
         self.supply.mint(resource, instances.len() as u128)?;
-        Ok(self.open_bucket(Held::Instances(instances), resource.into()))
+        Ok(self.open_bucket(Held::Instances(instances), resource))
     }
 
     /// Destroy what this invocation issues, consuming the bucket.
@@ -636,9 +636,9 @@ impl KernelSession {
         // burning through another instance's grant would be destroying
         // value this invocation has no authority over.
         let carried = self.buckets.resource_of(funds)?;
-        if carried != Denomination::from(resource) {
+        if carried != resource {
             return Err(SessionTrap::WrongResource {
-                cell: resource.into(),
+                cell: resource,
                 carried,
             });
         }

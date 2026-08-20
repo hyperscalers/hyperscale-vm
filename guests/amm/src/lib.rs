@@ -16,7 +16,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod amm {
-    use hyperscale_vm_sdk::Denomination;
+    use hyperscale_vm_sdk::ResourceAddr;
     use hyperscale_vm_sdk::state::{Bucket, Quantity, Rounding, UnitFixed};
 
     /// The pool's creation-fixed configuration: the pair it trades and
@@ -28,8 +28,8 @@ pub mod amm {
     /// bricked, and holding funds.
     #[config]
     struct Settings {
-        x: Denomination,
-        y: Denomination,
+        x: ResourceAddr,
+        y: ResourceAddr,
         fee: UnitFixed,
     }
 

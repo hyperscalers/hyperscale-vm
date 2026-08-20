@@ -11,7 +11,8 @@ use hyperscale_vm_types::{Address, CollectionId, ResourceAddr, SubstateKey};
 
 use crate::dsl::{Expr, TargetExpr};
 use crate::hash::Hasher;
-use crate::types::{Value, child_key, collection_id, resource_address};
+use crate::types::{Value, child_key, collection_id, native_address, resource_address};
+use crate::vocabulary::GENESIS_PUBLISHER;
 pub use crate::vocabulary::{INSTANCE, NF_VAULT, RESOURCE};
 
 /// What a resource is: divisible value, or named instances.
@@ -134,6 +135,20 @@ impl ResourceRecord {
     pub fn from_cell(bytes: &[u8]) -> Result<Self, DecodeError> {
         from_slice_with_depth(bytes, RECORD_WIRE_DEPTH)
     }
+}
+
+/// The protocol's fee and transfer resource: the genesis publisher's
+/// primary issue.
+///
+/// A resource like any other — the minter is the one address no signer
+/// reaches, which is exactly the strength the fee resource needs: no
+/// transaction can present a method of the publisher, so who may mint it
+/// is nobody, by the same arithmetic that answers it for every resource.
+/// Supply moves only where the protocol writes state directly.
+#[must_use]
+pub fn xrd(hasher: &dyn Hasher) -> ResourceAddr {
+    let publisher = native_address(hasher, GENESIS_PUBLISHER);
+    resource_address(hasher, publisher, ResourceKind::Fungible, &[])
 }
 
 /// The record cell for `resource` under `issuer`: the canonical child at
@@ -261,7 +276,7 @@ mod tests {
     };
     use crate::hash::TestHasher;
     use crate::types::native_address;
-    use crate::vocabulary::{GENESIS_PUBLISHER, XRD};
+    use crate::vocabulary::GENESIS_PUBLISHER;
 
     #[test]
     fn records_round_trip_canonically() {
@@ -282,7 +297,7 @@ mod tests {
     #[test]
     fn record_keys_separate_by_issuer_and_resource() {
         let publisher = native_address(&TestHasher, GENESIS_PUBLISHER);
-        let xrd = native_address(&TestHasher, XRD);
+        let xrd = super::xrd(&TestHasher);
         let other_issuer = Address::new([7; 31], AddressClass::Component);
         let other_resource = Address::new([8; 31], AddressClass::Resource);
 

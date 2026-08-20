@@ -93,7 +93,7 @@ fn narrow_type(
         // A resource is a denomination however it was derived, which is
         // the type `issued()` and `Bucket::resource()` hand the body.
         Term::SelfResource(..) | Term::ResourceOf(_) => {
-            Some(syn::parse_quote!(::hyperscale_vm_sdk::Denomination))
+            Some(syn::parse_quote!(::hyperscale_vm_sdk::ResourceAddr))
         }
         Term::Arg(index) => params.get(*index as usize).and_then(|(_, ty)| named(ty)),
         Term::Config(index) => config.get(*index as usize).and_then(|(_, ty)| named(ty)),

@@ -14,7 +14,7 @@
 use std::collections::BTreeSet;
 
 use hyperscale_hbor::{Hbor, to_vec};
-use hyperscale_vm_types::{CallTarget, Denomination};
+use hyperscale_vm_types::{CallTarget, ResourceAddr};
 
 use crate::hash::Hasher;
 use crate::manifest::ManifestHash;
@@ -41,7 +41,7 @@ pub enum Constraint {
     MaxAmount(u128),
     /// The edge's static resource type must be exactly this — checked at
     /// admission.
-    ResourceIs(Denomination),
+    ResourceIs(ResourceAddr),
 }
 
 /// One bound argument of a graph node.

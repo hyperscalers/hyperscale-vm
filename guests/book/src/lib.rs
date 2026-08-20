@@ -17,14 +17,14 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod book {
-    use hyperscale_vm_sdk::Denomination;
+    use hyperscale_vm_sdk::ResourceAddr;
     use hyperscale_vm_sdk::state::{Bucket, Ordered, Quantity, Ratio, Rounding, fresh_id, pack};
 
     /// The book's creation-fixed pair.
     #[config]
     struct Pair {
-        base: Denomination,
-        quote: Denomination,
+        base: ResourceAddr,
+        quote: ResourceAddr,
     }
 
     /// What placing an ask declines with.

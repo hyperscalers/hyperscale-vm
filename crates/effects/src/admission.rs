@@ -14,7 +14,7 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
-use hyperscale_vm_types::{Address, Denomination, EffectConflict, PrincipalAddr};
+use hyperscale_vm_types::{Address, EffectConflict, PrincipalAddr, ResourceAddr};
 
 use crate::dsl::{
     Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr, materialized_kind,
@@ -301,15 +301,15 @@ pub enum AdmissionError {
         "node {node} argument {param}: the method denominates this position in {expected:?}, \
          and the edge carries {found:?}"
     )]
-    Denomination {
+    WrongDenomination {
         /// The offending node.
         node: u32,
         /// The parameter position.
         param: u32,
         /// What the callee's declaration fixes the position to.
-        expected: Denomination,
+        expected: ResourceAddr,
         /// What the routed edge actually carries.
-        found: Denomination,
+        found: ResourceAddr,
     },
     /// A denomination expression that evaluated to something other than a
     /// resource address.
@@ -548,13 +548,13 @@ pub fn admit(
 /// drop a check the other makes. `verify` is the caller's own look at
 /// the resolved resource, asked before anything is consumed.
 fn bind_edge(
-    outputs: &[Vec<(Denomination, EdgeContent)>],
+    outputs: &[Vec<(ResourceAddr, EdgeContent)>],
     consumed: &mut [Vec<u32>],
     (source, output): (u32, u32),
     constraints: &[Constraint],
     param: ParamType,
     (node_index, param_index): (u32, u32),
-    verify: impl FnOnce(Denomination) -> Result<(), AdmissionError>,
+    verify: impl FnOnce(ResourceAddr) -> Result<(), AdmissionError>,
 ) -> Result<(Value, NodeInput), AdmissionError> {
     let flat = usize::try_from(source).map_err(|_| AdmissionError::TooManyNodes)?;
     let slot = usize::try_from(output).map_err(|_| AdmissionError::TooManyNodes)?;
@@ -605,7 +605,7 @@ fn bind_edge(
 
 pub(crate) fn check_constraints(
     constraints: &[Constraint],
-    resource: Denomination,
+    resource: ResourceAddr,
     node: u32,
     param: u32,
 ) -> Result<Bounds, AdmissionError> {
@@ -850,7 +850,7 @@ struct Lower<'a> {
     /// Flattened position per (intent, local node).
     flat_of: &'a [Vec<u32>],
     /// Evaluated output projections per flattened node.
-    outputs: Vec<Vec<(Denomination, EdgeContent)>>,
+    outputs: Vec<Vec<(ResourceAddr, EdgeContent)>>,
     /// Consumption count per output slot, per flattened node.
     consumed: Vec<Vec<u32>>,
     /// What each flattened node mints: an authorizing method's own
@@ -1207,7 +1207,7 @@ fn check_denominations(
                 param,
             });
         };
-        let expected = Denomination::try_from(expected).map_err(|source| AdmissionError::Eval {
+        let expected = ResourceAddr::try_from(expected).map_err(|source| AdmissionError::Eval {
             node: node_index,
             source: source.into(),
         })?;
@@ -1217,7 +1217,7 @@ fn check_denominations(
         if let Some(Value::Bucket { resource, .. }) = bound.get(position)
             && *resource != expected
         {
-            return Err(AdmissionError::Denomination {
+            return Err(AdmissionError::WrongDenomination {
                 node: node_index,
                 param,
                 expected,
@@ -1235,7 +1235,7 @@ fn project_outputs(
     eval_inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     node_index: u32,
-) -> Result<Vec<(Denomination, EdgeContent)>, AdmissionError> {
+) -> Result<Vec<(ResourceAddr, EdgeContent)>, AdmissionError> {
     let mut node_outputs = Vec::with_capacity(signature.outputs.len());
     for (slot, expr) in signature.outputs.iter().enumerate() {
         let slot_index = u32::try_from(slot).map_err(|_| AdmissionError::TooManyNodes)?;
@@ -1248,7 +1248,7 @@ fn project_outputs(
         // bucket states its content. Nothing else names an edge.
         node_outputs.push(match value {
             Value::Address(resource) => (
-                Denomination::try_from(resource).map_err(|source| AdmissionError::Eval {
+                ResourceAddr::try_from(resource).map_err(|source| AdmissionError::Eval {
                     node: node_index,
                     source: source.into(),
                 })?,
@@ -1309,7 +1309,7 @@ struct Lowering<'a> {
     target: Address,
     method: &'a str,
     node_inputs: &'a [NodeInput],
-    node_outputs: &'a [(Denomination, EdgeContent)],
+    node_outputs: &'a [(ResourceAddr, EdgeContent)],
     evidence: &'a [Presented],
     requires: Vec<Rule<JudgedLeaf>>,
     inputs: &'a EvalInputs<'a>,

@@ -179,7 +179,7 @@ fn a_delegation_in_the_wrong_resource_is_refused_at_admission() {
     assert!(
         matches!(
             refused,
-            AdmissionError::Denomination { param: 0, expected, .. } if expected == XRD.address()
+            AdmissionError::WrongDenomination { param: 0, expected, .. } if expected == XRD.address()
         ),
         "the refusal names the staked resource: {refused:?}"
     );

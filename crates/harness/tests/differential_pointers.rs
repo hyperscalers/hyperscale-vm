@@ -25,8 +25,8 @@ use hyperscale_vm_runtime::{
     validate_component,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Denomination, Effect, EffectSet, EffectTarget, Mode,
-    ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, ResourceAddr,
+    SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
 use wasmtime::{Result, Store};
@@ -36,7 +36,7 @@ const FUEL: u64 = 1_000_000_000;
 const OWNER: Address = Address::new([0x80; 31], AddressClass::Component);
 const HOLDINGS: CollectionId = CollectionId([9; 16]);
 /// What the instances in the fixture's collection are instances of.
-const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0x80; 31]));
+const RESOURCE: ResourceAddr = ResourceAddr::new([0x80; 31]);
 /// The orders the fixture holds, and the balance behind the amount cell.
 const INSTANCES: [u128; 3] = [10, 20, 30];
 const BALANCE: u128 = 42;

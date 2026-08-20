@@ -30,8 +30,8 @@ use hyperscale_vm_runtime::validate_component;
 use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Denomination, Effect, EffectSet, EffectTarget, Event,
-    Mode, Movement, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Movement,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::Context;
@@ -41,7 +41,7 @@ const RANDOMNESS: [u8; 32] = [3; 32];
 const FUEL: u64 = 10_000_000;
 const AMOUNT: u128 = 100;
 /// What the vaults in these fixtures hold.
-const RESOURCE: Denomination = Denomination::Resource(ResourceAddr::new([0xE1; 31]));
+const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0

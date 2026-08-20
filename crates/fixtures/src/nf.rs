@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
     Totality, Value, holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
-use hyperscale_vm_types::{ComponentAddr, Denomination, Presence};
+use hyperscale_vm_types::{ComponentAddr, Presence, ResourceAddr};
 
 /// The mint's declaration: the instance-data write, and the one-way
 /// door beside it. A mint creates; it never lands on an instance that
@@ -233,7 +233,7 @@ pub fn deposit(
 pub fn withdraw(
     builder: &mut TypedBuilder<'_>,
     holder: ComponentAddr,
-    resource: impl Into<Denomination>,
+    resource: impl Into<ResourceAddr>,
     ids: &[u64],
 ) -> Result<Bucket, TypedError> {
     let ids = Value::List(ids.iter().copied().map(Value::U64).collect());

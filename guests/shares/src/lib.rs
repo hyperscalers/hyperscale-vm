@@ -48,13 +48,13 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod shares {
-    use hyperscale_vm_sdk::Denomination;
+    use hyperscale_vm_sdk::ResourceAddr;
     use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity, Rounding, burn, mint};
 
     /// What the vault is denominated in.
     #[config]
     struct Settings {
-        asset: Denomination,
+        asset: ResourceAddr,
     }
 
     /// What an entry point declines with.

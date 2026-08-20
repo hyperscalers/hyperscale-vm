@@ -826,7 +826,7 @@ mod tests {
             MethodSignature {
                 totality: Totality::Fallible,
                 outputs: vec![Expr::Literal(Value::Bucket {
-                    resource: resource(0xE1).into(),
+                    resource: resource(0xE1),
                     content: EdgeContent::NonFungible { ids },
                 })],
                 ..MethodSignature::default()

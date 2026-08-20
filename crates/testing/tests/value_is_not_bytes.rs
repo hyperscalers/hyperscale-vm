@@ -21,11 +21,11 @@
 //! way to spell a byte write to one, so a rule the macro enforced would
 //! be a rule an artifact sidesteps.
 
-use hyperscale_vm_effects::vocabulary::{AUTH, VAULT, XRD};
+use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, AuthBase, AuthCell, Clause, ConditionExpr, Expr, MethodSignature, ModeExpr, PRIMARY,
     PackageMetadata, ParamType, Presented, RoleTable, RuleExpr, RuleLeaf, SlotId, StoredRule,
-    TargetExpr, TestHasher, Totality, Value, native_address,
+    TargetExpr, TestHasher, Totality, Value, xrd as protocol_xrd,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, account, principal, resource};
@@ -42,9 +42,9 @@ const TREASURE: ResourceAddr = resource(0xE7);
 /// A package's own first slot — nothing protocol about it.
 const POT: SlotId = SlotId(16);
 
-/// The native fee resource, which no package in this world issues.
+/// The protocol fee resource, which no package in this world issues.
 fn xrd() -> Address {
-    native_address(&TestHasher, XRD).into()
+    protocol_xrd(&TestHasher).into()
 }
 
 fn own(slot: SlotId, material: Vec<Expr>) -> TargetExpr {

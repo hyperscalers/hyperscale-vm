@@ -552,7 +552,7 @@ mod tests {
 
     use hyperscale_vm_effects::{Condition, Declaration, DeclaredAccess};
     use hyperscale_vm_types::{
-        Address, AddressClass, CollectionId, Denomination, Effect, EffectTarget, Mode, Presence,
+        Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Presence, ResourceAddr,
         encode_amount,
     };
 
@@ -962,7 +962,7 @@ mod tests {
             target: EffectTarget::Point(key(1)),
             mode: Mode::Write,
         };
-        let materialise = |holds: Vec<Option<Denomination>>| {
+        let materialise = |holds: Vec<Option<ResourceAddr>>| {
             KernelSession::materialize(
                 OverlayStore::new(Arc::new(MemoryStore::new())),
                 &Declaration {

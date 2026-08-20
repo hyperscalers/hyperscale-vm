@@ -49,7 +49,7 @@ fn arb_value() -> impl Strategy<Value = Value> {
             .prop_map(|byte| Value::Address(Address::new([byte; 31], AddressClass::Component))),
         (any::<u8>(), option::of(vec(any::<u64>(), 0..4))).prop_map(|(byte, ids)| {
             Value::Bucket {
-                resource: ResourceAddr::new([byte; 31]).into(),
+                resource: ResourceAddr::new([byte; 31]),
                 content: ids.map_or(EdgeContent::Fungible, |ids| EdgeContent::NonFungible {
                     ids,
                 }),
