@@ -16,23 +16,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Formatting wants the pinned nightly: the import grouping in
-      # rustfmt.toml is a nightly option, and a stable `cargo fmt` ignores
-      # it silently rather than enforcing it.
+      # Both gates run on nightly. The import grouping in rustfmt.toml is
+      # a nightly option a stable `cargo fmt` ignores silently, and
+      # clippy's newest lints are worth hearing before they reach the
+      # channel the crates build on — neither judgment is a consensus
+      # artifact, so riding the moving channel costs only churn.
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-06-08
-          components: rustfmt
-      # Everything else builds on the channel rust-toolchain.toml pins.
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.96.0"
-          components: clippy
+          toolchain: nightly
+          components: rustfmt, clippy
+      # The crates themselves build on the channel rust-toolchain.toml
+      # pins, which the test job takes.
       - uses: swatinem/rust-cache@v2
       - name: Cargo Fmt
-        run: cargo +nightly-2026-06-08 fmt --all --check
+        run: cargo +nightly fmt --all --check
       - name: Cargo Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo +nightly clippy --all-targets -- -D warnings
 
   test:
     name: Test Suite

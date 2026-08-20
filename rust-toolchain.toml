@@ -3,9 +3,10 @@
 # that moves weekly. Pinned exactly — upgrades are deliberate events,
 # never drift.
 #
-# Two things still want a pinned nightly, and both are scoped:
-# `cargo +nightly-2026-06-08 fmt` for the import grouping `rustfmt.toml`
-# asks for, and the guest artifacts, which pin their own toolchain in
+# The lint gates ride nightly instead: `cargo +nightly fmt` for the import
+# grouping `rustfmt.toml` asks for, and `cargo +nightly clippy` so a lint
+# is heard before it reaches this channel. Neither verdict is a consensus
+# artifact. The guest artifacts do want a pin, and carry their own in
 # `guests/rust-toolchain.toml` because the deploy-time stack bound needs
 # a prelude without panic formatting.
 [toolchain]
