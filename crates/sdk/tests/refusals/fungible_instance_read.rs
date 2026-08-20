@@ -14,7 +14,7 @@ mod contract {
 
     impl Contract {
         pub fn note(&mut self, id: u64) {
-            if let Some(coupon) = Coupon::filed(id) {
+            if let Some(coupon) = Coupon::at(id) {
                 let _ = coupon;
                 self.noted.set(id);
             }

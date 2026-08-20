@@ -14,7 +14,7 @@ mod contract {
 
     impl Contract {
         pub fn note(&mut self, id: u64) {
-            if let Some(badge) = OwnerBadge::filed(id) {
+            if let Some(badge) = OwnerBadge::at(id) {
                 let _ = badge;
                 self.noted.set(id);
             }

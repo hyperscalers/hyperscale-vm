@@ -58,7 +58,7 @@ mod issuer {
         /// minted: the issuer reads its own instance's record and acts
         /// on what it holds.
         pub fn note_operator(&mut self, id: u64) {
-            if let Some(seat) = Seat::filed(id) {
+            if let Some(seat) = Seat::at(id) {
                 self.noted.set(seat.operator);
             }
         }

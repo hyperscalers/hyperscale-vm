@@ -1246,13 +1246,13 @@ impl<'a> Lowerer<'a> {
         Eval::plain(quote!(#leaf.create(#record)))
     }
 
-    /// Lower `Name::filed(id)` — the record one instance carries, read at
+    /// Lower `Name::at(id)` — the record one instance carries, read at
     /// the cell its mint filed it in.
     ///
     /// Issuer-side by construction rather than by rule: the mark is the
     /// package's own type, so there is no spelling for a foreign
     /// instance's data, and reaching one is a call to whoever issues it.
-    fn lower_filed(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
+    fn lower_at(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
         if issued.kind != ResourceKind::NonFungible {
             self.error(
                 call.func.span(),
@@ -2646,12 +2646,12 @@ impl<'a> Lowerer<'a> {
             };
             return self.lower_record_create(&issued, call);
         }
-        // `Resource::filed(id)` — the record one instance carries.
-        if name == "filed" {
-            let Some(issued) = self.issuing_mark(call, "filed") else {
+        // `Resource::at(id)` — the record one instance carries.
+        if name == "at" {
+            let Some(issued) = self.issuing_mark(call, "at") else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
-            return self.lower_filed(&issued, call);
+            return self.lower_at(&issued, call);
         }
         // `Resource::burn(funds)` — the inverse, under the same grant.
         // Fungible alone: an instance leaves existence by no vocabulary
