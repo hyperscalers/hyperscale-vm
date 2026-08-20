@@ -8,7 +8,6 @@ error[E0277]: the trait bound `u128: AddressArg` is not satisfied
    |
    = help: the following other types implement trait `AddressArg`:
              ComponentAddr
-             NativeAddr
              PackageAddr
              PrincipalAddr
              ResourceAddr

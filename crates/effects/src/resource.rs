@@ -167,11 +167,6 @@ pub enum SealedBehaviour {
     Deposit,
 }
 
-/// The decoder cap for a sealed-rules list: the entries, one entry's
-/// pair, and the byte string holding one rule — the same three levels a
-/// role table decodes under, for the same reason.
-pub const MAX_SEALED_RULES_WIRE_DEPTH: usize = 3;
-
 /// The sealed rules a resource's address commits to: rules by
 /// behaviour, each as the bytes it was handed.
 ///

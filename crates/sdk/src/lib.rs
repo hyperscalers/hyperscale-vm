@@ -159,7 +159,7 @@ pub use hyperscale_vm_effects::{
 #[cfg(feature = "macros")]
 pub use hyperscale_vm_sdk_macros::blueprint;
 pub use hyperscale_vm_types::{
-    Address, CallTarget, ComponentAddr, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr,
+    Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
 pub use sym::{Addr, Amount, Blob, Bucket, Flag, Key, Kind, Num, Opaque, Seq, Sym};
 pub use trace::{Access, Interval, Leaf, Requirement, Trace};

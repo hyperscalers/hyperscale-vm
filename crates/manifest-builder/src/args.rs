@@ -10,7 +10,7 @@
 
 use hyperscale_vm_effects::{GraphArg, RoleTable, StoredRule, Value};
 use hyperscale_vm_types::{
-    Address, CallTarget, ComponentAddr, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr,
+    Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
 
 use crate::builder::{Bucket, GraphBuilder, Param};
@@ -75,7 +75,6 @@ address_arg!(
     ComponentAddr,
     PackageAddr,
     ResourceAddr,
-    NativeAddr,
     CallTarget,
 );
 
@@ -178,7 +177,6 @@ address_args!(
     ComponentAddr,
     PackageAddr,
     ResourceAddr,
-    NativeAddr,
     CallTarget,
 );
 

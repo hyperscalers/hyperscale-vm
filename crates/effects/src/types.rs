@@ -97,6 +97,11 @@ pub const fn package_slot(n: u16) -> SlotId {
 /// assigned or it is not an address, and adding one is a protocol version
 /// change. Where a class tag is wire-visible and a slot is internal to
 /// a derivation, both are halves of one namespace policy.
+///
+/// A number is derivation material — the address is a hash over it — so
+/// it names one role for as long as the protocol runs and is never
+/// reassigned. The sequence has gaps for that reason, and a gap is not a
+/// free number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
 pub struct NativeRole(pub u16);

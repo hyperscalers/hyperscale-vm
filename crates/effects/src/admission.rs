@@ -1469,13 +1469,11 @@ fn edge_bounds(node_inputs: &[NodeInput]) -> Vec<EdgeBound> {
             NodeInput::Edge {
                 source,
                 output,
-                content,
                 bounds,
                 ..
             } => Some(EdgeBound {
                 source: *source,
                 output: *output,
-                kind: ResourceKind::of(content),
                 param: u32::try_from(position).unwrap_or(u32::MAX),
                 bounds: *bounds,
             }),

@@ -851,7 +851,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![ResourceKind::NonFungible]
         );
-        assert_eq!(routing.calls[1].edges[0].kind, ResourceKind::NonFungible);
+        assert_eq!(routing.calls[1].edges[0].source, 0);
     }
 
     #[test]
@@ -983,7 +983,6 @@ mod tests {
                 .any(|arg| matches!(arg, CallArg::Bucket { .. })),
             "the consuming method's own ABI carries no bucket"
         );
-        assert_eq!(call.edges[0].kind, ResourceKind::Fungible);
         assert_eq!(
             call.edges[0].bounds,
             Bounds {

@@ -89,10 +89,9 @@ pub use publish::{
     SignatureError, check_abi, check_declarations, check_metadata, check_signature,
 };
 pub use resource::{
-    Fungibility, MAX_RESOURCE_MATERIAL_PARTS, MAX_SEALED_RULES_WIRE_DEPTH, RECORD_WIRE_DEPTH,
-    ResourceKind, ResourceMeta, ResourceRecord, ResourceRules, SealedBehaviour,
-    holdings_collection, holdings_entry, holdings_range, instance_data_key, issued_resource,
-    resource_record_key, xrd,
+    Fungibility, MAX_RESOURCE_MATERIAL_PARTS, RECORD_WIRE_DEPTH, ResourceKind, ResourceMeta,
+    ResourceRecord, ResourceRules, SealedBehaviour, holdings_collection, holdings_entry,
+    holdings_range, instance_data_key, issued_resource, resource_record_key, xrd,
 };
 pub use route::{
     FrameDeclaration, MAX_MANIFEST_NODES, PrefixShardResolver, Routing, ShardResolver, route,

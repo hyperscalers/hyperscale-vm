@@ -108,14 +108,16 @@ use std::collections::BTreeMap;
 use hyperscale_vm_effects::vocabulary::{
     AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT,
 };
-use hyperscale_vm_effects::{MAX_RULE_DEPTH, PACKAGE_SLOT_BASE, Rule, SlotId, well_formed};
+use hyperscale_vm_effects::{
+    MAX_RULE_DEPTH, PACKAGE_SLOT_BASE, ResourceKind, Rule, SlotId, well_formed,
+};
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 
 use crate::lower::{Field, FieldKind, Lowerer, Target};
-use crate::term::{Op, ResourceKind};
+use crate::term::{Op, emit_kind};
 
 /// Derive a contract's package from its module: the declaration routing
 /// reads, and the component that executes it.
@@ -825,7 +827,7 @@ fn guarded_identity(
             // mark is the item's rather than a literal repeated at every
             // gate that names it.
             if let Some((_, mark, kind)) = issued {
-                let kind = kind.emit();
+                let kind = emit_kind(*kind);
                 let mark = syn::LitByteStr::new(mark, identity.span());
                 return Ok((quote!(__t.self_resource(#kind, #mark)), false));
             }
@@ -865,7 +867,7 @@ fn guarded_identity(
                 .and_then(|name| resources.iter().find(|(r, ..)| *r == name));
             match (named, resolved) {
                 (true, Some((_, mark, kind))) => {
-                    let kind = kind.emit();
+                    let kind = emit_kind(*kind);
                     let mark = syn::LitByteStr::new(mark, identity.span());
                     Ok((quote!(__t.self_resource(#kind, #mark)), false))
                 }

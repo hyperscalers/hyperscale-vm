@@ -12,30 +12,21 @@
 //! runs before execution and never reads state. The macro's job is to say
 //! so at the line that did it.
 
+use hyperscale_vm_effects::ResourceKind;
 use proc_macro2::TokenStream;
 use quote::quote;
 
-/// A declared resource's kind, in the macro's own IR.
+/// The SDK path a declared resource's kind emits as.
 ///
-/// Mirrors `hyperscale_vm_sdk::ResourceKind` without depending on it: the
-/// macro only ever emits the path, and what it emits is decided where the
-/// resource is declared or where the operation fixes it — `mint` is
-/// fungible by construction, a `#[resource]` attribute states its own.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ResourceKind {
-    /// Divisible value.
-    Fungible,
-    /// Named instances.
-    NonFungible,
-}
-
-impl ResourceKind {
-    /// The SDK path this kind emits as.
-    pub fn emit(self) -> TokenStream {
-        match self {
-            Self::Fungible => quote!(::hyperscale_vm_sdk::ResourceKind::Fungible),
-            Self::NonFungible => quote!(::hyperscale_vm_sdk::ResourceKind::NonFungible),
-        }
+/// The kind itself is the vocabulary's, read rather than restated — the
+/// macro's only interest in it is the path it writes into a body, and
+/// what it writes is decided where the resource is declared or where the
+/// operation fixes it: `mint` is fungible by construction, a
+/// `#[resource]` attribute states its own.
+pub fn emit_kind(kind: ResourceKind) -> TokenStream {
+    match kind {
+        ResourceKind::Fungible => quote!(::hyperscale_vm_sdk::ResourceKind::Fungible),
+        ResourceKind::NonFungible => quote!(::hyperscale_vm_sdk::ResourceKind::NonFungible),
     }
 }
 
@@ -234,7 +225,7 @@ impl Term {
                 )
             }
             Self::SelfResource(kind, mark) => {
-                let kind = kind.emit();
+                let kind = emit_kind(*kind);
                 let mark = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
                 quote!(__t.self_resource(#kind, #mark).cast::<::hyperscale_vm_sdk::Opaque>())
             }

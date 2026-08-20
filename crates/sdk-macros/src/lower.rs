@@ -40,6 +40,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use hyperscale_vm_effects::ResourceKind;
 use hyperscale_vm_effects::vocabulary::{INSTANCE, RESOURCE};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
@@ -47,7 +48,7 @@ use syn::spanned::Spanned;
 
 use crate::mode::HandleMode;
 use crate::syntax::byte_literal;
-use crate::term::{Op, ResourceKind, Slot, Term};
+use crate::term::{Op, Slot, Term};
 use crate::{holds_role_table, is_named};
 
 /// What kind of state a component field holds, and under which slot.

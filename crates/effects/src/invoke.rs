@@ -117,10 +117,6 @@ pub struct EdgeBound {
     pub source: u32,
     /// Which of the producer's outputs the edge carries.
     pub output: u32,
-    /// The declared shape of the carried cell, which is what the bound is
-    /// judged over: a fungible edge's amount, a non-fungible edge's id
-    /// count.
-    pub kind: ResourceKind,
     /// The consuming node's declared parameter the edge is bound to —
     /// what a refusal names, since the signer wrote the bound against a
     /// parameter and not against an ABI position.
