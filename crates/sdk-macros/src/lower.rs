@@ -1139,10 +1139,17 @@ impl<'a> Lowerer<'a> {
                 || format!("configuration slot {slot}"),
                 |(name, _)| format!("`config.{name}`"),
             ),
-            Term::SelfResource(_, mark) => core::str::from_utf8(mark).map_or_else(
-                |_| "a resource this instance issues".into(),
-                |mark| format!("`issued(b\"{mark}\")`"),
-            ),
+            // A mark is a declaration's own name, so the declaration is
+            // what a reader goes back to — the mark itself is a spelling
+            // no body writes.
+            Term::SelfResource(_, mark) => self
+                .resources
+                .iter()
+                .find(|(_, declared, _)| declared == mark)
+                .map_or_else(
+                    || "a resource this instance issues".into(),
+                    |(name, ..)| format!("`issued({name})`"),
+                ),
             Term::ResourceOf(inner) => match **inner {
                 Term::Arg(index) => format!("argument {index}'s resource"),
                 _ => "the resource of a value the body holds".into(),
