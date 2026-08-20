@@ -16,11 +16,9 @@ mod contract {
     }
 
     impl Contract {
-        // A rule matches presented claims; possession is `#[proves]`.
-        // Admitting a `holds` here — under a disjunction, or conjoined
-        // beside the rule — would make authority a predicate engine,
-        // which is the fence the grammar keeps.
-        #[requires(holds(badge) || owner)]
+        // A threshold branch is inside a rule, so it is refused there
+        // too — depth does not buy possession a way in.
+        #[requires(n_of(2, owner, holds(badge)))]
         pub fn operate(&mut self, badge: Address, fee: Quantity) {
             let _ = badge;
             self.fee.set(fee);

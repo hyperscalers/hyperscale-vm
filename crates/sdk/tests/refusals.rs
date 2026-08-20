@@ -82,8 +82,34 @@ fn the_lowering_refuses_a_mark_it_can_see_is_wrong() {
 fn the_lowering_refuses_authority_a_caller_names() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/caller_named_branch.rs");
-    refuse.compile_fail("tests/refusals/holds_in_a_rule.rs");
     refuse.compile_fail("tests/refusals/caller_named_threshold.rs");
+}
+
+/// Possession is not a rule leaf, at any depth.
+///
+/// `#[requires]` is a match over presented claims and `#[proves]` is
+/// where possession is spelled, so a `holds` conjoined beside a rule is
+/// refused on the same terms as one nested inside a threshold or a
+/// disjunction: admitting any of them makes authority a predicate
+/// engine.
+#[test]
+fn the_lowering_refuses_possession_inside_a_rule() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/holds_in_a_rule.rs");
+    refuse.compile_fail("tests/refusals/holds_beside_a_rule.rs");
+    refuse.compile_fail("tests/refusals/nested_holds.rs");
+    refuse.compile_fail("tests/refusals/holds_under_a_branch.rs");
+}
+
+/// A gate leaf names one authority.
+///
+/// A badge the package issues and an address fixed at creation are
+/// different claims, so a name that resolves to both is refused rather
+/// than resolved by the order the lowering happens to look.
+#[test]
+fn the_lowering_refuses_an_authority_named_twice() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/named_both.rs");
 }
 
 /// A threshold the vocabulary holds no rule for, refused where it was

@@ -1,5 +1,5 @@
-error: possession conjoins as its own condition; it cannot sit inside a rule
-  --> tests/refusals/holds_in_a_rule.rs:22:20
+error: a `#[requires]` rule names claims only; possession is spelled `#[proves(badge)]`
+  --> tests/refusals/holds_in_a_rule.rs:23:20
    |
-22 |         #[requires(holds(badge) || owner)]
+23 |         #[requires(holds(badge) || owner)]
    |                    ^^^^^

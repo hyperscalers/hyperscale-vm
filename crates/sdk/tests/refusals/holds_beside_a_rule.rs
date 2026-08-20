@@ -16,11 +16,10 @@ mod contract {
     }
 
     impl Contract {
-        // A rule matches presented claims; possession is `#[proves]`.
-        // Admitting a `holds` here — under a disjunction, or conjoined
-        // beside the rule — would make authority a predicate engine,
-        // which is the fence the grammar keeps.
-        #[requires(holds(badge) || owner)]
+        // Conjoined beside the rule rather than within it, and refused
+        // on the same terms: `#[requires]` names claims, and possession
+        // is spelled `#[proves]`.
+        #[requires(owner && holds(badge))]
         pub fn operate(&mut self, badge: Address, fee: Quantity) {
             let _ = badge;
             self.fee.set(fee);

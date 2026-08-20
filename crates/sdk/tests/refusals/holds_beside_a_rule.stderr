@@ -1,0 +1,5 @@
+error: a `#[requires]` rule names claims only; possession is spelled `#[proves(badge)]`
+  --> tests/refusals/holds_beside_a_rule.rs:22:29
+   |
+22 |         #[requires(owner && holds(badge))]
+   |                             ^^^^^

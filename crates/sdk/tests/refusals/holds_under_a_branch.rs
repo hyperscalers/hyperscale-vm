@@ -8,6 +8,7 @@ mod contract {
     #[config]
     struct Settings {
         owner: Address,
+        deputy: Address,
     }
 
     #[state]
@@ -16,11 +17,10 @@ mod contract {
     }
 
     impl Contract {
-        // A rule matches presented claims; possession is `#[proves]`.
-        // Admitting a `holds` here — under a disjunction, or conjoined
-        // beside the rule — would make authority a predicate engine,
-        // which is the fence the grammar keeps.
-        #[requires(holds(badge) || owner)]
+        // Conjoined, but inside a branch of a disjunction: the
+        // conjunction the plan admits is the top-level one, and this is
+        // not it.
+        #[requires(owner || (holds(badge) && deputy))]
         pub fn operate(&mut self, badge: Address, fee: Quantity) {
             let _ = badge;
             self.fee.set(fee);

@@ -680,16 +680,18 @@ fn guarded_identity(
     resources: &[(String, Vec<u8>)],
     params: &[(String, syn::Type)],
 ) -> syn::Result<(TokenStream2, bool)> {
-    // Possession is a condition of its own, conjoined beside the rule;
-    // inside one — under a disjunction or a threshold — it would make
-    // authority a predicate engine, which is the fence this grammar
-    // keeps.
+    // Possession has its own authoring surface, and `#[requires]` is
+    // not it: a rule is a match over presented claims, and a `holds`
+    // anywhere in one — beside a rule under a conjunction as much as
+    // within it under a disjunction — would make authority a predicate
+    // engine, which is the fence this grammar keeps.
     if let syn::Expr::Call(call) = identity
         && matches!(call.func.as_ref(), syn::Expr::Path(path) if path.path.is_ident("holds"))
     {
         return Err(syn::Error::new(
             identity.span(),
-            "possession conjoins as its own condition; it cannot sit inside a rule",
+            "a `#[requires]` rule names claims only; possession is spelled \
+             `#[proves(badge)]`",
         ));
     }
     let refuse = || {
@@ -711,18 +713,30 @@ fn guarded_identity(
                      or a configuration field instead",
                 ));
             }
+            let issued = resources.iter().find(|(r, _)| *r == name);
+            let configured = config_fields.iter().position(|(f, _)| *f == name);
+            // The two are different authorities — a badge this instance
+            // issues, an address fixed where it was created — so a name
+            // that is both says nothing about which the gate means.
+            if issued.is_some() && configured.is_some() {
+                return Err(syn::Error::new(
+                    identity.span(),
+                    "this names both a resource the package issues and a configuration \
+                     field, so which authority the gate means is not written — rename one",
+                ));
+            }
             // A resource the package declares is one this instance
             // issues, so holding it is operating this instance and the
             // mark is the item's rather than a literal repeated at every
             // gate that names it.
-            if let Some((_, mark)) = resources.iter().find(|(r, _)| *r == name) {
+            if let Some((_, mark)) = issued {
                 let mark = syn::LitByteStr::new(mark, identity.span());
                 return Ok((quote!(__t.self_resource(#mark)), false));
             }
             // Creation-fixed, so the claim is the target's own: an
             // object whose address derives from no key admits somebody
             // by naming them where it was created.
-            let Some(slot) = config_fields.iter().position(|(f, _)| *f == name) else {
+            let Some(slot) = configured else {
                 return Err(refuse());
             };
             let slot = u32::try_from(slot).unwrap_or(u32::MAX);

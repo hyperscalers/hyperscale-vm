@@ -1,0 +1,5 @@
+error: this names both a resource the package issues and a configuration field, so which authority the gate means is not written — rename one
+  --> tests/refusals/named_both.rs:24:20
+   |
+24 |         #[requires(owner)]
+   |                    ^^^^^
