@@ -34,8 +34,8 @@ pub use buckets::Held;
 use hyperscale_vm_effects::distinct_ids;
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, CollectionId, Denomination, EffectSet, ISSUER_REP,
-    ResourceAddr, SubstateKey, TxHash, encode_amount,
+    ABSENT_REP, AbortReason, Address, Denomination, EffectSet, ISSUER_REP, ResourceAddr,
+    SubstateKey, TxHash, encode_amount,
 };
 pub use materialize::{Capability, Interval, MaterializeError};
 use ranges::Ranges;
@@ -370,26 +370,6 @@ impl KernelSession {
     /// Any [`SessionTrap`] the store raises.
     pub fn declared_cell(&mut self, key: SubstateKey) -> Result<Vec<u8>, SessionTrap> {
         Ok(self.store.read(key)?.unwrap_or_default())
-    }
-
-    /// Whether the holder keeps the instance at `order`, for the
-    /// kernel's custody gate — the same view an entry capability serves,
-    /// over the collection the gate admission lowered names, which is
-    /// declared by construction like the gate's cells.
-    ///
-    /// # Errors
-    ///
-    /// Any [`SessionTrap`] the store raises.
-    pub fn declared_holds_instance(
-        &mut self,
-        owner: Address,
-        collection: CollectionId,
-        order: u128,
-    ) -> Result<bool, SessionTrap> {
-        Ok(!self
-            .store
-            .entries_in_range(owner, collection, order, order, 1)?
-            .is_empty())
     }
 
     /// A fresh read through a read capability.

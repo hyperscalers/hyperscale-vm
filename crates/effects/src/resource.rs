@@ -112,8 +112,8 @@ pub fn resource_record_key(
 ///
 /// The declaring side spells the same fold as an entry target with the
 /// resource as its collection material; this is that identity for
-/// everything that consults holdings directly — the custody gate's
-/// possession read, the linearity oracle's scan.
+/// everything that consults holdings directly — a possession
+/// condition's read, the linearity oracle's scan.
 #[must_use]
 pub fn holdings_collection(
     hasher: &dyn Hasher,
@@ -150,14 +150,11 @@ pub fn holdings_range(resource: Expr, cap: u32) -> TargetExpr {
 /// One entry of that same interval: the instance of `resource` this
 /// holder keeps at `id`.
 ///
-/// The custody gate admits a possession read only as this target, keyed
-/// by exactly the badge and id it mints ([`MethodSignature::gate`]) —
-/// which is what makes the instance verified and the instance minted one
-/// thing. An entry read where the interval used to be is also the
-/// cheaper access: one leaf rather than a scan the whole id space is
-/// declared over.
-///
-/// [`MethodSignature::gate`]: crate::metadata::MethodSignature::gate
+/// Minting an instance claim takes a `Holds { Present }` condition over
+/// exactly this target, keyed by the same badge and id expressions the
+/// mint names — which is what makes the instance verified and the
+/// instance minted one thing. An entry is also the cheaper access: one
+/// leaf rather than a scan the whole id space is declared over.
 #[must_use]
 pub fn holdings_entry(resource: Expr, id: Expr) -> TargetExpr {
     TargetExpr::Entry {

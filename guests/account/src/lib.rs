@@ -6,13 +6,14 @@
 //! composes under the sender's single signature — the recipient is not
 //! asked for one, because nothing about a deposit is theirs to refuse.
 //!
-//! The stored-authority cell is a frame this package splices without a
-//! codec: `[u32 LE base_len][base]`, optionally followed by
-//! `[u64 LE effective_at_ms][base']` running to the cell's end, where
-//! `base = [u64 LE recovery_delay_ms][role-set bytes]`. The role-set
-//! bytes are opaque here — admission validated them, the kernel's gate
-//! decodes them — so every operation below is concatenation, integer
-//! reads at fixed offsets, and one saturating add.
+//! The stored-authority cell is an `AuthCell`: a governing `AuthBase` —
+//! the recovery delay and the `RoleTable` — and at most one pending
+//! `Proposal`, a whole replacement base with the instant it starts
+//! governing. The bodies below read and write it through that codec, so
+//! every operation is a field of the decoded cell, one comparison of the
+//! proposal's instant against the transaction clock, and one saturating
+//! add. A role's rule bytes stay opaque here: the kernel decodes them
+//! where it judges a condition against them.
 
 use hyperscale_vm_sdk::blueprint;
 
