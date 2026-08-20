@@ -56,6 +56,9 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/minted_wrong_kind.rs");
     refuse.compile_fail("tests/refusals/unmarked_mint.rs");
     refuse.compile_fail("tests/refusals/record_of_undeclared.rs");
+    refuse.compile_fail("tests/refusals/instance_of_undeclared.rs");
+    refuse.compile_fail("tests/refusals/unquantized_record.rs");
+    refuse.compile_fail("tests/refusals/overstated_record.rs");
     refuse.compile_fail("tests/refusals/table_read_without_presence.rs");
     refuse.compile_fail("tests/refusals/table_gate_second_write.rs");
     refuse.compile_fail("tests/refusals/colliding_marks.rs");

@@ -1,0 +1,5 @@
+error: `at` is called on a declared `#[resource]` struct — `Name::at(..)`. The derivation folds the resource's kind, and the declaration is where a kind is stated
+  --> tests/refusals/instance_of_undeclared.rs:15:16
+   |
+15 |             if Address::at(id).is_some() {
+   |                ^^^^^^^
