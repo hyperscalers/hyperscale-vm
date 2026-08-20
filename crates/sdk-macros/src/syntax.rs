@@ -1,8 +1,7 @@
 //! Syntax readers more than one walk needs.
 //!
 //! One copy per reading, because two copies of a reader is how the walks
-//! start seeing different programs: each fact has exactly one definition
-//! here.
+//! start seeing different programs.
 
 /// The author's own name for the `index`-th declared parameter, or
 /// `None` past the list — each caller supplies its own stand-in, and the

@@ -197,7 +197,6 @@ mod tests {
     use crate::manifest::Bounds;
     use crate::metadata::{MetadataCache, PackageMetadata};
     use crate::publish::{AbiError, SignatureError};
-    use crate::resource::ResourceKind;
     use crate::route::MAX_MANIFEST_NODES;
     use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
     use crate::test_worlds::{
@@ -807,8 +806,8 @@ mod tests {
     #[test]
     fn a_bucket_projection_types_its_edge_and_cell_shape() {
         // A producer whose output projection is a non-fungible bucket:
-        // the lowered call frames its cell as an id list, and the
-        // consumer's bound is judged over the same shape.
+        // the lowered call frames its cell as the id list the
+        // declaration named, and the consumer's bound resolves at it.
         let ids = vec![3, 9];
         let mut package = PackageMetadata::default();
         package.methods.insert(
@@ -844,14 +843,11 @@ mod tests {
         };
         let routing = routed(&graph, &cache, &instances);
         assert_eq!(
-            routing.calls[0]
-                .outputs
-                .iter()
-                .map(ResourceKind::of)
-                .collect::<Vec<_>>(),
-            vec![ResourceKind::NonFungible]
+            routing.calls[0].outputs,
+            vec![EdgeContent::NonFungible { ids: vec![3, 9] }]
         );
-        assert_eq!(routing.calls[1].edges[0].source, 0);
+        let edge = &routing.calls[1].edges[0];
+        assert_eq!((edge.source, edge.output), (0, 0));
     }
 
     #[test]

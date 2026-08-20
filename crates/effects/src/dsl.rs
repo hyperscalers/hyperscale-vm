@@ -713,7 +713,7 @@ pub struct EvalInputs<'a> {
 /// The sealed rules an envelope presented, by the address each record
 /// derives — first registration wins, and a false record registers a
 /// different resource.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SealedResources(BTreeMap<ResourceAddr, ResourceRules>);
 
 impl SealedResources {
