@@ -78,7 +78,7 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
             lottery_addr().enter(b, who, funds)
         })
     };
-    let draw = graph(|b| lottery_addr().draw(b));
+    let draw = graph(|b| lottery_addr().draw(b, u64::from(lottery::ROUND_CAP)));
 
     // The empty round first: nobody has entered, and the draw still
     // settles — recording what it drew and naming no winner.
@@ -141,4 +141,24 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
         }),
         "the round settles on the draw and the entrant it selects"
     );
+}
+
+/// The page a draw reads is the caller's choice, and the caller's bill:
+/// one method, two calls, two caps — priced apart by exactly the entries
+/// the larger page may walk.
+#[test]
+fn the_same_draw_at_two_caps_is_priced_apart() {
+    use hyperscale_vm_effects::{DEPTH_UNITS, footprint};
+
+    let world = world();
+    let declared = |cap: u64| {
+        let graph = graph_in(&world, |b| lottery_addr().draw(b, cap));
+        sharded_routing(&world, &graph)
+            .per_shard
+            .values()
+            .map(footprint)
+            .sum::<u64>()
+    };
+    let (page, larger) = (declared(64), declared(640));
+    assert_eq!(larger - page, DEPTH_UNITS * (640 - 64));
 }

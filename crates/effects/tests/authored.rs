@@ -192,14 +192,14 @@ fn every_authored_method_declares_who_may_call_it() {
 /// The literal a holdings interval is declared at, held against the
 /// constant it restates.
 ///
-/// A guest names no constant from this crate — the lowering takes an
-/// entry cap as a literal, so a package writes the number — which leaves
-/// the vocabulary's [`NF_MOVE_CAP`] and the account's `64` two copies of
-/// one bound with nothing between them. This is what is between them.
+/// A guest names no constant from this crate — the account's declaration
+/// spells its entry cap itself — which leaves the vocabulary's
+/// [`NF_MOVE_CAP`] and the account's `64` two copies of one bound with
+/// nothing between them. This is what is between them.
 #[test]
 fn the_account_files_at_the_cap_the_vocabulary_names() {
     use hyperscale_vm_effects::vocabulary::NF_MOVE_CAP;
-    use hyperscale_vm_effects::{Clause, TargetExpr};
+    use hyperscale_vm_effects::{Clause, Expr, TargetExpr, Value};
     use hyperscale_vm_stdlib::account;
 
     let metadata = account::metadata();
@@ -211,13 +211,14 @@ fn the_account_files_at_the_cap_the_vocabulary_names() {
                 Clause::Effect {
                     target: TargetExpr::Range { cap, .. },
                     ..
-                } => Some(*cap),
+                } => Some(cap.clone()),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("{method} declares a holdings interval"));
         assert_eq!(
-            declared, NF_MOVE_CAP,
-            "{method} files at {declared} where the vocabulary names {NF_MOVE_CAP}"
+            declared,
+            Expr::Literal(Value::U64(u64::from(NF_MOVE_CAP))),
+            "{method} files at {declared:?} where the vocabulary names {NF_MOVE_CAP}"
         );
     }
 }

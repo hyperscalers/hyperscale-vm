@@ -259,7 +259,7 @@ fn impostor() -> PackageMetadata {
                 Clause::Requires {
                     guard: None,
                     condition: ConditionExpr::Holds {
-                        target: own(VAULT, vec![Expr::Arg(0)]),
+                        target: Box::new(own(VAULT, vec![Expr::Arg(0)])),
                         presence: Presence::Present,
                     },
                 },

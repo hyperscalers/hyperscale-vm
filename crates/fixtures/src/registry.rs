@@ -98,7 +98,7 @@ pub fn metadata() -> PackageMetadata {
                     material: vec![],
                     lo: Expr::Arg(0),
                     hi: Expr::Literal(Value::U128(u128::MAX)),
-                    cap: DRAIN_CAP,
+                    cap: Expr::Literal(Value::U64(u64::from(DRAIN_CAP))),
                 },
                 mode: ModeExpr::Write,
                 denomination: None,

@@ -181,7 +181,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
                 material: vec![],
                 lo: Expr::Arg(0),
                 hi: Expr::Literal(Value::U128(u128::MAX)),
-                cap: 8,
+                cap: Expr::Literal(Value::U64(8)),
             },
             mode: ModeExpr::Read,
             denomination: None,

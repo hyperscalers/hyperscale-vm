@@ -3,7 +3,9 @@ PackageMetadata {
         "draw": MethodSignature {
             totality: Infallible,
             issues: None,
-            params: [],
+            params: [
+                U64,
+            ],
             outputs: [],
             denominations: [],
             effects: [
@@ -25,7 +27,9 @@ PackageMetadata {
                                 340282366920938463463374607431768211455,
                             ),
                         ),
-                        cap: 64,
+                        cap: Arg(
+                            0,
+                        ),
                     },
                     mode: Read,
                     denomination: None,

@@ -275,7 +275,11 @@ PackageMetadata {
                                 340282366920938463463374607431768211455,
                             ),
                         ),
-                        cap: 64,
+                        cap: Literal(
+                            U64(
+                                64,
+                            ),
+                        ),
                     },
                     mode: Write,
                     denomination: Some(
@@ -801,7 +805,11 @@ PackageMetadata {
                                 340282366920938463463374607431768211455,
                             ),
                         ),
-                        cap: 64,
+                        cap: Literal(
+                            U64(
+                                64,
+                            ),
+                        ),
                     },
                     mode: Write,
                     denomination: Some(

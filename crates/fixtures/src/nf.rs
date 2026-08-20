@@ -39,7 +39,7 @@ fn creating_instance(minted_resource: &Expr, minted_id: &Expr) -> Vec<Clause> {
         Clause::Requires {
             guard: None,
             condition: ConditionExpr::Holds {
-                target: target(),
+                target: Box::new(target()),
                 presence: Presence::Absent,
             },
         },

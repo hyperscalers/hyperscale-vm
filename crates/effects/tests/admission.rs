@@ -324,7 +324,7 @@ fn custodian_world(
     let holds = |target| Clause::Requires {
         guard: None,
         condition: ConditionExpr::Holds {
-            target,
+            target: Box::new(target),
             presence: Presence::Present,
         },
     };
@@ -1034,7 +1034,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
                 Clause::Requires {
                     guard: None,
                     condition: ConditionExpr::Holds {
-                        target: TargetExpr::Point(auth_cell()),
+                        target: Box::new(TargetExpr::Point(auth_cell())),
                         presence: Presence::Present,
                     },
                 },

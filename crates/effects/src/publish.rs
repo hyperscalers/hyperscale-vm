@@ -11,7 +11,7 @@ use hyperscale_vm_types::{AddressClass, Denomination, MAX_ERROR_CODES, MAX_EVENT
 
 use crate::dsl::{
     Clause, ConditionExpr, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH,
-    MAX_RANGE_CAP, ModeExpr, TargetExpr, materialized_kind,
+    ModeExpr, TargetExpr, materialized_kind,
 };
 use crate::metadata::PackageMetadata;
 use crate::resource::holdings_entry;
@@ -838,7 +838,7 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
                     target: required,
                     presence: Presence::Absent,
                 },
-            } if required == target
+            } if **required == *target
                 && (condition_guard.is_none() || condition_guard.as_deref() == guard.as_deref())
         )
     });
@@ -1088,7 +1088,7 @@ fn check_conditions(flat: &[&Clause]) -> Result<(), DeclarationError> {
                 // A presence is about the leaf it names, and an interval
                 // has none — the same refusal a presence-requiring write
                 // meets.
-                if matches!(target, TargetExpr::Range { .. }) {
+                if matches!(**target, TargetExpr::Range { .. }) {
                     return Err(DeclarationError::PresenceOnInterval { clause });
                 }
                 if !declares(target, under, &coherent) {
@@ -1182,7 +1182,7 @@ fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
                         target,
                         presence: Presence::Present,
                     },
-                } if *target == possession
+                } if **target == possession
                     && (condition_guard.is_none() || condition_guard.as_deref() == under)
             )
         });
@@ -1234,9 +1234,6 @@ pub enum SignatureBoundsError {
     /// More effect clauses than one signature may declare.
     #[error("signature declares more than {MAX_EFFECTS_PER_SIGNATURE} effects")]
     TooManyEffects,
-    /// A range cap past what one scan may lift.
-    #[error("range clause caps {0} entries, past the {MAX_RANGE_CAP} a scan may lift")]
-    RangeCap(u32),
 }
 
 /// Reject metadata past a bound the vocabulary fixes.
@@ -1382,15 +1379,13 @@ fn check_target_bounds(target: &TargetExpr) -> Result<(), SignatureBoundsError> 
             cap,
             ..
         } => {
-            if *cap > MAX_RANGE_CAP {
-                return Err(SignatureBoundsError::RangeCap(*cap));
-            }
             check_expr_bounds(owner, 0)?;
             for part in material {
                 check_expr_bounds(part, 0)?;
             }
             check_expr_bounds(lo, 0)?;
-            check_expr_bounds(hi, 0)
+            check_expr_bounds(hi, 0)?;
+            check_expr_bounds(cap, 0)
         }
     }
 }
@@ -1523,12 +1518,11 @@ mod tests {
     }
 
     #[test]
-    fn a_range_cap_is_bounded_where_a_scan_pays_for_it() {
-        // Nothing else in a declaration prices the cap: `footprint`
-        // charges the interval's magnitude and conflict reads its bounds,
-        // and both are the same for a page of one entry and a page of
-        // four billion.
-        let capped = |cap: u32| {
+    fn a_range_cap_is_an_expression_under_the_expression_bounds() {
+        // No magnitude bound stands here: what bounds an evaluated cap
+        // is the depth `footprint` charges for it. The expression itself
+        // walks the same structural bounds as the bounds beside it.
+        let capped = |cap: Expr| {
             one_method(MethodSignature {
                 totality: Totality::Fallible,
                 effects: vec![Clause::Effect {
@@ -1547,7 +1541,10 @@ mod tests {
                 ..MethodSignature::default()
             })
         };
-        assert_bounded(&capped(MAX_RANGE_CAP), &capped(MAX_RANGE_CAP + 1));
+        assert_bounded(
+            &capped(nested_projection(MAX_EXPR_DEPTH)),
+            &capped(nested_projection(MAX_EXPR_DEPTH + 1)),
+        );
     }
 
     #[test]
@@ -1677,7 +1674,7 @@ mod tests {
             condition,
         };
         let holds = |presence| ConditionExpr::Holds {
-            target: cell(),
+            target: Box::new(cell()),
             presence,
         };
         let satisfies = || ConditionExpr::Satisfies {
@@ -1785,7 +1782,7 @@ mod tests {
             condition,
         };
         let holds = |presence| ConditionExpr::Holds {
-            target: cell(),
+            target: Box::new(cell()),
             presence,
         };
         let declared = |clauses: Vec<Clause>| {
@@ -1808,14 +1805,14 @@ mod tests {
             declared(vec![requires(
                 None,
                 ConditionExpr::Holds {
-                    target: TargetExpr::Range {
+                    target: Box::new(TargetExpr::Range {
                         owner: Expr::SelfAddr,
                         collection: SlotId(PACKAGE_SLOT_BASE),
                         material: vec![],
                         lo: Expr::Literal(Value::U128(0)),
                         hi: Expr::Literal(Value::U128(10)),
-                        cap: 4,
-                    },
+                        cap: Expr::Literal(Value::U64(4)),
+                    }),
                     presence: Presence::Present,
                 },
             )]),
@@ -1888,7 +1885,7 @@ mod tests {
         let holds = |target| Clause::Requires {
             guard: None,
             condition: ConditionExpr::Holds {
-                target,
+                target: Box::new(target),
                 presence: Presence::Present,
             },
         };
@@ -2123,7 +2120,7 @@ mod tests {
                     Clause::Requires {
                         guard: None,
                         condition: ConditionExpr::Holds {
-                            target,
+                            target: Box::new(target),
                             presence: requires,
                         },
                     },
@@ -2148,7 +2145,7 @@ mod tests {
             material: vec![],
             lo: Expr::Literal(Value::U128(0)),
             hi: Expr::Literal(Value::U128(u128::MAX)),
-            cap: 4,
+            cap: Expr::Literal(Value::U64(4)),
         };
 
         for requires in [Presence::Absent, Presence::Present] {
@@ -2182,7 +2179,7 @@ mod tests {
         let write = |guard: Option<Expr>, presence| Clause::Requires {
             guard: guard.map(Box::new),
             condition: ConditionExpr::Holds {
-                target: target(),
+                target: Box::new(target()),
                 presence,
             },
         };
@@ -2256,7 +2253,7 @@ mod tests {
         let write = |guard: Option<Expr>, presence| Clause::Requires {
             guard: guard.map(Box::new),
             condition: ConditionExpr::Holds {
-                target: own_point(package_slot(0), vec![]),
+                target: Box::new(own_point(package_slot(0), vec![])),
                 presence,
             },
         };
@@ -2418,7 +2415,7 @@ mod tests {
         let write = |presence| Clause::Requires {
             guard: None,
             condition: ConditionExpr::Holds {
-                target: cell(vec![]),
+                target: Box::new(cell(vec![])),
                 presence,
             },
         };
@@ -2470,7 +2467,7 @@ mod tests {
                 Clause::Requires {
                     guard: None,
                     condition: ConditionExpr::Holds {
-                        target: cell(vec![Expr::Config(0)]),
+                        target: Box::new(cell(vec![Expr::Config(0)])),
                         presence: Presence::Present,
                     },
                 },
@@ -2566,7 +2563,7 @@ mod tests {
             material,
             lo: Expr::Literal(Value::U128(0)),
             hi: Expr::Literal(Value::U128(u128::MAX)),
-            cap: 4,
+            cap: Expr::Literal(Value::U64(4)),
         }
     }
 
@@ -2702,7 +2699,7 @@ mod tests {
                 Clause::Requires {
                     guard: None,
                     condition: ConditionExpr::Holds {
-                        target,
+                        target: Box::new(target),
                         presence: Presence::Absent,
                     },
                 },
@@ -3058,7 +3055,7 @@ mod tests {
             material: vec![a_resource()],
             lo: Expr::Literal(Value::U128(0)),
             hi: Expr::Literal(Value::U128(hi)),
-            cap: 4,
+            cap: Expr::Literal(Value::U64(4)),
         };
         assert_eq!(
             declared(vec![

@@ -298,7 +298,7 @@ fn the_lottery_wrappers_match_their_signatures() {
         // Alice pays and Bob is entered: the entrant is named by the
         // composer, not by whoever the funds came from.
         lottery_addr.enter(b, BOB, stake)?;
-        lottery_addr.draw(b)
+        lottery_addr.draw(b, 64)
     });
 }
 

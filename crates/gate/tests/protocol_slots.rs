@@ -62,11 +62,11 @@ fn writing(slot: SlotId, material: Vec<Expr>) -> PackageMetadata {
                 Clause::Requires {
                     guard: None,
                     condition: ConditionExpr::Holds {
-                        target: TargetExpr::Point(Expr::ChildKey {
+                        target: Box::new(TargetExpr::Point(Expr::ChildKey {
                             owner: Box::new(Expr::SelfAddr),
                             slot,
                             material,
-                        }),
+                        })),
                         presence: Presence::Absent,
                     },
                 },

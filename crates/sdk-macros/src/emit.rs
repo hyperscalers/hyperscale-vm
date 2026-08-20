@@ -135,14 +135,16 @@ fn target(target: &Target) -> TokenStream {
         }
         Target::Sweep { slot, cursor, cap } => {
             let cursor = cursor.emit();
+            let cap = cap.emit();
             quote!(
                 let __owner = __t.self_addr();
                 let __cursor = #cursor.cast::<::hyperscale_vm_sdk::Amount>();
+                let __cap = #cap.cast::<::hyperscale_vm_sdk::Num>();
                 let __access = __t.sweep(
                     &__owner,
                     ::hyperscale_vm_sdk::SlotId(#slot),
                     &__cursor,
-                    #cap,
+                    &__cap,
                 );
             )
         }
@@ -156,18 +158,20 @@ fn target(target: &Target) -> TokenStream {
             let material = material.iter().map(Term::emit);
             let lo = lo.emit();
             let hi = hi.emit();
+            let cap = cap.emit();
             quote!(
                 let __owner = __t.self_addr();
                 let __material = [#(#material),*];
                 let __lo = #lo.cast::<::hyperscale_vm_sdk::Amount>();
                 let __hi = #hi.cast::<::hyperscale_vm_sdk::Amount>();
+                let __cap = #cap.cast::<::hyperscale_vm_sdk::Num>();
                 let __access = __t.range(
                     &__owner,
                     ::hyperscale_vm_sdk::SlotId(#slot),
                     &__material,
                     &__lo,
                     &__hi,
-                    #cap,
+                    &__cap,
                 );
             )
         }

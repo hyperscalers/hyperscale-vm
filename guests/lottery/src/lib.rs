@@ -72,18 +72,21 @@ pub mod lottery {
             Entered { who }.emit();
         }
 
-        /// Settle the round on the transaction's own randomness.
-        pub fn draw(&mut self) {
+        /// Settle the round on the transaction's own randomness,
+        /// drawing among the first `cap` tickets.
+        pub fn draw(&mut self, cap: u64) {
             let draw = randomness();
             // A round nobody entered still drew: the draw is recorded, no
             // winner follows it, and the pot stands for the next round.
             // Refusing here would let an empty round wedge the lottery.
             //
             // One page, so a round past the cap draws among the tickets
-            // the sweep saw. A lottery that meant the whole set would
-            // crank across transactions; this one is a fixture and says
-            // which it is.
-            let winner = self.tickets.sweep(0, 64).pick(&draw);
+            // the sweep saw — and how many that is is the caller's
+            // choice, paid for as the page it declares. A lottery that
+            // meant the whole set whatever its size would crank across
+            // transactions; this one draws over the page its caller
+            // bought.
+            let winner = self.tickets.sweep(0, cap).pick(&draw);
             // The width is the environment's, and the record states it:
             // a draw that is not thirty-two bytes is a defect in the
             // kernel rather than in this round.

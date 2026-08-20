@@ -56,7 +56,11 @@ PackageMetadata {
                                 ),
                             ),
                         },
-                        cap: 64,
+                        cap: Literal(
+                            U64(
+                                64,
+                            ),
+                        ),
                     },
                     mode: Write,
                     denomination: None,

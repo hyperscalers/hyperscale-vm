@@ -893,7 +893,7 @@ mod tests {
                     material: vec![resource()],
                     lo: Expr::Literal(Value::U128(0)),
                     hi: Expr::Literal(Value::U128(u128::MAX)),
-                    cap: 4,
+                    cap: Expr::Literal(Value::U64(4)),
                 },
                 EffectTarget::Range {
                     owner,

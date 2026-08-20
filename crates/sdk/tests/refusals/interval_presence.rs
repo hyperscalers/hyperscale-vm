@@ -1,4 +1,4 @@
-use hyperscale_vm_sdk::{Amount, Blueprint, ParamType, SlotId, Sym, Trace};
+use hyperscale_vm_sdk::{Amount, Blueprint, ParamType, SlotId, Sym, Trace, sym::lit_u64};
 
 fn main() {
     let _ = Blueprint::builder()
@@ -11,8 +11,8 @@ fn main() {
             // of execution at all. So neither requirement is offered on
             // one, and reaching for either is a type error rather than a
             // published method the kernel would have to read past.
-            t.sweep(&owner, SlotId(16), &cursor, 4).create();
-            t.range(&owner, SlotId(16), &[], &cursor, &cursor, 4)
+            t.sweep(&owner, SlotId(16), &cursor, &lit_u64(4)).create();
+            t.range(&owner, SlotId(16), &[], &cursor, &cursor, &lit_u64(4))
                 .existing();
         })
         .build();

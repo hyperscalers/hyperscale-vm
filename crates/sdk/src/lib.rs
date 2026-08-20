@@ -90,23 +90,27 @@
 //! }
 //! ```
 //!
-//! A range whose entry cap is not a literal — the cap bounds the work
-//! execution may do, so it is declaration, not data:
+//! A range whose entry cap is read out of state, on the same terms as
+//! the key above — the cap evaluates with the declaration, so an
+//! argument or a configured value serves and a substate value arrives
+//! too late:
 //!
 //! ```compile_fail
 //! # use hyperscale_vm_sdk::blueprint;
 //! #[blueprint]
 //! mod bad {
-//!     use hyperscale_vm_sdk::state::Ordered;
+//!     use hyperscale_vm_sdk::state::{Cell, Ordered};
 //!
 //!     #[state]
 //!     struct Bad {
+//!         depth: Cell<u64>,
 //!         asks: Ordered<u128>,
 //!     }
 //!
 //!     impl Bad {
-//!         pub fn sweep(&mut self, cap: u64) {
-//!             let mut window = self.asks.range(0, 100, cap as u32);
+//!         pub fn sweep(&mut self) {
+//!             let cap = self.depth.get();
+//!             let mut window = self.asks.range(0, 100, cap);
 //!             window.remove(0);
 //!         }
 //!     }

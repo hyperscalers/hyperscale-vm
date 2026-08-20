@@ -199,7 +199,7 @@ fn book() -> Blueprint {
                     &[],
                     &lo,
                     &hi,
-                    book_package::FILL_CAP,
+                    &lit_u64(u64::from(book_package::FILL_CAP)),
                 )
                 .write();
 

@@ -1013,21 +1013,23 @@ impl<T> Ordered<T> {
 
     /// The whole order-key space, at most `cap` entries of it.
     ///
-    /// `cap` bounds the entries execution may touch and must be a literal,
-    /// on the same terms [`Self::range`] states.
+    /// `cap` bounds the entries execution may touch, on the same terms
+    /// [`Self::range`] states.
     #[must_use]
-    pub fn all(&self, cap: u32) -> Interval<T> {
+    pub fn all(&self, cap: u64) -> Interval<T> {
         let _ = cap;
         unimplemented!("{OFF_HOST}")
     }
 
     /// A declared interval of the order-key space.
     ///
-    /// `cap` bounds the entries execution may touch and must be a literal:
-    /// it is the work bound, so it is declaration rather than data. The
-    /// interval's own magnitude is what `footprint` charges.
+    /// `cap` bounds the entries execution may touch, and is derivable
+    /// like the bounds beside it — a literal, an argument, or a
+    /// configured value. The interval's magnitude is charged as the
+    /// exclusion it is and the cap as the walk it buys, so a caller
+    /// choosing a page pays for the page it chose.
     #[must_use]
-    pub fn range(&self, lo: OrderKey, hi: OrderKey, cap: u32) -> Interval<T> {
+    pub fn range(&self, lo: OrderKey, hi: OrderKey, cap: u64) -> Interval<T> {
         let _ = (lo, hi, cap);
         unimplemented!("{OFF_HOST}")
     }
@@ -1061,10 +1063,11 @@ impl<T> Unordered<T> {
     /// Up to `cap` entries from `cursor`, in hash order.
     ///
     /// Resume by passing the last visited order key plus one as the next
-    /// call's cursor; `0` starts the walk. `cap` must be a literal — it is
-    /// the work bound, so it is declaration rather than data.
+    /// call's cursor; `0` starts the walk. `cap` is derivable like the
+    /// cursor, so the page a sweep reads can be the caller's choice —
+    /// priced as the walk it buys.
     #[must_use]
-    pub fn sweep(&self, cursor: OrderKey, cap: u32) -> Interval<T> {
+    pub fn sweep(&self, cursor: OrderKey, cap: u64) -> Interval<T> {
         let _ = (cursor, cap);
         unimplemented!("{OFF_HOST}")
     }

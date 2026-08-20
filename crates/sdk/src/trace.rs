@@ -354,14 +354,16 @@ impl Trace {
     /// Hash order is arbitrary but canonical, so walking it from a cursor
     /// visits every entry exactly once across resumptions — the
     /// pagination-crank shape. The caller passes the cursor as an
-    /// argument; `0` starts the walk.
+    /// argument; `0` starts the walk. The cap evaluates like the cursor,
+    /// so the page a sweep reads can be the caller's choice, priced as
+    /// the depth it buys.
     #[must_use]
     pub fn sweep(
         &mut self,
         owner: &Sym<Addr>,
         collection: SlotId,
         cursor: &Sym<Amount>,
-        cap: u32,
+        cap: &Sym<Num>,
     ) -> Access<'_, Interval> {
         let target = TargetExpr::Range {
             owner: self.lower(owner.expr().clone()),
@@ -369,7 +371,7 @@ impl Trace {
             material: vec![],
             lo: self.lower(cursor.expr().clone()),
             hi: Expr::Literal(Value::U128(u128::MAX)),
-            cap,
+            cap: self.lower(cap.expr().clone()),
         };
         Access {
             trace: self,
@@ -381,9 +383,11 @@ impl Trace {
 
     /// Declare accesses to an interval of a collection's order-key space.
     ///
-    /// `cap` bounds the entries execution may touch; the interval's own
-    /// magnitude is what [`hyperscale_vm_effects::footprint`] charges, so a
-    /// range wider than the method needs is priced as the exclusion it is.
+    /// `cap` bounds the entries execution may touch and evaluates like
+    /// the bounds beside it. [`hyperscale_vm_effects::footprint`] charges
+    /// the interval's own magnitude as the exclusion it is and the cap as
+    /// the walk it buys, so a range wider or deeper than the method needs
+    /// is priced as what it claims.
     #[must_use]
     pub fn range(
         &mut self,
@@ -392,7 +396,7 @@ impl Trace {
         material: &[Sym<Opaque>],
         lo: &Sym<Amount>,
         hi: &Sym<Amount>,
-        cap: u32,
+        cap: &Sym<Num>,
     ) -> Access<'_, Interval> {
         let target = TargetExpr::Range {
             owner: self.lower(owner.expr().clone()),
@@ -400,7 +404,7 @@ impl Trace {
             material: self.lower_all(material),
             lo: self.lower(lo.expr().clone()),
             hi: self.lower(hi.expr().clone()),
-            cap,
+            cap: self.lower(cap.expr().clone()),
         };
         Access {
             trace: self,
@@ -705,7 +709,7 @@ impl Trace {
         self.emit(Clause::Requires {
             guard: None,
             condition: ConditionExpr::Holds {
-                target: possession,
+                target: Box::new(possession),
                 presence: Presence::Present,
             },
         });
@@ -986,7 +990,7 @@ impl Access<'_, Leaf> {
         self.trace.emit(Clause::Requires {
             guard: None,
             condition: ConditionExpr::Holds {
-                target: self.target.clone(),
+                target: Box::new(self.target.clone()),
                 presence,
             },
         });
@@ -1121,7 +1125,7 @@ mod tests {
     };
 
     use super::{MAX_FOREACH_ELEMENTS, Trace, absolute, rebind};
-    use crate::sym::{Addr, Amount, Key, Opaque, Seq, Sym};
+    use crate::sym::{Addr, Amount, Key, Num, Opaque, Seq, Sym};
 
     #[test]
     fn a_binder_lowers_to_its_de_bruijn_index() {
@@ -1261,16 +1265,20 @@ mod tests {
 
     #[test]
     fn a_range_lowers_its_bounds() {
-        let mut trace = Trace::new(vec![ParamType::U128]);
+        let mut trace = Trace::new(vec![ParamType::U128, ParamType::U64]);
         let owner = trace.self_addr();
         let lo: Sym<Amount> = trace.arg(0);
         let hi: Sym<Amount> = trace.config(0);
-        trace.range(&owner, SlotId(4), &[], &lo, &hi, 32).write();
+        let cap: Sym<Num> = trace.arg(1);
+        trace.range(&owner, SlotId(4), &[], &lo, &hi, &cap).write();
         let recorded = trace.finish();
         assert!(matches!(
             &recorded.clauses[0],
             Clause::Effect {
-                target: TargetExpr::Range { cap: 32, .. },
+                target: TargetExpr::Range {
+                    cap: Expr::Arg(1),
+                    ..
+                },
                 ..
             }
         ));

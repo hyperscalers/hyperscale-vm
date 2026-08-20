@@ -43,8 +43,9 @@
 //! so a key the body computes from a substate value arrives too late to
 //! route on. That is not a limitation the macro could engineer away, and
 //! the macro stops with an error on the offending line rather than
-//! guessing. The same applies to a range whose entry cap is not a
-//! literal.
+//! guessing. The same applies to a range's bounds and entry cap, which
+//! evaluate with the declaration: an argument or a configured value
+//! serves, a substate value does not.
 //!
 //! The walk is exhaustive: an expression form the lowering does not model
 //! is a compile error, never a skip, because a skipped form is a

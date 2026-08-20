@@ -114,8 +114,8 @@ pub enum Target {
         lo: Term,
         /// Inclusive upper bound.
         hi: Term,
-        /// The entry cap.
-        cap: u32,
+        /// The entry cap, derivable like the bounds beside it.
+        cap: Term,
     },
     /// One unordered-collection entry, at the hash of a logical key.
     KeyedEntry {
@@ -130,8 +130,8 @@ pub enum Target {
         slot: u16,
         /// The inclusive lower bound.
         cursor: Term,
-        /// The entry cap.
-        cap: u32,
+        /// The entry cap, derivable like the cursor.
+        cap: Term,
     },
 }
 
@@ -2856,14 +2856,13 @@ impl<'a> Lowerer<'a> {
 
             // An unordered collection's tail from a cursor.
             (FieldKind::Unordered, "sweep") => {
-                if let (Some(Val::Term(cursor)), Some(Val::Term(Term::LitU64(cap)))) =
-                    (vals.first(), vals.get(1))
+                if let (Some(Val::Term(cursor)), Some(Val::Term(cap))) = (vals.first(), vals.get(1))
                 {
                     let site = self.open(
                         Target::Sweep {
                             slot,
                             cursor: cursor.clone(),
-                            cap: u32::try_from(*cap).unwrap_or(u32::MAX),
+                            cap: cap.clone(),
                         },
                         field.element.clone(),
                         declared,
@@ -2872,9 +2871,9 @@ impl<'a> Lowerer<'a> {
                 } else {
                     self.error(
                         call.args.span(),
-                        "a sweep's cursor must be derivable from the arguments, and its entry \
-                     cap must be a literal — the cap bounds the work execution may do, so \
-                     it is declaration, not data",
+                        "a sweep's cursor and entry cap must be derivable from the method's \
+                     arguments or the component's configuration — routing evaluates the \
+                     declaration before execution and never reads state",
                     );
                     Eval::absent(call.args.span(), "an underivable sweep")
                 }
@@ -2882,11 +2881,8 @@ impl<'a> Lowerer<'a> {
 
             // A declared interval of an ordered collection.
             (FieldKind::Ordered, "range") => {
-                if let (
-                    Some(Val::Term(lo)),
-                    Some(Val::Term(hi)),
-                    Some(Val::Term(Term::LitU64(cap))),
-                ) = (vals.first(), vals.get(1), vals.get(2))
+                if let (Some(Val::Term(lo)), Some(Val::Term(hi)), Some(Val::Term(cap))) =
+                    (vals.first(), vals.get(1), vals.get(2))
                 {
                     let site = self.open(
                         Target::Range {
@@ -2894,7 +2890,7 @@ impl<'a> Lowerer<'a> {
                             material: material.to_vec(),
                             lo: lo.clone(),
                             hi: hi.clone(),
-                            cap: u32::try_from(*cap).unwrap_or(u32::MAX),
+                            cap: cap.clone(),
                         },
                         field.element.clone(),
                         declared,
@@ -2903,9 +2899,9 @@ impl<'a> Lowerer<'a> {
                 } else {
                     self.error(
                         call.args.span(),
-                        "a range's bounds must be derivable from the arguments, and its entry \
-                     cap must be a literal — the cap bounds the work execution may do, so \
-                     it is declaration, not data",
+                        "a range's bounds and entry cap must be derivable from the method's \
+                     arguments or the component's configuration — routing evaluates the \
+                     declaration before execution and never reads state",
                     );
                     Eval::absent(call.args.span(), "an underivable range")
                 }
@@ -2913,14 +2909,14 @@ impl<'a> Lowerer<'a> {
 
             // The whole of a collection's order-key space.
             (FieldKind::Ordered, "all") => {
-                if let Some(Val::Term(Term::LitU64(cap))) = vals.first() {
+                if let Some(Val::Term(cap)) = vals.first() {
                     let site = self.open(
                         Target::Range {
                             slot,
                             material: material.to_vec(),
                             lo: Term::LitU128(0),
                             hi: Term::LitU128(u128::MAX),
-                            cap: u32::try_from(*cap).unwrap_or(u32::MAX),
+                            cap: cap.clone(),
                         },
                         field.element.clone(),
                         declared,
@@ -2929,8 +2925,9 @@ impl<'a> Lowerer<'a> {
                 } else {
                     self.error(
                         call.args.span(),
-                        "an interval's entry cap must be a literal — the cap bounds the \
-                     work execution may do, so it is declaration, not data",
+                        "an interval's entry cap must be derivable from the method's \
+                     arguments or the component's configuration — routing evaluates the \
+                     declaration before execution and never reads state",
                     );
                     Eval::absent(call.args.span(), "an underivable interval")
                 }

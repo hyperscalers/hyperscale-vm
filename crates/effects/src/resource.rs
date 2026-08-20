@@ -143,7 +143,7 @@ pub fn holdings_range(resource: Expr, cap: u32) -> TargetExpr {
         material: vec![resource],
         lo: Expr::Literal(Value::U128(0)),
         hi: Expr::Literal(Value::U128(u128::MAX)),
-        cap,
+        cap: Expr::Literal(Value::U64(u64::from(cap))),
     }
 }
 

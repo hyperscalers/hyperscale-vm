@@ -46,16 +46,6 @@ pub const MAX_CLAUSE_DEPTH: usize = 4;
 /// of empty loops unbounded.
 pub const MAX_EFFECTS_PER_SIGNATURE: usize = 4096;
 
-/// The bound on a range clause's entry cap.
-///
-/// The cap is the only part of a declaration that buys execution work
-/// rather than key space: an interval's magnitude is what `footprint`
-/// charges and what conflict reads, and both are indifferent to how many
-/// entries sit inside it. So a cap is what a scan of the interval costs,
-/// and an unbounded one would let a signature claim a page no fee prices
-/// and no conflict verdict notices.
-pub const MAX_RANGE_CAP: u32 = 1024;
-
 /// A child key under the instance the method is running on.
 ///
 /// The shape every package's own storage takes: a package declares
@@ -363,8 +353,16 @@ pub enum TargetExpr {
         lo: Expr,
         /// Inclusive upper bound.
         hi: Expr,
-        /// The maximum entries execution may touch.
-        cap: u32,
+        /// The maximum entries execution may touch, evaluated like the
+        /// bounds beside it.
+        ///
+        /// The cap is the part of a declaration that buys execution work
+        /// rather than key space, and `footprint` charges it as depth —
+        /// which is what makes it safe to hand to a caller: a
+        /// caller-chosen cap is a caller-chosen bill, priced like the
+        /// rest of the declaration and bounded by the gas limit the
+        /// sender signed.
+        cap: Expr,
     },
 }
 
@@ -440,7 +438,7 @@ pub enum ConditionExpr {
     /// The leaf this target names is there, or is not.
     Holds {
         /// The leaf the condition is about.
-        target: TargetExpr,
+        target: Box<TargetExpr>,
         /// What must be true of it. Never [`Presence::Either`], which
         /// requires nothing and is refused at publish.
         presence: Presence,
@@ -592,6 +590,10 @@ pub enum EvalError {
         /// The tuple's arity.
         arity: usize,
     },
+    /// A range cap past the width the interval vocabulary counts
+    /// entries in.
+    #[error("range cap {0} exceeds the u32 an interval counts entries in")]
+    CapTooWide(u128),
     /// A lookup key matching no pair.
     #[error("lookup key not present")]
     LookupMiss,
@@ -1137,12 +1139,13 @@ fn eval_target(
             if lo > hi {
                 return Err(EvalError::InvalidRange);
             }
+            let cap = as_cap(eval_expr(cap, inputs, hasher, bindings, 0)?)?;
             Ok(EffectTarget::Range {
                 owner,
                 collection,
                 lo,
                 hi,
-                cap: *cap,
+                cap,
             })
         }
     }
@@ -1461,6 +1464,17 @@ fn as_u64(value: Value) -> Result<u64, EvalError> {
     }
 }
 
+/// A range cap, in the width the interval vocabulary counts entries in.
+///
+/// What bounds an evaluated cap is the fee its depth charge earns and
+/// the gas limit that pays it — but the count itself is a `u32` end to
+/// end, so a wider one is a refusal here rather than a truncation
+/// downstream.
+fn as_cap(value: Value) -> Result<u32, EvalError> {
+    let cap = as_u128(value)?;
+    u32::try_from(cap).map_err(|_| EvalError::CapTooWide(cap))
+}
+
 fn as_u128(value: Value) -> Result<u128, EvalError> {
     match value {
         Value::U64(v) => Ok(u128::from(v)),
@@ -1675,7 +1689,7 @@ mod tests {
             Clause::Requires {
                 guard: None,
                 condition: ConditionExpr::Holds {
-                    target: target(),
+                    target: Box::new(target()),
                     presence: Presence::Present,
                 },
             },
@@ -1698,7 +1712,7 @@ mod tests {
             Clause::Requires {
                 guard: Some(Box::new(Expr::Arg(0))),
                 condition: ConditionExpr::Holds {
-                    target: target(),
+                    target: Box::new(target()),
                     presence: Presence::Absent,
                 },
             },
@@ -2105,7 +2119,7 @@ mod tests {
                     material: vec![],
                     lo: Expr::Arg(0),
                     hi: Expr::Arg(1),
-                    cap: 16,
+                    cap: Expr::Arg(2),
                 },
                 mode: ModeExpr::Write,
                 denomination: None,
@@ -2128,7 +2142,7 @@ mod tests {
                 collection: collection_id(&TestHasher, ins.self_addr, SlotId(4), &[]),
                 lo: 100,
                 hi: 110,
-                cap: 16,
+                cap: 8,
             },
             mode: Mode::Write,
         }));
@@ -2145,7 +2159,7 @@ mod tests {
                 material: vec![],
                 lo: Expr::Arg(1),
                 hi: Expr::Arg(0),
-                cap: 16,
+                cap: Expr::Literal(Value::U64(16)),
             },
             mode: ModeExpr::Write,
             denomination: None,

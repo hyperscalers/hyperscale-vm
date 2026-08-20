@@ -13,10 +13,13 @@
 //! them. Whoever pays may name whoever they like as the entrant, which is
 //! buying somebody a ticket.
 //!
-//! `draw()`: a fresh read of the whole entrants interval and an exclusive
-//! write of the result. Public for a reason that is not laziness — the
-//! draw is the transaction's randomness, and no signer chooses it, so
-//! there is nothing an operator would be trusted with.
+//! `draw(cap)`: a fresh read of the entrants interval at the caller's
+//! cap and an exclusive write of the result. Public for a reason that is
+//! not laziness — the draw is the transaction's randomness, and no
+//! signer chooses it, so there is nothing an operator would be trusted
+//! with. The cap is the caller's because the page is the caller's bill:
+//! a round of sixty entrants is fair at sixty-four and a larger one
+//! draws at the cap its caller paid for.
 
 use hyperscale_vm_effects::PackageMetadata;
 
@@ -29,7 +32,7 @@ mod package;
 pub use package::lottery::Outcome;
 pub use package::lottery::client::*;
 
-/// The entrant cap a draw declares: the round a single draw settles.
+/// The entrant cap the corpus draws at: the round a single draw settles.
 pub const ROUND_CAP: u32 = 64;
 
 /// The package's declaration, traced from its own module.
