@@ -64,6 +64,9 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/merged_across.rs");
     refuse.compile_fail("tests/refusals/burned_foreign.rs");
     refuse.compile_fail("tests/refusals/burned_wrong_kind.rs");
+    refuse.compile_fail("tests/refusals/bare_mint_with_record.rs");
+    refuse.compile_fail("tests/refusals/fielded_mint_without_record.rs");
+    refuse.compile_fail("tests/refusals/fielded_fungible.rs");
 }
 
 /// A mark the macro can already tell is unsupportable, refused where the

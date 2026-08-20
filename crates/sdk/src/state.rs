@@ -1435,6 +1435,30 @@ pub fn file_instance(handle: Handle) {
     return host::cell_set(handle, &[1]);
 }
 
+/// File one minted instance's data cell: the record its mark declares,
+/// in the encoding that mark's own cell is read at.
+///
+/// Called by generated code, never by an author, at the same site and
+/// under the same absence requirement [`file_instance`] writes its byte
+/// at — so a fielded mark and a bare one create the same cell and differ
+/// only in what it holds.
+///
+/// # Panics
+///
+/// On a record whose encoding does not fit its own declared cap, which is
+/// a defect in the schema rather than in the call that minted against it.
+/// The same standing every record cell's write has.
+#[doc(hidden)]
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always)]
+pub fn file_instance_data<T: Record>(handle: Handle, data: &T) {
+    let bytes = to_vec_with_depth(data, T::WIRE_DEPTH).expect("a record within its own cap");
+    #[cfg(target_arch = "wasm32")]
+    return crate::guest::cell_set(handle, &bytes);
+    #[cfg(not(target_arch = "wasm32"))]
+    return host::cell_set(handle, &bytes);
+}
+
 /// Destroy the value at `funds` against the grant at `grant`.
 ///
 /// Called by generated code, never by an author, on the same terms

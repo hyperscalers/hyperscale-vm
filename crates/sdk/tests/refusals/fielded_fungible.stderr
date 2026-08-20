@@ -1,0 +1,8 @@
+error: a fungible resource has no instances, so these fields describe nothing — drop them, or declare the resource `non_fungible`
+  --> tests/refusals/fielded_fungible.rs:8:19
+   |
+ 8 |       struct Coupon {
+   |  ___________________^
+ 9 | |         issued_at: u64,
+10 | |     }
+   | |_____^

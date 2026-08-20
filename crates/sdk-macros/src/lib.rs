@@ -545,7 +545,7 @@ enum Gate {
 fn guarded_rule(
     expr: &syn::Expr,
     config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>, ResourceKind)],
+    resources: &[Resource],
     params: &[(String, syn::Type)],
     depth: usize,
 ) -> syn::Result<(TokenStream2, bool, bool)> {
@@ -670,7 +670,7 @@ fn threshold(
     span: Span,
     branches: &[&syn::Expr],
     config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>, ResourceKind)],
+    resources: &[Resource],
     params: &[(String, syn::Type)],
     depth: usize,
 ) -> syn::Result<Vec<TokenStream2>> {
@@ -774,7 +774,7 @@ fn sealed_subject(
 fn guarded_identity(
     identity: &syn::Expr,
     config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>, ResourceKind)],
+    resources: &[Resource],
     params: &[(String, syn::Type)],
 ) -> syn::Result<(TokenStream2, bool)> {
     // Possession has its own authoring surface, and `#[requires]` is
@@ -810,7 +810,7 @@ fn guarded_identity(
                      or a configuration field instead",
                 ));
             }
-            let issued = resources.iter().find(|(r, ..)| *r == name);
+            let issued = resources.iter().find(|r| r.name == name);
             let configured = config_fields.iter().position(|(f, _)| *f == name);
             // The two are different authorities — a badge this instance
             // issues, an address fixed where it was created — so a name
@@ -826,9 +826,9 @@ fn guarded_identity(
             // issues, so holding it is operating this instance and the
             // mark is the item's rather than a literal repeated at every
             // gate that names it.
-            if let Some((_, mark, kind)) = issued {
-                let kind = emit_kind(*kind);
-                let mark = syn::LitByteStr::new(mark, identity.span());
+            if let Some(issued) = issued {
+                let kind = emit_kind(issued.kind);
+                let mark = syn::LitByteStr::new(&issued.mark, identity.span());
                 return Ok((quote!(__t.self_resource(#kind, #mark)), false));
             }
             // Creation-fixed, so the claim is the target's own: an
@@ -864,11 +864,11 @@ fn guarded_identity(
                     syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
                     _ => None,
                 })
-                .and_then(|name| resources.iter().find(|(r, ..)| *r == name));
+                .and_then(|name| resources.iter().find(|r| r.name == name));
             match (named, resolved) {
-                (true, Some((_, mark, kind))) => {
-                    let kind = emit_kind(*kind);
-                    let mark = syn::LitByteStr::new(mark, identity.span());
+                (true, Some(issued)) => {
+                    let kind = emit_kind(issued.kind);
+                    let mark = syn::LitByteStr::new(&issued.mark, identity.span());
                     Ok((quote!(__t.self_resource(#kind, #mark)), false))
                 }
                 _ => Err(refuse()),
@@ -1854,7 +1854,7 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
 /// The mark is the name as the protocol spells names everywhere else, so
 /// what an author reads in a gate and what a consumer reads off the
 /// emitted constant are one string derived once.
-fn resources(items: &[syn::Item]) -> syn::Result<Vec<(String, Vec<u8>, ResourceKind)>> {
+fn resources(items: &[syn::Item]) -> syn::Result<Vec<Resource>> {
     let mut structs = Vec::new();
     for item in items {
         let syn::Item::Struct(item) = item else {
@@ -1863,14 +1863,44 @@ fn resources(items: &[syn::Item]) -> syn::Result<Vec<(String, Vec<u8>, ResourceK
         let Some(attr) = item.attrs.iter().find(|a| a.path().is_ident("resource")) else {
             continue;
         };
-        structs.push((&item.ident, resource_kind(attr)?));
+        let kind = resource_kind(attr)?;
+        // Fields are an instance's data, and a fungible resource has no
+        // instances — so a fielded fungible declaration states a schema
+        // nothing could ever hold.
+        if kind == ResourceKind::Fungible && !item.fields.is_empty() {
+            return Err(syn::Error::new(
+                item.fields.span(),
+                "a fungible resource has no instances, so these fields describe nothing \
+                 — drop them, or declare the resource `non_fungible`",
+            ));
+        }
+        structs.push((&item.ident, kind, !item.fields.is_empty()));
     }
-    let marks = distinct_band("resources", structs.iter().map(|(ident, _)| *ident))?;
+    let marks = distinct_band("resources", structs.iter().map(|(ident, ..)| *ident))?;
     Ok(structs
         .into_iter()
         .zip(marks)
-        .map(|((ident, kind), mark)| (ident.to_string(), mark.into_bytes(), kind))
+        .map(|((ident, kind, schema), mark)| Resource {
+            name: ident.to_string(),
+            mark: mark.into_bytes(),
+            kind,
+            schema,
+        })
         .collect())
+}
+
+/// One `#[resource]` declaration, as everything downstream reads it.
+#[derive(Clone)]
+struct Resource {
+    /// The struct's own name, which is what a body and a gate call it.
+    name: String,
+    /// The material separating it from the package's other resources.
+    mark: Vec<u8>,
+    /// The kind its attribute states.
+    kind: ResourceKind,
+    /// Whether the struct has fields, which is what makes it an
+    /// instance's data schema and not only a bare mark.
+    schema: bool,
 }
 
 /// The kind a `#[resource]` attribute states: fungible unless it says
@@ -1909,36 +1939,48 @@ fn resource_kind(attr: &syn::Attribute) -> syn::Result<ResourceKind> {
 /// package that has to derive the same address — so the mark a gate
 /// evaluates and the mark a host names are one declaration rather than
 /// two that agree by inspection.
-fn resource_marks(declared: &[(String, Vec<u8>, ResourceKind)]) -> Vec<syn::Item> {
+fn resource_marks(declared: &[Resource]) -> Vec<syn::Item> {
     declared
         .iter()
-        .flat_map(|(name, mark, kind)| {
-            let ident = syn::Ident::new(&screaming(name), Span::call_site());
-            let bytes = syn::LitByteStr::new(mark, Span::call_site());
-            let doc = format!("The mark separating `{name}` from this package's other resources.");
-            let mark_const: syn::Item = syn::parse_quote!(
-                #[doc = #doc]
-                pub const #ident: &[u8] = #bytes;
-            );
-            // The declared kind, readable from the type: what lets the
-            // `resource` accessor answer a handle whose surface matches
-            // the declaration.
-            let struct_ident = syn::Ident::new(name, Span::call_site());
-            let kind_ty: syn::Type = match kind {
-                ResourceKind::Fungible => {
-                    syn::parse_quote!(::hyperscale_vm_sdk::state::Fungible)
-                }
-                ResourceKind::NonFungible => {
-                    syn::parse_quote!(::hyperscale_vm_sdk::state::NonFungible)
-                }
-            };
-            let mark_impl: syn::Item = syn::parse_quote!(
-                impl ::hyperscale_vm_sdk::state::Mark for #struct_ident {
-                    type Kind = #kind_ty;
-                }
-            );
-            [mark_const, mark_impl, issuance(name, *kind, &struct_ident)]
-        })
+        .flat_map(
+            |Resource {
+                 name,
+                 mark,
+                 kind,
+                 schema,
+             }| {
+                let ident = syn::Ident::new(&screaming(name), Span::call_site());
+                let bytes = syn::LitByteStr::new(mark, Span::call_site());
+                let doc =
+                    format!("The mark separating `{name}` from this package's other resources.");
+                let mark_const: syn::Item = syn::parse_quote!(
+                    #[doc = #doc]
+                    pub const #ident: &[u8] = #bytes;
+                );
+                // The declared kind, readable from the type: what lets the
+                // `resource` accessor answer a handle whose surface matches
+                // the declaration.
+                let struct_ident = syn::Ident::new(name, Span::call_site());
+                let kind_ty: syn::Type = match kind {
+                    ResourceKind::Fungible => {
+                        syn::parse_quote!(::hyperscale_vm_sdk::state::Fungible)
+                    }
+                    ResourceKind::NonFungible => {
+                        syn::parse_quote!(::hyperscale_vm_sdk::state::NonFungible)
+                    }
+                };
+                let mark_impl: syn::Item = syn::parse_quote!(
+                    impl ::hyperscale_vm_sdk::state::Mark for #struct_ident {
+                        type Kind = #kind_ty;
+                    }
+                );
+                [
+                    mark_const,
+                    mark_impl,
+                    issuance(name, *kind, *schema, &struct_ident),
+                ]
+            },
+        )
         .collect()
 }
 
@@ -1962,7 +2004,7 @@ fn resource_marks(declared: &[(String, Vec<u8>, ResourceKind)]) -> Vec<syn::Item
 /// rewritten by the lowering before either half of the emission sees one,
 /// so what a guest build would compile here is an unreachable panic and
 /// whatever that drags in.
-fn issuance(name: &str, kind: ResourceKind, mark: &syn::Ident) -> syn::Item {
+fn issuance(name: &str, kind: ResourceKind, schema: bool, mark: &syn::Ident) -> syn::Item {
     let mint_doc = format!("Bring `{name}` into existence, as an edge.");
     match kind {
         ResourceKind::Fungible => {
@@ -1987,6 +2029,21 @@ fn issuance(name: &str, kind: ResourceKind, mark: &syn::Ident) -> syn::Item {
                 }
             )
         }
+        // A fielded mark's instance carries a record, so the mint takes
+        // one: the id keys the data cell and the value is what the cell
+        // holds. A bare mark's cell holds the presence byte and there is
+        // nothing to hand it.
+        ResourceKind::NonFungible if schema => syn::parse_quote!(
+            #[cfg(not(target_arch = "wasm32"))]
+            impl #mark {
+                #[doc = #mint_doc]
+                #[must_use]
+                pub fn mint(id: u64, data: Self) -> ::hyperscale_vm_sdk::state::NfBucket {
+                    let _ = (id, data);
+                    ::core::unimplemented!("a contract body runs on the guest")
+                }
+            }
+        ),
         ResourceKind::NonFungible => syn::parse_quote!(
             #[cfg(not(target_arch = "wasm32"))]
             impl #mark {
@@ -2013,7 +2070,7 @@ struct Declared<'a> {
     /// The configuration struct's fields, in slot order.
     config_fields: &'a [(String, syn::Type)],
     /// The `#[resource]` structs: name, mark, kind.
-    resources: &'a [(String, Vec<u8>, ResourceKind)],
+    resources: &'a [Resource],
 }
 
 /// Whether a state field holds the package's own role table: the same
@@ -2085,7 +2142,11 @@ fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
         };
         let marked = |name: &str| item.attrs.iter().any(|a| a.path().is_ident(name));
         let (record, event) = (marked("record"), marked("event"));
-        if !record && !event {
+        // A `#[resource]` struct with fields is an instance's data
+        // schema, and its cell is read and written as the record it is.
+        // A bare mark declares no fields and encodes nothing.
+        let instance = marked("resource") && !item.fields.is_empty();
+        if !record && !event && !instance {
             continue;
         }
         item.attrs.push(syn::parse_quote!(
@@ -2093,14 +2154,26 @@ fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
         ));
         item.attrs
             .push(syn::parse_quote!(#[derive(::hyperscale_vm_sdk::hbor::Hbor)]));
-        // Fixed width, claimed: a record is stored and an event is
-        // emitted, and both want an encoding with no error to handle —
-        // an emit especially, since a method marked total may not
-        // allocate and so writes its payload into a buffer sized from
-        // this bound. A field carrying a length refuses by name.
-        item.attrs.push(syn::parse_quote!(
-            #[hbor(crate = ::hyperscale_vm_sdk::hbor, infallible)]
-        ));
+        // Fixed width, claimed, for the two that need it: a record is
+        // stored and an event is emitted, and an emit especially wants an
+        // encoding with no error to handle, since a method marked total
+        // may not allocate and so writes its payload into a buffer sized
+        // from this bound. A field carrying a length refuses by name.
+        //
+        // Instance data claims no such thing. Nothing encodes one off a
+        // total method — the publish gate refuses that mark from a
+        // published package, and a mint is gated where a total method
+        // admits everyone — so the cell is written through the same
+        // allocating encode every record cell is, and a schema is free to
+        // name an instance.
+        if record || event {
+            item.attrs.push(syn::parse_quote!(
+                #[hbor(crate = ::hyperscale_vm_sdk::hbor, infallible)]
+            ));
+        } else {
+            item.attrs
+                .push(syn::parse_quote!(#[hbor(crate = ::hyperscale_vm_sdk::hbor)]));
+        }
         // Named by whoever reads it: a record by the reader of its cell,
         // an event by the decoder of its payload. Both are the package's
         // own surface, so both are open the way the configuration struct
@@ -2110,7 +2183,7 @@ fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
         for field in &mut item.fields {
             field.vis = syn::parse_quote!(pub);
         }
-        if record {
+        if record || instance {
             let name = &item.ident;
             records.push(syn::parse_quote!(
                 impl ::hyperscale_vm_sdk::state::Record for #name {}

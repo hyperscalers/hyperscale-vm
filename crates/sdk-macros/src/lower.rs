@@ -48,7 +48,7 @@ use syn::spanned::Spanned;
 
 use crate::mode::HandleMode;
 use crate::term::{Op, Slot, Term};
-use crate::{Declared, holds_role_table, is_named};
+use crate::{Declared, Resource, holds_role_table, is_named};
 
 /// What kind of state a component field holds, and under which slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -688,11 +688,7 @@ impl<'a> Lowerer<'a> {
     /// serve both: the derivation folds the kind, so an operation reading
     /// it off the declaration reaches the resource the author named
     /// instead of the vacant sibling the other kind would derive.
-    fn issuing_mark(
-        &mut self,
-        call: &syn::ExprCall,
-        op: &str,
-    ) -> Option<(String, Vec<u8>, ResourceKind)> {
+    fn issuing_mark(&mut self, call: &syn::ExprCall, op: &str) -> Option<Resource> {
         let named = free_call_mark(call);
         let at = named
             .as_ref()
@@ -705,12 +701,12 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The declaration a name refers to, where it refers to one.
-    fn resource_named(&self, name: &syn::Ident) -> Option<(String, Vec<u8>, ResourceKind)> {
+    fn resource_named(&self, name: &syn::Ident) -> Option<Resource> {
         let name = name.to_string();
         self.declared
             .resources
             .iter()
-            .find(|(r, ..)| *r == name)
+            .find(|r| r.name == name)
             .cloned()
     }
 
@@ -719,7 +715,7 @@ impl<'a> Lowerer<'a> {
     fn mark_key(&mut self, call: &syn::ExprMethodCall) -> Option<Eval> {
         let named = method_call_mark(call);
         let at = named.as_ref().map_or_else(|| call.span(), Spanned::span);
-        let Some((_, mark, kind)) = named.and_then(|n| self.resource_named(&n)) else {
+        let Some(declared) = named.and_then(|n| self.resource_named(&n)) else {
             self.error(
                 at,
                 "`resource` names a declared `#[resource]` struct in type position — \
@@ -728,7 +724,7 @@ impl<'a> Lowerer<'a> {
             );
             return None;
         };
-        let term = Term::SelfResource(kind, mark);
+        let term = Term::SelfResource(declared.kind, declared.mark);
         Some(Eval {
             val: Val::Term(term.clone()),
             code: Code::Term(term),
@@ -753,8 +749,8 @@ impl<'a> Lowerer<'a> {
             syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
             _ => None,
         })?;
-        let (_, mark, kind) = self.declared.resources.iter().find(|(r, ..)| *r == name)?;
-        Some(Term::SelfResource(*kind, mark.clone()))
+        let declared = self.declared.resources.iter().find(|r| r.name == name)?;
+        Some(Term::SelfResource(declared.kind, declared.mark.clone()))
     }
 
     /// The cells this body touches under more than one condition.
@@ -1164,10 +1160,10 @@ impl<'a> Lowerer<'a> {
                 .declared
                 .resources
                 .iter()
-                .find(|(_, declared, _)| declared == mark)
+                .find(|declared| declared.mark == *mark)
                 .map_or_else(
                     || "a resource this instance issues".into(),
-                    |(name, ..)| format!("`issued({name})`"),
+                    |declared| format!("`issued({})`", declared.name),
                 ),
             Term::ResourceOf(inner) => match **inner {
                 Term::Arg(index) => format!("argument {index}'s resource"),
@@ -1198,7 +1194,7 @@ impl<'a> Lowerer<'a> {
     /// instance-cell write it implies: the named id is one data cell
     /// created where absent, so a minted instance and its filed cell are
     /// one declaration.
-    fn lower_mint_nf(&mut self, mark: &[u8], call: &syn::ExprCall) -> Eval {
+    fn lower_mint_nf(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
         let Some(named) = call.args.first() else {
             self.error(
                 call.args.span(),
@@ -1216,7 +1212,39 @@ impl<'a> Lowerer<'a> {
             );
             return Eval::absent(named.span(), "an underivable instance id");
         };
-        let resource_term = Term::SelfResource(ResourceKind::NonFungible, mark.to_vec());
+        // The data is the cell's content and not its key, so it is
+        // ordinary code the body computes — nothing about it reaches the
+        // declaration, which is keyed by the id alone.
+        let data = match (issued.schema, call.args.iter().nth(1)) {
+            (true, Some(arg)) => {
+                let eval = self.expr(arg);
+                Some(self.value(eval.code))
+            }
+            (true, None) => {
+                self.error(
+                    call.args.span(),
+                    &format!(
+                        "`{}` declares fields, so its instance carries them: a mint names \
+                         the id and the record filed under it",
+                        issued.name
+                    ),
+                );
+                return Eval::absent(call.args.span(), "a fielded mint with no record");
+            }
+            (false, Some(arg)) => {
+                self.error(
+                    arg.span(),
+                    &format!(
+                        "`{}` declares no fields, so its instance holds the presence byte \
+                         and nothing else — a mark carrying a schema is a struct with fields",
+                        issued.name
+                    ),
+                );
+                return Eval::absent(arg.span(), "a bare mint handed a record");
+            }
+            (false, None) => None,
+        };
+        let resource_term = Term::SelfResource(ResourceKind::NonFungible, issued.mark.clone());
         let site = self.open(
             Target::Point {
                 slot: INSTANCE.0,
@@ -1227,8 +1255,12 @@ impl<'a> Lowerer<'a> {
         );
         self.record(site, Op::Create, None, call.span());
         let handle = self.handle(site, call.span());
+        let file = data.map_or_else(
+            || quote!(::hyperscale_vm_sdk::state::file_instance(#handle);),
+            |data| quote!(::hyperscale_vm_sdk::state::file_instance_data(#handle, &#data);),
+        );
         let id_value = self.value(eval.code);
-        let grant = self.issuer(ResourceKind::NonFungible, mark);
+        let grant = self.issuer(ResourceKind::NonFungible, &issued.mark);
         let produced = Term::NfBucket {
             resource: Box::new(resource_term),
             ids: Box::new(Term::List(vec![id])),
@@ -1236,7 +1268,7 @@ impl<'a> Lowerer<'a> {
         Eval {
             val: Val::Produced(produced),
             code: Code::Rust(quote!({
-                ::hyperscale_vm_sdk::state::file_instance(#handle);
+                #file
                 ::hyperscale_vm_sdk::state::mint_nf_granted(#grant, &[#id_value])
             })),
         }
@@ -2474,20 +2506,20 @@ impl<'a> Lowerer<'a> {
         // issuance grant come out of the same call, and the kind it
         // states is what picks between a quantity and a list of ids.
         if name == "mint" {
-            let Some((_, mark, kind)) = self.issuing_mark(call, "mint") else {
+            let Some(issued) = self.issuing_mark(call, "mint") else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
-            if kind == ResourceKind::NonFungible {
-                return self.lower_mint_nf(&mark, call);
+            if issued.kind == ResourceKind::NonFungible {
+                return self.lower_mint_nf(&issued, call);
             }
             let amount = call.args.first().map_or(
                 Code::Absent(call.args.span(), "an issue with no amount"),
                 |a| self.expr(a).code,
             );
             let amount = self.value(amount);
-            let grant = self.issuer(ResourceKind::Fungible, &mark);
+            let grant = self.issuer(ResourceKind::Fungible, &issued.mark);
             return Eval {
-                val: Val::Produced(Term::SelfResource(ResourceKind::Fungible, mark)),
+                val: Val::Produced(Term::SelfResource(ResourceKind::Fungible, issued.mark)),
                 code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#grant, #amount))),
             };
         }
@@ -2495,20 +2527,21 @@ impl<'a> Lowerer<'a> {
         // Fungible alone: an instance leaves existence by no vocabulary
         // this has, so the mark's kind is a refusal rather than a branch.
         if name == "burn" {
-            let Some((declared, mark, kind)) = self.issuing_mark(call, "burn") else {
+            let Some(issued) = self.issuing_mark(call, "burn") else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
-            if kind != ResourceKind::Fungible {
+            if issued.kind != ResourceKind::Fungible {
                 self.error(
                     call.func.span(),
                     &format!(
-                        "`{declared}` is non-fungible, and an instance has no burn — a \
-                         holding is retired by moving it somewhere nothing spends from"
+                        "`{}` is non-fungible, and an instance has no burn — a \
+                         holding is retired by moving it somewhere nothing spends from",
+                        issued.name
                     ),
                 );
                 return Eval::absent(call.func.span(), "a non-fungible burn");
             }
-            return self.lower_burn(&mark, call);
+            return self.lower_burn(&issued.mark, call);
         }
         if name == "issued" {
             let Some(term) = self.declared_resource(call) else {

@@ -12,6 +12,7 @@ use hyperscale_vm_effects::{
     resource_record_key,
 };
 use hyperscale_vm_sdk::blueprint;
+use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_testing::{Chain, PrincipalAddr, account, package, principal};
 use hyperscale_vm_types::{Outcome, Presence, UnmetCondition};
 
@@ -23,6 +24,14 @@ mod issuer {
 
     #[resource(non_fungible)]
     struct OwnerBadge;
+
+    /// A fielded mark: the instance's data cell holds this record, in
+    /// the encoding the mark itself declares.
+    #[resource(non_fungible)]
+    struct Seat {
+        operator: u64,
+        label: String,
+    }
 
     #[resource]
     struct Coupon;
@@ -41,6 +50,19 @@ mod issuer {
         /// Bring the coupon into existence, displayed at six digits.
         pub fn open(&mut self) {
             self.resource::<Coupon>().create(6);
+        }
+
+        /// Seat an operator: the seat's record, and the one instance
+        /// carrying who operates it.
+        pub fn seat(&mut self, operator: u64) -> NfBucket {
+            self.resource::<Seat>().create();
+            Seat::mint(
+                7,
+                Seat {
+                    operator,
+                    label: "front-row".to_owned(),
+                },
+            )
         }
     }
 }
@@ -157,5 +179,62 @@ fn a_mint_files_the_instance_cell_at_its_id() {
     assert_eq!(
         chain.cell(instance_data_key(&TestHasher, instance, badge, 0)),
         Some(vec![1]),
+    );
+}
+
+/// A fielded mark's instance carries its record: the mint files the
+/// mark's own encoding where a bare mark files the presence byte, at the
+/// same cell under the same absence requirement.
+#[test]
+fn a_fielded_mint_files_the_record_its_mark_declares() {
+    let (mut chain, instance) = founded();
+    chain
+        .transact(FOUNDER, |b| {
+            let seat = instance.seat(b, 42)?;
+            account::deposit_nf(b, FOUNDER, seat)
+        })
+        .expect_completed();
+
+    let seat = issued_resource(
+        &TestHasher,
+        instance,
+        ResourceKind::NonFungible,
+        issuer::SEAT,
+    );
+    let filed = chain
+        .cell(instance_data_key(&TestHasher, instance, seat, 7))
+        .expect("the instance's data cell");
+    assert_eq!(
+        filed,
+        to_vec(&issuer::Seat {
+            operator: 42,
+            label: "front-row".to_owned(),
+        })
+        .expect("the record encodes"),
+        "the cell holds the record's own encoding, not a presence byte",
+    );
+}
+
+/// An id nothing minted has no cell, so a schema is readable exactly
+/// where an instance exists.
+#[test]
+fn an_unminted_id_has_no_data_cell() {
+    let (mut chain, instance) = founded();
+    chain
+        .transact(FOUNDER, |b| {
+            let seat = instance.seat(b, 42)?;
+            account::deposit_nf(b, FOUNDER, seat)
+        })
+        .expect_completed();
+
+    let seat = issued_resource(
+        &TestHasher,
+        instance,
+        ResourceKind::NonFungible,
+        issuer::SEAT,
+    );
+    assert_eq!(
+        chain.cell(instance_data_key(&TestHasher, instance, seat, 8)),
+        None,
     );
 }
