@@ -27,9 +27,10 @@
 //! what resolves a collection to one of those parameters is the lowering
 //! — which is why [`Keyed`], [`Ordered`] and [`Unordered`] have no body
 //! on either target: a call to `at` is rewritten to the handle it named,
-//! never made. The same holds for [`mint`], [`issued`] and
-//! [`fresh_id`], each of which the lowering answers from the declaration.
-//! Reaching one at run time is reaching a stub, which is what makes an
+//! never made. The same holds for [`mint`], `issued(<Resource>)` and
+//! [`fresh_id`], each of which the lowering answers from the declaration
+//! — `issued` all the way down to the name, which resolves to no
+//! function at all. Reaching a stub at run time is what makes an
 //! authoring half that was called directly fail rather than execute.
 //!
 //! The accessors that do have a guest body are always inlined, because
@@ -1390,20 +1391,6 @@ pub fn burn_granted(grant: u32, funds: Bucket) {
 #[must_use]
 pub const fn pack(hi: u64, lo: u64) -> OrderKey {
     ((hi as OrderKey) << 64) | (lo as OrderKey)
-}
-
-/// A resource this instance issues, separated from its others by `mark`.
-///
-/// Derived from the instance rather than configured: an instance's
-/// address commits its configuration, so a configured field naming a
-/// value derived from that address would not be expressible. Pass an
-/// empty mark for the instance's primary issue, and a distinguishing one
-/// for anything beside it — a badge that operates the instance is the
-/// same derivation over different material.
-#[must_use]
-pub fn issued(mark: &[u8]) -> Denomination {
-    let _ = mark;
-    unimplemented!("{OFF_HOST}")
 }
 
 /// A deterministic fresh id, unique within this call.

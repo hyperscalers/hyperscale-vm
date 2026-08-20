@@ -420,7 +420,7 @@ pub fn expr_depth(expr: &Expr) -> usize {
         Expr::List(elements) | Expr::Tuple(elements) => {
             elements.iter().map(expr_depth).max().unwrap_or(0)
         }
-        Expr::SelfResource { material } => material.iter().map(expr_depth).max().unwrap_or(0),
+        Expr::SelfResource { material, .. } => material.iter().map(expr_depth).max().unwrap_or(0),
         Expr::ChildKey {
             owner, material, ..
         }

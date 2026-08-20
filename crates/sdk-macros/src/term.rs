@@ -15,6 +15,30 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
+/// A declared resource's kind, in the macro's own IR.
+///
+/// Mirrors `hyperscale_vm_sdk::ResourceKind` without depending on it: the
+/// macro only ever emits the path, and what it emits is decided where the
+/// resource is declared or where the operation fixes it — `mint` is
+/// fungible by construction, a `#[resource]` attribute states its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResourceKind {
+    /// Divisible value.
+    Fungible,
+    /// Named instances.
+    NonFungible,
+}
+
+impl ResourceKind {
+    /// The SDK path this kind emits as.
+    pub fn emit(self) -> TokenStream {
+        match self {
+            Self::Fungible => quote!(::hyperscale_vm_sdk::ResourceKind::Fungible),
+            Self::NonFungible => quote!(::hyperscale_vm_sdk::ResourceKind::NonFungible),
+        }
+    }
+}
+
 /// An expression the DSL admits, in the macro's own IR.
 ///
 /// One-to-one with the subset of `hyperscale_vm_effects::Expr` a body can
@@ -66,8 +90,9 @@ pub enum Term {
         /// The logical key.
         key: Box<Self>,
     },
-    /// A resource the instance issues, marked apart from its others.
-    SelfResource(Vec<u8>),
+    /// A resource the instance issues, marked apart from its others, of
+    /// the kind its derivation folds.
+    SelfResource(ResourceKind, Vec<u8>),
     /// A non-fungible edge: the resource, and the instances it carries.
     NfBucket {
         /// The resource the edge is denominated in.
@@ -208,9 +233,10 @@ impl Term {
                         .cast::<::hyperscale_vm_sdk::Opaque>()
                 )
             }
-            Self::SelfResource(mark) => {
+            Self::SelfResource(kind, mark) => {
+                let kind = kind.emit();
                 let mark = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
-                quote!(__t.self_resource(#mark).cast::<::hyperscale_vm_sdk::Opaque>())
+                quote!(__t.self_resource(#kind, #mark).cast::<::hyperscale_vm_sdk::Opaque>())
             }
             Self::NfBucket { resource, ids } => {
                 let resource = resource.emit();

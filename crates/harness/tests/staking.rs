@@ -19,9 +19,9 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
     AdmissionError, EnvelopeTree, Fungibility, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, ResourceRecord,
-    TestHasher, Value, admit_tree, child_key, holdings_collection, resource_address,
-    resource_record_key, route_tree,
+    IntentDecl, ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, ResourceKind,
+    ResourceRecord, TestHasher, Value, admit_tree, child_key, holdings_collection,
+    resource_address, resource_record_key, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
@@ -41,7 +41,7 @@ const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// pool, not configured, which is what the signature's `SelfResource`
 /// evaluates to.
 fn unit() -> ResourceAddr {
-    resource_address(&TestHasher, pool(), &[])
+    resource_address(&TestHasher, pool(), ResourceKind::Fungible, &[])
 }
 /// The pool's owner badge — the same derivation the operator gate
 /// evaluates.
@@ -49,6 +49,7 @@ fn badge() -> ResourceAddr {
     resource_address(
         &TestHasher,
         pool(),
+        ResourceKind::NonFungible,
         &[Value::Bytes(staking::OWNER_BADGE.to_vec()).canonical_bytes()],
     )
 }

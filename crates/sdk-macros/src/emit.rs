@@ -291,9 +291,10 @@ pub fn declaration(
     });
     // The grant binds after the values, which is where the export takes
     // it: the binding's order is the export's parameter order.
-    let issuer = lowered.issues.as_ref().map(|mark| {
+    let issuer = lowered.issues.as_ref().map(|(kind, mark)| {
+        let kind = kind.emit();
         let bytes = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
-        quote!(__t.bind_issuer(#bytes);)
+        quote!(__t.bind_issuer(#kind, #bytes);)
     });
     let fallible = declines.then(|| quote!(__t.fallible();));
     let total = total.then(|| quote!(__t.total();));

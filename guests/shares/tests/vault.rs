@@ -1,7 +1,7 @@
 //! The share vault's own tests, against the real kernel.
 
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
+    Chain, PrincipalAddr, ResourceAddr, ResourceKind, account, package, principal, resource,
 };
 use shares_guest::shares::client::{Settings, Shares};
 
@@ -62,7 +62,8 @@ fn redeeming_every_share_returns_every_asset() {
     chain
         .transact(ALICE, |b| {
             let signed_in = account::authorize(b, ALICE)?;
-            let units = account::withdraw(b, signed_in, Chain::issued(vault, b""), 1_000)?;
+            let shares = Chain::issued(vault, ResourceKind::Fungible, b"");
+            let units = account::withdraw(b, signed_in, shares, 1_000)?;
             let back = vault.redeem(b, units)?;
             account::deposit(b, ALICE, back)
         })
@@ -106,7 +107,8 @@ fn there_is_no_path_that_grows_assets_without_minting_shares() {
     chain
         .transact(ALICE, |b| {
             let signed_in = account::authorize(b, ALICE)?;
-            let units = account::withdraw(b, signed_in, Chain::issued(vault, b""), 1_000)?;
+            let shares = Chain::issued(vault, ResourceKind::Fungible, b"");
+            let units = account::withdraw(b, signed_in, shares, 1_000)?;
             let back = vault.redeem(b, units)?;
             account::deposit(b, ALICE, back)
         })

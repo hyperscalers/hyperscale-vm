@@ -8,6 +8,7 @@ use crate::hash::{Hash32, Hasher, TestHasher};
 use crate::instance::{InstanceMeta, InstanceRegistry};
 use crate::manifest::{Bounds, Manifest, Node, NodeInput};
 use crate::metadata::{MetadataCache, PackageHash, PackageMetadata};
+use crate::resource::ResourceKind;
 use crate::route::PrefixShardResolver;
 use crate::signature::{MethodSignature, ParamType, Totality};
 use crate::types::{EdgeContent, SlotId, Value, resource_address};
@@ -38,7 +39,13 @@ pub fn instance_of(package: &str) -> ComponentAddr {
 /// The resource an instance of `package` issues from empty material —
 /// what a fixture producer's `SelfResource` output evaluates to.
 pub fn issued_by(package: &str) -> Denomination {
-    resource_address(&TestHasher, instance_of(package), &[]).into()
+    resource_address(
+        &TestHasher,
+        instance_of(package),
+        ResourceKind::Fungible,
+        &[],
+    )
+    .into()
 }
 
 /// A resource-class literal, for a fixture that names one directly.
@@ -86,7 +93,10 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
     vault_pkg.methods.insert(
         "withdraw".into(),
         MethodSignature {
-            outputs: vec![Expr::SelfResource { material: vec![] }],
+            outputs: vec![Expr::SelfResource {
+                kind: ResourceKind::Fungible,
+                material: vec![],
+            }],
             effects: vec![self_point(SlotId(1), ModeExpr::Reserve(Expr::Arg(0)))],
             ..MethodSignature::default()
         },
@@ -95,7 +105,10 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
     venue_pkg.methods.insert(
         "swap".into(),
         MethodSignature {
-            outputs: vec![Expr::SelfResource { material: vec![] }],
+            outputs: vec![Expr::SelfResource {
+                kind: ResourceKind::Fungible,
+                material: vec![],
+            }],
             effects: vec![self_point(SlotId(2), ModeExpr::Write)],
             ..MethodSignature::default()
         },

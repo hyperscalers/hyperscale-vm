@@ -31,7 +31,7 @@ use std::collections::BTreeSet;
 
 use buckets::Buckets;
 pub use buckets::Held;
-use hyperscale_vm_effects::distinct_ids;
+use hyperscale_vm_effects::{ResourceKind, distinct_ids};
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, Denomination, EffectSet, ISSUER_REP, ResourceAddr,
@@ -122,6 +122,10 @@ pub enum SessionTrap {
     /// through a lowered handle, kept as an honest error.
     #[error("this invocation issues nothing")]
     IssuanceUngranted,
+    /// A mint of the other kind than the grant's address commits: a
+    /// fungible amount of a non-fungible resource, or the reverse.
+    #[error("this grant does not issue what the operation creates")]
+    WrongIssuanceKind,
     /// A split past what a bucket holds.
     #[error("a split of {amount} exceeds the {held} the bucket holds")]
     BucketUnderflow {
@@ -201,6 +205,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::ReservationMissing => Self::ReservationMissing,
             SessionTrap::ReservationTaken => Self::ReservationAlreadyTaken,
             SessionTrap::IssuanceUngranted => Self::IssuanceUngranted,
+            SessionTrap::WrongIssuanceKind => Self::WrongIssuanceKind,
             SessionTrap::BucketUnderflow { .. } => Self::BucketUnderflow,
             SessionTrap::BucketOverflow => Self::BucketOverflow,
             SessionTrap::WrongEdgeKind => Self::WrongEdgeKind,
@@ -287,7 +292,7 @@ pub struct KernelSession {
     /// asked. The bit reaches the guest as a handle all the same, so it
     /// is visible in the export's own type and a body that was granted
     /// nothing has nothing to name.
-    issuance: Option<ResourceAddr>,
+    issuance: Option<(ResourceAddr, ResourceKind)>,
     /// Reservations already taken, by capability rep.
     ///
     /// A grant answers once. The read this replaces answered every time
@@ -593,12 +598,7 @@ impl KernelSession {
     /// Any [`SessionTrap`], including a mint against a grant this
     /// invocation was never given.
     pub fn mint(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
-        if rep != ISSUER_REP {
-            return Err(SessionTrap::UnknownHandle(rep));
-        }
-        let Some(resource) = self.issuance else {
-            return Err(SessionTrap::IssuanceUngranted);
-        };
+        let resource = self.issued(rep, ResourceKind::Fungible)?;
         self.supply.mint(resource, amount)?;
         Ok(self.open_bucket(Held::Amount(amount), resource.into()))
     }
@@ -610,12 +610,7 @@ impl KernelSession {
     /// Any [`SessionTrap`], including a mint against a grant this
     /// invocation was never given.
     pub fn mint_instances(&mut self, rep: u32, ids: &[u64]) -> Result<u32, SessionTrap> {
-        if rep != ISSUER_REP {
-            return Err(SessionTrap::UnknownHandle(rep));
-        }
-        let Some(resource) = self.issuance else {
-            return Err(SessionTrap::IssuanceUngranted);
-        };
+        let resource = self.issued(rep, ResourceKind::NonFungible)?;
         let named = distinct_ids(ids).ok_or(SessionTrap::MalformedIdSet)?;
         let instances: BTreeSet<u128> = named.into_iter().map(u128::from).collect();
         // An instance's supply is its existence: what a non-fungible
@@ -634,7 +629,7 @@ impl KernelSession {
         if rep != ISSUER_REP {
             return Err(SessionTrap::UnknownHandle(rep));
         }
-        let Some(resource) = self.issuance else {
+        let Some((resource, _)) = self.issuance else {
             return Err(SessionTrap::IssuanceUngranted);
         };
         // A grant names one resource, so what it destroys is that one:
@@ -656,12 +651,30 @@ impl KernelSession {
     /// mint it and to burn it, which are two directions of one right.
     ///
     /// Read off the method's own declaration by whoever entered the node;
-    /// entering the next one takes it away again. The resource is the
-    /// grant's whole content — what a body may bring into or out of
-    /// existence is fixed before it runs, and there is no second one it
-    /// could name.
-    pub const fn grant_issuance(&mut self, resource: ResourceAddr) {
-        self.issuance = Some(resource);
+    /// entering the next one takes it away again. The resource and its
+    /// kind are the grant's whole content — what a body may bring into
+    /// or out of existence is fixed before it runs, and there is no
+    /// second one it could name.
+    pub const fn grant_issuance(&mut self, resource: ResourceAddr, kind: ResourceKind) {
+        self.issuance = Some((resource, kind));
+    }
+
+    /// The granted resource, held to the kind the operation creates.
+    ///
+    /// The grant's address commits its kind, so a mint of the other
+    /// kind is not a variant of the resource — it is an operation on a
+    /// resource this invocation was never granted.
+    fn issued(&self, rep: u32, kind: ResourceKind) -> Result<ResourceAddr, SessionTrap> {
+        if rep != ISSUER_REP {
+            return Err(SessionTrap::UnknownHandle(rep));
+        }
+        let Some((resource, granted)) = self.issuance else {
+            return Err(SessionTrap::IssuanceUngranted);
+        };
+        if granted != kind {
+            return Err(SessionTrap::WrongIssuanceKind);
+        }
+        Ok(resource)
     }
 
     /// Take the reservation this capability holds, as a bucket.

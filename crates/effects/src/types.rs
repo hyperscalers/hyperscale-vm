@@ -9,6 +9,7 @@ use hyperscale_vm_types::{
 
 use crate::hash::{Hash32, Hasher};
 use crate::metadata::PackageHash;
+use crate::resource::ResourceKind;
 
 /// A shard identity, as resolved from an address prefix.
 ///
@@ -267,19 +268,24 @@ pub fn package_address(hasher: &dyn Hasher, package: PackageHash) -> PackageAddr
 
 /// The address of a resource minted under `minter`.
 ///
-/// A resource address commits to its provenance: who may mint it is
-/// readable from the address, so a holder checks supply authority by
-/// recomputing the derivation rather than by trusting a claim about it.
-/// The material separates the resources one minter issues.
+/// A resource address commits to its provenance and its kind: who may
+/// mint it and what it is are readable from the address, so a holder
+/// checks supply authority by recomputing the derivation rather than by
+/// trusting a claim about it, and a resource minted as both kinds is
+/// unconstructible — the two derivations are two addresses. The
+/// material separates the resources one minter issues.
 #[must_use]
 pub fn resource_address(
     hasher: &dyn Hasher,
     minter: impl Into<Address>,
+    kind: ResourceKind,
     material: &[Vec<u8>],
 ) -> ResourceAddr {
     let minter_bytes = minter.into().to_bytes();
-    let mut parts: Vec<&[u8]> = Vec::with_capacity(1 + material.len());
+    let kind_tag = [kind.tag()];
+    let mut parts: Vec<&[u8]> = Vec::with_capacity(2 + material.len());
     parts.push(&minter_bytes);
+    parts.push(&kind_tag);
     parts.extend(material.iter().map(Vec::as_slice));
     ResourceAddr::new(body(hasher.hash(DOMAIN_RESOURCE, &parts)))
 }
@@ -465,6 +471,7 @@ mod tests {
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::metadata::PackageHash;
+    use crate::resource::ResourceKind;
     use crate::vectors::{
         CONFIG_LEAF, PACKAGE, SALT, address_vector_lines, address_vectors, expected_classes,
     };
@@ -572,7 +579,8 @@ mod tests {
                 "principal/ed25519/b = ca6f00440ae6880825310430406d4bfc462131d3fa34aa0d993da698a6bd6e01",
                 "component/salted = 182371a0c66262beab502fc6f5e9c7a92f94c5f903e378fdc07d999c58fa2b02",
                 "package/content = 94cb538bce2c0a6cf61a9fff32d805fb229e1db7174679c17d404686430e4103",
-                "resource/minted = f72ffe983b73e50f18db85a1cb300808acab0346e1d60fbe8683981bab88de04",
+                "resource/minted = 3c02dce7351c22599c33fe4dbb7952f15067c91c5f367ea7b55d8a5f68743d04",
+                "resource/minted-nf = 1c9ab560ba43abd7f4086e6b612dd21f1702df45dcf37ed00945103f07c85c04",
                 "native/xrd = 6d533c845b52439ae3b1b23e2b1c40e96e9c96ec0c67c70c9b238f1b860d1a05",
             ]
         );
@@ -622,29 +630,46 @@ mod tests {
     }
 
     #[test]
-    fn a_resource_separates_by_minter_and_material() {
+    fn a_resource_separates_by_minter_kind_and_material() {
+        let fungible = ResourceKind::Fungible;
         let config = config_hash(&TestHasher, CONFIG_LEAF);
         let minter = component_address(&TestHasher, PACKAGE, config, SALT);
         let other = component_address(&TestHasher, PACKAGE, config, Hash32([0x5c; 32]));
-        let base = resource_address(&TestHasher, minter, &[b"unit".to_vec()]);
+        let base = resource_address(&TestHasher, minter, fungible, &[b"unit".to_vec()]);
 
         assert_eq!(
             base,
-            resource_address(&TestHasher, minter, &[b"unit".to_vec()])
+            resource_address(&TestHasher, minter, fungible, &[b"unit".to_vec()])
         );
         assert_ne!(
             base,
-            resource_address(&TestHasher, other, &[b"unit".to_vec()])
+            resource_address(&TestHasher, other, fungible, &[b"unit".to_vec()])
         );
         assert_ne!(
             base,
-            resource_address(&TestHasher, minter, &[b"other".to_vec()])
+            resource_address(&TestHasher, minter, fungible, &[b"other".to_vec()])
+        );
+        // The kind is derivation material, so a resource minted as both
+        // kinds is two addresses rather than one address worn two ways.
+        assert_ne!(
+            base,
+            resource_address(
+                &TestHasher,
+                minter,
+                ResourceKind::NonFungible,
+                &[b"unit".to_vec()]
+            )
         );
         // The minter is a framed part, so material cannot be chosen to
         // reproduce another minter's resource by shifting the boundary.
         assert_ne!(
-            resource_address(&TestHasher, minter, &[b"ab".to_vec(), b"c".to_vec()]),
-            resource_address(&TestHasher, minter, &[b"abc".to_vec()])
+            resource_address(
+                &TestHasher,
+                minter,
+                fungible,
+                &[b"ab".to_vec(), b"c".to_vec()]
+            ),
+            resource_address(&TestHasher, minter, fungible, &[b"abc".to_vec()])
         );
     }
 
@@ -660,6 +685,7 @@ mod tests {
             resource_address(
                 &TestHasher,
                 Address::new([0x11; 31], AddressClass::Component),
+                ResourceKind::Fungible,
                 &[vec![0x11; 32]],
             )
             .body(),

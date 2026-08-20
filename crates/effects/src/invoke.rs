@@ -18,24 +18,11 @@ use hyperscale_vm_types::{Address, CellKind, ResourceAddr};
 use crate::manifest::{Bounds, JudgedLeaf};
 use crate::metadata::PackageHash;
 use crate::presented::Presented;
+use crate::resource::ResourceKind;
 use crate::rule::Rule;
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE};
 
-/// What kind of value an edge carries.
-///
-/// Declared — evaluated from the producing method's output projection —
-/// and never sniffed from what crosses: the kind is what admission binds
-/// a consumer's parameter against, and what a signed bound is judged in
-/// the terms of.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EdgeKind {
-    /// The edge carries a dynamic amount.
-    Fungible,
-    /// The edge carries named instances.
-    NonFungible,
-}
-
-impl EdgeKind {
+impl ResourceKind {
     /// The cell shape a projection's content crosses the boundary as.
     #[must_use]
     pub const fn of(content: &EdgeContent) -> Self {
@@ -133,7 +120,7 @@ pub struct EdgeBound {
     /// The declared shape of the carried cell, which is what the bound is
     /// judged over: a fungible edge's amount, a non-fungible edge's id
     /// count.
-    pub kind: EdgeKind,
+    pub kind: ResourceKind,
     /// The consuming node's declared parameter the edge is bound to —
     /// what a refusal names, since the signer wrote the bound against a
     /// parameter and not against an ABI position.
@@ -170,16 +157,19 @@ pub struct NodeCall {
     /// output order. An export produces exactly one edge per entry: a
     /// fungible one as a bucket the kernel takes back, a non-fungible one
     /// as the cell its ids frame.
-    pub outputs: Vec<EdgeKind>,
+    pub outputs: Vec<ResourceKind>,
     /// The resource this node's method may bring into being, where its
-    /// declaration says it brings one.
+    /// declaration says it brings one, with the kind its derivation
+    /// folded.
     ///
     /// Evaluated at routing from the mark the signature carries, against
     /// the target's own address — so an instance can issue what its own
     /// address derives and nothing else, which is the whole of what
     /// grants the authority. Carrying the address rather than a bit is
-    /// what lets an issued edge be stamped with what it holds.
-    pub issues: Option<ResourceAddr>,
+    /// what lets an issued edge be stamped with what it holds; carrying
+    /// the kind beside it is what lets the session hold each mint
+    /// operation to the one shape the grant's address commits.
+    pub issues: Option<(ResourceAddr, ResourceKind)>,
     /// The claims this call presents, resolved from the signed evidence
     /// the manifest node names.
     pub evidence: Vec<Presented>,

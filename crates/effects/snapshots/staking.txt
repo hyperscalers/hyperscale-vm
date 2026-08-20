@@ -17,6 +17,7 @@ PackageMetadata {
                         rule: Require(
                             Claim(
                                 SelfResource {
+                                    kind: NonFungible,
                                     material: [
                                         Literal(
                                             Bytes(
@@ -90,6 +91,7 @@ PackageMetadata {
                         rule: Require(
                             Claim(
                                 SelfResource {
+                                    kind: NonFungible,
                                     material: [
                                         Literal(
                                             Bytes(
@@ -150,6 +152,7 @@ PackageMetadata {
                         rule: Require(
                             Claim(
                                 SelfResource {
+                                    kind: NonFungible,
                                     material: [
                                         Literal(
                                             Bytes(
@@ -237,6 +240,7 @@ PackageMetadata {
                         rule: Require(
                             Claim(
                                 SelfResource {
+                                    kind: NonFungible,
                                     material: [
                                         Literal(
                                             Bytes(
@@ -323,13 +327,17 @@ PackageMetadata {
         "stake": MethodSignature {
             totality: Infallible,
             issues: Some(
-                [],
+                Issuance {
+                    mark: [],
+                    kind: Fungible,
+                },
             ),
             params: [
                 Bucket,
             ],
             outputs: [
                 SelfResource {
+                    kind: Fungible,
                     material: [],
                 },
             ],
@@ -389,6 +397,7 @@ PackageMetadata {
                         rule: Require(
                             Claim(
                                 SelfResource {
+                                    kind: NonFungible,
                                     material: [
                                         Literal(
                                             Bytes(
@@ -462,7 +471,10 @@ PackageMetadata {
         "unstake": MethodSignature {
             totality: Infallible,
             issues: Some(
-                [],
+                Issuance {
+                    mark: [],
+                    kind: Fungible,
+                },
             ),
             params: [
                 Bucket,
@@ -471,6 +483,7 @@ PackageMetadata {
             denominations: [
                 Some(
                     SelfResource {
+                        kind: Fungible,
                         material: [],
                     },
                 ),

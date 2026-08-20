@@ -7,7 +7,7 @@
 
 use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, PackageHash,
-    PrefixShardResolver, TestHasher, Value, resource_address,
+    PrefixShardResolver, ResourceKind, TestHasher, Value, resource_address,
 };
 use hyperscale_vm_fixtures::{amm, splitter};
 use hyperscale_vm_manifest_builder::{
@@ -67,7 +67,7 @@ fn splitter() -> ComponentAddr {
 /// The pool's own stake units, derived from the pool rather than
 /// configured — so a wallet can name them without the pool declaring them.
 fn units() -> ResourceAddr {
-    resource_address(&TestHasher, stake_pool(), &[])
+    resource_address(&TestHasher, stake_pool(), ResourceKind::Fungible, &[])
 }
 
 fn world() -> (MetadataCache, InstanceRegistry) {

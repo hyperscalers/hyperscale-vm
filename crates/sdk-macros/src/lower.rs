@@ -47,7 +47,7 @@ use syn::spanned::Spanned;
 use crate::is_named;
 use crate::mode::HandleMode;
 use crate::syntax::byte_literal;
-use crate::term::{Op, Slot, Term};
+use crate::term::{Op, ResourceKind, Slot, Term};
 
 /// What kind of state a component field holds, and under which slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -377,9 +377,9 @@ pub struct Lowered {
     /// The branches whose verdict the export takes, in the order they
     /// were declared, each saying which arm's clause its flag names.
     pub flags: Vec<Polarity>,
-    /// The mark of the resource the body issues, where it issues one, and
-    /// so whether the export takes the grant.
-    pub issues: Option<Vec<u8>>,
+    /// The resource the body issues, where it issues one — its kind and
+    /// its mark — and so whether the export takes the grant.
+    pub issues: Option<(ResourceKind, Vec<u8>)>,
     /// The rewritten statements, executing against materialized handles.
     pub body: TokenStream,
     /// The value edges the body ends with, each as the expression that
@@ -612,6 +612,9 @@ pub struct Lowerer<'a> {
     /// reached by accessor rather than declared as fields.
     accessors: &'a BTreeMap<String, Field>,
     config_fields: &'a [(String, syn::Type)],
+    /// The `#[resource]` structs the package declares, each with its mark
+    /// and its kind — what `issued(Name)` resolves against.
+    resources: &'a [(String, Vec<u8>, ResourceKind)],
     params: &'a [(String, syn::Type)],
     /// Whether the method yields anything at all, read off its return
     /// type. A body ending in a loop or a conditional has a tail
@@ -642,6 +645,7 @@ impl<'a> Lowerer<'a> {
         fields: &'a BTreeMap<String, Field>,
         accessors: &'a BTreeMap<String, Field>,
         config_fields: &'a [(String, syn::Type)],
+        resources: &'a [(String, Vec<u8>, ResourceKind)],
         params: &'a [(String, syn::Type)],
         returns: bool,
         total: bool,
@@ -651,6 +655,7 @@ impl<'a> Lowerer<'a> {
             total,
             accessors,
             config_fields,
+            resources,
             params,
             returns,
             locals: vec![BTreeMap::new()],
@@ -670,10 +675,47 @@ impl<'a> Lowerer<'a> {
             self.fields,
             self.accessors,
             self.config_fields,
+            self.resources,
             self.params,
             self.returns,
             self.total,
         )
+    }
+
+    /// Refuse a fungible mint or burn whose mark is a declared
+    /// non-fungible resource's.
+    ///
+    /// The derivation folds the kind, so the call would not touch the
+    /// declared resource — it would derive its vacant fungible sibling,
+    /// silently. A mark matching no declaration stays legal: the
+    /// primary and any undeclared fungible issue are named by mark
+    /// alone.
+    fn refuse_wrong_kind(&mut self, mark: &[u8], call: &syn::ExprCall) {
+        let declared = self
+            .resources
+            .iter()
+            .find(|(_, m, _)| m == mark)
+            .filter(|(.., kind)| *kind != ResourceKind::Fungible);
+        if let Some((name, ..)) = declared {
+            self.error(
+                call.args.span(),
+                &format!(
+                    "this mark is `{name}`'s, a non-fungible resource — a fungible \
+                     operation would derive its vacant fungible sibling, not it"
+                ),
+            );
+        }
+    }
+
+    /// The declared resource an `issued(Name)` call names, as a term
+    /// carrying the declaration's own mark and kind.
+    fn declared_resource(&self, call: &syn::ExprCall) -> Option<Term> {
+        let name = call.args.first().and_then(|arg| match arg {
+            syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
+            _ => None,
+        })?;
+        let (_, mark, kind) = self.resources.iter().find(|(r, ..)| *r == name)?;
+        Some(Term::SelfResource(*kind, mark.clone()))
     }
 
     /// The cells this body touches under more than one condition.
@@ -1012,7 +1054,8 @@ impl<'a> Lowerer<'a> {
             lowerer.error(
                 expr.span(),
                 "a denomination is `config.<field>` for a configured resource, or \
-                 `issued(b\"..\")` for one the instance derives from its own address",
+                 `issued(<Resource>)` for a declared one the instance derives from its \
+                 own address",
             );
             None
         };
@@ -1044,16 +1087,14 @@ impl<'a> Lowerer<'a> {
                     u32::try_from(index).expect("a configuration record is shorter than u32"),
                 ))
             }
-            // `issued(b"..")` — the instance's own resource, by the mark
-            // separating it from the instance's others.
+            // `issued(Name)` — the instance's own resource, by the
+            // declared `#[resource]` struct whose mark and kind derive it.
             syn::Expr::Call(call) => {
                 if free_call_name(call).as_deref() != Some("issued") {
                     return refuse(self);
                 }
-                call.args
-                    .first()
-                    .and_then(byte_literal)
-                    .map_or_else(|| refuse(self), |mark| Some(Term::SelfResource(mark)))
+                self.declared_resource(call)
+                    .map_or_else(|| refuse(self), Some)
             }
             _ => refuse(self),
         }
@@ -1071,7 +1112,7 @@ impl<'a> Lowerer<'a> {
                 || format!("configuration slot {slot}"),
                 |(name, _)| format!("`config.{name}`"),
             ),
-            Term::SelfResource(mark) => core::str::from_utf8(mark).map_or_else(
+            Term::SelfResource(_, mark) => core::str::from_utf8(mark).map_or_else(
                 |_| "a resource this instance issues".into(),
                 |mark| format!("`issued(b\"{mark}\")`"),
             ),
@@ -1111,7 +1152,7 @@ impl<'a> Lowerer<'a> {
             self.error(call.args.span(), "a burn with nothing to destroy");
             return Eval::absent(call.args.span(), "a burn with no value");
         };
-        let held = Term::SelfResource(mark.to_vec());
+        let held = Term::SelfResource(ResourceKind::Fungible, mark.to_vec());
         match Self::edge_resource(&destroyed) {
             Some(Term::ResourceOf(inner)) if matches!(*inner, Term::Arg(_)) => {
                 if let Term::Arg(param) = *inner {
@@ -1137,7 +1178,7 @@ impl<'a> Lowerer<'a> {
             ),
         }
         let funds = self.value(destroyed.code);
-        let grant = self.issuer(mark);
+        let grant = self.issuer(ResourceKind::Fungible, mark);
         Eval::plain(quote!(::hyperscale_vm_sdk::state::burn_granted(#grant, #funds)))
     }
 
@@ -1289,7 +1330,7 @@ impl<'a> Lowerer<'a> {
             | Term::IdsOf(_)
             | Term::Len(_)
             | Term::OrderKey { .. }
-            | Term::SelfResource(_)
+            | Term::SelfResource(..)
             | Term::Add(..)
             | Term::If { .. } => self.need(&Need::Derived(term.clone())),
             // A judgment has no guest representation, so what crosses is
@@ -1373,8 +1414,8 @@ impl<'a> Lowerer<'a> {
 
     /// Bind this method's issuance grant as an export parameter, and
     /// answer the rep the issue call takes.
-    fn issuer(&mut self, mark: &[u8]) -> TokenStream {
-        self.out.issues = Some(mark.to_vec());
+    fn issuer(&mut self, kind: ResourceKind, mark: &[u8]) -> TokenStream {
+        self.out.issues = Some((kind, mark.to_vec()));
         quote!(__issuer)
     }
 
@@ -2327,14 +2368,15 @@ impl<'a> Lowerer<'a> {
                 );
                 return Eval::absent(call.args.span(), "a computed resource mark");
             };
+            self.refuse_wrong_kind(&mark, call);
             let amount = call.args.iter().nth(1).map_or(
                 Code::Absent(call.args.span(), "an issue with no amount"),
                 |a| self.expr(a).code,
             );
             let amount = self.value(amount);
-            let grant = self.issuer(&mark);
+            let grant = self.issuer(ResourceKind::Fungible, &mark);
             return Eval {
-                val: Val::Produced(Term::SelfResource(mark)),
+                val: Val::Produced(Term::SelfResource(ResourceKind::Fungible, mark)),
                 code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#grant, #amount))),
             };
         }
@@ -2348,19 +2390,19 @@ impl<'a> Lowerer<'a> {
                 );
                 return Eval::absent(call.args.span(), "a computed resource mark");
             };
+            self.refuse_wrong_kind(&mark, call);
             return self.lower_burn(&mark, call);
         }
         if name == "issued" {
-            let mark = call.args.first().and_then(byte_literal);
-            let Some(mark) = mark else {
+            let Some(term) = self.declared_resource(call) else {
                 self.error(
                     call.args.span(),
-                    "the mark separating an instance's resources is part of every key \
-                     derived from one, so it must be a byte-string literal",
+                    "`issued` names a declared `#[resource]` struct — the derivation \
+                     folds the resource's kind, and the declaration is where a kind \
+                     is stated",
                 );
-                return Eval::absent(call.args.span(), "a computed resource mark");
+                return Eval::absent(call.args.span(), "an undeclared resource");
             };
-            let term = Term::SelfResource(mark);
             return Eval {
                 val: Val::Term(term.clone()),
                 code: Code::Term(term),

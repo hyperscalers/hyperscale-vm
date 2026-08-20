@@ -7,8 +7,8 @@
 
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
-    CONFIRMATION, Clause, ConditionExpr, Expr, PRIMARY, PackageMetadata, RECOVERY, RuleExpr,
-    RuleLeaf, Value, check_abi, check_declarations,
+    CONFIRMATION, Clause, ConditionExpr, Expr, PRIMARY, PackageMetadata, RECOVERY, ResourceKind,
+    RuleExpr, RuleLeaf, Value, check_abi, check_declarations,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_stdlib::staking::OWNER_BADGE;
@@ -80,6 +80,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
     let this = || vec![RuleExpr::claim(Expr::SelfAddr)];
     let owner_badge = || {
         vec![RuleExpr::claim(Expr::SelfResource {
+            kind: ResourceKind::NonFungible,
             material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
         })]
     };

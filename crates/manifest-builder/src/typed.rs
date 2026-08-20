@@ -755,7 +755,7 @@ fn resolvable(expr: &Expr, known: &[bool], depth: usize) -> bool {
         } => deeper(cond) && deeper(then) && deeper(otherwise),
         Expr::NfBucket { resource, ids } => deeper(resource) && deeper(ids),
         Expr::List(elements) | Expr::Tuple(elements) => elements.iter().all(deeper),
-        Expr::SelfResource { material } => material.iter().all(deeper),
+        Expr::SelfResource { material, .. } => material.iter().all(deeper),
         Expr::ChildKey {
             owner, material, ..
         }

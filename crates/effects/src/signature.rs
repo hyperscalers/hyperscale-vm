@@ -8,7 +8,7 @@ use hyperscale_vm_types::{
 
 use crate::auth::RoleTable;
 use crate::dsl::{Clause, ConditionExpr, Expr};
-use crate::invoke::EdgeKind;
+use crate::resource::ResourceKind;
 use crate::rule::{RuleExpr, RuleLeaf, StoredRule};
 use crate::types::{MAX_IDS_PER_EDGE, Value};
 
@@ -84,10 +84,10 @@ impl ParamType {
 
     /// The edge kind this parameter accepts, if it is an edge at all.
     #[must_use]
-    pub const fn edge_kind(self) -> Option<EdgeKind> {
+    pub const fn edge_kind(self) -> Option<ResourceKind> {
         match self {
-            Self::Bucket => Some(EdgeKind::Fungible),
-            Self::NfBucket => Some(EdgeKind::NonFungible),
+            Self::Bucket => Some(ResourceKind::Fungible),
+            Self::NfBucket => Some(ResourceKind::NonFungible),
             _ => None,
         }
     }
@@ -255,6 +255,21 @@ impl Totality {
     }
 }
 
+/// The resource a method's issuance grant is over: the mark deriving it
+/// and the kind it is.
+///
+/// The kind travels with the mark because the derivation folds it — the
+/// grant's address is a function of both — and because a burn-only
+/// method has no output projection to read a kind from, so nothing else
+/// in the signature could say it.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub struct Issuance {
+    /// The material separating this resource from the instance's others.
+    pub mark: Vec<u8>,
+    /// What the resource is, folded into its derivation.
+    pub kind: ResourceKind,
+}
+
 /// A method's declared access: every effect the method itself reaches,
 /// and no further — a frame declares only under its own instance's
 /// prefix.
@@ -268,15 +283,15 @@ pub struct MethodSignature {
     /// locally and offers no veto, so it must be one that cannot come
     /// back with a refusal or a trap for the core to have to answer.
     pub totality: Totality,
-    /// The mark of the resource this method may bring into or out of
-    /// existence, where it may.
+    /// The resource this method may bring into or out of existence,
+    /// where it may.
     ///
     /// A mark rather than an address: it is the material separating one
     /// of the instance's own resources from its others, so naming another
     /// instance's is not something this field can say. The walk grants
     /// the issuance handle against it, and the gate holds the export to
     /// taking one exactly when it is present.
-    pub issues: Option<Vec<u8>>,
+    pub issues: Option<Issuance>,
     /// The method's parameter kinds, in order; admission types every node
     /// against them.
     pub params: Vec<ParamType>,

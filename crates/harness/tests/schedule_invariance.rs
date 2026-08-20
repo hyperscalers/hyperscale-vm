@@ -15,7 +15,7 @@ use hyperscale_vm_kernel::{
     Locality, MemoryStore, OverlayStore, RunResult, Unavailable, WorkingStore, decode_amount,
     execute_batch,
 };
-use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
+use hyperscale_vm_ref::{CVal, HandleKind, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, WriteCell, add_kernel_to_linker, blessed_engine,
 };
@@ -279,11 +279,11 @@ impl GuestRunner for RefRunner {
                         .expect("capability present"),
                 )
                 .expect("bounded"),
-                        ResourceKind::ReserveCell,
+                        HandleKind::ReserveCell,
                     ),
                     CVal::Borrow(
                         rep_of(&session, &Capability::Delta(recipient)),
-                        ResourceKind::DeltaCell,
+                        HandleKind::DeltaCell,
                     ),
                 ],
             ),
@@ -291,7 +291,7 @@ impl GuestRunner for RefRunner {
                 "rmw",
                 vec![CVal::Borrow(
                     rep_of(&session, &Capability::Write(cell)),
-                    ResourceKind::WriteCell,
+                    HandleKind::WriteCell,
                 )],
             ),
         };

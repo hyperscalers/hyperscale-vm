@@ -3,10 +3,10 @@
 //! addresses, and every malformed composition rejects exactly.
 
 use hyperscale_vm_effects::{
-    AdmissionError, AdmittedTree, Bounds, Constraint, EdgeContent, EdgeKind, EdgeRef, EnvelopeTree,
-    GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, InstanceRegistry, IntentDecl,
-    MAX_VALUE_DEPTH, MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, NULLIFIER_SLOT,
-    NodeInput, PackageHash, PrefixShardResolver, ShardResolver, Subintent, TestHasher, Value,
+    AdmissionError, AdmittedTree, Bounds, Constraint, EdgeContent, EdgeRef, EnvelopeTree, GraphArg,
+    GraphNode, Hash32, Hasher, InstanceMeta, InstanceRegistry, IntentDecl, MAX_VALUE_DEPTH,
+    MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, NULLIFIER_SLOT, NodeInput,
+    PackageHash, PrefixShardResolver, ResourceKind, ShardResolver, Subintent, TestHasher, Value,
     YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
 use hyperscale_vm_stdlib::account;
@@ -320,8 +320,8 @@ fn a_yielded_edge_is_judged_by_its_kind() {
     let wrong = nf_tree(deposit_param(ALICE, 0));
     assert!(matches!(
         admit_composed(&wrong),
-        Err(AdmissionError::EdgeKindMismatch {
-            found: EdgeKind::NonFungible,
+        Err(AdmissionError::ResourceKindMismatch {
+            found: ResourceKind::NonFungible,
             ..
         })
     ));
@@ -339,8 +339,8 @@ fn a_yielded_edge_is_judged_by_its_kind() {
     crossed.root.graph.nodes[2] = GraphNode::new(ALICE, "deposit-nf", vec![GraphArg::Param(0)]);
     assert!(matches!(
         admit_composed(&crossed),
-        Err(AdmissionError::EdgeKindMismatch {
-            found: EdgeKind::Fungible,
+        Err(AdmissionError::ResourceKindMismatch {
+            found: ResourceKind::Fungible,
             ..
         })
     ));

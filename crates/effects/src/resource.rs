@@ -14,6 +14,40 @@ use crate::hash::Hasher;
 use crate::types::{Value, child_key, collection_id, resource_address};
 pub use crate::vocabulary::{INSTANCE, NF_VAULT, RESOURCE};
 
+/// What a resource is: divisible value, or named instances.
+///
+/// Derivation material before it is anything else: the discriminant is
+/// folded into [`resource_address`](crate::types::resource_address), so
+/// one address names one kind and a resource minted as both kinds is
+/// two resources rather than a conflation. The same vocabulary types an
+/// edge — declared, evaluated from the producing method's output
+/// projection, and never sniffed from what crosses: the kind is what
+/// admission binds a consumer's parameter against, and what a signed
+/// bound is judged in the terms of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+pub enum ResourceKind {
+    /// Divisible value: linear amounts in vault cells; edges carry
+    /// 16-byte quantities.
+    Fungible,
+    /// Named instances held as sub-collection entries; edges carry id
+    /// sets.
+    NonFungible,
+}
+
+impl ResourceKind {
+    /// The kind's derivation byte: the part [`resource_address`] folds
+    /// between the minter and the material.
+    ///
+    /// [`resource_address`]: crate::types::resource_address
+    #[must_use]
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Fungible => 0,
+            Self::NonFungible => 1,
+        }
+    }
+}
+
 /// The resource `instance` issues under `mark` — the mark separating it
 /// from the instance's other issues, an empty one naming the primary.
 ///
@@ -26,6 +60,7 @@ pub use crate::vocabulary::{INSTANCE, NF_VAULT, RESOURCE};
 pub fn issued_resource(
     hasher: &dyn Hasher,
     instance: impl Into<Address>,
+    kind: ResourceKind,
     mark: &[u8],
 ) -> ResourceAddr {
     let material = if mark.is_empty() {
@@ -33,14 +68,14 @@ pub fn issued_resource(
     } else {
         vec![Value::Bytes(mark.to_vec()).canonical_bytes()]
     };
-    resource_address(hasher, instance, &material)
+    resource_address(hasher, instance, kind, &material)
 }
 
 /// The decoder cap for a record cell: a flat two-field struct, one level
 /// of body over the frame.
 const RECORD_WIRE_DEPTH: usize = 4;
 
-/// What a resource is: divisible value, or named instances.
+/// What a record states about its resource, in the shape a client reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum Fungibility {
     /// Linear amounts in vault cells; edges carry 16-byte quantities.
@@ -54,6 +89,21 @@ pub enum Fungibility {
     /// sets. Instances are whole by construction, so there is no
     /// divisibility to state.
     NonFungible,
+}
+
+impl Fungibility {
+    /// The kind this record restates.
+    ///
+    /// Restates rather than states: the address already commits it, and
+    /// the record carries it because a hash cannot be read backwards —
+    /// a client learns a resource's kind here, never the kernel.
+    #[must_use]
+    pub const fn kind(&self) -> ResourceKind {
+        match self {
+            Self::Fungible { .. } => ResourceKind::Fungible,
+            Self::NonFungible => ResourceKind::NonFungible,
+        }
+    }
 }
 
 /// One resource's record cell.

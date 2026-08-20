@@ -45,7 +45,7 @@ use crate::ops::Value;
 /// traps exactly as the blessed engine's canonical ABI does — the
 /// mode-escape trap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceKind {
+pub enum HandleKind {
     /// `bucket`: the world's only owned resource, and so the only one a
     /// guest can keep past a call or discard.
     Bucket,
@@ -73,7 +73,7 @@ pub enum ResourceKind {
     InstanceRange,
 }
 
-impl ResourceKind {
+impl HandleKind {
     /// The resource type a materialized handle is passed as.
     const fn of(kind: CellKind) -> Self {
         match kind {
@@ -119,7 +119,7 @@ pub enum CVal {
     /// `u64`.
     U64(u64),
     /// A borrowed capability handle carrying its host rep and its type.
-    Borrow(u32, ResourceKind),
+    Borrow(u32, HandleKind),
     /// An owned handle at its host rep.
     ///
     /// No type beside it, where a borrow carries one: the world owns a
@@ -147,14 +147,14 @@ impl From<&GuestArg<'_>> for CVal {
     /// position, because an invocation is granted at most one.
     fn from(arg: &GuestArg<'_>) -> Self {
         match arg {
-            GuestArg::Handle { rep, kind } => Self::Borrow(*rep, ResourceKind::of(*kind)),
+            GuestArg::Handle { rep, kind } => Self::Borrow(*rep, HandleKind::of(*kind)),
             GuestArg::Bool(taken) => Self::Bool(*taken),
             GuestArg::U64(scalar) => Self::U64(*scalar),
             GuestArg::Address(address) => Self::Address(address.to_bytes()),
             GuestArg::Bytes(bytes) => Self::Bytes(bytes.to_vec()),
             GuestArg::Ids(ids) => Self::Ids(ids.to_vec()),
             GuestArg::Bucket(rep) => Self::Own(*rep),
-            GuestArg::Issuer => Self::Borrow(ISSUER_REP, ResourceKind::Issuer),
+            GuestArg::Issuer => Self::Borrow(ISSUER_REP, HandleKind::Issuer),
         }
     }
 }
@@ -224,7 +224,7 @@ enum CompFunc {
 #[derive(Debug, Clone)]
 enum CoreFuncDef {
     Lower { func: u32, opts: CanonOpts },
-    ResourceDrop { kind: Option<ResourceKind> },
+    ResourceDrop { kind: Option<HandleKind> },
     Alias { instance: u32, name: String },
 }
 
@@ -251,7 +251,7 @@ enum CoreInstanceDef {
 enum CTypeEntry {
     Func(CType),
     Defined(CTy),
-    Resource(ResourceKind),
+    Resource(HandleKind),
     Other,
 }
 
@@ -440,7 +440,7 @@ impl RefComponent {
                             // world declared — which is how a world's own
                             // value record reaches its exports' signatures.
                             ComponentTypeRef::Type(bound) => {
-                                let entry = ResourceKind::from_name(import.name.name)
+                                let entry = HandleKind::from_name(import.name.name)
                                     .map(CTypeEntry::Resource)
                                     .or_else(|| match bound {
                                         TypeBounds::Eq(index) => {
@@ -630,8 +630,7 @@ impl RefComponent {
                 }
                 ComponentExternalKind::Type => {
                     self.types.push(
-                        ResourceKind::from_name(name)
-                            .map_or(CTypeEntry::Other, CTypeEntry::Resource),
+                        HandleKind::from_name(name).map_or(CTypeEntry::Other, CTypeEntry::Resource),
                     );
                 }
                 _ => {
@@ -867,7 +866,7 @@ fn resolve_alias<T>(
 /// A live handle-table entry, typed with its resource kind.
 struct Handle {
     rep: u32,
-    kind: ResourceKind,
+    kind: HandleKind,
     live: bool,
     /// Whether the guest owns the handle or was lent it.
     ///
@@ -1232,7 +1231,7 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
                 (CVal::Own(rep), CTy::Own) => {
                     let idx = self.canon.insert(Handle {
                         rep: *rep,
-                        kind: ResourceKind::Bucket,
+                        kind: HandleKind::Bucket,
                         live: true,
                         own: true,
                     });
@@ -1580,7 +1579,7 @@ impl<H: KernelHost> KernelCanon<'_, H> {
     fn seat_bucket(&mut self, rep: u32) -> u32 {
         self.insert(Handle {
             rep,
-            kind: ResourceKind::Bucket,
+            kind: HandleKind::Bucket,
             live: true,
             own: true,
         })
@@ -1620,7 +1619,7 @@ impl<H: KernelHost> KernelCanon<'_, H> {
     /// Lends a handle to the call being lowered, yielding the rep behind
     /// it. The lend stands until the call ends, which is what stops an
     /// `own` argument beside it from taking the slot away.
-    fn resolve_handle(&mut self, index: Value, expected: ResourceKind) -> Result<u32, ExecError> {
+    fn resolve_handle(&mut self, index: Value, expected: HandleKind) -> Result<u32, ExecError> {
         let idx = index.as_i32().cast_unsigned() as usize;
         match self.handles.get(idx) {
             Some(Some(h)) if h.live && h.kind == expected => {
@@ -1868,9 +1867,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::Clock => Ok(vec![Value::I64(self.host.clock_ms().cast_signed())]),
                     HostFn::ReadCellGet | HostFn::LockedCellGet | HostFn::WriteCellGet => {
                         let expected = match host_fn {
-                            HostFn::ReadCellGet => ResourceKind::ReadCell,
-                            HostFn::LockedCellGet => ResourceKind::LockedCell,
-                            _ => ResourceKind::WriteCell,
+                            HostFn::ReadCellGet => HandleKind::ReadCell,
+                            HostFn::LockedCellGet => HandleKind::LockedCell,
+                            _ => HandleKind::WriteCell,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let mut port = MeterPort {
@@ -1889,9 +1888,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::AmountBalance | HostFn::AmountReadBalance => {
                         let expected = if host_fn == HostFn::AmountBalance {
-                            ResourceKind::AmountCell
+                            HandleKind::AmountCell
                         } else {
-                            ResourceKind::AmountRead
+                            HandleKind::AmountRead
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let held = meter::amount_balance(
@@ -1907,7 +1906,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::WriteCellSet => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::WriteCell)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::WriteCell)?;
                         let mem = self.mem_opt(id)?;
                         let bytes = Self::read_guest_bytes(store, mem, args[1], args[2])?;
                         meter::write_cell_set(
@@ -1928,9 +1927,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     // slot.
                     HostFn::AmountTake | HostFn::DeltaTake => {
                         let expected = if host_fn == HostFn::AmountTake {
-                            ResourceKind::AmountCell
+                            HandleKind::AmountCell
                         } else {
-                            ResourceKind::DeltaCell
+                            HandleKind::DeltaCell
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let amount = flat_amount(args[1], args[2]);
@@ -1947,7 +1946,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
                     HostFn::IssuerPut => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::Issuer)?;
                         let funds = self.consume_bucket(args[1])?;
                         meter::burn(
                             &mut MeterPort {
@@ -1961,7 +1960,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::IssuerMint => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::Issuer)?;
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_ids(store, mem, args[1], args[2])?;
                         let minted = meter::mint_instances(
@@ -1976,7 +1975,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(vec![Value::I32(self.seat_bucket(minted).cast_signed())])
                     }
                     HostFn::InstanceTake => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::InstanceRange)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::InstanceRange)?;
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_ids(store, mem, args[1], args[2])?;
                         let taken = meter::instance_range_take(
@@ -1991,7 +1990,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(vec![Value::I32(self.seat_bucket(taken).cast_signed())])
                     }
                     HostFn::InstancePut => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::InstanceRange)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::InstanceRange)?;
                         let funds = self.consume_bucket(args[1])?;
                         let mem = self.mem_opt(id)?;
                         let value = Self::read_guest_bytes(store, mem, args[2], args[3])?;
@@ -2008,7 +2007,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::BucketTake => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::Bucket)?;
                         let amount = flat_amount(args[1], args[2]);
                         let split = meter::bucket_take(
                             &mut MeterPort {
@@ -2022,7 +2021,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(vec![Value::I32(self.seat_bucket(split).cast_signed())])
                     }
                     HostFn::BucketPut => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::Bucket)?;
                         let other = self.consume_bucket(args[1])?;
                         meter::bucket_put(
                             &mut MeterPort {
@@ -2125,7 +2124,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::BucketSplit => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::Bucket)?;
                         let split = meter::bucket_split(
                             &mut MeterPort {
                                 host: &mut self.host,
@@ -2139,7 +2138,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(vec![Value::I32(self.seat_bucket(split).cast_signed())])
                     }
                     HostFn::BucketAmount => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::Bucket)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::Bucket)?;
                         let amount = meter::bucket_amount(
                             &mut MeterPort {
                                 host: &mut self.host,
@@ -2154,9 +2153,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::AmountPut | HostFn::DeltaPut => {
                         let expected = if host_fn == HostFn::AmountPut {
-                            ResourceKind::AmountCell
+                            HandleKind::AmountCell
                         } else {
-                            ResourceKind::DeltaCell
+                            HandleKind::DeltaCell
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let funds = self.consume_bucket(args[1])?;
@@ -2173,7 +2172,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::IssuerTake => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::Issuer)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::Issuer)?;
                         let amount = flat_amount(args[1], args[2]);
                         let bucket = meter::mint(
                             &mut MeterPort {
@@ -2187,7 +2186,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
                     HostFn::ReserveTake => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::ReserveCell)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::ReserveCell)?;
                         let bucket = meter::reserve_cell_take(
                             &mut MeterPort {
                                 host: &mut self.host,
@@ -2200,9 +2199,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::RangeReadCount | HostFn::RangeWriteCount | HostFn::InstanceCount => {
                         let expected = match host_fn {
-                            HostFn::RangeReadCount => ResourceKind::RangeRead,
-                            HostFn::InstanceCount => ResourceKind::InstanceRange,
-                            _ => ResourceKind::RangeWrite,
+                            HostFn::RangeReadCount => HandleKind::RangeRead,
+                            HostFn::InstanceCount => HandleKind::InstanceRange,
+                            _ => HandleKind::RangeWrite,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let count = meter::range_count(
@@ -2219,9 +2218,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::RangeWriteCovered
                     | HostFn::InstanceCovered => {
                         let expected = match host_fn {
-                            HostFn::RangeReadCovered => ResourceKind::RangeRead,
-                            HostFn::InstanceCovered => ResourceKind::InstanceRange,
-                            _ => ResourceKind::RangeWrite,
+                            HostFn::RangeReadCovered => HandleKind::RangeRead,
+                            HostFn::InstanceCovered => HandleKind::InstanceRange,
+                            _ => HandleKind::RangeWrite,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let covered = meter::range_covered(
@@ -2236,9 +2235,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::RangeReadOrder | HostFn::RangeWriteOrder | HostFn::InstanceOrder => {
                         let expected = match host_fn {
-                            HostFn::RangeReadOrder => ResourceKind::RangeRead,
-                            HostFn::InstanceOrder => ResourceKind::InstanceRange,
-                            _ => ResourceKind::RangeWrite,
+                            HostFn::RangeReadOrder => HandleKind::RangeRead,
+                            HostFn::InstanceOrder => HandleKind::InstanceRange,
+                            _ => HandleKind::RangeWrite,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let index = args[1].as_i32().cast_unsigned();
@@ -2257,9 +2256,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::RangeReadEntry | HostFn::RangeWriteEntry | HostFn::InstanceEntry => {
                         let expected = match host_fn {
-                            HostFn::RangeReadEntry => ResourceKind::RangeRead,
-                            HostFn::InstanceEntry => ResourceKind::InstanceRange,
-                            _ => ResourceKind::RangeWrite,
+                            HostFn::RangeReadEntry => HandleKind::RangeRead,
+                            HostFn::InstanceEntry => HandleKind::InstanceRange,
+                            _ => HandleKind::RangeWrite,
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let index = args[1].as_i32().cast_unsigned();
@@ -2277,7 +2276,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::RangeWriteSet => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::RangeWrite)?;
                         let index = args[1].as_i32().cast_unsigned();
                         let mem = self.mem_opt(id)?;
                         let value = Self::read_guest_bytes(store, mem, args[2], args[3])?;
@@ -2294,7 +2293,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::RangeWriteInsert => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::RangeWrite)?;
                         let mem = self.mem_opt(id)?;
                         let order = flat_amount(args[1], args[2]);
                         let value = Self::read_guest_bytes(store, mem, args[3], args[4])?;
@@ -2311,7 +2310,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::RangeWriteRemove => {
-                        let rep = self.resolve_handle(args[0], ResourceKind::RangeWrite)?;
+                        let rep = self.resolve_handle(args[0], HandleKind::RangeWrite)?;
                         let index = args[1].as_i32().cast_unsigned();
                         meter::range_remove(
                             &mut MeterPort {

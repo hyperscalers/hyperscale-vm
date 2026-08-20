@@ -1,0 +1,5 @@
+error: this mark is `OwnerBadge`'s, a non-fungible resource — a fungible operation would derive its vacant fungible sibling, not it
+  --> tests/refusals/minted_wrong_kind.rs:17:18
+   |
+17 |             mint(b"owner-badge", 1)
+   |                  ^^^^^^^^^^^^^^

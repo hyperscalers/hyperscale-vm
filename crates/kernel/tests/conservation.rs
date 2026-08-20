@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, Value, child_key};
+use hyperscale_vm_effects::{Hash32, ResourceKind, SlotId, TestHasher, Value, child_key};
 use hyperscale_vm_kernel::{
     AmountLedger, Baseline, DeltaOp, MemoryStore, OverlayStore, Substates, SupplyLedger,
     WorkingStore, decode_amount,
@@ -95,7 +95,7 @@ mod through_the_session {
         AbortReason, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome, ResourceAddr,
     };
 
-    use super::{Hash32, MemoryStore, TestHasher, TxHash, encode_amount, vault};
+    use super::{Hash32, MemoryStore, ResourceKind, TestHasher, TxHash, encode_amount, vault};
 
     const UNIT: ResourceAddr = ResourceAddr::new([0xA1; 31]);
 
@@ -128,7 +128,7 @@ mod through_the_session {
             hash,
         )
         .expect("one unheld delta cell materializes");
-        session.grant_issuance(UNIT);
+        session.grant_issuance(UNIT, ResourceKind::Fungible);
         session
     }
 

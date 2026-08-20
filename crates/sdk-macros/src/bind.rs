@@ -92,7 +92,7 @@ fn narrow_type(
     match term {
         // A resource is a denomination however it was derived, which is
         // the type `issued()` and `Bucket::resource()` hand the body.
-        Term::SelfResource(_) | Term::ResourceOf(_) => {
+        Term::SelfResource(..) | Term::ResourceOf(_) => {
             Some(syn::parse_quote!(::hyperscale_vm_sdk::Denomination))
         }
         Term::Arg(index) => params.get(*index as usize).and_then(|(_, ty)| named(ty)),
@@ -148,7 +148,7 @@ pub fn derived_shape(
             ::hyperscale_vm_sdk::state::OrderKey
         ))),
         // A resource is an address however it was derived.
-        Term::SelfResource(_) | Term::ResourceOf(_) => Shape::Address,
+        Term::SelfResource(..) | Term::ResourceOf(_) => Shape::Address,
         Term::Arg(index) => params
             .get(*index as usize)
             .map_or(Shape::Scalar, |(_, ty)| named(ty)),

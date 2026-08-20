@@ -7,7 +7,8 @@
 
 use hyperscale_vm_effects::{
     Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PRIMARY,
-    PackageHash, PrefixShardResolver, TestHasher, Value, admit, footprint, resource_address, route,
+    PackageHash, PrefixShardResolver, ResourceKind, TestHasher, Value, admit, footprint,
+    resource_address, route,
 };
 use hyperscale_vm_manifest_builder::{
     Authority, EnvelopeBuilder, PreflightError, TypedBuilder, preflight, preflight_tree,
@@ -45,6 +46,7 @@ fn badge() -> ResourceAddr {
     resource_address(
         &TestHasher,
         pool(),
+        ResourceKind::NonFungible,
         &[Value::Bytes(staking::OWNER_BADGE.to_vec()).canonical_bytes()],
     )
 }

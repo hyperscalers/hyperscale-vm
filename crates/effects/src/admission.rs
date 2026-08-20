@@ -23,11 +23,11 @@ use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
-use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall};
+use crate::invoke::{CallArg, EdgeBound, NodeCall};
 use crate::manifest::{Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{MetadataCache, PackageHash};
 use crate::presented::Presented;
-use crate::resource::issued_resource;
+use crate::resource::{ResourceKind, issued_resource};
 use crate::route::{FrameDeclaration, MAX_MANIFEST_NODES};
 use crate::rule::Rule;
 use crate::signature::{AbiParam, MethodSignature, ParamType};
@@ -235,7 +235,7 @@ pub enum AdmissionError {
     /// other. The producer's projection says what crosses; the callee's
     /// signature says what it takes.
     #[error("node {node} argument {param}: a {expected} parameter cannot take a {found:?} edge")]
-    EdgeKindMismatch {
+    ResourceKindMismatch {
         /// The offending node.
         node: u32,
         /// The parameter position.
@@ -243,7 +243,7 @@ pub enum AdmissionError {
         /// The kind the parameter declares.
         expected: &'static str,
         /// The kind the producing edge carries.
-        found: EdgeKind,
+        found: ResourceKind,
     },
     /// An edge whose producer is not an earlier node — the shape a cycle
     /// would need, rejected structurally.
@@ -578,9 +578,9 @@ fn bind_edge(
     // callee's signature fixes what it takes; a fungible cell and an id
     // cell are different shapes, so a mismatch is a graph nothing should
     // sign rather than something a guest decodes its way out of.
-    let carried = EdgeKind::of(&content);
+    let carried = ResourceKind::of(&content);
     if param.edge_kind() != Some(carried) {
-        return Err(AdmissionError::EdgeKindMismatch {
+        return Err(AdmissionError::ResourceKindMismatch {
             node: node_index,
             param: param_index,
             expected: param.name(),
@@ -1436,12 +1436,14 @@ fn lower_call(
         // output projections everything else evaluated against.
         outputs: node_outputs
             .iter()
-            .map(|(_, content)| EdgeKind::of(content))
+            .map(|(_, content)| ResourceKind::of(content))
             .collect(),
-        issues: signature
-            .issues
-            .as_deref()
-            .map(|mark| issued_resource(hasher, target, mark)),
+        issues: signature.issues.as_ref().map(|issuance| {
+            (
+                issued_resource(hasher, target, issuance.kind, &issuance.mark),
+                issuance.kind,
+            )
+        }),
         evidence: evidence.to_vec(),
         requires,
     })
@@ -1467,7 +1469,7 @@ fn edge_bounds(node_inputs: &[NodeInput]) -> Vec<EdgeBound> {
             } => Some(EdgeBound {
                 source: *source,
                 output: *output,
-                kind: EdgeKind::of(content),
+                kind: ResourceKind::of(content),
                 param: u32::try_from(position).unwrap_or(u32::MAX),
                 bounds: *bounds,
             }),

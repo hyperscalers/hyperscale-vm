@@ -18,7 +18,7 @@ use std::sync::Arc;
 use hyperscale_vm_effects::{Declaration, DeclaredAccess};
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_ref::{
-    CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
+    CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance,
 };
 use hyperscale_vm_runtime::{
     AmountCell, AmountRead, Bucket, DeltaCell, HostRefusal, InstanceRange, InstantiationCharges,
@@ -294,43 +294,43 @@ fn lower(store: &mut Store<KernelSession>, arg: &CVal) -> Result<Val> {
 /// inside an active call scope, and there is none while arguments are
 /// still being assembled. The guest parameter is a borrow either way;
 /// the canonical ABI lends the handle for the call and takes it back.
-fn borrow(store: &mut Store<KernelSession>, rep: u32, kind: ResourceKind) -> Result<ResourceAny> {
+fn borrow(store: &mut Store<KernelSession>, rep: u32, kind: HandleKind) -> Result<ResourceAny> {
     let store = &mut *store;
     match kind {
-        ResourceKind::Bucket => {
+        HandleKind::Bucket => {
             ResourceAny::try_from_resource(Resource::<Bucket>::new_own(rep), store)
         }
-        ResourceKind::Issuer => {
+        HandleKind::Issuer => {
             ResourceAny::try_from_resource(Resource::<Issuer>::new_own(rep), store)
         }
-        ResourceKind::ReadCell => {
+        HandleKind::ReadCell => {
             ResourceAny::try_from_resource(Resource::<ReadCell>::new_own(rep), store)
         }
-        ResourceKind::LockedCell => {
+        HandleKind::LockedCell => {
             ResourceAny::try_from_resource(Resource::<LockedCell>::new_own(rep), store)
         }
-        ResourceKind::WriteCell => {
+        HandleKind::WriteCell => {
             ResourceAny::try_from_resource(Resource::<WriteCell>::new_own(rep), store)
         }
-        ResourceKind::AmountCell => {
+        HandleKind::AmountCell => {
             ResourceAny::try_from_resource(Resource::<AmountCell>::new_own(rep), store)
         }
-        ResourceKind::AmountRead => {
+        HandleKind::AmountRead => {
             ResourceAny::try_from_resource(Resource::<AmountRead>::new_own(rep), store)
         }
-        ResourceKind::DeltaCell => {
+        HandleKind::DeltaCell => {
             ResourceAny::try_from_resource(Resource::<DeltaCell>::new_own(rep), store)
         }
-        ResourceKind::ReserveCell => {
+        HandleKind::ReserveCell => {
             ResourceAny::try_from_resource(Resource::<ReserveCell>::new_own(rep), store)
         }
-        ResourceKind::RangeRead => {
+        HandleKind::RangeRead => {
             ResourceAny::try_from_resource(Resource::<RangeRead>::new_own(rep), store)
         }
-        ResourceKind::RangeWrite => {
+        HandleKind::RangeWrite => {
             ResourceAny::try_from_resource(Resource::<RangeWrite>::new_own(rep), store)
         }
-        ResourceKind::InstanceRange => {
+        HandleKind::InstanceRange => {
             ResourceAny::try_from_resource(Resource::<InstanceRange>::new_own(rep), store)
         }
     }

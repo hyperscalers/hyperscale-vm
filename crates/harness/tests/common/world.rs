@@ -7,8 +7,8 @@ use std::sync::{Arc, LazyLock};
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG};
 use hyperscale_vm_effects::{
     AuthBase, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
-    MetadataCache, PackageHash, PrefixShardResolver, Presented, RoleTable, Routing, ShardId,
-    ShardResolver, StarShape, StoredRule, TestHasher, Value, admit, child_key,
+    MetadataCache, PackageHash, PrefixShardResolver, Presented, ResourceKind, RoleTable, Routing,
+    ShardId, ShardResolver, StarShape, StoredRule, TestHasher, Value, admit, child_key,
     classify as classify_star, collection_id, resource_address, route,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
@@ -150,7 +150,12 @@ pub fn shares_vault() -> shares::Shares {
 
 /// The share the vault issues against deposits.
 pub fn shares_unit() -> ResourceAddr {
-    resource_address(&TestHasher, Address::from(shares_vault()), &[])
+    resource_address(
+        &TestHasher,
+        Address::from(shares_vault()),
+        ResourceKind::Fungible,
+        &[],
+    )
 }
 
 pub fn book_meta() -> InstanceMeta {
@@ -197,7 +202,12 @@ pub fn nf_issuer() -> ComponentAddr {
 
 /// The resource the issuer mints: its own provenance, empty material.
 pub fn nf_resource() -> ResourceAddr {
-    resource_address(&TestHasher, nf_issuer().address(), &[])
+    resource_address(
+        &TestHasher,
+        nf_issuer().address(),
+        ResourceKind::NonFungible,
+        &[],
+    )
 }
 
 pub fn nf_holder_meta(salt: u8) -> InstanceMeta {

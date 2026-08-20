@@ -77,7 +77,7 @@ pub use hyperscale_vm_types::{
     work_units,
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
-pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, distinct_ids};
+pub use invoke::{CallArg, EdgeBound, NodeCall, distinct_ids};
 pub use manifest::{Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     MetadataCache, PACKAGE_SLOT, PackageHash, PackageMetadata, PublishRefusal, package_hash,
@@ -89,7 +89,7 @@ pub use publish::{
     SignatureError, check_abi, check_declarations, check_metadata, check_signature,
 };
 pub use resource::{
-    Fungibility, ResourceRecord, holdings_collection, holdings_entry, holdings_range,
+    Fungibility, ResourceKind, ResourceRecord, holdings_collection, holdings_entry, holdings_range,
     instance_data_key, issued_resource, resource_record_key,
 };
 pub use route::{
@@ -99,7 +99,7 @@ pub use rule::{
     MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, RuleLeaf, StoredRule,
     well_formed,
 };
-pub use signature::{AbiParam, MethodSignature, ParamType, Totality};
+pub use signature::{AbiParam, Issuance, MethodSignature, ParamType, Totality};
 pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};
 pub use types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, NativeRole,

@@ -40,7 +40,7 @@ pub mod staking {
     /// The identity the pool's operator surface admits: a badge this
     /// instance issues, so holding it is operating the pool and selling
     /// the pool is transferring it.
-    #[resource]
+    #[resource(non_fungible)]
     struct OwnerBadge;
 
     #[config]

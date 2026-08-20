@@ -16,7 +16,7 @@
 // the appearance is an artifact of a contract living inside a test binary.
 #![allow(dead_code)]
 
-use hyperscale_vm_effects::{Clause, ModeExpr, RuleExpr};
+use hyperscale_vm_effects::{Clause, ModeExpr, ResourceKind, RuleExpr};
 use hyperscale_vm_sdk::blueprint;
 
 /// Control-flow spellings of one access set, each beside its straight-line
@@ -248,6 +248,9 @@ fn reading_the_environment_declares_nothing() {
 mod issuer {
     use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rounding, mint};
 
+    #[resource(non_fungible)]
+    struct OwnerBadge;
+
     #[state]
     struct Issuer {
         staked: Cell<Quantity>,
@@ -274,7 +277,7 @@ mod issuer {
         }
 
         /// The operator surface, gated on the badge the pool issues.
-        #[requires(issued(b"owner-badge"))]
+        #[requires(issued(OwnerBadge))]
         pub fn retire(&mut self) {
             self.staked.set(Quantity::ZERO);
         }
@@ -310,7 +313,10 @@ fn an_instance_issues_resources_its_own_address_derives() {
     // which is a different resource from any marked one.
     assert_eq!(
         metadata.methods["stake"].outputs,
-        vec![Expr::SelfResource { material: vec![] }],
+        vec![Expr::SelfResource {
+            kind: ResourceKind::Fungible,
+            material: vec![],
+        }],
     );
     // The badge is the same derivation over the mark that separates it.
     assert!(
@@ -320,6 +326,7 @@ fn an_instance_issues_resources_its_own_address_derives() {
                 guard: None,
                 condition: ConditionExpr::Satisfies {
                     rule: RuleExpr::claim(Expr::SelfResource {
+                        kind: ResourceKind::NonFungible,
                         material: vec![Expr::Literal(Value::Bytes(b"owner-badge".to_vec()))],
                     }),
                 },

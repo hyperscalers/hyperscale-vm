@@ -4,7 +4,7 @@
 
 use hyperscale_vm_effects::{
     Constraint, EdgeRef, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
-    MetadataCache, PackageHash, TestHasher, Value, admit, resource_address,
+    MetadataCache, PackageHash, ResourceKind, TestHasher, Value, admit, resource_address,
 };
 use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -50,7 +50,7 @@ fn pool() -> ComponentAddr {
 /// The resource the pool issues: derived from the pool's own address, not
 /// from anything it was configured with.
 fn unit() -> ResourceAddr {
-    resource_address(&TestHasher, pool(), &[])
+    resource_address(&TestHasher, pool(), ResourceKind::Fungible, &[])
 }
 
 fn world() -> (MetadataCache, InstanceRegistry) {

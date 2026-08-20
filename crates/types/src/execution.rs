@@ -326,6 +326,10 @@ pub enum AbortReason {
     /// accepted, so never the sender's defect and priced to nobody.
     #[hbor(discriminant = 58)]
     CodeUnavailable,
+    /// A mint of the other kind than the grant's address commits: a
+    /// fungible amount of a non-fungible resource, or the reverse.
+    #[hbor(discriminant = 59)]
+    WrongIssuanceKind,
 }
 
 /// How execution ended: the abort taxonomy as the receipt records it.
@@ -533,6 +537,7 @@ mod tests {
             (56, AbortReason::ExportMissing),
             (57, AbortReason::InstantiationFailed),
             (58, AbortReason::CodeUnavailable),
+            (59, AbortReason::WrongIssuanceKind),
         ];
         for (byte, reason) in classes {
             assert_eq!(

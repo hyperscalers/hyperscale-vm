@@ -115,7 +115,7 @@ use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 
 use crate::lower::{Field, FieldKind, Lowerer, Target};
-use crate::syntax::byte_literal;
+use crate::term::ResourceKind;
 
 /// Derive a contract's package from its module: the declaration routing
 /// reads, and the component that executes it.
@@ -266,8 +266,8 @@ fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
             return Err(syn::Error::new(
                 field.span(),
                 "a single vault holds one resource and nothing names which: add \
-                 `#[denomination(config.<field>)]`, or `#[denomination(issued(b\"..\"))]` for \
-                 a resource the instance issues",
+                 `#[denomination(config.<field>)]`, or `#[denomination(issued(<Resource>))]` \
+                 for a declared resource the instance issues",
             ));
         }
         (FieldKind::Keyed, true, true) => {
@@ -507,7 +507,7 @@ enum Gate {
 fn guarded_rule(
     expr: &syn::Expr,
     config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>)],
+    resources: &[(String, Vec<u8>, ResourceKind)],
     params: &[(String, syn::Type)],
     depth: usize,
 ) -> syn::Result<(TokenStream2, bool, bool)> {
@@ -610,7 +610,7 @@ fn threshold(
     span: Span,
     branches: &[&syn::Expr],
     config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>)],
+    resources: &[(String, Vec<u8>, ResourceKind)],
     params: &[(String, syn::Type)],
     depth: usize,
 ) -> syn::Result<Vec<TokenStream2>> {
@@ -678,7 +678,7 @@ fn count_literal(expr: &syn::Expr) -> Option<u8> {
 fn guarded_identity(
     identity: &syn::Expr,
     config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>)],
+    resources: &[(String, Vec<u8>, ResourceKind)],
     params: &[(String, syn::Type)],
 ) -> syn::Result<(TokenStream2, bool)> {
     // Possession has its own authoring surface, and `#[requires]` is
@@ -714,7 +714,7 @@ fn guarded_identity(
                      or a configuration field instead",
                 ));
             }
-            let issued = resources.iter().find(|(r, _)| *r == name);
+            let issued = resources.iter().find(|(r, ..)| *r == name);
             let configured = config_fields.iter().position(|(f, _)| *f == name);
             // The two are different authorities — a badge this instance
             // issues, an address fixed where it was created — so a name
@@ -730,9 +730,10 @@ fn guarded_identity(
             // issues, so holding it is operating this instance and the
             // mark is the item's rather than a literal repeated at every
             // gate that names it.
-            if let Some((_, mark)) = issued {
+            if let Some((_, mark, kind)) = issued {
+                let kind = kind.emit();
                 let mark = syn::LitByteStr::new(mark, identity.span());
-                return Ok((quote!(__t.self_resource(#mark)), false));
+                return Ok((quote!(__t.self_resource(#kind, #mark)), false));
             }
             // Creation-fixed, so the claim is the target's own: an
             // object whose address derives from no key admits somebody
@@ -748,7 +749,9 @@ fn guarded_identity(
         }
         // A badge the instance issues: holding it is operating the
         // instance, and it derives from the address rather than from
-        // anything a caller supplies.
+        // anything a caller supplies. `issued(Name)` names a declared
+        // `#[resource]` struct, because the derivation folds the kind
+        // and the declaration is where a kind is stated.
         syn::Expr::Call(call) => {
             let named = match &*call.func {
                 syn::Expr::Path(path) => path
@@ -758,11 +761,19 @@ fn guarded_identity(
                     .is_some_and(|s| s.ident == "issued"),
                 _ => false,
             };
-            let mark = call.args.first().and_then(byte_literal);
-            match (named, mark) {
-                (true, Some(mark)) => {
-                    let mark = syn::LitByteStr::new(&mark, identity.span());
-                    Ok((quote!(__t.self_resource(#mark)), false))
+            let resolved = call
+                .args
+                .first()
+                .and_then(|arg| match arg {
+                    syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
+                    _ => None,
+                })
+                .and_then(|name| resources.iter().find(|(r, ..)| *r == name));
+            match (named, resolved) {
+                (true, Some((_, mark, kind))) => {
+                    let kind = kind.emit();
+                    let mark = syn::LitByteStr::new(mark, identity.span());
+                    Ok((quote!(__t.self_resource(#kind, #mark)), false))
                 }
                 _ => Err(refuse()),
             }
@@ -776,7 +787,7 @@ fn guarded_identity(
 fn parse_requires(
     attr: &syn::Attribute,
     config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>)],
+    resources: &[(String, Vec<u8>, ResourceKind)],
     params: &[(String, syn::Type)],
 ) -> syn::Result<Gate> {
     let written: syn::Expr = attr.parse_args()?;
@@ -828,7 +839,7 @@ fn parse_gate(
     fields: &BTreeMap<String, Field>,
     accessors: &BTreeMap<String, Field>,
     config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>)],
+    resources: &[(String, Vec<u8>, ResourceKind)],
     params: &[(String, syn::Type)],
 ) -> syn::Result<Gate> {
     // A gate names the cell its rule lives in the way a body would, and a
@@ -1179,7 +1190,7 @@ fn lower_method(
     fields: &BTreeMap<String, Field>,
     accessors: &BTreeMap<String, Field>,
     config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>)],
+    resources: &[(String, Vec<u8>, ResourceKind)],
     serves: client::Serves,
 ) -> syn::Result<Lowered> {
     let published = method_name(method)?;
@@ -1210,6 +1221,7 @@ fn lower_method(
         fields,
         accessors,
         config_fields,
+        resources,
         &params,
         returns,
         claims_total,
@@ -1424,7 +1436,7 @@ fn lower_methods(
     fields: &BTreeMap<String, Field>,
     accessors: &BTreeMap<String, Field>,
     config_fields: &[(String, syn::Type)],
-    resources: &[(String, Vec<u8>)],
+    resources: &[(String, Vec<u8>, ResourceKind)],
     serves: client::Serves,
 ) -> syn::Result<Vec<Lowered>> {
     let mut lowered = Vec::new();
@@ -1651,23 +1663,51 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
 /// The mark is the name as the protocol spells names everywhere else, so
 /// what an author reads in a gate and what a consumer reads off the
 /// emitted constant are one string derived once.
-fn resources(items: &[syn::Item]) -> Vec<(String, Vec<u8>)> {
-    items
-        .iter()
-        .filter_map(|item| {
-            let syn::Item::Struct(item) = item else {
-                return None;
-            };
-            item.attrs
-                .iter()
-                .any(|a| a.path().is_ident("resource"))
-                .then(|| {
-                    let name = item.ident.to_string();
-                    let mark = kebab(&name).into_bytes();
-                    (name, mark)
-                })
-        })
-        .collect()
+fn resources(items: &[syn::Item]) -> syn::Result<Vec<(String, Vec<u8>, ResourceKind)>> {
+    let mut declared = Vec::new();
+    for item in items {
+        let syn::Item::Struct(item) = item else {
+            continue;
+        };
+        let Some(attr) = item.attrs.iter().find(|a| a.path().is_ident("resource")) else {
+            continue;
+        };
+        let kind = resource_kind(attr)?;
+        let name = item.ident.to_string();
+        let mark = kebab(&name).into_bytes();
+        declared.push((name, mark, kind));
+    }
+    Ok(declared)
+}
+
+/// The kind a `#[resource]` attribute states: fungible unless it says
+/// `non_fungible`.
+///
+/// Stated in the source because the derivation folds it — the mark
+/// constant a gate evaluates and the address a host derives both need
+/// the kind, and the attribute is the one place both read from.
+fn resource_kind(attr: &syn::Attribute) -> syn::Result<ResourceKind> {
+    match &attr.meta {
+        syn::Meta::Path(_) => Ok(ResourceKind::Fungible),
+        syn::Meta::List(_) => {
+            let ident: syn::Ident = attr.parse_args()?;
+            match ident.to_string().as_str() {
+                "fungible" => Ok(ResourceKind::Fungible),
+                "non_fungible" => Ok(ResourceKind::NonFungible),
+                other => Err(syn::Error::new(
+                    ident.span(),
+                    format!(
+                        "`{other}` is not a resource kind — a resource is `fungible` \
+                         (the default) or `non_fungible`"
+                    ),
+                )),
+            }
+        }
+        syn::Meta::NameValue(nv) => Err(syn::Error::new(
+            nv.value.span(),
+            "a resource states its kind as `#[resource(non_fungible)]`, not as a value",
+        )),
+    }
 }
 
 /// The constant naming each declared resource's mark.
@@ -1676,10 +1716,10 @@ fn resources(items: &[syn::Item]) -> Vec<(String, Vec<u8>)> {
 /// package that has to derive the same address — so the mark a gate
 /// evaluates and the mark a host names are one declaration rather than
 /// two that agree by inspection.
-fn resource_marks(declared: &[(String, Vec<u8>)]) -> Vec<syn::Item> {
+fn resource_marks(declared: &[(String, Vec<u8>, ResourceKind)]) -> Vec<syn::Item> {
     declared
         .iter()
-        .map(|(name, mark)| {
+        .map(|(name, mark, _)| {
             let ident = syn::Ident::new(&screaming(name), Span::call_site());
             let bytes = syn::LitByteStr::new(mark, Span::call_site());
             let doc = format!("The mark separating `{name}` from this package's other resources.");
@@ -1779,7 +1819,7 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     let config_fields = config_slots(items, config_name.as_ref());
     let events = event_names(items);
     let errors = error_names(items);
-    let declared_resources = resources(items);
+    let declared_resources = resources(items)?;
     let accessors = accessors(config_name.as_ref());
     let methods = lower_methods(
         items,

@@ -153,8 +153,8 @@ pub use blueprint::{Blueprint, Builder, Method};
 // never has to depend on `vm-effects` directly.
 pub use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
 pub use hyperscale_vm_effects::{
-    AuthBase, AuthCell, CONFIRMATION, PRIMARY, ParamType, Proposal, RECOVERY, RoleId, SlotId,
-    encode_metadata, package_role,
+    AuthBase, AuthCell, CONFIRMATION, PRIMARY, ParamType, Proposal, RECOVERY, ResourceKind, RoleId,
+    SlotId, encode_metadata, package_role,
 };
 #[cfg(feature = "macros")]
 pub use hyperscale_vm_sdk_macros::blueprint;

@@ -9,8 +9,8 @@
 use hyperscale_vm_effects::dsl::{Clause, ConditionExpr, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::vocabulary::INSTANCE;
 use hyperscale_vm_effects::{
-    AbiParam, Expr, MethodSignature, PackageMetadata, ParamType, RuleExpr, Totality, Value,
-    holdings_range,
+    AbiParam, Expr, Issuance, MethodSignature, PackageMetadata, ParamType, ResourceKind, RuleExpr,
+    Totality, Value, holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
 use hyperscale_vm_types::{ComponentAddr, Denomination, Presence};
@@ -63,7 +63,10 @@ fn creating_instance(minted_resource: &Expr, minted_id: &Expr) -> Vec<Clause> {
 /// declares exactly the walk it performs.
 #[must_use]
 pub fn metadata() -> PackageMetadata {
-    let minted_resource = Expr::SelfResource { material: vec![] };
+    let minted_resource = Expr::SelfResource {
+        kind: ResourceKind::NonFungible,
+        material: vec![],
+    };
     let minted_id = Expr::FreshId { slot: 0 };
     let mut methods = PackageMetadata::default();
     methods.methods.insert(
@@ -73,7 +76,10 @@ pub fn metadata() -> PackageMetadata {
             // The pool's own resource, by the mark that separates it from
             // the instance's others — which is what the grant is for and
             // what makes another issuer's inexpressible here.
-            issues: Some(Vec::new()),
+            issues: Some(Issuance {
+                mark: Vec::new(),
+                kind: ResourceKind::NonFungible,
+            }),
             params: vec![],
             abi: vec![
                 AbiParam::Handle(0),
@@ -137,7 +143,10 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             // Bringing value out of existence is as declared as bringing
             // it in, and under the same grant.
-            issues: Some(Vec::new()),
+            issues: Some(Issuance {
+                mark: Vec::new(),
+                kind: ResourceKind::NonFungible,
+            }),
             params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Bucket(0), AbiParam::Issuer],
             ..MethodSignature::default()

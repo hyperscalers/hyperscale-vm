@@ -10,11 +10,11 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world};
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
-    AbiParam, AdmissionError, Clause, Condition, ConditionExpr, Constraint, EdgeKind, EdgeRef,
-    EvalError, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
-    JudgedLeaf, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature, ModeExpr, PRIMARY,
-    PackageMetadata, ParamType, Presented, Rule, RuleExpr, RuleLeaf, TargetExpr, TestHasher,
-    Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
+    AbiParam, AdmissionError, Clause, Condition, ConditionExpr, Constraint, EdgeRef, EvalError,
+    EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, JudgedLeaf,
+    MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature, ModeExpr, PRIMARY,
+    PackageMetadata, ParamType, Presented, ResourceKind, Rule, RuleExpr, RuleLeaf, TargetExpr,
+    TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
@@ -705,11 +705,11 @@ fn every_malformed_mutation_rejects() {
     wrong_edge_kind.nodes[3].method = "deposit-nf".into();
     assert_eq!(
         admit_it(&wrong_edge_kind),
-        Err(AdmissionError::EdgeKindMismatch {
+        Err(AdmissionError::ResourceKindMismatch {
             node: 3,
             param: 0,
             expected: "nf-bucket",
-            found: EdgeKind::Fungible,
+            found: ResourceKind::Fungible,
         })
     );
     let mut phantom = valid_graph();

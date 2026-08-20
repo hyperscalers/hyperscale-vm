@@ -25,7 +25,7 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, Held, Interval, KernelSession, MemoryStore, OverlayStore, Receipt,
 };
-use hyperscale_vm_ref::{CVal, ResourceKind};
+use hyperscale_vm_ref::{CVal, HandleKind};
 use hyperscale_vm_runtime::validate_component;
 use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
@@ -149,7 +149,7 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
     let funds = dual
         .invoke_both(
             "withdraw",
-            &[CVal::Borrow(sender_rep, ResourceKind::ReserveCell)],
+            &[CVal::Borrow(sender_rep, HandleKind::ReserveCell)],
         )?
         .bucket()?;
     let (blessed, reference) = dual.finish()?;
@@ -162,7 +162,7 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
     dual.invoke_both(
         "deposit",
         &[
-            CVal::Borrow(recipient_rep, ResourceKind::DeltaCell),
+            CVal::Borrow(recipient_rep, HandleKind::DeltaCell),
             CVal::Own(funds),
         ],
     )?;
@@ -479,8 +479,8 @@ fn dual_round() -> Result<(Receipt, u64)> {
     dual.invoke_both(
         "enter",
         &[
-            CVal::Borrow(entry_rep, ResourceKind::RangeWrite),
-            CVal::Borrow(pot_rep, ResourceKind::DeltaCell),
+            CVal::Borrow(entry_rep, HandleKind::RangeWrite),
+            CVal::Borrow(pot_rep, HandleKind::DeltaCell),
             CVal::Bytes(ticket_order().to_le_bytes().to_vec()),
             CVal::Address(ENTRANT.to_bytes()),
             CVal::Own(funds),
@@ -506,8 +506,8 @@ fn dual_round() -> Result<(Receipt, u64)> {
     dual.invoke_both(
         "draw",
         &[
-            CVal::Borrow(round_rep, ResourceKind::RangeRead),
-            CVal::Borrow(outcome_rep, ResourceKind::WriteCell),
+            CVal::Borrow(round_rep, HandleKind::RangeRead),
+            CVal::Borrow(outcome_rep, HandleKind::WriteCell),
         ],
     )?;
     let (blessed, reference) = dual.finish()?;

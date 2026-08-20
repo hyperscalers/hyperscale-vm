@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
     EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
-    PackageHash, PackageMetadata, Presented, RoleTable, StoredRule, TestHasher, Value, admit,
-    resource_address,
+    PackageHash, PackageMetadata, Presented, ResourceKind, RoleTable, StoredRule, TestHasher,
+    Value, admit, resource_address,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -248,7 +248,12 @@ fn the_staking_wrappers_match_their_signatures() {
 /// The resource a pool issues, which its `stake` output derives from the
 /// pool's own address.
 fn staking_units(pool: staking::Staking) -> ResourceAddr {
-    resource_address(&TestHasher, Address::from(pool), &[])
+    resource_address(
+        &TestHasher,
+        Address::from(pool),
+        ResourceKind::Fungible,
+        &[],
+    )
 }
 
 #[test]
@@ -317,7 +322,12 @@ fn the_splitter_wrapper_matches_its_signature() {
 #[test]
 fn the_nf_wrappers_match_their_signatures() {
     let issuer = address("nf", vec![]);
-    let resource = resource_address(&TestHasher, issuer.address(), &[]);
+    let resource = resource_address(
+        &TestHasher,
+        issuer.address(),
+        ResourceKind::NonFungible,
+        &[],
+    );
     admits(|b| {
         let minted = nf::mint(b, issuer)?;
         nf::deposit(b, issuer, minted)?;
@@ -329,7 +339,12 @@ fn the_nf_wrappers_match_their_signatures() {
 #[test]
 fn the_custody_wrappers_match_their_signatures() {
     let issuer = address("nf", vec![]);
-    let resource = resource_address(&TestHasher, issuer.address(), &[]);
+    let resource = resource_address(
+        &TestHasher,
+        issuer.address(),
+        ResourceKind::NonFungible,
+        &[],
+    );
     let gated = address("nf", vec![Value::Address(BASE.address())]);
     admits(|b| {
         let minted = nf::mint(b, issuer)?;

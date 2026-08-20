@@ -40,6 +40,7 @@
 
 use std::sync::Arc;
 
+pub use hyperscale_vm_effects::ResourceKind;
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
     AdmissionError, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
@@ -325,8 +326,12 @@ impl Chain {
     /// is what the tracer means by it and the only spelling that reaches
     /// the address the body does.
     #[must_use]
-    pub fn issued(instance: impl Into<ComponentAddr>, mark: &[u8]) -> ResourceAddr {
-        issued_resource(&TestHasher, instance.into(), mark)
+    pub fn issued(
+        instance: impl Into<ComponentAddr>,
+        kind: ResourceKind,
+        mark: &[u8],
+    ) -> ResourceAddr {
+        issued_resource(&TestHasher, instance.into(), kind, mark)
     }
 
     /// Put `amount` of `resource` in `owner`'s vault, as though it had

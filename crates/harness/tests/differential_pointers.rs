@@ -19,7 +19,7 @@ use hyperscale_vm_effects::{
     Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore};
-use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance, ResourceKind};
+use hyperscale_vm_ref::{CVal, HandleKind, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{
     AmountCell, Bucket, InstanceRange, add_kernel_to_linker, blessed_engine, classify,
     validate_component,
@@ -205,7 +205,7 @@ fn lift_verdicts(ptr: i32, len: i32) -> Result<(Verdict, Verdict)> {
     both(
         &lifting(ptr, len),
         "take",
-        &[CVal::Borrow(0, ResourceKind::InstanceRange)],
+        &[CVal::Borrow(0, HandleKind::InstanceRange)],
         |instance, store| {
             instance
                 .get_typed_func::<(Resource<InstanceRange>,), (Resource<Bucket>,)>(
@@ -304,7 +304,7 @@ fn a_return_area_is_judged_the_same_by_both() -> Result<()> {
         both(
             &returning(retptr),
             "weigh",
-            &[CVal::Borrow(1, ResourceKind::AmountCell)],
+            &[CVal::Borrow(1, HandleKind::AmountCell)],
             |instance, store| {
                 instance
                     .get_typed_func::<(Resource<AmountCell>,), (u64,)>(&mut *store, "weigh")?
@@ -380,7 +380,7 @@ fn a_realloc_result_is_judged_the_same_by_both() -> Result<()> {
             &allocating(at),
             "count",
             &[
-                CVal::Borrow(0, ResourceKind::InstanceRange),
+                CVal::Borrow(0, HandleKind::InstanceRange),
                 CVal::Ids(vec![10, 20]),
             ],
             |instance, store| {

@@ -17,6 +17,7 @@ use hyperscale_vm_types::{
 use crate::hash::{Hash32, Hasher};
 use crate::manifest::{Condition, JudgedLeaf, ManifestHash};
 use crate::presented::Presented;
+use crate::resource::ResourceKind;
 use crate::rule::{RuleExpr, RuleLeaf};
 use crate::types::{
     EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
@@ -141,6 +142,10 @@ pub enum Expr {
     /// value derived from that address could not be written down. The
     /// material separates the resources one instance issues.
     SelfResource {
+        /// The resource's kind, folded into the derivation: what the
+        /// instance issues under this material is one kind of thing,
+        /// fixed where the declaration named it.
+        kind: ResourceKind,
         /// The material separating this resource from the instance's
         /// others, canonically encoded into the derivation.
         material: Vec<Self>,
@@ -296,7 +301,9 @@ impl Expr {
             }
             Self::List(elements)
             | Self::Tuple(elements)
-            | Self::SelfResource { material: elements } => children.extend(elements),
+            | Self::SelfResource {
+                material: elements, ..
+            } => children.extend(elements),
             Self::ChildKey {
                 owner, material, ..
             }
@@ -1291,8 +1298,11 @@ fn eval_expr(
             u64::try_from(as_list(sub(list)?)?.len()).unwrap_or(u64::MAX),
         )),
         Expr::Lookup { map, key } => lookup(as_list(sub(map)?)?, &sub(key)?),
-        Expr::SelfResource { material: parts } => Ok(Value::Address(
-            resource_address(hasher, inputs.self_addr, &material(parts)?).into(),
+        Expr::SelfResource {
+            kind,
+            material: parts,
+        } => Ok(Value::Address(
+            resource_address(hasher, inputs.self_addr, *kind, &material(parts)?).into(),
         )),
         Expr::ChildKey {
             owner,
@@ -1611,7 +1621,7 @@ mod tests {
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::manifest::ManifestHash;
-    use crate::resource::issued_resource;
+    use crate::resource::{ResourceKind, issued_resource};
     use crate::types::{
         EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
     };
@@ -1642,6 +1652,7 @@ mod tests {
             (Expr::Tuple(vec![leaf(1), leaf(2)]), vec![1, 2]),
             (
                 Expr::SelfResource {
+                    kind: ResourceKind::Fungible,
                     material: vec![leaf(1), leaf(2)],
                 },
                 vec![1, 2],
@@ -1842,18 +1853,24 @@ mod tests {
     #[test]
     fn a_self_resource_over_a_mark_literal_is_the_issued_resource() {
         let context = inputs(&[], &[]);
-        for mark in [&b""[..], b"unit"] {
-            let material = if mark.is_empty() {
-                Vec::new()
-            } else {
-                vec![Expr::Literal(Value::Bytes(mark.to_vec()))]
-            };
-            assert_eq!(
-                evaluate_expr(&Expr::SelfResource { material }, &context, &TestHasher),
-                Ok(Value::Address(
-                    issued_resource(&TestHasher, context.self_addr, mark).into()
-                )),
-            );
+        for kind in [ResourceKind::Fungible, ResourceKind::NonFungible] {
+            for mark in [&b""[..], b"unit"] {
+                let material = if mark.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![Expr::Literal(Value::Bytes(mark.to_vec()))]
+                };
+                assert_eq!(
+                    evaluate_expr(
+                        &Expr::SelfResource { kind, material },
+                        &context,
+                        &TestHasher
+                    ),
+                    Ok(Value::Address(
+                        issued_resource(&TestHasher, context.self_addr, kind, mark).into()
+                    )),
+                );
+            }
         }
     }
 

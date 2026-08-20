@@ -193,10 +193,11 @@ mod tests {
     use crate::graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
     use crate::hash::{Hash32, TestHasher};
     use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
-    use crate::invoke::{CallArg, EdgeKind};
+    use crate::invoke::CallArg;
     use crate::manifest::Bounds;
     use crate::metadata::{MetadataCache, PackageMetadata};
     use crate::publish::{AbiError, SignatureError};
+    use crate::resource::ResourceKind;
     use crate::route::MAX_MANIFEST_NODES;
     use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
     use crate::test_worlds::{
@@ -842,8 +843,8 @@ mod tests {
             ],
         };
         let routing = routed(&graph, &cache, &instances);
-        assert_eq!(routing.calls[0].outputs, vec![EdgeKind::NonFungible]);
-        assert_eq!(routing.calls[1].edges[0].kind, EdgeKind::NonFungible);
+        assert_eq!(routing.calls[0].outputs, vec![ResourceKind::NonFungible]);
+        assert_eq!(routing.calls[1].edges[0].kind, ResourceKind::NonFungible);
     }
 
     #[test]
@@ -975,7 +976,7 @@ mod tests {
                 .any(|arg| matches!(arg, CallArg::Bucket { .. })),
             "the consuming method's own ABI carries no bucket"
         );
-        assert_eq!(call.edges[0].kind, EdgeKind::Fungible);
+        assert_eq!(call.edges[0].kind, ResourceKind::Fungible);
         assert_eq!(
             call.edges[0].bounds,
             Bounds {

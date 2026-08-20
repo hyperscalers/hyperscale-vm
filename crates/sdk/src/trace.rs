@@ -30,9 +30,9 @@
 //! published contract whose method can never be called.
 
 use hyperscale_vm_effects::{
-    AbiParam, Clause, ConditionExpr, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS,
-    MAX_RULE_DEPTH, ModeExpr, PRIMARY, ParamType, RoleId, RuleExpr, RuleLeaf, SlotId, TargetExpr,
-    Totality, Value, well_formed,
+    AbiParam, Clause, ConditionExpr, Expr, Issuance, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
+    MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, PRIMARY, ParamType, ResourceKind, RoleId,
+    RuleExpr, RuleLeaf, SlotId, TargetExpr, Totality, Value, well_formed,
 };
 use hyperscale_vm_types::Presence;
 
@@ -82,8 +82,8 @@ pub struct Trace {
     last_clause: Option<u32>,
     /// Whose authority naming this method requires.
     pending_role: Option<RoleId>,
-    /// The mark of the resource this method may issue.
-    issues: Option<Vec<u8>>,
+    /// The resource this method may issue: its mark and its kind.
+    issues: Option<Issuance>,
     /// Whether the method carries an error arm.
     totality: Totality,
 }
@@ -244,13 +244,13 @@ impl Trace {
     /// than one — a stake unit and the badge that operates the pool are
     /// the same derivation over different material.
     #[must_use]
-    pub fn self_resource(&self, mark: &[u8]) -> Sym<Addr> {
+    pub fn self_resource(&self, kind: ResourceKind, mark: &[u8]) -> Sym<Addr> {
         let material = if mark.is_empty() {
             Vec::new()
         } else {
             vec![Expr::Literal(Value::Bytes(mark.to_vec()))]
         };
-        Sym::new(Expr::SelfResource { material })
+        Sym::new(Expr::SelfResource { kind, material })
     }
 
     /// A deterministic fresh 64-bit id, in the next unused slot.
@@ -553,9 +553,13 @@ impl Trace {
     /// Called by generated code where a body issues or destroys. The mark
     /// is the material separating one of the instance's own resources
     /// from its others, so what a method may create is fixed by the
-    /// declaration and cannot be another instance's.
-    pub fn bind_issuer(&mut self, mark: &[u8]) {
-        self.issues = Some(mark.to_vec());
+    /// declaration and cannot be another instance's; the kind rides with
+    /// it because the grant's derivation folds it.
+    pub fn bind_issuer(&mut self, kind: ResourceKind, mark: &[u8]) {
+        self.issues = Some(Issuance {
+            mark: mark.to_vec(),
+            kind,
+        });
         self.values.push(AbiParam::Issuer);
     }
 
@@ -1005,7 +1009,7 @@ pub(crate) struct Recorded {
     pub(crate) denominations: Vec<Option<Expr>>,
     pub(crate) worst_case: usize,
     pub(crate) abi: Vec<AbiParam>,
-    pub(crate) issues: Option<Vec<u8>>,
+    pub(crate) issues: Option<Issuance>,
     pub(crate) totality: Totality,
 }
 
@@ -1056,7 +1060,8 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
                 .map(|field| rebind(field, depth))
                 .collect(),
         ),
-        Expr::SelfResource { material } => Expr::SelfResource {
+        Expr::SelfResource { kind, material } => Expr::SelfResource {
+            kind,
             material: material
                 .into_iter()
                 .map(|expr| rebind(expr, depth))
