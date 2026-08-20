@@ -46,6 +46,17 @@ pub const PACKAGE_ROLE_BASE: u16 = 16;
 
 const _: () = assert!(PACKAGE_ROLE_BASE > CONFIRMATION.0);
 
+/// The roles one package may declare.
+///
+/// The same kind of bound `MAX_EVENT_TYPES` and `MAX_ERROR_CODES` are:
+/// a gate carries the band offset and a metadata table renders it, so
+/// what publish holds a record to is the ceiling rather than the table
+/// behind it. Well below what the band can address, because an entry
+/// past a ceiling is one no gate reaches.
+pub const MAX_PACKAGE_ROLES: usize = 1024;
+
+const _: () = assert!(MAX_PACKAGE_ROLES < (u16::MAX - PACKAGE_ROLE_BASE) as usize);
+
 /// The `n`th role of a package's own band.
 #[must_use]
 pub const fn package_role(n: u16) -> RoleId {

@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
 
+use crate::auth::MAX_PACKAGE_ROLES;
 use crate::dsl::{
     Clause, ConditionExpr, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH,
     ModeExpr, TargetExpr, materialized_kind,
@@ -1199,6 +1200,9 @@ pub enum MetadataBoundsError {
     /// An event table longer than the index an emitted event can carry.
     #[error("event table names {0} types, past the {MAX_EVENT_TYPES} an event index can reach")]
     EventTable(usize),
+    /// A role table longer than the band a package's own roles occupy.
+    #[error("role table names {0} roles, past the {MAX_PACKAGE_ROLES} a package's band holds")]
+    RoleTable(usize),
     /// An error table longer than the index a declined code can carry.
     #[error("error table names {0} codes, past the {MAX_ERROR_CODES} a declined code can reach")]
     ErrorTable(usize),
@@ -1253,6 +1257,9 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
     }
     if metadata.errors.len() > MAX_ERROR_CODES as usize {
         return Err(MetadataBoundsError::ErrorTable(metadata.errors.len()));
+    }
+    if metadata.roles.len() > MAX_PACKAGE_ROLES {
+        return Err(MetadataBoundsError::RoleTable(metadata.roles.len()));
     }
     for (name, signature) in &metadata.methods {
         check_signature_bounds(signature).map_err(|source| MetadataBoundsError::Method {
@@ -1585,10 +1592,11 @@ mod tests {
         );
     }
 
-    /// Both name tables are bounded by the index that reaches them: the
-    /// kernel checks an emitted event type and a returned error code
-    /// without holding the metadata, so a table longer than the ceiling
-    /// would name entries nothing could ever refer to.
+    /// Every name table is bounded by what reaches an entry: the kernel
+    /// checks an emitted event type and a returned error code without
+    /// holding the metadata, and a gate carries a role's band offset —
+    /// so a table longer than its ceiling names entries nothing could
+    /// ever refer to.
     #[test]
     fn a_name_table_past_the_index_the_kernel_accepts_is_refused() {
         let events = |len: usize| PackageMetadata {
@@ -1608,6 +1616,12 @@ mod tests {
             &errors(MAX_ERROR_CODES as usize),
             &errors(MAX_ERROR_CODES as usize + 1),
         );
+
+        let roles = |len: usize| PackageMetadata {
+            roles: vec![String::new(); len],
+            ..PackageMetadata::default()
+        };
+        assert_bounded(&roles(MAX_PACKAGE_ROLES), &roles(MAX_PACKAGE_ROLES + 1));
     }
 
     fn clause() -> Clause {
