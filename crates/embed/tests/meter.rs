@@ -112,6 +112,9 @@ impl KernelHost for StubHost {
     fn range_count(&mut self, _rep: u32) -> Result<u32, AbortReason> {
         self.op("range-count", 2)
     }
+    fn range_covered(&mut self, _rep: u32) -> Result<bool, AbortReason> {
+        self.op("range-covered", true)
+    }
     fn range_order(&mut self, _rep: u32, _index: u32) -> Result<u128, AbortReason> {
         self.op("range-order", 7)
     }
@@ -353,6 +356,13 @@ fn every_function_charges_its_pinned_sequence() {
                 let _ = meter::range_count(p, 0);
             },
             vec![Host("range-count"), Host("take-scan-debt"), Charge(3)],
+        ),
+        (
+            "range-covered",
+            |p| {
+                let _ = meter::range_covered(p, 0);
+            },
+            vec![Host("range-covered"), Host("take-scan-debt"), Charge(3)],
         ),
         (
             "range-order",

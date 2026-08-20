@@ -362,9 +362,8 @@ impl Op {
     pub fn from_method(name: &str) -> Option<Self> {
         match name {
             "locked" => Some(Self::Locked),
-            "get" | "peek" | "count" | "entry" | "order" | "balance" | "pick" | "picked" => {
-                Some(Self::Get)
-            }
+            "get" | "peek" | "count" | "covered" | "entry" | "order" | "balance" | "pick"
+            | "picked" => Some(Self::Get),
             "put" | "take" | "declared" | "file" => Some(Self::Move),
             "reserve" => Some(Self::Reserve),
             "set" | "insert" | "remove" => Some(Self::Set),

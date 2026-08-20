@@ -169,6 +169,7 @@ enum HostFn {
     AmountBalance,
     AmountReadBalance,
     InstanceCount,
+    InstanceCovered,
     InstanceOrder,
     InstanceEntry,
     AmountTake,
@@ -186,9 +187,11 @@ enum HostFn {
     DeltaPut,
     ReserveTake,
     RangeReadCount,
+    RangeReadCovered,
     RangeReadOrder,
     RangeReadEntry,
     RangeWriteCount,
+    RangeWriteCovered,
     RangeWriteOrder,
     RangeWriteEntry,
     RangeWriteSet,
@@ -689,6 +692,7 @@ impl RefComponent {
             ("state", "instance-range-take") => Ok(HostFn::InstanceTake),
             ("state", "instance-range-put") => Ok(HostFn::InstancePut),
             ("state", "instance-range-count") => Ok(HostFn::InstanceCount),
+            ("state", "instance-range-covered") => Ok(HostFn::InstanceCovered),
             ("state", "instance-range-order") => Ok(HostFn::InstanceOrder),
             ("state", "instance-range-entry") => Ok(HostFn::InstanceEntry),
             ("state", "bucket-take") => Ok(HostFn::BucketTake),
@@ -700,9 +704,11 @@ impl RefComponent {
             ("state", "delta-cell-put") => Ok(HostFn::DeltaPut),
             ("state", "reserve-cell-take") => Ok(HostFn::ReserveTake),
             ("state", "range-read-count") => Ok(HostFn::RangeReadCount),
+            ("state", "range-read-covered") => Ok(HostFn::RangeReadCovered),
             ("state", "range-read-order") => Ok(HostFn::RangeReadOrder),
             ("state", "range-read-entry") => Ok(HostFn::RangeReadEntry),
             ("state", "range-write-count") => Ok(HostFn::RangeWriteCount),
+            ("state", "range-write-covered") => Ok(HostFn::RangeWriteCovered),
             ("state", "range-write-order") => Ok(HostFn::RangeWriteOrder),
             ("state", "range-write-entry") => Ok(HostFn::RangeWriteEntry),
             ("state", "range-write-set") => Ok(HostFn::RangeWriteSet),
@@ -1756,6 +1762,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::RangeReadCount
                     | HostFn::RangeWriteCount
                     | HostFn::InstanceCount
+                    | HostFn::RangeReadCovered
+                    | HostFn::RangeWriteCovered
+                    | HostFn::InstanceCovered
                     | HostFn::Randomness
                     | HostFn::ReserveTake,
                 ) => 1,
@@ -2205,6 +2214,25 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         )
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(count.cast_signed())])
+                    }
+                    HostFn::RangeReadCovered
+                    | HostFn::RangeWriteCovered
+                    | HostFn::InstanceCovered => {
+                        let expected = match host_fn {
+                            HostFn::RangeReadCovered => ResourceKind::RangeRead,
+                            HostFn::InstanceCovered => ResourceKind::InstanceRange,
+                            _ => ResourceKind::RangeWrite,
+                        };
+                        let rep = self.resolve_handle(args[0], expected)?;
+                        let covered = meter::range_covered(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                        )
+                        .map_err(meter_fault)?;
+                        Ok(vec![Value::I32(i32::from(covered))])
                     }
                     HostFn::RangeReadOrder | HostFn::RangeWriteOrder | HostFn::InstanceOrder => {
                         let expected = match host_fn {

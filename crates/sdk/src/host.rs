@@ -376,6 +376,21 @@ pub fn entry_count(handle: Handle) -> u32 {
     }))
 }
 
+/// Whether this interval's page holds every entry the interval does.
+///
+/// # Panics
+///
+/// On a handle that is not an interval.
+#[must_use]
+pub fn entry_covered(handle: Handle) -> bool {
+    scanned(kernel(|k| match handle {
+        Handle::RangeRead(rep) | Handle::RangeWrite(rep) | Handle::InstanceRange(rep) => {
+            k.range_covered(rep)
+        }
+        other => unreachable!("{other:?} is not an interval"),
+    }))
+}
+
 /// The order key of this interval's entry at `index`.
 ///
 /// # Panics

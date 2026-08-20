@@ -18,8 +18,8 @@
 //! not laziness — the draw is the transaction's randomness, and no
 //! signer chooses it, so there is nothing an operator would be trusted
 //! with. The cap is the caller's because the page is the caller's bill —
-//! but which tickets count is nobody's: a page returned full may have
-//! truncated the round, so the draw declines it, and every settled
+//! but which tickets count is nobody's: the kernel answers whether the
+//! page covered the round, a short round declines, and every settled
 //! winner was drawn over every ticket at a cost that rose with the
 //! round.
 
@@ -37,8 +37,8 @@ pub use package::lottery::client::*;
 /// The entrant cap the corpus draws at: the round a single draw settles.
 pub const ROUND_CAP: u32 = 64;
 
-/// The code `draw` declines with when its page came back full — a round
-/// it cannot prove it considered whole.
+/// The code `draw` declines with when its page did not cover the round
+/// — tickets past the cap exist, unwalked and unconsidered.
 pub const ROUND_TRUNCATED: u32 = 0;
 
 /// The package's declaration, traced from its own module.

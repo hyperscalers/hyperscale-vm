@@ -217,6 +217,11 @@ interface state {
     /// Entries currently in the interval, bounded by the declared cap.
     range-read-count: func(r: borrow<range-read>) -> u32;
 
+    /// Whether the page holds every entry the interval does: a page
+    /// short of its cap exhausted the interval, and a full one is
+    /// answered by probing past its last entry.
+    range-read-covered: func(r: borrow<range-read>) -> bool;
+
     /// The order key of the entry at `index`, ascending.
     range-read-order: func(r: borrow<range-read>, index: u32) -> amount;
 
@@ -225,6 +230,11 @@ interface state {
 
     /// Entries currently in the interval, bounded by the declared cap.
     range-write-count: func(r: borrow<range-write>) -> u32;
+
+    /// Whether the page holds every entry the interval does: a page
+    /// short of its cap exhausted the interval, and a full one is
+    /// answered by probing past its last entry.
+    range-write-covered: func(r: borrow<range-write>) -> bool;
 
     /// The order key of the entry at `index`, ascending.
     range-write-order: func(r: borrow<range-write>, index: u32) -> amount;
@@ -244,6 +254,11 @@ interface state {
 
     /// Entries currently in the interval, bounded by the declared cap.
     instance-range-count: func(r: borrow<instance-range>) -> u32;
+
+    /// Whether the page holds every entry the interval does: a page
+    /// short of its cap exhausted the interval, and a full one is
+    /// answered by probing past its last entry.
+    instance-range-covered: func(r: borrow<instance-range>) -> bool;
 
     /// The order key of the entry at `index`, ascending — which for an
     /// instance is its own id.

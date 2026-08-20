@@ -246,6 +246,10 @@ impl KernelHost for TestHost {
         Ok(0)
     }
 
+    fn range_covered(&mut self, _rep: u32) -> std::result::Result<bool, AbortReason> {
+        Ok(true)
+    }
+
     fn range_order(&mut self, _rep: u32, _index: u32) -> std::result::Result<u128, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }

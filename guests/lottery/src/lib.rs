@@ -37,10 +37,9 @@ pub mod lottery {
     /// What a draw declines with.
     #[error]
     enum Error {
-        /// The page bought did not provably cover the round: the sweep
-        /// came back full, so tickets past the cap may exist, and a
-        /// winner drawn over a truncated round would disenfranchise
-        /// them silently. Retry with a larger cap.
+        /// The page bought did not cover the round: tickets past the
+        /// cap exist, and a winner drawn over a truncated round would
+        /// disenfranchise them silently. Retry with a larger cap.
         RoundTruncated,
     }
 
@@ -86,15 +85,14 @@ pub mod lottery {
         /// every ticket the round holds.
         ///
         /// The caller buys the page and pays for it as the walk it
-        /// declares; what no caller chooses is which tickets count. A
-        /// sweep that returns fewer entries than its cap has exhausted
-        /// the collection, so the winner is drawn over the whole round
-        /// or the round declines — a page that comes back full proves
-        /// nothing about what lies past it.
+        /// declares; what no caller chooses is which tickets count. The
+        /// kernel answers whether the page covered the round, so the
+        /// winner is drawn over the whole round or the round declines —
+        /// and a page exactly the round's size still settles.
         pub fn draw(&mut self, cap: u64) -> Result<(), Error> {
             let draw = randomness();
             let window = self.tickets.sweep(0, cap);
-            if u64::from(window.count()) == cap {
+            if !window.covered() {
                 return Err(Error::RoundTruncated);
             }
             // A round nobody entered still drew: the draw is recorded, no

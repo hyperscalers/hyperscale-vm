@@ -180,6 +180,15 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason>;
 
+    /// Whether the materialized page holds every entry the interval
+    /// does: a page short of its cap exhausted the interval, and a full
+    /// one is answered by probing past its last entry.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn range_covered(&mut self, rep: u32) -> Result<bool, AbortReason>;
+
     /// The order key of the entry at `index`.
     ///
     /// # Errors

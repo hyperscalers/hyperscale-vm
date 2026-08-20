@@ -129,10 +129,14 @@ const DISCHARGED: &[(&str, &str)] = &[
     // sum past it would need value no mint ever created.
     ("state", "amount-cell-put"),
     ("state", "delta-cell-put"),
-    // A count takes no index, so there is no bound to fall outside.
+    // A count takes no index, so there is no bound to fall outside; the
+    // coverage question is answered from the same page and its probe.
     ("state", "range-read-count"),
     ("state", "range-write-count"),
     ("state", "instance-range-count"),
+    ("state", "range-read-covered"),
+    ("state", "range-write-covered"),
+    ("state", "instance-range-covered"),
     // Total on every input; the arithmetic that refuses a divisor or a
     // width stays out, because those are runtime values no declaration
     // speaks about.

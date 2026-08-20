@@ -1208,6 +1208,23 @@ impl<T> Interval<T> {
         return host::entry_count(self.handle);
     }
 
+    /// Whether this page holds every entry the interval does — the
+    /// proof a body settles a whole set on.
+    ///
+    /// A page short of its cap exhausted the interval and answers by
+    /// itself; a full page is answered by the kernel probing past its
+    /// last entry, so a page exactly the set's size still covers. What
+    /// a `false` says is that entries past the cap exist, and whoever
+    /// bought the page did not pay to walk them.
+    #[must_use]
+    #[inline(always)]
+    pub fn covered(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        return crate::guest::entry_covered(self.handle);
+        #[cfg(not(target_arch = "wasm32"))]
+        return host::entry_covered(self.handle);
+    }
+
     /// The index `draw` selects over the entries currently here, or
     /// `None` where there are none.
     ///
@@ -1215,10 +1232,10 @@ impl<T> Interval<T> {
     /// as uniform over everything the collection holds: a sweep sees at
     /// most its declared cap, so a selection over a collection larger
     /// than one page is uniform over that page and the rest cannot be
-    /// picked. A package that means the whole set cranks — sweeping
-    /// pages across transactions and reducing as it goes — because the
-    /// cap is fixed at publish and no declaration sizes itself by
-    /// reading state.
+    /// picked. A package that means the whole set gates the pick on
+    /// [`Interval::covered`], or cranks — sweeping pages across
+    /// transactions and reducing as it goes — because no declaration
+    /// sizes itself by reading state.
     ///
     /// The selection reasoning, once, because it is the protocol's
     /// rather than a package's. The draw is the kernel's 32-byte word

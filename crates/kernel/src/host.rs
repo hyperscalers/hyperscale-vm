@@ -95,6 +95,9 @@ impl KernelHost for KernelSession {
     fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason> {
         refused(Self::range_count(self, rep))
     }
+    fn range_covered(&mut self, rep: u32) -> Result<bool, AbortReason> {
+        refused(Self::range_covered(self, rep))
+    }
     fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, AbortReason> {
         refused(Self::range_order(self, rep, index))
     }

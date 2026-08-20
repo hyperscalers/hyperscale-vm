@@ -301,6 +301,13 @@ pub fn range_count<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<u
     refused(count)
 }
 
+/// `covered`, on any of the three interval resources.
+pub fn range_covered<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<bool, MeterError> {
+    let covered = port.host().range_covered(rep);
+    charge_scan(port)?;
+    refused(covered)
+}
+
 /// `order`, on any of the three interval resources.
 pub fn range_order<P: HostAccess + FuelSink>(
     port: &mut P,

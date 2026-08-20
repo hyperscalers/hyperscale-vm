@@ -118,6 +118,9 @@ pub mod fixtures {
         fn range_count(&mut self, _rep: u32) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
+        fn range_covered(&mut self, _rep: u32) -> Result<bool, AbortReason> {
+            Err(AbortReason::HandleUnknown)
+        }
         fn range_order(&mut self, _rep: u32, _index: u32) -> Result<u128, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }

@@ -56,11 +56,6 @@ PackageMetadata {
                 Handle(
                     1,
                 ),
-                Derived(
-                    Arg(
-                        0,
-                    ),
-                ),
             ],
         },
         "enter": MethodSignature {

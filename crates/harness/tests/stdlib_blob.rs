@@ -508,9 +508,6 @@ fn dual_round() -> Result<(Receipt, u64)> {
         &[
             CVal::Borrow(round_rep, ResourceKind::RangeRead),
             CVal::Borrow(outcome_rep, ResourceKind::WriteCell),
-            // The evaluated cap, handed over because the body reads it:
-            // a page returned full is a round the draw may not settle.
-            CVal::U64(u64::from(lottery::ROUND_CAP)),
         ],
     )?;
     let (blessed, reference) = dual.finish()?;

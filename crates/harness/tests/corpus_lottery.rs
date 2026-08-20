@@ -201,13 +201,13 @@ fn a_draw_buys_a_page_past_any_ceiling() {
     );
 }
 
-/// Which tickets count is nobody's choice: a page that comes back full
-/// may have truncated the round, so the draw declines it — and a page
-/// one wider than the round proves itself complete and settles. Every
-/// settled winner was therefore drawn over every ticket, at a cost that
-/// rises with the round.
+/// Which tickets count is nobody's choice: the kernel answers whether
+/// the page covered the round, so a short page declines and a page
+/// exactly the round's size settles — no headroom entry is bought just
+/// to prove the walk complete. Every settled winner was therefore drawn
+/// over every ticket, at a cost that rises with the round.
 #[test]
-fn a_draw_declines_a_page_it_cannot_prove_complete() {
+fn a_draw_declines_a_page_that_did_not_cover_the_round() {
     let world = world();
     let mut store = MemoryStore::new();
     for who in [ALICE, BOB] {
@@ -231,12 +231,12 @@ fn a_draw_declines_a_page_it_cannot_prove_complete() {
         &[
             (&enter(ALICE), TxHash(Hash32([0x80; 32]))),
             (&enter(BOB), TxHash(Hash32([0x81; 32]))),
-            // Two tickets fill a two-entry page, so nothing past it is
-            // ruled out and the round declines.
-            (&draw_at(2), TxHash(Hash32([0x82; 32]))),
-            // One entry of headroom is the proof: a page of three held
-            // two, so the round was walked whole.
-            (&draw_at(3), TxHash(Hash32([0x83; 32]))),
+            // A one-entry page over a two-ticket round leaves a ticket
+            // unwalked, and the round declines.
+            (&draw_at(1), TxHash(Hash32([0x82; 32]))),
+            // A page exactly the round's size covers it: the kernel
+            // probes past the page's last entry and finds nothing.
+            (&draw_at(2), TxHash(Hash32([0x83; 32]))),
         ],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));

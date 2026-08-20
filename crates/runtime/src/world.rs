@@ -419,9 +419,21 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         },
     )?;
     state.func_wrap(
+        "range-read-covered",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeRead>,)| {
+            Ok((meter::range_covered(&mut Port(&mut store), r.rep()).map_err(fault)?,))
+        },
+    )?;
+    state.func_wrap(
         "range-write-count",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeWrite>,)| {
             Ok((meter::range_count(&mut Port(&mut store), r.rep()).map_err(fault)?,))
+        },
+    )?;
+    state.func_wrap(
+        "range-write-covered",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeWrite>,)| {
+            Ok((meter::range_covered(&mut Port(&mut store), r.rep()).map_err(fault)?,))
         },
     )?;
     state.func_wrap(
@@ -442,6 +454,12 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         "instance-range-count",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<InstanceRange>,)| {
             Ok((meter::range_count(&mut Port(&mut store), r.rep()).map_err(fault)?,))
+        },
+    )?;
+    state.func_wrap(
+        "instance-range-covered",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<InstanceRange>,)| {
+            Ok((meter::range_covered(&mut Port(&mut store), r.rep()).map_err(fault)?,))
         },
     )?;
     state.func_wrap(

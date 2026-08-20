@@ -205,6 +205,38 @@ impl KernelSession {
         Ok(u32::try_from(self.ranges.scans[&rep].len()).unwrap_or(u32::MAX))
     }
 
+    /// Whether the materialized page holds every entry the interval
+    /// does.
+    ///
+    /// A page shorter than its cap exhausted the interval, and answers
+    /// by itself. A full page proves nothing about what lies past it,
+    /// so the last entry's successor is probed — one more seek inside
+    /// the declared key space, charged to scan debt like the page was —
+    /// and the page covered the interval exactly when nothing is there.
+    /// Under a cap of zero the page is empty and the probe runs from
+    /// the interval's own floor, so coverage is the interval's
+    /// emptiness.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn range_covered(&mut self, rep: u32) -> Result<bool, SessionTrap> {
+        self.scan(rep)?;
+        let interval = self.interval(rep)?;
+        let page = &self.ranges.scans[&rep];
+        if page.len() < usize::try_from(interval.cap).unwrap_or(usize::MAX) {
+            return Ok(true);
+        }
+        let resume = match page.last() {
+            Some((last, _)) if *last == interval.hi => return Ok(true),
+            Some((last, _)) => last + 1,
+            None => interval.lo,
+        };
+        Ok(self
+            .lift(interval.owner, interval.collection, resume, interval.hi, 1)?
+            .is_empty())
+    }
+
     /// The order key at `index`, ascending.
     ///
     /// # Errors
@@ -637,6 +669,97 @@ mod tests {
             session.range_take(0, &[94]),
             Err(SessionTrap::WriteCapExceeded { cap: 4, order: 94 })
         );
+    }
+
+    /// Coverage is exact, not conservative: a page with headroom proves
+    /// the interval exhausted, and a full page is answered by probing
+    /// the last entry's successor rather than declined outright.
+    #[test]
+    fn coverage_is_proved_by_headroom_or_by_the_probe() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let mut store = MemoryStore::new();
+        for order in 0..4u128 {
+            store
+                .entry_write(owner, collection, order, vec![1])
+                .unwrap();
+        }
+        let at_cap = |cap| {
+            declared(&[Effect {
+                target: EffectTarget::Range {
+                    owner,
+                    collection,
+                    lo: 0,
+                    hi: u128::MAX,
+                    cap,
+                },
+                mode: Mode::Read,
+            }])
+        };
+        let covered = |cap| {
+            session_over(store.clone(), &at_cap(cap))
+                .range_covered(0)
+                .unwrap()
+        };
+        // Headroom is the cheap proof: five saw four and stopped short.
+        assert!(covered(5));
+        // A full page of four still covers, by the probe: nothing sits
+        // past the fourth entry.
+        assert!(covered(4));
+        // A full page of three does not: the probe finds the fourth.
+        assert!(!covered(3));
+        // A cap of zero materializes nothing, so coverage is the
+        // interval's emptiness — and this one holds entries.
+        assert!(!covered(0));
+    }
+
+    /// A full page whose last entry sits on the interval's own upper
+    /// bound needs no probe: nothing inside the claim can lie past it.
+    #[test]
+    fn a_page_ending_on_the_bound_is_covered_without_a_probe() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let mut store = MemoryStore::new();
+        for order in 0..4u128 {
+            store
+                .entry_write(owner, collection, order, vec![1])
+                .unwrap();
+        }
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: 3,
+                cap: 4,
+            },
+            mode: Mode::Read,
+        }]);
+        let mut session = session_over(store, &set);
+        assert!(session.range_covered(0).unwrap());
+    }
+
+    /// An empty interval is covered at any cap — including zero, where
+    /// the question degenerates to "is anything there".
+    #[test]
+    fn an_empty_interval_is_covered_at_any_cap() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let at_cap = |cap| {
+            declared(&[Effect {
+                target: EffectTarget::Range {
+                    owner,
+                    collection: CollectionId([4; 16]),
+                    lo: 0,
+                    hi: u128::MAX,
+                    cap,
+                },
+                mode: Mode::Read,
+            }])
+        };
+        for cap in [0, 4] {
+            let mut session = session_over(MemoryStore::new(), &at_cap(cap));
+            assert!(session.range_covered(0).unwrap());
+        }
     }
 
     #[test]
