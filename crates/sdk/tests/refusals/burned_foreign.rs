@@ -5,6 +5,9 @@ mod contract {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{Cell, Quantity, Vault, burn};
 
+    #[resource]
+    struct Unit;
+
     #[config]
     struct Settings {
         asset: Address,
@@ -19,7 +22,7 @@ mod contract {
     impl Contract {
         pub fn destroy(&mut self, amount: Quantity) {
             let taken = self.assets.vault().take(amount);
-            burn(b"", taken);
+            burn(Unit, taken);
         }
     }
 }

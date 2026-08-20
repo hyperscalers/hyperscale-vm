@@ -1,5 +1,5 @@
-error: `mint` names a declared `#[resource]` struct — the derivation folds the resource's kind, and the declaration is where a kind is stated
-  --> tests/refusals/merged_across.rs:22:28
+error: this merges `issued(Unit)` into `config.asset`, and one edge carries one resource. A merge moves value without converting it, so the two have to be the same resource
+  --> tests/refusals/merged_across.rs:25:13
    |
-22 |             taken.put(mint(b"", amount));
-   |                            ^^^
+25 |             taken.put(mint(Unit, amount));
+   |             ^^^^^
