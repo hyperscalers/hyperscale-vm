@@ -1765,9 +1765,7 @@ fn authoring_accessors(state: &syn::Ident, config: Option<&syn::Ident>) -> Token
             /// by its declared `#[resource]` struct.
             fn resource<K: ::hyperscale_vm_sdk::state::Mark>(
                 &self,
-                resource: K,
             ) -> ::hyperscale_vm_sdk::state::ResourceCell<K::Kind> {
-                let _ = resource;
                 ::core::unimplemented!("a contract body runs on the guest")
             }
         }
@@ -1939,9 +1937,68 @@ fn resource_marks(declared: &[(String, Vec<u8>, ResourceKind)]) -> Vec<syn::Item
                     type Kind = #kind_ty;
                 }
             );
-            [mark_const, mark_impl]
+            [mark_const, mark_impl, issuance(name, *kind, &struct_ident)]
         })
         .collect()
+}
+
+/// The issuance surface a mark carries: what bringing this resource into
+/// existence, and taking it back out, is spelled as.
+///
+/// One word for both kinds, because the declaration already states which
+/// one it is, and the shape the word takes is the shape that declaration
+/// implies — a quantity for a fungible mark, an instance id for a
+/// non-fungible one. Emitted per mark rather than offered as one generic
+/// function, which is what makes the wrong shape a type error on the
+/// argument rather than a refusal the macro has to phrase.
+///
+/// One instance per call, because one call is one declared cell — which
+/// is what the lowering opens either way. Several at once is the edge
+/// merge `NfBucket::put` already performs, so the batch the surface does
+/// not offer costs a line rather than a vocabulary.
+///
+/// Bodies are the off-host stubs every contract surface has, and they sit
+/// where the author's own `impl` block sits: off the guest. Every call is
+/// rewritten by the lowering before either half of the emission sees one,
+/// so what a guest build would compile here is an unreachable panic and
+/// whatever that drags in.
+fn issuance(name: &str, kind: ResourceKind, mark: &syn::Ident) -> syn::Item {
+    let mint_doc = format!("Bring `{name}` into existence, as an edge.");
+    match kind {
+        ResourceKind::Fungible => {
+            let burn_doc = format!("Destroy `{name}`, which is `funds`' own resource.");
+            syn::parse_quote!(
+                #[cfg(not(target_arch = "wasm32"))]
+                impl #mark {
+                    #[doc = #mint_doc]
+                    #[must_use]
+                    pub fn mint(
+                        quantity: ::hyperscale_vm_sdk::state::Quantity,
+                    ) -> ::hyperscale_vm_sdk::state::Bucket {
+                        let _ = quantity;
+                        ::core::unimplemented!("a contract body runs on the guest")
+                    }
+
+                    #[doc = #burn_doc]
+                    pub fn burn(funds: ::hyperscale_vm_sdk::state::Bucket) {
+                        let _ = &funds;
+                        ::core::unimplemented!("a contract body runs on the guest")
+                    }
+                }
+            )
+        }
+        ResourceKind::NonFungible => syn::parse_quote!(
+            #[cfg(not(target_arch = "wasm32"))]
+            impl #mark {
+                #[doc = #mint_doc]
+                #[must_use]
+                pub fn mint(id: u64) -> ::hyperscale_vm_sdk::state::NfBucket {
+                    let _ = id;
+                    ::core::unimplemented!("a contract body runs on the guest")
+                }
+            }
+        ),
+    }
 }
 
 /// Everything a package declares by name, gathered once and read by the

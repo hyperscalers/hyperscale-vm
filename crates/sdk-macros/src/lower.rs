@@ -682,50 +682,57 @@ impl<'a> Lowerer<'a> {
         Self::new(self.declared, self.params, self.returns, self.total)
     }
 
-    /// The mark a fungible issuance operation names, where the call's
-    /// first argument is a declared fungible `#[resource]` struct.
+    /// The declaration an issuance is called on, kind and all.
     ///
-    /// The derivation folds the kind, so a non-fungible declaration
-    /// under a fungible operation would not touch the declared resource
-    /// — it would derive its vacant fungible sibling, silently. Naming
-    /// the declaration rather than its mark is what makes that a
-    /// refusal rather than a thing to notice.
-    fn fungible_mark(&mut self, call: &syn::ExprCall, op: &str) -> Option<Vec<u8>> {
-        let resolved = call
-            .args
-            .first()
-            .and_then(|arg| match arg {
-                syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
-                _ => None,
-            })
-            .and_then(|n| {
-                self.declared
-                    .resources
-                    .iter()
-                    .find(|(r, ..)| *r == n)
-                    .cloned()
-            });
-        let Some((name, mark, kind)) = resolved else {
+    /// Answering the kind rather than checking it is what lets one word
+    /// serve both: the derivation folds the kind, so an operation reading
+    /// it off the declaration reaches the resource the author named
+    /// instead of the vacant sibling the other kind would derive.
+    fn issuing_mark(
+        &mut self,
+        call: &syn::ExprCall,
+        op: &str,
+    ) -> Option<(String, Vec<u8>, ResourceKind)> {
+        let named = free_call_mark(call);
+        let at = named
+            .as_ref()
+            .map_or_else(|| call.func.span(), Spanned::span);
+        let Some(declared) = named.and_then(|n| self.resource_named(&n)) else {
+            self.error(at, &undeclared_mark(op));
+            return None;
+        };
+        Some(declared)
+    }
+
+    /// The declaration a name refers to, where it refers to one.
+    fn resource_named(&self, name: &syn::Ident) -> Option<(String, Vec<u8>, ResourceKind)> {
+        let name = name.to_string();
+        self.declared
+            .resources
+            .iter()
+            .find(|(r, ..)| *r == name)
+            .cloned()
+    }
+
+    /// The resource a mark in type position names, as the key of the
+    /// record cell it opens.
+    fn mark_key(&mut self, call: &syn::ExprMethodCall) -> Option<Eval> {
+        let named = method_call_mark(call);
+        let at = named.as_ref().map_or_else(|| call.span(), Spanned::span);
+        let Some((_, mark, kind)) = named.and_then(|n| self.resource_named(&n)) else {
             self.error(
-                call.args.span(),
-                &format!(
-                    "`{op}` names a declared `#[resource]` struct — the derivation folds \
-                     the resource's kind, and the declaration is where a kind is stated"
-                ),
+                at,
+                "`resource` names a declared `#[resource]` struct in type position — \
+                 `self.resource::<Name>()`. The record it creates states the mark's own \
+                 kind, which is the declaration's to know",
             );
             return None;
         };
-        if kind != ResourceKind::Fungible {
-            self.error(
-                call.args.span(),
-                &format!(
-                    "`{name}` is non-fungible — its instances are minted with `mint_nf`, \
-                     and a fungible `{op}` would derive its vacant fungible sibling"
-                ),
-            );
-            return None;
-        }
-        Some(mark)
+        let term = Term::SelfResource(kind, mark);
+        Some(Eval {
+            val: Val::Term(term.clone()),
+            code: Code::Term(term),
+        })
     }
 
     /// The key of a record-cell site — the mark-derived resource — where
@@ -1187,104 +1194,62 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Lower `mint_nf(Name, &[id, ..])` — the non-fungible mint, coupled
-    /// to the instance-cell writes it implies: each named id is one data
-    /// cell created where absent, so a minted instance and its filed
-    /// cell are one declaration.
-    fn lower_mint_nf(&mut self, call: &syn::ExprCall) -> Eval {
-        let resolved = call
-            .args
-            .first()
-            .and_then(|arg| match arg {
-                syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
-                _ => None,
-            })
-            .and_then(|n| {
-                self.declared
-                    .resources
-                    .iter()
-                    .find(|(r, ..)| *r == n)
-                    .cloned()
-            });
-        let Some((resource_name, mark, kind)) = resolved else {
+    /// Lower `Name::mint(id)` — the non-fungible mint, coupled to the
+    /// instance-cell write it implies: the named id is one data cell
+    /// created where absent, so a minted instance and its filed cell are
+    /// one declaration.
+    fn lower_mint_nf(&mut self, mark: &[u8], call: &syn::ExprCall) -> Eval {
+        let Some(named) = call.args.first() else {
             self.error(
                 call.args.span(),
-                "`mint_nf` names a declared `#[resource]` struct — the derivation \
-                 folds the resource's kind, and the declaration is where a kind is \
-                 stated",
+                "a non-fungible mint names the instance it creates rather than an amount \
+                 — one id, and the instance's data cell is keyed by it",
             );
-            return Eval::absent(call.args.span(), "an undeclared resource");
+            return Eval::absent(call.args.span(), "a mint with no id");
         };
-        if kind != ResourceKind::NonFungible {
+        let eval = self.expr(named);
+        let Val::Term(id) = eval.val else {
             self.error(
-                call.args.span(),
-                &format!(
-                    "`{resource_name}` is fungible — a fungible resource is minted \
-                     with `mint`, and its address is not the one instances would \
-                     sit under"
-                ),
+                named.span(),
+                "this id is not derivable from the method's arguments — routing \
+                 evaluates the declaration before execution and never reads state",
             );
-            return Eval::absent(call.args.span(), "a fungible resource minted as instances");
-        }
-        let Some(elements) = call.args.iter().nth(1).and_then(id_elements) else {
-            self.error(
-                call.args.span(),
-                "the ids a mint names are part of the declaration — each instance's \
-                 data cell is keyed by one — so they must be written as a literal \
-                 list: `&[fresh_id()]`, `&[0, 1]`",
-            );
-            return Eval::absent(call.args.span(), "an underivable id list");
+            return Eval::absent(named.span(), "an underivable instance id");
         };
-        let resource_term = Term::SelfResource(ResourceKind::NonFungible, mark.clone());
-        let mut id_terms = Vec::new();
-        let mut id_values = Vec::new();
-        let mut files = Vec::new();
-        for element in elements {
-            let eval = self.expr(element);
-            let Val::Term(id) = eval.val else {
-                self.error(
-                    element.span(),
-                    "this id is not derivable from the method's arguments — routing \
-                     evaluates the declaration before execution and never reads state",
-                );
-                return Eval::absent(element.span(), "an underivable instance id");
-            };
-            let site = self.open(
-                Target::Point {
-                    slot: INSTANCE.0,
-                    material: vec![resource_term.clone(), id.clone()],
-                },
-                None,
-                None,
-            );
-            self.record(site, Op::Create, None, call.span());
-            let handle = self.handle(site, call.span());
-            files.push(quote!(::hyperscale_vm_sdk::state::file_instance(#handle);));
-            id_terms.push(id);
-            id_values.push(self.value(eval.code));
-        }
-        let grant = self.issuer(ResourceKind::NonFungible, &mark);
+        let resource_term = Term::SelfResource(ResourceKind::NonFungible, mark.to_vec());
+        let site = self.open(
+            Target::Point {
+                slot: INSTANCE.0,
+                material: vec![resource_term.clone(), id.clone()],
+            },
+            None,
+            None,
+        );
+        self.record(site, Op::Create, None, call.span());
+        let handle = self.handle(site, call.span());
+        let id_value = self.value(eval.code);
+        let grant = self.issuer(ResourceKind::NonFungible, mark);
         let produced = Term::NfBucket {
             resource: Box::new(resource_term),
-            ids: Box::new(Term::List(id_terms)),
+            ids: Box::new(Term::List(vec![id])),
         };
         Eval {
             val: Val::Produced(produced),
             code: Code::Rust(quote!({
-                #(#files)*
-                ::hyperscale_vm_sdk::state::mint_nf_granted(#grant, &[#(#id_values),*])
+                ::hyperscale_vm_sdk::state::file_instance(#handle);
+                ::hyperscale_vm_sdk::state::mint_nf_granted(#grant, &[#id_value])
             })),
         }
     }
 
-    /// Lower `burn(mark, funds)`.
+    /// Lower `Name::burn(funds)`.
     ///
     /// What it destroys is the resource the mark derives, so an edge a
     /// caller supplied is held to that resource exactly as a credit to a
     /// cell holding it would be — and one the body produced is compared
     /// outright, because no caller is involved to be constrained.
     fn lower_burn(&mut self, mark: &[u8], call: &syn::ExprCall) -> Eval {
-        let Some(destroyed) = call.args.iter().nth(1).map(|a| self.expr(a)) else {
+        let Some(destroyed) = call.args.first().map(|a| self.expr(a)) else {
             self.error(call.args.span(), "a burn with nothing to destroy");
             return Eval::absent(call.args.span(), "a burn with no value");
         };
@@ -2355,16 +2320,6 @@ impl<'a> Lowerer<'a> {
                 code,
             };
         }
-        // A declared `#[resource]` struct in expression position is the
-        // resource it names — the same derivation `issued(Name)` spells,
-        // resolved here so an accessor takes the mark directly.
-        if let Some((_, mark, kind)) = self.declared.resources.iter().find(|(r, ..)| *r == name) {
-            let term = Term::SelfResource(*kind, mark.clone());
-            return Eval {
-                val: Val::Term(term.clone()),
-                code: Code::Term(term),
-            };
-        }
         if let Some(index) = self.params.iter().position(|(p, _)| *p == name) {
             let slot = u32::try_from(index).expect("a parameter list is shorter than u32");
             let term = Term::Arg(slot);
@@ -2513,15 +2468,19 @@ impl<'a> Lowerer<'a> {
                 code: Code::Term(term),
             };
         }
-        // `mint(Resource, amount)` — the one edge with no cell behind
-        // it. The declaration names the resource exactly as
-        // `issued(Resource)` derives an address from one, so the output
-        // projection and the issuance grant come out of the same call.
+        // `Resource::mint(..)` — the one edge with no cell behind it. The
+        // declaration names the resource exactly as `issued(Resource)`
+        // derives an address from one, so the output projection and the
+        // issuance grant come out of the same call, and the kind it
+        // states is what picks between a quantity and a list of ids.
         if name == "mint" {
-            let Some(mark) = self.fungible_mark(call, "mint") else {
-                return Eval::absent(call.args.span(), "an undeclared fungible resource");
+            let Some((_, mark, kind)) = self.issuing_mark(call, "mint") else {
+                return Eval::absent(call.func.span(), "an undeclared resource");
             };
-            let amount = call.args.iter().nth(1).map_or(
+            if kind == ResourceKind::NonFungible {
+                return self.lower_mint_nf(&mark, call);
+            }
+            let amount = call.args.first().map_or(
                 Code::Absent(call.args.span(), "an issue with no amount"),
                 |a| self.expr(a).code,
             );
@@ -2532,14 +2491,23 @@ impl<'a> Lowerer<'a> {
                 code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#grant, #amount))),
             };
         }
-        if name == "mint_nf" {
-            return self.lower_mint_nf(call);
-        }
-        // `burn(Resource, funds)` — the inverse, under the same grant.
+        // `Resource::burn(funds)` — the inverse, under the same grant.
+        // Fungible alone: an instance leaves existence by no vocabulary
+        // this has, so the mark's kind is a refusal rather than a branch.
         if name == "burn" {
-            let Some(mark) = self.fungible_mark(call, "burn") else {
-                return Eval::absent(call.args.span(), "an undeclared fungible resource");
+            let Some((declared, mark, kind)) = self.issuing_mark(call, "burn") else {
+                return Eval::absent(call.func.span(), "an undeclared resource");
             };
+            if kind != ResourceKind::Fungible {
+                self.error(
+                    call.func.span(),
+                    &format!(
+                        "`{declared}` is non-fungible, and an instance has no burn — a \
+                         holding is retired by moving it somewhere nothing spends from"
+                    ),
+                );
+                return Eval::absent(call.func.span(), "a non-fungible burn");
+            }
             return self.lower_burn(&mark, call);
         }
         if name == "issued" {
@@ -3031,31 +2999,37 @@ impl<'a> Lowerer<'a> {
         let Some(field) = self.declared.accessors.get(name).cloned() else {
             return Eval::absent(call.span(), "an unknown protocol cell");
         };
-        let evals: Vec<Eval> = call.args.iter().map(|arg| self.expr(arg)).collect();
-        let arity = usize::from(!matches!(field.kind, FieldKind::Cell | FieldKind::Locked));
-        if evals.len() != arity {
-            self.error(call.span(), &format!("`{name}` takes {arity} argument(s)"));
-            return Eval::absent(call.span(), "a protocol cell named with the wrong arity");
-        }
+        // The record cell is keyed by a mark, and a mark is named in type
+        // position — so the key comes off the turbofish and the argument
+        // list is empty, where every other accessor takes its key as the
+        // argument it was handed.
+        let evals: Vec<Eval> = if name == "resource" {
+            if !call.args.is_empty() {
+                self.error(
+                    call.args.span(),
+                    "`resource` takes its mark in type position and nothing else — \
+                     `self.resource::<Name>()`",
+                );
+                return Eval::absent(call.span(), "a record cell named with an argument");
+            }
+            self.mark_key(call).into_iter().collect()
+        } else {
+            let evals: Vec<Eval> = call.args.iter().map(|arg| self.expr(arg)).collect();
+            let arity = usize::from(!matches!(field.kind, FieldKind::Cell | FieldKind::Locked));
+            if evals.len() != arity {
+                self.error(call.span(), &format!("`{name}` takes {arity} argument(s)"));
+                return Eval::absent(call.span(), "a protocol cell named with the wrong arity");
+            }
+            evals
+        };
         match field.kind {
-            // A leaf of the family, at the key the accessor was handed.
+            // A leaf of the family, at the mark the accessor was handed.
             // The record cell's key is a declared resource and nothing
             // else: the kind the record states is the mark's, so a key
             // the declaration cannot see the kind of names no record.
             FieldKind::Keyed => {
-                if name == "resource"
-                    && !matches!(
-                        evals.first().map(|e| &e.val),
-                        Some(Val::Term(Term::SelfResource(..)))
-                    )
-                {
-                    self.error(
-                        call.args.span(),
-                        "`resource` names a declared `#[resource]` struct — the record \
-                         it creates states the mark's own kind, which is the \
-                         declaration's to know",
-                    );
-                    return Eval::absent(call.args.span(), "an undeclared resource");
+                if evals.is_empty() {
+                    return Eval::absent(call.span(), "an undeclared resource");
                 }
                 self.on_field(&field, &[], "at", &evals, call)
             }
@@ -3476,14 +3450,43 @@ fn free_call_name(call: &syn::ExprCall) -> Option<String> {
     path.path.segments.last().map(|s| s.ident.to_string())
 }
 
-/// The elements of a literal id list expression: `&[a, b]` or `[a, b]`.
-fn id_elements(expr: &syn::Expr) -> Option<Vec<&syn::Expr>> {
-    let inner = match expr {
-        syn::Expr::Reference(reference) => &*reference.expr,
-        other => other,
+/// The one name a turbofish holds, where it holds exactly one.
+///
+/// A mark is a declaration's own name and nothing else, so a path, a
+/// lifetime or a second argument names no mark — and the caller says so
+/// at the span this returns, which is the name rather than the call.
+fn sole_type_argument(
+    args: &syn::punctuated::Punctuated<syn::GenericArgument, syn::Token![,]>,
+) -> Option<syn::Ident> {
+    let [syn::GenericArgument::Type(syn::Type::Path(path))] = args.iter().collect::<Vec<_>>()[..]
+    else {
+        return None;
     };
-    match inner {
-        syn::Expr::Array(array) => Some(array.elems.iter().collect()),
-        _ => None,
-    }
+    path.path.get_ident().cloned()
+}
+
+/// What an operation says when the mark it was called on names no
+/// declaration — including the spelling, because an author reaching for
+/// the free-function form lands here.
+fn undeclared_mark(op: &str) -> String {
+    format!(
+        "`{op}` is called on a declared `#[resource]` struct — `Name::{op}(..)`. The \
+         derivation folds the resource's kind, and the declaration is where a kind is stated"
+    )
+}
+
+/// The mark an issuance is called on: the `Name` of `Name::mint(..)`.
+fn free_call_mark(call: &syn::ExprCall) -> Option<syn::Ident> {
+    let syn::Expr::Path(path) = &*call.func else {
+        return None;
+    };
+    let [mark, _] = path.path.segments.iter().collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    mark.arguments.is_none().then(|| mark.ident.clone())
+}
+
+/// The mark a method call names in type position: `self.resource::<Name>()`.
+fn method_call_mark(call: &syn::ExprMethodCall) -> Option<syn::Ident> {
+    sole_type_argument(&call.turbofish.as_ref()?.args)
 }

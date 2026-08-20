@@ -21,7 +21,7 @@ const SUCCESSOR: PrincipalAddr = principal(0x52);
 mod registry {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{
-        AuthBase, AuthCell, Cell, NfBucket, Proposal, Quantity, RoleTable, clock_ms, mint_nf,
+        AuthBase, AuthCell, Cell, NfBucket, Proposal, Quantity, RoleTable, clock_ms,
     };
 
     /// The badge the table's rules name: the registry's own issue, so
@@ -55,7 +55,7 @@ mod registry {
                 recovery_delay_ms: delay_ms,
                 roles: table,
             }));
-            mint_nf(AdminBadge, &[0])
+            AdminBadge::mint(0)
         }
 
         /// The admin surface.

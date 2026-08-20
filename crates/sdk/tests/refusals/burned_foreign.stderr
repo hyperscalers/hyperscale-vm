@@ -1,5 +1,5 @@
 error: this destroys `config.asset` against a grant over `issued(Unit)`. A grant is authority over one resource, and burning is that authority in the other direction
-  --> tests/refusals/burned_foreign.rs:25:18
+  --> tests/refusals/burned_foreign.rs:25:24
    |
-25 |             burn(Unit, taken);
-   |                  ^^^^
+25 |             Unit::burn(taken);
+   |                        ^^^^^

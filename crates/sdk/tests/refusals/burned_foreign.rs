@@ -3,7 +3,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Cell, Quantity, Vault, burn};
+    use hyperscale_vm_sdk::state::{Cell, Quantity, Vault};
 
     #[resource]
     struct Unit;
@@ -22,7 +22,7 @@ mod contract {
     impl Contract {
         pub fn destroy(&mut self, amount: Quantity) {
             let taken = self.assets.vault().take(amount);
-            burn(Unit, taken);
+            Unit::burn(taken);
         }
     }
 }

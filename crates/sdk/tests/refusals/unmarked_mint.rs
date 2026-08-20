@@ -2,7 +2,9 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 mod contract {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity, mint};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity};
+
+    struct Coupon;
 
     #[state]
     struct Contract {
@@ -11,7 +13,7 @@ mod contract {
 
     impl Contract {
         pub fn forge(&mut self, amount: Quantity) -> Bucket {
-            mint(b"", amount)
+            Coupon::mint(amount)
         }
     }
 }

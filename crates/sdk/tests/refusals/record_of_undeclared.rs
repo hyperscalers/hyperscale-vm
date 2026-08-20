@@ -8,8 +8,8 @@ mod contract {
     struct Contract {}
 
     impl Contract {
-        pub fn seize(&mut self, target: Address) {
-            self.resource(target).create();
+        pub fn seize(&mut self) {
+            self.resource::<Address>().create();
         }
     }
 }

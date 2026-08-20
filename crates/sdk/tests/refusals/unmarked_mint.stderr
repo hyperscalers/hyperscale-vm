@@ -1,5 +1,5 @@
-error: `mint` names a declared `#[resource]` struct — the derivation folds the resource's kind, and the declaration is where a kind is stated
-  --> tests/refusals/unmarked_mint.rs:14:18
+error: `mint` is called on a declared `#[resource]` struct — `Name::mint(..)`. The derivation folds the resource's kind, and the declaration is where a kind is stated
+  --> tests/refusals/unmarked_mint.rs:16:13
    |
-14 |             mint(b"", amount)
-   |                  ^^^
+16 |             Coupon::mint(amount)
+   |             ^^^^^^

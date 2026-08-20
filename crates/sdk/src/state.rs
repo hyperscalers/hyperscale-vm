@@ -611,35 +611,6 @@ impl NfBucket {
     }
 }
 
-/// Mint `quantity` of the fungible resource `resource` declares.
-///
-/// The one place value appears with no cell debited behind it, and it is
-/// the instance's own resource by construction — a declared
-/// `#[resource]` struct names one of its resources exactly as
-/// `issued(<Resource>)` derives an address from one. The authority is a
-/// handle the kernel grants against this method's declared outputs, so a
-/// body that never said it produces what it issues has none.
-#[must_use]
-pub fn mint<R: Mark<Kind = Fungible>>(resource: R, quantity: Quantity) -> Bucket {
-    let _ = (resource, quantity);
-    unimplemented!("{OFF_HOST}")
-}
-
-/// Destroy `funds`, which must be the resource `resource` declares.
-///
-/// The inverse of [`mint`] and under the same authority: bringing value
-/// out of existence is as declared as bringing it in. What separates it
-/// from moving value into a cell nobody spends from is that the shard's
-/// own supply falls — a retired balance is still supply, and this is not.
-///
-/// Consumes the edge, so the value is gone rather than held somewhere the
-/// body forgot about.
-#[allow(clippy::needless_pass_by_value)] // a burn consumes what it destroys
-pub fn burn<R: Mark<Kind = Fungible>>(resource: R, funds: Bucket) {
-    let _ = (resource, &funds);
-    unimplemented!("{OFF_HOST}")
-}
-
 /// A permanently locked configuration leaf.
 ///
 /// Read through [`Locked::locked`], which declares a locked read that excludes
@@ -1462,20 +1433,6 @@ pub fn file_instance(handle: Handle) {
     return crate::guest::cell_set(handle, &[1]);
     #[cfg(not(target_arch = "wasm32"))]
     return host::cell_set(handle, &[1]);
-}
-
-/// Create the named instances of a resource this instance issues, as an
-/// edge.
-///
-/// The resource is a declared non-fungible `#[resource]` struct — the
-/// kind is the mark's, and the derivation folds it — and each id is part
-/// of the declaration: the lowering files each instance's data cell
-/// beside the mint, with the absence requirement that makes creating an
-/// instance and overwriting one different declarations.
-#[must_use]
-pub fn mint_nf<R: Mark<Kind = NonFungible>>(resource: R, ids: &[u64]) -> NfBucket {
-    let _ = (resource, ids);
-    unimplemented!("{OFF_HOST}")
 }
 
 /// Destroy the value at `funds` against the grant at `grant`.

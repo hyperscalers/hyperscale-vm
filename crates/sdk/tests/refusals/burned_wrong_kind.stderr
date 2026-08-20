@@ -1,0 +1,5 @@
+error: `OwnerBadge` is non-fungible, and an instance has no burn — a holding is retired by moving it somewhere nothing spends from
+  --> tests/refusals/burned_wrong_kind.rs:17:13
+   |
+17 |             OwnerBadge::burn(badge);
+   |             ^^^^^^^^^^

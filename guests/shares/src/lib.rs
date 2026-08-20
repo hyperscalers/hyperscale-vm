@@ -49,7 +49,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod shares {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity, Rounding, burn, mint};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity, Rounding};
 
     /// The claim on the vault a depositor takes away: the resource
     /// this instance issues against what it holds, so a share names the
@@ -102,7 +102,7 @@ pub mod shares {
                 paid.scale(per_asset, Rounding::Down)
             };
             self.supply.set(supply + minted);
-            Ok(mint(Unit, minted))
+            Ok(Unit::mint(minted))
         }
 
         /// Ask for exactly `want` shares, paying out of `funds`.
@@ -135,7 +135,7 @@ pub mod shares {
             let change = funds.take(spare);
             vault.put(funds);
             self.supply.set(supply + want);
-            Ok((mint(Unit, want), change))
+            Ok((Unit::mint(want), change))
         }
 
         /// Ask for exactly `want` assets, paying in shares.
@@ -160,7 +160,7 @@ pub mod shares {
                 return Err(Error::Insufficient);
             };
             let back = units.take(spare);
-            burn(Unit, units);
+            Unit::burn(units);
             self.supply.set(supply - needed);
             Ok((vault.take(want), back))
         }
@@ -179,7 +179,7 @@ pub mod shares {
             };
             let out = returned.scale(per_share, Rounding::Down);
 
-            burn(Unit, units);
+            Unit::burn(units);
             self.supply.set(supply - returned);
             Ok(vault.take(out))
         }

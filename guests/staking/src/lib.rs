@@ -32,7 +32,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod staking {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, NfBucket, Quantity, burn, mint, mint_nf};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, NfBucket, Quantity};
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
     /// The pool's creation-fixed configuration: what a delegation is
@@ -145,7 +145,7 @@ pub mod staking {
             let staked = funds.quantity();
             self.vault(self.config().staked_resource).put(funds);
             Staked { amount: staked }.emit();
-            mint(StakeUnit, staked)
+            StakeUnit::mint(staked)
         }
 
         /// Return stake units, beginning the unbonding period.
@@ -158,11 +158,10 @@ pub mod staking {
         /// contending on a total neither of them reads.
         pub fn unstake(&mut self, units: Bucket) {
             let returned = units.quantity();
-            burn(StakeUnit, units);
+            StakeUnit::burn(units);
             Unstaked { amount: returned }.emit();
         }
 
-        /// Take on a validator, recording the key the pool registered.
         /// Bring the pool's operator surface into existence: the owner
         /// badge's record, and its one instance, handed back for the
         /// founder to keep.
@@ -173,10 +172,11 @@ pub mod staking {
         /// cells directly, and is held to them byte for byte.
         #[requires(founder)]
         pub fn found(&mut self) -> NfBucket {
-            self.resource(OwnerBadge).create();
-            mint_nf(OwnerBadge, &[0])
+            self.resource::<OwnerBadge>().create();
+            OwnerBadge::mint(0)
         }
 
+        /// Take on a validator, recording the key the pool registered.
         #[requires(OwnerBadge)]
         pub fn register_validator(
             &mut self,

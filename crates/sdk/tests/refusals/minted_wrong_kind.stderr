@@ -1,5 +1,7 @@
-error: `OwnerBadge` is non-fungible — its instances are minted with `mint_nf`, and a fungible `mint` would derive its vacant fungible sibling
-  --> tests/refusals/minted_wrong_kind.rs:17:18
+error[E0308]: mismatched types
+  --> tests/refusals/minted_wrong_kind.rs:17:13
    |
-17 |             mint(OwnerBadge, 1)
-   |                  ^^^^^^^^^^
+16 |         pub fn forge(&mut self) -> Bucket {
+   |                                    ------ expected `hyperscale_vm_sdk::state::Bucket` because of return type
+17 |             OwnerBadge::mint(1)
+   |             ^^^^^^^^^^^^^^^^^^^ expected `Bucket`, found `NfBucket`

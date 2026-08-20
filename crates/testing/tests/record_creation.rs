@@ -19,7 +19,7 @@ const FOUNDER: PrincipalAddr = principal(0x31);
 
 #[blueprint]
 mod issuer {
-    use hyperscale_vm_sdk::state::{NfBucket, mint_nf};
+    use hyperscale_vm_sdk::state::NfBucket;
 
     #[resource(non_fungible)]
     struct OwnerBadge;
@@ -34,13 +34,13 @@ mod issuer {
         /// Bring the badge into existence: its record, and its first
         /// instance, handed back as an edge for the founder to keep.
         pub fn found(&mut self) -> NfBucket {
-            self.resource(OwnerBadge).create();
-            mint_nf(OwnerBadge, &[0])
+            self.resource::<OwnerBadge>().create();
+            OwnerBadge::mint(0)
         }
 
         /// Bring the coupon into existence, displayed at six digits.
         pub fn open(&mut self) {
-            self.resource(Coupon).create(6);
+            self.resource::<Coupon>().create(6);
         }
     }
 }
