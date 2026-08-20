@@ -636,9 +636,10 @@ mod tests {
     #[test]
     fn a_protocol_claim_its_artifact_refuses_does_not_admit() {
         // The lottery's draw is public, so it clears the gate rule and
-        // reaches the artifact — which refuses it, because settling walks
-        // the entrants and a walk has no static fuel ceiling. The account
-        // no longer serves as the example: every body it has is a call or
+        // reaches the artifact. The export carries an error arm — a draw
+        // declines a page it cannot prove covered the round — so a Total
+        // claim contradicts the export's own type first. The account no
+        // longer serves as the example: every body it has is a call or
         // two, and the kernel does the work the loops used to.
         let mut metadata = lottery::metadata();
         metadata
@@ -651,10 +652,17 @@ mod tests {
         let error = admit_protocol_package(&artifact)
             .expect_err("a mark the code cannot support is not admissible");
         assert!(
-            error.0.contains("does not support"),
+            error.0.contains("error arm"),
             "refused for the wrong reason: {}",
             error.0,
         );
+
+        // Behind the arm stands the refusal the arm now masks on the
+        // admission path: settling walks the entrants, and a walk has no
+        // static fuel ceiling, so the artifact itself refuses the mark
+        // whatever the metadata claims.
+        let honest = attach_metadata(LOTTERY_COMPONENT, &lottery::metadata()).expect("attaches");
+        check_method(&honest, "draw").expect_err("a walk has no static ceiling");
     }
 
     /// A component whose one export takes a `u64`, for bindings to

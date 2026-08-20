@@ -1,7 +1,7 @@
 PackageMetadata {
     methods: {
         "draw": MethodSignature {
-            totality: Infallible,
+            totality: Fallible,
             issues: None,
             params: [
                 U64,
@@ -55,6 +55,11 @@ PackageMetadata {
                 ),
                 Handle(
                     1,
+                ),
+                Derived(
+                    Arg(
+                        0,
+                    ),
                 ),
             ],
         },
@@ -153,6 +158,8 @@ PackageMetadata {
         "entered",
         "drawn",
     ],
-    errors: [],
+    errors: [
+        "round-truncated",
+    ],
     roles: [],
 }

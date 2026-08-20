@@ -17,9 +17,11 @@
 //! cap and an exclusive write of the result. Public for a reason that is
 //! not laziness — the draw is the transaction's randomness, and no
 //! signer chooses it, so there is nothing an operator would be trusted
-//! with. The cap is the caller's because the page is the caller's bill:
-//! a round of sixty entrants is fair at sixty-four and a larger one
-//! draws at the cap its caller paid for.
+//! with. The cap is the caller's because the page is the caller's bill —
+//! but which tickets count is nobody's: a page returned full may have
+//! truncated the round, so the draw declines it, and every settled
+//! winner was drawn over every ticket at a cost that rose with the
+//! round.
 
 use hyperscale_vm_effects::PackageMetadata;
 
@@ -34,6 +36,10 @@ pub use package::lottery::client::*;
 
 /// The entrant cap the corpus draws at: the round a single draw settles.
 pub const ROUND_CAP: u32 = 64;
+
+/// The code `draw` declines with when its page came back full — a round
+/// it cannot prove it considered whole.
+pub const ROUND_TRUNCATED: u32 = 0;
 
 /// The package's declaration, traced from its own module.
 #[must_use]

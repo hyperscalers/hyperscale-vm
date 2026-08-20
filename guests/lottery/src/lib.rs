@@ -34,6 +34,16 @@ pub mod lottery {
         who: Address,
     }
 
+    /// What a draw declines with.
+    #[error]
+    enum Error {
+        /// The page bought did not provably cover the round: the sweep
+        /// came back full, so tickets past the cap may exist, and a
+        /// winner drawn over a truncated round would disenfranchise
+        /// them silently. Retry with a larger cap.
+        RoundTruncated,
+    }
+
     /// The round settled on a draw.
     #[event]
     struct Drawn(Outcome);
@@ -72,21 +82,25 @@ pub mod lottery {
             Entered { who }.emit();
         }
 
-        /// Settle the round on the transaction's own randomness,
-        /// drawing among the first `cap` tickets.
-        pub fn draw(&mut self, cap: u64) {
+        /// Settle the round on the transaction's own randomness, over
+        /// every ticket the round holds.
+        ///
+        /// The caller buys the page and pays for it as the walk it
+        /// declares; what no caller chooses is which tickets count. A
+        /// sweep that returns fewer entries than its cap has exhausted
+        /// the collection, so the winner is drawn over the whole round
+        /// or the round declines — a page that comes back full proves
+        /// nothing about what lies past it.
+        pub fn draw(&mut self, cap: u64) -> Result<(), Error> {
             let draw = randomness();
+            let window = self.tickets.sweep(0, cap);
+            if u64::from(window.count()) == cap {
+                return Err(Error::RoundTruncated);
+            }
             // A round nobody entered still drew: the draw is recorded, no
             // winner follows it, and the pot stands for the next round.
             // Refusing here would let an empty round wedge the lottery.
-            //
-            // One page, so a round past the cap draws among the tickets
-            // the sweep saw — and how many that is is the caller's
-            // choice, paid for as the page it declares. A lottery that
-            // meant the whole set whatever its size would crank across
-            // transactions; this one draws over the page its caller
-            // bought.
-            let winner = self.tickets.sweep(0, cap).pick(&draw);
+            let winner = window.pick(&draw);
             // The width is the environment's, and the record states it:
             // a draw that is not thirty-two bytes is a defect in the
             // kernel rather than in this round.
@@ -96,6 +110,7 @@ pub mod lottery {
             };
             self.outcome.set(Some(settled.clone()));
             Drawn(settled).emit();
+            Ok(())
         }
     }
 }

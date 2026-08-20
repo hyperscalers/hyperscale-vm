@@ -200,3 +200,51 @@ fn a_draw_buys_a_page_past_any_ceiling() {
         "one entrant under a five-thousand-entry page still wins their own round"
     );
 }
+
+/// Which tickets count is nobody's choice: a page that comes back full
+/// may have truncated the round, so the draw declines it — and a page
+/// one wider than the round proves itself complete and settles. Every
+/// settled winner was therefore drawn over every ticket, at a cost that
+/// rises with the round.
+#[test]
+fn a_draw_declines_a_page_it_cannot_prove_complete() {
+    let world = world();
+    let mut store = MemoryStore::new();
+    for who in [ALICE, BOB] {
+        store
+            .write(vault(who, RES_X), encode_amount(150).to_vec())
+            .unwrap();
+    }
+
+    let enter = |who: PrincipalAddr| {
+        graph(move |b| {
+            let proof = account::authorize(b, who)?;
+            let funds = account::withdraw(b, proof, RES_X, 100)?;
+            lottery_addr().enter(b, who, funds)
+        })
+    };
+    let draw_at = |cap: u64| graph(move |b| lottery_addr().draw(b, cap));
+
+    let (results, store) = run_both(
+        &world,
+        &store,
+        &[
+            (&enter(ALICE), TxHash(Hash32([0x80; 32]))),
+            (&enter(BOB), TxHash(Hash32([0x81; 32]))),
+            // Two tickets fill a two-entry page, so nothing past it is
+            // ruled out and the round declines.
+            (&draw_at(2), TxHash(Hash32([0x82; 32]))),
+            // One entry of headroom is the proof: a page of three held
+            // two, so the round was walked whole.
+            (&draw_at(3), TxHash(Hash32([0x83; 32]))),
+        ],
+    );
+    assert!(matches!(results[0], TxResult::Completed(_)));
+    assert!(matches!(results[1], TxResult::Completed(_)));
+    assert_eq!(results[2], TxResult::Declined(lottery::ROUND_TRUNCATED));
+    assert!(matches!(results[3], TxResult::Completed(_)));
+    assert!(
+        settled_round(&store).is_some_and(|outcome| outcome.winner.is_some()),
+        "the whole round settled on a winner"
+    );
+}
