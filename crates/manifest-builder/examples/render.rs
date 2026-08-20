@@ -7,7 +7,7 @@
 
 use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, PackageHash,
-    PrefixShardResolver, ResourceKind, TestHasher, Value, resource_address,
+    PrefixShardResolver, ResourceKind, TestHasher, Value, issued_resource,
 };
 use hyperscale_vm_fixtures::{amm, splitter};
 use hyperscale_vm_manifest_builder::{
@@ -64,14 +64,15 @@ fn splitter() -> ComponentAddr {
     instance("splitter", vec![]).address(&TestHasher)
 }
 
-/// The pool's own stake units, derived from the pool rather than
-/// configured — so a wallet can name them without the pool declaring them.
+/// The pool's own stake units, derived from the pool and its declared
+/// mark rather than configured — so a wallet names them off the pool's
+/// address without asking the pool anything.
 fn units() -> ResourceAddr {
-    resource_address(
+    issued_resource(
         &TestHasher,
         stake_pool(),
         ResourceKind::Fungible,
-        &[Value::Bytes(staking::STAKE_UNIT.to_vec()).canonical_bytes()],
+        staking::STAKE_UNIT,
     )
 }
 
