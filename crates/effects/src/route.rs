@@ -138,6 +138,11 @@ impl Routing {
 }
 
 /// The bound on manifest nodes admission or routing will address.
+///
+/// A bound on pre-payment work: admission's single walk is linear in
+/// the nodes and runs before any fee is assured, so what stands here is
+/// a ceiling sized against the admission budget — the declared work the
+/// walk produces is what carries a charge.
 pub const MAX_MANIFEST_NODES: usize = 4096;
 
 /// Route an admitted transaction: project its evaluated declaration

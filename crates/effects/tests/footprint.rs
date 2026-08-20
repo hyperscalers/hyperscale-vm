@@ -188,3 +188,34 @@ proptest! {
         assert_eq!(footprint(&declared), summed);
     }
 }
+
+/// A move of more instances prices above a move of fewer, through the
+/// vocabulary's own shape: a holdings interval's cap is the entries a
+/// deposit or withdrawal may file, and the cap is charged as depth.
+#[test]
+fn a_move_of_more_instances_prices_above_fewer() {
+    use hyperscale_vm_effects::dsl::{Clause, ModeExpr};
+    use hyperscale_vm_effects::{
+        EvalInputs, Expr, Hash32, ManifestHash, TestHasher, Value, evaluate_effects, holdings_range,
+    };
+
+    let holder = Address::new([3; 31], AddressClass::Component);
+    let resource = Address::new([4; 31], AddressClass::Resource);
+    let moved = |cap: u32| {
+        let clauses = [Clause::Effect {
+            guard: None,
+            target: holdings_range(Expr::Literal(Value::Address(resource)), cap),
+            mode: ModeExpr::Write,
+            denomination: None,
+        }];
+        let inputs = EvalInputs {
+            self_addr: holder,
+            args: &[],
+            config: &[],
+            node_index: 0,
+            identity: ManifestHash(Hash32([7; 32])),
+        };
+        footprint(&evaluate_effects(&clauses, &inputs, &TestHasher).unwrap())
+    };
+    assert!(moved(64) > moved(8), "more instances, same interval");
+}

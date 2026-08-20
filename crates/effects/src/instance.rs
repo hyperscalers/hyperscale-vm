@@ -58,7 +58,7 @@ pub struct InstanceMeta {
     pub salt: Hash32,
 }
 
-/// The bound on an instance's configuration fields.
+/// The bound on an instance's configuration fields. A wire bound.
 ///
 /// A signature indexes them positionally with a `u32`, and the whole list
 /// is hashed into the instance's address, so the cap is what keeps a

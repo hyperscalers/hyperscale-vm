@@ -25,14 +25,23 @@ use crate::types::{
 
 /// The bound on any collection a `for-each` clause maps over. Keeps
 /// signature evaluation O(manifest size) whatever the metadata declares.
+///
+/// A bound on pre-payment work: evaluation happens at admission, before
+/// any fee is assured, so no charge can pay for a longer list — the
+/// ceiling is sized against the admission budget. The effects an
+/// iteration lands are charged by `footprint` like any others.
 pub const MAX_FOREACH_ELEMENTS: usize = 1024;
 
-/// The bound on expression nesting. The evaluator recurses per subterm, so
-/// this is what keeps a pathological signature a deterministic rejection
-/// rather than a native stack abort.
+/// The bound on expression nesting. A recursion bound: the evaluator
+/// recurses per subterm, so this is what keeps a pathological signature
+/// a deterministic rejection rather than a native stack abort.
 pub const MAX_EXPR_DEPTH: usize = 32;
 
 /// The bound on `for-each` nesting within one signature.
+///
+/// A recursion bound like [`MAX_EXPR_DEPTH`]: the evaluator recurses per
+/// clause scope, and width under nesting is
+/// [`MAX_EFFECTS_PER_SIGNATURE`]'s to bound.
 pub const MAX_CLAUSE_DEPTH: usize = 4;
 
 /// The bound on the work one signature evaluation may do — effects
@@ -44,6 +53,10 @@ pub const MAX_CLAUSE_DEPTH: usize = 4;
 /// rather than only the effects they land: an empty-bodied loop declares
 /// nothing yet still runs its list, so an effect count would leave a nest
 /// of empty loops unbounded.
+///
+/// A bound on pre-payment work, on the terms [`MAX_FOREACH_ELEMENTS`]
+/// states: evaluation runs before any fee is assured, so a ceiling
+/// stands here where a charge stands on what the evaluation declares.
 pub const MAX_EFFECTS_PER_SIGNATURE: usize = 4096;
 
 /// A child key under the instance the method is running on.

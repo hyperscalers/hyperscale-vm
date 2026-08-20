@@ -33,7 +33,7 @@ use crate::rule::Rule;
 use crate::signature::{AbiParam, MethodSignature, ParamType};
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value};
 
-/// The bound on yield parameters one intent may declare.
+/// The bound on yield parameters one intent may declare. A wire bound.
 ///
 /// An intent binds one edge per parameter, so this bounds the binding
 /// vector too — which is what makes every parameter position expressible

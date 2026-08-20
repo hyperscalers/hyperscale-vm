@@ -43,6 +43,11 @@ pub const INSTANCE: SlotId = SlotId(7);
 /// The entry cap a holdings interval declares: enough for every id one
 /// edge can carry, since [`MAX_IDS_PER_EDGE`](crate::types::MAX_IDS_PER_EDGE)
 /// fits it.
+///
+/// A price, not a ceiling: the cap is charged as depth like any range
+/// cap, so a move of more instances declares a deeper interval and pays
+/// for it. What this constant fixes is the figure the vocabulary's own
+/// holdings declarations file at.
 pub const NF_MOVE_CAP: u32 = 64;
 
 /// The method a rest policy deposits through.

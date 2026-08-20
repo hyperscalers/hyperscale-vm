@@ -32,13 +32,15 @@ use crate::presented::Presented;
 /// Two levels cover every flat shape — "this key", "k of these keys" —
 /// and four admit a threshold whose branches are themselves small
 /// key sets, which is the widest shape a guardian arrangement plausibly
-/// takes. Sized against evaluation cost rather than measurement, and
-/// worth revisiting when a real rule shape exists.
+/// takes. A bound on pre-payment work — a gate judges a rule before any
+/// fee is assured — sized against evaluation cost rather than
+/// measurement, and worth revisiting when a real rule shape exists.
 pub const MAX_RULE_DEPTH: usize = 4;
 
-/// The bound on one threshold's branch count.
+/// The bound on one threshold's branch count, on the same pre-payment
+/// terms as [`MAX_RULE_DEPTH`].
 ///
-/// With [`MAX_RULE_DEPTH`], the worst admissible rule holds
+/// Together the two admit at worst
 /// `MAX_RULE_BRANCHES^(MAX_RULE_DEPTH - 1)` identity leaves — 4096 — so
 /// evaluating one is a few thousand address comparisons before it starts.
 pub const MAX_RULE_BRANCHES: usize = 16;

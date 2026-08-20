@@ -30,16 +30,22 @@ use crate::address::{Address, EffectTarget, SubstateKey};
 use crate::mode::Presence;
 
 /// The events one transaction may emit.
+///
+/// A wire bound, not a price: event bytes are receipt content, priced by
+/// the retention-byte rate like everything else a receipt retains. What
+/// this bounds is the list a receipt decoder allocates.
 pub const MAX_EVENTS_PER_TX: usize = 256;
 
-/// The bytes one event payload may carry.
+/// The bytes one event payload may carry — a wire bound, on the same
+/// terms as [`MAX_EVENTS_PER_TX`]: the bytes themselves are priced at
+/// the retention rate, and this bounds what one decode allocates.
 pub const MAX_EVENT_PAYLOAD_BYTES: usize = 4096;
 
 /// The event types one package may declare — the bound on an emitted
-/// index, checked without resolving it.
+/// index, checked without resolving it. A wire bound on the index.
 pub const MAX_EVENT_TYPES: u32 = 1024;
 
-/// The error codes one package may declare.
+/// The error codes one package may declare. A wire bound on the code.
 ///
 /// The bound on a returned code, checked the same way an event index is
 /// and for the same reason: the kernel is not holding the package's

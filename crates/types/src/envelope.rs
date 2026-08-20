@@ -25,13 +25,21 @@ use crate::work::signature_work;
 
 /// The cap on an envelope body's bytes — a call tree or a package
 /// artifact.
+///
+/// A wire bound: decode happens before anything is known about a
+/// transaction at all, so what stands here is what a decoder will
+/// allocate for a stranger.
 pub const MAX_TX_BYTES_LEN: usize = 1024 * 1024;
 
-/// The cap on an envelope's optional message, in bytes.
+/// The cap on an envelope's optional message, in bytes. A wire bound,
+/// on [`MAX_TX_BYTES_LEN`]'s terms.
 pub const MAX_MESSAGE_LEN: usize = 1024;
 
 /// The bound on subintents one envelope may compose, and so on the
 /// signatures it carries for them.
+///
+/// A wire bound on the decode; the signatures themselves are priced,
+/// per scheme, by [`signature_work`].
 pub const MAX_SUBINTENTS: usize = 32;
 
 /// The abort class floor as a fraction of the signed fee ceiling:

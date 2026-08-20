@@ -24,7 +24,8 @@ use crate::address::{Address, CollectionId, LocalKey, SubstateKey};
 use crate::amount::{amount_cell, read_amount};
 
 /// The bytes one committed cell value may carry — one bound for a cell
-/// wherever it travels, in a receipt or a provision.
+/// wherever it travels, in a receipt or a provision. A wire bound; the
+/// bytes themselves are the storage bond's to price.
 pub const MAX_CELL_VALUE_LEN: usize = 2 * 1024 * 1024;
 
 const DOMAIN_ENTRY: &[u8] = b"hyperscale-vm/entry-leaf";

@@ -308,7 +308,7 @@ pub fn config_hash(hasher: &dyn Hasher, config_leaf: &[u8]) -> Hash32 {
     hasher.hash(DOMAIN_INSTANCE_CONFIG, &[config_leaf])
 }
 
-/// The bound on a value's nesting depth.
+/// The bound on a value's nesting depth. A recursion bound.
 ///
 /// Admission rejects a deeper literal before it reaches the manifest hash.
 /// A wire decoder is expected to bound nesting too — a value deep enough
@@ -428,6 +428,10 @@ impl Value {
 /// The bound on the instance ids one non-fungible edge may move — the
 /// cap every id-carrying projection decodes under, and the count the
 /// edge's boundary cell crossing is sized by.
+///
+/// A wire bound, not a price: the work of moving the ids is charged as
+/// depth on the holdings interval they move through, whose cap
+/// ([`NF_MOVE_CAP`](crate::vocabulary::NF_MOVE_CAP)) covers a full edge.
 pub const MAX_IDS_PER_EDGE: usize = 64;
 
 /// What a value edge carries besides its resource. Structural rather

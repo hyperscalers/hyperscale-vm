@@ -64,6 +64,10 @@ pub enum GraphArg {
 }
 
 /// The bound on identities one call may present as evidence.
+///
+/// A bound on pre-payment work: admission resolves each reference
+/// against the intent before any fee is assured, so the list is a
+/// ceiling sized against that budget rather than a charge.
 pub const MAX_EVIDENCE_PER_NODE: usize = 8;
 
 /// Where a presented proof comes from.
