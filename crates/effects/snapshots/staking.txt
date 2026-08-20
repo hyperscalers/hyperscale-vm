@@ -569,7 +569,18 @@ PackageMetadata {
             totality: Infallible,
             issues: Some(
                 Issuance {
-                    mark: [],
+                    mark: [
+                        115,
+                        116,
+                        97,
+                        107,
+                        101,
+                        45,
+                        117,
+                        110,
+                        105,
+                        116,
+                    ],
                     kind: Fungible,
                 },
             ),
@@ -579,7 +590,24 @@ PackageMetadata {
             outputs: [
                 SelfResource {
                     kind: Fungible,
-                    material: [],
+                    material: [
+                        Literal(
+                            Bytes(
+                                [
+                                    115,
+                                    116,
+                                    97,
+                                    107,
+                                    101,
+                                    45,
+                                    117,
+                                    110,
+                                    105,
+                                    116,
+                                ],
+                            ),
+                        ),
+                    ],
                 },
             ],
             denominations: [
@@ -713,7 +741,18 @@ PackageMetadata {
             totality: Infallible,
             issues: Some(
                 Issuance {
-                    mark: [],
+                    mark: [
+                        115,
+                        116,
+                        97,
+                        107,
+                        101,
+                        45,
+                        117,
+                        110,
+                        105,
+                        116,
+                    ],
                     kind: Fungible,
                 },
             ),
@@ -725,7 +764,24 @@ PackageMetadata {
                 Some(
                     SelfResource {
                         kind: Fungible,
-                        material: [],
+                        material: [
+                            Literal(
+                                Bytes(
+                                    [
+                                        115,
+                                        116,
+                                        97,
+                                        107,
+                                        101,
+                                        45,
+                                        117,
+                                        110,
+                                        105,
+                                        116,
+                                    ],
+                                ),
+                            ),
+                        ],
                     },
                 ),
             ],

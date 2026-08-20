@@ -62,7 +62,7 @@ fn redeeming_every_share_returns_every_asset() {
     chain
         .transact(ALICE, |b| {
             let signed_in = account::authorize(b, ALICE)?;
-            let shares = Chain::issued(vault, ResourceKind::Fungible, b"");
+            let shares = Chain::issued(vault, ResourceKind::Fungible, shares_guest::shares::UNIT);
             let units = account::withdraw(b, signed_in, shares, 1_000)?;
             let back = vault.redeem(b, units)?;
             account::deposit(b, ALICE, back)
@@ -107,7 +107,7 @@ fn there_is_no_path_that_grows_assets_without_minting_shares() {
     chain
         .transact(ALICE, |b| {
             let signed_in = account::authorize(b, ALICE)?;
-            let shares = Chain::issued(vault, ResourceKind::Fungible, b"");
+            let shares = Chain::issued(vault, ResourceKind::Fungible, shares_guest::shares::UNIT);
             let units = account::withdraw(b, signed_in, shares, 1_000)?;
             let back = vault.redeem(b, units)?;
             account::deposit(b, ALICE, back)

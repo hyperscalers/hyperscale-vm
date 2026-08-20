@@ -252,7 +252,7 @@ fn staking_units(pool: staking::Staking) -> ResourceAddr {
         &TestHasher,
         Address::from(pool),
         ResourceKind::Fungible,
-        &[],
+        &[Value::Bytes(staking::STAKE_UNIT.to_vec()).canonical_bytes()],
     )
 }
 

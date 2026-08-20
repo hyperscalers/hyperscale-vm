@@ -50,7 +50,12 @@ fn pool() -> ComponentAddr {
 /// The resource the pool issues: derived from the pool's own address, not
 /// from anything it was configured with.
 fn unit() -> ResourceAddr {
-    resource_address(&TestHasher, pool(), ResourceKind::Fungible, &[])
+    resource_address(
+        &TestHasher,
+        pool(),
+        ResourceKind::Fungible,
+        &[Value::Bytes(staking::STAKE_UNIT.to_vec()).canonical_bytes()],
+    )
 }
 
 fn world() -> (MetadataCache, InstanceRegistry) {

@@ -1,4 +1,4 @@
-error: this destroys `config.asset` against a grant over `issued(b"")`. A grant is authority over one resource, and burning is that authority in the other direction
+error: `burn` names a declared `#[resource]` struct — the derivation folds the resource's kind, and the declaration is where a kind is stated
   --> tests/refusals/burned_foreign.rs:22:18
    |
 22 |             burn(b"", taken);

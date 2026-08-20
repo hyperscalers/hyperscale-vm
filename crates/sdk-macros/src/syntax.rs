@@ -1,21 +1,8 @@
 //! Syntax readers more than one walk needs.
 //!
 //! One copy per reading, because two copies of a reader is how the walks
-//! start seeing different programs: the blueprint walk and the lowering
-//! both read byte-string literals and parameter names, and each fact has
-//! exactly one definition here.
-
-/// A byte-string literal's bytes, through any references around it.
-pub fn byte_literal(expr: &syn::Expr) -> Option<Vec<u8>> {
-    match expr {
-        syn::Expr::Lit(lit) => match &lit.lit {
-            syn::Lit::ByteStr(bytes) => Some(bytes.value()),
-            _ => None,
-        },
-        syn::Expr::Reference(reference) => byte_literal(&reference.expr),
-        _ => None,
-    }
-}
+//! start seeing different programs: each fact has exactly one definition
+//! here.
 
 /// The author's own name for the `index`-th declared parameter, or
 /// `None` past the list — each caller supplies its own stand-in, and the

@@ -20,6 +20,9 @@ use hyperscale_vm_effects::PackageMetadata;
 #[path = "../../../guests/shares/src/lib.rs"]
 mod package;
 
+/// The material separating the vault's own unit from anything else it
+/// might issue — the package's own, re-exported rather than restated.
+pub use package::shares::UNIT;
 pub use package::shares::client::*;
 /// The package's own bodies, dispatched natively.
 ///

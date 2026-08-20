@@ -51,6 +51,12 @@ pub mod shares {
     use hyperscale_vm_sdk::ResourceAddr;
     use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity, Rounding, burn, mint};
 
+    /// The claim on the vault a depositor takes away: the resource
+    /// this instance issues against what it holds, so a share names the
+    /// pool that owes it and no coordination fixes which pool that is.
+    #[resource]
+    struct Unit;
+
     /// What the vault is denominated in.
     #[config]
     struct Settings {
@@ -96,7 +102,7 @@ pub mod shares {
                 paid.scale(per_asset, Rounding::Down)
             };
             self.supply.set(supply + minted);
-            Ok(mint(b"", minted))
+            Ok(mint(Unit, minted))
         }
 
         /// Ask for exactly `want` shares, paying out of `funds`.
@@ -129,7 +135,7 @@ pub mod shares {
             let change = funds.take(spare);
             vault.put(funds);
             self.supply.set(supply + want);
-            Ok((mint(b"", want), change))
+            Ok((mint(Unit, want), change))
         }
 
         /// Ask for exactly `want` assets, paying in shares.
@@ -154,7 +160,7 @@ pub mod shares {
                 return Err(Error::Insufficient);
             };
             let back = units.take(spare);
-            burn(b"", units);
+            burn(Unit, units);
             self.supply.set(supply - needed);
             Ok((vault.take(want), back))
         }
@@ -173,7 +179,7 @@ pub mod shares {
             };
             let out = returned.scale(per_share, Rounding::Down);
 
-            burn(b"", units);
+            burn(Unit, units);
             self.supply.set(supply - returned);
             Ok(vault.take(out))
         }

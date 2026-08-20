@@ -1,5 +1,5 @@
 error: `mint` names a declared `#[resource]` struct — the derivation folds the resource's kind, and the declaration is where a kind is stated
-  --> tests/refusals/merged_across.rs:22:28
+  --> tests/refusals/unmarked_mint.rs:14:18
    |
-22 |             taken.put(mint(b"", amount));
-   |                            ^^^
+14 |             mint(b"", amount)
+   |                  ^^^

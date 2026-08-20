@@ -42,7 +42,12 @@ const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// pool, not configured, which is what the signature's `SelfResource`
 /// evaluates to.
 fn unit() -> ResourceAddr {
-    resource_address(&TestHasher, pool(), ResourceKind::Fungible, &[])
+    resource_address(
+        &TestHasher,
+        pool(),
+        ResourceKind::Fungible,
+        &[Value::Bytes(staking::STAKE_UNIT.to_vec()).canonical_bytes()],
+    )
 }
 /// The pool's owner badge — the same derivation the operator gate
 /// evaluates.

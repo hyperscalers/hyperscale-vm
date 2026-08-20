@@ -5,6 +5,9 @@ mod contract {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{Cell, Quantity, Vault, mint};
 
+    #[resource]
+    struct Unit;
+
     #[config]
     struct Settings {
         asset: Address,
@@ -18,7 +21,7 @@ mod contract {
 
     impl Contract {
         pub fn inflate(&mut self, amount: Quantity) {
-            self.assets.vault().put(mint(b"", amount));
+            self.assets.vault().put(mint(Unit, amount));
         }
     }
 }

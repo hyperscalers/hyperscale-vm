@@ -43,6 +43,12 @@ pub mod staking {
     #[resource(non_fungible)]
     struct OwnerBadge;
 
+    /// A delegation's receipt: the resource the pool issues against what
+    /// is staked with it, so a holder's units name the pool that owes
+    /// them and two pools can never share one stake unit.
+    #[resource]
+    struct StakeUnit;
+
     #[config]
     struct Settings {
         staked_resource: ResourceAddr,
@@ -139,7 +145,7 @@ pub mod staking {
             let staked = funds.quantity();
             self.vault(self.config().staked_resource).put(funds);
             Staked { amount: staked }.emit();
-            mint(b"", staked)
+            mint(StakeUnit, staked)
         }
 
         /// Return stake units, beginning the unbonding period.
@@ -152,7 +158,7 @@ pub mod staking {
         /// contending on a total neither of them reads.
         pub fn unstake(&mut self, units: Bucket) {
             let returned = units.quantity();
-            burn(b"", units);
+            burn(StakeUnit, units);
             Unstaked { amount: returned }.emit();
         }
 

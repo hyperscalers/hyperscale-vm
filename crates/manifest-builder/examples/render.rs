@@ -67,7 +67,12 @@ fn splitter() -> ComponentAddr {
 /// The pool's own stake units, derived from the pool rather than
 /// configured — so a wallet can name them without the pool declaring them.
 fn units() -> ResourceAddr {
-    resource_address(&TestHasher, stake_pool(), ResourceKind::Fungible, &[])
+    resource_address(
+        &TestHasher,
+        stake_pool(),
+        ResourceKind::Fungible,
+        &[Value::Bytes(staking::STAKE_UNIT.to_vec()).canonical_bytes()],
+    )
 }
 
 fn world() -> (MetadataCache, InstanceRegistry) {

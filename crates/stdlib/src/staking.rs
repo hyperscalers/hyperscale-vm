@@ -15,12 +15,6 @@ use hyperscale_vm_effects::PackageMetadata;
 #[path = "../../../guests/staking/src/lib.rs"]
 mod package;
 
-/// The material separating a pool's owner badge from the unit it issues.
-///
-/// The package's own, re-exported rather than restated: the gate that
-/// judges the badge and the host that derives its address read one
-/// declaration.
-pub use package::staking::OWNER_BADGE;
 pub use package::staking::client::*;
 /// The package's own bodies, dispatched natively.
 ///
@@ -28,6 +22,12 @@ pub use package::staking::client::*;
 /// this is running the code the artifact was built from rather than a
 /// stand-in for it.
 pub use package::staking::invoke;
+/// The material separating each resource a pool issues from the others.
+///
+/// The package's own, re-exported rather than restated: the gate that
+/// judges the badge, the host that derives either address, and the body
+/// that mints read one declaration.
+pub use package::staking::{OWNER_BADGE, STAKE_UNIT};
 pub use package::staking::{
     ParamVote, ParamVoteCast, ParamVoteCleared, Staked, Unstaked, Validator, ValidatorDeactivated,
     ValidatorRegistered, ValidatorUnjailed,

@@ -47,7 +47,6 @@ use quote::quote;
 use syn::spanned::Spanned;
 
 use crate::mode::HandleMode;
-use crate::syntax::byte_literal;
 use crate::term::{Op, Slot, Term};
 use crate::{holds_role_table, is_named};
 
@@ -684,29 +683,44 @@ impl<'a> Lowerer<'a> {
         )
     }
 
-    /// Refuse a fungible mint or burn whose mark is a declared
-    /// non-fungible resource's.
+    /// The mark a fungible issuance operation names, where the call's
+    /// first argument is a declared fungible `#[resource]` struct.
     ///
-    /// The derivation folds the kind, so the call would not touch the
-    /// declared resource — it would derive its vacant fungible sibling,
-    /// silently. A mark matching no declaration stays legal: the
-    /// primary and any undeclared fungible issue are named by mark
-    /// alone.
-    fn refuse_wrong_kind(&mut self, mark: &[u8], call: &syn::ExprCall) {
-        let declared = self
-            .resources
-            .iter()
-            .find(|(_, m, _)| m == mark)
-            .filter(|(.., kind)| *kind != ResourceKind::Fungible);
-        if let Some((name, ..)) = declared {
+    /// The derivation folds the kind, so a non-fungible declaration
+    /// under a fungible operation would not touch the declared resource
+    /// — it would derive its vacant fungible sibling, silently. Naming
+    /// the declaration rather than its mark is what makes that a
+    /// refusal rather than a thing to notice.
+    fn fungible_mark(&mut self, call: &syn::ExprCall, op: &str) -> Option<Vec<u8>> {
+        let resolved = call
+            .args
+            .first()
+            .and_then(|arg| match arg {
+                syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
+                _ => None,
+            })
+            .and_then(|n| self.resources.iter().find(|(r, ..)| *r == n).cloned());
+        let Some((name, mark, kind)) = resolved else {
             self.error(
                 call.args.span(),
                 &format!(
-                    "this mark is `{name}`'s, a non-fungible resource — a fungible \
-                     operation would derive its vacant fungible sibling, not it"
+                    "`{op}` names a declared `#[resource]` struct — the derivation folds \
+                     the resource's kind, and the declaration is where a kind is stated"
                 ),
             );
+            return None;
+        };
+        if kind != ResourceKind::Fungible {
+            self.error(
+                call.args.span(),
+                &format!(
+                    "`{name}` is non-fungible — its instances are minted with `mint_nf`, \
+                     and a fungible `{op}` would derive its vacant fungible sibling"
+                ),
+            );
+            return None;
         }
+        Some(mark)
     }
 
     /// The key of a record-cell site — the mark-derived resource — where
@@ -2469,20 +2483,14 @@ impl<'a> Lowerer<'a> {
                 code: Code::Term(term),
             };
         }
-        // `mint(mark, amount)` — the one edge with no cell behind it.
-        // The mark names the resource exactly as `issued` derives an
-        // address from one, so the output projection and the issuance
-        // grant come out of the same call.
+        // `mint(Resource, amount)` — the one edge with no cell behind
+        // it. The declaration names the resource exactly as
+        // `issued(Resource)` derives an address from one, so the output
+        // projection and the issuance grant come out of the same call.
         if name == "mint" {
-            let Some(mark) = call.args.first().and_then(byte_literal) else {
-                self.error(
-                    call.args.span(),
-                    "the mark separating an instance's resources is part of every key \
-                     derived from one, so it must be a byte-string literal",
-                );
-                return Eval::absent(call.args.span(), "a computed resource mark");
+            let Some(mark) = self.fungible_mark(call, "mint") else {
+                return Eval::absent(call.args.span(), "an undeclared fungible resource");
             };
-            self.refuse_wrong_kind(&mark, call);
             let amount = call.args.iter().nth(1).map_or(
                 Code::Absent(call.args.span(), "an issue with no amount"),
                 |a| self.expr(a).code,
@@ -2497,17 +2505,11 @@ impl<'a> Lowerer<'a> {
         if name == "mint_nf" {
             return self.lower_mint_nf(call);
         }
-        // `burn(mark, funds)` — the inverse, under the same grant.
+        // `burn(Resource, funds)` — the inverse, under the same grant.
         if name == "burn" {
-            let Some(mark) = call.args.first().and_then(byte_literal) else {
-                self.error(
-                    call.args.span(),
-                    "the mark separating an instance's resources is part of every key \
-                     derived from one, so it must be a byte-string literal",
-                );
-                return Eval::absent(call.args.span(), "a computed resource mark");
+            let Some(mark) = self.fungible_mark(call, "burn") else {
+                return Eval::absent(call.args.span(), "an undeclared fungible resource");
             };
-            self.refuse_wrong_kind(&mark, call);
             return self.lower_burn(&mark, call);
         }
         if name == "issued" {

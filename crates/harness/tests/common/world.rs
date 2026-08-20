@@ -154,7 +154,7 @@ pub fn shares_unit() -> ResourceAddr {
         &TestHasher,
         Address::from(shares_vault()),
         ResourceKind::Fungible,
-        &[],
+        &[Value::Bytes(shares::UNIT.to_vec()).canonical_bytes()],
     )
 }
 

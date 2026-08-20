@@ -54,14 +54,19 @@ impl ResourceKind {
     }
 }
 
-/// The resource `instance` issues under `mark` — the mark separating it
-/// from the instance's other issues, an empty one naming the primary.
+/// The resource `instance` issues under `mark` — the material
+/// separating it from the instance's other issues.
 ///
 /// The one spelling of how a mark becomes derivation material. The
 /// authoring surface reaches the same address by evaluating
-/// `SelfResource` over the mark as a byte literal, and the routed grant
-/// is lowered through this, so the two agree because they are one code
-/// path pinned by one test.
+/// `SelfResource` over the mark a `#[resource]` declaration carries, and
+/// the routed grant is lowered through this, so the two agree because
+/// they are one code path pinned by one test.
+///
+/// An empty mark derives an address no package can name: every resource
+/// a guest issues is a declaration, and a declaration's mark is its own
+/// name. What is left there is the fee resource, whose minter runs no
+/// code at all.
 #[must_use]
 pub fn issued_resource(
     hasher: &dyn Hasher,
@@ -261,14 +266,18 @@ impl ResourceMeta {
     }
 }
 
-/// The protocol's fee and transfer resource: the genesis publisher's
-/// primary issue.
+/// The protocol's fee and transfer resource: the unmarked issue of the
+/// genesis publisher.
 ///
 /// A resource like any other — the minter is the one address no signer
 /// reaches, which is exactly the strength the fee resource needs: no
 /// transaction can present a method of the publisher, so who may mint it
 /// is nobody, by the same arithmetic that answers it for every resource.
 /// Supply moves only where the protocol writes state directly.
+///
+/// The one unmarked resource in the system, because a package's issues
+/// are all declared and a declaration carries a name. Nothing rests on
+/// that beyond legibility: the minter is what makes this unmintable.
 #[must_use]
 pub fn xrd(hasher: &dyn Hasher) -> ResourceAddr {
     let publisher = native_address(hasher, GENESIS_PUBLISHER);

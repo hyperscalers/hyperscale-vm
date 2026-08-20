@@ -251,6 +251,9 @@ mod issuer {
     #[resource(non_fungible)]
     struct OwnerBadge;
 
+    #[resource]
+    struct Unit;
+
     #[state]
     struct Issuer {
         staked: Cell<Quantity>,
@@ -273,7 +276,7 @@ mod issuer {
             let staked = funds.quantity();
             self.staked.set(staked);
             self.vault(funds.resource()).put(funds);
-            mint(b"", staked)
+            mint(Unit, staked)
         }
 
         /// The operator surface, gated on the badge the pool issues.
@@ -309,16 +312,18 @@ fn an_instance_issues_resources_its_own_address_derives() {
     use hyperscale_vm_effects::{Clause, ConditionExpr, Expr, Value};
 
     let metadata = issuer::blueprint().metadata();
-    // The unit is the instance's primary issue: no material at all,
-    // which is a different resource from any marked one.
+    // Every issue is a declared one, and the mark is the declaration's
+    // own name: what separates the unit from the badge is material the
+    // author wrote down rather than the absence of any.
     assert_eq!(
         metadata.methods["stake"].outputs,
         vec![Expr::SelfResource {
             kind: ResourceKind::Fungible,
-            material: vec![],
+            material: vec![Expr::Literal(Value::Bytes(b"unit".to_vec()))],
         }],
     );
-    // The badge is the same derivation over the mark that separates it.
+    // The badge is the same derivation over its own mark — and its own
+    // kind, which the derivation folds beside the material.
     assert!(
         metadata.methods["retire"]
             .effects

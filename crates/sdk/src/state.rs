@@ -610,22 +610,21 @@ impl NfBucket {
     }
 }
 
-/// Mint `amount` of the resource this instance derives from `mark`.
+/// Mint `quantity` of the fungible resource `resource` declares.
 ///
 /// The one place value appears with no cell debited behind it, and it is
-/// the instance's own resource by construction — `mark` separates one of
-/// its resources from another exactly as [`issued`] derives an address
-/// from one. The authority is a handle the kernel grants against this
-/// method's declared outputs, so a body that never said it produces what
-/// it issues has none.
+/// the instance's own resource by construction — a declared
+/// `#[resource]` struct names one of its resources exactly as
+/// `issued(<Resource>)` derives an address from one. The authority is a
+/// handle the kernel grants against this method's declared outputs, so a
+/// body that never said it produces what it issues has none.
 #[must_use]
-pub fn mint(mark: &[u8], quantity: Quantity) -> Bucket {
-    let amount = quantity.subunits();
-    let _ = (mark, amount);
+pub fn mint<R: Mark<Kind = Fungible>>(resource: R, quantity: Quantity) -> Bucket {
+    let _ = (resource, quantity);
     unimplemented!("{OFF_HOST}")
 }
 
-/// Destroy `funds`, which must be the resource `mark` derives.
+/// Destroy `funds`, which must be the resource `resource` declares.
 ///
 /// The inverse of [`mint`] and under the same authority: bringing value
 /// out of existence is as declared as bringing it in. What separates it
@@ -633,11 +632,10 @@ pub fn mint(mark: &[u8], quantity: Quantity) -> Bucket {
 /// own supply falls — a retired balance is still supply, and this is not.
 ///
 /// Consumes the edge, so the value is gone rather than held somewhere the
-/// body forgot about; a mark naming another instance's resource has no
-/// grant behind it and the kernel refuses.
+/// body forgot about.
 #[allow(clippy::needless_pass_by_value)] // a burn consumes what it destroys
-pub fn burn(mark: &[u8], funds: Bucket) {
-    let _ = (mark, &funds);
+pub fn burn<R: Mark<Kind = Fungible>>(resource: R, funds: Bucket) {
+    let _ = (resource, &funds);
     unimplemented!("{OFF_HOST}")
 }
 

@@ -4,17 +4,14 @@ use hyperscale_vm_sdk::blueprint;
 mod contract {
     use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity, mint};
 
-    #[resource(non_fungible)]
-    struct OwnerBadge;
-
     #[state]
     struct Contract {
         supply: Cell<Quantity>,
     }
 
     impl Contract {
-        pub fn forge(&mut self) -> Bucket {
-            mint(OwnerBadge, 1)
+        pub fn forge(&mut self, amount: Quantity) -> Bucket {
+            mint(b"", amount)
         }
     }
 }
