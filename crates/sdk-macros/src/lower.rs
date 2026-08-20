@@ -3181,10 +3181,6 @@ impl<'a> Lowerer<'a> {
         let Some(field) = self.declared.accessors.get(name).cloned() else {
             return Eval::absent(call.span(), "an unknown protocol cell");
         };
-        // The record cell is keyed by a mark, and a mark is named in type
-        // position — so the key comes off the turbofish and the argument
-        // list is empty, where every other accessor takes its key as the
-        // argument it was handed.
         let evals: Vec<Eval> = call.args.iter().map(|arg| self.expr(arg)).collect();
         let arity = usize::from(!matches!(field.kind, FieldKind::Cell | FieldKind::Locked));
         if evals.len() != arity {
@@ -3192,10 +3188,10 @@ impl<'a> Lowerer<'a> {
             return Eval::absent(call.span(), "a protocol cell named with the wrong arity");
         }
         match field.kind {
-            // A leaf of the family, at the mark the accessor was handed.
-            // The record cell's key is a declared resource and nothing
-            // else: the kind the record states is the mark's, so a key
-            // the declaration cannot see the kind of names no record.
+            // A leaf of the family, at the key the accessor was handed.
+            // The family is the vault one, so that key is the resource
+            // the leaf holds — read off the element type where the site
+            // is opened rather than stated by the accessor.
             FieldKind::Keyed => self.on_field(&field, &[], "at", &evals, call),
             // The sub-collection under the cell, which the body then
             // opens an interval on.
