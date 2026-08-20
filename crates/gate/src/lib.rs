@@ -327,7 +327,7 @@ fn check_abi_against_export(
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        AbiParam, Accessibility, Expr, MethodSignature, PackageMetadata, RuleExpr,
+        AbiParam, Clause, ConditionExpr, Expr, MethodSignature, PackageMetadata, RuleExpr,
     };
     use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, book, lottery};
     use hyperscale_vm_runtime::component_exports;
@@ -476,18 +476,18 @@ mod tests {
             .methods
             .get_mut("withdraw")
             .expect("declared")
-            .accessibility = Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr));
+            .effects
+            .push(Clause::Requires {
+                guard: None,
+                condition: ConditionExpr::Satisfies {
+                    rule: RuleExpr::claim(Expr::SelfAddr),
+                },
+            });
         let artifact = attach_metadata(&component, &metadata).expect("attaches");
 
         let admitted = admit_package(&artifact).expect("admits");
-        assert_eq!(
-            admitted.methods["withdraw"].accessibility,
-            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr))
-        );
-        assert_eq!(
-            admitted.methods["deposit"].accessibility,
-            Accessibility::Public
-        );
+        assert!(admitted.methods["withdraw"].requires_evidence());
+        assert!(!admitted.methods["deposit"].requires_evidence());
 
         // And the two declarations are two artifacts: the field is
         // content-addressed with the code, so nothing can republish the

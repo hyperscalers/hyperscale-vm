@@ -5,9 +5,10 @@
 //! has to stand where it can see them all — which is outside the crate
 //! defining the rules.
 
+use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
-    Accessibility, CONFIRMATION, CustodyClaim, Expr, PRIMARY, PackageMetadata, RECOVERY, RuleExpr,
-    Value, check_abi, check_declarations,
+    CONFIRMATION, Clause, ConditionExpr, Expr, PRIMARY, PackageMetadata, RECOVERY, RuleExpr,
+    RuleLeaf, Value, check_abi, check_declarations,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_stdlib::staking::OWNER_BADGE;
@@ -53,127 +54,138 @@ fn every_authored_signature_is_well_formed() {
     }
 }
 
-/// Who may call every authored method, as a table.
+/// Who may call every authored method, as a table: the rules each
+/// method requires, and the claims it mints.
 ///
-/// Exhaustive on purpose. `Public` is the default, so a method added
-/// without a thought about its callers gets the permissive value
-/// silently — and the shape that is easiest to miss moves no funds at
-/// all: `securify` writes a leaf under its target's prefix and consumes
-/// nothing, which is the same class as any later per-account module.
-/// Adding a method breaks this list, which is the point.
+/// Exhaustive on purpose. A method with no authority condition admits
+/// everyone, so a method added without a thought about its callers gets
+/// the permissive value silently — and the shape that is easiest to miss
+/// moves no funds at all: `securify` writes a leaf under its target's
+/// prefix and consumes nothing, which is the same class as any later
+/// per-account module. Adding a method breaks this list, which is the
+/// point.
 #[allow(clippy::too_many_lines)] // one row per method, and the exhaustiveness is the point
-fn authored_accessibility() -> Vec<(&'static str, &'static str, Accessibility)> {
+fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<Expr>)> {
+    let auth_cell = || Expr::ChildKey {
+        owner: Box::new(Expr::SelfAddr),
+        slot: AUTH,
+        material: vec![],
+    };
+    let stored = |role| {
+        vec![RuleExpr::Require(RuleLeaf::Stored {
+            cell: auth_cell(),
+            role,
+        })]
+    };
+    let this = || vec![RuleExpr::claim(Expr::SelfAddr)];
+    let owner_badge = || {
+        vec![RuleExpr::claim(Expr::SelfResource {
+            material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
+        })]
+    };
+    let open = Vec::new;
     vec![
-        ("account", "authorize", Accessibility::Authorizing),
-        ("account", "cancel", Accessibility::RoleGated(PRIMARY)),
-        ("account", "confirm", Accessibility::RoleGated(CONFIRMATION)),
-        ("account", "deposit", Accessibility::Public),
-        ("account", "deposit-nf", Accessibility::Public),
+        (
+            "account",
+            "authorize",
+            stored(PRIMARY),
+            vec![Expr::SelfAddr],
+        ),
+        ("account", "cancel", stored(PRIMARY), vec![]),
+        ("account", "confirm", stored(CONFIRMATION), vec![]),
+        ("account", "deposit", open(), vec![]),
+        ("account", "deposit-nf", open(), vec![]),
         (
             "account",
             "present-badge",
-            Accessibility::Custodial(CustodyClaim::Fungible(Expr::Arg(0))),
+            stored(PRIMARY),
+            vec![Expr::Arg(0)],
         ),
         (
             "account",
             "present-instance",
-            Accessibility::Custodial(CustodyClaim::Instance {
-                badge: Expr::Arg(0),
-                id: Expr::Arg(1),
-            }),
+            stored(PRIMARY),
+            vec![Expr::Tuple(vec![Expr::Arg(0), Expr::Arg(1)])],
         ),
-        ("account", "propose", Accessibility::RoleGated(RECOVERY)),
-        (
-            "account",
-            "securify",
-            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr)),
-        ),
-        (
-            "account",
-            "withdraw",
-            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr)),
-        ),
-        (
-            "account",
-            "withdraw-nf",
-            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr)),
-        ),
-        ("amm", "swap", Accessibility::Public),
-        ("book", "fill-asks", Accessibility::Public),
-        ("book", "place-ask", Accessibility::Public),
-        ("lottery", "draw", Accessibility::Public),
-        ("lottery", "enter", Accessibility::Public),
-        ("nf", "burn", Accessibility::Public),
-        ("nf", "deposit", Accessibility::Public),
-        ("nf", "mint", Accessibility::Public),
+        ("account", "propose", stored(RECOVERY), vec![]),
+        ("account", "securify", this(), vec![]),
+        ("account", "withdraw", this(), vec![]),
+        ("account", "withdraw-nf", this(), vec![]),
+        ("amm", "swap", open(), vec![]),
+        ("book", "fill-asks", open(), vec![]),
+        ("book", "place-ask", open(), vec![]),
+        ("lottery", "draw", open(), vec![]),
+        ("lottery", "enter", open(), vec![]),
+        ("nf", "burn", open(), vec![]),
+        ("nf", "deposit", open(), vec![]),
+        ("nf", "mint", open(), vec![]),
         (
             "nf",
             "operate",
-            Accessibility::Guarded(RuleExpr::claim(Expr::Config(0))),
+            vec![RuleExpr::claim(Expr::Config(0))],
+            vec![],
         ),
         (
             "nf",
             "operate-instance",
-            Accessibility::Guarded(RuleExpr::claim(Expr::Tuple(vec![
+            vec![RuleExpr::claim(Expr::Tuple(vec![
                 Expr::Config(0),
                 Expr::Config(1),
-            ]))),
+            ]))],
+            vec![],
         ),
         (
             "nf",
             "operate-quorum",
-            Accessibility::Guarded(RuleExpr::CountOf {
+            vec![RuleExpr::CountOf {
                 count: 2,
                 rules: (1..=3)
                     .map(|slot| {
                         RuleExpr::claim(Expr::Tuple(vec![Expr::Config(0), Expr::Config(slot)]))
                     })
                     .collect(),
-            }),
+            }],
+            vec![],
         ),
-        ("nf", "withdraw", Accessibility::Public),
-        ("registry", "bind", Accessibility::Public),
-        ("registry", "check", Accessibility::Public),
-        ("registry", "drain", Accessibility::Public),
-        ("splitter", "take", Accessibility::Public),
-        (
-            "staking",
-            "cast-param-vote",
-            Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
-                material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-            })),
-        ),
-        (
-            "staking",
-            "clear-param-vote",
-            Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
-                material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-            })),
-        ),
-        (
-            "staking",
-            "deactivate-validator",
-            Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
-                material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-            })),
-        ),
-        (
-            "staking",
-            "register-validator",
-            Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
-                material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-            })),
-        ),
-        ("staking", "stake", Accessibility::Public),
-        (
-            "staking",
-            "unjail",
-            Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
-                material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-            })),
-        ),
-        ("staking", "unstake", Accessibility::Public),
+        ("nf", "withdraw", open(), vec![]),
+        ("registry", "bind", open(), vec![]),
+        ("registry", "check", open(), vec![]),
+        ("registry", "drain", open(), vec![]),
+        ("splitter", "take", open(), vec![]),
+        ("staking", "cast-param-vote", owner_badge(), vec![]),
+        ("staking", "clear-param-vote", owner_badge(), vec![]),
+        ("staking", "deactivate-validator", owner_badge(), vec![]),
+        ("staking", "register-validator", owner_badge(), vec![]),
+        ("staking", "stake", open(), vec![]),
+        ("staking", "unjail", owner_badge(), vec![]),
+        ("staking", "unstake", open(), vec![]),
     ]
+}
+
+#[test]
+fn every_authored_method_declares_who_may_call_it() {
+    let packages = corpus();
+    let declared: Vec<_> = packages
+        .iter()
+        .flat_map(|(package, metadata)| {
+            metadata.methods.iter().map(move |(name, signature)| {
+                let mut requires = Vec::new();
+                let mut mints = Vec::new();
+                for clause in signature.effects.iter().flat_map(Clause::effects) {
+                    match clause {
+                        Clause::Requires {
+                            condition: ConditionExpr::Satisfies { rule },
+                            ..
+                        } => requires.push(rule.clone()),
+                        Clause::Mints { claim, .. } => mints.push(claim.clone()),
+                        _ => {}
+                    }
+                }
+                (*package, name.as_str(), requires, mints)
+            })
+        })
+        .collect();
+    assert_eq!(declared, authored_authority());
 }
 
 /// The literal a holdings interval is declared at, held against the
@@ -207,18 +219,4 @@ fn the_account_files_at_the_cap_the_vocabulary_names() {
             "{method} files at {declared} where the vocabulary names {NF_MOVE_CAP}"
         );
     }
-}
-
-#[test]
-fn every_authored_method_declares_who_may_call_it() {
-    let packages = corpus();
-    let declared: Vec<_> = packages
-        .iter()
-        .flat_map(|(package, metadata)| {
-            metadata.methods.iter().map(move |(name, signature)| {
-                (*package, name.as_str(), signature.accessibility.clone())
-            })
-        })
-        .collect();
-    assert_eq!(declared, authored_accessibility());
 }

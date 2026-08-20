@@ -424,7 +424,7 @@ impl<'a> TypedBuilder<'a> {
         proofs: &[Proof],
     ) -> Result<Proof, TypedError> {
         let (_, signature) = self.resolve(target, method)?;
-        if !signature.accessibility.mints() {
+        if !signature.mints() {
             return Err(TypedError::UnmintingProof {
                 method: method.to_owned(),
             });

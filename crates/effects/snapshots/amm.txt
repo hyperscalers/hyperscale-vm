@@ -1,7 +1,6 @@
 PackageMetadata {
     methods: {
         "swap": MethodSignature {
-            accessibility: Public,
             totality: Fallible,
             issues: None,
             params: [

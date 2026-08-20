@@ -1,7 +1,6 @@
 PackageMetadata {
     methods: {
         "draw": MethodSignature {
-            accessibility: Public,
             totality: Infallible,
             issues: None,
             params: [],
@@ -56,7 +55,6 @@ PackageMetadata {
             ],
         },
         "enter": MethodSignature {
-            accessibility: Public,
             totality: Infallible,
             issues: None,
             params: [

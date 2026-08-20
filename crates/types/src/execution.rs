@@ -384,42 +384,6 @@ pub enum Outcome {
         /// The index into the declining package's error table.
         code: u32,
     },
-    /// A guarded call whose presented evidence does not satisfy its
-    /// target's gate.
-    ///
-    /// Priced with [`Outcome::Infeasible`] rather than as a defect: a
-    /// stored rule can change between signing and execution, so
-    /// presented authority a target no longer admits is a stale
-    /// declaration — the class a spent nullifier occupies for the same
-    /// reason. Whether the gate still admits the presentation is the
-    /// target's state, which is why the verdict is reached here rather
-    /// than at admission.
-    #[hbor(discriminant = 5)]
-    Unauthorized {
-        /// The calling node.
-        node: u32,
-    },
-    /// A write whose declared presence requirement the committed leaf
-    /// does not meet.
-    ///
-    /// Priced with [`Outcome::Infeasible`] rather than as a defect, and
-    /// for the reason the taxonomy already gives twice: the sender
-    /// declared a precondition on committed state and the world moved
-    /// between signing and execution. A leaf created or removed by
-    /// somebody else is the same event a stored rule changing is, and
-    /// the protocol cannot tell that apart from a sender who declared
-    /// wrongly — the two leave identical state. Pricing the ambiguity as
-    /// a defect would charge every honest loser of the race to reach the
-    /// careless caller, and would make any leaf a third party can create
-    /// a lever for charging somebody else their whole declared ceiling.
-    #[hbor(discriminant = 6)]
-    PresenceUnmet {
-        /// The target whose leaf did not meet it.
-        target: EffectTarget,
-        /// What the write required of it. Never [`Presence::Either`],
-        /// which requires nothing and so cannot go unmet.
-        required: Presence,
-    },
     /// A subintent this transaction commits was already spent.
     ///
     /// The composer lost a race it could not have won: canonical order
@@ -598,14 +562,6 @@ mod tests {
                 },
             ),
             (4, Outcome::Declined { node: 0, code: 0 }),
-            (5, Outcome::Unauthorized { node: 0 }),
-            (
-                6,
-                Outcome::PresenceUnmet {
-                    target: EffectTarget::Point(key),
-                    required: Presence::Present,
-                },
-            ),
             (7, Outcome::NullifierSpent { key }),
             (
                 8,

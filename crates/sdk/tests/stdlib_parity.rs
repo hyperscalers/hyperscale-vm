@@ -18,7 +18,7 @@
 //! those tests without restating them.
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
-use hyperscale_vm_effects::{PackageMetadata, ParamType, SlotId};
+use hyperscale_vm_effects::{CONFIRMATION, PRIMARY, PackageMetadata, ParamType, RECOVERY, SlotId};
 use hyperscale_vm_fixtures::{
     amm as amm_package, book as book_package, splitter as splitter_package,
 };
@@ -37,6 +37,9 @@ fn account() -> Blueprint {
                 let amount: Sym<Amount> = t.arg(1);
                 let holder = t.self_addr();
 
+                // The gate first: the macro emits it ahead of the body.
+                let rule = t.claim(&holder);
+                t.guarded_by(rule);
                 let vault = holder.child(VAULT, &[resource.clone().cast()]);
                 t.point(&vault).holding(&resource).reserve(&amount);
                 t.output(&resource);
@@ -63,6 +66,7 @@ fn account() -> Blueprint {
             let holder = t.self_addr();
             let cell = holder.child(AUTH, &[]);
             t.point(&cell).read();
+            t.authorizing();
         })
         // Securify and the recovery surface all write the same cell,
         // exclusively — every role rewrite conflicts with every
@@ -74,6 +78,8 @@ fn account() -> Blueprint {
             &[ParamType::RoleTable, ParamType::U64],
             |t: &mut Trace| {
                 let holder = t.self_addr();
+                let rule = t.claim(&holder);
+                t.guarded_by(rule);
                 let cell = holder.child(AUTH, &[]);
                 t.point(&cell).create();
             },
@@ -85,17 +91,20 @@ fn account() -> Blueprint {
                 let holder = t.self_addr();
                 let cell = holder.child(AUTH, &[]);
                 t.point(&cell).existing();
+                t.role_gated(RECOVERY);
             },
         )
         .method("cancel", &[], |t: &mut Trace| {
             let holder = t.self_addr();
             let cell = holder.child(AUTH, &[]);
             t.point(&cell).existing();
+            t.role_gated(PRIMARY);
         })
         .method("confirm", &[], |t: &mut Trace| {
             let holder = t.self_addr();
             let cell = holder.child(AUTH, &[]);
             t.point(&cell).existing();
+            t.role_gated(CONFIRMATION);
         })
         .build()
 }
@@ -248,13 +257,12 @@ fn assert_parity(traced: &Blueprint, authored: &PackageMetadata, package: &str) 
             .methods
             .get(name)
             .unwrap_or_else(|| panic!("{package}: the SDK declared no `{name}`"));
-        // Everything a body determines, compared field by field. The ABI
-        // binding and the accessibility are deliberately not among them:
-        // a trace sees which handles a body opened and in what order,
-        // never the component's exported parameter list and never a claim
-        // about who may call it. Both are authored beside the WIT. What
-        // validates the binding is the publish check, against the export
-        // type in the artifact itself.
+        // Everything a body and its gates determine, compared field by
+        // field. The ABI binding is deliberately not among them: a trace
+        // sees which handles a body opened and in what order, never the
+        // component's exported parameter list, which is authored beside
+        // the WIT. What validates the binding is the publish check,
+        // against the export type in the artifact itself.
         assert_eq!(got.params, signature.params, "{package}::{name} params");
         assert_eq!(got.outputs, signature.outputs, "{package}::{name} outputs");
         assert_eq!(

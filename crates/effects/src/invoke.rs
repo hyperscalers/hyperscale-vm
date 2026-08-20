@@ -15,7 +15,7 @@
 
 use hyperscale_vm_types::{Address, CellKind, ResourceAddr};
 
-use crate::manifest::{AuthorityGate, Bounds, JudgedLeaf};
+use crate::manifest::{Bounds, JudgedLeaf};
 use crate::metadata::PackageHash;
 use crate::presented::Presented;
 use crate::rule::Rule;
@@ -183,13 +183,11 @@ pub struct NodeCall {
     /// The claims this call presents, resolved from the signed evidence
     /// the manifest node names.
     pub evidence: Vec<Presented>,
-    /// The gate the presented identities are judged against. `None` for
-    /// a method admitting anyone, and then the presented set is empty
-    /// too.
-    pub authority: Option<AuthorityGate>,
     /// The authority conditions this node's declaration requires, each a
     /// judged rule over the call's presented evidence and the stored
-    /// rules its cells hold. All must be satisfied.
+    /// rules its cells hold. All must be satisfied — a claim leaf by the
+    /// presented set alone, a stored leaf by the rule the named role
+    /// selects at the cell, judged where the cell lives.
     pub requires: Vec<Rule<JudgedLeaf>>,
 }
 

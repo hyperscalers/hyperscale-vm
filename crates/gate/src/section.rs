@@ -60,9 +60,9 @@ mod tests {
 
     use hyperscale_hbor::to_vec_with_depth;
     use hyperscale_vm_effects::{
-        AbiParam, Accessibility, Clause, EdgeContent, Expr, MAX_CLAUSE_DEPTH,
-        MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_VALUE_DEPTH, METADATA_WIRE_DEPTH,
-        MethodSignature, ModeExpr, ParamType, RuleExpr, TargetExpr, Totality, Value, package_slot,
+        AbiParam, Clause, EdgeContent, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
+        MAX_EXPR_DEPTH, MAX_VALUE_DEPTH, METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType,
+        TargetExpr, Totality, Value, package_slot,
     };
     use hyperscale_vm_fixtures::{amm, book, splitter};
     use hyperscale_vm_stdlib::account;
@@ -171,7 +171,6 @@ mod tests {
     /// call site, and a deep literal.
     fn every_authored_shape() -> MethodSignature {
         MethodSignature {
-            accessibility: Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr)),
             totality: Totality::Fallible,
             issues: None,
             abi: vec![AbiParam::Guard(0)],

@@ -509,6 +509,21 @@ pub enum Clause {
         /// The precondition.
         condition: ConditionExpr,
     },
+    /// A claim this call mints as evidence for the intent's later nodes.
+    ///
+    /// Justified by a condition the same declaration carries, and the
+    /// publish check refuses one that is not: minting one's own identity
+    /// takes satisfying one's own stored rule, and minting a badge takes
+    /// that plus holding it — the possession read keyed by the same
+    /// expression, so the claim minted and the thing held are one
+    /// resource because one expression writes both.
+    Mints {
+        /// When this clause is declared at all, or always where absent.
+        guard: Option<Box<Expr>>,
+        /// What is minted: the target's own address for an identity, a
+        /// badge resource, or a `(badge, id)` pair for one instance.
+        claim: Expr,
+    },
 }
 
 impl Clause {
@@ -518,7 +533,8 @@ impl Clause {
         match self {
             Self::Effect { guard, .. }
             | Self::ForEach { guard, .. }
-            | Self::Requires { guard, .. } => match guard {
+            | Self::Requires { guard, .. }
+            | Self::Mints { guard, .. } => match guard {
                 Some(cond) => Some(cond),
                 None => None,
             },
@@ -778,6 +794,10 @@ pub struct Declaration {
     /// [`Declaration::ordered`] — a condition is a judgment, not an
     /// access — and judged where each kind's state lives.
     pub conditions: Vec<Condition>,
+    /// The claims this declaration mints, evaluated, an instance mint
+    /// widened to its resource. What admission hands the intent's later
+    /// nodes as this node's evidence.
+    pub mints: Vec<Presented>,
     /// Whether each top-level clause was declared at all, in clause order.
     ///
     /// True where the clause carries no guard, and where its guard held.
@@ -821,6 +841,7 @@ impl Declaration {
         Self {
             clause_taken: vec![true; ordered.len()],
             conditions: Vec::new(),
+            mints: Vec::new(),
             set,
             ordered,
             clause_spans,
@@ -987,6 +1008,36 @@ fn eval_clauses(
                 budget.charge()?;
                 let condition = eval_condition(condition, inputs, hasher, bindings)?;
                 out.conditions.push(condition);
+            }
+            Clause::Mints { claim, .. } => {
+                budget.charge()?;
+                let value = eval_expr(claim, inputs, hasher, bindings, 0)?;
+                let minted = Presented::of(&value).ok_or_else(|| EvalError::TypeMismatch {
+                    expected: "claim",
+                    found: value.kind(),
+                })?;
+                // The one identity a declaration may mint is the
+                // target's own, spelled as itself: any other expression
+                // that evaluates to an identity would be forgeable —
+                // satisfying one's own stored rule is no feat — so the
+                // refusal is structural rather than the publish check's
+                // alone.
+                if matches!(minted, Presented::Identity(_)) && !matches!(claim, Expr::SelfAddr) {
+                    return Err(EvalError::TypeMismatch {
+                        expected: "badge",
+                        found: "identity",
+                    });
+                }
+                let claim = minted;
+                out.mints.push(claim);
+                // An instance holder holds the badge, so presenting one
+                // satisfies a rule naming the resource as well as a rule
+                // naming the instance. The widening happens at the mint,
+                // where possession was verified, which is what keeps the
+                // judge an equality walk.
+                if let Presented::Instance(badge, _) = claim {
+                    out.mints.push(Presented::Resource(badge));
+                }
             }
             Clause::ForEach { list, body, .. } => {
                 let items = as_list(eval_expr(list, inputs, hasher, bindings, 0)?)?;

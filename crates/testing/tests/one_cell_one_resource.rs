@@ -12,8 +12,8 @@
 //! withdrawal under the other reaches.
 
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType,
-    SlotId, TargetExpr, Totality, Value,
+    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, SlotId,
+    TargetExpr, Totality, Value,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, account, principal, resource};
@@ -52,7 +52,6 @@ fn mixer() -> PackageMetadata {
     metadata.methods.insert(
         "fill".into(),
         MethodSignature {
-            accessibility: Accessibility::Public,
             totality: Totality::Infallible,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
@@ -63,7 +62,6 @@ fn mixer() -> PackageMetadata {
     metadata.methods.insert(
         "drain".into(),
         MethodSignature {
-            accessibility: Accessibility::Public,
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
             outputs: vec![Expr::Literal(Value::Address(DEAR.address()))],

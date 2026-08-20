@@ -75,10 +75,7 @@ pub use hyperscale_vm_types::{
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, EdgeKind, NodeCall, distinct_ids};
-pub use manifest::{
-    AuthorityGate, Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput,
-    Possession,
-};
+pub use manifest::{Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     MetadataCache, PACKAGE_SLOT, PackageHash, PackageMetadata, PublishRefusal, package_hash,
     package_key,
@@ -99,10 +96,7 @@ pub use rule::{
     MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, RuleLeaf, StoredRule,
     well_formed,
 };
-pub use signature::{
-    AbiParam, Accessibility, CustodyClaim, GateError, GateShape, MethodSignature, ParamType,
-    Totality,
-};
+pub use signature::{AbiParam, MethodSignature, ParamType, Totality};
 pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};
 pub use types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, NativeRole,

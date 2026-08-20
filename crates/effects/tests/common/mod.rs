@@ -161,7 +161,14 @@ pub fn effect_set(effects: &[Effect]) -> EffectSet {
 #[must_use]
 pub fn wide_account_metadata() -> PackageMetadata {
     let mut methods = account::metadata();
-    let mut effects = methods.methods["withdraw"].effects.clone();
+    // The accesses alone: the case is the superset evaluation, and the
+    // gate's condition would ask this ungated fixture for evidence.
+    let mut effects: Vec<Clause> = methods.methods["withdraw"]
+        .effects
+        .iter()
+        .filter(|clause| matches!(clause, Clause::Effect { .. }))
+        .cloned()
+        .collect();
     effects.push(Clause::Effect {
         guard: None,
         target: TargetExpr::Point(self_child(SlotId(99), vec![])),

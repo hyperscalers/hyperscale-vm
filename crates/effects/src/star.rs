@@ -323,7 +323,6 @@ mod tests {
                 method: "act".into(),
                 inputs: vec![],
                 evidence: Vec::new(),
-                authority: None,
             }],
         };
         (cache, instances, manifest)
@@ -393,7 +392,6 @@ mod tests {
                     method: "make".into(),
                     inputs: vec![],
                     evidence: Vec::new(),
-                    authority: None,
                 },
                 Node {
                     target: instance_of("consumer").into(),
@@ -406,7 +404,6 @@ mod tests {
                         bounds: Bounds::default(),
                     }],
                     evidence: Vec::new(),
-                    authority: None,
                 },
             ],
         };
@@ -461,7 +458,6 @@ mod tests {
                     method: "swap".into(),
                     inputs: vec![],
                     evidence: Vec::new(),
-                    authority: None,
                 },
                 Node {
                     target: instance_of("vault").into(),
@@ -480,7 +476,6 @@ mod tests {
                         },
                     ],
                     evidence: Vec::new(),
-                    authority: None,
                 },
             ],
         };

@@ -290,7 +290,7 @@ fn a_stored_rate_folds_to_an_exclusive_write_never_a_movement() {
         .iter()
         .map(|clause| match clause {
             Clause::Effect { mode, .. } => mode.clone(),
-            Clause::ForEach { .. } | Clause::Requires { .. } => {
+            Clause::ForEach { .. } | Clause::Requires { .. } | Clause::Mints { .. } => {
                 panic!("the accrual maps over nothing and requires nothing")
             }
         })
@@ -303,7 +303,7 @@ fn a_stored_rate_folds_to_an_exclusive_write_never_a_movement() {
 
 #[test]
 fn an_instance_issues_resources_its_own_address_derives() {
-    use hyperscale_vm_effects::{Accessibility, Expr, Value};
+    use hyperscale_vm_effects::{Clause, ConditionExpr, Expr, Value};
 
     let metadata = issuer::blueprint().metadata();
     // The unit is the instance's primary issue: no material at all,
@@ -313,11 +313,17 @@ fn an_instance_issues_resources_its_own_address_derives() {
         vec![Expr::SelfResource { material: vec![] }],
     );
     // The badge is the same derivation over the mark that separates it.
-    assert_eq!(
-        metadata.methods["retire"].accessibility,
-        Accessibility::Guarded(RuleExpr::claim(Expr::SelfResource {
-            material: vec![Expr::Literal(Value::Bytes(b"owner-badge".to_vec()))],
-        })),
+    assert!(
+        metadata.methods["retire"]
+            .effects
+            .contains(&Clause::Requires {
+                guard: None,
+                condition: ConditionExpr::Satisfies {
+                    rule: RuleExpr::claim(Expr::SelfResource {
+                        material: vec![Expr::Literal(Value::Bytes(b"owner-badge".to_vec()))],
+                    }),
+                },
+            })
     );
 }
 
@@ -692,36 +698,49 @@ mod board {
 /// operators and its own precedence.
 #[test]
 fn a_declared_gate_carries_the_whole_threshold_algebra() {
-    use hyperscale_vm_effects::{Accessibility, Expr};
+    use hyperscale_vm_effects::{Clause, ConditionExpr, Expr};
 
     let metadata = board::blueprint().metadata();
     let slot = |index| RuleExpr::claim(Expr::Config(index));
 
     // `||` is a count of one.
+    let requires = |method: &str| {
+        metadata.methods[method]
+            .effects
+            .iter()
+            .find_map(|clause| match clause {
+                Clause::Requires {
+                    condition: ConditionExpr::Satisfies { rule },
+                    ..
+                } => Some(rule.clone()),
+                _ => None,
+            })
+            .expect("a gated method requires its rule")
+    };
     assert_eq!(
-        metadata.methods["set-fee"].accessibility,
-        Accessibility::Guarded(RuleExpr::CountOf {
+        requires("set-fee"),
+        RuleExpr::CountOf {
             count: 1,
             rules: vec![slot(0), slot(1)],
-        }),
+        },
     );
     // `n_of` is the threshold no operator expresses, and this one is
     // published under a name its identifier does not derive.
     assert_eq!(
-        metadata.methods["reset"].accessibility,
-        Accessibility::Guarded(RuleExpr::CountOf {
+        requires("reset"),
+        RuleExpr::CountOf {
             count: 2,
             rules: vec![slot(0), slot(1), slot(2)],
-        }),
+        },
     );
     // `&&` is a count of every branch, and a chain of one operator is
     // one threshold rather than two — depth is the cap that binds first.
     assert_eq!(
-        metadata.methods["dissolve"].accessibility,
-        Accessibility::Guarded(RuleExpr::CountOf {
+        requires("dissolve"),
+        RuleExpr::CountOf {
             count: 3,
             rules: vec![slot(0), slot(1), slot(2)],
-        }),
+        },
     );
 }
 

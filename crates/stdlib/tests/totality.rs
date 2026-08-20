@@ -8,7 +8,6 @@
 //! hear back, so a mark the code cannot support is a torn settlement
 //! rather than a lost optimisation.
 
-use hyperscale_vm_effects::Accessibility;
 use hyperscale_vm_runtime::check_method;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, staking};
 
@@ -45,7 +44,7 @@ fn packages() -> Vec<Package> {
             .map(|(name, signature)| Method {
                 name: name.clone(),
                 marked: signature.totality.is_total(),
-                open: signature.accessibility == Accessibility::Public,
+                open: !signature.requires_evidence(),
             })
             .collect(),
     })

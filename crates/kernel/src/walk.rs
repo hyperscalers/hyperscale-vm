@@ -11,16 +11,13 @@
 //! or an abort. An embedder can get engine embedding wrong; it cannot
 //! get manifest semantics wrong.
 
-use hyperscale_vm_effects::{
-    AuthCell, AuthorityGate, CallArg, JudgedLeaf, NodeCall, PRIMARY, PackageHash, Possession, Rule,
-};
+use hyperscale_vm_effects::{AuthCell, CallArg, JudgedLeaf, NodeCall, PackageHash, Rule};
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, MAX_ERROR_CODES, Outcome, UnmetCondition,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult, Unavailable};
-use crate::modes::decode_amount;
 use crate::session::{KernelSession, SessionTrap};
 
 /// One export invocation, fully assembled.
@@ -304,16 +301,6 @@ fn gated(
     node: u32,
     mut session: KernelSession,
 ) -> Result<KernelSession, NodeFailure> {
-    match authorized(call, &mut session) {
-        Ok(true) => {}
-        Ok(false) => return Err(fail(session, Outcome::Unauthorized { node }, 0)),
-        Err(_) => {
-            return Err(composition_defect(
-                session,
-                AbortReason::AuthorityCellUnreadable,
-            ));
-        }
-    }
     for rule in &call.requires {
         match satisfies(rule, call, &mut session) {
             Ok(true) => {}
@@ -372,57 +359,6 @@ fn satisfies(
                 }
             }
             Ok(met >= usize::from(*count))
-        }
-    }
-}
-
-/// Whether a call's presented identities satisfy its gate.
-///
-/// Admission has already checked that a guarded call presents something;
-/// what remains is whether it presents *enough*, which is the target's
-/// own question and is asked where the target is. An identity gate is a
-/// pure match. A stored-rule gate reads the target's cell — declared by
-/// the method itself, so provisioned wherever this runs — and hands the
-/// bytes to [`AuthCell::admits`], the verdict this gate shares with the
-/// payer shard's binding check, judged at the transaction clock.
-fn authorized(call: &NodeCall, session: &mut KernelSession) -> Result<bool, SessionTrap> {
-    match &call.authority {
-        None => Ok(true),
-        Some(AuthorityGate::Presented(rule)) => Ok(rule.satisfied_by(&call.evidence)),
-        &Some(AuthorityGate::StoredRule { cell, role }) => {
-            let bytes = session.declared_cell(cell)?;
-            let clock = session.clock_ms();
-            Ok(AuthCell::admits(
-                &bytes,
-                call.target,
-                role,
-                &call.evidence,
-                clock,
-            ))
-        }
-        &Some(AuthorityGate::Custody { cell, possession }) => {
-            // The holder acts — its stored primary judges the presented
-            // set exactly as a sign-in would — and the holder holds what
-            // the claim names: value in the badge-keyed vault, or the
-            // instance at its own id. Anything but a well-formed
-            // non-zero amount cell reads as not held; a corrupt vault
-            // grants nothing.
-            let bytes = session.declared_cell(cell)?;
-            let clock = session.clock_ms();
-            if !AuthCell::admits(&bytes, call.target, PRIMARY, &call.evidence, clock) {
-                return Ok(false);
-            }
-            match possession {
-                Possession::Vault(vault) => {
-                    let amount = session.declared_cell(vault)?;
-                    Ok(decode_amount(&amount).is_ok_and(|held| held > 0))
-                }
-                Possession::Instance {
-                    owner,
-                    holdings,
-                    id,
-                } => session.declared_holds_instance(owner, holdings, u128::from(id)),
-            }
         }
     }
 }

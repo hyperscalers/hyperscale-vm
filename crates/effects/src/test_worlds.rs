@@ -131,21 +131,18 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
                 method: "withdraw".into(),
                 inputs: vec![NodeInput::Literal(Value::U128(5))],
                 evidence: Vec::new(),
-                authority: None,
             },
             Node {
                 target: instance_of("venue").into(),
                 method: "swap".into(),
                 inputs: vec![edge(0, issued_by("vault"))],
                 evidence: Vec::new(),
-                authority: None,
             },
             Node {
                 target: instance_of("sink").into(),
                 method: "deposit".into(),
                 inputs: vec![edge(1, issued_by("venue"))],
                 evidence: Vec::new(),
-                authority: None,
             },
         ],
     };
@@ -201,7 +198,6 @@ pub fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
                     NodeInput::Literal(Value::U128(9)),
                 ],
                 evidence: Vec::new(),
-                authority: None,
             },
             Node {
                 target: instance_of("payee").into(),
@@ -214,7 +210,6 @@ pub fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
                     bounds: Bounds::default(),
                 }],
                 evidence: Vec::new(),
-                authority: None,
             },
         ],
     };

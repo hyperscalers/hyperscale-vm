@@ -30,9 +30,9 @@
 //! published contract whose method can never be called.
 
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, Clause, ConditionExpr, CustodyClaim, Expr, MAX_CLAUSE_DEPTH,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, RoleId, RuleExpr,
-    SlotId, TargetExpr, Totality, Value, well_formed,
+    AbiParam, Clause, ConditionExpr, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS,
+    MAX_RULE_DEPTH, ModeExpr, PRIMARY, ParamType, RoleId, RuleExpr, RuleLeaf, SlotId, TargetExpr,
+    Totality, Value, well_formed,
 };
 use hyperscale_vm_types::Presence;
 
@@ -81,7 +81,7 @@ pub struct Trace {
     /// [`Trace::bind_handle`] names.
     last_clause: Option<u32>,
     /// Whose authority naming this method requires.
-    accessibility: Accessibility,
+    pending_role: Option<RoleId>,
     /// The mark of the resource this method may issue.
     issues: Option<Vec<u8>>,
     /// Whether the method carries an error arm.
@@ -102,7 +102,7 @@ impl Trace {
             handles: Vec::new(),
             values: Vec::new(),
             last_clause: None,
-            accessibility: Accessibility::Public,
+            pending_role: None,
             issues: None,
             totality: Totality::Infallible,
         }
@@ -160,6 +160,7 @@ impl Trace {
             },
             Clause::ForEach { list, body, .. } => Clause::ForEach { guard, list, body },
             Clause::Requires { condition, .. } => Clause::Requires { guard, condition },
+            Clause::Mints { claim, .. } => Clause::Mints { guard, claim },
         }
     }
 
@@ -622,27 +623,56 @@ impl Trace {
 
     /// Record that naming this method requires meeting `rule`.
     pub fn guarded_by(&mut self, rule: Requirement) {
-        self.accessibility = Accessibility::Guarded(rule.0);
+        self.emit(Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Satisfies { rule: rule.0 },
+        });
     }
 
-    /// Record that naming this method requires satisfying the target's own
-    /// rule, and mints the target's identity.
+    /// Record that naming this method requires satisfying the target's
+    /// own stored rule — read through the cell the last emitted clause
+    /// declared — and mints the target's identity.
     pub fn authorizing(&mut self) {
-        self.accessibility = Accessibility::Authorizing;
+        let cell = self.last_point_target();
+        self.emit(Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Satisfies {
+                rule: RuleExpr::Require(RuleLeaf::Stored {
+                    cell,
+                    role: PRIMARY,
+                }),
+            },
+        });
+        self.emit(Clause::Mints {
+            guard: None,
+            claim: Expr::SelfAddr,
+        });
     }
 
     /// Record that naming this method requires satisfying `role` of the
     /// target's stored role table.
-    pub fn role_gated(&mut self, role: RoleId) {
-        self.accessibility = Accessibility::RoleGated(role);
+    ///
+    /// Deferred: the cell the table lives in is the body's one exclusive
+    /// write, which has not been lowered yet, so [`Trace::finish`] reads
+    /// it off the recorded clauses.
+    pub const fn role_gated(&mut self, role: RoleId) {
+        self.pending_role = Some(role);
     }
 
     /// Record that naming this method requires the target's own rule and
     /// its possession of some of the fungible badge `badge`, and mints
     /// that badge's address.
+    ///
+    /// The rule cell and the possession cell are the two reads the
+    /// caller just declared, in that order, so the conditions are keyed
+    /// by exactly the expressions the mint names.
     pub fn custodial(&mut self, badge: &Sym<Addr>) {
         let badge = self.lower(badge.expr().clone());
-        self.accessibility = Accessibility::Custodial(CustodyClaim::Fungible(badge));
+        self.custody(badge.clone());
+        self.emit(Clause::Mints {
+            guard: None,
+            claim: badge,
+        });
     }
 
     /// Record that naming this method requires the target's own rule and
@@ -651,7 +681,63 @@ impl Trace {
     pub fn custodial_instance(&mut self, badge: &Sym<Addr>, id: &Sym<Amount>) {
         let badge = self.lower(badge.expr().clone());
         let id = self.lower(id.expr().clone());
-        self.accessibility = Accessibility::Custodial(CustodyClaim::Instance { badge, id });
+        self.custody(badge.clone());
+        self.emit(Clause::Mints {
+            guard: None,
+            claim: Expr::Tuple(vec![badge, id]),
+        });
+    }
+
+    /// The custody conditions over the two reads just declared: the
+    /// stored primary at the rule cell, and possession at the cell the
+    /// last clause names.
+    fn custody(&mut self, _badge: Expr) {
+        let (rule_cell, possession) = self.last_two_targets();
+        self.emit(Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Satisfies {
+                rule: RuleExpr::Require(RuleLeaf::Stored {
+                    cell: rule_cell,
+                    role: PRIMARY,
+                }),
+            },
+        });
+        self.emit(Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Holds {
+                target: possession,
+                presence: Presence::Present,
+            },
+        });
+    }
+
+    /// The point expression of the last emitted top-level effect clause.
+    fn last_point_target(&self) -> Expr {
+        let scope = self.scopes.last().expect("the method scope stands");
+        match scope.last() {
+            Some(Clause::Effect {
+                target: TargetExpr::Point(cell),
+                ..
+            }) => cell.clone(),
+            _ => panic!("a rule-reading gate declares its cell first"),
+        }
+    }
+
+    /// The point expression and whole target of the last two emitted
+    /// top-level effect clauses, in emission order.
+    fn last_two_targets(&self) -> (Expr, TargetExpr) {
+        let scope = self.scopes.last().expect("the method scope stands");
+        let len = scope.len();
+        match (scope.get(len.wrapping_sub(2)), scope.get(len - 1)) {
+            (
+                Some(Clause::Effect {
+                    target: TargetExpr::Point(cell),
+                    ..
+                }),
+                Some(Clause::Effect { target, .. }),
+            ) => (cell.clone(), target.clone()),
+            _ => panic!("a custody gate declares its rule read and its possession read first"),
+        }
     }
 
     /// Record that this method produces a value edge carrying `resource`.
@@ -730,7 +816,34 @@ impl Trace {
             1,
             "a for-each scope outlived its closure"
         );
-        let clauses = self.scopes.pop().unwrap_or_default();
+        let mut clauses = self.scopes.pop().unwrap_or_default();
+        // A role-gated method's rule cell is the body's one exclusive
+        // write, so the condition is written once the body has been: the
+        // write that serialises a role rewrite against a concurrent
+        // sign-in is also what names the cell the rule is read from.
+        if let Some(role) = self.pending_role {
+            let mut writes = clauses.iter().filter_map(|clause| match clause {
+                Clause::Effect {
+                    target: TargetExpr::Point(cell),
+                    mode: ModeExpr::Write,
+                    ..
+                } => Some(cell.clone()),
+                _ => None,
+            });
+            let cell = writes
+                .next()
+                .expect("a role-gated method rewrites its rule cell");
+            assert!(
+                writes.next().is_none(),
+                "a role-gated method rewrites exactly one cell"
+            );
+            clauses.push(Clause::Requires {
+                guard: None,
+                condition: ConditionExpr::Satisfies {
+                    rule: RuleExpr::Require(RuleLeaf::Stored { cell, role }),
+                },
+            });
+        }
         let mut abi = self.handles;
         abi.extend(self.flags);
         abi.extend(self.values);
@@ -748,7 +861,6 @@ impl Trace {
             outputs: self.outputs,
             worst_case: self.worst_case,
             abi,
-            accessibility: self.accessibility,
             issues: self.issues,
             totality: self.totality,
         }
@@ -889,7 +1001,6 @@ pub(crate) struct Recorded {
     pub(crate) denominations: Vec<Option<Expr>>,
     pub(crate) worst_case: usize,
     pub(crate) abi: Vec<AbiParam>,
-    pub(crate) accessibility: Accessibility,
     pub(crate) issues: Option<Vec<u8>>,
     pub(crate) totality: Totality,
 }
@@ -1006,7 +1117,7 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        Accessibility, Clause, Expr, ParamType, RuleExpr, SlotId, TargetExpr,
+        Clause, ConditionExpr, Expr, ParamType, RuleExpr, SlotId, TargetExpr,
     };
 
     use super::{MAX_FOREACH_ELEMENTS, Trace, absolute, rebind};
@@ -1039,11 +1150,20 @@ mod tests {
         let rule = trace.n_of(2, branches);
         trace.guarded_by(rule);
 
-        let Accessibility::Guarded(RuleExpr::CountOf { count, rules }) =
-            trace.finish().accessibility
+        let recorded = trace.finish();
+        let [
+            Clause::Requires {
+                condition:
+                    ConditionExpr::Satisfies {
+                        rule: RuleExpr::CountOf { count, rules },
+                    },
+                ..
+            },
+        ] = recorded.clauses.as_slice()
         else {
             panic!("a threshold declares a counted rule");
         };
+        let (count, rules) = (*count, rules.clone());
         assert_eq!(count, 2);
         assert_eq!(
             rules,
@@ -1064,8 +1184,13 @@ mod tests {
         let rule = trace.claim(&owner);
         trace.guarded_by(rule);
         assert_eq!(
-            trace.finish().accessibility,
-            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr))
+            trace.finish().clauses,
+            vec![Clause::Requires {
+                guard: None,
+                condition: ConditionExpr::Satisfies {
+                    rule: RuleExpr::claim(Expr::SelfAddr),
+                },
+            }]
         );
     }
 

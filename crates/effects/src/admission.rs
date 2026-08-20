@@ -14,7 +14,7 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
-use hyperscale_vm_types::{Address, Denomination, EffectConflict, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{Address, Denomination, EffectConflict, PrincipalAddr};
 
 use crate::dsl::{
     Declaration, EvalError, EvalInputs, evaluate_declaration, evaluate_expr, materialized_kind,
@@ -24,20 +24,14 @@ use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
 use crate::invoke::{CallArg, EdgeBound, EdgeKind, NodeCall};
-use crate::manifest::{
-    AuthorityGate, Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput,
-    Possession,
-};
+use crate::manifest::{Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{MetadataCache, PackageHash};
 use crate::presented::Presented;
-use crate::resource::{holdings_collection, issued_resource};
+use crate::resource::issued_resource;
 use crate::route::{FrameDeclaration, MAX_MANIFEST_NODES};
-use crate::rule::{Rule, RuleLeaf};
-use crate::signature::{
-    AbiParam, Accessibility, CustodyClaim, GateShape, MethodSignature, ParamType,
-};
-use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};
-use crate::vocabulary::VAULT;
+use crate::rule::Rule;
+use crate::signature::{AbiParam, MethodSignature, ParamType};
+use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value};
 
 /// The bound on yield parameters one intent may declare.
 ///
@@ -903,7 +897,6 @@ impl Lower<'_> {
                 package: meta.package,
                 method: node.method.clone(),
             })?;
-        let gate = checked.gate();
         let signature = checked.signature();
         if signature.params.len() != node.args.len() {
             return Err(AdmissionError::ArityMismatch {
@@ -926,8 +919,6 @@ impl Lower<'_> {
             identity: self.identity,
         };
         check_denominations(signature, &bound, &eval_inputs, self.hasher, node_index)?;
-        let (claims, authority) =
-            judge_gate(gate, signature, node, &eval_inputs, self.hasher, node_index)?;
         let node_outputs = project_outputs(signature, &eval_inputs, self.hasher, node_index)?;
 
         // The frame: this node's effect signature, evaluated over the
@@ -968,7 +959,6 @@ impl Lower<'_> {
                 node_inputs: &inputs,
                 node_outputs: &node_outputs,
                 evidence: &evidence,
-                authority: authority.as_ref(),
                 requires,
                 inputs: &eval_inputs,
                 hasher: self.hasher,
@@ -984,12 +974,13 @@ impl Lower<'_> {
             self.declaration.set.insert(access.effect)?;
             self.declaration.ordered.push(*access);
         }
+        // What this node mints is read off its declared clauses, the
+        // widening already applied where the evaluation resolved them.
+        self.minted.push(frame.mints);
         self.frames.push(FrameDeclaration {
             node: node_index,
             ordered: frame.ordered,
         });
-
-        self.minted.push(claims);
         self.consumed.push(vec![0; node_outputs.len()]);
         self.outputs.push(node_outputs);
         self.lowered.push(Node {
@@ -997,7 +988,6 @@ impl Lower<'_> {
             method: node.method.clone(),
             inputs,
             evidence,
-            authority,
         });
         Ok(())
     }
@@ -1238,114 +1228,6 @@ fn check_denominations(
     Ok(())
 }
 
-/// Discriminate the gate: what this node mints, and the authority gate
-/// the call is judged against — one match, so the claims and the gate
-/// cannot come from two readings of the shape.
-///
-/// Everything evaluates over the same inputs the output types evaluate
-/// against: what the target itself names, never what the caller claims.
-fn judge_gate(
-    gate: GateShape<'_>,
-    signature: &MethodSignature,
-    node: &GraphNode,
-    eval_inputs: &EvalInputs<'_>,
-    hasher: &dyn Hasher,
-    node_index: u32,
-) -> Result<(Vec<Presented>, Option<AuthorityGate>), AdmissionError> {
-    let eval = |expr| {
-        evaluate_expr(expr, eval_inputs, hasher).map_err(|source| AdmissionError::Eval {
-            node: node_index,
-            source,
-        })
-    };
-    Ok(match gate {
-        GateShape::Open => (Vec::new(), None),
-        // A custodial gate: the holder's stored primary plus possession
-        // of what it mints. The pinned shape keys the possession read by
-        // exactly the claim's own expressions, so the vault key and the
-        // holdings entry are the badge's own derivations.
-        GateShape::Custody { cell: rule, claim } => {
-            let badge = match eval(claim.badge())? {
-                Value::Address(badge) => ResourceAddr::try_from(badge)
-                    .map_err(|_| AdmissionError::MintType { node: node_index })?,
-                _ => return Err(AdmissionError::MintType { node: node_index }),
-            };
-            let Value::Key(cell) = eval(rule)? else {
-                return Err(AdmissionError::RuleCellType { node: node_index });
-            };
-            let holder = node.target.address();
-            // An instance holder holds the badge, so presenting one
-            // satisfies a rule naming the resource as well as a rule
-            // naming the instance. The widening happens here, where
-            // possession was verified, which is what keeps the judge
-            // an equality walk rather than a subsumption rule every
-            // reader of a stored rule would have to share.
-            let (claims, possession) = match claim {
-                CustodyClaim::Fungible(_) => (
-                    vec![Presented::Resource(badge)],
-                    Possession::Vault(child_key(
-                        hasher,
-                        holder,
-                        VAULT,
-                        &[Value::Address(badge.address()).canonical_bytes()],
-                    )),
-                ),
-                CustodyClaim::Instance { id, .. } => {
-                    let id = match eval(id)? {
-                        Value::U64(id) => id,
-                        Value::U128(id) => u64::try_from(id)
-                            .map_err(|_| AdmissionError::MintType { node: node_index })?,
-                        _ => return Err(AdmissionError::MintType { node: node_index }),
-                    };
-                    (
-                        vec![Presented::Instance(badge, id), Presented::Resource(badge)],
-                        Possession::Instance {
-                            owner: holder,
-                            holdings: holdings_collection(hasher, holder, badge.address()),
-                            id,
-                        },
-                    )
-                }
-            };
-            (claims, Some(AuthorityGate::Custody { cell, possession }))
-        }
-        GateShape::Guarded(rule) => {
-            // Every leaf, over the same inputs the output types
-            // evaluate against — the shape is the declaration's and
-            // only the claims are computed.
-            let rule = rule.map_leaves(&mut |leaf| {
-                // A guarded gate judges presented claims alone; the
-                // publish check refuses a stored leaf here, so the arm
-                // is a backstop rather than a verdict anyone reaches.
-                let RuleLeaf::Claim(expr) = leaf else {
-                    return Err(AdmissionError::AuthorityType { node: node_index });
-                };
-                let value = evaluate_expr(expr, eval_inputs, hasher).map_err(|source| {
-                    AdmissionError::Eval {
-                        node: node_index,
-                        source,
-                    }
-                })?;
-                Presented::of(&value).ok_or(AdmissionError::AuthorityType { node: node_index })
-            })?;
-            (Vec::new(), Some(AuthorityGate::Presented(rule)))
-        }
-        GateShape::Rule { cell, role } => {
-            let Value::Key(cell) = eval(cell)? else {
-                return Err(AdmissionError::RuleCellType { node: node_index });
-            };
-            // An authorizing method's target acts as itself; a role-gated
-            // one is judged and mints nothing.
-            let claims = if matches!(signature.accessibility, Accessibility::Authorizing) {
-                vec![Presented::Identity(node.target)]
-            } else {
-                Vec::new()
-            };
-            (claims, Some(AuthorityGate::StoredRule { cell, role }))
-        }
-    })
-}
-
 /// Evaluate the node's declared output projections: the resource and
 /// content of each edge it produces.
 fn project_outputs(
@@ -1429,7 +1311,6 @@ struct Lowering<'a> {
     node_inputs: &'a [NodeInput],
     node_outputs: &'a [(Denomination, EdgeContent)],
     evidence: &'a [Presented],
-    authority: Option<&'a AuthorityGate>,
     requires: Vec<Rule<JudgedLeaf>>,
     inputs: &'a EvalInputs<'a>,
     hasher: &'a dyn Hasher,
@@ -1490,7 +1371,6 @@ fn lower_call(
         node_inputs,
         node_outputs,
         evidence,
-        authority,
         requires,
         inputs,
         hasher,
@@ -1563,7 +1443,6 @@ fn lower_call(
             .as_deref()
             .map(|mark| issued_resource(hasher, target, mark)),
         evidence: evidence.to_vec(),
-        authority: authority.cloned(),
         requires,
     })
 }

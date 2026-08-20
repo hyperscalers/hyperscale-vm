@@ -14,10 +14,9 @@ use crate::dsl::{
     MAX_RANGE_CAP, ModeExpr, TargetExpr, materialized_kind,
 };
 use crate::metadata::PackageMetadata;
+use crate::resource::holdings_entry;
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
-use crate::signature::{
-    AbiParam, Accessibility, CustodyClaim, GateError, GateShape, MethodSignature,
-};
+use crate::signature::{AbiParam, MethodSignature};
 use crate::types::{MAX_VALUE_DEPTH, SlotId, Value};
 use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
@@ -60,20 +59,6 @@ impl<'a> CheckedSignature<'a> {
     pub const fn signature(&self) -> &'a MethodSignature {
         self.signature
     }
-
-    /// The gate the accessibility names — infallible here, because the
-    /// shape check is part of what minted the witness.
-    ///
-    /// # Panics
-    ///
-    /// Only for a witness minted over an unchecked fixture whose
-    /// accessibility shape would never have published.
-    #[must_use]
-    pub fn gate(&self) -> GateShape<'a> {
-        self.signature
-            .gate()
-            .expect("the witness is minted by the composed signature check")
-    }
 }
 
 impl std::ops::Deref for CheckedSignature<'_> {
@@ -109,17 +94,6 @@ pub fn check_signature(
 /// cache without one.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AbiError {
-    /// An authorizing method whose declaration is not exactly one point
-    /// read — the cell its stored rule lives in, which the gate
-    /// evaluates and the read provisions.
-    #[error("an authorizing method declares exactly one point read: its rule cell")]
-    AuthorizingShape,
-    /// A role-gated method whose declaration is not exactly one point
-    /// write — the cell its stored roles live in. The write is where
-    /// the gate's cell comes from, and it serializes role rewrites
-    /// against concurrent sign-ins.
-    #[error("a role-gated method declares exactly one point write: its rule cell")]
-    RoleGatedShape,
     /// An issuance grant bound by a method that declares no issued
     /// resource. The walk grants one from the declaration, so there would
     /// be nothing to hand over.
@@ -184,34 +158,6 @@ pub enum AbiError {
         /// What that parameter actually is.
         kind: &'static str,
     },
-    /// A rule leaf reading what the caller supplies.
-    ///
-    /// A caller who names the claim they must present can always present
-    /// it, so the method reads as guarded and admits everyone. Every
-    /// leaf answers, because one caller-named branch of a threshold is
-    /// one branch the caller satisfies for free.
-    #[error("the authority this method requires is one its caller names")]
-    CallerNamedAuthority,
-    /// A guarded gate holding a stored-rule leaf.
-    ///
-    /// A gate fixed at publish judges presented claims alone; a rule the
-    /// target stores is a condition, judged where the cell lives.
-    #[error("a guarded gate judges presented claims alone; a stored rule is a condition")]
-    StoredRuleInGate,
-    /// A custodial method whose declaration is not the pinned custody
-    /// shape: the holder's rule cell read, and the one possession read
-    /// its claim names, keyed by exactly the expressions the gate mints.
-    ///
-    /// Which read that is follows from the claim, because a resource is
-    /// issued fungible or non-fungible and never both: a fungible claim
-    /// reads the badge-keyed vault, an instance claim the badge's
-    /// holdings entry at the id it names.
-    #[error(
-        "a custodial method declares two reads: its rule cell, and the \
-         badge-keyed vault for a fungible claim or the holdings entry at \
-         the id for an instance one"
-    )]
-    CustodialShape,
     /// One bucket parameter carried by more than one ABI parameter.
     ///
     /// A bucket carried by *none* is well-formed: a method that forwards
@@ -225,18 +171,6 @@ pub enum AbiError {
         /// How many ABI parameters name it.
         carried: u32,
     },
-}
-
-// Publish speaks the wider ABI vocabulary; a gate-shape refusal is one
-// of its verdicts.
-impl From<GateError> for AbiError {
-    fn from(error: GateError) -> Self {
-        match error {
-            GateError::AuthorizingShape => Self::AuthorizingShape,
-            GateError::RoleGatedShape => Self::RoleGatedShape,
-            GateError::CustodialShape => Self::CustodialShape,
-        }
-    }
 }
 
 /// Judge a signature's ABI binding against the declaration it is a
@@ -255,22 +189,6 @@ impl From<GateError> for AbiError {
 /// Any [`AbiError`]; verdicts are deterministic and identical on every
 /// node.
 pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
-    if let Accessibility::Guarded(rule) = &signature.accessibility {
-        if rule.reads_call_inputs() {
-            return Err(AbiError::CallerNamedAuthority);
-        }
-        // A gate fixed at publish judges presented claims alone; a rule
-        // the target stores is a condition, judged where the cell lives.
-        if rule
-            .leaves()
-            .any(|leaf| matches!(leaf, RuleLeaf::Stored { .. }))
-        {
-            return Err(AbiError::StoredRuleInGate);
-        }
-    }
-    // A gated method's whole declaration is what its gate judges at, in
-    // the shape its accessibility pins.
-    signature.gate().map_err(AbiError::from)?;
     let bound = |count: usize| u32::try_from(count).unwrap_or(u32::MAX);
     let mut carried = vec![0u32; signature.params.len()];
     for (index, binding) in signature.abi.iter().enumerate() {
@@ -373,9 +291,6 @@ pub enum DeclarationError {
         /// effects, `for-each` bodies counted in place.
         clause: u32,
     },
-    /// A method claiming totality behind a gate that can turn it away.
-    #[error("a total method admits every caller, and this one is gated")]
-    GatedTotality,
     /// A method claiming totality over a guarded clause. A total leg
     /// runs with every declared handle materialized, and a guarded-out
     /// clause materializes none.
@@ -433,6 +348,27 @@ pub enum DeclarationError {
     /// A presence condition requiring `Either`, which nothing can fail.
     #[error("condition clause {clause} requires `Either` of a leaf, which requires nothing")]
     VacuousCondition {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+    },
+    /// A mint no condition justifies: minting one's own identity takes
+    /// satisfying one's own stored rule, and letting a declaration mint
+    /// without one would be forgeable identity.
+    #[error("mint clause {clause} is justified by no stored-rule condition beside it")]
+    UnjustifiedMint {
+        /// The clause's position in a preorder walk of the signature's
+        /// effects.
+        clause: u32,
+    },
+    /// A badge mint whose possession read is missing, or keyed by a
+    /// different expression than the claim — which would let the claim
+    /// minted and the thing held name different resources.
+    #[error(
+        "mint clause {clause} mints a badge without the possession condition keyed by the \
+         same expression"
+    )]
+    MintUnheld {
         /// The clause's position in a preorder walk of the signature's
         /// effects.
         clause: u32,
@@ -1039,14 +975,6 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
             return Err(DeclarationError::MixedContents { clause });
         }
     }
-    // A gate is an error arm the vocabulary can see. Trap freedom is what
-    // the artifact scan establishes, and it says nothing about whether the
-    // call is admitted at all — a guarded method turns callers away for
-    // reasons the body never runs to discover, which is exactly the
-    // refusal a total leg promises cannot happen.
-    if signature.totality.is_total() && signature.accessibility != Accessibility::Public {
-        return Err(DeclarationError::GatedTotality);
-    }
     // Trap freedom for a total leg rests on every handle being
     // materialized from the declared effect set, and an absent
     // capability is precisely a change to that. Precision is what a
@@ -1193,6 +1121,75 @@ fn check_conditions(flat: &[&Clause]) -> Result<(), DeclarationError> {
             }
         }
     }
+    check_mints(flat)
+}
+
+/// The mint pass: a mint is justified by a condition the same
+/// declaration carries. Minting one's own identity takes satisfying
+/// one's own stored rule; minting a badge takes that plus holding it,
+/// the possession read keyed by the same expressions the mint names —
+/// so the claim minted and the thing held are one resource because one
+/// expression writes both.
+fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
+    // Minting one's own identity takes satisfying one's own stored rule;
+    // minting a badge takes that plus holding it, the possession read
+    // keyed by the same expressions the mint names — so the claim minted
+    // and the thing held are one resource because one expression writes
+    // both.
+    for (index, clause) in flat.iter().enumerate() {
+        let Clause::Mints { guard, claim } = clause else {
+            continue;
+        };
+        let clause = u32::try_from(index).unwrap_or(u32::MAX);
+        let under = guard.as_deref();
+        let justified = flat.iter().any(|beside| {
+            matches!(
+                beside,
+                Clause::Requires {
+                    guard: condition_guard,
+                    condition: ConditionExpr::Satisfies { rule },
+                } if rule
+                    .leaves()
+                    .any(|leaf| matches!(leaf, RuleLeaf::Stored { .. }))
+                    && (condition_guard.is_none() || condition_guard.as_deref() == under)
+            )
+        });
+        if !justified {
+            return Err(DeclarationError::UnjustifiedMint { clause });
+        }
+        let possession = match claim {
+            // The target's own identity: the stored rule alone is the
+            // justification.
+            Expr::SelfAddr => continue,
+            // One instance: held when the badge-keyed holdings entry at
+            // the id is there.
+            Expr::Tuple(parts) if parts.len() == 2 => {
+                holdings_entry(parts[0].clone(), parts[1].clone())
+            }
+            // A fungible badge: held when the badge-keyed vault is.
+            badge => TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: VAULT,
+                material: vec![badge.clone()],
+            }),
+        };
+        let held = flat.iter().any(|beside| {
+            matches!(
+                beside,
+                Clause::Requires {
+                    guard: condition_guard,
+                    condition: ConditionExpr::Holds {
+                        target,
+                        presence: Presence::Present,
+                    },
+                } if *target == possession
+                    && (condition_guard.is_none() || condition_guard.as_deref() == under)
+            )
+        });
+        if !held {
+            return Err(DeclarationError::MintUnheld { clause });
+        }
+    }
     Ok(())
 }
 
@@ -1283,15 +1280,6 @@ fn check_rule_bounds(rule: &RuleExpr) -> Result<(), SignatureBoundsError> {
 }
 
 fn check_signature_bounds(signature: &MethodSignature) -> Result<(), SignatureBoundsError> {
-    match &signature.accessibility {
-        Accessibility::Guarded(rule) => check_rule_bounds(rule)?,
-        Accessibility::Custodial(CustodyClaim::Fungible(badge)) => check_expr_bounds(badge, 0)?,
-        Accessibility::Custodial(CustodyClaim::Instance { badge, id }) => {
-            check_expr_bounds(badge, 0)?;
-            check_expr_bounds(id, 0)?;
-        }
-        Accessibility::Public | Accessibility::Authorizing | Accessibility::RoleGated(_) => {}
-    }
     for output in &signature.outputs {
         check_expr_bounds(output, 0)?;
     }
@@ -1355,6 +1343,16 @@ fn check_clause_bounds(
                     ConditionExpr::Holds { target, .. } => check_target_bounds(target)?,
                     ConditionExpr::Satisfies { rule } => check_rule_bounds(rule)?,
                 }
+            }
+            Clause::Mints { guard, claim } => {
+                if let Some(cond) = guard {
+                    check_expr_bounds(cond, 0)?;
+                }
+                *declared += 1;
+                if *declared > MAX_EFFECTS_PER_SIGNATURE {
+                    return Err(SignatureBoundsError::TooManyEffects);
+                }
+                check_expr_bounds(claim, 0)?;
             }
         }
     }
@@ -1424,11 +1422,10 @@ mod tests {
     use hyperscale_vm_types::{Address, AddressClass};
 
     use super::*;
-    use crate::auth::{CONFIRMATION, PRIMARY, RECOVERY};
+    use crate::auth::PRIMARY;
     use crate::envelope::NULLIFIER_SLOT;
     use crate::metadata::PACKAGE_SLOT;
-    use crate::resource::{holdings_entry, holdings_range};
-    use crate::signature::{GateShape, ParamType, Totality};
+    use crate::signature::{ParamType, Totality};
     use crate::types::{Value, package_slot};
 
     /// A signature whose only effect points at `expr`.
@@ -1656,134 +1653,6 @@ mod tests {
         ));
     }
 
-    /// A rule-reading method's whole declaration is the cell its gate
-    /// judges at: one point clause, read for a sign-in, exclusively
-    /// written for a recovery op. Anything else is refused where the
-    /// package publishes, under the accessibility's own error.
-    #[test]
-    fn a_rule_reading_method_declares_exactly_its_cell() {
-        let shaped = |accessibility, mode| MethodSignature {
-            totality: Totality::Fallible,
-            accessibility,
-            effects: vec![Clause::Effect {
-                guard: None,
-                target: TargetExpr::Point(Expr::SelfAddr),
-                mode,
-                denomination: None,
-            }],
-            ..MethodSignature::default()
-        };
-        assert_eq!(
-            check_abi(&shaped(Accessibility::Authorizing, ModeExpr::Read)),
-            Ok(())
-        );
-        assert_eq!(
-            check_abi(&shaped(Accessibility::RoleGated(RECOVERY), ModeExpr::Write)),
-            Ok(())
-        );
-
-        // The right clause under the wrong mode, and no clause at all.
-        assert_eq!(
-            check_abi(&shaped(Accessibility::Authorizing, ModeExpr::Write)),
-            Err(AbiError::AuthorizingShape)
-        );
-        assert_eq!(
-            check_abi(&shaped(Accessibility::RoleGated(PRIMARY), ModeExpr::Read)),
-            Err(AbiError::RoleGatedShape)
-        );
-        assert_eq!(
-            check_abi(&MethodSignature {
-                totality: Totality::Fallible,
-                accessibility: Accessibility::Authorizing,
-                ..MethodSignature::default()
-            }),
-            Err(AbiError::AuthorizingShape)
-        );
-
-        // The accessor itself names the judging role.
-        let sign_in = shaped(Accessibility::Authorizing, ModeExpr::Read);
-        assert!(matches!(
-            sign_in.gate(),
-            Ok(GateShape::Rule { role: PRIMARY, .. })
-        ));
-        let confirm = shaped(Accessibility::RoleGated(CONFIRMATION), ModeExpr::Write);
-        assert!(matches!(
-            confirm.gate(),
-            Ok(GateShape::Rule {
-                role: CONFIRMATION,
-                ..
-            })
-        ));
-        assert_eq!(MethodSignature::default().gate(), Ok(GateShape::Open));
-    }
-
-    /// A method requiring an identity its own caller names admits
-    /// everyone while reading as guarded, so the declaration is refused
-    /// where the package publishes.
-    #[test]
-    fn an_authority_the_caller_names_is_refused() {
-        let guarded = |rule: RuleExpr| MethodSignature {
-            totality: Totality::Fallible,
-            accessibility: Accessibility::Guarded(rule),
-            ..MethodSignature::default()
-        };
-        let require = |expr| guarded(RuleExpr::claim(expr));
-        assert_eq!(check_abi(&require(Expr::SelfAddr)), Ok(()));
-        assert_eq!(check_abi(&require(Expr::Config(0))), Ok(()));
-        assert_eq!(
-            check_abi(&require(Expr::Arg(0))),
-            Err(AbiError::CallerNamedAuthority)
-        );
-        // And however deeply the argument is buried.
-        assert_eq!(
-            check_abi(&require(Expr::ResourceOf(Box::new(Expr::Field(
-                Box::new(Expr::Arg(1)),
-                0
-            ))))),
-            Err(AbiError::CallerNamedAuthority)
-        );
-
-        // One caller-named branch of a threshold is one branch the
-        // caller satisfies for free, so every leaf answers.
-        assert_eq!(
-            check_abi(&guarded(RuleExpr::CountOf {
-                count: 2,
-                rules: vec![
-                    RuleExpr::claim(Expr::Config(0)),
-                    RuleExpr::claim(Expr::Config(1)),
-                    RuleExpr::claim(Expr::Arg(0)),
-                ],
-            })),
-            Err(AbiError::CallerNamedAuthority)
-        );
-    }
-
-    /// A gate fixed at publish judges presented claims alone; a rule the
-    /// target stores is a condition, judged where the cell lives.
-    #[test]
-    fn a_stored_leaf_in_a_guarded_gate_is_refused() {
-        let stored = RuleExpr::Require(RuleLeaf::Stored {
-            cell: Expr::SelfAddr,
-            role: PRIMARY,
-        });
-        let guarded = |rule: RuleExpr| MethodSignature {
-            totality: Totality::Fallible,
-            accessibility: Accessibility::Guarded(rule),
-            ..MethodSignature::default()
-        };
-        assert_eq!(
-            check_abi(&guarded(stored.clone())),
-            Err(AbiError::StoredRuleInGate)
-        );
-        assert_eq!(
-            check_abi(&guarded(RuleExpr::CountOf {
-                count: 1,
-                rules: vec![RuleExpr::claim(Expr::Config(0)), stored],
-            })),
-            Err(AbiError::StoredRuleInGate)
-        );
-    }
-
     /// A condition names its own target, and one check replaces the gate
     /// shapes: every target it names is declared as an access under
     /// `Read` or `Write`, by a clause that fires whenever the condition
@@ -1978,6 +1847,116 @@ mod tests {
         );
     }
 
+    /// A mint is justified by a condition the same declaration carries,
+    /// or it does not publish: identity takes the stored rule, a badge
+    /// takes that plus possession keyed by the same expression.
+    #[test]
+    fn a_mint_no_condition_justifies_is_refused() {
+        let auth_cell = || Expr::ChildKey {
+            owner: Box::new(Expr::SelfAddr),
+            slot: SlotId(4),
+            material: vec![],
+        };
+        let read = |target| Clause::Effect {
+            guard: None,
+            target,
+            mode: ModeExpr::Read,
+            denomination: None,
+        };
+        let satisfies = || Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Satisfies {
+                rule: RuleExpr::Require(RuleLeaf::Stored {
+                    cell: auth_cell(),
+                    role: PRIMARY,
+                }),
+            },
+        };
+        let vault = |badge: Expr| {
+            TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: VAULT,
+                material: vec![badge],
+            })
+        };
+        let read_vault = |badge: Expr| Clause::Effect {
+            guard: None,
+            target: vault(badge.clone()),
+            mode: ModeExpr::Read,
+            denomination: Some(Box::new(badge)),
+        };
+        let holds = |target| Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Holds {
+                target,
+                presence: Presence::Present,
+            },
+        };
+        let mints = |claim| Clause::Mints { guard: None, claim };
+        let declared = |clauses: Vec<Clause>| {
+            check_declarations(&MethodSignature {
+                effects: clauses,
+                ..MethodSignature::default()
+            })
+        };
+
+        // Identity: the stored rule alone justifies it.
+        assert_eq!(
+            declared(vec![
+                read(TargetExpr::Point(auth_cell())),
+                satisfies(),
+                mints(Expr::SelfAddr),
+            ]),
+            Ok(())
+        );
+        // No stored-rule condition beside it: forgeable identity.
+        assert_eq!(
+            declared(vec![mints(Expr::SelfAddr)]),
+            Err(DeclarationError::UnjustifiedMint { clause: 0 })
+        );
+        assert_eq!(
+            declared(vec![
+                Clause::Requires {
+                    guard: None,
+                    condition: ConditionExpr::Satisfies {
+                        rule: RuleExpr::claim(Expr::Config(0)),
+                    },
+                },
+                mints(Expr::SelfAddr),
+            ]),
+            Err(DeclarationError::UnjustifiedMint { clause: 1 }),
+            "a claim-only rule verifies no stored authority"
+        );
+
+        // A badge: the possession condition, keyed by the same
+        // expression the claim names.
+        let badge_mint = |possession_key: Expr| {
+            declared(vec![
+                read(TargetExpr::Point(auth_cell())),
+                read_vault(Expr::Config(0)),
+                read_vault(possession_key.clone()),
+                satisfies(),
+                holds(vault(possession_key)),
+                mints(Expr::Config(0)),
+            ])
+        };
+        assert_eq!(badge_mint(Expr::Config(0)), Ok(()));
+        assert_eq!(
+            badge_mint(Expr::Config(1)),
+            Err(DeclarationError::MintUnheld { clause: 5 }),
+            "possession of some other cell holds nothing about this claim"
+        );
+        // Possession required, but never stated at all.
+        assert_eq!(
+            declared(vec![
+                read(TargetExpr::Point(auth_cell())),
+                satisfies(),
+                mints(Expr::Config(0)),
+            ]),
+            Err(DeclarationError::MintUnheld { clause: 2 })
+        );
+    }
+
     /// A declared threshold sits under the caps a stored one is decoded
     /// under, so a signature that publishes cannot evaluate into a rule
     /// the decode gate would refuse.
@@ -1987,7 +1966,10 @@ mod tests {
             methods: BTreeMap::from([(
                 "m".to_owned(),
                 MethodSignature {
-                    accessibility: Accessibility::Guarded(rule),
+                    effects: vec![Clause::Requires {
+                        guard: None,
+                        condition: ConditionExpr::Satisfies { rule },
+                    }],
                     ..MethodSignature::default()
                 },
             )]),
@@ -2033,117 +2015,6 @@ mod tests {
                 .is_err()
             );
         }
-    }
-
-    /// The custody shape: one possession read behind the rule cell's
-    /// own, keyed by exactly what the gate mints — the badge-keyed vault
-    /// for a fungible claim, the holdings entry at the id for an
-    /// instance one.
-    #[test]
-    fn the_custody_shape_ties_possession_to_what_is_minted() {
-        let shaped = |claim: CustodyClaim, effects| MethodSignature {
-            totality: Totality::Fallible,
-            accessibility: Accessibility::Custodial(claim),
-            effects,
-            ..MethodSignature::default()
-        };
-        let rule = || Clause::Effect {
-            guard: None,
-            target: TargetExpr::Point(Expr::SelfAddr),
-            mode: ModeExpr::Read,
-            denomination: None,
-        };
-        let read = |target| Clause::Effect {
-            guard: None,
-            target,
-            mode: ModeExpr::Read,
-            denomination: None,
-        };
-        let vault = |key: Expr| {
-            TargetExpr::Point(Expr::ChildKey {
-                owner: Box::new(Expr::SelfAddr),
-                slot: VAULT,
-                material: vec![key],
-            })
-        };
-        let badge = Expr::Arg(0);
-        let id = Expr::Arg(1);
-
-        // A fungible claim: the vault keyed by the badge it mints.
-        let fungible = CustodyClaim::Fungible(badge.clone());
-        let well_formed = shaped(fungible.clone(), vec![rule(), read(vault(badge.clone()))]);
-        assert_eq!(check_abi(&well_formed), Ok(()));
-        assert!(matches!(well_formed.gate(), Ok(GateShape::Custody { .. })));
-
-        // An instance claim: the holdings entry at the id it mints.
-        let instance = CustodyClaim::Instance {
-            badge: badge.clone(),
-            id: id.clone(),
-        };
-        let well_formed = shaped(
-            instance.clone(),
-            vec![rule(), read(holdings_entry(badge.clone(), id.clone()))],
-        );
-        assert_eq!(check_abi(&well_formed), Ok(()));
-        assert!(matches!(well_formed.gate(), Ok(GateShape::Custody { .. })));
-
-        // A possession read keyed by anything but what is minted would
-        // verify holding one thing while minting another.
-        assert_eq!(
-            check_abi(&shaped(
-                fungible.clone(),
-                vec![rule(), read(vault(Expr::Arg(1)))]
-            )),
-            Err(AbiError::CustodialShape)
-        );
-        assert_eq!(
-            check_abi(&shaped(
-                instance.clone(),
-                vec![rule(), read(holdings_entry(Expr::Arg(2), id.clone()))]
-            )),
-            Err(AbiError::CustodialShape)
-        );
-        assert_eq!(
-            check_abi(&shaped(
-                instance.clone(),
-                vec![rule(), read(holdings_entry(badge.clone(), Expr::Arg(2)))]
-            )),
-            Err(AbiError::CustodialShape)
-        );
-
-        // Each claim admits its own shape of read and not the other's:
-        // a resource is issued as one or the other, and the declaration
-        // says which.
-        assert_eq!(
-            check_abi(&shaped(
-                fungible.clone(),
-                vec![rule(), read(holdings_entry(badge.clone(), id))]
-            )),
-            Err(AbiError::CustodialShape)
-        );
-        assert_eq!(
-            check_abi(&shaped(instance, vec![rule(), read(vault(badge.clone()))])),
-            Err(AbiError::CustodialShape)
-        );
-
-        // The rule cell's read alone, with no possession beside it, and
-        // the old three-clause shape that declared both and meant
-        // either.
-        assert_eq!(
-            check_abi(&shaped(fungible.clone(), vec![rule()])),
-            Err(AbiError::CustodialShape)
-        );
-        assert_eq!(
-            check_abi(&shaped(
-                fungible,
-                vec![
-                    rule(),
-                    read(vault(badge.clone())),
-                    read(holdings_range(badge, 1)),
-                ]
-            )),
-            Err(AbiError::CustodialShape)
-        );
     }
 
     #[test]
@@ -2201,21 +2072,36 @@ mod tests {
             Ok(())
         );
 
-        // Every gate is a caller this method can turn away.
-        for accessibility in [
-            Accessibility::Guarded(RuleExpr::claim(Expr::SelfAddr)),
-            Accessibility::Authorizing,
-            Accessibility::Custodial(CustodyClaim::Fungible(Expr::Arg(0))),
-            Accessibility::RoleGated(PRIMARY),
-        ] {
-            assert_eq!(
-                check_declarations(&total(MethodSignature {
-                    accessibility,
-                    ..MethodSignature::default()
-                })),
-                Err(DeclarationError::GatedTotality),
-            );
-        }
+        // Every condition is a caller this method can turn away, and a
+        // reservation is a race it can lose.
+        assert_eq!(
+            check_declarations(&total(MethodSignature {
+                effects: vec![Clause::Requires {
+                    guard: None,
+                    condition: ConditionExpr::Satisfies {
+                        rule: RuleExpr::claim(Expr::SelfAddr),
+                    },
+                }],
+                ..MethodSignature::default()
+            })),
+            Err(DeclarationError::ConditionalTotality),
+        );
+        assert_eq!(
+            check_declarations(&total(MethodSignature {
+                effects: vec![Clause::Effect {
+                    guard: None,
+                    target: TargetExpr::Point(Expr::ChildKey {
+                        owner: Box::new(Expr::SelfAddr),
+                        slot: SlotId(PACKAGE_SLOT_BASE),
+                        material: vec![],
+                    }),
+                    mode: ModeExpr::Reserve(Expr::Literal(Value::U128(5))),
+                    denomination: Some(Box::new(Expr::Config(0))),
+                }],
+                ..MethodSignature::default()
+            })),
+            Err(DeclarationError::ConditionalTotality),
+        );
     }
 
     /// A presence requirement is about the leaf a write lands on, so the

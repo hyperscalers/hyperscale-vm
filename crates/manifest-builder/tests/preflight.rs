@@ -164,7 +164,10 @@ fn the_operator_surface_is_the_badge_holders_custody() {
     // the badge itself at the surface — reachable only through that
     // presentation, which is the point, and which the report says
     // rather than calling the surface unreachable.
-    assert_eq!(report.authority[0].authority, Authority::Custody);
+    assert_eq!(
+        report.authority[0].authority,
+        Authority::StoredRule(PRIMARY)
+    );
     assert_eq!(
         report.authority[1].authority,
         Authority::Badge {

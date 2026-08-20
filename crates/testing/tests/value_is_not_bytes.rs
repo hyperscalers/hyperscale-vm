@@ -23,14 +23,14 @@
 
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT, XRD};
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, AuthBase, AuthCell, Clause, CustodyClaim, Expr, MethodSignature,
-    ModeExpr, PackageMetadata, ParamType, Presented, RoleTable, RuleExpr, SlotId, StoredRule,
+    AbiParam, AuthBase, AuthCell, Clause, ConditionExpr, Expr, MethodSignature, ModeExpr, PRIMARY,
+    PackageMetadata, ParamType, Presented, RoleTable, RuleExpr, RuleLeaf, SlotId, StoredRule,
     TargetExpr, TestHasher, Totality, Value, native_address,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, account, principal, resource};
 use hyperscale_vm_types::{
-    AbortReason, Address, ComponentAddr, PrincipalAddr, ResourceAddr, encode_amount,
+    AbortReason, Address, ComponentAddr, Presence, PrincipalAddr, ResourceAddr, encode_amount,
 };
 
 const ATTACKER: PrincipalAddr = principal(0x22);
@@ -82,7 +82,6 @@ fn counterfeiter() -> PackageMetadata {
     metadata.methods.insert(
         "forge".into(),
         MethodSignature {
-            accessibility: Accessibility::Public,
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
             outputs: vec![Expr::Literal(Value::Address(xrd()))],
@@ -161,7 +160,6 @@ fn aliased() -> PackageMetadata {
     metadata.methods.insert(
         "forge".into(),
         MethodSignature {
-            accessibility: Accessibility::Public,
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
             outputs: vec![held()],
@@ -224,7 +222,6 @@ fn impostor() -> PackageMetadata {
     metadata.methods.insert(
         "arm".into(),
         MethodSignature {
-            accessibility: Accessibility::Public,
             totality: Totality::Infallible,
             params: vec![ParamType::Address],
             abi: vec![AbiParam::Handle(0), AbiParam::Handle(1)],
@@ -238,7 +235,6 @@ fn impostor() -> PackageMetadata {
     metadata.methods.insert(
         "present".into(),
         MethodSignature {
-            accessibility: Accessibility::Custodial(CustodyClaim::Fungible(Expr::Arg(0))),
             totality: Totality::Infallible,
             params: vec![ParamType::Address],
             abi: vec![],
@@ -247,6 +243,30 @@ fn impostor() -> PackageMetadata {
                 // A vault is a value cell in every mode it is reached in,
                 // so even the possession read says what it holds.
                 read(own(VAULT, vec![Expr::Arg(0)]), Some(Box::new(Expr::Arg(0)))),
+                Clause::Requires {
+                    guard: None,
+                    condition: ConditionExpr::Satisfies {
+                        rule: RuleExpr::Require(RuleLeaf::Stored {
+                            cell: Expr::ChildKey {
+                                owner: Box::new(Expr::SelfAddr),
+                                slot: AUTH,
+                                material: vec![],
+                            },
+                            role: PRIMARY,
+                        }),
+                    },
+                },
+                Clause::Requires {
+                    guard: None,
+                    condition: ConditionExpr::Holds {
+                        target: own(VAULT, vec![Expr::Arg(0)]),
+                        presence: Presence::Present,
+                    },
+                },
+                Clause::Mints {
+                    guard: None,
+                    claim: Expr::Arg(0),
+                },
             ],
             ..MethodSignature::default()
         },
@@ -296,15 +316,22 @@ fn treasury() -> PackageMetadata {
     metadata.methods.insert(
         "payout".into(),
         MethodSignature {
-            accessibility: Accessibility::Guarded(RuleExpr::claim(Expr::Config(0))),
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
             outputs: vec![Expr::Config(1)],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
-            effects: vec![write(
-                own(VAULT, vec![Expr::Config(1)]),
-                Some(Box::new(Expr::Config(1))),
-            )],
+            effects: vec![
+                write(
+                    own(VAULT, vec![Expr::Config(1)]),
+                    Some(Box::new(Expr::Config(1))),
+                ),
+                Clause::Requires {
+                    guard: None,
+                    condition: ConditionExpr::Satisfies {
+                        rule: RuleExpr::claim(Expr::Config(0)),
+                    },
+                },
+            ],
             ..MethodSignature::default()
         },
     );
@@ -386,7 +413,6 @@ fn silent() -> PackageMetadata {
     metadata.methods.insert(
         "fill".into(),
         MethodSignature {
-            accessibility: Accessibility::Public,
             totality: Totality::Infallible,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],

@@ -23,9 +23,9 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, AuthorityGate, EnvelopeTree, Hasher, InstanceRegistry, Manifest,
-    ManifestGraph, ManifestHash, MetadataCache, Presented, RoleId, Routing, ShardId, ShardResolver,
-    StoredRule, SubintentRecord, admit, admit_tree, footprint, route, route_tree,
+    AdmissionError, Admitted, EnvelopeTree, Hasher, InstanceRegistry, JudgedLeaf, Manifest,
+    ManifestGraph, ManifestHash, MetadataCache, Presented, RoleId, Routing, Rule, ShardId,
+    ShardResolver, SubintentRecord, admit, admit_tree, footprint, route, route_tree,
 };
 use hyperscale_vm_types::{
     Address, CallTarget, NetworkWord, PrincipalAddr, ResourceAddr, SchemeId, TextError,
@@ -76,10 +76,6 @@ pub enum Authority {
         /// resource at large.
         instance: Option<u64>,
     },
-    /// The target's stored primary plus possession of the badge its
-    /// method names — the custody gate; only state knows whether the
-    /// badge is held.
-    Custody,
     /// A threshold the method itself declares: `count` of `branches`,
     /// each a claim of its own. What satisfies which branch is the
     /// holder's to know, so the report states the shape rather than
@@ -185,9 +181,7 @@ impl Report {
             .iter()
             .filter_map(|required| match required.authority {
                 Authority::Signature(principal) => Some(principal),
-                Authority::StoredRule(_) | Authority::Custody => {
-                    PrincipalAddr::try_from(required.target).ok()
-                }
+                Authority::StoredRule(_) => PrincipalAddr::try_from(required.target).ok(),
                 Authority::Anyone
                 | Authority::TargetHasNoKey
                 | Authority::Badge { .. }
@@ -294,20 +288,23 @@ fn report(
     // what it is, and nothing signs for that.
     let mut authority = Vec::with_capacity(admitted.manifest().nodes.len());
     for (index, node) in admitted.manifest().nodes.iter().enumerate() {
-        let required = match &node.authority {
-            None => Authority::Anyone,
-            Some(AuthorityGate::Presented(StoredRule::Require(claim))) => claimed(claim),
+        let required = match admitted.calls()[index].requires.as_slice() {
+            [] => Authority::Anyone,
+            [Rule::Require(JudgedLeaf::Claim(claim))] => claimed(claim),
+            [Rule::Require(JudgedLeaf::Stored { role, .. })] => Authority::StoredRule(*role),
             // A threshold names more than one thing, and which of them a
             // holder can produce is theirs to know: the report says what
             // is asked rather than picking a way to satisfy it.
-            Some(AuthorityGate::Presented(StoredRule::CountOf { count, rules })) => {
-                Authority::Threshold {
-                    count: *count,
-                    branches: u32::try_from(rules.len()).unwrap_or(u32::MAX),
-                }
-            }
-            Some(AuthorityGate::StoredRule { role, .. }) => Authority::StoredRule(*role),
-            Some(AuthorityGate::Custody { .. }) => Authority::Custody,
+            [Rule::CountOf { count, rules }] => Authority::Threshold {
+                count: *count,
+                branches: u32::try_from(rules.len()).unwrap_or(u32::MAX),
+            },
+            // Several required rules conjoin, so the report says how
+            // many are asked and that all of them are.
+            rules => Authority::Threshold {
+                count: u8::try_from(rules.len()).unwrap_or(u8::MAX),
+                branches: u32::try_from(rules.len()).unwrap_or(u32::MAX),
+            },
         };
         authority.push(Required {
             node: u32::try_from(index).unwrap_or(u32::MAX),

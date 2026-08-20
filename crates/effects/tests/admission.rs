@@ -10,11 +10,11 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world};
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, AdmissionError, AuthorityGate, Clause, Constraint, CustodyClaim,
-    EdgeKind, EdgeRef, EvalError, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta,
-    InstanceRegistry, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature, ModeExpr,
-    PRIMARY, PackageMetadata, ParamType, Possession, Presented, RuleExpr, StoredRule, TargetExpr,
-    TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
+    AbiParam, AdmissionError, Clause, Condition, ConditionExpr, Constraint, EdgeKind, EdgeRef,
+    EvalError, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry,
+    JudgedLeaf, MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature, ModeExpr, PRIMARY,
+    PackageMetadata, ParamType, Presented, Rule, RuleExpr, RuleLeaf, TargetExpr, TestHasher,
+    Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
@@ -266,20 +266,20 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     let authorize = &admitted.manifest().nodes[0];
     assert_eq!(authorize.evidence, vec![Presented::Identity(ALICE.into())]);
     assert_eq!(
-        authorize.authority,
-        Some(AuthorityGate::StoredRule {
+        admitted.calls()[0].requires,
+        vec![Rule::Require(JudgedLeaf::Stored {
             cell: child_key(&TestHasher, ALICE, AUTH, &[]),
             role: PRIMARY,
-        })
+        })]
     );
 
     let withdraw = &admitted.manifest().nodes[1];
     assert_eq!(withdraw.evidence, vec![Presented::Identity(ALICE.into())]);
     assert_eq!(
-        withdraw.authority,
-        Some(AuthorityGate::Presented(StoredRule::Require(
-            Presented::Identity(ALICE.into())
-        )))
+        admitted.calls()[1].requires,
+        vec![Rule::Require(JudgedLeaf::Claim(Presented::Identity(
+            ALICE.into()
+        )))]
     );
 
     let _ = route(&admitted, &resolver());
@@ -288,46 +288,80 @@ fn a_minted_proof_resolves_to_its_producers_target() {
 /// A custodian fixture: an authorizing method minting whatever identity
 /// its metadata names, and a guarded method opening for the configured
 /// one.
+/// What the custodian's `present` method declares: `Identity` mints the
+/// target's own address off its stored rule alone; the badge shapes add
+/// the possession read, its condition, and the badge's mint.
+enum Presenting {
+    Identity,
+    Fungible(Expr),
+    Instance(Expr, Expr),
+}
+
 fn custodian_world(
-    accessibility: Accessibility,
+    presenting: &Presenting,
     config: Vec<Value>,
 ) -> (MetadataCache, InstanceRegistry, ComponentAddr) {
-    let rule = Clause::Effect {
-        guard: None,
-        target: TargetExpr::Point(Expr::ChildKey {
-            owner: Box::new(Expr::SelfAddr),
-            slot: AUTH,
-            material: vec![],
-        }),
-        mode: ModeExpr::Read,
-        denomination: None,
+    let auth_cell = || Expr::ChildKey {
+        owner: Box::new(Expr::SelfAddr),
+        slot: AUTH,
+        material: vec![],
     };
-    let possession = |target| Clause::Effect {
+    let read = |target| Clause::Effect {
         guard: None,
         target,
         mode: ModeExpr::Read,
         denomination: None,
     };
-    let effects = match &accessibility {
-        Accessibility::Custodial(CustodyClaim::Fungible(_)) => vec![
-            rule,
-            possession(TargetExpr::Point(Expr::ChildKey {
-                owner: Box::new(Expr::SelfAddr),
-                slot: VAULT,
-                material: vec![Expr::Config(0)],
-            })),
+    let satisfies = || Clause::Requires {
+        guard: None,
+        condition: ConditionExpr::Satisfies {
+            rule: RuleExpr::Require(RuleLeaf::Stored {
+                cell: auth_cell(),
+                role: PRIMARY,
+            }),
+        },
+    };
+    let holds = |target| Clause::Requires {
+        guard: None,
+        condition: ConditionExpr::Holds {
+            target,
+            presence: Presence::Present,
+        },
+    };
+    let mints = |claim| Clause::Mints { guard: None, claim };
+    let vault = |badge: &Expr| {
+        TargetExpr::Point(Expr::ChildKey {
+            owner: Box::new(Expr::SelfAddr),
+            slot: VAULT,
+            material: vec![badge.clone()],
+        })
+    };
+    let effects = match presenting {
+        Presenting::Identity => vec![
+            read(TargetExpr::Point(auth_cell())),
+            satisfies(),
+            mints(Expr::SelfAddr),
         ],
-        Accessibility::Custodial(CustodyClaim::Instance { badge, id }) => {
-            vec![rule, possession(holdings_entry(badge.clone(), id.clone()))]
-        }
-        _ => vec![rule],
+        Presenting::Fungible(badge) => vec![
+            read(TargetExpr::Point(auth_cell())),
+            read(vault(badge)),
+            satisfies(),
+            holds(vault(badge)),
+            mints(badge.clone()),
+        ],
+        Presenting::Instance(badge, id) => vec![
+            read(TargetExpr::Point(auth_cell())),
+            read(holdings_entry(badge.clone(), id.clone())),
+            satisfies(),
+            holds(holdings_entry(badge.clone(), id.clone())),
+            mints(Expr::Tuple(vec![badge.clone(), id.clone()])),
+        ],
     };
     let mut package = PackageMetadata::default();
     package.methods.insert(
         "present".into(),
         MethodSignature {
             totality: Totality::Fallible,
-            accessibility,
             effects,
             ..MethodSignature::default()
         },
@@ -336,7 +370,12 @@ fn custodian_world(
         "operate".into(),
         MethodSignature {
             totality: Totality::Fallible,
-            accessibility: Accessibility::Guarded(RuleExpr::claim(Expr::Config(0))),
+            effects: vec![Clause::Requires {
+                guard: None,
+                condition: ConditionExpr::Satisfies {
+                    rule: RuleExpr::claim(Expr::Config(0)),
+                },
+            }],
             ..MethodSignature::default()
         },
     );
@@ -379,7 +418,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     let badge = ResourceAddr::new([0xB0; 31]);
 
     let (cache, instances, custodian) = custodian_world(
-        Accessibility::Custodial(CustodyClaim::Fungible(Expr::Config(0))),
+        &Presenting::Fungible(Expr::Config(0)),
         vec![Value::Address(badge.address())],
     );
     let admitted = admit(
@@ -390,19 +429,28 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
         &TestHasher,
     )
     .expect("admits");
-    let present = &admitted.manifest().nodes[0];
     assert_eq!(
-        present.authority,
-        Some(AuthorityGate::Custody {
+        admitted.calls()[0].requires,
+        vec![Rule::Require(JudgedLeaf::Stored {
             cell: child_key(&TestHasher, custodian, AUTH, &[]),
-            possession: Possession::Vault(child_key(
-                &TestHasher,
-                custodian,
-                VAULT,
-                &[Value::Address(badge.address()).canonical_bytes()],
-            )),
-        }),
-        "the gate is the holder's rule plus the badge-keyed vault"
+            role: PRIMARY,
+        })],
+        "the holder's rule rides the call"
+    );
+    assert!(
+        admitted
+            .declaration()
+            .conditions
+            .contains(&Condition::Holds {
+                target: EffectTarget::Point(child_key(
+                    &TestHasher,
+                    custodian,
+                    VAULT,
+                    &[Value::Address(badge.address()).canonical_bytes()],
+                )),
+                presence: Presence::Present,
+            }),
+        "the badge-keyed vault's possession joins the union declaration"
     );
     let operate = &admitted.manifest().nodes[1];
     assert_eq!(
@@ -411,20 +459,16 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
         "the proof presents the badge, not the producer's address"
     );
     assert_eq!(
-        operate.authority,
-        Some(AuthorityGate::Presented(StoredRule::Require(
-            Presented::Resource(badge)
-        ))),
+        admitted.calls()[1].requires,
+        vec![Rule::Require(JudgedLeaf::Claim(Presented::Resource(badge)))],
         "a gate naming a resource address wants the badge, by the class alone"
     );
 
-    // An authorizing sign-in mints the target itself: satisfying one's
-    // own rule is no feat, so an identity it could name beyond itself
-    // would be forgeable — which is why the accessibility names none.
-    let (cache, instances, custodian) = custodian_world(
-        Accessibility::Authorizing,
-        vec![Value::Address(badge.address())],
-    );
+    // An identity sign-in mints the target itself: satisfying one's own
+    // rule is no feat, so an identity it could name beyond itself would
+    // be forgeable — which is why the justification check names none.
+    let (cache, instances, custodian) =
+        custodian_world(&Presenting::Identity, vec![Value::Address(badge.address())]);
     let admitted = admit(
         &custodian_graph(custodian),
         ALICE,
@@ -439,22 +483,44 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     );
     // A badge that is not a resource address has nothing possessable
     // behind it.
+    // An instance mint widens to its resource where possession was
+    // verified: the minted set carries both claims.
     let (cache, instances, custodian) = custodian_world(
-        Accessibility::Custodial(CustodyClaim::Fungible(Expr::Config(0))),
+        &Presenting::Instance(Expr::Config(0), Expr::Literal(Value::U64(7))),
+        vec![Value::Address(badge.address())],
+    );
+    let admitted = admit(
+        &custodian_graph(custodian),
+        ALICE,
+        &cache,
+        &instances,
+        &TestHasher,
+    )
+    .expect("admits");
+    assert_eq!(
+        admitted.manifest().nodes[1].evidence,
+        vec![Presented::Instance(badge, 7), Presented::Resource(badge),],
+        "one instance held is the badge held, where possession was verified"
+    );
+
+    // A badge that is not a resource address has nothing possessable
+    // behind it: the mint's claim evaluates to no badge.
+    let (cache, instances, custodian) = custodian_world(
+        &Presenting::Fungible(Expr::Config(0)),
         vec![Value::Address(Address::new(
             [0xB0; 31],
             AddressClass::Component,
         ))],
     );
-    assert_eq!(
+    assert!(
         admit(
             &custodian_graph(custodian),
             ALICE,
             &cache,
             &instances,
             &TestHasher
-        ),
-        Err(AdmissionError::MintType { node: 0 })
+        )
+        .is_err()
     );
 }
 

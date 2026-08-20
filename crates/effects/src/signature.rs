@@ -1,18 +1,16 @@
 //! The effect-signature vocabulary: what a published method declares
-//! about its parameters, its accessibility, and its ABI binding.
+//! about its parameters and its ABI binding.
 
 use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{
     CallTarget, ComponentAddr, Denomination, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
 
-use crate::auth::{PRIMARY, RoleId, RoleTable};
-use crate::dsl::{Clause, ConditionExpr, Expr, ModeExpr, TargetExpr};
+use crate::auth::RoleTable;
+use crate::dsl::{Clause, ConditionExpr, Expr};
 use crate::invoke::EdgeKind;
-use crate::resource::holdings_entry;
 use crate::rule::{RuleExpr, RuleLeaf, StoredRule};
 use crate::types::{MAX_IDS_PER_EDGE, Value};
-use crate::vocabulary::VAULT;
 
 /// A method parameter's admitted kind. Bucket parameters consume a value
 /// edge; every other kind binds a literal or envelope input.
@@ -216,144 +214,6 @@ pub enum AbiParam {
     Derived(Expr),
 }
 
-/// Whose authority a method's target admits.
-///
-/// A package declares this beside the code it describes, because an
-/// address is a hash and nothing about a target can be read off it: only
-/// the package knows whether a method spends the target's funds, writes
-/// its leaves, or merely offers something to whoever asks.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
-pub enum Accessibility {
-    /// Anyone may name this method on this target. What the caller
-    /// supplies is the caller's own, gated wherever it was obtained.
-    #[default]
-    Public,
-    /// Naming this method requires satisfying this rule, over the
-    /// target's own inputs.
-    ///
-    /// `Require(SelfAddr)` is a method only the target itself may be
-    /// made to perform; a configuration slot is how an object nobody
-    /// owns admits somebody, since a pool's address derives from no key
-    /// while a configured field can name a claim that does. A threshold
-    /// over configured slots is how a fixed admin set says "two of these
-    /// three" — the same algebra a stored rule has, on the side that
-    /// declares rather than stores.
-    ///
-    /// Every claim a method can require is one the target itself names,
-    /// so an authority verdict never reaches state under a prefix the
-    /// manifest did not name. Authority held by somebody else is a call
-    /// to *them*, which the manifest writes down like any other.
-    Guarded(RuleExpr),
-    /// Naming this method requires satisfying the target's own rule, and
-    /// doing so mints the target's identity as evidence for later nodes
-    /// of the same intent.
-    ///
-    /// The one gate that is the target's rule rather than an identity an
-    /// expression names. Minting is a property of this accessibility and
-    /// of nothing else, so a caller cannot conjure a target's authority
-    /// by pointing evidence at a method that merely does something.
-    Authorizing,
-    /// Naming this method requires satisfying one of the target's stored
-    /// roles — which one is named here — and mints nothing.
-    ///
-    /// The recovery surface: judged like an authorizing gate, against
-    /// the role set that governs at the transaction clock, but a
-    /// role-gated node is never a proof, so recovery authority opens
-    /// recovery methods and nothing else.
-    RoleGated(RoleId),
-    /// Naming this method requires satisfying the target's own rule
-    /// *and* the target holding what this claim names — and doing so
-    /// mints that badge as evidence.
-    ///
-    /// Holding as the third way to mint a proof. Judged like an
-    /// authorizing gate over the same stored rule — the holder acts,
-    /// nobody else presents its badges — with the claim's own possession
-    /// read beside it: the badge-keyed vault non-empty, or the holdings
-    /// entry at the named id. The whole declaration is the shape
-    /// [`gate`] pins: the rule cell's read and that one possession read,
-    /// keyed by exactly the expressions the mint names, so the claim
-    /// minted and the thing held cannot name different resources.
-    ///
-    /// A possession gate mints the badge rather than the holder's own
-    /// identity, so what a guarded consumer matches is the thing held,
-    /// never who holds it. Exactly this accessibility names what it
-    /// mints: an authorizing method always mints the target itself —
-    /// letting it name anything else would be forgeable identity, since
-    /// satisfying one's own stored rule is no feat — while a custodial
-    /// mint is honest by construction, the same expressions keying the
-    /// possession read its gate judges.
-    ///
-    /// [`gate`]: MethodSignature::gate
-    Custodial(CustodyClaim),
-}
-
-/// Which shape of badge a custody gate is about, and how possession of
-/// it is read.
-///
-/// A resource is issued as one or the other, so the claim says which.
-/// Declaring both and admitting either — which is what a single
-/// disjunction over the vault and the whole holdings interval amounts to
-/// — leaves the declaration unable to say what the method is for, and
-/// makes every holder of a badge resource one authority. A resource used
-/// both ways takes a method per shape.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-pub enum CustodyClaim {
-    /// A fungible badge: held when the badge-keyed vault is non-zero.
-    Fungible(Expr),
-    /// One instance: held when the badge-keyed holdings entry at this id
-    /// is there.
-    Instance {
-        /// The badge resource.
-        badge: Expr,
-        /// Which instance of it, as the entry's own order key.
-        id: Expr,
-    },
-}
-
-impl CustodyClaim {
-    /// The badge expression, whichever shape the claim takes.
-    #[must_use]
-    pub const fn badge(&self) -> &Expr {
-        match self {
-            Self::Fungible(badge) | Self::Instance { badge, .. } => badge,
-        }
-    }
-}
-
-impl Accessibility {
-    /// Whether naming the method requires presenting anything.
-    ///
-    /// The one authority question the signed form answers on its own:
-    /// whether what is presented satisfies the target is the target's
-    /// own business, answered where its state is.
-    #[must_use]
-    pub const fn requires_evidence(&self) -> bool {
-        !matches!(self, Self::Public)
-    }
-
-    /// Whether the gate judges against a rule the target stores, rather
-    /// than an identity the declaration names.
-    ///
-    /// What the intent's own signature may reach, and nothing else: a
-    /// signature signs in, and whether the key behind it still holds the
-    /// account's authority is the stored rule's answer. An identity a
-    /// declaration names is not something a signature can stand in for.
-    #[must_use]
-    pub const fn reads_a_rule(&self) -> bool {
-        matches!(
-            self,
-            Self::Authorizing | Self::RoleGated(_) | Self::Custodial(_)
-        )
-    }
-
-    /// Whether naming the method mints evidence for later nodes of the
-    /// same intent.
-    #[must_use]
-    pub const fn mints(&self) -> bool {
-        matches!(self, Self::Authorizing | Self::Custodial(_))
-    }
-}
-
 /// How completely a method can be relied on to return.
 ///
 /// Three states rather than a flag, because the two facts behind them are
@@ -401,7 +261,6 @@ impl Totality {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct MethodSignature {
     /// Whose authority naming this method on this target requires.
-    pub accessibility: Accessibility,
     /// How completely the method returns: whether a caller has a failure
     /// to handle, and whether anything rules out a trap.
     ///
@@ -456,69 +315,13 @@ pub struct MethodSignature {
     pub abi: Vec<AbiParam>,
 }
 
-/// Why a signature's accessibility names no gate: the declaration is
-/// not the shape that accessibility pins.
-///
-/// Its own vocabulary rather than a slice of
-/// [`AbiError`](crate::publish::AbiError), so the one consumer that
-/// classifies these refusals matches them exhaustively — a new refusal
-/// here is a compile error there, never a silent fall-through.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum GateError {
-    /// An authorizing method whose declaration is not exactly one point
-    /// read — the cell its stored rule lives in.
-    #[error("an authorizing method declares exactly one point read: its rule cell")]
-    AuthorizingShape,
-    /// A role-gated method whose declaration is not exactly one point
-    /// write — the same cell, rewritten whole.
-    #[error("a role-gated method declares exactly one point write: its rule cell")]
-    RoleGatedShape,
-    /// A custodial method whose declaration is not the pinned custody
-    /// shape.
-    #[error("a custodial method declares the custody shape: its rule cell and one possession read")]
-    CustodialShape,
-}
-
-/// The whole shape of a method's gate: what a caller presents, and what
-/// the declaration reads to judge it.
-///
-/// One shape rather than one accessor per accessibility, because the
-/// choice of refusal is a function of the accessibility the accessor
-/// just matched on. A caller left to draw its own conclusion from a
-/// `None` is a caller free to disagree about which gate it is looking
-/// at.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GateShape<'a> {
-    /// Nothing to present, and nothing read to judge it.
-    Open,
-    /// The rule a caller's presented set must satisfy, over the target's
-    /// own inputs.
-    Guarded(&'a RuleExpr),
-    /// A rule the target stores, and the role that judges: the primary
-    /// for a sign-in, the named role for a recovery op.
-    Rule {
-        /// The cell expression the stored rules live at.
-        cell: &'a Expr,
-        /// The role the presented set must satisfy.
-        role: RoleId,
-    },
-    /// The holder's stored primary, and the badge the declaration reads
-    /// possession of and the gate mints.
-    Custody {
-        /// The cell expression the holder's stored rules live at.
-        cell: &'a Expr,
-        /// What is held, and how the declaration reads it.
-        claim: &'a CustodyClaim,
-    },
-}
-
 impl MethodSignature {
     /// Whether a call to this method must present evidence: its
     /// accessibility gate, or any authority condition its declaration
     /// requires.
     #[must_use]
     pub fn requires_evidence(&self) -> bool {
-        self.accessibility.requires_evidence() || self.required_rules().next().is_some()
+        self.required_rules().next().is_some()
     }
 
     /// Whether judging this method reads a stored rule — which is what
@@ -527,11 +330,19 @@ impl MethodSignature {
     /// stored rule's own question.
     #[must_use]
     pub fn reads_a_rule(&self) -> bool {
-        self.accessibility.reads_a_rule()
-            || self
-                .required_rules()
-                .flat_map(RuleExpr::leaves)
-                .any(|leaf| matches!(leaf, RuleLeaf::Stored { .. }))
+        self.required_rules()
+            .flat_map(RuleExpr::leaves)
+            .any(|leaf| matches!(leaf, RuleLeaf::Stored { .. }))
+    }
+
+    /// Whether a call to this method mints a claim: any `Mints` clause
+    /// its declaration states.
+    #[must_use]
+    pub fn mints(&self) -> bool {
+        self.effects
+            .iter()
+            .flat_map(Clause::effects)
+            .any(|clause| matches!(clause, Clause::Mints { .. }))
     }
 
     /// Every rule a `Requires` clause of this declaration states, in
@@ -547,110 +358,6 @@ impl MethodSignature {
                 } => Some(rule),
                 _ => None,
             })
-    }
-
-    /// The gate's whole shape: what a caller must present, and what the
-    /// declaration reads to judge it.
-    ///
-    /// `Ok` exactly when the accessibility and the declaration agree on
-    /// the shape that accessibility pins. A rule-reading gate declares
-    /// one point clause — read for a sign-in, which is what provisions
-    /// the cell to every participant, and exclusively written for a
-    /// recovery op, which keeps a role rewrite out of any wave that
-    /// signs in under the roles it replaces. A custodial gate declares
-    /// that read and the one possession read its claim's shape names,
-    /// keyed by *exactly* the badge it mints, which is what makes the
-    /// claim minted and the thing held one resource.
-    ///
-    /// Every judge of the shape asks here, so none can drift: the
-    /// publish check refuses a signature this refuses, and admission
-    /// re-asks, so a cached package that never passed one refuses rather
-    /// than lowering an ungated node.
-    ///
-    /// # Errors
-    ///
-    /// The shape refusal named for the accessibility that was declared.
-    pub fn gate(&self) -> Result<GateShape<'_>, GateError> {
-        match &self.accessibility {
-            Accessibility::Public => Ok(GateShape::Open),
-            Accessibility::Guarded(rule) => Ok(GateShape::Guarded(rule)),
-            Accessibility::Authorizing => self
-                .rule_point(&|mode| matches!(mode, ModeExpr::Read))
-                .map(|cell| GateShape::Rule {
-                    cell,
-                    role: PRIMARY,
-                })
-                .ok_or(GateError::AuthorizingShape),
-            Accessibility::RoleGated(role) => self
-                .rule_point(&|mode| matches!(mode, ModeExpr::Write))
-                .map(|cell| GateShape::Rule { cell, role: *role })
-                .ok_or(GateError::RoleGatedShape),
-            Accessibility::Custodial(claim) => self.custody(claim).ok_or(GateError::CustodialShape),
-        }
-    }
-
-    /// The cell a rule-reading gate judges at, when the declaration is
-    /// one point clause `admits` accepts and nothing else.
-    ///
-    /// Taken as a predicate rather than as a mode, because what a
-    /// role-gated method owes is exclusivity on its rule cell — that is
-    /// what serializes a role rewrite against a concurrent sign-in — and
-    /// a write's presence requirement is orthogonal to it. A method that
-    /// creates its own rule cell, or that requires one already there, is
-    /// gated on the same cell in the same mode.
-    fn rule_point(&self, admits: &dyn Fn(&ModeExpr) -> bool) -> Option<&Expr> {
-        let mut accesses = self.accesses();
-        match (accesses.next(), accesses.next()) {
-            (
-                Some(Clause::Effect {
-                    target: TargetExpr::Point(cell),
-                    mode: declared,
-                    ..
-                }),
-                None,
-            ) if admits(declared) => Some(cell),
-            _ => None,
-        }
-    }
-
-    /// The declared accesses alone: the shape pins are over what a
-    /// method touches, and a condition clause beside them is a judgment,
-    /// not an access.
-    fn accesses(&self) -> impl Iterator<Item = &Clause> {
-        self.effects
-            .iter()
-            .filter(|clause| matches!(clause, Clause::Effect { .. }))
-    }
-
-    /// The custody shape over `claim`: the holder's rule cell, and the
-    /// one possession read the claim's shape names — the badge-keyed
-    /// vault, or the badge's holdings entry at the id.
-    fn custody<'a>(&'a self, claim: &'a CustodyClaim) -> Option<GateShape<'a>> {
-        let accesses: Vec<&Clause> = self.accesses().collect();
-        let [
-            Clause::Effect {
-                target: TargetExpr::Point(cell),
-                mode: ModeExpr::Read,
-                ..
-            },
-            Clause::Effect {
-                target: possession,
-                mode: ModeExpr::Read,
-                ..
-            },
-        ] = accesses.as_slice()
-        else {
-            return None;
-        };
-        let pinned = match claim {
-            CustodyClaim::Fungible(badge) => TargetExpr::Point(Expr::ChildKey {
-                owner: Box::new(Expr::SelfAddr),
-                slot: VAULT,
-                material: vec![badge.clone()],
-            }),
-            CustodyClaim::Instance { badge, id } => holdings_entry(badge.clone(), id.clone()),
-        };
-        (*possession == pinned).then_some(GateShape::Custody { cell, claim })
     }
 }
 

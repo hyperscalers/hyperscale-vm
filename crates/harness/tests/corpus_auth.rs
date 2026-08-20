@@ -44,7 +44,9 @@ fn a_refused_authorization_takes_its_consumers_with_it() {
     );
     assert_eq!(
         results,
-        vec![TxResult::Refused(Outcome::Unauthorized { node: 0 })]
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 0 },
+        })]
     );
     assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 150);
     assert_eq!(amount_of(&final_store, vault(BOB, RES_X)), 0);
@@ -91,7 +93,9 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     let (results, store) = run_both(&world, &store, &[(&transfer, TxHash(Hash32([0x52; 32])))]);
     assert_eq!(
         results,
-        vec![TxResult::Refused(Outcome::Unauthorized { node: 0 })],
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 0 },
+        })],
         "the retired key must not open the account"
     );
 
@@ -184,7 +188,9 @@ fn a_chained_sign_in_acts_two_rules_deep() {
     );
     assert_eq!(
         results,
-        vec![TxResult::Refused(Outcome::Unauthorized { node: 1 })],
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 1 },
+        })],
         "the maker's rule names Alice's account, not Bob's"
     );
 
@@ -237,7 +243,9 @@ fn a_proof_opens_only_the_account_that_minted_it() {
     );
     assert_eq!(
         results,
-        vec![TxResult::Refused(Outcome::Unauthorized { node: 1 })],
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 1 },
+        })],
         "a proof is its own account's identity and no other's"
     );
 }
@@ -309,7 +317,9 @@ fn assert_acts(
     } else {
         assert_eq!(
             results,
-            vec![TxResult::Refused(Outcome::Unauthorized { node: 0 })],
+            vec![TxResult::Refused(Outcome::ConditionUnmet {
+                condition: UnmetCondition::Satisfies { node: 0 },
+            })],
             "the rule must refuse this signer at {clock_ms}"
         );
     }
@@ -334,7 +344,9 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     );
     assert_eq!(
         results,
-        vec![TxResult::Refused(Outcome::Unauthorized { node: 0 })],
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 0 },
+        })],
         "primary is not recovery"
     );
 
@@ -465,7 +477,9 @@ fn confirmation_enacts_a_proposal_early() {
     );
     assert_eq!(
         results,
-        vec![TxResult::Refused(Outcome::Unauthorized { node: 0 })],
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 0 },
+        })],
         "recovery is not confirmation"
     );
 
@@ -622,9 +636,20 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
         ],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));
+    // A non-holder fails the possession condition, judged by the shard
+    // holding the entry before anything runs.
     assert_eq!(
         results[1],
-        TxResult::Refused(Outcome::Unauthorized { node: 0 })
+        TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Entry {
+                    owner: BOB.into(),
+                    collection: holdings_collection(&TestHasher, BOB, badge),
+                    order: u128::from(id),
+                },
+                required: Presence::Present,
+            },
+        })
     );
     let (results, store) = run_both_signed(
         &world,
@@ -634,7 +659,9 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
     );
     assert_eq!(
         results[0],
-        TxResult::Refused(Outcome::Unauthorized { node: 0 })
+        TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 0 },
+        })
     );
 
     // The badge moves to Bob: operatorship moves with it, and the
@@ -655,9 +682,20 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
     );
     assert!(matches!(results[0], TxResult::Completed(_)));
     assert!(matches!(results[1], TxResult::Completed(_)));
+    // The seller no longer holds the instance, so the possession
+    // condition refuses before anything about authority is asked.
     assert_eq!(
         results[2],
-        TxResult::Refused(Outcome::Unauthorized { node: 0 })
+        TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Entry {
+                    owner: ALICE.into(),
+                    collection: holdings_collection(&TestHasher, ALICE, badge),
+                    order: u128::from(id),
+                },
+                required: Presence::Present,
+            },
+        })
     );
 }
 
@@ -744,7 +782,9 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
     );
     assert_eq!(
         results[1],
-        TxResult::Refused(Outcome::Unauthorized { node: 1 }),
+        TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 1 },
+        }),
         "a sibling instance of the same resource is a different authority"
     );
 
@@ -867,11 +907,15 @@ fn a_declared_threshold_admits_exactly_its_quorum() {
     );
     assert_eq!(
         results[0],
-        TxResult::Refused(Outcome::Unauthorized { node: 1 })
+        TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 1 },
+        })
     );
     assert_eq!(
         results[1],
-        TxResult::Refused(Outcome::Unauthorized { node: 2 })
+        TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 2 },
+        })
     );
 }
 
@@ -899,8 +943,14 @@ fn a_fungible_badge_is_custody_while_the_vault_is_funded() {
         ],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));
+    // A non-holder fails the possession condition at its own vault.
     assert_eq!(
         results[1],
-        TxResult::Refused(Outcome::Unauthorized { node: 0 })
+        TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(vault(BOB, RES_X)),
+                required: Presence::Present,
+            },
+        })
     );
 }

@@ -100,7 +100,6 @@ fn call(target: Address, evidence: Vec<Presented>, requires: Vec<Rule<JudgedLeaf
         outputs: Vec::new(),
         issues: None,
         evidence,
-        authority: None,
         requires,
     }
 }

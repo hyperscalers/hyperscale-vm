@@ -9,8 +9,8 @@
 use hyperscale_vm_effects::dsl::{Clause, ConditionExpr, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::vocabulary::{INSTANCE, NF_MOVE_CAP};
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, Expr, MethodSignature, PackageMetadata, ParamType, RuleExpr, Totality,
-    Value, holdings_range,
+    AbiParam, Expr, MethodSignature, PackageMetadata, ParamType, RuleExpr, Totality, Value,
+    holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
 use hyperscale_vm_types::{ComponentAddr, Denomination, Presence};
@@ -69,7 +69,6 @@ pub fn metadata() -> PackageMetadata {
         "mint".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            accessibility: Accessibility::Public,
             // The pool's own resource, by the mark that separates it from
             // the instance's others — which is what the grant is for and
             // what makes another issuer's inexpressible here.
@@ -92,7 +91,6 @@ pub fn metadata() -> PackageMetadata {
         "deposit".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            accessibility: Accessibility::Public,
             issues: None,
             params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
@@ -113,7 +111,6 @@ pub fn metadata() -> PackageMetadata {
         "withdraw".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            accessibility: Accessibility::Public,
             issues: None,
             params: vec![ParamType::Address, ParamType::Ids],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
@@ -134,7 +131,6 @@ pub fn metadata() -> PackageMetadata {
         "burn".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            accessibility: Accessibility::Public,
             // Bringing value out of existence is as declared as bringing
             // it in, and under the same grant.
             issues: Some(Vec::new()),
@@ -150,7 +146,10 @@ pub fn metadata() -> PackageMetadata {
             name.into(),
             MethodSignature {
                 totality: Totality::Infallible,
-                accessibility: Accessibility::Guarded(rule),
+                effects: vec![Clause::Requires {
+                    guard: None,
+                    condition: ConditionExpr::Satisfies { rule },
+                }],
                 issues: None,
                 ..MethodSignature::default()
             },

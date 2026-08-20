@@ -7,8 +7,8 @@
 
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::{
-    AbiParam, Accessibility, Expr, MethodSignature, PackageMetadata, ParamType, SlotId, Totality,
-    Value, package_slot,
+    AbiParam, Expr, MethodSignature, PackageMetadata, ParamType, SlotId, Totality, Value,
+    package_slot,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_types::ComponentAddr;
@@ -50,7 +50,6 @@ pub fn metadata() -> PackageMetadata {
         "bind".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            accessibility: Accessibility::Public,
             issues: None,
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![
@@ -72,7 +71,6 @@ pub fn metadata() -> PackageMetadata {
         "check".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            accessibility: Accessibility::Public,
             issues: None,
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
@@ -89,7 +87,6 @@ pub fn metadata() -> PackageMetadata {
         "drain".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            accessibility: Accessibility::Public,
             issues: None,
             params: vec![ParamType::U128],
             abi: vec![AbiParam::Handle(0)],

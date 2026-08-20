@@ -7,14 +7,12 @@
 //! reads only what signatures evaluate over: each node's target, method, and
 //! bound inputs. Amounts are dynamic; types are static.
 
-use hyperscale_vm_types::{
-    Address, CollectionId, Denomination, EffectTarget, Presence, SubstateKey,
-};
+use hyperscale_vm_types::{Address, Denomination, EffectTarget, Presence, SubstateKey};
 
 use crate::auth::RoleId;
 use crate::hash::Hash32;
 use crate::presented::Presented;
-use crate::rule::{Rule, StoredRule};
+use crate::rule::Rule;
 use crate::types::{EdgeContent, Value};
 
 /// A consumer's signed amount bounds on an edge, folded to their
@@ -91,53 +89,6 @@ pub struct Node {
     /// The claims this call presents, resolved from the signed evidence
     /// the node names. Empty for a call requiring none.
     pub evidence: Vec<Presented>,
-    /// The gate this call's presented evidence is judged against.
-    /// `None` for a method admitting anyone.
-    ///
-    /// Admission has already checked that a guarded call presents
-    /// *something*; whether what it presents satisfies the gate is
-    /// answered at execution, against the target.
-    pub authority: Option<AuthorityGate>,
-}
-
-/// The gate a call's presented evidence is judged against at execution.
-///
-/// Not `Copy`: a rule is a tree, so a gate is a value a reader borrows
-/// rather than one every match arm duplicates.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AuthorityGate {
-    /// The presented set must satisfy this rule — what the target itself
-    /// named, evaluated at admission with every leaf read off its value's
-    /// own class, so a gate naming a configured resource address wants
-    /// the badge and one naming three of them can want two.
-    Presented(StoredRule),
-    /// The presented set must satisfy one of the target's stored rules
-    /// at this cell — or, while the cell is absent, carry the identity
-    /// the target's address derives. The cell is the method's own
-    /// declared point clause, so it is provisioned wherever the call
-    /// runs, and which stored rule judges the call is the role its
-    /// accessibility names: the primary for an authorizing method, the
-    /// named role for a role-gated one. The governing role set is
-    /// picked at the transaction clock, so a matured proposal judges
-    /// without anything applying it.
-    StoredRule {
-        /// The cell the target's rules live in.
-        cell: SubstateKey,
-        /// The stored rule the presented set must satisfy.
-        role: RoleId,
-    },
-    /// The presented set must satisfy the target's stored primary at
-    /// `cell` — the holder acts, nobody else presents its badges — and
-    /// the target must hold what `possession` names. Both reads are the
-    /// method's own declared clauses, keyed by the same expressions the
-    /// mint names, so what this gate verifies possession of is exactly
-    /// what it mints.
-    Custody {
-        /// The cell the holder's rules live in; judged as the primary.
-        cell: SubstateKey,
-        /// What the holder must hold.
-        possession: Possession,
-    },
 }
 
 /// A judged rule's leaf: the evaluated twin of
@@ -182,28 +133,6 @@ pub enum Condition {
     Satisfies {
         /// The rule, its leaves evaluated.
         rule: Rule<JudgedLeaf>,
-    },
-}
-
-/// What a custody gate reads to decide the holder holds it.
-///
-/// One leaf either way: the badge is fungible and the vault carries an
-/// amount, or it is an instance and the holdings entry at its id is
-/// there. A resource is issued as one or the other, so a gate reads one
-/// or the other — never an interval standing in for both.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Possession {
-    /// The badge-keyed vault cell: held when its amount is non-zero.
-    Vault(SubstateKey),
-    /// One entry of the badge-keyed holdings collection: held when the
-    /// entry at this id is there.
-    Instance {
-        /// The collection's owner — the holder itself.
-        owner: Address,
-        /// The badge-keyed holdings collection.
-        holdings: CollectionId,
-        /// Which instance, as the entry's own order key.
-        id: u64,
     },
 }
 

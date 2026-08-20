@@ -130,7 +130,6 @@ impl Builder {
         let method = Method {
             signature: MethodSignature {
                 totality: recorded.totality,
-                accessibility: recorded.accessibility,
                 issues: recorded.issues,
                 params: params.to_vec(),
                 abi: recorded.abi,

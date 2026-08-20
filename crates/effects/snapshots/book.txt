@@ -1,7 +1,6 @@
 PackageMetadata {
     methods: {
         "fill-asks": MethodSignature {
-            accessibility: Public,
             totality: Infallible,
             issues: None,
             params: [
@@ -123,7 +122,6 @@ PackageMetadata {
             ],
         },
         "place-ask": MethodSignature {
-            accessibility: Public,
             totality: Fallible,
             issues: None,
             params: [

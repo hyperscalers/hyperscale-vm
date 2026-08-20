@@ -1,33 +1,6 @@
 PackageMetadata {
     methods: {
         "cast-param-vote": MethodSignature {
-            accessibility: Guarded(
-                Require(
-                    Claim(
-                        SelfResource {
-                            material: [
-                                Literal(
-                                    Bytes(
-                                        [
-                                            111,
-                                            119,
-                                            110,
-                                            101,
-                                            114,
-                                            45,
-                                            98,
-                                            97,
-                                            100,
-                                            103,
-                                            101,
-                                        ],
-                                    ),
-                                ),
-                            ],
-                        },
-                    ),
-                ),
-            ),
             totality: Infallible,
             issues: None,
             params: [
@@ -38,6 +11,36 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
+                Requires {
+                    guard: None,
+                    condition: Satisfies {
+                        rule: Require(
+                            Claim(
+                                SelfResource {
+                                    material: [
+                                        Literal(
+                                            Bytes(
+                                                [
+                                                    111,
+                                                    119,
+                                                    110,
+                                                    101,
+                                                    114,
+                                                    45,
+                                                    98,
+                                                    97,
+                                                    100,
+                                                    103,
+                                                    101,
+                                                ],
+                                            ),
+                                        ),
+                                    ],
+                                },
+                            ),
+                        ),
+                    },
+                },
                 Effect {
                     guard: None,
                     target: Point(
@@ -55,7 +58,7 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    0,
+                    1,
                 ),
                 Derived(
                     Arg(
@@ -75,39 +78,42 @@ PackageMetadata {
             ],
         },
         "clear-param-vote": MethodSignature {
-            accessibility: Guarded(
-                Require(
-                    Claim(
-                        SelfResource {
-                            material: [
-                                Literal(
-                                    Bytes(
-                                        [
-                                            111,
-                                            119,
-                                            110,
-                                            101,
-                                            114,
-                                            45,
-                                            98,
-                                            97,
-                                            100,
-                                            103,
-                                            101,
-                                        ],
-                                    ),
-                                ),
-                            ],
-                        },
-                    ),
-                ),
-            ),
             totality: Infallible,
             issues: None,
             params: [],
             outputs: [],
             denominations: [],
             effects: [
+                Requires {
+                    guard: None,
+                    condition: Satisfies {
+                        rule: Require(
+                            Claim(
+                                SelfResource {
+                                    material: [
+                                        Literal(
+                                            Bytes(
+                                                [
+                                                    111,
+                                                    119,
+                                                    110,
+                                                    101,
+                                                    114,
+                                                    45,
+                                                    98,
+                                                    97,
+                                                    100,
+                                                    103,
+                                                    101,
+                                                ],
+                                            ),
+                                        ),
+                                    ],
+                                },
+                            ),
+                        ),
+                    },
+                },
                 Effect {
                     guard: None,
                     target: Point(
@@ -125,38 +131,11 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    0,
+                    1,
                 ),
             ],
         },
         "deactivate-validator": MethodSignature {
-            accessibility: Guarded(
-                Require(
-                    Claim(
-                        SelfResource {
-                            material: [
-                                Literal(
-                                    Bytes(
-                                        [
-                                            111,
-                                            119,
-                                            110,
-                                            101,
-                                            114,
-                                            45,
-                                            98,
-                                            97,
-                                            100,
-                                            103,
-                                            101,
-                                        ],
-                                    ),
-                                ),
-                            ],
-                        },
-                    ),
-                ),
-            ),
             totality: Infallible,
             issues: None,
             params: [
@@ -165,6 +144,36 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
+                Requires {
+                    guard: None,
+                    condition: Satisfies {
+                        rule: Require(
+                            Claim(
+                                SelfResource {
+                                    material: [
+                                        Literal(
+                                            Bytes(
+                                                [
+                                                    111,
+                                                    119,
+                                                    110,
+                                                    101,
+                                                    114,
+                                                    45,
+                                                    98,
+                                                    97,
+                                                    100,
+                                                    103,
+                                                    101,
+                                                ],
+                                            ),
+                                        ),
+                                    ],
+                                },
+                            ),
+                        ),
+                    },
+                },
                 Requires {
                     guard: None,
                     condition: Holds {
@@ -212,33 +221,6 @@ PackageMetadata {
             ],
         },
         "register-validator": MethodSignature {
-            accessibility: Guarded(
-                Require(
-                    Claim(
-                        SelfResource {
-                            material: [
-                                Literal(
-                                    Bytes(
-                                        [
-                                            111,
-                                            119,
-                                            110,
-                                            101,
-                                            114,
-                                            45,
-                                            98,
-                                            97,
-                                            100,
-                                            103,
-                                            101,
-                                        ],
-                                    ),
-                                ),
-                            ],
-                        },
-                    ),
-                ),
-            ),
             totality: Infallible,
             issues: None,
             params: [
@@ -249,6 +231,36 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
+                Requires {
+                    guard: None,
+                    condition: Satisfies {
+                        rule: Require(
+                            Claim(
+                                SelfResource {
+                                    material: [
+                                        Literal(
+                                            Bytes(
+                                                [
+                                                    111,
+                                                    119,
+                                                    110,
+                                                    101,
+                                                    114,
+                                                    45,
+                                                    98,
+                                                    97,
+                                                    100,
+                                                    103,
+                                                    101,
+                                                ],
+                                            ),
+                                        ),
+                                    ],
+                                },
+                            ),
+                        ),
+                    },
+                },
                 Requires {
                     guard: None,
                     condition: Holds {
@@ -289,7 +301,7 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    1,
+                    2,
                 ),
                 Derived(
                     Arg(
@@ -309,7 +321,6 @@ PackageMetadata {
             ],
         },
         "stake": MethodSignature {
-            accessibility: Public,
             totality: Infallible,
             issues: Some(
                 [],
@@ -364,33 +375,6 @@ PackageMetadata {
             ],
         },
         "unjail": MethodSignature {
-            accessibility: Guarded(
-                Require(
-                    Claim(
-                        SelfResource {
-                            material: [
-                                Literal(
-                                    Bytes(
-                                        [
-                                            111,
-                                            119,
-                                            110,
-                                            101,
-                                            114,
-                                            45,
-                                            98,
-                                            97,
-                                            100,
-                                            103,
-                                            101,
-                                        ],
-                                    ),
-                                ),
-                            ],
-                        },
-                    ),
-                ),
-            ),
             totality: Infallible,
             issues: None,
             params: [
@@ -399,6 +383,36 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
+                Requires {
+                    guard: None,
+                    condition: Satisfies {
+                        rule: Require(
+                            Claim(
+                                SelfResource {
+                                    material: [
+                                        Literal(
+                                            Bytes(
+                                                [
+                                                    111,
+                                                    119,
+                                                    110,
+                                                    101,
+                                                    114,
+                                                    45,
+                                                    98,
+                                                    97,
+                                                    100,
+                                                    103,
+                                                    101,
+                                                ],
+                                            ),
+                                        ),
+                                    ],
+                                },
+                            ),
+                        ),
+                    },
+                },
                 Requires {
                     guard: None,
                     condition: Holds {
@@ -446,7 +460,6 @@ PackageMetadata {
             ],
         },
         "unstake": MethodSignature {
-            accessibility: Public,
             totality: Infallible,
             issues: Some(
                 [],
