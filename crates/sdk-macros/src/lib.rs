@@ -966,6 +966,17 @@ fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
                 denomination: None,
             },
         ),
+        (
+            "resource".to_owned(),
+            Field {
+                slot: RESOURCE.0,
+                kind: FieldKind::Keyed,
+                element: Some(syn::parse_quote!(
+                    ::core::option::Option<::hyperscale_vm_sdk::state::ResourceRecord>
+                )),
+                denomination: None,
+            },
+        ),
     ]);
     // A package with no configuration struct has no configuration to
     // read, and `config()` is a name it never gets rather than one that
@@ -1575,6 +1586,16 @@ fn authoring_accessors(state: &syn::Ident, config: Option<&syn::Ident>) -> Token
             > {
                 ::core::unimplemented!("a contract body runs on the guest")
             }
+
+            /// The record cell of a resource this instance issues, named
+            /// by its declared `#[resource]` struct.
+            fn resource<K: ::hyperscale_vm_sdk::state::Mark>(
+                &self,
+                resource: K,
+            ) -> ::hyperscale_vm_sdk::state::ResourceCell<K::Kind> {
+                let _ = resource;
+                ::core::unimplemented!("a contract body runs on the guest")
+            }
         }
     )
 }
@@ -1717,14 +1738,32 @@ fn resource_kind(attr: &syn::Attribute) -> syn::Result<ResourceKind> {
 fn resource_marks(declared: &[(String, Vec<u8>, ResourceKind)]) -> Vec<syn::Item> {
     declared
         .iter()
-        .map(|(name, mark, _)| {
+        .flat_map(|(name, mark, kind)| {
             let ident = syn::Ident::new(&screaming(name), Span::call_site());
             let bytes = syn::LitByteStr::new(mark, Span::call_site());
             let doc = format!("The mark separating `{name}` from this package's other resources.");
-            syn::parse_quote!(
+            let mark_const: syn::Item = syn::parse_quote!(
                 #[doc = #doc]
                 pub const #ident: &[u8] = #bytes;
-            )
+            );
+            // The declared kind, readable from the type: what lets the
+            // `resource` accessor answer a handle whose surface matches
+            // the declaration.
+            let struct_ident = syn::Ident::new(name, Span::call_site());
+            let kind_ty: syn::Type = match kind {
+                ResourceKind::Fungible => {
+                    syn::parse_quote!(::hyperscale_vm_sdk::state::Fungible)
+                }
+                ResourceKind::NonFungible => {
+                    syn::parse_quote!(::hyperscale_vm_sdk::state::NonFungible)
+                }
+            };
+            let mark_impl: syn::Item = syn::parse_quote!(
+                impl ::hyperscale_vm_sdk::state::Mark for #struct_ident {
+                    type Kind = #kind_ty;
+                }
+            );
+            [mark_const, mark_impl]
         })
         .collect()
 }

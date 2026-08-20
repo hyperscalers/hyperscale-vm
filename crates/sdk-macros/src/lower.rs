@@ -40,6 +40,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use hyperscale_vm_effects::vocabulary::RESOURCE;
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
@@ -704,6 +705,17 @@ impl<'a> Lowerer<'a> {
                      operation would derive its vacant fungible sibling, not it"
                 ),
             );
+        }
+    }
+
+    /// The key of a record-cell site — the mark-derived resource — where
+    /// `site` is one, which is what makes `create` on it the record's.
+    fn record_cell(&self, site: usize) -> Option<Term> {
+        match self.out.sites.get(site).map(|s| &s.target) {
+            Some(Target::Point { slot, material }) if *slot == RESOURCE.0 => {
+                material.first().cloned()
+            }
+            _ => None,
         }
     }
 
@@ -2212,6 +2224,16 @@ impl<'a> Lowerer<'a> {
                 code,
             };
         }
+        // A declared `#[resource]` struct in expression position is the
+        // resource it names — the same derivation `issued(Name)` spells,
+        // resolved here so an accessor takes the mark directly.
+        if let Some((_, mark, kind)) = self.resources.iter().find(|(r, ..)| *r == name) {
+            let term = Term::SelfResource(*kind, mark.clone());
+            return Eval {
+                val: Val::Term(term.clone()),
+                code: Code::Term(term),
+            };
+        }
         if let Some(index) = self.params.iter().position(|(p, _)| *p == name) {
             let slot = u32::try_from(index).expect("a parameter list is shorter than u32");
             let term = Term::Arg(slot);
@@ -2732,6 +2754,44 @@ impl<'a> Lowerer<'a> {
                         code: Code::Rust(quote!(#receiver_code.take(#(#rewritten),*))),
                     };
                 }
+                // The record cell's create writes the canonical record.
+                // The kind is the mark's — the site's key carries it — so
+                // the body states only what the address cannot: a
+                // fungible record's display quantization.
+                if call.method == "create"
+                    && let Some(Term::SelfResource(kind, _)) = self.record_cell(site)
+                {
+                    let record = match kind {
+                        ResourceKind::Fungible => {
+                            let Some(divisibility) = rewritten.first() else {
+                                self.error(
+                                    call.span(),
+                                    "a fungible record states its display quantization: \
+                                     `create(<divisibility>)`",
+                                );
+                                return Eval::absent(call.span(), "a record with no divisibility");
+                            };
+                            quote!(::hyperscale_vm_sdk::state::ResourceRecord {
+                                kind: ::hyperscale_vm_sdk::state::Fungibility::Fungible {
+                                    divisibility: #divisibility,
+                                },
+                            })
+                        }
+                        ResourceKind::NonFungible => {
+                            if !rewritten.is_empty() {
+                                self.error(
+                                    call.span(),
+                                    "a non-fungible record has nothing to state — the kind \
+                                     is the mark's and instances are whole by construction",
+                                );
+                            }
+                            quote!(::hyperscale_vm_sdk::state::ResourceRecord {
+                                kind: ::hyperscale_vm_sdk::state::Fungibility::NonFungible,
+                            })
+                        }
+                    };
+                    return Eval::plain(quote!(#receiver_code.create(#record)));
+                }
                 let name = &call.method;
                 Eval::plain(quote!(#receiver_code.#name(#(#rewritten),*)))
             }
@@ -2856,7 +2916,26 @@ impl<'a> Lowerer<'a> {
         }
         match field.kind {
             // A leaf of the family, at the key the accessor was handed.
-            FieldKind::Keyed => self.on_field(&field, &[], "at", &evals, call),
+            // The record cell's key is a declared resource and nothing
+            // else: the kind the record states is the mark's, so a key
+            // the declaration cannot see the kind of names no record.
+            FieldKind::Keyed => {
+                if name == "resource"
+                    && !matches!(
+                        evals.first().map(|e| &e.val),
+                        Some(Val::Term(Term::SelfResource(..)))
+                    )
+                {
+                    self.error(
+                        call.args.span(),
+                        "`resource` names a declared `#[resource]` struct — the record \
+                         it creates states the mark's own kind, which is the \
+                         declaration's to know",
+                    );
+                    return Eval::absent(call.args.span(), "an undeclared resource");
+                }
+                self.on_field(&field, &[], "at", &evals, call)
+            }
             // The sub-collection under the cell, which the body then
             // opens an interval on.
             FieldKind::Ordered => {

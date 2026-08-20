@@ -74,7 +74,11 @@ pub fn issued_resource(
 
 /// The decoder cap for a record cell: a flat two-field struct, one level
 /// of body over the frame.
-const RECORD_WIRE_DEPTH: usize = 4;
+///
+/// Public because the record crosses one boundary: the authoring surface
+/// writes the cell a client later decodes, and the two agree on the cap
+/// by reading it here.
+pub const RECORD_WIRE_DEPTH: usize = 4;
 
 /// What a record states about its resource, in the shape a client reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]

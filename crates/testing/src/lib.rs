@@ -357,6 +357,15 @@ impl Chain {
 
     /// What `owner` holds of `resource`.
     ///
+    /// One committed cell's bytes, or nothing where no cell is.
+    ///
+    /// The raw read a test uses to hold a written cell to the exact
+    /// bytes the protocol's own encoder produces.
+    #[must_use]
+    pub fn cell(&self, key: SubstateKey) -> Option<Vec<u8>> {
+        self.store.cell(key)
+    }
+
     /// # Panics
     ///
     /// If the cell is there and is not an amount.
