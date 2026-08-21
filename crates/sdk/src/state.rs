@@ -27,10 +27,10 @@
 //! what resolves a collection to one of those parameters is the lowering
 //! — which is why [`Keyed`], [`Ordered`] and [`Unordered`] have no body
 //! on either target: a call to `at` is rewritten to the handle it named,
-//! never made. The same holds for [`mint`], `issued(<Resource>)` and
-//! [`fresh_id`], each of which the lowering answers from the declaration
-//! — `issued` all the way down to the name, which resolves to no
-//! function at all. Reaching a stub at run time is what makes an
+//! never made. The same holds for `<Resource>::mint(..)`,
+//! `issued(<Resource>)` and [`fresh_id`], each of which the lowering
+//! answers from the declaration — `issued` all the way down to the name,
+//! which resolves to no function at all. Reaching a stub at run time is what makes an
 //! authoring half that was called directly fail rather than execute.
 //!
 //! The accessors that do have a guest body are always inlined, because
