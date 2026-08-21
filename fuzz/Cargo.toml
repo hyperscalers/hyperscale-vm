@@ -19,6 +19,7 @@ hyperscale-vm-harness = { path = "../crates/harness" }
 hyperscale-vm-kernel = { path = "../crates/kernel" }
 hyperscale-vm-ref = { path = "../crates/ref" }
 hyperscale-vm-runtime = { path = "../crates/runtime" }
+hyperscale-vm-types = { path = "../crates/types" }
 libfuzzer-sys = "0.4.13"
 wasm-smith = "0.255.0"
 wasmtime = "=47.0.3"

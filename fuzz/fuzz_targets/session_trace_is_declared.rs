@@ -15,29 +15,29 @@ use std::sync::{Arc, LazyLock};
 
 use arbitrary::Unstructured;
 use hyperscale_vm_effects::{
-    Address, Effect, EffectSet, EffectTarget, Hash32, Hasher, Mode, RoleId, SubstateKey,
-    TestHasher, child_key,
+    Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
-use hyperscale_vm_harness::session_host::SessionHost;
-use hyperscale_vm_kernel::{
-    Capability, EnvInputs, KernelSession, MemoryStore, Outcome, OverlayStore, SubstateStore,
-    TxHash, encode_amount,
-};
+use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_ref::{
-    CVal, CanonError, ExecError, RefComponent, RefComponentInstance, ResourceKind,
+    CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance,
 };
 use hyperscale_vm_runtime::{
-    DeltaCell, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
+    DeltaCell, HostRefusal, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
     add_kernel_to_linker, blessed_engine,
+};
+use hyperscale_vm_types::{
+    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use libfuzzer_sys::fuzz_target;
 use wasmtime::component::{Component, Instance, Linker, Resource};
-use wasmtime::{Engine, Store};
+use wasmtime::{Engine, Error, Store};
 
 const FUEL: u64 = 1_000_000_000;
-const ASKS: RoleId = RoleId(4);
-const BOOK: Address = Address([0x40; 16]);
+const ASKS: CollectionId = CollectionId([4; 16]);
+/// What the two cells the transfer moves between hold.
+const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
 const EXPORTS: &[&str] = &[
     "transfer",
@@ -46,13 +46,14 @@ const EXPORTS: &[&str] = &[
     "scan-sum",
     "fill",
     "place",
+    "no-such-entry",
     "escape",
     "forge",
     "forge-zero",
+    "hash-tag",
     "read-value",
     "handle-value",
     "leak",
-    "bad-amount",
 ];
 
 struct Runtime {
@@ -76,7 +77,7 @@ static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
 struct Plan {
     committed: u128,
     reserve: u128,
-    locked_bytes: Vec<u8>,
+    config_bytes: Vec<u8>,
     rmw_bytes: Vec<u8>,
     readable_bytes: Vec<u8>,
     entries: Vec<(u128, Vec<u8>)>,
@@ -91,7 +92,7 @@ impl Plan {
     fn new(u: &mut Unstructured) -> arbitrary::Result<Self> {
         let committed = u.int_in_range(0..=1_000u32)?.into();
         let reserve = u.int_in_range(0..=1_200u32)?.into();
-        let locked_bytes = small_bytes(u, 1, 4)?;
+        let config_bytes = small_bytes(u, 1, 4)?;
         let rmw_bytes = small_bytes(u, 0, 4)?;
         let readable_bytes = small_bytes(u, 0, 4)?;
         let mut entries = Vec::new();
@@ -107,7 +108,7 @@ impl Plan {
         Ok(Self {
             committed,
             reserve,
-            locked_bytes,
+            config_bytes,
             rmw_bytes,
             readable_bytes,
             entries,
@@ -137,30 +138,33 @@ struct Fx {
     readable: SubstateKey,
 }
 
+fn owner(byte: u8) -> Address {
+    Address::new([byte; 31], AddressClass::Component)
+}
+
 /// Builds the store and the declared set; `None` when the plan produced a
 /// shape the effect model refuses (that refusal is not what this lane
 /// tests).
 fn fixture(plan: &Plan) -> Option<Fx> {
-    let sender = child_key(&TestHasher, Address([0x10; 16]), RoleId(1), &[]);
-    let recipient = child_key(&TestHasher, Address([0x20; 16]), RoleId(1), &[]);
-    let config = child_key(&TestHasher, Address([0x30; 16]), RoleId(3), &[]);
-    let rmw = child_key(&TestHasher, Address([0x30; 16]), RoleId(5), &[]);
-    let readable = child_key(&TestHasher, Address([0x30; 16]), RoleId(6), &[]);
-    let spare = child_key(&TestHasher, Address([0x50; 16]), RoleId(7), &[]);
+    let sender = child_key(&TestHasher, owner(0x10), SlotId(1), &[]);
+    let recipient = child_key(&TestHasher, owner(0x20), SlotId(1), &[]);
+    let config = child_key(&TestHasher, owner(0x30), SlotId(3), &[]);
+    let rmw = child_key(&TestHasher, owner(0x30), SlotId(5), &[]);
+    let readable = child_key(&TestHasher, owner(0x30), SlotId(6), &[]);
+    let spare = child_key(&TestHasher, owner(0x50), SlotId(7), &[]);
+    let book = owner(0x40);
 
     let mut store = MemoryStore::new();
     if plan.committed > 0 {
-        store.write(sender, encode_amount(plan.committed).to_vec()).ok()?;
+        store.write(sender, encode_amount(plan.committed).to_vec());
     }
-    store.write(config, plan.locked_bytes.clone()).ok()?;
-    store.lock(config).ok()?;
-    store.write(rmw, plan.rmw_bytes.clone()).ok()?;
-    store.write(readable, plan.readable_bytes.clone()).ok()?;
-    store.write(spare, vec![1]).ok()?;
+    store.write(config, plan.config_bytes.clone());
+    store.write(rmw, plan.rmw_bytes.clone());
+    store.write(readable, plan.readable_bytes.clone());
+    store.write(spare, vec![1]);
     for (order, value) in &plan.entries {
-        store.entry_write(BOOK, ASKS, *order, value.clone()).ok()?;
+        store.entry_write(book, ASKS, *order, value.clone());
     }
-    store.clear_log();
 
     let mut declared = EffectSet::new();
     let mut effects = vec![
@@ -174,9 +178,12 @@ fn fixture(plan: &Plan) -> Option<Fx> {
             target: EffectTarget::Point(recipient),
             mode: Mode::Delta,
         },
+        // The configuration leaf is ordinary state, read like any other:
+        // its immutability is the one-way door its declaration carries,
+        // not a mode of its own.
         Effect {
             target: EffectTarget::Point(config),
-            mode: Mode::Locked,
+            mode: Mode::Read,
         },
         Effect {
             target: EffectTarget::Point(rmw),
@@ -188,7 +195,7 @@ fn fixture(plan: &Plan) -> Option<Fx> {
         },
         Effect {
             target: EffectTarget::Range {
-                owner: BOOK,
+                owner: book,
                 collection: ASKS,
                 lo: plan.lo,
                 hi: plan.hi,
@@ -198,7 +205,7 @@ fn fixture(plan: &Plan) -> Option<Fx> {
         },
         Effect {
             target: EffectTarget::Range {
-                owner: BOOK,
+                owner: book,
                 collection: ASKS,
                 lo: plan.lo,
                 hi: plan.hi,
@@ -230,12 +237,39 @@ fn fixture(plan: &Plan) -> Option<Fx> {
     })
 }
 
+/// What each declared cell holds, aligned with the order the capability
+/// table is built in.
+///
+/// The two the transfer moves between, and nothing else: the
+/// read-modify-write cell and the ask ladder are written as bytes and as
+/// entries, which is what a cell denominating nothing is for.
+fn denominations(fx: &Fx) -> Vec<Option<ResourceAddr>> {
+    fx.declared
+        .iter()
+        .map(|effect| match effect.target {
+            EffectTarget::Point(key) if key == fx.sender || key == fx.recipient => Some(RESOURCE),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A session over the fixture, or `None` where the declaration is
+/// infeasible — an over-reservation refuses materialization identically
+/// on both lanes, and that refusal is not what this lane tests.
 fn session(fx: &Fx) -> Option<KernelSession> {
+    let declaration = Declaration {
+        set: fx.declared.clone(),
+        ordered: fx
+            .declared
+            .iter()
+            .zip(denominations(fx))
+            .map(|(effect, holds)| DeclaredAccess { effect, holds })
+            .collect(),
+        ..Declaration::default()
+    };
     KernelSession::materialize(
         OverlayStore::new(Arc::new(fx.store.clone())),
-        &fx.declared,
-        &fx.declared.iter().collect::<Vec<_>>(),
-        &[],
+        &declaration,
         TxHash(Hash32([0x33; 32])),
         EnvInputs {
             clock_ms: 424_242,
@@ -255,40 +289,39 @@ fn rep_where(caps: &[Capability], pred: impl Fn(&Capability) -> bool) -> u32 {
 }
 
 /// The handles each export receives, in parameter order.
-fn args_for(fx: &Fx, caps: &[Capability], export: &str) -> Vec<(u32, ResourceKind)> {
-    let point = |wanted: SubstateKey, kind: ResourceKind| {
+fn args_for(fx: &Fx, caps: &[Capability], export: &str) -> Vec<(u32, HandleKind)> {
+    let point = |wanted: SubstateKey, kind: HandleKind| {
         let rep = rep_where(caps, |c| match (kind, c) {
-            (ResourceKind::ReadCell, Capability::Read(key))
-            | (ResourceKind::LockedCell, Capability::Locked(key))
-            | (ResourceKind::WriteCell, Capability::Write(key))
-            | (ResourceKind::DeltaCell, Capability::Delta(key))
-            | (ResourceKind::ReserveCell, Capability::Reserve { key, .. }) => *key == wanted,
+            (HandleKind::ReadCell, Capability::Read(key))
+            | (HandleKind::WriteCell, Capability::Write(key))
+            | (HandleKind::DeltaCell, Capability::Delta(key))
+            | (HandleKind::ReserveCell, Capability::Reserve { key, .. }) => *key == wanted,
             _ => false,
         });
         (rep, kind)
     };
-    let range = |kind: ResourceKind| {
+    let range = |kind: HandleKind| {
         let rep = rep_where(caps, |c| {
             matches!(
                 (kind, c),
-                (ResourceKind::RangeRead, Capability::RangeRead { .. })
-                    | (ResourceKind::RangeWrite, Capability::RangeWrite { .. })
+                (HandleKind::RangeRead, Capability::RangeRead(..))
+                    | (HandleKind::RangeWrite, Capability::RangeWrite(..))
             )
         });
         (rep, kind)
     };
     match export {
         "transfer" => vec![
-            point(fx.sender, ResourceKind::ReserveCell),
-            point(fx.recipient, ResourceKind::DeltaCell),
+            point(fx.sender, HandleKind::ReserveCell),
+            point(fx.recipient, HandleKind::DeltaCell),
         ],
-        "peek" => vec![point(fx.config, ResourceKind::LockedCell)],
-        "rmw" => vec![point(fx.rmw, ResourceKind::WriteCell)],
-        "scan-sum" => vec![range(ResourceKind::RangeRead)],
-        "fill" | "place" => vec![range(ResourceKind::RangeWrite)],
-        "escape" | "bad-amount" => vec![point(fx.recipient, ResourceKind::DeltaCell)],
-        "leak" | "handle-value" => vec![point(fx.readable, ResourceKind::ReadCell)],
-        "forge" | "forge-zero" => vec![],
+        "peek" => vec![point(fx.config, HandleKind::ReadCell)],
+        "rmw" => vec![point(fx.rmw, HandleKind::WriteCell)],
+        "scan-sum" => vec![range(HandleKind::RangeRead)],
+        "fill" | "place" | "no-such-entry" => vec![range(HandleKind::RangeWrite)],
+        "escape" => vec![point(fx.recipient, HandleKind::DeltaCell)],
+        "leak" | "handle-value" | "read-value" => vec![point(fx.readable, HandleKind::ReadCell)],
+        "forge" | "forge-zero" | "hash-tag" => vec![],
         other => unreachable!("unknown export {other}"),
     }
 }
@@ -300,7 +333,7 @@ enum LaneOutcome {
     UnknownHandle,
     WrongHandleType,
     BorrowsRemain,
-    Refusal(String),
+    Refusal(AbortReason),
     Other(String),
 }
 
@@ -313,26 +346,35 @@ impl LaneOutcome {
     }
 }
 
-fn classify_blessed(msg: &str) -> LaneOutcome {
+/// The blessed engine's failure as a lane outcome.
+///
+/// A kernel refusal comes back as the class the host assigned it —
+/// downcast, not parsed — which is the one comparison here that has to be
+/// exact. The canonical-ABI classes below still read from the engine's
+/// prose, because wasmtime words them and resolves them to no trap kind;
+/// they are lane bookkeeping and reach no receipt.
+fn classify_blessed(error: &Error) -> LaneOutcome {
+    if let Some(refusal) = error.downcast_ref::<HostRefusal>() {
+        return LaneOutcome::Refusal(refusal.0);
+    }
+    let msg = format!("{error:#}");
     if msg.contains("unknown handle index") {
         LaneOutcome::UnknownHandle
     } else if msg.contains("borrow handles") {
         LaneOutcome::BorrowsRemain
-    } else if let Some(tail) = msg.split("kernel refusal: ").nth(1) {
-        LaneOutcome::Refusal(tail.lines().next().unwrap_or(tail).to_string())
     } else if msg.contains("resource") && msg.contains("type") {
         LaneOutcome::WrongHandleType
     } else {
-        LaneOutcome::Other(msg.to_string())
+        LaneOutcome::Other(msg)
     }
 }
 
 fn call1<T: 'static>(
-    store: &mut Store<SessionHost>,
+    store: &mut Store<KernelSession>,
     instance: &Instance,
     export: &str,
     rep: u32,
-) -> Result<u64, wasmtime::Error> {
+) -> Result<u64, Error> {
     let f = instance.get_typed_func::<(Resource<T>,), (u64,)>(&mut *store, export)?;
     f.call(&mut *store, (Resource::new_borrow(rep),))
         .map(|(v,)| v)
@@ -340,13 +382,13 @@ fn call1<T: 'static>(
 
 /// Runs the plan's call sequence on one instance, stopping at the first
 /// non-value outcome (a trapped store cannot be re-entered).
-fn run_blessed(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, SessionHost, u64)> {
+fn run_blessed(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, KernelSession, u64)> {
     let rt = &*RUNTIME;
-    let host = SessionHost(session(fx)?);
-    let caps = host.0.capabilities().to_vec();
+    let host = session(fx)?;
+    let caps = host.capabilities().to_vec();
     let mut store = Store::new(&rt.engine, host);
     store.set_fuel(FUEL).expect("fuel is configured");
-    let mut linker = Linker::<SessionHost>::new(&rt.engine);
+    let mut linker = Linker::<KernelSession>::new(&rt.engine);
     add_kernel_to_linker(&mut linker).expect("kernel world links");
     let instance = linker
         .instantiate(&mut store, &rt.component)
@@ -355,7 +397,7 @@ fn run_blessed(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, SessionHost, u
     let mut outcomes = Vec::new();
     for export in &plan.calls {
         let args = args_for(fx, &caps, export);
-        let result: Result<u64, wasmtime::Error> = match (*export, args.as_slice()) {
+        let result: Result<u64, Error> = match (*export, args.as_slice()) {
             ("transfer", [(a, _), (b, _)]) => instance
                 .get_typed_func::<(Resource<ReserveCell>, Resource<DeltaCell>), (u64,)>(
                     &mut store, export,
@@ -367,29 +409,32 @@ fn run_blessed(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, SessionHost, u
                     )
                     .map(|(v,)| v)
                 }),
-            ("forge" | "forge-zero", []) => instance
+            ("forge" | "forge-zero" | "hash-tag", []) => instance
                 .get_typed_func::<(), (u64,)>(&mut store, export)
                 .and_then(|f| f.call(&mut store, ()).map(|(v,)| v)),
             (_, [(rep, kind)]) => match kind {
-                ResourceKind::ReadCell => call1::<ReadCell>(&mut store, &instance, export, *rep),
-                ResourceKind::LockedCell => {
-                    call1::<LockedCell>(&mut store, &instance, export, *rep)
-                }
-                ResourceKind::WriteCell => call1::<WriteCell>(&mut store, &instance, export, *rep),
-                ResourceKind::DeltaCell => call1::<DeltaCell>(&mut store, &instance, export, *rep),
-                ResourceKind::ReserveCell => {
+                HandleKind::ReadCell => call1::<ReadCell>(&mut store, &instance, export, *rep),
+                HandleKind::WriteCell => call1::<WriteCell>(&mut store, &instance, export, *rep),
+                HandleKind::DeltaCell => call1::<DeltaCell>(&mut store, &instance, export, *rep),
+                HandleKind::ReserveCell => {
                     call1::<ReserveCell>(&mut store, &instance, export, *rep)
                 }
-                ResourceKind::RangeRead => call1::<RangeRead>(&mut store, &instance, export, *rep),
-                ResourceKind::RangeWrite => {
-                    call1::<RangeWrite>(&mut store, &instance, export, *rep)
-                }
+                HandleKind::RangeRead => call1::<RangeRead>(&mut store, &instance, export, *rep),
+                HandleKind::RangeWrite => call1::<RangeWrite>(&mut store, &instance, export, *rep),
+                // Nothing this fixture exports takes value or issues any;
+                // the bucket lane drives both, and the value handles with
+                // it.
+                HandleKind::Bucket
+                | HandleKind::Issuer
+                | HandleKind::AmountCell
+                | HandleKind::AmountRead
+                | HandleKind::InstanceRange => unreachable!("{export} takes no value handle"),
             },
             _ => unreachable!("unexpected arg shape for {export}"),
         };
         let outcome = match result {
             Ok(v) => LaneOutcome::Value(v),
-            Err(e) => classify_blessed(&format!("{e:#}")),
+            Err(e) => classify_blessed(&e),
         };
         let stop = outcome.value().is_none();
         outcomes.push(outcome);
@@ -401,12 +446,12 @@ fn run_blessed(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, SessionHost, u
     Some((outcomes, store.into_data(), fuel))
 }
 
-fn run_ref(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, SessionHost, u64)> {
+fn run_ref(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, KernelSession, u64)> {
     let rt = &*RUNTIME;
-    let host = SessionHost(session(fx)?);
-    let caps = host.0.capabilities().to_vec();
+    let host = session(fx)?;
+    let caps = host.capabilities().to_vec();
     let mut instance = RefComponentInstance::instantiate(&rt.reference, host, FUEL)
-        .expect("fixture instantiates");
+        .unwrap_or_else(|(_, error)| panic!("fixture instantiates: {error}"));
 
     let mut outcomes = Vec::new();
     for export in &plan.calls {
@@ -422,7 +467,7 @@ fn run_ref(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, SessionHost, u64)>
             Err(ExecError::Canon(CanonError::UnknownHandle)) => LaneOutcome::UnknownHandle,
             Err(ExecError::Canon(CanonError::WrongHandleType)) => LaneOutcome::WrongHandleType,
             Err(ExecError::Canon(CanonError::BorrowsRemain)) => LaneOutcome::BorrowsRemain,
-            Err(ExecError::Canon(CanonError::Host(m))) => LaneOutcome::Refusal(m),
+            Err(ExecError::Canon(CanonError::Host(reason))) => LaneOutcome::Refusal(reason),
             Err(e) => LaneOutcome::Other(format!("{e:?}")),
         };
         let stop = outcome.value().is_none();
@@ -450,8 +495,8 @@ fuzz_target!(|data: &[u8]| {
 
     assert_eq!(blessed, reference, "outcomes diverged for {:?}", plan.calls);
     assert_eq!(
-        blessed_host.0.store().access_log(),
-        ref_host.0.store().access_log(),
+        blessed_host.store().access_log(),
+        ref_host.store().access_log(),
         "access logs diverged for {:?}",
         plan.calls
     );
@@ -460,14 +505,11 @@ fuzz_target!(|data: &[u8]| {
     // The oracle: every recorded access inside the declared set, whatever
     // the sequence did.
     let value = blessed.last().and_then(LaneOutcome::value);
-    let outcome = Outcome::Completed { value };
     let (blessed_receipt, _) = blessed_host
-        .0
-        .finish(outcome.clone(), blessed_fuel)
+        .finish(value, blessed_fuel)
         .expect("oracle clean on the blessed side");
     let (ref_receipt, _) = ref_host
-        .0
-        .finish(outcome, ref_fuel)
+        .finish(value, ref_fuel)
         .expect("oracle clean on the reference side");
     assert_eq!(blessed_receipt, ref_receipt, "receipts diverged");
 });
