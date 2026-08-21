@@ -23,7 +23,7 @@ use common::world::*;
 #[test]
 fn the_registry_binds_checks_and_drains_hashed_entries() {
     let world = world();
-    let store = MemoryStore::new();
+    let store = sealed_store();
 
     let bind = |name: u64, value: u128| graph(|b| registry::bind(b, registry_addr(), name, value));
     let check =
@@ -92,7 +92,7 @@ fn the_registry_binds_checks_and_drains_hashed_entries() {
 #[test]
 fn non_fungibles_mint_transfer_and_burn_end_to_end() {
     let world = world();
-    let store = MemoryStore::new();
+    let store = sealed_store();
 
     let resource = nf_resource();
     let holder_a = nf_holder(7);
@@ -201,7 +201,7 @@ fn a_mint_onto_an_instance_already_there_is_refused() {
     let id = fresh_id(&TestHasher, admitted.identity(), 0, 0);
     let data = instance_data_key(&TestHasher, nf_issuer(), nf_resource(), id);
 
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store.write(data, id.to_le_bytes().to_vec()).unwrap();
 
     let (results, _) = run_both_signed(

@@ -83,6 +83,7 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() {
     let world = (cache, instances);
 
     let mut store = MemoryStore::new();
+    seal(&mut store, &mirror_meta());
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();

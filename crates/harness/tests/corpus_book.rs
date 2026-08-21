@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 use hyperscale_vm_effects::{AdmissionError, Hash32, ManifestGraph, TestHasher, admit, fresh_id};
 use hyperscale_vm_fixtures::book;
 use hyperscale_vm_harness::driver::{amount_of, vault};
-use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{Address, EffectTarget, EntryKey, TxHash, encode_amount};
 
@@ -101,8 +100,7 @@ fn fill_provisions_the_interval_and_the_fence() {
 #[test]
 fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
     let world = world();
-    let mut store = MemoryStore::new();
-    seal(&mut store, &book_meta());
+    let mut store = sealed_store();
     store
         .write(vault(MAKER, BASE), encode_amount(60).to_vec())
         .unwrap();

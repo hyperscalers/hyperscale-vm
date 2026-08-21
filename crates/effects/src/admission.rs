@@ -14,11 +14,14 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
-use hyperscale_vm_types::{Address, EffectConflict, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{
+    Address, CallTarget, Effect, EffectConflict, EffectTarget, Mode, Presence, PrincipalAddr,
+    ResourceAddr,
+};
 
 use crate::dsl::{
-    Declaration, EvalError, EvalInputs, SealedResources, evaluate_declaration, evaluate_expr,
-    materialized_kind,
+    Declaration, DeclaredAccess, EvalError, EvalInputs, SealedResources, evaluate_declaration,
+    evaluate_expr, materialized_kind,
 };
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
@@ -32,7 +35,8 @@ use crate::resource::{ResourceKind, issued_resource};
 use crate::route::{FrameDeclaration, MAX_MANIFEST_NODES};
 use crate::rule::Rule;
 use crate::signature::{AbiParam, MethodSignature, ParamType};
-use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value};
+use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};
+use crate::vocabulary::CONFIG;
 
 /// The bound on yield parameters one intent may declare. A wire bound.
 ///
@@ -930,13 +934,13 @@ impl Lower<'_> {
         // The frame: this node's effect signature, evaluated over the
         // same inputs everything above evaluated over. The one place the
         // declaration comes into being.
-        let frame = evaluate_declaration(&signature.effects, &eval_inputs, self.hasher).map_err(
-            |source| AdmissionError::Eval {
+        let mut frame = evaluate_declaration(&signature.effects, &eval_inputs, self.hasher)
+            .map_err(|source| AdmissionError::Eval {
                 node: node_index,
                 source,
-            },
-        )?;
+            })?;
         own_prefix_only(&frame, node.target.address(), node_index)?;
+        let fence = self.fence(node.target, &mut frame)?;
         // The frame's handles occupy the run of the capability table
         // starting here, so the offset is taken before the frame is
         // logged.
@@ -952,6 +956,9 @@ impl Lower<'_> {
                 Condition::Satisfies { rule } => requires.push(rule.clone()),
                 Condition::Holds { .. } => self.declaration.conditions.push(condition.clone()),
             }
+        }
+        if let Some(condition) = fence {
+            self.declaration.conditions.push(condition);
         }
         self.calls.push(lower_call(
             node_index,
@@ -996,6 +1003,55 @@ impl Lower<'_> {
             evidence,
         });
         Ok(())
+    }
+
+    /// The instantiation fence for a node's target: the read of its
+    /// configuration leaf, appended to `frame`, and the presence the
+    /// judging shard holds it to.
+    ///
+    /// The protocol's own term rather than the package's. Whether a
+    /// creation finished is a question about the target's address class
+    /// — a component derives from a record and has one to finish, a
+    /// principal derives from a key and has none — so it is answered
+    /// where the class is known and not by every method of every
+    /// package restating it. A package cannot omit what it does not
+    /// write, which is what makes the fence universal over hand-written
+    /// declarations and derived ones alike.
+    ///
+    /// The read is appended, so every clause span the signature's own
+    /// ABI bindings name keeps the position it had.
+    ///
+    /// A node that writes the leaf is the seal itself, and takes no
+    /// presence: its own `Absent` door is what it declares, and the
+    /// publish gate admits no other write at the slot.
+    fn fence(
+        &self,
+        target: CallTarget,
+        frame: &mut Declaration,
+    ) -> Result<Option<Condition>, AdmissionError> {
+        let CallTarget::Component(address) = target else {
+            return Ok(None);
+        };
+        let leaf = EffectTarget::Point(child_key(self.hasher, address, CONFIG, &[]));
+        let seals = frame.ordered.iter().any(|access| {
+            access.effect.target == leaf && matches!(access.effect.mode, Mode::Write)
+        });
+        if seals {
+            return Ok(None);
+        }
+        let effect = Effect {
+            target: leaf,
+            mode: Mode::Read,
+        };
+        frame.set.insert(effect)?;
+        frame.ordered.push(DeclaredAccess {
+            effect,
+            holds: None,
+        });
+        Ok(Some(Condition::Holds {
+            target: leaf,
+            presence: Presence::Present,
+        }))
     }
 
     /// Bind the node's arguments against its declared parameters: a

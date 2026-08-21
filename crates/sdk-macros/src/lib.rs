@@ -1391,19 +1391,7 @@ fn lower_method(
         }
     }
     let total = claim.is_some();
-    // Every method of an instance-serving package carries the
-    // instantiation fence, except the seal itself: `instantiate` is the
-    // one method that must run while the leaf is absent, and it carries
-    // the opposite door. A principal has no creation to finish, so its
-    // methods carry nothing.
-    let fenced = matches!(serves, client::Serves::Instances) && published != "instantiate";
-    let closure = emit::declaration(
-        &lowered,
-        &gate_calls(&gate, &lowered),
-        declining,
-        total,
-        fenced,
-    );
+    let closure = emit::declaration(&lowered, &gate_calls(&gate, &lowered), declining, total);
     let declaration = quote!(
         .method(#published, &[#(#kinds),*], #closure)
     );

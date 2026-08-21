@@ -203,6 +203,7 @@ mod tests {
         addr, instance_of, meta_of, method, payer_payee_world, pkg, resolver, resource, self_point,
     };
     use crate::types::{EdgeContent, ShardId, SlotId, Value, child_key, package_slot};
+    use crate::vocabulary::CONFIG;
 
     const fn alice() -> PrincipalAddr {
         PrincipalAddr::new([0xAA; 31])
@@ -299,11 +300,31 @@ mod tests {
                     mode: Mode::Delta,
                 },
                 Effect {
+                    target: EffectTarget::Point(child_key(
+                        &TestHasher,
+                        instance_of("payer"),
+                        CONFIG,
+                        &[],
+                    )),
+                    mode: Mode::Read,
+                },
+                Effect {
                     target: point(instance_of("payee"), SlotId(2)),
                     mode: Mode::Delta,
                 },
+                Effect {
+                    target: EffectTarget::Point(child_key(
+                        &TestHasher,
+                        instance_of("payee"),
+                        CONFIG,
+                        &[],
+                    )),
+                    mode: Mode::Read,
+                },
             ],
-            "each node's clauses in node order"
+            "each node's clauses in node order, its fence read last — \
+             appended, so every clause span an ABI binding names keeps \
+             the position its signature gave it"
         );
     }
 
@@ -358,6 +379,17 @@ mod tests {
         );
     }
 
+    /// The effects a package's own clauses declared, with the
+    /// instantiation fence's read of the target's configuration leaf
+    /// dropped.
+    ///
+    /// Admission puts that read on every component call, so a test about
+    /// what a signature declares counts what the signature wrote.
+    fn own_effects(set: &EffectSet, target: impl Into<Address>) -> usize {
+        let leaf = EffectTarget::Point(child_key(&TestHasher, target, CONFIG, &[]));
+        set.iter().filter(|effect| effect.target != leaf).count()
+    }
+
     #[test]
     fn a_locked_read_declares_its_target() {
         let mut cache = MetadataCache::new();
@@ -380,7 +412,7 @@ mod tests {
         // target is actually locked is the kernel's to refuse, since only
         // the store knows.
         let declared = routing.per_shard.values().next().unwrap();
-        assert_eq!(declared.iter().count(), 2);
+        assert_eq!(own_effects(declared, instance_of("oracle")), 2);
         for slot in [SlotId(1), SlotId(2)] {
             assert!(declared.contains(&Effect {
                 target: point(instance_of("oracle"), slot),
@@ -652,20 +684,30 @@ mod tests {
         let (cache, instances, graph) = guarded_world(Value::U64(1), Value::U64(2), Vec::new());
         let routing = routed(&graph, &cache, &instances);
         assert_eq!(
-            routing.declaration().clone().set.len(),
+            own_effects(
+                &routing.declaration().clone().set,
+                graph.nodes[0].target.address()
+            ),
             0,
             "a guarded-out clause is out of the declared set"
         );
         assert_eq!(
             routing.shards().count(),
-            0,
-            "and out of the routed shard set, so its owner is no participant"
+            1,
+            "and the one shard routed to is the target's own, which the \
+             instantiation fence makes a participant of every call"
         );
 
         // The same signature over a configuration its guard holds for.
         let (cache, instances, graph) = guarded_world(Value::U64(1), Value::U64(1), Vec::new());
         let routing = routed(&graph, &cache, &instances);
-        assert_eq!(routing.declaration().clone().set.len(), 1);
+        assert_eq!(
+            own_effects(
+                &routing.declaration().clone().set,
+                graph.nodes[0].target.address()
+            ),
+            1
+        );
     }
 
     #[test]
@@ -737,7 +779,7 @@ mod tests {
         let routing = routed(&one_node(target), &cache, &instances);
         let declaration = routing.declaration().clone();
         assert_eq!(
-            declaration.set.len(),
+            own_effects(&declaration.set, target),
             1,
             "one of three elements satisfies the guard"
         );

@@ -13,35 +13,6 @@ PackageMetadata {
             effects: [
                 Requires {
                     guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    3,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                3,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
-                Requires {
-                    guard: None,
                     condition: Satisfies {
                         rule: Require(
                             Claim(
@@ -88,7 +59,7 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    3,
+                    1,
                 ),
                 Derived(
                     Arg(
@@ -116,35 +87,6 @@ PackageMetadata {
             effects: [
                 Requires {
                     guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    3,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                3,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
-                Requires {
-                    guard: None,
                     condition: Satisfies {
                         rule: Require(
                             Claim(
@@ -191,7 +133,7 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    3,
+                    1,
                 ),
             ],
         },
@@ -204,35 +146,6 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    3,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                3,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
                 Requires {
                     guard: None,
                     condition: Satisfies {
@@ -368,35 +281,6 @@ PackageMetadata {
             ],
             denominations: [],
             effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    3,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                3,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
                 Requires {
                     guard: None,
                     condition: Satisfies {
@@ -572,10 +456,10 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    4,
+                    2,
                 ),
                 Handle(
-                    6,
+                    4,
                 ),
                 Issuer,
             ],
@@ -637,35 +521,6 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    3,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                3,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
                 Requires {
                     guard: None,
                     condition: Satisfies {
@@ -737,7 +592,7 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    4,
+                    2,
                 ),
                 Derived(
                     Arg(
@@ -809,35 +664,6 @@ PackageMetadata {
                 ),
             ],
             effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    3,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                3,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
                 Effect {
                     guard: None,
                     target: Point(
@@ -863,7 +689,7 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    2,
+                    0,
                 ),
                 Bucket(
                     0,
@@ -880,35 +706,6 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    3,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                3,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
                 Requires {
                     guard: None,
                     condition: Satisfies {
@@ -1034,37 +831,7 @@ PackageMetadata {
                     },
                 ),
             ],
-            effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    3,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                3,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
-            ],
+            effects: [],
             abi: [
                 Bucket(
                     0,

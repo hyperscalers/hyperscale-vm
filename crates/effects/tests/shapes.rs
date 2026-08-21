@@ -392,13 +392,15 @@ fn a_declared_superset_evaluates_without_error() {
     let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
     let routing = route(&admitted, &resolver());
     let set = &routing.per_shard[&shard_of(alice)];
-    // The exact effect and the never-touched superset both routed; the
-    // remaining two are the deposit that consumes the withdrawal.
+    // The exact effect and the never-touched superset both routed; two
+    // more are the deposit that consumes the withdrawal, and the last is
+    // the fence's read of the target's own configuration leaf.
     assert!(set.contains(&Effect {
         target: EffectTarget::Point(vault(alice, RES_X)),
         mode: Mode::Reserve { amount: 1 },
     }));
-    assert_eq!(set.len(), 4);
+    assert!(set.contains(&fence_read(alice)));
+    assert_eq!(set.len(), 5);
 }
 
 /// A presented instance record is the whole of instantiation: the swap

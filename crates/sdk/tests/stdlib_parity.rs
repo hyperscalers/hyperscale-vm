@@ -141,7 +141,6 @@ fn amm() -> Blueprint {
             "swap",
             &[ParamType::Bucket, ParamType::U128],
             |t: &mut Trace| {
-                t.fence();
                 // The reserve pair is creation-fixed, and which side of it
                 // a call sells is read off the arriving bucket — so both
                 // vault keys are one conditional over configuration
@@ -187,7 +186,6 @@ fn book() -> Blueprint {
             "place-ask",
             &[ParamType::U64, ParamType::Bucket],
             |t: &mut Trace| {
-                t.fence();
                 let price: Sym<Num> = t.arg(0);
                 let _funds: Sym<Bucket> = t.arg(1);
                 let venue = t.self_addr();
@@ -211,7 +209,6 @@ fn book() -> Blueprint {
             "fill-asks",
             &[ParamType::U64, ParamType::U64, ParamType::Bucket],
             |t: &mut Trace| {
-                t.fence();
                 let from: Sym<Num> = t.arg(0);
                 let to: Sym<Num> = t.arg(1);
                 let payment: Sym<Bucket> = t.arg(2);

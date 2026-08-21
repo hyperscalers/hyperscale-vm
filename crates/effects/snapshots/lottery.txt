@@ -9,35 +9,6 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    3,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                3,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
                 Effect {
                     guard: None,
                     target: Range {
@@ -80,10 +51,10 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    2,
+                    0,
                 ),
                 Handle(
-                    3,
+                    1,
                 ),
             ],
         },
@@ -97,35 +68,6 @@ PackageMetadata {
             outputs: [],
             denominations: [],
             effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    3,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                3,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
                 Effect {
                     guard: None,
                     target: Entry {
@@ -178,10 +120,10 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    2,
+                    0,
                 ),
                 Handle(
-                    3,
+                    1,
                 ),
                 Derived(
                     OrderKey {

@@ -262,7 +262,6 @@ pub fn declaration(
     gate: &TokenStream,
     declines: bool,
     total: bool,
-    fenced: bool,
 ) -> TokenStream {
     // One draw per call site: the entry key derived from a fresh id and
     // the parameter carrying that id have to name the same slot.
@@ -299,14 +298,9 @@ pub fn declaration(
     });
     let fallible = declines.then(|| quote!(__t.fallible();));
     let total = total.then(|| quote!(__t.total();));
-    // The fence sits first: whether the component is actual precedes
-    // whatever else the method asks, and it binds no handle, so nothing
-    // about the clauses behind it moves.
-    let fence = fenced.then(|| quote!(__t.fence();));
     quote!(
         |__t: &mut ::hyperscale_vm_sdk::Trace| {
             #(#fresh)*
-            #fence
             #gate
             #fallible
             #total

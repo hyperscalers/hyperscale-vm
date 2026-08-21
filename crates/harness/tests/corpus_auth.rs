@@ -23,7 +23,7 @@ use common::world::*;
 #[test]
 fn a_refused_authorization_takes_its_consumers_with_it() {
     let world = world();
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
@@ -66,7 +66,7 @@ fn securify_graph(rule: &StoredRule) -> ManifestGraph {
 #[test]
 fn securify_retires_the_old_key_and_installs_the_rule() {
     let world = world();
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
@@ -143,7 +143,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
 /// so the maker's funds move only through a proof minted inside the
 /// same transaction.
 fn chained_store() -> MemoryStore {
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store
         .write(vault(MAKER, RES_X), encode_amount(150).to_vec())
         .unwrap();
@@ -220,7 +220,7 @@ fn a_chained_sign_in_acts_two_rules_deep() {
 #[test]
 fn a_proof_opens_only_the_account_that_minted_it() {
     let world = world();
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store
         .write(vault(BOB, RES_X), encode_amount(150).to_vec())
         .unwrap();
@@ -271,7 +271,7 @@ fn split_base() -> AuthBase {
 /// A store holding Alice's funds and her securified split-role cell,
 /// written as the guest would write it.
 fn recovered_store() -> MemoryStore {
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
@@ -653,7 +653,7 @@ fn a_freeze_after_maturity_strips_the_promoted_primary() {
 #[test]
 fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
     let world = world();
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
@@ -708,7 +708,7 @@ fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
 #[test]
 fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     let world = world();
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
@@ -894,7 +894,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     // declares one: the write requires the leaf to be there, and the
     // shard holding it judges that against committed state after the
     // virtual rule signed the caller in and before the body runs.
-    let mut virtual_store = MemoryStore::new();
+    let mut virtual_store = sealed_store();
     virtual_store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
@@ -927,7 +927,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
 #[test]
 fn custody_opens_for_the_holder_and_only_the_holder() {
     let world = world();
-    let store = MemoryStore::new();
+    let store = sealed_store();
 
     let badge = nf_resource();
     let gated = gated_by(badge.address(), 9);
@@ -1046,7 +1046,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
 #[test]
 fn distinct_instances_of_one_badge_are_distinct_authorities() {
     let (cache, mut instances) = world();
-    let store = MemoryStore::new();
+    let store = sealed_store();
     let badge = nf_resource();
 
     // Seat one instance on each holder.
@@ -1056,7 +1056,7 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
         let second = nf::mint(b, nf_issuer())?;
         account::deposit_nf(b, BOB, second)
     });
-    let (results, store) = run_both(
+    let (results, mut store) = run_both(
         &(cache.clone(), instances.clone()),
         &store,
         &[(&seat, TxHash(Hash32([0x81; 32])))],
@@ -1085,6 +1085,7 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
         salt: Hash32([12; 32]),
     };
     let by_instance_addr = by_instance.address(&TestHasher);
+    seal(&mut store, &by_instance);
     instances.create(&TestHasher, by_instance);
     let world = (cache, instances);
     let by_resource = gated_by(badge.address(), 9);
@@ -1154,7 +1155,7 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
 #[test]
 fn a_declared_threshold_admits_exactly_its_quorum() {
     let (cache, mut instances) = world();
-    let store = MemoryStore::new();
+    let store = sealed_store();
     let badge = nf_resource();
 
     // Four instances: three the configuration names, one it does not.
@@ -1165,7 +1166,7 @@ fn a_declared_threshold_admits_exactly_its_quorum() {
         }
         Ok(())
     });
-    let (results, store) = run_both(
+    let (results, mut store) = run_both(
         &(cache.clone(), instances.clone()),
         &store,
         &[(&seat, TxHash(Hash32([0x91; 32])))],
@@ -1198,6 +1199,7 @@ fn a_declared_threshold_admits_exactly_its_quorum() {
         salt: Hash32([13; 32]),
     };
     let quorum_addr = quorum.address(&TestHasher);
+    seal(&mut store, &quorum);
     instances.create(&TestHasher, quorum);
     let world = (cache, instances);
 
@@ -1258,7 +1260,7 @@ fn a_declared_threshold_admits_exactly_its_quorum() {
 #[test]
 fn a_fungible_badge_is_custody_while_the_vault_is_funded() {
     let world = world();
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store
         .write(vault(ALICE, RES_X), encode_amount(1).to_vec())
         .unwrap();
@@ -1301,7 +1303,7 @@ fn a_fungible_badge_is_custody_while_the_vault_is_funded() {
 #[test]
 fn a_drained_badge_vault_closes_the_custody_it_opened() {
     let world = world();
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store
         .write(vault(ALICE, RES_X), encode_amount(1).to_vec())
         .unwrap();

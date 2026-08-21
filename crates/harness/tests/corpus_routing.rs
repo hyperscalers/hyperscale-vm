@@ -23,11 +23,13 @@ use common::world::*;
 /// the encoded role sets in the propose vector are the witness —
 /// unchanged, is a re-pin of the same routing.
 ///
-/// The swap and fill pins carry the instantiation fence: every method of
-/// an instance-serving package reads its target's configuration leaf, so
-/// the owning shard is a participant and provisions the leaf. Transfer
-/// and propose reach only principals, which carry no fence, and their
-/// pins did not move — the accounts-pay-nothing half of that answer.
+/// The swap and fill pins carry the instantiation fence: admission reads
+/// the configuration leaf of every component a node targets, so the
+/// owning shard is a participant and provisions the leaf. The read is
+/// appended to the node's frame, which is where it sits in `ordered`.
+/// Transfer and propose reach only principals, which have no creation to
+/// finish and take no fence, and their pins did not move — the
+/// accounts-pay-nothing half of that answer.
 #[test]
 fn the_catalogue_routes_to_pinned_vectors() {
     let world = world();
@@ -54,9 +56,9 @@ fn the_catalogue_routes_to_pinned_vectors() {
 
 const PIN_TRANSFER: &str = "48581278cc03342e87aa9c0fd30e8321c26a8f889f12f51db6ba0f4f0a3f8825";
 
-const PIN_SWAP: &str = "58d8538b2c796e2417e784ded19e00fd174bd18365f38439c589993f553e422e";
+const PIN_SWAP: &str = "7ba91597f941b234e5826d1c6cdd2fa2e9b4de39e12e805b1b8d9cd3b06bf582";
 
-const PIN_FILL: &str = "6f8934fcd65d9c4f2b5da942d1d3dddb4a04cce72d157d2b381fbcb2acc476a1";
+const PIN_FILL: &str = "1624f2bd42e1e1c2dadd8307d7ba62e9a67909abc99fa31c8f7569a30f7a4e45";
 
 const PIN_PROPOSE: &str = "15155b4205c3c1c16e7f5f940ff8df7ee6c69afcddb99a1ce5dca4dffc805a79";
 

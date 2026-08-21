@@ -80,7 +80,7 @@ fn a_swap_paid_in_either_side_of_the_pair_admits() {
 }
 
 fn swap_store() -> MemoryStore {
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store
         .write(vault(ALICE, RES_X), encode_amount(600).to_vec())
         .unwrap();
@@ -90,7 +90,6 @@ fn swap_store() -> MemoryStore {
     store
         .write(vault(pool(), RES_Y), encode_amount(1_000).to_vec())
         .unwrap();
-    seal(&mut store, &pool_meta());
     store
 }
 
@@ -238,7 +237,7 @@ fn a_violated_output_floor_declines_identically() {
 /// which way it truncates is the whole of what the four entry points are
 /// for.
 fn shares_store() -> MemoryStore {
-    let mut store = MemoryStore::new();
+    let mut store = sealed_store();
     store
         .write(vault(ALICE, RES_X), encode_amount(1_000).to_vec())
         .unwrap();
@@ -248,7 +247,6 @@ fn shares_store() -> MemoryStore {
     store
         .write(supply_leaf(shares_vault()), encode_amount(777).to_vec())
         .unwrap();
-    seal(&mut store, &shares_meta());
     store
 }
 

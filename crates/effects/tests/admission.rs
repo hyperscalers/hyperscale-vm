@@ -8,7 +8,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world};
-use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
+use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, AdmissionError, Clause, Condition, ConditionExpr, Constraint, EdgeRef, EvalError,
     EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, JudgedLeaf,
@@ -1083,12 +1083,20 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
     let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
 
     let key = child_key(&TestHasher, target, AUTH, &[]);
+    // The signature's own condition, then the instantiation fence
+    // admission puts on every component call.
     assert_eq!(
         admitted.declaration().conditions,
-        vec![Condition::Holds {
-            target: EffectTarget::Point(key),
-            presence: Presence::Present,
-        }]
+        vec![
+            Condition::Holds {
+                target: EffectTarget::Point(key),
+                presence: Presence::Present,
+            },
+            Condition::Holds {
+                target: EffectTarget::Point(child_key(&TestHasher, target, CONFIG, &[])),
+                presence: Presence::Present,
+            },
+        ]
     );
     assert_eq!(
         admitted.calls()[0].requires,

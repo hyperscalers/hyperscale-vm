@@ -110,17 +110,39 @@ pub fn world() -> (MetadataCache, InstanceRegistry) {
     cache.publish_unchecked(pkg("shares"), shares::metadata());
     let mut instances = InstanceRegistry::new();
     instances.serve_principals(pkg("account"));
-    instances.create(&TestHasher, pool_meta());
-    instances.create(&TestHasher, book_meta());
-    instances.create(&TestHasher, registry_meta());
-    instances.create(&TestHasher, nf_issuer_meta());
-    instances.create(&TestHasher, nf_holder_meta(7));
-    instances.create(&TestHasher, nf_holder_meta(8));
-    instances.create(&TestHasher, gated_meta(nf_resource().address(), 9));
-    instances.create(&TestHasher, gated_meta(RES_X.address(), 10));
-    instances.create(&TestHasher, lottery_meta());
-    instances.create(&TestHasher, shares_meta());
+    for meta in world_instances() {
+        instances.create(&TestHasher, meta);
+    }
     (cache, instances)
+}
+
+/// Every component the corpus world holds a record for.
+pub fn world_instances() -> Vec<InstanceMeta> {
+    vec![
+        pool_meta(),
+        book_meta(),
+        registry_meta(),
+        nf_issuer_meta(),
+        nf_holder_meta(7),
+        nf_holder_meta(8),
+        gated_meta(nf_resource().address(), 9),
+        gated_meta(RES_X.address(), 10),
+        lottery_meta(),
+        shares_meta(),
+    ]
+}
+
+/// A store where every component the world names is actual.
+///
+/// What a network's genesis does for the components it is born running:
+/// admission fences every call on a component's configuration leaf, so a
+/// corpus that calls one starts from a store where the seal is there.
+pub fn sealed_store() -> MemoryStore {
+    let mut store = MemoryStore::new();
+    for meta in world_instances() {
+        seal(&mut store, &meta);
+    }
+    store
 }
 
 pub fn pool_meta() -> InstanceMeta {

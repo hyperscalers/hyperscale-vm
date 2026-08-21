@@ -29,7 +29,6 @@
 //! in a build step, and every condition it rejects would otherwise become a
 //! published contract whose method can never be called.
 
-use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
     AbiParam, Clause, ConditionExpr, Expr, Issuance, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
     MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, PRIMARY, ParamType, ResourceKind, RoleId,
@@ -698,40 +697,6 @@ impl Trace {
             condition: ConditionExpr::Satisfies {
                 rule: RuleExpr::Require(RuleLeaf::Stored { cell, role }),
             },
-        });
-    }
-
-    /// Record the instantiation fence: a read of the target's own
-    /// configuration leaf, and the presence that makes the component
-    /// actual.
-    ///
-    /// Every method an instance-serving package declares carries this
-    /// pair, so a call on a component nobody instantiated is a routed
-    /// refusal judged by the shard holding the leaf, whatever the
-    /// package declares besides. The read costs one leaf in the declared
-    /// span and no contention — after the seal the leaf has no writer —
-    /// and it is what makes the owning shard a participant of every
-    /// method, so the condition is never asked of a shard that is not
-    /// there. No handle is bound: the leaf's values reach the guest as
-    /// evaluated configuration slots, never as a cell it decodes.
-    pub fn fence(&mut self) {
-        let leaf = Expr::ChildKey {
-            owner: Box::new(Expr::SelfAddr),
-            slot: CONFIG,
-            material: Vec::new(),
-        };
-        self.emit(Clause::Requires {
-            guard: None,
-            condition: ConditionExpr::Holds {
-                target: Box::new(TargetExpr::Point(leaf.clone())),
-                presence: Presence::Present,
-            },
-        });
-        self.emit(Clause::Effect {
-            guard: None,
-            target: TargetExpr::Point(leaf),
-            mode: ModeExpr::Read,
-            denomination: None,
         });
     }
 

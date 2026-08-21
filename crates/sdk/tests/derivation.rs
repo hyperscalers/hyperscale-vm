@@ -140,41 +140,9 @@ mod registry {
 
 #[test]
 fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
-    use hyperscale_vm_effects::vocabulary::CONFIG;
-    use hyperscale_vm_effects::{Clause, ConditionExpr, Expr, ModeExpr, SlotId, TargetExpr, Value};
-    use hyperscale_vm_types::Presence;
+    use hyperscale_vm_effects::{Clause, Expr, ModeExpr, SlotId, TargetExpr, Value};
 
     let metadata = registry::blueprint().metadata();
-    // Every method opens on the instantiation fence.
-    let fence = || {
-        let leaf = || {
-            TargetExpr::Point(Expr::ChildKey {
-                owner: Box::new(Expr::SelfAddr),
-                slot: CONFIG,
-                material: vec![],
-            })
-        };
-        [
-            Clause::Requires {
-                guard: None,
-                condition: ConditionExpr::Holds {
-                    target: Box::new(leaf()),
-                    presence: Presence::Present,
-                },
-            },
-            Clause::Effect {
-                guard: None,
-                target: leaf(),
-                mode: ModeExpr::Read,
-                denomination: None,
-            },
-        ]
-    };
-    let fenced = |clause: Clause| {
-        let mut effects = fence().to_vec();
-        effects.push(clause);
-        effects
-    };
     let hashed_entry = || TargetExpr::Entry {
         owner: Expr::SelfAddr,
         collection: SlotId(16),
@@ -187,25 +155,25 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
     };
     assert_eq!(
         metadata.methods["bind"].effects,
-        fenced(Clause::Effect {
+        vec![Clause::Effect {
             guard: None,
             target: hashed_entry(),
             mode: ModeExpr::Write,
             denomination: None,
-        }),
+        }],
     );
     assert_eq!(
         metadata.methods["resolve"].effects,
-        fenced(Clause::Effect {
+        vec![Clause::Effect {
             guard: None,
             target: hashed_entry(),
             mode: ModeExpr::Read,
             denomination: None,
-        }),
+        }],
     );
     assert_eq!(
         metadata.methods["sweep"].effects,
-        fenced(Clause::Effect {
+        vec![Clause::Effect {
             guard: None,
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
@@ -217,7 +185,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
             },
             mode: ModeExpr::Read,
             denomination: None,
-        }),
+        }],
     );
 }
 
@@ -326,20 +294,17 @@ fn a_stored_rate_folds_to_an_exclusive_write_never_a_movement() {
     let modes: Vec<ModeExpr> = metadata.methods["accrue"]
         .effects
         .iter()
-        .filter_map(|clause| match clause {
-            Clause::Effect { mode, .. } => Some(mode.clone()),
-            // The fence's presence condition.
-            Clause::Requires { .. } => None,
-            Clause::ForEach { .. } | Clause::Mints { .. } => {
-                panic!("the accrual maps over nothing and mints nothing")
+        .map(|clause| match clause {
+            Clause::Effect { mode, .. } => mode.clone(),
+            Clause::ForEach { .. } | Clause::Requires { .. } | Clause::Mints { .. } => {
+                panic!("the accrual maps over nothing and requires nothing")
             }
         })
         .collect();
     // A rate is not value: nothing moves into or out of the cell, so the
     // site folds to the exclusive read-modify-write and the commutative
     // movement semantics that read an amount cell are unreachable for it.
-    // The read ahead of it is the fence's.
-    assert_eq!(modes, vec![ModeExpr::Read, ModeExpr::Write]);
+    assert_eq!(modes, vec![ModeExpr::Write]);
 }
 
 #[test]
@@ -456,20 +421,17 @@ fn a_branch_the_declaration_can_read_guards_its_own_clauses() {
         .iter()
         .map(|clause| clause.guard().cloned())
         .collect();
-    // The fence pair is nobody's branch, so it carries no guard; the
-    // two vault movements carry their arm's.
+    // Reading the configuration declares nothing — the leaf is read by
+    // the fence admission puts on every component call — so the two
+    // vault movements are the whole clause list, each under its arm's
+    // condition.
     assert_eq!(
         guards,
-        vec![
-            None,
-            None,
-            Some(cond.clone()),
-            Some(Expr::Not(Box::new(cond.clone()))),
-        ],
+        vec![Some(cond.clone()), Some(Expr::Not(Box::new(cond.clone()))),],
     );
 
     // Both arms move value, so both clauses are commutative.
-    assert!(credit.effects[2..].iter().all(|clause| matches!(
+    assert!(credit.effects.iter().all(|clause| matches!(
         clause,
         Clause::Effect {
             mode: ModeExpr::Delta,
@@ -484,7 +446,7 @@ fn a_branch_the_declaration_can_read_guards_its_own_clauses() {
             .iter()
             .filter(|binding| matches!(binding, AbiParam::Guard(_)))
             .collect::<Vec<_>>(),
-        vec![&AbiParam::Guard(2)],
+        vec![&AbiParam::Guard(0)],
     );
 
     // The edge is credited to one of two vaults, so its denomination is
@@ -552,7 +514,7 @@ fn a_total_method_declares_the_union_and_binds_no_verdict() {
     let metadata = always::blueprint().metadata();
     let bump = &metadata.methods["bump"];
     assert_eq!(bump.totality, Totality::Total);
-    assert_eq!(bump.effects.len(), 4, "the fence pair, then both arms");
+    assert_eq!(bump.effects.len(), 2, "both arms are declared");
     assert!(
         bump.effects.iter().all(|clause| clause.guard().is_none()),
         "and neither under a condition, because a total leg materialises every handle"
@@ -582,7 +544,7 @@ fn a_branch_the_declaration_cannot_read_declares_the_union() {
 
     let metadata = switch::blueprint().metadata();
     let opaque = &metadata.methods["bump-opaque"];
-    assert_eq!(opaque.effects.len(), 4, "the fence pair, then both arms");
+    assert_eq!(opaque.effects.len(), 2);
     assert!(
         opaque.effects.iter().all(|clause| clause.guard().is_none()),
         "an unreadable condition guards nothing"
@@ -673,15 +635,14 @@ fn a_cell_reached_from_more_than_one_place_is_declared_always() {
             .collect::<Vec<_>>()
     };
 
-    // Written inside the branch and after it: one clause past the fence
-    // pair, no condition, and nothing for the guest to branch its
-    // declaration on.
-    assert_eq!(guards("after"), vec![None, None, None]);
+    // Written inside the branch and after it: one clause, no condition,
+    // and nothing for the guest to branch its declaration on.
+    assert_eq!(guards("after"), vec![None]);
     assert!(verdicts("after").is_empty());
 
     // Written by both arms: the same statement, because between them the
     // arms cover every call.
-    assert_eq!(guards("both"), vec![None, None, None]);
+    assert_eq!(guards("both"), vec![None]);
     assert!(verdicts("both").is_empty());
 
     // And the precision is per cell rather than per branch: the shared
@@ -691,11 +652,8 @@ fn a_cell_reached_from_more_than_one_place_is_declared_always() {
         Box::new(Expr::Arg(0)),
         Box::new(Expr::Literal(Value::U64(1))),
     );
-    assert_eq!(
-        guards("mixed"),
-        vec![None, None, None, Some(Expr::Not(Box::new(cond)))]
-    );
-    assert_eq!(verdicts("mixed"), vec![&AbiParam::Guard(3)]);
+    assert_eq!(guards("mixed"), vec![None, Some(Expr::Not(Box::new(cond)))]);
+    assert_eq!(verdicts("mixed"), vec![&AbiParam::Guard(1)]);
 }
 
 /// A component whose admin set is configuration rather than storage:
@@ -936,10 +894,9 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
 
     // One vault clause against two, off the same choice: the arms of a
     // selection are values the declaration reads, and the arms of an `if`
-    // statement are bodies it can only take the union of. Both also pin
-    // the configuration they read the sides from.
-    assert_eq!(effects("either").len(), 3);
-    assert_eq!(effects("both").len(), 4);
+    // statement are bodies it can only take the union of.
+    assert_eq!(effects("either").len(), 1);
+    assert_eq!(effects("both").len(), 2);
 
     // And the one clause resolves to whichever side the call picks —
     // never to both, and never to a third thing.
@@ -1008,8 +965,8 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
     // A compound key is a product, and it is the material rather than a
     // second collection.
     let paired = effects("paired");
-    let [_, _, Clause::Effect { target, .. }] = paired.as_slice() else {
-        panic!("the fence pair, then one entry");
+    let [Clause::Effect { target, .. }] = paired.as_slice() else {
+        panic!("one entry");
     };
     let TargetExpr::Entry { order, .. } = target else {
         panic!("an unordered entry");
@@ -1096,12 +1053,8 @@ fn a_valueless_narrowing_is_a_key_not_a_denomination() {
     let metadata = roster::blueprint().metadata();
     for method in ["seat", "page"] {
         let effects = &metadata.methods[method].effects;
-        assert_eq!(
-            effects.len(),
-            3,
-            "{method} declares one clause past the fence pair"
-        );
-        let Clause::Effect { denomination, .. } = &effects[2] else {
+        assert_eq!(effects.len(), 1, "{method} declares one clause");
+        let Clause::Effect { denomination, .. } = &effects[0] else {
             panic!("{method} declares an access");
         };
         assert!(denomination.is_none(), "{method} denominates nothing");
@@ -1247,12 +1200,12 @@ fn a_holdings_interval_is_denominated_by_its_narrowing() {
 
     let metadata = shelf::blueprint().metadata();
     let effects = &metadata.methods["pull"].effects;
-    assert_eq!(effects.len(), 3, "the fence pair, then pull's one clause");
+    assert_eq!(effects.len(), 1, "pull declares one clause");
     let Clause::Effect {
         target,
         denomination,
         ..
-    } = &effects[2]
+    } = &effects[0]
     else {
         panic!("pull declares an access");
     };
@@ -1274,7 +1227,7 @@ fn a_spelled_count_lowers_to_the_length_projection() {
 
     let metadata = shelf::blueprint().metadata();
     let effects = &metadata.methods["window"].effects;
-    let Clause::Effect { target, .. } = &effects[2] else {
+    let Clause::Effect { target, .. } = &effects[0] else {
         panic!("window declares an access");
     };
     assert!(matches!(
@@ -1292,7 +1245,7 @@ fn a_spelled_sum_lowers_to_the_addition() {
 
     let metadata = shelf::blueprint().metadata();
     let effects = &metadata.methods["window-both"].effects;
-    let Clause::Effect { target, .. } = &effects[2] else {
+    let Clause::Effect { target, .. } = &effects[0] else {
         panic!("window-both declares an access");
     };
     let count = |arg| Box::new(Expr::Len(Box::new(Expr::Arg(arg))));
@@ -1311,7 +1264,7 @@ fn two_moves_through_one_interval_derive_the_summed_cap() {
 
     let metadata = shelf::blueprint().metadata();
     let effects = &metadata.methods["restock"].effects;
-    let Clause::Effect { target, .. } = &effects[2] else {
+    let Clause::Effect { target, .. } = &effects[0] else {
         panic!("restock declares an access");
     };
     let filed = Box::new(Expr::Len(Box::new(Expr::IdsOf(Box::new(Expr::Arg(1))))));
