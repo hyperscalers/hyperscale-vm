@@ -50,17 +50,22 @@ quote = "1.0.47"
 syn = { version = "3.0.3", features = ["full", "extra-traits", "visit"] }
 thiserror = "2.0.19"
 trybuild = "1.0.120"
-wasm-smith = "0.255.0"
-wasmparser = "0.255.0"
-wat = "1.255.0"
-wit-component = "0.255.0"
+# The wasm-tools family tracks the blessed engine's own wasmparser rather
+# than the newest release. The profile validator and vm-ref have to judge a
+# module with the same parser that compiles it; holding the family on the
+# engine's line is what keeps one copy in the tree. `wat` alone needs an
+# exact pin: it versions as 1.x, so a caret would admit the whole major and
+# drag a second wasm-encoder and wasmparser back in behind it.
+wasm-smith = "0.254.0"
+wasmparser = "0.254.0"
+wat = "=1.254.0"
+wit-component = "0.254.0"
 # The guest bindings generator, pinned exactly like the guest toolchain and
 # for the same reason: what it emits is part of a consensus artifact.
 wit-bindgen = "=0.60.0"
-# The blessed engine, pinned exactly to the latest stable ahead of the 48 LTS
-# (expected 2026-08-20; the pin moves there when it lands). Upgrades are
-# deliberate protocol events, never dependency drift.
-wasmtime = { version = "=47.0.3", features = ["component-model", "winch", "pulley"] }
+# The blessed engine, pinned exactly to the 48 LTS. Upgrades are deliberate
+# protocol events, never dependency drift.
+wasmtime = { version = "=48.0.0", features = ["component-model", "winch", "pulley"] }
 
 [workspace.lints.rust]
 missing_docs = "warn"
