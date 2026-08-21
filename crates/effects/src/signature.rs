@@ -6,7 +6,7 @@ use hyperscale_vm_types::{CallTarget, ComponentAddr, PackageAddr, PrincipalAddr,
 
 use crate::auth::RoleTable;
 use crate::dsl::{Clause, ConditionExpr, Expr};
-use crate::resource::ResourceKind;
+use crate::resource::{ResourceKind, SealedRulesExpr};
 use crate::rule::{RuleExpr, RuleLeaf, StoredRule};
 use crate::types::{MAX_IDS_PER_EDGE, Value};
 
@@ -253,6 +253,14 @@ pub struct Issuance {
     pub mark: Vec<u8>,
     /// What the resource is, folded into its derivation.
     pub kind: ResourceKind,
+    /// The rules the resource's address seals, resolved against the
+    /// instance issuing them where the grant is derived.
+    ///
+    /// The same set the declaration's own `SelfResource` expressions
+    /// carry, because it has to be the same address: a gate naming the
+    /// resource and the grant that mints it derive through one
+    /// commitment, so the tier has a minter rather than only a verifier.
+    pub seals: SealedRulesExpr,
 }
 
 /// A method's declared access: every effect the method itself reaches,

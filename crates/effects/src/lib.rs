@@ -94,15 +94,16 @@ pub use publish::{
 pub use records::{ChainRecords, Composed, Records};
 pub use resource::{
     MAX_RESOURCE_MATERIAL_PARTS, RECORD_WIRE_DEPTH, ResourceKind, ResourceMeta, ResourceRecord,
-    ResourceRules, SealedBehaviour, holdings_collection, holdings_entry, holdings_range,
-    instance_data_key, issued_resource, resource_record_key, xrd,
+    ResourceRules, SealedBehaviour, SealedResolveError, SealedRulesExpr, holdings_collection,
+    holdings_entry, holdings_range, instance_data_key, issued_resource, resource_record_key,
+    sealed_issued_resource, xrd,
 };
 pub use route::{
     FrameDeclaration, MAX_MANIFEST_NODES, PrefixShardResolver, Routing, ShardResolver, route,
 };
 pub use rule::{
-    MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, RuleLeaf, StoredRule,
-    well_formed,
+    MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, RuleLeaf, SealedClaim,
+    SealedRuleExpr, StoredRule, well_formed,
 };
 pub use signature::{AbiParam, Issuance, MethodSignature, ParamType, Totality};
 pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};

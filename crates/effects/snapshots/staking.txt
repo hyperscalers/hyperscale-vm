@@ -37,6 +37,9 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
+                                    seals: SealedRulesExpr(
+                                        [],
+                                    ),
                                 },
                             ),
                         ),
@@ -111,6 +114,9 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
+                                    seals: SealedRulesExpr(
+                                        [],
+                                    ),
                                 },
                             ),
                         ),
@@ -172,6 +178,9 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
+                                    seals: SealedRulesExpr(
+                                        [],
+                                    ),
                                 },
                             ),
                         ),
@@ -241,6 +250,9 @@ PackageMetadata {
                         101,
                     ],
                     kind: NonFungible,
+                    seals: SealedRulesExpr(
+                        [],
+                    ),
                 },
             ),
             params: [],
@@ -267,6 +279,9 @@ PackageMetadata {
                                 ),
                             ),
                         ],
+                        seals: SealedRulesExpr(
+                            [],
+                        ),
                     },
                     ids: List(
                         [
@@ -353,6 +368,9 @@ PackageMetadata {
                                                 ),
                                             ),
                                         ],
+                                        seals: SealedRulesExpr(
+                                            [],
+                                        ),
                                     },
                                 ],
                             },
@@ -390,6 +408,9 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
+                                    seals: SealedRulesExpr(
+                                        [],
+                                    ),
                                 },
                             ],
                         },
@@ -427,6 +448,9 @@ PackageMetadata {
                                                 ),
                                             ),
                                         ],
+                                        seals: SealedRulesExpr(
+                                            [],
+                                        ),
                                     },
                                 ],
                             },
@@ -463,6 +487,9 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
+                                    seals: SealedRulesExpr(
+                                        [],
+                                    ),
                                 },
                             ],
                         },
@@ -501,6 +528,9 @@ PackageMetadata {
                                                 ),
                                             ),
                                         ],
+                                        seals: SealedRulesExpr(
+                                            [],
+                                        ),
                                     },
                                     Literal(
                                         U64(
@@ -543,6 +573,9 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
+                                    seals: SealedRulesExpr(
+                                        [],
+                                    ),
                                 },
                                 Literal(
                                     U64(
@@ -612,6 +645,9 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
+                                    seals: SealedRulesExpr(
+                                        [],
+                                    ),
                                 },
                             ),
                         ),
@@ -693,6 +729,9 @@ PackageMetadata {
                         116,
                     ],
                     kind: Fungible,
+                    seals: SealedRulesExpr(
+                        [],
+                    ),
                 },
             ),
             params: [
@@ -719,6 +758,9 @@ PackageMetadata {
                             ),
                         ),
                     ],
+                    seals: SealedRulesExpr(
+                        [],
+                    ),
                 },
             ],
             denominations: [
@@ -797,6 +839,9 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
+                                    seals: SealedRulesExpr(
+                                        [],
+                                    ),
                                 },
                             ),
                         ),
@@ -865,6 +910,9 @@ PackageMetadata {
                         116,
                     ],
                     kind: Fungible,
+                    seals: SealedRulesExpr(
+                        [],
+                    ),
                 },
             ),
             params: [
@@ -893,6 +941,9 @@ PackageMetadata {
                                 ),
                             ),
                         ],
+                        seals: SealedRulesExpr(
+                            [],
+                        ),
                     },
                 ),
             ],

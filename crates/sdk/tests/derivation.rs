@@ -16,7 +16,7 @@
 // the appearance is an artifact of a contract living inside a test binary.
 #![allow(dead_code)]
 
-use hyperscale_vm_effects::{Clause, ModeExpr, ResourceKind, RuleExpr};
+use hyperscale_vm_effects::{Clause, ModeExpr, ResourceKind, RuleExpr, SealedRulesExpr};
 use hyperscale_vm_sdk::blueprint;
 
 /// Control-flow spellings of one access set, each beside its straight-line
@@ -320,6 +320,7 @@ fn an_instance_issues_resources_its_own_address_derives() {
         vec![Expr::SelfResource {
             kind: ResourceKind::Fungible,
             material: vec![Expr::Literal(Value::Bytes(b"unit".to_vec()))],
+            seals: SealedRulesExpr::new(),
         }],
     );
     // The badge is the same derivation over its own mark — and its own
@@ -333,6 +334,7 @@ fn an_instance_issues_resources_its_own_address_derives() {
                     rule: RuleExpr::claim(Expr::SelfResource {
                         kind: ResourceKind::NonFungible,
                         material: vec![Expr::Literal(Value::Bytes(b"owner-badge".to_vec()))],
+                        seals: SealedRulesExpr::new(),
                     }),
                 },
             })

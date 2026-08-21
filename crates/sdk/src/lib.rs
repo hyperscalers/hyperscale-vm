@@ -154,7 +154,8 @@ pub use blueprint::{Blueprint, Builder, Method};
 pub use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
 pub use hyperscale_vm_effects::{
     AuthBase, AuthCell, CONFIRMATION, PRIMARY, ParamType, Proposal, RECOVERY, ResourceKind, RoleId,
-    SealedBehaviour, SlotId, encode_metadata, package_role,
+    SealedBehaviour, SealedClaim, SealedRuleExpr, SealedRulesExpr, SlotId, encode_metadata,
+    package_role,
 };
 #[cfg(feature = "macros")]
 pub use hyperscale_vm_sdk_macros::blueprint;

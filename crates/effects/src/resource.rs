@@ -14,6 +14,8 @@ use hyperscale_vm_types::{Address, CollectionId, ResourceAddr, SubstateKey};
 use crate::auth::RoleBytes;
 use crate::dsl::{Expr, TargetExpr};
 use crate::hash::{Hash32, Hasher};
+use crate::presented::Presented;
+use crate::rule::{SealedClaim, SealedRuleExpr, StoredRule};
 use crate::types::{
     Value, child_key, collection_id, native_address, resource_address, sealed_resource_address,
 };
@@ -74,8 +76,25 @@ pub fn issued_resource(
     kind: ResourceKind,
     mark: &[u8],
 ) -> ResourceAddr {
+    sealed_issued_resource(hasher, instance, kind, &ResourceRules::new(), mark)
+}
+
+/// The same derivation, over a mark that seals rules.
+///
+/// Beside [`issued_resource`] rather than inside it so the mark's
+/// encoding into derivation material is spelled once: the unsealed form
+/// is this one over the empty set, which is what every unsealed
+/// resource's address already folds.
+#[must_use]
+pub fn sealed_issued_resource(
+    hasher: &dyn Hasher,
+    instance: impl Into<Address>,
+    kind: ResourceKind,
+    rules: &ResourceRules,
+    mark: &[u8],
+) -> ResourceAddr {
     let material = [Value::Bytes(mark.to_vec()).canonical_bytes()];
-    resource_address(hasher, instance, kind, &material)
+    sealed_resource_address(hasher, instance, kind, rules, &material)
 }
 
 /// The decoder cap for a record cell: the one variant frame a record is,
@@ -225,6 +244,144 @@ impl ResourceRules {
 }
 
 const DOMAIN_SEALED_RULES: &[u8] = b"hyperscale-vm/sealed-rules";
+
+/// The sealed rules a declaration commits, before the instance issuing
+/// them is known.
+///
+/// [`ResourceRules`] as a package writes it down: the same
+/// behaviour-keyed list under the same ascending discipline, holding the
+/// rule's tree rather than the bytes it encodes to. What separates them
+/// is what a leaf names — a declared leaf names a derivation, and
+/// resolving one against an instance is what [`Self::resolve`] does.
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+#[hbor(transparent, validate = ascending_declared_behaviours)]
+pub struct SealedRulesExpr(Vec<(SealedBehaviour, SealedRuleExpr)>);
+
+fn ascending_declared_behaviours(rules: &SealedRulesExpr) -> Result<(), &'static str> {
+    rules
+        .0
+        .windows(2)
+        .all(|pair| pair[0].0 < pair[1].0)
+        .then_some(())
+        .ok_or("sealed behaviours must be ascending and distinct")
+}
+
+impl SealedRulesExpr {
+    /// The empty set, which seals nothing.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Whether this declaration seals anything at all.
+    ///
+    /// The one question the derivation asks before doing any work: an
+    /// empty set resolves to the empty [`ResourceRules`], which is what
+    /// every unsealed resource's address already folds.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Seal `rule` for `behaviour`, replacing what was there.
+    pub fn set(&mut self, behaviour: SealedBehaviour, rule: SealedRuleExpr) {
+        match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
+            Ok(index) => self.0[index].1 = rule,
+            Err(index) => self.0.insert(index, (behaviour, rule)),
+        }
+    }
+
+    /// Every behaviour sealed here, with the rule declared for it.
+    pub fn iter(&self) -> impl Iterator<Item = (SealedBehaviour, &SealedRuleExpr)> {
+        self.0.iter().map(|(behaviour, rule)| (*behaviour, rule))
+    }
+
+    /// Resolve every declared rule against the instance that issues the
+    /// resource, and the configuration that instance's address folds.
+    ///
+    /// # Errors
+    ///
+    /// [`SealedResolveError`] for a configuration field the record does
+    /// not have or whose value names no claim, and for a rule whose
+    /// resolved form is past the caps a stored rule is held to.
+    pub fn resolve(
+        &self,
+        hasher: &dyn Hasher,
+        instance: Address,
+        config: &[Value],
+    ) -> Result<ResourceRules, SealedResolveError> {
+        let mut resolved = ResourceRules::new();
+        for (behaviour, rule) in self.iter() {
+            let stored = resolve_rule(hasher, instance, config, rule)?;
+            let bytes =
+                RoleBytes::try_from(&stored).map_err(|_| SealedResolveError::PastTheCaps)?;
+            resolved.set(behaviour, bytes);
+        }
+        Ok(resolved)
+    }
+}
+
+/// Why a declared sealed set does not resolve against an instance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum SealedResolveError {
+    /// A leaf naming a configuration field the record does not have.
+    #[error("sealed rule names configuration field {0}, which the record does not have")]
+    NoSuchField(u32),
+    /// A configuration field whose value names no claim — a package
+    /// address, a protocol role, anything not callable and not a
+    /// resource.
+    #[error("sealed rule names configuration field {0}, whose value names no claim")]
+    NotAClaim(u32),
+    /// A resolved rule past the caps a stored rule is held to.
+    #[error("a resolved sealed rule is past the caps a stored rule is held to")]
+    PastTheCaps,
+}
+
+fn resolve_rule(
+    hasher: &dyn Hasher,
+    instance: Address,
+    config: &[Value],
+    rule: &SealedRuleExpr,
+) -> Result<StoredRule, SealedResolveError> {
+    Ok(match rule {
+        SealedRuleExpr::Require(claim) => {
+            StoredRule::Require(resolve_claim(hasher, instance, config, claim)?)
+        }
+        SealedRuleExpr::CountOf { count, rules } => StoredRule::CountOf {
+            count: *count,
+            rules: rules
+                .iter()
+                .map(|rule| resolve_rule(hasher, instance, config, rule))
+                .collect::<Result<_, _>>()?,
+        },
+    })
+}
+
+fn resolve_claim(
+    hasher: &dyn Hasher,
+    instance: Address,
+    config: &[Value],
+    claim: &SealedClaim,
+) -> Result<Presented, SealedResolveError> {
+    // A badge named inside a sealed rule derives through the unsealed
+    // form, which is what keeps the derivation well-founded: nothing
+    // here can name a resource whose own rules are still being computed.
+    let badge = |kind, mark: &[u8]| issued_resource(hasher, instance, kind, mark);
+    Ok(match claim {
+        SealedClaim::SelfAddr => Presented::of_address(instance)
+            .expect("an instance issuing a resource is a callable address"),
+        SealedClaim::SelfBadge { mark } => Presented::Resource(badge(ResourceKind::Fungible, mark)),
+        SealedClaim::SelfInstance { mark, id } => {
+            Presented::Instance(badge(ResourceKind::NonFungible, mark), *id)
+        }
+        SealedClaim::Config(slot) => {
+            let value = config
+                .get(*slot as usize)
+                .ok_or(SealedResolveError::NoSuchField(*slot))?;
+            Presented::of(value).ok_or(SealedResolveError::NotAClaim(*slot))?
+        }
+    })
+}
 
 /// A presented resource record: the address preimage, carried in the
 /// envelope and verified by re-derivation.

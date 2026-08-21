@@ -20,11 +20,13 @@ use crate::hash::{Hash32, Hasher};
 use crate::instance::InstanceMeta;
 use crate::manifest::{Condition, JudgedLeaf, ManifestHash};
 use crate::presented::Presented;
-use crate::resource::{ResourceKind, ResourceMeta, ResourceRules, SealedBehaviour};
+use crate::resource::{
+    ResourceKind, ResourceMeta, ResourceRules, SealedBehaviour, SealedResolveError, SealedRulesExpr,
+};
 use crate::rule::{Rule, RuleExpr, RuleLeaf};
 use crate::types::{
     EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
-    resource_address,
+    sealed_resource_address,
 };
 
 /// The bound on any collection a `for-each` clause maps over. Keeps
@@ -159,6 +161,14 @@ pub enum Expr {
         /// The material separating this resource from the instance's
         /// others, canonically encoded into the derivation.
         material: Vec<Self>,
+        /// The rules the resource's address seals, resolved against the
+        /// issuing instance where this evaluates.
+        ///
+        /// Part of the derivation rather than beside it: the address is
+        /// the hash of these too, so a resource whose rules changed
+        /// would be a different resource, and the tier has a minter
+        /// rather than only a verifier.
+        seals: SealedRulesExpr,
     },
     /// The canonical child key `owner | H(slot, material…)`.
     ChildKey {
@@ -624,6 +634,10 @@ pub enum EvalError {
     /// resource.
     #[error(transparent)]
     NotAResource(#[from] WrongClass),
+    /// A resource whose declared sealed rules do not resolve against
+    /// the instance issuing it.
+    #[error(transparent)]
+    SealedUnresolvable(#[from] SealedResolveError),
     /// A sealed leaf naming a resource whose record the envelope never
     /// presented — there is nothing to verify a rule against.
     #[error("the sealed rules of {0:?} were not presented")]
@@ -1301,6 +1315,26 @@ fn eval_collection(
     Ok(collection_id(hasher, owner, slot, &encoded))
 }
 
+/// The address of a resource the target instance issues: the derivation
+/// over its material, folding the rules its declaration seals.
+///
+/// The sealed set resolves here rather than at publish because its
+/// leaves name the issuing instance — a badge that instance also issues,
+/// a field of the configuration its address commits — none of which
+/// exist until a target is resolved.
+fn self_resource(
+    hasher: &dyn Hasher,
+    inputs: &EvalInputs<'_>,
+    kind: ResourceKind,
+    material: &[Vec<u8>],
+    seals: &SealedRulesExpr,
+) -> Result<Value, EvalError> {
+    let rules = seals.resolve(hasher, inputs.self_addr, &inputs.record.config)?;
+    Ok(Value::Address(
+        sealed_resource_address(hasher, inputs.self_addr, kind, &rules, material).into(),
+    ))
+}
+
 fn eval_mode(
     mode: &ModeExpr,
     inputs: &EvalInputs<'_>,
@@ -1404,9 +1438,8 @@ fn eval_expr(
         Expr::SelfResource {
             kind,
             material: parts,
-        } => Ok(Value::Address(
-            resource_address(hasher, inputs.self_addr, *kind, &material(parts)?).into(),
-        )),
+            seals,
+        } => self_resource(hasher, inputs, *kind, &material(parts)?, seals),
         Expr::ChildKey {
             owner,
             slot,
@@ -1725,7 +1758,7 @@ mod tests {
     use crate::instance::InstanceMeta;
     use crate::manifest::ManifestHash;
     use crate::metadata::PackageHash;
-    use crate::resource::{ResourceKind, issued_resource};
+    use crate::resource::{ResourceKind, SealedRulesExpr, issued_resource};
     use crate::types::{
         EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
     };
@@ -1758,6 +1791,7 @@ mod tests {
                 Expr::SelfResource {
                     kind: ResourceKind::Fungible,
                     material: vec![leaf(1), leaf(2)],
+                    seals: SealedRulesExpr::new(),
                 },
                 vec![1, 2],
             ),
@@ -1984,7 +2018,11 @@ mod tests {
                 let material = vec![Expr::Literal(Value::Bytes(mark.to_vec()))];
                 assert_eq!(
                     evaluate_expr(
-                        &Expr::SelfResource { kind, material },
+                        &Expr::SelfResource {
+                            kind,
+                            material,
+                            seals: SealedRulesExpr::new(),
+                        },
                         &context,
                         &TestHasher
                     ),

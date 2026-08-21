@@ -1391,7 +1391,13 @@ fn lower_method(
         }
     }
     let total = claim.is_some();
-    let closure = emit::declaration(&lowered, &gate_calls(&gate, &lowered), declining, total);
+    let closure = emit::declaration(
+        &lowered,
+        &gate_calls(&gate, &lowered),
+        declining,
+        total,
+        &sealed_registrations(declared.resources),
+    );
     let declaration = quote!(
         .method(#published, &[#(#kinds),*], #closure)
     );
@@ -1930,7 +1936,7 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
 /// The mark is the name as the protocol spells names everywhere else, so
 /// what an author reads in a gate and what a consumer reads off the
 /// emitted constant are one string derived once.
-fn resources(items: &[syn::Item]) -> syn::Result<Vec<Resource>> {
+fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<Resource>> {
     let mut structs = Vec::new();
     for item in items {
         let syn::Item::Struct(item) = item else {
@@ -1943,6 +1949,7 @@ fn resources(items: &[syn::Item]) -> syn::Result<Vec<Resource>> {
             kind,
             divisibility,
             initial,
+            seals,
         } = resource_attr(attr)?;
         // Fields are an instance's data, and a fungible resource has no
         // instances — so a fielded fungible declaration states a schema
@@ -1970,20 +1977,40 @@ fn resources(items: &[syn::Item]) -> syn::Result<Vec<Resource>> {
             kind,
             divisibility,
             initial,
+            seals,
             !item.fields.is_empty(),
         ));
     }
+    // Rendered in a second pass, against the whole declared set: a
+    // sealed leaf names another of the package's own marks, so what its
+    // kind is and whether it seals rules of its own are answers only the
+    // full set has.
+    let named: Vec<(&syn::Ident, ResourceKind, bool)> = structs
+        .iter()
+        .map(|(ident, kind, _, _, seals, _)| (*ident, *kind, seals.is_some()))
+        .collect();
+    let rendered: Vec<TokenStream2> = structs
+        .iter()
+        .map(|(_, _, _, _, seals, _)| {
+            seals.as_ref().map_or_else(
+                || Ok(quote!(::hyperscale_vm_sdk::SealedRulesExpr::new())),
+                |list| sealed_rules(list, &named, config_fields),
+            )
+        })
+        .collect::<syn::Result<_>>()?;
     let marks = distinct_band("resources", structs.iter().map(|(ident, ..)| *ident))?;
     let declared: Vec<Resource> = structs
         .into_iter()
         .zip(marks)
+        .zip(rendered)
         .map(
-            |((ident, kind, divisibility, initial, schema), mark)| Resource {
+            |(((ident, kind, divisibility, initial, _, schema), mark), seals)| Resource {
                 name: ident.to_string(),
                 mark: mark.into_bytes(),
                 kind,
                 divisibility,
                 initial,
+                seals,
                 schema,
             },
         )
@@ -2011,6 +2038,260 @@ fn resources(items: &[syn::Item]) -> syn::Result<Vec<Resource>> {
     Ok(declared)
 }
 
+/// What a declaration registers before it declares anything: the rules
+/// each of the package's own marks seals.
+///
+/// Emitted once per method rather than at each site naming a resource,
+/// because the address folds these rules — so one registration is what
+/// keeps a gate, a key and a mint from deriving three addresses. A
+/// package that seals nothing emits nothing.
+fn sealed_registrations(resources: &[Resource]) -> TokenStream2 {
+    let registered = resources.iter().filter(|r| !r.seals.is_empty()).map(|r| {
+        let mark = syn::LitByteStr::new(&r.mark, Span::call_site());
+        let seals = &r.seals;
+        quote!(__t.seals(#mark, #seals);)
+    });
+    quote!(#(#registered)*)
+}
+
+/// Whether a call's callee is the free function `name`.
+fn calls(func: &syn::Expr, name: &str) -> bool {
+    matches!(func, syn::Expr::Path(path)
+        if path.path.segments.last().is_some_and(|last| last.ident == name))
+}
+
+/// The sealed-rule grammar: a behaviour, and the rule its resource's
+/// address commits for it.
+///
+/// The same combinators `#[requires(..)]` takes — `||`, `&&`,
+/// `n_of(k, …)` — over a closed leaf set, because a sealed rule is
+/// folded into an address rather than judged against a cell. What a leaf
+/// may name is what the address already knows: the issuing instance,
+/// a badge that instance also issues, or a configuration field.
+fn sealed_rules(
+    attr: &syn::MetaList,
+    resources: &[(&syn::Ident, ResourceKind, bool)],
+    config_fields: &[String],
+) -> syn::Result<TokenStream2> {
+    let entries = attr.parse_args_with(
+        syn::punctuated::Punctuated::<syn::MetaNameValue, syn::Token![,]>::parse_terminated,
+    )?;
+    let mut sealed = Vec::new();
+    let mut named: Vec<String> = Vec::new();
+    for entry in &entries {
+        let behaviour = match entry.path.get_ident().map(ToString::to_string).as_deref() {
+            Some("recall") => quote!(Recall),
+            Some("freeze") => quote!(Freeze),
+            Some("deposit") => quote!(Deposit),
+            _ => {
+                return Err(syn::Error::new(
+                    entry.path.span(),
+                    "a sealed behaviour is `recall`, `freeze`, or `deposit` — the set an \
+                     address cannot answer by arithmetic, since who may mint is the \
+                     derivation's",
+                ));
+            }
+        };
+        let name = behaviour.to_string();
+        if named.contains(&name) {
+            return Err(syn::Error::new(
+                entry.path.span(),
+                format!(
+                    "`{}` is sealed twice, and a resource seals one rule for each \
+                         behaviour",
+                    entry.path.get_ident().expect("matched an ident")
+                ),
+            ));
+        }
+        named.push(name);
+        let rule = sealed_rule(&entry.value, resources, config_fields, 0)?;
+        sealed.push(quote!(
+            __seals.set(::hyperscale_vm_sdk::SealedBehaviour::#behaviour, #rule);
+        ));
+    }
+    Ok(quote!({
+        let mut __seals = ::hyperscale_vm_sdk::SealedRulesExpr::new();
+        #(#sealed)*
+        __seals
+    }))
+}
+
+fn sealed_rule(
+    expr: &syn::Expr,
+    resources: &[(&syn::Ident, ResourceKind, bool)],
+    config_fields: &[String],
+    depth: usize,
+) -> syn::Result<TokenStream2> {
+    match expr {
+        syn::Expr::Paren(inner) => sealed_rule(&inner.expr, resources, config_fields, depth),
+        syn::Expr::Binary(binary) => {
+            let all = match binary.op {
+                syn::BinOp::Or(_) => false,
+                syn::BinOp::And(_) => true,
+                _ => {
+                    return Err(syn::Error::new(
+                        binary.op.span(),
+                        "a sealed rule combines claims with `||`, `&&`, or `n_of(k, …)`",
+                    ));
+                }
+            };
+            let branches = flatten(expr, &binary.op);
+            let lowered = sealed_branches(expr.span(), &branches, resources, config_fields, depth)?;
+            let count = if all {
+                u8::try_from(lowered.len()).unwrap_or(u8::MAX)
+            } else {
+                1u8
+            };
+            check_threshold_node(expr.span(), count, lowered.len())?;
+            Ok(quote!(::hyperscale_vm_sdk::SealedRuleExpr::CountOf {
+                count: #count,
+                rules: ::std::vec![#(#lowered),*],
+            }))
+        }
+        syn::Expr::Call(call) if calls(&call.func, "n_of") => {
+            let mut args = call.args.iter();
+            let count = match args.next() {
+                Some(syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Int(int),
+                    ..
+                })) => int.base10_parse::<u8>()?,
+                _ => {
+                    return Err(syn::Error::new(
+                        call.span(),
+                        "a threshold states its count first: `n_of(2, a, b, c)`",
+                    ));
+                }
+            };
+            let branches: Vec<&syn::Expr> = args.collect();
+            let lowered = sealed_branches(call.span(), &branches, resources, config_fields, depth)?;
+            check_threshold_node(call.span(), count, lowered.len())?;
+            Ok(quote!(::hyperscale_vm_sdk::SealedRuleExpr::CountOf {
+                count: #count,
+                rules: ::std::vec![#(#lowered),*],
+            }))
+        }
+        other => {
+            let claim = sealed_claim(other, resources, config_fields)?;
+            Ok(quote!(::hyperscale_vm_sdk::SealedRuleExpr::Require(#claim)))
+        }
+    }
+}
+
+fn sealed_branches(
+    span: Span,
+    branches: &[&syn::Expr],
+    resources: &[(&syn::Ident, ResourceKind, bool)],
+    config_fields: &[String],
+    depth: usize,
+) -> syn::Result<Vec<TokenStream2>> {
+    if depth + 1 >= MAX_RULE_DEPTH {
+        return Err(syn::Error::new(
+            span,
+            format!("a sealed rule nests past the {MAX_RULE_DEPTH} levels the vocabulary admits"),
+        ));
+    }
+    branches
+        .iter()
+        .map(|branch| sealed_rule(branch, resources, config_fields, depth + 1))
+        .collect()
+}
+
+/// One sealed leaf, as the closed vocabulary spells it.
+fn sealed_claim(
+    expr: &syn::Expr,
+    resources: &[(&syn::Ident, ResourceKind, bool)],
+    config_fields: &[String],
+) -> syn::Result<TokenStream2> {
+    let refuse = |span| {
+        syn::Error::new(
+            span,
+            "a sealed claim is `self`, `issued(<Resource>)` for a fungible badge, \
+             `issued(<Resource>, <id>)` for one instance of a non-fungible one, or a \
+             configuration field by name — a derivation the address already knows, \
+             never anything a caller supplies",
+        )
+    };
+    match expr {
+        // The issuing instance, acting as itself.
+        syn::Expr::Path(path) if path.path.is_ident("self") => {
+            Ok(quote!(::hyperscale_vm_sdk::SealedClaim::SelfAddr))
+        }
+        // A configuration field, whose address class says which claim.
+        syn::Expr::Path(path) => {
+            let name = path
+                .path
+                .get_ident()
+                .map(ToString::to_string)
+                .ok_or_else(|| refuse(path.span()))?;
+            let slot = config_fields
+                .iter()
+                .position(|field| *field == name)
+                .ok_or_else(|| {
+                    syn::Error::new(
+                        path.span(),
+                        format!("`{name}` is not a configuration field of this package"),
+                    )
+                })?;
+            let slot = u32::try_from(slot).unwrap_or(u32::MAX);
+            Ok(quote!(::hyperscale_vm_sdk::SealedClaim::Config(#slot)))
+        }
+        // A badge the issuing instance also issues.
+        syn::Expr::Call(call) if calls(&call.func, "issued") => {
+            let mut args = call.args.iter();
+            let named = match args.next() {
+                Some(syn::Expr::Path(path)) => path.path.get_ident().map(ToString::to_string),
+                _ => None,
+            }
+            .ok_or_else(|| refuse(call.span()))?;
+            let Some((ident, kind, seals)) = resources.iter().find(|(ident, ..)| **ident == named)
+            else {
+                return Err(syn::Error::new(
+                    call.span(),
+                    format!("`{named}` is not a `#[resource]` of this package"),
+                ));
+            };
+            // The well-foundedness rule, said where the author wrote it:
+            // a leaf derives through the unsealed form, so naming a mark
+            // that seals its own rules would name an address nothing is
+            // ever minted at.
+            if *seals {
+                return Err(syn::Error::new(
+                    call.span(),
+                    format!(
+                        "`{named}` seals rules of its own, and a sealed rule names only \
+                         resources that seal none — a leaf derives through the unsealed \
+                         form, so this would name an address nothing is minted at"
+                    ),
+                ));
+            }
+            let mark = syn::LitByteStr::new(kebab(&named).as_bytes(), ident.span());
+            match (kind, args.next()) {
+                (ResourceKind::Fungible, None) => Ok(quote!(
+                    ::hyperscale_vm_sdk::SealedClaim::SelfBadge { mark: #mark.to_vec() }
+                )),
+                (ResourceKind::NonFungible, Some(id)) => Ok(quote!(
+                    ::hyperscale_vm_sdk::SealedClaim::SelfInstance {
+                        mark: #mark.to_vec(),
+                        id: #id,
+                    }
+                )),
+                (ResourceKind::Fungible, Some(id)) => Err(syn::Error::new(
+                    id.span(),
+                    format!("`{named}` is fungible, and a balance has no instance to name"),
+                )),
+                (ResourceKind::NonFungible, None) => Err(syn::Error::new(
+                    call.span(),
+                    format!(
+                        "`{named}` is non-fungible, so a claim on it names which instance: \
+                         `issued({named}, <id>)`"
+                    ),
+                )),
+            }
+        }
+        other => Err(refuse(other.span())),
+    }
+}
+
 /// One `#[resource]` declaration, as everything downstream reads it.
 #[derive(Clone)]
 struct Resource {
@@ -2027,6 +2308,11 @@ struct Resource {
     /// states one: a quantity for a fungible mark, an instance id for a
     /// non-fungible one — the same split the mint itself takes.
     initial: Option<syn::LitInt>,
+    /// The rules its address commits, as the expression that builds
+    /// them. Rendered once here because three sites emit it — a gate
+    /// naming the resource, a term over it, and the grant that mints it
+    /// — and an address they disagreed about would be three resources.
+    seals: TokenStream2,
     /// Whether the struct has fields, which is what makes it an
     /// instance's data schema and not only a bare mark.
     schema: bool,
@@ -2053,12 +2339,14 @@ struct ResourceAttr {
     kind: ResourceKind,
     divisibility: u8,
     initial: Option<syn::LitInt>,
+    seals: Option<syn::MetaList>,
 }
 
 fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
     let mut kind = None;
     let mut divisibility = None;
     let mut initial = None;
+    let mut seals = None;
     if matches!(attr.meta, syn::Meta::List(_)) {
         let terms = attr.parse_args_with(
             syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
@@ -2077,6 +2365,11 @@ fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
                             "a resource is one kind — the derivation folds it, so two \
                              spellings would be two addresses",
                         ));
+                    }
+                }
+                syn::Meta::List(list) if list.path.is_ident("seals") => {
+                    if seals.replace(list.clone()).is_some() {
+                        return Err(syn::Error::new(list.path.span(), "seals, twice"));
                     }
                 }
                 syn::Meta::List(list) if list.path.is_ident("initial") => {
@@ -2117,6 +2410,7 @@ fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
         kind,
         divisibility: divisibility.unwrap_or(DEFAULT_DIVISIBILITY),
         initial,
+        seals,
     })
 }
 
@@ -2124,8 +2418,9 @@ fn unknown_resource_term(at: &impl Spanned) -> syn::Error {
     syn::Error::new(
         at.span(),
         "a resource states `fungible` (the default) or `non_fungible`, the supply \
-         its component comes up holding as `initial(<n>)`, and — where it is \
-         fungible — `divisibility = <digits>`",
+         its component comes up holding as `initial(<n>)`, the rules its address \
+         commits as `seals(<behaviour> = <rule>, …)`, and — where it is fungible — \
+         `divisibility = <digits>`",
     )
 }
 
@@ -2540,7 +2835,13 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     let config_fields = config_slots(items, config_name.as_ref());
     let events = event_names(items)?;
     let errors = error_names(items)?;
-    let declared_resources = resources(items)?;
+    let declared_resources = resources(
+        items,
+        &config_fields
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>(),
+    )?;
     let declared_roles = role_names(items)?;
     let accessors = accessors(config_name.as_ref());
     let declared = Declared {

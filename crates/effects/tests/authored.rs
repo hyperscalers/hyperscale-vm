@@ -8,7 +8,7 @@
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
     CONFIRMATION, Clause, ConditionExpr, Expr, PRIMARY, PackageMetadata, RECOVERY, ResourceKind,
-    RuleExpr, RuleLeaf, SealedBehaviour, Value, check_abi, check_declarations,
+    RuleExpr, RuleLeaf, SealedBehaviour, SealedRulesExpr, Value, check_abi, check_declarations,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_stdlib::staking::OWNER_BADGE;
@@ -82,6 +82,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         vec![RuleExpr::claim(Expr::SelfResource {
             kind: ResourceKind::NonFungible,
             material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
+            seals: SealedRulesExpr::new(),
         })]
     };
     let open = Vec::new;

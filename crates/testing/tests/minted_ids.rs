@@ -9,7 +9,8 @@
 //! comes back, before anything downstream can file or consume it.
 
 use hyperscale_vm_effects::{
-    AbiParam, Expr, Issuance, MethodSignature, PackageMetadata, ResourceKind, Totality, Value,
+    AbiParam, Expr, Issuance, MethodSignature, PackageMetadata, ResourceKind, SealedRulesExpr,
+    Totality, Value,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, PrincipalAddr, account, principal};
@@ -33,12 +34,14 @@ fn issuer() -> PackageMetadata {
             issues: Some(Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
+                seals: SealedRulesExpr::new(),
             }),
             abi: vec![AbiParam::Issuer],
             outputs: vec![Expr::NfBucket {
                 resource: Box::new(Expr::SelfResource {
                     kind: ResourceKind::NonFungible,
                     material: vec![Expr::Literal(Value::Bytes(BADGE.to_vec()))],
+                    seals: SealedRulesExpr::new(),
                 }),
                 ids: Box::new(Expr::List(vec![Expr::Literal(Value::U64(DECLARED))])),
             }],
@@ -63,11 +66,13 @@ fn miscast_issuer() -> PackageMetadata {
             issues: Some(Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
+                seals: SealedRulesExpr::new(),
             }),
             abi: vec![AbiParam::Issuer],
             outputs: vec![Expr::SelfResource {
                 kind: ResourceKind::NonFungible,
                 material: vec![Expr::Literal(Value::Bytes(BADGE.to_vec()))],
+                seals: SealedRulesExpr::new(),
             }],
             ..MethodSignature::default()
         },

@@ -75,7 +75,7 @@ pub const MAX_RULE_WIRE_DEPTH: usize = 2 * MAX_RULE_DEPTH + 1;
 /// present, and nothing else. Which claims those are is [`Presented`]'s:
 /// an identity acting as itself, a badge resource, or one instance of
 /// one.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 #[hbor(validate = well_formed)]
 pub enum Rule<L> {
     /// Satisfied when this leaf is among those presented.
@@ -107,7 +107,7 @@ pub type StoredRule = Rule<Presented>;
 /// kinds — and the cost is legible in the same clause: a claim over
 /// configuration reads no state, a stored leaf is a provisioned read of
 /// a mutable cell.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum RuleLeaf {
     /// A claim the declaration names, evaluated over the method's own
     /// inputs into the claim a caller must present.
@@ -167,6 +167,54 @@ impl RuleLeaf {
 ///
 /// [`check_metadata`]: crate::metadata::check_metadata
 pub type RuleExpr = Rule<RuleLeaf>;
+
+/// A sealed rule's leaf: a claim a resource's own derivation commits to.
+///
+/// Its own closed vocabulary rather than [`RuleLeaf`], because a sealed
+/// rule is folded into an address rather than judged against a cell. Two
+/// things follow from the closure. **The tree stays a tree**: reusing
+/// [`RuleLeaf`] would put a [`Rule`] inside an [`Expr`] while
+/// [`RuleLeaf::Claim`] already holds one, making the two mutually
+/// recursive and their depth caps a joint property. And **the derivation
+/// stays well-founded**: a badge named here derives through the unsealed
+/// form, so nothing in a resource's sealed rules can name a resource
+/// whose own rules are still being computed.
+///
+/// What it can name is what a resource's own address already knows: the
+/// instance that issues it, a badge that instance issues, or a field of
+/// the configuration the instance's address folds. Nothing a caller
+/// supplies, because a caller supplies nothing to a derivation.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+pub enum SealedClaim {
+    /// The issuing instance, acting as itself.
+    SelfAddr,
+    /// A fungible badge the issuing instance also issues, at the
+    /// material separating it from the instance's others.
+    SelfBadge {
+        /// The mark, canonically encoded into the badge's derivation.
+        mark: Vec<u8>,
+    },
+    /// One named instance of a non-fungible badge the issuing instance
+    /// also issues.
+    SelfInstance {
+        /// The mark, as [`SealedClaim::SelfBadge`] states it.
+        mark: Vec<u8>,
+        /// Which instance of it.
+        id: u64,
+    },
+    /// The n-th field of the issuing instance's configuration, whose
+    /// address class says which claim it makes — the same reading
+    /// [`Presented::of_address`] gives every other declared address.
+    Config(u32),
+}
+
+/// A rule a resource's address seals, before the instance that issues it
+/// is known.
+///
+/// The shape is static and only the leaves resolve, on the terms
+/// [`RuleExpr`] states — so the caps a declaration is held to at publish
+/// are the caps the sealed set is held to wherever it is judged.
+pub type SealedRuleExpr = Rule<SealedClaim>;
 
 /// The threshold rule one node meets, wherever the rule came from.
 ///

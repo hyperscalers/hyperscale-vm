@@ -15,7 +15,7 @@ use crate::dsl::{
     ModeExpr, TargetExpr, materialized_kind,
 };
 use crate::metadata::PackageMetadata;
-use crate::resource::holdings_entry;
+use crate::resource::{SealedRulesExpr, holdings_entry};
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
 use crate::signature::{AbiParam, MethodSignature};
 use crate::types::{MAX_VALUE_DEPTH, SlotId, Value};
@@ -1411,6 +1411,9 @@ fn check_signature_bounds(signature: &MethodSignature) -> Result<(), SignatureBo
             check_expr_bounds(expr, 0)?;
         }
     }
+    if let Some(issuance) = &signature.issues {
+        check_sealed_bounds(&issuance.seals)?;
+    }
     let mut declared = 0usize;
     check_clause_bounds(&signature.effects, 0, &mut declared)
 }
@@ -1529,8 +1532,28 @@ fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), SignatureBoundsErr
     {
         return Err(SignatureBoundsError::LiteralDepth);
     }
+    // The sealed set is not a child — its leaves hold no expression at
+    // all — so it is walked here rather than reached by the recursion.
+    if let Expr::SelfResource { seals, .. } = expr {
+        check_sealed_bounds(seals)?;
+    }
     expr.children()
         .try_for_each(|child| check_expr_bounds(child, depth + 1))
+}
+
+/// Every rule a declaration seals, under the caps a stored rule is
+/// decoded under.
+///
+/// Held here as well as at resolution because a resolved rule is what a
+/// holder judges: a set past the caps would derive an address whose
+/// rules nothing could decode, and refusing at publish is the verdict a
+/// package author can read.
+fn check_sealed_bounds(seals: &SealedRulesExpr) -> Result<(), SignatureBoundsError> {
+    seals.iter().try_for_each(|(_, rule)| {
+        rule.within_caps(0)
+            .then_some(())
+            .ok_or(SignatureBoundsError::RuleCaps)
+    })
 }
 
 #[cfg(test)]
@@ -1543,7 +1566,7 @@ mod tests {
     use crate::auth::PRIMARY;
     use crate::envelope::NULLIFIER_SLOT;
     use crate::metadata::PACKAGE_SLOT;
-    use crate::resource::{ResourceKind, SealedBehaviour};
+    use crate::resource::{ResourceKind, SealedBehaviour, SealedRulesExpr};
     use crate::signature::{Issuance, ParamType, Totality};
     use crate::types::{Value, package_slot};
 
@@ -2041,6 +2064,7 @@ mod tests {
                 issues: Some(Issuance {
                     mark: mark.to_vec(),
                     kind: ResourceKind::Fungible,
+                    seals: SealedRulesExpr::new(),
                 }),
                 ..MethodSignature::default()
             })

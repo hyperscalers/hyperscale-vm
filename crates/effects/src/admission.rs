@@ -36,7 +36,7 @@ use crate::metadata::{PackageHash, PackageMetadata};
 use crate::presented::Presented;
 use crate::publish::{CheckedSignature, seals};
 use crate::records::ChainRecords;
-use crate::resource::{ResourceKind, issued_resource};
+use crate::resource::{ResourceKind, sealed_issued_resource};
 use crate::route::{FrameDeclaration, MAX_MANIFEST_NODES};
 use crate::rule::Rule;
 use crate::signature::{AbiParam, MethodSignature, ParamType};
@@ -1589,12 +1589,26 @@ fn lower_call(
             .iter()
             .map(|(_, content)| content.clone())
             .collect(),
-        issues: signature.issues.as_ref().map(|issuance| {
-            (
-                issued_resource(hasher, target, issuance.kind, &issuance.mark),
-                issuance.kind,
-            )
-        }),
+        issues: signature
+            .issues
+            .as_ref()
+            .map(|issuance| -> Result<_, AdmissionError> {
+                // The rules the mark seals ride the grant's own address,
+                // so what a body mints is what a gate naming the same
+                // resource resolves to.
+                let rules = issuance
+                    .seals
+                    .resolve(hasher, target, &inputs.record.config)
+                    .map_err(|source| AdmissionError::Eval {
+                        node: node_index,
+                        source: source.into(),
+                    })?;
+                Ok((
+                    sealed_issued_resource(hasher, target, issuance.kind, &rules, &issuance.mark),
+                    issuance.kind,
+                ))
+            })
+            .transpose()?,
         evidence: evidence.to_vec(),
         requires,
     })

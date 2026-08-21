@@ -260,6 +260,7 @@ pub fn declaration(
     gate: &TokenStream,
     declines: bool,
     total: bool,
+    seals: &TokenStream,
 ) -> TokenStream {
     // One draw per call site: the entry key derived from a fresh id and
     // the parameter carrying that id have to name the same slot.
@@ -298,6 +299,7 @@ pub fn declaration(
     let total = total.then(|| quote!(__t.total();));
     quote!(
         |__t: &mut ::hyperscale_vm_sdk::Trace| {
+            #seals
             #(#fresh)*
             #gate
             #fallible
