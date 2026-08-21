@@ -10,7 +10,7 @@ use hyperscale_vm_effects::envelope::NULLIFIER_SLOT;
 use hyperscale_vm_effects::vocabulary::{AUTH, INSTANCE, RESOURCE};
 use hyperscale_vm_effects::{
     AbiParam, Clause, ConditionExpr, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType,
-    SlotId, TargetExpr, Value,
+    SlotId, TargetExpr, Value, seal_clauses,
 };
 use hyperscale_vm_gate::{admit_package, attach_metadata};
 use hyperscale_vm_types::{Address, AddressClass, Presence};
@@ -27,8 +27,10 @@ fn component() -> Vec<u8> {
     (export "write-cell" (type $wc (sub resource)))))
   (alias export $state "write-cell" (type $wcell))
   (core module $m
-    (func (export "m") (param i32 i64)))
+    (func (export "m") (param i32 i64))
+    (func (export "seal")))
   (core instance $i (instantiate $m))
+  (func (export "instantiate") (canon lift (core func $i "seal")))
   (func (export "m")
     (param "c" (borrow $wcell)) (param "amount" u64)
     (canon lift (core func $i "m"))))
@@ -41,6 +43,15 @@ fn component() -> Vec<u8> {
 /// by `material`.
 fn writing(slot: SlotId, material: Vec<Expr>) -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
+    // Every published package brings its components up through a seal of
+    // its own; the case under test is the method beside it.
+    metadata.methods.insert(
+        "instantiate".into(),
+        MethodSignature {
+            effects: seal_clauses(),
+            ..MethodSignature::default()
+        },
+    );
     metadata.methods.insert(
         "m".into(),
         MethodSignature {

@@ -18,9 +18,10 @@
 //! that will receive its arguments.
 
 pub use hyperscale_vm_effects::METADATA_SECTION;
+use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
-    AbiParam, MethodSignature, PackageMetadata, Totality, attach_metadata as attach_canonical,
-    check_signature, materialized_kind, metadata_section,
+    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, TargetExpr, Totality,
+    attach_metadata as attach_canonical, check_signature, materialized_kind, metadata_section,
 };
 use hyperscale_vm_runtime::{
     ExportParam, ExportShape, check_method, classify_exports, validated_component,
@@ -158,7 +159,56 @@ fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, Gat
         check_outputs_against_export(method, signature, export)?;
         judge_totality(artifact, method, signature, export, provenance)?;
     }
+    judge_seal(&metadata, provenance)?;
     Ok(metadata)
+}
+
+/// Whether a signature writes the component's own configuration leaf —
+/// the one write the slot admits, and so the seal that makes a component
+/// actual.
+///
+/// The `Absent` door beside it is not re-checked here: the slot's shape
+/// admits no `CONFIG` write without one, so a signature that reached
+/// this gate carries it.
+fn seals(signature: &MethodSignature) -> bool {
+    signature
+        .effects
+        .iter()
+        .flat_map(Clause::effects)
+        .any(|clause| {
+            matches!(
+                clause,
+                Clause::Effect {
+                    target: TargetExpr::Point(Expr::ChildKey { owner, slot, material }),
+                    mode: ModeExpr::Write,
+                    ..
+                } if **owner == Expr::SelfAddr && *slot == CONFIG && material.is_empty()
+            )
+        })
+}
+
+/// Judge that a published package can bring its components up.
+///
+/// Admission fences every call on a component against the presence of
+/// its configuration leaf, and the only thing that can write that leaf
+/// is a method of the component's own package. A published package
+/// declaring no such method has components that can never become actual
+/// — every call to every one of them refused, for a reason no caller
+/// could have read off the package. Refused here, where the answer is
+/// the author's to give.
+///
+/// Only a publisher's. A principal has no creation to finish, so the
+/// package serving them declares no seal and wants none; that package is
+/// the protocol's, seeded at genesis, and no published package can take
+/// its place.
+fn judge_seal(metadata: &PackageMetadata, provenance: Provenance) -> Result<(), GateError> {
+    if matches!(provenance, Provenance::Protocol) || metadata.methods.values().any(seals) {
+        return Ok(());
+    }
+    Err(GateError(
+        "the package declares no way to make a component of it actual: one method must          write the component's own configuration leaf, which is the cell every call to it          is judged against"
+            .into(),
+    ))
 }
 
 /// Judge a method's declared outputs against what its export hands back.
@@ -328,6 +378,7 @@ fn check_abi_against_export(
 mod tests {
     use hyperscale_vm_effects::{
         AbiParam, Clause, ConditionExpr, Expr, MethodSignature, PackageMetadata, RuleExpr,
+        seal_clauses,
     };
     use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, book, lottery};
     use hyperscale_vm_runtime::component_exports;
@@ -340,6 +391,10 @@ mod tests {
     fn component_exporting(names: &[&str]) -> Vec<u8> {
         use std::fmt::Write as _;
 
+        // Every published package brings its components up through a
+        // seal of its own, so the fixture exports one beside whatever
+        // the case under test names.
+        let names: Vec<&str> = names.iter().copied().chain(["instantiate"]).collect();
         let mut source = String::from("(component\n  (core module $m\n");
         for index in 0..names.len() {
             let _ = writeln!(source, "    (func (export \"f{index}\"))");
@@ -355,7 +410,8 @@ mod tests {
         parse_str(&source).expect("the component assembles")
     }
 
-    /// Metadata declaring one empty signature per method name.
+    /// Metadata declaring one empty signature per method name, beside
+    /// the seal every published package needs to bring a component up.
     fn declaring(methods: &[&str]) -> PackageMetadata {
         let mut metadata = PackageMetadata::default();
         for method in methods {
@@ -363,7 +419,16 @@ mod tests {
                 .methods
                 .insert((*method).into(), MethodSignature::default());
         }
+        metadata.methods.insert("instantiate".into(), sealing());
         metadata
+    }
+
+    /// A signature carrying the seal every published package needs.
+    fn sealing() -> MethodSignature {
+        MethodSignature {
+            effects: seal_clauses(),
+            ..MethodSignature::default()
+        }
     }
 
     /// A preamble followed by one non-custom section carrying `body`.
@@ -502,7 +567,7 @@ mod tests {
     /// judged against.
     fn component_declining(name: &str) -> Vec<u8> {
         parse_str(&*format!(
-            "(component\n  (core module $m\n    (memory (export \"mem\") 1 1)\n               (func (export \"f\") (result i32) i32.const 0))\n             (core instance $i (instantiate $m))\n             (func (export \"{name}\") (result (result (error u32)))\n               (canon lift (core func $i \"f\") (memory $i \"mem\"))))"
+            "(component\n  (core module $m\n    (memory (export \"mem\") 1 1)\n               (func (export \"f\") (result i32) i32.const 0)\n               (func (export \"seal\")))\n             (core instance $i (instantiate $m))\n             (func (export \"instantiate\") (canon lift (core func $i \"seal\")))\n             (func (export \"{name}\") (result (result (error u32)))\n               (canon lift (core func $i \"f\") (memory $i \"mem\"))))"
         ))
         .expect("the component assembles")
     }
@@ -518,6 +583,7 @@ mod tests {
     fn a_totality_mark_the_export_type_contradicts_refuses_at_publish() {
         let declining = component_declining("swap");
         let mut fallible = PackageMetadata::default();
+        fallible.methods.insert("instantiate".into(), sealing());
         fallible.methods.insert(
             "swap".into(),
             MethodSignature {
@@ -561,6 +627,36 @@ mod tests {
         )
         .expect("attaches");
         assert!(admit_package(&renamed).is_err());
+    }
+
+    /// A published package has to be able to bring a component up.
+    ///
+    /// Admission judges every call on a component against its
+    /// configuration leaf, and only a method of the component's own
+    /// package can write that leaf. A package declaring none has
+    /// components nobody can ever call — refused here, where the author
+    /// can still do something about it, rather than one call at a time
+    /// for the life of the package.
+    #[test]
+    fn a_publish_refuses_a_package_that_can_seal_nothing() {
+        let mut sealless = declaring(&["deposit"]);
+        sealless.methods.remove("instantiate");
+        let artifact =
+            attach_metadata(&component_exporting(&["deposit"]), &sealless).expect("attaches");
+        let refused = admit_package(&artifact).expect_err("its components could never be called");
+        assert!(refused.0.contains("configuration leaf"), "{}", refused.0);
+
+        // The same package, with the seal its components come up
+        // through.
+        let artifact =
+            attach_metadata(&component_exporting(&["deposit"]), &declaring(&["deposit"]))
+                .expect("attaches");
+        assert!(admit_package(&artifact).is_ok());
+
+        // The protocol's own account declares no seal and wants none: a
+        // principal has no creation to finish, and the package serving
+        // them is seeded at genesis rather than published.
+        assert!(admit_protocol_package(account_artifact()).is_ok());
     }
 
     #[test]
@@ -671,8 +767,10 @@ mod tests {
         parse_str(
             r#"(component
                  (core module $m
-                   (func (export "f") (param i64) (result i64) local.get 0))
+                   (func (export "f") (param i64) (result i64) local.get 0)
+                   (func (export "seal")))
                  (core instance $i (instantiate $m))
+                 (func (export "instantiate") (canon lift (core func $i "seal")))
                  (func (export "m") (param "clock" u64) (result u64)
                    (canon lift (core func $i "f"))))"#,
         )
@@ -727,8 +825,10 @@ mod tests {
                    (export "delta-cell" (type $dc (sub resource)))))
                  (alias export $state "delta-cell" (type $delta))
                  (core module $m
-                   (func (export "f") (param i32) (result i64) i64.const 0))
+                   (func (export "f") (param i32) (result i64) i64.const 0)
+                   (func (export "seal")))
                  (core instance $i (instantiate $m))
+                 (func (export "instantiate") (canon lift (core func $i "seal")))
                  (func (export "m") (param "vault" (borrow $delta)) (result u64)
                    (canon lift (core func $i "f"))))"#,
         )

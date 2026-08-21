@@ -912,6 +912,44 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     Ok(())
 }
 
+/// The clauses a component's seal declares: the write of its own
+/// configuration leaf, under the one-way door its absence is.
+///
+/// The one write the `CONFIG` slot admits, and so the only way a
+/// component becomes actual. A package that declares no method carrying
+/// these has components that can never be called, since admission holds
+/// every call to one against that leaf's presence — which is why the
+/// publish gate refuses such a package rather than letting its author
+/// find out a call at a time.
+///
+/// Spelled here so a hand-written package writes the shape the gate
+/// looks for rather than rediscovering it.
+#[must_use]
+pub fn seal_clauses() -> Vec<Clause> {
+    let leaf = || {
+        TargetExpr::Point(Expr::ChildKey {
+            owner: Box::new(Expr::SelfAddr),
+            slot: CONFIG,
+            material: Vec::new(),
+        })
+    };
+    vec![
+        Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Holds {
+                target: Box::new(leaf()),
+                presence: Presence::Absent,
+            },
+        },
+        Clause::Effect {
+            guard: None,
+            target: leaf(),
+            mode: ModeExpr::Write,
+            denomination: None,
+        },
+    ]
+}
+
 /// Judge a signature's declared effects against the prefix and the cells
 /// they are the signature's to declare.
 ///

@@ -11,7 +11,7 @@
 
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, TargetExpr,
-    Value, package_slot,
+    Value, package_slot, seal_clauses,
 };
 use hyperscale_vm_gate::{admit_package, attach_metadata};
 use hyperscale_vm_types::{Address, AddressClass};
@@ -27,8 +27,10 @@ fn borrowing(resource: &str) -> Vec<u8> {
     (export "{resource}" (type $c (sub resource)))))
   (alias export $state "{resource}" (type $cell))
   (core module $m
-    (func (export "m") (param i32)))
+    (func (export "m") (param i32))
+    (func (export "seal")))
   (core instance $i (instantiate $m))
+  (func (export "instantiate") (canon lift (core func $i "seal")))
   (func (export "m") (param "c" (borrow $cell))
     (canon lift (core func $i "m"))))
 "#
@@ -45,6 +47,15 @@ fn declaring(holds_value: bool) -> PackageMetadata {
         )))
     };
     let mut metadata = PackageMetadata::default();
+    // Every published package brings its components up through a seal of
+    // its own; the case under test is the method beside it.
+    metadata.methods.insert(
+        "instantiate".into(),
+        MethodSignature {
+            effects: seal_clauses(),
+            ..MethodSignature::default()
+        },
+    );
     metadata.methods.insert(
         "m".into(),
         MethodSignature {
