@@ -321,8 +321,31 @@ pub fn admit_tree(
             signer: Some(subintent.signer),
         });
     }
+    // The envelope's own records, composed over what the chain already
+    // answers for. Each stands for the seal of the component it derives
+    // and for nothing else — `Lower` holds every node targeting one to
+    // being that component's seal.
+    //
+    // Which components the chain happens to hold does not enter it: an
+    // envelope means the same thing wherever it is judged, so a record
+    // beside an ordinary call is refused whether or not the component it
+    // names is already there.
+    let resolvable = instances.with_instances(&tree.instances, hasher);
+    let presented: BTreeSet<Address> = tree
+        .instances
+        .iter()
+        .map(|meta| meta.address(hasher).address())
+        .collect();
     let sealed = SealedResources::from_presented(hasher, &tree.resources);
-    let admitted = admit_intents(&views, identity, cache, instances, &sealed, hasher)?;
+    let admitted = admit_intents(
+        &views,
+        identity,
+        cache,
+        &resolvable,
+        &presented,
+        &sealed,
+        hasher,
+    )?;
     Ok(AdmittedTree {
         admitted,
         subintents: records,

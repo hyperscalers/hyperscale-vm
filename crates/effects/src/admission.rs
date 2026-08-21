@@ -14,6 +14,8 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
+use std::collections::BTreeSet;
+
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectConflict, EffectTarget, Mode, Presence, PrincipalAddr,
     ResourceAddr,
@@ -31,6 +33,7 @@ use crate::invoke::{CallArg, EdgeBound, NodeCall};
 use crate::manifest::{Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{MetadataCache, PackageHash};
 use crate::presented::Presented;
+use crate::publish::seals;
 use crate::resource::{ResourceKind, issued_resource};
 use crate::route::{FrameDeclaration, MAX_MANIFEST_NODES};
 use crate::rule::Rule;
@@ -121,6 +124,20 @@ pub enum AdmissionError {
     /// other's outputs in a cycle.
     #[error("the envelope's yield edges admit no execution order")]
     CyclicYields,
+    /// A record presented for a node that is not its component's seal.
+    ///
+    /// A component the chain has is a component whose record the chain
+    /// answers with; presenting one is only ever how a component that
+    /// does not exist yet is brought up.
+    #[error(
+        "node {node} presents a record and calls `{method}`, which is not its component's seal"
+    )]
+    PresentedForCall {
+        /// The offending node.
+        node: u32,
+        /// The method it named.
+        method: String,
+    },
     /// A guarded method named with no evidence presented.
     #[error("node {node} calls a guarded method and presents no evidence")]
     MissingEvidence {
@@ -534,6 +551,7 @@ pub fn admit(
         identity,
         cache,
         instances,
+        &BTreeSet::new(),
         SealedResources::none(),
         hasher,
     )
@@ -658,6 +676,7 @@ pub(crate) fn admit_intents(
     identity: ManifestHash,
     cache: &MetadataCache,
     instances: &InstanceRegistry,
+    presented: &BTreeSet<Address>,
     sealed: &SealedResources,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
@@ -675,6 +694,7 @@ pub(crate) fn admit_intents(
         identity,
         cache,
         instances,
+        presented,
         sealed,
         hasher,
         flat_of: &flat_of,
@@ -854,6 +874,16 @@ struct Lower<'a> {
     identity: ManifestHash,
     cache: &'a MetadataCache,
     instances: &'a InstanceRegistry,
+    /// The component addresses the envelope's own records resolve, and
+    /// nothing committed does.
+    ///
+    /// A record may stand for exactly one call: the seal that makes its
+    /// component actual. Every other target resolves from state, so a
+    /// record presented beside one is a claim about a component the
+    /// chain can already answer for — and admitting it would let a
+    /// caller name the configuration of a component somebody else
+    /// created.
+    presented: &'a BTreeSet<Address>,
     sealed: &'a SealedResources,
     hasher: &'a dyn Hasher,
     /// Flattened position per (intent, local node).
@@ -879,7 +909,7 @@ struct Lower<'a> {
     table_len: u32,
 }
 
-impl Lower<'_> {
+impl<'a> Lower<'a> {
     fn lower_node(
         &mut self,
         intent_index: usize,
@@ -890,30 +920,7 @@ impl Lower<'_> {
         let node_index =
             u32::try_from(self.lowered.len()).map_err(|_| AdmissionError::TooManyNodes)?;
         let local = u32::try_from(local_index).map_err(|_| AdmissionError::TooManyNodes)?;
-        let meta = self
-            .instances
-            .get(node.target)
-            .ok_or_else(|| ResolveError::UnknownInstance(node.target.address()))?;
-        self.cache
-            .get(meta.package)
-            .ok_or(ResolveError::UnknownPackage(meta.package))?;
-        // The witness, not the record: everything behind the cache door
-        // passed the composed signature check, so nothing below re-asks.
-        let checked = self
-            .cache
-            .method(meta.package, &node.method)
-            .ok_or_else(|| ResolveError::UnknownMethod {
-                package: meta.package,
-                method: node.method.clone(),
-            })?;
-        let signature = checked.signature();
-        if signature.params.len() != node.args.len() {
-            return Err(AdmissionError::ArityMismatch {
-                node: node_index,
-                expected: signature.params.len(),
-                found: node.args.len(),
-            });
-        }
+        let (meta, signature) = self.resolve_call(node, node_index)?;
 
         let (bound, inputs) = self.bind_args(intent_index, local, node, signature, node_index)?;
         let evidence =
@@ -1003,6 +1010,57 @@ impl Lower<'_> {
             evidence,
         });
         Ok(())
+    }
+
+    /// The record and signature a node's call resolves to, held to what
+    /// this envelope may say about them.
+    ///
+    /// The chain from an address through its record and package to the
+    /// named signature, refused at the first broken link — and then two
+    /// judgments the signature makes possible: whether a record the
+    /// envelope carried may stand for this call at all, and whether the
+    /// arguments match what the method declares.
+    fn resolve_call(
+        &self,
+        node: &GraphNode,
+        node_index: u32,
+    ) -> Result<(&'a InstanceMeta, &'a MethodSignature), AdmissionError> {
+        let meta = self
+            .instances
+            .get(node.target)
+            .ok_or_else(|| ResolveError::UnknownInstance(node.target.address()))?;
+        self.cache
+            .get(meta.package)
+            .ok_or(ResolveError::UnknownPackage(meta.package))?;
+        // The witness, not the record: everything behind the cache door
+        // passed the composed signature check, so nothing below re-asks.
+        let checked = self
+            .cache
+            .method(meta.package, &node.method)
+            .ok_or_else(|| ResolveError::UnknownMethod {
+                package: meta.package,
+                method: node.method.clone(),
+            })?;
+        let signature = checked.signature();
+        // A record the envelope carried stands for the seal of the
+        // component it derives and nothing else. Every other target
+        // answers from committed state, so a record beside one would be
+        // a caller stating the configuration of a component the chain
+        // holds its own answer for — and the two need never agree.
+        if self.presented.contains(&node.target.address()) && !seals(signature) {
+            return Err(AdmissionError::PresentedForCall {
+                node: node_index,
+                method: node.method.clone(),
+            });
+        }
+        if signature.params.len() != node.args.len() {
+            return Err(AdmissionError::ArityMismatch {
+                node: node_index,
+                expected: signature.params.len(),
+                found: node.args.len(),
+            });
+        }
+        Ok((meta, signature))
     }
 
     /// The instantiation fence for a node's target: the read of its

@@ -912,18 +912,38 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     Ok(())
 }
 
+/// Whether a method writes the component's own configuration leaf — the
+/// one write the `CONFIG` slot admits, and so the seal that makes a
+/// component actual.
+///
+/// Two readers. The publish gate refuses a package declaring no such
+/// method, whose components could never be called; and admission admits
+/// a presented record for a seal's own node and nowhere else, because
+/// the seal is the one call whose target has no committed record to
+/// resolve against.
+///
+/// The `Absent` door beside it is not asked about here: the slot's shape
+/// admits no `CONFIG` write without one.
+#[must_use]
+pub fn seals(signature: &MethodSignature) -> bool {
+    signature
+        .effects
+        .iter()
+        .flat_map(Clause::effects)
+        .any(|clause| {
+            matches!(
+                clause,
+                Clause::Effect {
+                    target: TargetExpr::Point(Expr::ChildKey { owner, slot, material }),
+                    mode: ModeExpr::Write,
+                    ..
+                } if **owner == Expr::SelfAddr && *slot == CONFIG && material.is_empty()
+            )
+        })
+}
+
 /// The clauses a component's seal declares: the write of its own
 /// configuration leaf, under the one-way door its absence is.
-///
-/// The one write the `CONFIG` slot admits, and so the only way a
-/// component becomes actual. A package that declares no method carrying
-/// these has components that can never be called, since admission holds
-/// every call to one against that leaf's presence — which is why the
-/// publish gate refuses such a package rather than letting its author
-/// find out a call at a time.
-///
-/// Spelled here so a hand-written package writes the shape the gate
-/// looks for rather than rediscovering it.
 #[must_use]
 pub fn seal_clauses() -> Vec<Clause> {
     let leaf = || {

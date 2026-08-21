@@ -18,10 +18,9 @@
 //! that will receive its arguments.
 
 pub use hyperscale_vm_effects::METADATA_SECTION;
-use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
-    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, TargetExpr, Totality,
-    attach_metadata as attach_canonical, check_signature, materialized_kind, metadata_section,
+    AbiParam, MethodSignature, PackageMetadata, Totality, attach_metadata as attach_canonical,
+    check_signature, materialized_kind, metadata_section, seals,
 };
 use hyperscale_vm_runtime::{
     ExportParam, ExportShape, check_method, classify_exports, validated_component,
@@ -161,30 +160,6 @@ fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, Gat
     }
     judge_seal(&metadata, provenance)?;
     Ok(metadata)
-}
-
-/// Whether a signature writes the component's own configuration leaf —
-/// the one write the slot admits, and so the seal that makes a component
-/// actual.
-///
-/// The `Absent` door beside it is not re-checked here: the slot's shape
-/// admits no `CONFIG` write without one, so a signature that reached
-/// this gate carries it.
-fn seals(signature: &MethodSignature) -> bool {
-    signature
-        .effects
-        .iter()
-        .flat_map(Clause::effects)
-        .any(|clause| {
-            matches!(
-                clause,
-                Clause::Effect {
-                    target: TargetExpr::Point(Expr::ChildKey { owner, slot, material }),
-                    mode: ModeExpr::Write,
-                    ..
-                } if **owner == Expr::SelfAddr && *slot == CONFIG && material.is_empty()
-            )
-        })
 }
 
 /// Judge that a published package can bring its components up.

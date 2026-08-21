@@ -88,6 +88,7 @@ pub use presented::Presented;
 pub use publish::{
     AbiError, CheckedSignature, DeclarationError, MetadataBoundsError, SignatureBoundsError,
     SignatureError, check_abi, check_declarations, check_metadata, check_signature, seal_clauses,
+    seals,
 };
 pub use resource::{
     MAX_RESOURCE_MATERIAL_PARTS, RECORD_WIRE_DEPTH, ResourceKind, ResourceMeta, ResourceRecord,

@@ -2,6 +2,8 @@
 //! along their yield edges, the nullifier vocabulary derives canonical
 //! addresses, and every malformed composition rejects exactly.
 
+use std::collections::BTreeSet;
+
 use hyperscale_vm_effects::{
     AdmissionError, AdmittedTree, Bounds, Constraint, EdgeContent, EdgeRef, EnvelopeTree, GraphArg,
     GraphNode, Hash32, Hasher, InstanceMeta, InstanceRegistry, IntentDecl, MAX_VALUE_DEPTH,
@@ -9,6 +11,7 @@ use hyperscale_vm_effects::{
     PackageHash, PrefixShardResolver, ResourceKind, ShardResolver, Subintent, TestHasher, Value,
     YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
+use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, PrincipalAddr, ResourceAddr,
@@ -629,5 +632,95 @@ fn a_deep_instance_config_value_refuses_at_admission() {
     assert!(matches!(
         admit_composed(&tree),
         Err(AdmissionError::InstanceValueTooDeep { .. })
+    ));
+}
+
+/// A presented record brings a component up, and does nothing else.
+///
+/// Once a component is actual its record is the chain's to answer with,
+/// so a caller carrying one alongside an ordinary call is stating the
+/// configuration of something the chain already holds — two sources for
+/// one fact, which need never agree. The seal is the one call with no
+/// committed record to resolve against, so it is the one call a record
+/// may stand for.
+#[test]
+fn a_record_stands_for_a_seal_and_for_no_other_call() {
+    let drawing = PackageHash(TestHasher.hash(b"package", &[b"lottery"]));
+    let mut cache = MetadataCache::new();
+    cache.publish_unchecked(pkg(), account::metadata());
+    cache.publish_unchecked(drawing, lottery::metadata());
+    let mut instances = InstanceRegistry::new();
+    instances.serve_principals(pkg());
+
+    let meta = InstanceMeta {
+        package: drawing,
+        config: Vec::new(),
+        salt: Hash32([5; 32]),
+    };
+    let round = meta.address(&TestHasher);
+    let calling = |method: &str, args: Vec<GraphArg>, records: Vec<InstanceMeta>| EnvelopeTree {
+        root: IntentDecl {
+            graph: ManifestGraph {
+                nodes: vec![GraphNode {
+                    target: round.into(),
+                    method: method.into(),
+                    args,
+                    evidence: BTreeSet::new(),
+                }],
+            },
+            params: Vec::new(),
+        },
+        root_bindings: Vec::new(),
+        subintents: Vec::new(),
+        instances: records,
+        resources: Vec::new(),
+    };
+    let admit_with = |tree: &EnvelopeTree, instances: &InstanceRegistry| {
+        admit_tree(
+            tree,
+            ALICE,
+            tree.hash(&TestHasher),
+            &cache,
+            instances,
+            &TestHasher,
+        )
+    };
+
+    // The seal: nothing committed answers for the component yet, which
+    // is exactly what the record is for.
+    let seal = calling("instantiate", Vec::new(), vec![meta.clone()]);
+    assert!(admit_with(&seal, &instances).is_ok());
+
+    // Any other call carrying the same record is refused, though the
+    // record is honest and derives the address it claims.
+    let draw = || {
+        calling(
+            "draw",
+            vec![GraphArg::Literal(Value::U64(8))],
+            vec![meta.clone()],
+        )
+    };
+    let drawn = draw();
+    assert!(
+        matches!(
+            admit_with(&drawn, &instances),
+            Err(AdmissionError::PresentedForCall { node: 0, .. })
+        ),
+        "a record stands for the seal alone: {:?}",
+        admit_with(&drawn, &instances)
+    );
+
+    // And once the chain answers for the component, the same call
+    // admits carrying nothing at all.
+    let sealed = instances.with_instances(std::slice::from_ref(&meta), &TestHasher);
+    let bare = calling("draw", vec![GraphArg::Literal(Value::U64(8))], Vec::new());
+    assert!(admit_with(&bare, &sealed).is_ok());
+
+    // A record presented beside a component the chain already holds is
+    // refused on the same terms — the chain's answer is the one that
+    // stands, so a caller's copy is never consulted.
+    assert!(matches!(
+        admit_with(&drawn, &sealed),
+        Err(AdmissionError::PresentedForCall { node: 0, .. })
     ));
 }
