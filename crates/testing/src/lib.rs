@@ -53,6 +53,7 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 #[cfg(feature = "wasm")]
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
+use hyperscale_vm_stdlib::{INSTANTIATE, found};
 pub use hyperscale_vm_types::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_types::{
     CallTarget, Outcome as KernelOutcome, SubstateKey, TxHash, encode_amount,
@@ -322,41 +323,21 @@ impl Chain {
         let leaf = child_key(&TestHasher, address, CONFIG, &[]);
         let bytes = meta.leaf_bytes().expect("an instance's record encodes");
         self.records.instances.create(&TestHasher, meta);
-        // The kind decides which door the edge is filed through: a
-        // balance lands in a vault and an instance in the holdings
-        // interval, and the two share no accessor. And the gate decides
-        // whether the founder signs in first: a package may hold
-        // bringing up to the caller its configuration names, and a
-        // method that admits anyone reads no proof.
-        let stated = self
+        // The chain answers for the address from here, which is this
+        // tier's answer to what an envelope's presented record is.
+        let Some(signature) = self
             .records
             .packages
-            .method(package, "instantiate")
-            .map(|checked| {
-                let signature = checked.signature();
-                (
-                    signature.issues.as_ref().map(|issued| issued.kind),
-                    signature.requires_evidence(),
-                )
-            });
-        let Some((issues, gated)) = stated else {
+            .method(package, INSTANTIATE)
+            .map(|checked| checked.signature().clone())
+        else {
             self.store.write(leaf, bytes);
             return address;
         };
-        self.transact(founder, |b| {
-            let outputs = if gated {
-                let signed_in = account::authorize(b, founder)?;
-                b.call_as(signed_in, address, "instantiate", ())?
-            } else {
-                b.call(address, "instantiate", ())?
-            };
-            match issues {
-                Some(ResourceKind::NonFungible) => account::deposit_nf(b, founder, outputs.one()?),
-                Some(ResourceKind::Fungible) => account::deposit(b, founder, outputs.one()?),
-                None => outputs.none(),
-            }
-        })
-        .expect_completed();
+        // The bring-up, composed where what the package asks for is read
+        // off its own declaration rather than restated here.
+        self.transact(founder, |b| found(b, founder, address, &signature))
+            .expect_completed();
         assert_eq!(
             self.store.cell(leaf),
             Some(bytes),

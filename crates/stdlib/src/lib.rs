@@ -11,10 +11,12 @@
 //! conformance lane runs them under both runtimes.
 
 pub mod account;
+mod found;
 pub mod staking;
 
 use std::sync::LazyLock;
 
+pub use found::{INSTANTIATE, found};
 use hyperscale_vm_effects::vocabulary::GENESIS_PUBLISHER as GENESIS_PUBLISHER_ROLE;
 use hyperscale_vm_effects::{
     Hasher, PackageHash, attach_metadata, native_address, package_hash, package_key,

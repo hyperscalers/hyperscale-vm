@@ -11,10 +11,11 @@
 //! the wrappers are gated out of it, which is what makes emitting them
 //! move no package hash and no blob.
 
-use hyperscale_vm_effects::{GrantsExpr, ResourceKind, Value, granting_issued_resource};
 pub use hyperscale_vm_effects::{
-    Hasher, PackageMetadata, RoleTable, SlotId, StoredRule, Value as ManifestValue,
+    GrantsExpr, Hash32, Hasher, InstanceMeta, PackageMetadata, RoleTable, SlotId, StoredRule,
+    Value as ManifestValue, declaration_hash,
 };
+use hyperscale_vm_effects::{ResourceKind, Value, granting_issued_resource};
 pub use hyperscale_vm_manifest_builder::{
     AddressArg, Arg, Args, Bucket, BucketArg, Outputs, Proof, TypedBuilder, TypedError,
 };
@@ -24,6 +25,38 @@ pub use hyperscale_vm_types::{
 
 use crate::num::{Quantity, UnitFixed};
 use crate::state::Table;
+
+/// The record an instance of `C` derives from, under `config` and
+/// `salt`.
+///
+/// The one thing a composition must have *before* it can type a call on
+/// the component: the chain answers for no address until the seal
+/// commits, so the record is what the composer layers behind the chain
+/// to resolve the target it is about to create. Built here rather than
+/// spelled at each call site because three of its four parts are the
+/// package's own — the declaration hash, the configuration's slot order,
+/// and the encoding — and only the salt is the caller's.
+///
+/// The salt is asked for rather than picked: it is what makes two
+/// instances of one configuration different, so choosing it is choosing
+/// which component this is.
+///
+/// # Panics
+///
+/// If `C`'s declaration does not encode, which no traced package
+/// produces.
+#[must_use]
+pub fn instance_meta<C: Component>(
+    hasher: &dyn Hasher,
+    config: C::Config,
+    salt: Hash32,
+) -> InstanceMeta {
+    InstanceMeta {
+        package: declaration_hash(hasher, &C::metadata()).expect("a traced declaration encodes"),
+        config: config.values(),
+        salt,
+    }
+}
 
 /// The address a component issues a resource at, under one mark.
 ///

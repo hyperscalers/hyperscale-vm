@@ -25,9 +25,11 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
-use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
+use hyperscale_vm_manifest_builder::{Names, TypedBuilder, TypedError, render};
 use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, staking};
+use hyperscale_vm_stdlib::{
+    ACCOUNT_COMPONENT, INSTANTIATE, STAKING_COMPONENT, account, found, staking,
+};
 use hyperscale_vm_types::{
     Address, Outcome, Presence, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, UnmetCondition,
     encode_amount,
@@ -511,11 +513,43 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
 /// record of each mark it issues, and minting the owner badge it comes
 /// up holding — filed in the founder's own account.
 fn bring_up_graph() -> ManifestGraph {
+    let signature = staking::metadata()
+        .methods
+        .remove(INSTANTIATE)
+        .expect("an instance-serving package declares its seal");
+    graph(|b| found(b, OPERATOR, pool().into(), &signature))
+}
+
+/// The same bring-up, written out — the sign-in, the seal, the deposit.
+///
+/// What the generated composition is held to: it reads which of those
+/// nodes exist off the package's own declaration, and this says what the
+/// answer is for a package that gates its bring-up and issues a badge.
+fn hand_written_bring_up() -> ManifestGraph {
     graph(|b| {
         let founder = account::authorize(b, OPERATOR)?;
         let badge = pool().instantiate(b, founder)?;
         account::deposit_nf(b, OPERATOR, badge)
     })
+}
+
+/// The composed bring-up is the composition a caller would have written,
+/// node for node.
+///
+/// Rendered rather than compared structurally, because what a wallet
+/// shows is the property that matters: a composition a caller cannot
+/// read is one they cannot check before signing.
+#[test]
+fn the_composed_bring_up_renders_as_the_hand_written_one() {
+    let chain = world();
+    let rendered = |graph: &ManifestGraph| {
+        render(graph, &chain, &TestHasher, "test", &Names::none())
+            .expect("a graph over this world renders")
+    };
+    assert_eq!(
+        rendered(&bring_up_graph()),
+        rendered(&hand_written_bring_up()),
+    );
 }
 
 /// A pool brings itself up and reaches its own operator surface: one
