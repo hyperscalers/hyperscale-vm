@@ -230,15 +230,19 @@ pub struct BrTargets {
     pub default: u32,
 }
 
-/// The fuel schedule of the pinned engine, reimplemented as the spec.
+/// The fuel schedule, stated in the spec's own operator vocabulary.
 ///
-/// Extracted from wasmtime 47's cranelift translation (`fuel_before_op`):
 /// `nop`, `drop`, and pure control structure (`block`, `loop`, `unreachable`,
 /// `return`, `else`, `end`) are free; every other operator costs one; each
 /// function entry costs one. `memory.fill`/`memory.copy` additionally cost
 /// one per byte moved, charged at the execution site in the interpreter.
-/// Verified to the unit against the engine by the differential fuel lane.
-pub(crate) const fn fuel_cost(op: &Op) -> u64 {
+///
+/// This is an independent statement of the schedule the blessed engine is
+/// configured with, sharing no constant with it. The harness holds the two
+/// to each other operator by operator, and the differential fuel lane holds
+/// the whole accounting to the engine's.
+#[must_use]
+pub const fn fuel_cost(op: &Op) -> u64 {
     match op {
         Op::Nop
         | Op::Drop

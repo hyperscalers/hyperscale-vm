@@ -2,12 +2,14 @@
 //!
 //! One constructor produces the locked [`wasmtime::Config`]; no other
 //! configuration path exists, so nothing can accidentally run outside the
-//! profile. Fuel is always on, the profile's disabled proposals are disabled
-//! here as defense in depth behind the deploy validator, and NaN
-//! canonicalization is enabled even though the profile bans floats.
+//! profile. Fuel is always on and priced by [`crate::fuel`], the profile's
+//! disabled proposals are disabled here as defense in depth behind the
+//! deploy validator, and NaN canonicalization is enabled even though the
+//! profile bans floats.
 
 use wasmtime::{Config, Engine, Result, Strategy};
 
+use crate::fuel::blessed_operator_cost;
 use crate::profile::{MAX_MEMORY_PAGES, MAX_WASM_STACK_BYTES};
 
 /// One wasm page: the unit [`MAX_MEMORY_PAGES`] counts.
@@ -19,6 +21,10 @@ pub fn blessed_config() -> Config {
     let mut config = Config::new();
     config.strategy(Strategy::Cranelift);
     config.consume_fuel(true);
+    // Price operators from the canonical schedule rather than the engine's
+    // own defaults, so what a receipt reports is a fact about this
+    // workspace and not about the version of the engine that ran it.
+    config.operator_cost(blessed_operator_cost());
     config.cranelift_nan_canonicalization(true);
     config.wasm_component_model(true);
     config.wasm_component_model_async(false);

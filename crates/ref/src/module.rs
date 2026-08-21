@@ -461,8 +461,16 @@ const fn mem_offset(memarg: &MemArg) -> u64 {
     memarg.offset
 }
 
+/// Maps one wasm operator onto the spec's own operator vocabulary.
+///
+/// `types` resolves the function-type form of a block type; an operator
+/// carrying no block type reads none of it.
+///
+/// # Errors
+///
+/// [`DecodeError`] if the operator is outside the deterministic profile.
 #[allow(clippy::too_many_lines)] // single dispatch over the operator set
-fn translate(types: &[FuncType], op: &Operator<'_>) -> Result<Op, DecodeError> {
+pub fn translate(types: &[FuncType], op: &Operator<'_>) -> Result<Op, DecodeError> {
     use NumOp as N;
     let out = match op {
         Operator::Unreachable => Op::Unreachable,

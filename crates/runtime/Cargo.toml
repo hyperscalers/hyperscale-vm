@@ -21,6 +21,7 @@ wasmparser.workspace = true
 wasmtime = { workspace = true, optional = true }
 
 [dev-dependencies]
+serde_json.workspace = true
 wat.workspace = true
 
 [lints]

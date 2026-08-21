@@ -25,6 +25,8 @@ pub mod call;
 #[cfg(feature = "engine")]
 pub mod engine;
 #[cfg(feature = "engine")]
+pub mod fuel;
+#[cfg(feature = "engine")]
 pub mod gas;
 #[cfg(feature = "engine")]
 pub mod world;
@@ -39,6 +41,7 @@ pub use {
     call::{Returned, call_export, invoke_export},
     charges::instantiate_charged,
     engine::{blessed_config, blessed_engine},
+    fuel::blessed_operator_cost,
     world::{
         Amount, AmountCell, AmountRead, Bucket, DeltaCell, HostRefusal, InstanceRange, Issuer,
         RangeRead, RangeWrite, ReadCell, ReserveCell, Wide, WitOrdering, WitRounding, WriteCell,

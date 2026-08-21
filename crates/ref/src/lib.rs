@@ -15,5 +15,5 @@ pub mod ops;
 pub use component::{CVal, HandleKind, RefComponent, RefComponentInstance};
 pub use error::{DecodeError, InstantiateError, Trap};
 pub use interp::{CanonError, ExecError, MAX_CALL_DEPTH, RefInstance};
-pub use module::RefModule;
-pub use ops::Value;
+pub use module::{RefModule, translate};
+pub use ops::{Op, Value, fuel_cost};

@@ -716,6 +716,7 @@ dependencies = [
  "hyperscale-vm-testing",
  "hyperscale-vm-types",
  "wasm-smith",
+ "wasmparser",
  "wasmtime",
  "wat",
  "wit-component",
@@ -762,6 +763,7 @@ version = "0.1.0"
 dependencies = [
  "hyperscale-vm-embed",
  "hyperscale-vm-types",
+ "serde_json",
  "thiserror 2.0.19",
  "wasmparser",
  "wasmtime",

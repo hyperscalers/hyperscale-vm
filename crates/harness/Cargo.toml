@@ -28,6 +28,7 @@ hyperscale-vm-manifest-builder.workspace = true
 hyperscale-vm-sdk.workspace = true
 hyperscale-vm-stdlib.workspace = true
 wasm-smith.workspace = true
+wasmparser.workspace = true
 wat.workspace = true
 
 [lints]
