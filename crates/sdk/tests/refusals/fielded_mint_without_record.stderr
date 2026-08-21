@@ -1,5 +1,5 @@
 error: `Seat` declares fields, so its instance carries them: a mint names the id and the record filed under it
-  --> tests/refusals/fielded_mint_without_record.rs:18:24
+  --> tests/refusals/fielded_mint_without_record.rs:17:24
    |
-18 |             Seat::mint(0)
+17 |             Seat::mint(0)
    |                        ^

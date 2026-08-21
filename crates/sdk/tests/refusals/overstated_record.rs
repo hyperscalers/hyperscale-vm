@@ -4,7 +4,7 @@ use hyperscale_vm_sdk::blueprint;
 mod contract {
     use hyperscale_vm_sdk::state::{Cell, Quantity};
 
-    #[resource(non_fungible)]
+    #[resource(non_fungible, divisibility = 6)]
     struct OwnerBadge;
 
     #[state]
@@ -13,8 +13,8 @@ mod contract {
     }
 
     impl Contract {
-        pub fn found(&mut self) {
-            OwnerBadge::create(6);
+        pub fn note(&mut self, value: Quantity) {
+            self.supply.set(value);
         }
     }
 }

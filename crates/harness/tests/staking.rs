@@ -63,14 +63,28 @@ fn badge() -> ResourceAddr {
 /// The badge instance the operator holds in these tests.
 const BADGE_ID: u64 = 0;
 
-/// Seal the pool: the committed configuration leaf its instantiation
-/// writes, which is what makes its methods reachable at all.
+/// Seal the pool: the cells its instantiation writes — the
+/// configuration leaf that makes its methods reachable at all, and the
+/// record of each mark it issues.
 fn seal_pool(store: &mut MemoryStore) {
     store.write(
         child_key(&TestHasher, pool(), CONFIG, &[]),
         pool_meta().leaf_bytes().unwrap(),
     );
+    store.write(
+        resource_record_key(&TestHasher, pool(), unit()),
+        UNIT_RECORD.to_cell().unwrap(),
+    );
+    store.write(
+        resource_record_key(&TestHasher, pool(), badge()),
+        BADGE_RECORD.to_cell().unwrap(),
+    );
 }
+
+/// The records the pool's instantiation writes: one per mark it
+/// declares, whether or not anything has been issued at it yet.
+const UNIT_RECORD: ResourceRecord = ResourceRecord::Fungible { divisibility: 18 };
+const BADGE_RECORD: ResourceRecord = ResourceRecord::NonFungible;
 
 /// A store where [`OPERATOR`] holds the pool's owner badge — what every
 /// operator-surface test starts from.
@@ -276,16 +290,9 @@ fn batch_entry(world: &Records, tree: &EnvelopeTree, composer: PrincipalAddr) ->
     Ok(BatchTx::new(TxHash(identity.0), declaration, env()).with_calls(routing.calls))
 }
 
-/// The record the pool's instantiation writes for the unit it issues.
-const UNIT_RECORD: ResourceRecord = ResourceRecord::Fungible { divisibility: 18 };
-
 fn seeded_store(xrd: u128, units: u128) -> MemoryStore {
     let mut store = MemoryStore::new();
     seal_pool(&mut store);
-    store.write(
-        resource_record_key(&TestHasher, pool(), unit()),
-        UNIT_RECORD.to_cell().unwrap(),
-    );
     seed_vault(&mut store, ALICE, XRD, xrd);
     if units > 0 {
         seed_vault(&mut store, ALICE, unit(), units);
@@ -519,23 +526,16 @@ fn found_graph() -> ManifestGraph {
     })
 }
 
-/// The record the founding call writes for the badge it creates.
-const BADGE_RECORD: ResourceRecord = ResourceRecord::NonFungible;
-
 /// A pool instantiated outside genesis reaches its own operator surface:
-/// one founding call writes the badge's record and its instance, files
-/// the badge in the founder's account, and the surface opens to whoever
-/// presents it — the cells a seated pool holds, written by the
-/// vocabulary instead of by genesis.
+/// its instantiation writes each mark's record, one founding call mints
+/// the badge and files it in the founder's account, and the surface
+/// opens to whoever presents it — the cells a seated pool holds,
+/// written by the vocabulary instead of by genesis.
 #[test]
 fn a_pool_founds_itself_and_reaches_its_operator_surface() -> Result<()> {
     let world = world();
     let mut store = MemoryStore::new();
     seal_pool(&mut store);
-    store.write(
-        resource_record_key(&TestHasher, pool(), unit()),
-        UNIT_RECORD.to_cell().unwrap(),
-    );
 
     let found = batch_entry(&world, &single_intent(found_graph()), OPERATOR)?;
     let (outcome, after_found) = run_both(&store, std::slice::from_ref(&found));

@@ -1183,12 +1183,13 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Lower `Name::create(..)` — the record cell, under the one-way door
-    /// its absence is.
+    /// Lower `Name::__record(..)` — the record cell, under the one-way
+    /// door its absence is.
     ///
-    /// The record is the protocol's own encoding rather than anything the
+    /// The record is the protocol's own encoding rather than anything a
     /// body assembles, so what the call carries is the single fact the
-    /// address does not: a fungible resource's display quantization.
+    /// address does not: a fungible resource's display quantization,
+    /// which the mark's own attribute states.
     fn lower_record_create(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
         let stated: Vec<_> = call
             .args
@@ -2678,11 +2679,14 @@ impl<'a> Lowerer<'a> {
                 ResourceKind::Fungible => self.lower_mint(&issued, call),
             };
         }
-        // `Resource::create(..)` — the record cell, written where the
-        // resource comes into existence. The kind is the mark's, so the
-        // body states only what the address cannot carry.
-        if name == "create" {
-            let Some(issued) = self.issuing_mark(call, "create") else {
+        // `Resource::__record(..)` — the record cell, written where the
+        // resource comes into existence. The generated `instantiate`'s
+        // marker, unspellable from an authored body for the reason
+        // `__seal` is: a record is written once, where the component
+        // becomes actual, so a body that wrote one would be writing a
+        // second.
+        if name == "__record" {
+            let Some(issued) = self.issuing_mark(call, "__record") else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
             return self.lower_record_create(&issued, call);

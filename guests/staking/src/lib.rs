@@ -162,17 +162,15 @@ pub mod staking {
             Unstaked { amount: returned }.emit();
         }
 
-        /// Bring the pool's operator surface into existence: the owner
-        /// badge's record, and its one instance, handed back for the
-        /// founder to keep.
+        /// Mint the pool's one owner badge, handed back for the founder
+        /// to keep.
         ///
-        /// The record's absence is the one-way door — a second founding
-        /// is refused by the shard holding the leaf before any body
-        /// runs. Genesis seats its own pools by writing these same
+        /// The instance's data cell is the one-way door — a second
+        /// founding is refused by the shard holding the leaf before any
+        /// body runs. Genesis seats its own pools by writing these same
         /// cells directly, and is held to them byte for byte.
         #[requires(founder)]
         pub fn found(&mut self) -> NfBucket {
-            OwnerBadge::create();
             OwnerBadge::mint(0)
         }
 

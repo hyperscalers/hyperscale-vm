@@ -155,9 +155,6 @@ fn a_fielded_instance_reads_the_same_in_both_lanes() {
     let run = |mut chain: Chain| {
         chain.publish(grammar());
         let shapes = chain.instantiate::<grammar::Grammar>(());
-        chain
-            .transact(ALICE, |b| shapes.found(b))
-            .expect_completed();
         let outcome = chain.transact(ALICE, |b| {
             let seat = shapes.seat(b, 3, 42)?;
             account::deposit_nf(b, ALICE, seat)

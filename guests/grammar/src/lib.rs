@@ -101,11 +101,6 @@ pub mod grammar {
             self.vault(resource).reserve(amount)
         }
 
-        /// The mark's own record, under the one-way door its absence is.
-        pub fn found(&mut self) {
-            Seat::create();
-        }
-
         /// A fielded mint beside the read of what it filed: one cell,
         /// written as the record the mark declares and decoded back as
         /// the same. Both halves are here because a host build settles

@@ -300,81 +300,6 @@ PackageMetadata {
                             ChildKey {
                                 owner: SelfAddr,
                                 slot: SlotId(
-                                    5,
-                                ),
-                                material: [
-                                    SelfResource {
-                                        kind: NonFungible,
-                                        material: [
-                                            Literal(
-                                                Bytes(
-                                                    [
-                                                        111,
-                                                        119,
-                                                        110,
-                                                        101,
-                                                        114,
-                                                        45,
-                                                        98,
-                                                        97,
-                                                        100,
-                                                        103,
-                                                        101,
-                                                    ],
-                                                ),
-                                            ),
-                                        ],
-                                    },
-                                ],
-                            },
-                        ),
-                        presence: Absent,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                5,
-                            ),
-                            material: [
-                                SelfResource {
-                                    kind: NonFungible,
-                                    material: [
-                                        Literal(
-                                            Bytes(
-                                                [
-                                                    111,
-                                                    119,
-                                                    110,
-                                                    101,
-                                                    114,
-                                                    45,
-                                                    98,
-                                                    97,
-                                                    100,
-                                                    103,
-                                                    101,
-                                                ],
-                                            ),
-                                        ),
-                                    ],
-                                },
-                            ],
-                        },
-                    ),
-                    mode: Write,
-                    denomination: None,
-                },
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
                                     7,
                                 ),
                                 material: [
@@ -458,9 +383,6 @@ PackageMetadata {
                 Handle(
                     2,
                 ),
-                Handle(
-                    4,
-                ),
                 Issuer,
             ],
         },
@@ -500,10 +422,164 @@ PackageMetadata {
                     mode: Write,
                     denomination: None,
                 },
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    5,
+                                ),
+                                material: [
+                                    SelfResource {
+                                        kind: NonFungible,
+                                        material: [
+                                            Literal(
+                                                Bytes(
+                                                    [
+                                                        111,
+                                                        119,
+                                                        110,
+                                                        101,
+                                                        114,
+                                                        45,
+                                                        98,
+                                                        97,
+                                                        100,
+                                                        103,
+                                                        101,
+                                                    ],
+                                                ),
+                                            ),
+                                        ],
+                                    },
+                                ],
+                            },
+                        ),
+                        presence: Absent,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                5,
+                            ),
+                            material: [
+                                SelfResource {
+                                    kind: NonFungible,
+                                    material: [
+                                        Literal(
+                                            Bytes(
+                                                [
+                                                    111,
+                                                    119,
+                                                    110,
+                                                    101,
+                                                    114,
+                                                    45,
+                                                    98,
+                                                    97,
+                                                    100,
+                                                    103,
+                                                    101,
+                                                ],
+                                            ),
+                                        ),
+                                    ],
+                                },
+                            ],
+                        },
+                    ),
+                    mode: Write,
+                    denomination: None,
+                },
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    5,
+                                ),
+                                material: [
+                                    SelfResource {
+                                        kind: Fungible,
+                                        material: [
+                                            Literal(
+                                                Bytes(
+                                                    [
+                                                        115,
+                                                        116,
+                                                        97,
+                                                        107,
+                                                        101,
+                                                        45,
+                                                        117,
+                                                        110,
+                                                        105,
+                                                        116,
+                                                    ],
+                                                ),
+                                            ),
+                                        ],
+                                    },
+                                ],
+                            },
+                        ),
+                        presence: Absent,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                5,
+                            ),
+                            material: [
+                                SelfResource {
+                                    kind: Fungible,
+                                    material: [
+                                        Literal(
+                                            Bytes(
+                                                [
+                                                    115,
+                                                    116,
+                                                    97,
+                                                    107,
+                                                    101,
+                                                    45,
+                                                    117,
+                                                    110,
+                                                    105,
+                                                    116,
+                                                ],
+                                            ),
+                                        ),
+                                    ],
+                                },
+                            ],
+                        },
+                    ),
+                    mode: Write,
+                    denomination: None,
+                },
             ],
             abi: [
                 Handle(
                     1,
+                ),
+                Handle(
+                    3,
+                ),
+                Handle(
+                    5,
                 ),
                 Derived(
                     SelfRecord,

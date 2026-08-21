@@ -12,7 +12,6 @@ mod contract {
 
     impl Contract {
         pub fn found(&mut self) -> NfBucket {
-            OwnerBadge::create();
             OwnerBadge::mint(0, OwnerBadge)
         }
     }

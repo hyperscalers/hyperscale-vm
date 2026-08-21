@@ -1639,24 +1639,48 @@ fn lower_methods(
         }
     }
     if matches!(serves, client::Serves::Instances) {
-        lowered.push(lower_method(&instantiate_method(), declared, serves)?);
+        lowered.push(lower_method(
+            &instantiate_method(declared.resources),
+            declared,
+            serves,
+        )?);
     }
     Ok(lowered)
 }
 
-/// The generated `instantiate` — the seal that makes a component actual.
+/// The generated `instantiate` — the seal that makes a component actual,
+/// beside the record of every resource it declares.
 ///
-/// Synthesized rather than authored: the body's one statement lowers to
-/// the `CONFIG` write under its absence door, with the record's bytes
-/// evaluated by the kernel, and the method is never emitted into the
-/// module — only its lowered halves exist.
-fn instantiate_method() -> syn::ImplItemFn {
+/// Synthesized rather than authored: the statements lower to the
+/// `CONFIG` write and one `RESOURCE` write per declared mark, each under
+/// its own absence door, and the method is never emitted into the module
+/// — only its lowered halves exist.
+///
+/// The records ride the seal rather than a call of their own because a
+/// record is an ordinary declared write and needs no issuance grant, so
+/// the node that makes the component actual is the node that says what
+/// it issues. A package declaring no resource comes up in this one node
+/// and nothing else.
+fn instantiate_method(resources: &[Resource]) -> syn::ImplItemFn {
+    let records = resources.iter().map(|resource| {
+        let name = syn::Ident::new(&resource.name, Span::call_site());
+        let stated = match resource.kind {
+            ResourceKind::Fungible => {
+                let divisibility = resource.divisibility;
+                quote!(#divisibility)
+            }
+            ResourceKind::NonFungible => quote!(),
+        };
+        quote!(#name::__record(#stated);)
+    });
     syn::parse_quote!(
         /// Makes this component actual: seals its creation-fixed record
-        /// into the configuration leaf, refused where the leaf is
-        /// already there.
+        /// into the configuration leaf and writes the record of every
+        /// resource it issues, each refused where its leaf is already
+        /// there.
         pub fn instantiate(&mut self) {
-            self.__seal()
+            self.__seal();
+            #(#records)*
         }
     )
 }
@@ -1875,7 +1899,7 @@ fn resources(items: &[syn::Item]) -> syn::Result<Vec<Resource>> {
         let Some(attr) = item.attrs.iter().find(|a| a.path().is_ident("resource")) else {
             continue;
         };
-        let kind = resource_kind(attr)?;
+        let ResourceAttr { kind, divisibility } = resource_attr(attr)?;
         // Fields are an instance's data, and a fungible resource has no
         // instances — so a fielded fungible declaration states a schema
         // nothing could ever hold.
@@ -1886,16 +1910,17 @@ fn resources(items: &[syn::Item]) -> syn::Result<Vec<Resource>> {
                  — drop them, or declare the resource `non_fungible`",
             ));
         }
-        structs.push((&item.ident, kind, !item.fields.is_empty()));
+        structs.push((&item.ident, kind, divisibility, !item.fields.is_empty()));
     }
     let marks = distinct_band("resources", structs.iter().map(|(ident, ..)| *ident))?;
     Ok(structs
         .into_iter()
         .zip(marks)
-        .map(|((ident, kind, schema), mark)| Resource {
+        .map(|((ident, kind, divisibility, schema), mark)| Resource {
             name: ident.to_string(),
             mark: mark.into_bytes(),
             kind,
+            divisibility,
             schema,
         })
         .collect())
@@ -1910,39 +1935,100 @@ struct Resource {
     mark: Vec<u8>,
     /// The kind its attribute states.
     kind: ResourceKind,
+    /// The display quantization its record carries. Meaningless on a
+    /// non-fungible mark, where it is never read.
+    divisibility: u8,
     /// Whether the struct has fields, which is what makes it an
     /// instance's data schema and not only a bare mark.
     schema: bool,
 }
 
-/// The kind a `#[resource]` attribute states: fungible unless it says
-/// `non_fungible`.
+/// The display quantization a fungible resource carries where its
+/// attribute states none.
 ///
-/// Stated in the source because the derivation folds it — the mark
-/// constant a gate evaluates and the address a host derives both need
-/// the kind, and the attribute is the one place both read from.
-fn resource_kind(attr: &syn::Attribute) -> syn::Result<ResourceKind> {
-    match &attr.meta {
-        syn::Meta::Path(_) => Ok(ResourceKind::Fungible),
-        syn::Meta::List(_) => {
-            let ident: syn::Ident = attr.parse_args()?;
-            match ident.to_string().as_str() {
-                "fungible" => Ok(ResourceKind::Fungible),
-                "non_fungible" => Ok(ResourceKind::NonFungible),
-                other => Err(syn::Error::new(
-                    ident.span(),
-                    format!(
-                        "`{other}` is not a resource kind — a resource is `fungible` \
-                         (the default) or `non_fungible`"
-                    ),
-                )),
+/// The width the protocol's own fee resource is recorded at, so a
+/// package that says nothing is recorded like the one resource every
+/// network already holds. Nothing on-chain consults it — a divisibility
+/// is what a client renders with — which is why a default is a default
+/// and not a guess with consequences.
+const DEFAULT_DIVISIBILITY: u8 = 18;
+
+/// What a `#[resource]` attribute states about the resource beside its
+/// name.
+///
+/// Stated in the source because the derivation and the record both fold
+/// it: the mark constant a gate evaluates and the address a host derives
+/// need the kind, and the record `instantiate` writes needs the
+/// divisibility. The attribute is the one place all three read from.
+struct ResourceAttr {
+    kind: ResourceKind,
+    divisibility: u8,
+}
+
+fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
+    let mut kind = None;
+    let mut divisibility = None;
+    if matches!(attr.meta, syn::Meta::List(_)) {
+        let terms = attr.parse_args_with(
+            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+        )?;
+        for term in &terms {
+            match term {
+                syn::Meta::Path(path) => {
+                    let stated = match path.get_ident().map(ToString::to_string).as_deref() {
+                        Some("fungible") => ResourceKind::Fungible,
+                        Some("non_fungible") => ResourceKind::NonFungible,
+                        _ => return Err(unknown_resource_term(path)),
+                    };
+                    if kind.replace(stated).is_some() {
+                        return Err(syn::Error::new(
+                            path.span(),
+                            "a resource is one kind — the derivation folds it, so two \
+                             spellings would be two addresses",
+                        ));
+                    }
+                }
+                syn::Meta::NameValue(nv) if nv.path.is_ident("divisibility") => {
+                    let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Int(int),
+                        ..
+                    }) = &nv.value
+                    else {
+                        return Err(syn::Error::new(
+                            nv.value.span(),
+                            "a divisibility is a literal count of subunit digits",
+                        ));
+                    };
+                    if divisibility.replace(int.base10_parse::<u8>()?).is_some() {
+                        return Err(syn::Error::new(nv.path.span(), "divisibility, twice"));
+                    }
+                }
+                other => return Err(unknown_resource_term(other)),
             }
         }
-        syn::Meta::NameValue(nv) => Err(syn::Error::new(
-            nv.value.span(),
-            "a resource states its kind as `#[resource(non_fungible)]`, not as a value",
-        )),
     }
+    let kind = kind.unwrap_or(ResourceKind::Fungible);
+    // Instances are whole by construction, so there is no quantity for a
+    // quantization to be about.
+    if kind == ResourceKind::NonFungible && divisibility.is_some() {
+        return Err(syn::Error::new(
+            attr.span(),
+            "a non-fungible resource has no divisibility — its instances are whole, \
+             and what a client renders is an id",
+        ));
+    }
+    Ok(ResourceAttr {
+        kind,
+        divisibility: divisibility.unwrap_or(DEFAULT_DIVISIBILITY),
+    })
+}
+
+fn unknown_resource_term(at: &impl Spanned) -> syn::Error {
+    syn::Error::new(
+        at.span(),
+        "a resource states `fungible` (the default) or `non_fungible`, and a \
+         fungible one may state `divisibility = <digits>`",
+    )
 }
 
 /// The constant naming each declared resource's mark.
@@ -1960,6 +2046,7 @@ fn resource_marks(declared: &[Resource]) -> Vec<syn::Item> {
                  mark,
                  kind,
                  schema,
+                 ..
              }| {
                 let ident = syn::Ident::new(&screaming(name), Span::call_site());
                 let bytes = syn::LitByteStr::new(mark, Span::call_site());

@@ -1,5 +1,5 @@
 error: `OwnerBadge` declares no fields, so its instance holds the presence byte and nothing else — a mark carrying a schema is a struct with fields
-  --> tests/refusals/bare_mint_with_record.rs:16:33
+  --> tests/refusals/bare_mint_with_record.rs:15:33
    |
-16 |             OwnerBadge::mint(0, OwnerBadge)
+15 |             OwnerBadge::mint(0, OwnerBadge)
    |                                 ^^^^^^^^^^

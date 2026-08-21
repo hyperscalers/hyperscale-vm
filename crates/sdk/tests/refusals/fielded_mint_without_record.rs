@@ -14,7 +14,6 @@ mod contract {
 
     impl Contract {
         pub fn seat(&mut self) -> NfBucket {
-            Seat::create();
             Seat::mint(0)
         }
     }

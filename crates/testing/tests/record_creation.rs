@@ -1,11 +1,11 @@
 //! An issuer brings its own resources into existence.
 //!
-//! A record is the issuer's own cell, so writing one is an ordinary
-//! declared access, and the `Absent` condition beside the write is the
-//! one-way door: a second creation is refused by the shard holding the
-//! leaf before any body runs. The cells a creating call writes are held
-//! to the protocol's own encoding, byte for byte — a founded resource
-//! and a genesis-seeded one have to be the same object.
+//! A record is the issuer's own cell, written where the component
+//! becomes actual: instantiation seals the configuration leaf and files
+//! one record per declared mark, each under the `Absent` condition that
+//! is its one-way door. The cells it writes are held to the protocol's
+//! own encoding, byte for byte — an instantiated resource and a
+//! genesis-seeded one have to be the same object.
 
 use hyperscale_vm_effects::{
     PACKAGE_SLOT_BASE, ResourceKind, ResourceRecord, SlotId, TestHasher, child_key,
@@ -33,7 +33,7 @@ mod issuer {
         label: String,
     }
 
-    #[resource]
+    #[resource(divisibility = 6)]
     struct Coupon;
 
     #[state]
@@ -42,16 +42,10 @@ mod issuer {
     }
 
     impl Issuer {
-        /// Bring the badge into existence: its record, and its first
-        /// instance, handed back as an edge for the founder to keep.
+        /// Mint the badge's first instance, handed back as an edge for
+        /// the founder to keep.
         pub fn found(&mut self) -> NfBucket {
-            OwnerBadge::create();
             OwnerBadge::mint(0)
-        }
-
-        /// Bring the coupon into existence, displayed at six digits.
-        pub fn open(&mut self) {
-            Coupon::create(6);
         }
 
         /// Note who operates the seat at `id`, where such a seat was
@@ -80,10 +74,8 @@ mod issuer {
             seated
         }
 
-        /// Seat an operator: the seat's record, and the one instance
-        /// carrying who operates it.
+        /// Seat an operator: the one instance carrying who operates it.
         pub fn seat(&mut self, operator: u64) -> NfBucket {
-            Seat::create();
             Seat::mint(
                 7,
                 Seat {
@@ -113,69 +105,55 @@ fn found(chain: &mut Chain, instance: issuer::client::Issuer) {
         .expect_completed();
 }
 
-/// The record a creating call writes is the record the protocol encodes:
-/// the same cell, the same bytes, under the issuer at the resource the
-/// mark derives.
+/// Instantiation writes a record per declared mark, in the protocol's
+/// own encoding: the same cells, the same bytes, under the issuer at the
+/// resources its marks derive.
+///
+/// Every mark, not only the ones a body goes on to mint: what a resource
+/// is denominated at is a fact about the component, so a client reading
+/// one never has to know whether anything has been issued yet.
 #[test]
-fn a_creating_call_writes_the_canonical_record() {
-    let (mut chain, instance) = founded();
-    found(&mut chain, instance);
+fn instantiation_writes_the_canonical_record_of_every_mark() {
+    let (chain, instance) = founded();
 
-    let badge = issued_resource(
-        &TestHasher,
-        instance,
-        ResourceKind::NonFungible,
-        issuer::OWNER_BADGE,
-    );
-    assert_eq!(
-        chain.cell(resource_record_key(&TestHasher, instance, badge)),
-        Some(
-            ResourceRecord::NonFungible
-                .to_cell()
-                .expect("a record encodes")
+    for (kind, mark, record) in [
+        (
+            ResourceKind::NonFungible,
+            issuer::OWNER_BADGE,
+            ResourceRecord::NonFungible,
         ),
-    );
+        (
+            ResourceKind::NonFungible,
+            issuer::SEAT,
+            ResourceRecord::NonFungible,
+        ),
+        (
+            ResourceKind::Fungible,
+            issuer::COUPON,
+            ResourceRecord::Fungible { divisibility: 6 },
+        ),
+    ] {
+        let resource = issued_resource(&TestHasher, instance, kind, mark);
+        assert_eq!(
+            chain.cell(resource_record_key(&TestHasher, instance, resource)),
+            Some(record.to_cell().expect("a record encodes")),
+            "{mark:?}",
+        );
+    }
 }
 
-/// A fungible record carries the divisibility the call stated.
+/// The one-way door: a second instantiation is refused as the unmet
+/// `Absent` condition, judged where the leaves live, and never reaches a
+/// body.
 #[test]
-fn a_fungible_record_states_its_divisibility() {
+fn a_second_instantiation_is_refused_where_the_leaves_live() {
     let (mut chain, instance) = founded();
-    chain
-        .transact(FOUNDER, |b| instance.open(b))
-        .expect_completed();
-
-    let coupon = issued_resource(
-        &TestHasher,
-        instance,
-        ResourceKind::Fungible,
-        issuer::COUPON,
-    );
-    assert_eq!(
-        chain.cell(resource_record_key(&TestHasher, instance, coupon)),
-        Some(
-            ResourceRecord::Fungible { divisibility: 6 }
-                .to_cell()
-                .expect("a record encodes")
-        ),
-    );
-}
-
-/// The one-way door: a second creation is refused as the unmet `Absent`
-/// condition, judged where the leaf lives, and never reaches a body.
-#[test]
-fn a_second_creation_is_refused_where_the_leaf_lives() {
-    let (mut chain, instance) = founded();
-    found(&mut chain, instance);
 
     let outcome = chain
-        .transact(FOUNDER, |b| {
-            let badge = instance.found(b)?;
-            account::deposit_nf(b, FOUNDER, badge)
-        })
+        .transact(FOUNDER, |b| b.call(instance, "instantiate", ())?.none())
         .refused()
         .cloned()
-        .expect("the second creation is refused");
+        .expect("the second instantiation is refused");
     assert!(
         matches!(
             outcome,

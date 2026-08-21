@@ -1,5 +1,0 @@
-error: a fungible record states its display quantization: `create(<divisibility>)`
-  --> tests/refusals/unquantized_record.rs:17:13
-   |
-17 |             Coupon::create();
-   |             ^^^^^^

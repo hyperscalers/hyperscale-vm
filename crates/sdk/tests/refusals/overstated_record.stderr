@@ -1,5 +1,5 @@
-error: a non-fungible record has nothing to state — the kind is the mark's and instances are whole by construction
-  --> tests/refusals/overstated_record.rs:17:13
-   |
-17 |             OwnerBadge::create(6);
-   |             ^^^^^^^^^^
+error: a non-fungible resource has no divisibility — its instances are whole, and what a client renders is an id
+ --> tests/refusals/overstated_record.rs:7:5
+  |
+7 |     #[resource(non_fungible, divisibility = 6)]
+  |     ^
