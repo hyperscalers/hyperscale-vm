@@ -515,7 +515,7 @@ mod tests {
     fn a_transaction_still_holding_value_does_not_commit() {
         let vault = key(0xB2);
         let mut store = MemoryStore::new();
-        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.write(vault, encode_amount(100).to_vec());
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
             mode: Mode::Write,
@@ -549,7 +549,7 @@ mod tests {
     fn an_empty_bucket_left_standing_is_not_a_loss() {
         let vault = key(0xB3);
         let mut store = MemoryStore::new();
-        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.write(vault, encode_amount(100).to_vec());
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
             mode: Mode::Write,

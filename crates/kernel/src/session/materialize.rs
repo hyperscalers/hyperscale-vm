@@ -57,8 +57,6 @@ impl Interval {
 pub enum Capability {
     /// A fresh read of one cell.
     Read(SubstateKey),
-    /// A pinned read of one cell.
-    Locked(SubstateKey),
     /// An exclusive read-modify-write of one cell holding bytes.
     Write(SubstateKey),
     /// The same exclusive access to a cell holding value.
@@ -103,7 +101,6 @@ impl Capability {
     pub const fn kind(&self) -> CellKind {
         match self {
             Self::Read(_) => CellKind::Read,
-            Self::Locked(_) => CellKind::Locked,
             Self::Write(_) => CellKind::Write,
             Self::Amount(_) => CellKind::Amount,
             Self::AmountRead(_) => CellKind::AmountRead,
@@ -123,14 +120,6 @@ pub enum MaterializeError {
     /// A declared mode/target combination the world cannot yet hand out.
     #[error("no capability form for {0:?}")]
     Unsupported(Box<Effect>),
-    /// A mutation declared on a permanently locked substate.
-    #[error("declared mutation of locked substate {0:?}")]
-    MutationOfLocked(SubstateKey),
-    /// A locked read declared on a substate that is not locked. The mode
-    /// reads without coherence and without making a participant, which is
-    /// sound only where no version of the target differs.
-    #[error("declared locked read of unlocked substate {0:?}")]
-    UnlockedTarget(SubstateKey),
     /// A declared presence condition the committed leaf does not meet.
     ///
     /// The same class of verdict as an infeasible reservation, and at
@@ -197,10 +186,6 @@ impl KernelSession {
     /// adopting reservations a batch judge already holds for this
     /// transaction.
     ///
-    /// The overlay's base is what locked reads resolve against, fixed
-    /// for the whole batch
-    /// regardless of what the group threads on top.
-    ///
     /// The capability table's order is the effect set's canonical order,
     /// so reps are deterministic; the caller passes handles to the guest
     /// in table order.
@@ -233,9 +218,7 @@ impl KernelSession {
         // has already summed the amounts two clauses claimed on one cell.
         // Judging the clause list instead would judge each amount
         // separately against the same balance, so a signature reserving
-        // `n` twice over a cell holding `n` would pass both. A reservation
-        // on a locked cell is refused where its clause's capability is
-        // built, like every other mutation of one.
+        // `n` twice over a cell holding `n` would pass both.
         let mut reservations = Vec::new();
         for effect in declared.iter() {
             if let (EffectTarget::Point(key), Mode::Reserve { amount }) =
@@ -274,7 +257,7 @@ impl KernelSession {
             {
                 return Err(MaterializeError::MixedContents(access.effect.target));
             }
-            table.push(capability_for(&store, access.effect, denominated)?);
+            table.push(capability_for(access.effect, denominated)?);
         }
         // One transaction may not declare both an exclusive write and a
         // commutative mode on the same cell: the receipt records
@@ -468,66 +451,35 @@ const fn interval_of(target: EffectTarget) -> Option<Interval> {
 /// The capability form of one declared effect: the world-design mapping.
 /// Entry targets are degenerate one-entry intervals, so collection access
 /// needs exactly two resource shapes.
-fn capability_for(
-    store: &OverlayStore,
-    effect: Effect,
-    denominated: bool,
-) -> Result<Capability, MaterializeError> {
-    let locked_checked = |key: SubstateKey| {
-        if store.is_locked(key) {
-            Err(MaterializeError::MutationOfLocked(key))
-        } else {
-            Ok(key)
-        }
-    };
+fn capability_for(effect: Effect, denominated: bool) -> Result<Capability, MaterializeError> {
     match (effect.target, effect.mode) {
         (EffectTarget::Point(key), Mode::Read) => Ok(if denominated {
             Capability::AmountRead(key)
         } else {
             Capability::Read(key)
         }),
-        // The mirror of `locked_checked`, and the reason a locked read needs
-        // no proof: an unlocked target could differ between the shard that
-        // owns it and one that only reads it, and a locked read makes no
-        // participant, so nothing would carry the owner's value to anyone
-        // else. Two participants would read one key and derive two
-        // receipts. A read of mutable state is `Mode::Read`, which
-        // provisions.
-        (EffectTarget::Point(key), Mode::Locked) => {
-            if store.is_locked(key) {
-                Ok(Capability::Locked(key))
-            } else {
-                Err(MaterializeError::UnlockedTarget(key))
-            }
-        }
         // What a cell holds chooses the handle. The two share no
         // operation, so a body reaching for the wrong one is holding a
         // type that does not have it rather than meeting a refusal.
-        (EffectTarget::Point(key), Mode::Write) => {
-            let key = locked_checked(key)?;
-            Ok(if denominated {
-                Capability::Amount(key)
-            } else {
-                Capability::Write(key)
-            })
-        }
+        (EffectTarget::Point(key), Mode::Write) => Ok(if denominated {
+            Capability::Amount(key)
+        } else {
+            Capability::Write(key)
+        }),
         // The two modes that move value and do nothing else. A cell
         // they name holds value, so the declaration has to say what —
         // judged here rather than at the movement, because a declaration
         // that cannot be materialized is one no body should run against.
         (EffectTarget::Point(key), Mode::Delta) => {
             if denominated {
-                Ok(Capability::Delta(locked_checked(key)?))
+                Ok(Capability::Delta(key))
             } else {
                 Err(MaterializeError::UndenominatedMovement(key))
             }
         }
         (EffectTarget::Point(key), Mode::Reserve { amount }) => {
             if denominated {
-                Ok(Capability::Reserve {
-                    key: locked_checked(key)?,
-                    amount,
-                })
+                Ok(Capability::Reserve { key, amount })
             } else {
                 Err(MaterializeError::UndenominatedMovement(key))
             }
@@ -615,16 +567,14 @@ mod tests {
             let mut store = MemoryStore::new();
             match target {
                 EffectTarget::Point(key) => {
-                    store.write(key, vec![7]).expect("seed");
+                    store.write(key, vec![7]);
                 }
                 EffectTarget::Entry {
                     owner,
                     collection,
                     order,
                 } => {
-                    store
-                        .entry_write(owner, collection, order, vec![7])
-                        .expect("seed");
+                    store.entry_write(owner, collection, order, vec![7]);
                 }
                 EffectTarget::Range { .. } => unreachable!("not a leaf"),
             }
@@ -783,7 +733,7 @@ mod tests {
         // holding 100 would pass both and hold 120.
         let vault = key(0xC7);
         let mut store = MemoryStore::new();
-        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.write(vault, encode_amount(100).to_vec());
 
         let reserve = Effect {
             target: EffectTarget::Point(vault),
@@ -822,7 +772,7 @@ mod tests {
         // of any fan-out.
         let vault = key(0xC8);
         let mut store = MemoryStore::new();
-        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.write(vault, encode_amount(100).to_vec());
 
         let reserve = |amount| Effect {
             target: EffectTarget::Point(vault),
@@ -860,7 +810,6 @@ mod tests {
             Clause, Expr, ModeExpr, TargetExpr, Value, materialized_kind, package_slot,
         };
 
-        let store = OverlayStore::new(Arc::new(MemoryStore::new()));
         let owner = Address::new([3; 31], AddressClass::Component);
         let collection = CollectionId([4; 16]);
         let resource = || Expr::Literal(Value::Address(RESOURCE.address()));
@@ -906,7 +855,6 @@ mod tests {
         ];
         let modes = [
             (ModeExpr::Read, Mode::Read),
-            (ModeExpr::Locked, Mode::Locked),
             (ModeExpr::Write, Mode::Write),
             (ModeExpr::Delta, Mode::Delta),
             (ModeExpr::Reserve(Expr::Arg(0)), Mode::Reserve { amount: 1 }),
@@ -923,7 +871,6 @@ mod tests {
                     denomination: Some(Box::new(resource())),
                 };
                 let built = capability_for(
-                    &store,
                     Effect {
                         target: *target,
                         mode: *mode,
@@ -1078,7 +1025,7 @@ mod tests {
     fn a_mismatched_held_reservation_is_surfaced_not_adopted() {
         let vault = key(4);
         let mut store = MemoryStore::new();
-        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.write(vault, encode_amount(100).to_vec());
         // A batch judge already holds a different amount for this
         // transaction than the declaration asks for.
         store.judge_and_hold(&[(tx(1), vault, 40)]).unwrap();
@@ -1103,43 +1050,10 @@ mod tests {
         );
     }
 
-    /// A movement mutates the cell it lands on, so a locked cell admits
-    /// none — the same refusal every write meets, judged where the
-    /// clause's capability is built.
-    #[test]
-    fn a_movement_on_a_locked_cell_is_refused() {
-        let vault = key(0xCA);
-        for mode in [Mode::Reserve { amount: 10 }, Mode::Delta] {
-            let mut store = MemoryStore::new();
-            store.write(vault, encode_amount(100).to_vec()).unwrap();
-            store.lock(vault);
-            let set = declared(&[Effect {
-                target: EffectTarget::Point(vault),
-                mode,
-            }]);
-            assert_eq!(
-                KernelSession::materialize(
-                    OverlayStore::new(Arc::new(store)),
-                    &Declaration {
-                        set: set.clone(),
-                        ordered: holding(&ord(&set)),
-                        ..Declaration::default()
-                    },
-                    tx(1),
-                    env(),
-                    hash,
-                )
-                .map(|_| ())
-                .expect_err("a movement mutates, and a locked cell admits none"),
-                MaterializeError::MutationOfLocked(vault),
-                "{mode:?}"
-            );
-        }
-    }
-
     #[test]
     fn a_mode_the_world_cannot_hand_out_refuses_at_materialization() {
-        // A locked read of a collection interval has no capability form.
+        // A commutative movement over a collection interval has no
+        // capability form: an interval holds entries, not an amount.
         let set = declared(&[Effect {
             target: EffectTarget::Range {
                 owner: Address::new([9; 31], AddressClass::Component),
@@ -1148,7 +1062,7 @@ mod tests {
                 hi: 1,
                 cap: 1,
             },
-            mode: Mode::Locked,
+            mode: Mode::Delta,
         }]);
         assert!(matches!(
             KernelSession::materialize(

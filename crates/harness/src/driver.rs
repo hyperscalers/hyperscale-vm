@@ -244,9 +244,7 @@ pub fn seed_vault(
     resource: impl Into<Address>,
     amount: u128,
 ) {
-    store
-        .write(vault(owner, resource), encode_amount(amount).to_vec())
-        .unwrap();
+    store.write(vault(owner, resource), encode_amount(amount).to_vec());
 }
 
 /// Whether the engines ended on the one verdict the native lane cannot

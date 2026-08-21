@@ -99,10 +99,10 @@ impl EffectSet {
 
     /// The provision requirement of this effect set: the targets whose
     /// committed values a counterpart shard must carry — fresh reads and
-    /// the prior values of read-modify-writes. Locked reads are
-    /// client-proven, deltas read nothing, and reservation feasibility is
-    /// judged at the owning shard, so none of them provision. A
-    /// commutative-only leg therefore provisions nothing at all.
+    /// the prior values of read-modify-writes. Deltas read nothing and
+    /// reservation feasibility is judged at the owning shard, so neither
+    /// provisions. A commutative-only leg therefore provisions nothing
+    /// at all.
     #[must_use]
     pub fn provision_targets(&self) -> BTreeSet<EffectTarget> {
         self.by_target
@@ -170,16 +170,14 @@ mod tests {
     fn only_read_and_write_targets_provision() {
         // A counterpart shard has to carry what execution reads: fresh
         // reads, and the prior value a read-modify-write folds over.
-        // A locked target cannot change, deltas read nothing, and a
-        // reservation is judged where it lives — so a commutative-only
-        // leg provisions nothing at all.
+        // Deltas read nothing and a reservation is judged where it
+        // lives — so a commutative-only leg provisions nothing at all.
         let mut set = EffectSet::new();
         for (byte, mode) in [
             (1, Mode::Read),
             (2, Mode::Write),
             (3, Mode::Delta),
             (4, Mode::Reserve { amount: 5 }),
-            (5, Mode::Locked),
         ] {
             set.insert(Effect {
                 target: target(byte),
@@ -243,7 +241,6 @@ mod tests {
         for modes in [
             &[Mode::Delta, Mode::Reserve { amount: 1 }][..],
             &[Mode::Read, Mode::Delta],
-            &[Mode::Locked, Mode::Reserve { amount: 1 }],
             &[Mode::Read, Mode::Write],
             &[Mode::Write],
         ] {

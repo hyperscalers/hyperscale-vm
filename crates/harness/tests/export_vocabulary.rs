@@ -29,7 +29,6 @@ const FUEL: u64 = 1_000_000_000;
 /// the kernel world exports each under.
 const HANDLE_KINDS: &[&str] = &[
     "read-cell",
-    "locked-cell",
     "write-cell",
     "amount-cell",
     "amount-read",

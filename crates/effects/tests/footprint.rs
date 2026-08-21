@@ -23,7 +23,6 @@ fn arb_mode() -> impl Strategy<Value = Mode> {
         Just(Mode::Delta),
         Just(Mode::Write),
         any::<u128>().prop_map(|amount| Mode::Reserve { amount }),
-        Just(Mode::Locked),
     ]
 }
 

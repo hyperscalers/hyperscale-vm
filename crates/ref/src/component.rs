@@ -53,8 +53,6 @@ pub enum HandleKind {
     Issuer,
     /// `read-cell`.
     ReadCell,
-    /// `locked-cell`.
-    LockedCell,
     /// `write-cell`.
     WriteCell,
     /// `amount-cell`.
@@ -78,7 +76,6 @@ impl HandleKind {
     const fn of(kind: CellKind) -> Self {
         match kind {
             CellKind::Read => Self::ReadCell,
-            CellKind::Locked => Self::LockedCell,
             CellKind::Write => Self::WriteCell,
             CellKind::Amount => Self::AmountCell,
             CellKind::AmountRead => Self::AmountRead,
@@ -95,7 +92,6 @@ impl HandleKind {
             "bucket" => Some(Self::Bucket),
             "issuer" => Some(Self::Issuer),
             "read-cell" => Some(Self::ReadCell),
-            "locked-cell" => Some(Self::LockedCell),
             "write-cell" => Some(Self::WriteCell),
             "amount-cell" => Some(Self::AmountCell),
             "amount-read" => Some(Self::AmountRead),
@@ -163,7 +159,6 @@ impl From<&GuestArg<'_>> for CVal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HostFn {
     ReadCellGet,
-    LockedCellGet,
     WriteCellGet,
     WriteCellSet,
     AmountBalance,
@@ -679,7 +674,6 @@ impl RefComponent {
             .map_or(interface.as_str(), |(_, s)| s);
         match (suffix, name) {
             ("state", "read-cell-get") => Ok(HostFn::ReadCellGet),
-            ("state", "locked-cell-get") => Ok(HostFn::LockedCellGet),
             ("state", "write-cell-get") => Ok(HostFn::WriteCellGet),
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
             ("state", "amount-cell-balance") => Ok(HostFn::AmountBalance),
@@ -1770,7 +1764,6 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                 ) => 1,
                 CompFunc::Host(
                     HostFn::ReadCellGet
-                    | HostFn::LockedCellGet
                     | HostFn::WriteCellGet
                     | HostFn::AmountBalance
                     | HostFn::AmountReadBalance
@@ -1866,11 +1859,11 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                 self.lent.clear();
                 match host_fn {
                     HostFn::Clock => Ok(vec![Value::I64(self.host.clock_ms().cast_signed())]),
-                    HostFn::ReadCellGet | HostFn::LockedCellGet | HostFn::WriteCellGet => {
-                        let expected = match host_fn {
-                            HostFn::ReadCellGet => HandleKind::ReadCell,
-                            HostFn::LockedCellGet => HandleKind::LockedCell,
-                            _ => HandleKind::WriteCell,
+                    HostFn::ReadCellGet | HostFn::WriteCellGet => {
+                        let expected = if host_fn == HostFn::ReadCellGet {
+                            HandleKind::ReadCell
+                        } else {
+                            HandleKind::WriteCell
                         };
                         let rep = self.resolve_handle(args[0], expected)?;
                         let mut port = MeterPort {
@@ -1879,7 +1872,6 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         };
                         let bytes = match host_fn {
                             HostFn::ReadCellGet => meter::read_cell_get(&mut port, rep),
-                            HostFn::LockedCellGet => meter::locked_cell_get(&mut port, rep),
                             _ => meter::write_cell_get(&mut port, rep),
                         }
                         .map_err(meter_fault)?;

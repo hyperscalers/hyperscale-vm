@@ -180,7 +180,6 @@ fn scanned<T>(answer: Result<T, AbortReason>) -> T {
 pub fn cell_get(handle: Handle) -> Vec<u8> {
     settled(kernel(|k| match handle {
         Handle::Read(rep) => k.read_cell(rep),
-        Handle::Locked(rep) => k.locked_cell(rep),
         Handle::Write(rep) => k.write_cell_get(rep),
         other => unreachable!("{other:?} reads no point substate"),
     }))
@@ -571,7 +570,6 @@ pub fn handle(args: &[GuestArg<'_>], at: usize, declared: CellKind) -> Handle {
     }
     match declared {
         CellKind::Read => Handle::Read(rep),
-        CellKind::Locked => Handle::Locked(rep),
         CellKind::Write => Handle::Write(rep),
         CellKind::Amount => Handle::Amount(rep),
         CellKind::AmountRead => Handle::AmountRead(rep),

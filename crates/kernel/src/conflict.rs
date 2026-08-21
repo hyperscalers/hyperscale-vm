@@ -145,7 +145,6 @@ mod tests {
     const fn mode_of(kind: ModeKind) -> Mode {
         match kind {
             ModeKind::Read => Mode::Read,
-            ModeKind::Locked => Mode::Locked,
             ModeKind::Delta => Mode::Delta,
             ModeKind::Reserve => Mode::Reserve { amount: 1 },
             ModeKind::Write => Mode::Write,
@@ -154,15 +153,14 @@ mod tests {
 
     #[test]
     fn same_key_conflicts_follow_the_compatibility_matrix() {
-        use ModeKind::{Delta, Locked, Read, Reserve, Write};
-        let kinds = [Read, Locked, Delta, Reserve, Write];
+        use ModeKind::{Delta, Read, Reserve, Write};
+        let kinds = [Read, Delta, Reserve, Write];
         // The complement of the lattice's compatibility table.
         let conflict_table = [
-            [false, false, true, true, true],
-            [false, false, false, false, false],
-            [true, false, false, false, true],
-            [true, false, false, false, true],
-            [true, false, true, true, true],
+            [false, true, true, true],
+            [true, false, false, true],
+            [true, false, false, true],
+            [true, true, true, true],
         ];
         for (i, &a) in kinds.iter().enumerate() {
             for (j, &b) in kinds.iter().enumerate() {
@@ -236,8 +234,7 @@ mod tests {
         assert!(!targets_overlap(&range(20, 5), &entry(10)));
         assert!(!targets_overlap(&entry(10), &range(20, 5)));
 
-        // Overlapping exclusive writes conflict; a locked range rides
-        // along with anything.
+        // Overlapping exclusive writes conflict.
         let write_range = Effect {
             target: range(5, 15),
             mode: Mode::Write,
@@ -247,10 +244,5 @@ mod tests {
             mode: Mode::Write,
         };
         assert!(conflicts(&write_range, &write_entry));
-        let locked_range = Effect {
-            target: range(0, 100),
-            mode: Mode::Locked,
-        };
-        assert!(!conflicts(&locked_range, &write_range));
     }
 }

@@ -121,9 +121,7 @@ fn transfer_session() -> KernelSession {
         })
         .unwrap();
     let mut store = MemoryStore::new();
-    store
-        .write(sender, encode_amount(500).to_vec())
-        .expect("seed sender balance");
+    store.write(sender, encode_amount(500).to_vec());
     let mut session = materialize(
         &store,
         &declared,

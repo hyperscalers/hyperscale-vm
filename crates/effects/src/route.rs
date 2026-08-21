@@ -380,14 +380,14 @@ mod tests {
     }
 
     #[test]
-    fn a_locked_read_declares_its_target() {
+    fn a_read_declares_its_target() {
         let mut chain = Records::new();
         let mut meta = PackageMetadata::default();
         meta.methods.insert(
             "peek".into(),
             method(vec![
-                self_point(SlotId(1), ModeExpr::Locked),
-                self_point(SlotId(2), ModeExpr::Locked),
+                self_point(SlotId(1), ModeExpr::Read),
+                self_point(SlotId(2), ModeExpr::Read),
             ]),
         );
         chain.packages.publish_unchecked(pkg("oracle"), meta);
@@ -396,15 +396,15 @@ mod tests {
             nodes: vec![node(instance_of("oracle"), "peek", vec![])],
         };
         let routing = routed(&graph, &chain);
-        // A locked read declares its target like any other mode; whether the
-        // target is actually locked is the kernel's to refuse, since only
+        // A read declares its target like any other mode; whether the
+        // target is actually there is the kernel's to refuse, since only
         // the store knows.
         let declared = routing.per_shard.values().next().unwrap();
         assert_eq!(own_effects(declared, instance_of("oracle")), 2);
         for slot in [SlotId(1), SlotId(2)] {
             assert!(declared.contains(&Effect {
                 target: point(instance_of("oracle"), slot),
-                mode: Mode::Locked,
+                mode: Mode::Read,
             }));
         }
     }

@@ -337,15 +337,6 @@ pub enum DeclarationError {
         /// effects.
         clause: u32,
     },
-    /// A stored-rule condition whose cell is declared through a locked
-    /// read. A rule cell is mutable by definition, so the read would
-    /// judge a rule a concurrent transaction may be rewriting.
-    #[error("condition clause {clause} reads a stored rule through a locked read")]
-    ConditionOnLocked {
-        /// The clause's position in a preorder walk of the signature's
-        /// effects.
-        clause: u32,
-    },
     /// A presence condition requiring `Either`, which nothing can fail.
     #[error("condition clause {clause} requires `Either` of a leaf, which requires nothing")]
     VacuousCondition {
@@ -501,8 +492,8 @@ pub enum DeclarationError {
     ///
     /// Every declared access is a capability a body borrows, and which
     /// one is a function of the target's shape and the mode: a leaf is
-    /// read, locked, rewritten or moved through, and an interval is read
-    /// or rewritten. A pairing outside that materializes nothing, so it
+    /// read, rewritten or moved through, and an interval is read or
+    /// rewritten. A pairing outside that materializes nothing, so it
     /// is a clause every call aborts at — and a declaration stating an
     /// access no execution can hold is worse than one that never
     /// published. Refused again at materialization, which is where the
@@ -619,7 +610,7 @@ fn slot_of(target: &TargetExpr) -> Option<(SlotId, &[Expr])> {
 /// their values protocol facts rather than one package's business. A
 /// fact has a shape: a vault holds an amount keyed by the resource it
 /// holds, a record is written when the thing it describes comes into
-/// being, a configuration leaf is locked. So the shape is not the
+/// being, a configuration leaf is written once. So the shape is not the
 /// declaring package's to choose either, and a clause naming one of
 /// these cells any other way is a clause whose leaf would be read as
 /// something it does not hold.
@@ -716,7 +707,7 @@ fn vocabulary_shape(
                     ModeExpr::Read | ModeExpr::Write | ModeExpr::Delta | ModeExpr::Reserve(_)
                 ),
             "holds a fungible balance: one leaf, keyed by the resource it holds, \
-             denominated in that resource, and never locked",
+             denominated in that resource",
         ),
         CLAIMS => (
             point
@@ -736,7 +727,7 @@ fn vocabulary_shape(
              that resource and denominated in it",
         ),
         CONFIG => (
-            point && bare && (creates || matches!(mode, ModeExpr::Locked)),
+            point && bare && creates,
             "is the creation-fixed configuration leaf: one leaf, no material, \
              written where absent and never rewritten",
         ),
@@ -1240,12 +1231,6 @@ fn check_conditions(signature: &MethodSignature, flat: &[&Clause]) -> Result<(),
                     if declares(&point, under, &coherent) {
                         continue;
                     }
-                    // A rule cell is mutable by definition, so a locked
-                    // read of one is a sign-in judged against a rule a
-                    // concurrent transaction may be rewriting.
-                    if declares(&point, under, &|mode| matches!(mode, ModeExpr::Locked)) {
-                        return Err(DeclarationError::ConditionOnLocked { clause });
-                    }
                     return Err(DeclarationError::ConditionUndeclared { clause });
                 }
             }
@@ -1530,7 +1515,7 @@ fn check_target_bounds(target: &TargetExpr) -> Result<(), SignatureBoundsError> 
 
 fn check_mode_bounds(mode: &ModeExpr) -> Result<(), SignatureBoundsError> {
     match mode {
-        ModeExpr::Read | ModeExpr::Delta | ModeExpr::Write | ModeExpr::Locked => Ok(()),
+        ModeExpr::Read | ModeExpr::Delta | ModeExpr::Write => Ok(()),
         ModeExpr::Reserve(amount) => check_expr_bounds(amount, 0),
     }
 }
@@ -1802,11 +1787,13 @@ mod tests {
     /// does.
     #[test]
     fn a_condition_over_an_undeclared_or_incoherent_target_is_refused() {
+        // Keyed by the resource it holds, so the movement below can
+        // denominate it: a movement names what it moves.
         let cell = || {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
                 slot: SlotId(PACKAGE_SLOT_BASE),
-                material: vec![],
+                material: vec![a_resource()],
             })
         };
         let access = |guard: Option<Expr>, mode| Clause::Effect {
@@ -1814,6 +1801,14 @@ mod tests {
             target: cell(),
             mode,
             denomination: None,
+        };
+        // The incoherent mode: a movement declares the cell, but a
+        // movement cannot carry a judgment.
+        let movement = || Clause::Effect {
+            guard: None,
+            target: cell(),
+            mode: ModeExpr::Delta,
+            denomination: Some(Box::new(a_resource())),
         };
         let requires = |guard: Option<Expr>, condition| Clause::Requires {
             guard: guard.map(Box::new),
@@ -1874,10 +1869,7 @@ mod tests {
             Err(DeclarationError::ConditionUndeclared { clause: 0 })
         );
         assert_eq!(
-            declared(vec![
-                access(None, ModeExpr::Locked),
-                requires(None, holds(Presence::Present)),
-            ]),
+            declared(vec![movement(), requires(None, holds(Presence::Present))]),
             Err(DeclarationError::ConditionUndeclared { clause: 1 })
         );
         assert_eq!(
@@ -1893,16 +1885,6 @@ mod tests {
                 requires(Some(guard()), holds(Presence::Present)),
             ]),
             Err(DeclarationError::ConditionUndeclared { clause: 1 })
-        );
-
-        // A rule cell is mutable by definition, so a locked read of one
-        // would judge a rule a concurrent transaction may be rewriting.
-        assert_eq!(
-            declared(vec![
-                access(None, ModeExpr::Locked),
-                requires(None, satisfies()),
-            ]),
-            Err(DeclarationError::ConditionOnLocked { clause: 1 })
         );
     }
 
@@ -2569,9 +2551,6 @@ mod tests {
                     "{target:?} {mode:?}"
                 );
             }
-            // Nor is a collection something a locked read names: what a
-            // lock pins is one leaf's value.
-            assert_eq!(declared(target.clone(), ModeExpr::Locked, None), refused);
             // The two it does have.
             assert_eq!(declared(target.clone(), ModeExpr::Read, None), Ok(()));
             assert_eq!(
@@ -2865,13 +2844,7 @@ mod tests {
                 Ok(())
             );
             assert!(misshapen(&read(own_point(slot, vec![a_resource()]), None)));
-            // Value is never locked, never keyed by nothing, and never a
-            // collection.
-            assert!(misshapen(&one_clause(
-                own_point(slot, vec![a_resource()]),
-                ModeExpr::Locked,
-                Some(a_resource())
-            )));
+            // Value is never keyed by nothing, and never a collection.
             assert!(misshapen(&read(own_point(slot, vec![]), None)));
             assert!(misshapen(&read(
                 own_interval(slot, vec![a_resource()]),
@@ -2933,12 +2906,10 @@ mod tests {
         // A configuration leaf is read, written once where absent, and
         // never rewritten; a stored authority cell is read or rewritten
         // whole. Neither is keyed by anything and neither holds value.
-        for mode in [ModeExpr::Locked, ModeExpr::Read] {
-            assert_eq!(
-                check_declarations(&plain(own_point(CONFIG, vec![]), mode)),
-                Ok(())
-            );
-        }
+        assert_eq!(
+            check_declarations(&plain(own_point(CONFIG, vec![]), ModeExpr::Read)),
+            Ok(())
+        );
         assert_eq!(
             check_declarations(&creating(own_point(CONFIG, vec![]), None)),
             Ok(())

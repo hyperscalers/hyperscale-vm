@@ -10,10 +10,6 @@
 //! [`OverlayStore::discard_active`]; neither touches the base, so the cost
 //! of every store operation is bounded by overlay size, never by state
 //! size.
-//!
-//! Locked reads are the exception to layering: they resolve against the
-//! base alone, which is the batch baseline — the attested version pinned
-//! reads see regardless of what the group has threaded on top.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -81,7 +77,7 @@ impl OverlayStore {
         }
     }
 
-    /// The shared base: the batch baseline locked reads resolve against.
+    /// The shared base: the batch baseline the layers sit over.
     #[must_use]
     pub const fn base(&self) -> &Arc<dyn Baseline> {
         &self.base
@@ -100,14 +96,6 @@ impl OverlayStore {
 
     fn record(&mut self, target: EffectTarget, kind: ModeKind) {
         self.log.push(Access { target, kind });
-    }
-
-    /// Whether a substate is permanently locked. Locks are baseline
-    /// state — creation-fixed configuration composed under the base — so
-    /// the layers never carry one.
-    #[must_use]
-    pub fn is_locked(&self, key: SubstateKey) -> bool {
-        self.base.is_locked(key)
     }
 
     /// The effective value of a point cell: active over committed over
@@ -369,10 +357,10 @@ impl OverlayStore {
 
     /// Whether either layer carries a cell change.
     ///
-    /// Locked reads resolve against the base alone, so the overlay a
-    /// batch forks its groups from must not have written a cell: if it
-    /// had, every group's pinned reads would silently resolve against
-    /// post-judge state instead of the attested baseline.
+    /// Every group forks from the judged overlay as its immutable base,
+    /// and judging holds reservations rather than writing cells — so a
+    /// cell change here is the judge phase having done something it must
+    /// not, and every group would read the result as baseline.
     #[must_use]
     pub fn has_layered_cells(&self) -> bool {
         !self.active.cells.is_empty() || !self.committed.cells.is_empty()
@@ -445,23 +433,13 @@ impl WorkingStore for OverlayStore {
         Ok(self.cell_value(key))
     }
 
-    fn locked(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
-        self.record(EffectTarget::Point(key), ModeKind::Locked);
-        // The baseline, deliberately: a locked read is pinned like every
-        // snapshot, and a locked cell rejects every mutation, so the
-        // layers can hold nothing this read should see.
-        Ok(self.base.cell(key))
-    }
-
     fn write(&mut self, key: SubstateKey, value: Vec<u8>) -> Result<(), StoreError> {
-        self.reject_locked(key)?;
         self.record(EffectTarget::Point(key), ModeKind::Write);
         self.active.cells.insert(key, Some(value));
         Ok(())
     }
 
     fn remove(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError> {
-        self.reject_locked(key)?;
         self.record(EffectTarget::Point(key), ModeKind::Write);
         let previous = self.cell_value(key);
         self.active.cells.insert(key, None);
@@ -469,7 +447,6 @@ impl WorkingStore for OverlayStore {
     }
 
     fn queue_delta(&mut self, key: SubstateKey, op: DeltaOp) -> Result<(), StoreError> {
-        self.reject_locked(key)?;
         self.record(EffectTarget::Point(key), ModeKind::Delta);
         self.active.pending_deltas.entry(key).or_default().push(op);
         Ok(())
@@ -594,10 +571,6 @@ impl Substates for OverlayStore {
 }
 
 impl Baseline for OverlayStore {
-    fn is_locked(&self, key: SubstateKey) -> bool {
-        Self::is_locked(self, key)
-    }
-
     fn holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128> {
         self.effective_holds(key)
     }
@@ -640,7 +613,7 @@ mod tests {
     fn overlay_over(entries: &[(u128, u8)]) -> OverlayStore {
         let mut base = MemoryStore::new();
         for (order, value) in entries {
-            base.entry_write(BOOK, ASKS, *order, vec![*value]).unwrap();
+            base.entry_write(BOOK, ASKS, *order, vec![*value]);
         }
         OverlayStore::new(Arc::new(base))
     }
@@ -689,10 +662,10 @@ mod tests {
     }
 
     #[test]
-    fn reads_layer_and_locked_reads_resolve_against_the_base() {
+    fn reads_resolve_through_the_layers_to_the_base() {
         let mut base = MemoryStore::new();
         let cell = key(1);
-        base.write(cell, vec![1]).unwrap();
+        base.write(cell, vec![1]);
         let mut overlay = OverlayStore::new(Arc::new(base));
 
         overlay.write(cell, vec![2]).unwrap();
@@ -700,12 +673,9 @@ mod tests {
         assert_eq!(overlay.read(cell).unwrap(), Some(vec![2]));
         overlay.write(cell, vec![3]).unwrap();
         assert_eq!(overlay.read(cell).unwrap(), Some(vec![3]));
-        // The locked read resolves against the base, not the layers.
-        assert_eq!(overlay.locked(cell).unwrap(), Some(vec![1]));
 
         overlay.remove(cell).unwrap();
         assert_eq!(overlay.read(cell).unwrap(), None);
-        assert_eq!(overlay.locked(cell).unwrap(), Some(vec![1]));
     }
 
     #[test]
@@ -755,7 +725,7 @@ mod tests {
     fn reservations_layer_over_base_holds() {
         let mut base = MemoryStore::new();
         let vault = key(4);
-        base.write(vault, encode_amount(100).to_vec()).unwrap();
+        base.write(vault, encode_amount(100).to_vec());
         base.judge_and_hold(&[(tx(1), vault, 60)]).unwrap();
         let mut overlay = OverlayStore::new(Arc::new(base));
 
@@ -793,7 +763,7 @@ mod tests {
         // the base still carries it.
         let mut base = MemoryStore::new();
         let vault = key(4);
-        base.write(vault, encode_amount(60).to_vec()).unwrap();
+        base.write(vault, encode_amount(60).to_vec());
         base.judge_and_hold(&[(tx(1), vault, 50)]).unwrap();
 
         let overlay = OverlayStore::new(Arc::new(base.clone()));
@@ -815,7 +785,7 @@ mod tests {
         // the settle could not honour is still there to release.
         let mut base = MemoryStore::new();
         let vault = key(7);
-        base.write(vault, encode_amount(100).to_vec()).unwrap();
+        base.write(vault, encode_amount(100).to_vec());
         base.judge_and_hold(&[(tx(1), vault, 100)]).unwrap();
         let mut overlay = OverlayStore::new(Arc::new(base));
         overlay.write(vault, encode_amount(10).to_vec()).unwrap();
@@ -829,26 +799,10 @@ mod tests {
     }
 
     #[test]
-    fn base_locks_reject_overlay_mutations() {
-        let mut base = MemoryStore::new();
-        let cell = key(5);
-        base.write(cell, vec![7]).unwrap();
-        base.lock(cell);
-        let mut overlay = OverlayStore::new(Arc::new(base));
-        assert!(overlay.is_locked(cell));
-        assert_eq!(overlay.write(cell, vec![8]), Err(StoreError::Locked(cell)));
-        assert_eq!(overlay.remove(cell), Err(StoreError::Locked(cell)));
-        assert_eq!(
-            overlay.queue_delta(cell, DeltaOp::Add(1)),
-            Err(StoreError::Locked(cell))
-        );
-    }
-
-    #[test]
     fn collapse_applies_both_layers_to_the_base() {
         let mut base = MemoryStore::new();
         for (order, value) in [(5u128, 5u8), (10, 10)] {
-            base.entry_write(BOOK, ASKS, order, vec![value]).unwrap();
+            base.entry_write(BOOK, ASKS, order, vec![value]);
         }
         let mut overlay = OverlayStore::new(Arc::new(base.clone()));
         let cell = key(6);

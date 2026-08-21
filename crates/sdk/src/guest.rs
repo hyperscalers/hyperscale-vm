@@ -49,8 +49,8 @@ use core::mem::ManuallyDrop;
 
 pub use bindings::hyperscale::kernel;
 use kernel::state::{
-    AmountCell, AmountRead, DeltaCell, InstanceRange, Issuer, LockedCell, RangeRead, RangeWrite,
-    ReadCell, ReserveCell, WriteCell,
+    AmountCell, AmountRead, DeltaCell, InstanceRange, Issuer, RangeRead, RangeWrite, ReadCell,
+    ReserveCell, WriteCell,
 };
 
 use crate::Address;
@@ -216,7 +216,6 @@ macro_rules! borrows {
 borrows! {
     issuer -> Issuer,
     read_cell -> ReadCell,
-    locked_cell -> LockedCell,
     write_cell -> WriteCell,
     amount_cell -> AmountCell,
     amount_read -> AmountRead,
@@ -239,7 +238,6 @@ borrows! {
 pub fn cell_get(handle: Handle) -> Vec<u8> {
     match handle {
         Handle::Read(rep) => kernel::state::read_cell_get(&read_cell(rep)),
-        Handle::Locked(rep) => kernel::state::locked_cell_get(&locked_cell(rep)),
         Handle::Write(rep) => kernel::state::write_cell_get(&write_cell(rep)),
         other => unreachable!("{other:?} reads no point substate"),
     }

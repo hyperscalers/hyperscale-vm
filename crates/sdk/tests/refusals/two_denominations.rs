@@ -17,7 +17,7 @@ mod contract {
 
     impl Contract {
         pub fn bank(&mut self, funds: Bucket) {
-            let settings = self.config().locked();
+            let settings = self.config();
             let (half, rest) = funds.split(Quantity::ZERO.ratio_to(Quantity::ZERO).unwrap());
             self.vault(settings.base).put(half);
             self.vault(settings.quote).put(rest);

@@ -18,8 +18,8 @@ use wasmtime::{AsContextMut, Error, Result, Store};
 
 use crate::abort::{CallError, classify, exhausted};
 use crate::world::{
-    AmountCell, AmountRead, Bucket, DeltaCell, InstanceRange, Issuer, LockedCell, RangeRead,
-    RangeWrite, ReadCell, ReserveCell, WriteCell,
+    AmountCell, AmountRead, Bucket, DeltaCell, InstanceRange, Issuer, RangeRead, RangeWrite,
+    ReadCell, ReserveCell, WriteCell,
 };
 
 /// An address as the world's `record address`: four little-endian words.
@@ -56,9 +56,6 @@ fn address_val(address: Address) -> Val {
 fn handle(kind: CellKind, rep: u32, store: impl AsContextMut) -> Result<ResourceAny> {
     match kind {
         CellKind::Read => ResourceAny::try_from_resource(Resource::<ReadCell>::new_own(rep), store),
-        CellKind::Locked => {
-            ResourceAny::try_from_resource(Resource::<LockedCell>::new_own(rep), store)
-        }
         CellKind::Write => {
             ResourceAny::try_from_resource(Resource::<WriteCell>::new_own(rep), store)
         }

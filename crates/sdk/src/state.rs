@@ -3,7 +3,7 @@
 //! Every one of these types exists to make the access mode *derivable*.
 //! State is reachable only through the handles here, and each method on
 //! them names exactly one point of the mode lattice — `add` is commutative,
-//! `reserve` is conditional, `set` is exclusive, `locked` excludes nothing.
+//! `reserve` is conditional, `set` is exclusive.
 //! So `#[blueprint]` reads the mode off the body rather than asking for it,
 //! and a cell a method both reads and writes folds to `Write` because the
 //! lattice says `Write` subsumes `Read`.
@@ -611,32 +611,18 @@ impl NfBucket {
     }
 }
 
-/// A permanently locked configuration leaf.
+/// The instance's creation-fixed configuration.
 ///
-/// Read through [`Locked::locked`], which declares a locked read that excludes
-/// nothing and carries no proof obligation. Its fields are the instance's
-/// creation-fixed configuration slots, in declaration order.
+/// Its fields are the configuration slots the record holds, in
+/// declaration order. Reading one declares nothing: the record is what
+/// admission resolved the target with, so a body consults it without
+/// claiming anything and every method's fence already holds the leaf it
+/// was sealed into present.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Locked<T>(core::marker::PhantomData<fn() -> T>);
+pub struct Config<T>(core::marker::PhantomData<fn() -> T>);
 
-impl<T> Locked<T> {
-    /// The configuration. Locked at creation, so every version reads the
-    /// same: no proof obligation, no participant.
-    #[must_use]
-    pub fn locked(&self) -> &T {
-        unimplemented!("{OFF_HOST}")
-    }
-}
-
-/// Configuration fields read straight off the component, with no claim.
-///
-/// The deref is the type-level statement of a rule the VM already has:
-/// creation-fixed configuration is a locked substate, verified once and
-/// cached process-wide, so consulting it costs no declaration and creates
-/// no participant. Pinning the whole record is a separate, deliberate act —
-/// [`Locked::locked`] — which a method performs only when it wants the
-/// record stable rather than merely readable.
-impl<T> core::ops::Deref for Locked<T> {
+/// Configuration fields read straight off the component.
+impl<T> core::ops::Deref for Config<T> {
     type Target = T;
 
     fn deref(&self) -> &T {

@@ -51,9 +51,6 @@ impl KernelHost for StubHost {
     fn read_cell(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
         self.op("read-cell", vec![0; 5])
     }
-    fn locked_cell(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
-        self.op("locked-cell", vec![0; 5])
-    }
     fn write_cell_get(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
         self.op("write-cell-get", vec![0; 5])
     }
@@ -218,13 +215,6 @@ fn every_function_charges_its_pinned_sequence() {
                 let _ = meter::read_cell_get(p, 0);
             },
             vec![Host("read-cell"), Charge(5)],
-        ),
-        (
-            "locked-cell-get",
-            |p| {
-                let _ = meter::locked_cell_get(p, 0);
-            },
-            vec![Host("locked-cell"), Charge(5)],
         ),
         (
             "write-cell-get",

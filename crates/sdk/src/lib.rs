@@ -29,7 +29,7 @@
 //!         let pool = t.self_addr();
 //!
 //!         let config: Sym<_> = pool.child(SlotId(0), &[]);
-//!         t.point(&config).locked();
+//!         t.point(&config).read();
 //!         t.point(&pool.child(VAULT, &[sold.clone().cast()])).write();
 //!         t.point(&pool.child(VAULT, &[bought.clone().cast()])).write();
 //!

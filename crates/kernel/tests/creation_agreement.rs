@@ -108,7 +108,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
         owner: creator.address(),
         local: fresh_local(&TestHasher, identity, 1, 0),
     };
-    store.write(created, vec![42]).unwrap();
+    store.write(created, vec![42]);
     assert!(declared.contains(&Effect {
         target: EffectTarget::Point(created),
         mode: write(),
@@ -116,14 +116,12 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
 
     // The entry's fresh sequence agrees the same way.
     let seq = fresh_id(&TestHasher, identity, 1, 1);
-    store
-        .entry_write(
-            creator.address(),
-            collection_id(&TestHasher, creator.address(), SlotId(4), &[]),
-            (u128::from(99u64) << 64) | u128::from(seq),
-            vec![7],
-        )
-        .unwrap();
+    store.entry_write(
+        creator.address(),
+        collection_id(&TestHasher, creator.address(), SlotId(4), &[]),
+        (u128::from(99u64) << 64) | u128::from(seq),
+        vec![7],
+    );
     assert!(declared.contains(&Effect {
         target: EffectTarget::Entry {
             owner: creator.into(),

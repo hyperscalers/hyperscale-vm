@@ -448,7 +448,7 @@ mod tests {
         let owner = Address::new([9; 31], AddressClass::Component);
         let collection = CollectionId([4; 16]);
         let mut store = MemoryStore::new();
-        store.entry_write(owner, collection, 10, vec![1]).unwrap();
+        store.entry_write(owner, collection, 10, vec![1]);
         let set = declared(&[Effect {
             target: EffectTarget::Range {
                 owner,
@@ -554,9 +554,7 @@ mod tests {
         let collection = CollectionId([4; 16]);
         let mut store = MemoryStore::new();
         for order in 0..4u128 {
-            store
-                .entry_write(owner, collection, order, vec![u8::try_from(order).unwrap()])
-                .unwrap();
+            store.entry_write(owner, collection, order, vec![u8::try_from(order).unwrap()]);
         }
         let set = declared(&[Effect {
             target: EffectTarget::Range {
@@ -587,9 +585,7 @@ mod tests {
         let collection = CollectionId([4; 16]);
         let mut store = MemoryStore::new();
         for order in 0..4u128 {
-            store
-                .entry_write(owner, collection, order, vec![7; 10])
-                .unwrap();
+            store.entry_write(owner, collection, order, vec![7; 10]);
         }
         let set = declared(&[Effect {
             target: EffectTarget::Range {
@@ -623,7 +619,7 @@ mod tests {
         let owner = Address::new([9; 31], AddressClass::Component);
         let (held, other) = (CollectionId([1; 16]), CollectionId([2; 16]));
         let mut store = MemoryStore::new();
-        store.entry_write(owner, held, 1, vec![7]).unwrap();
+        store.entry_write(owner, held, 1, vec![7]);
         let interval = |collection| Effect {
             target: EffectTarget::Range {
                 owner,
@@ -665,9 +661,7 @@ mod tests {
         let collection = CollectionId([4; 16]);
         let mut store = MemoryStore::new();
         for order in 0..100u128 {
-            store
-                .entry_write(owner, collection, order, vec![1])
-                .unwrap();
+            store.entry_write(owner, collection, order, vec![1]);
         }
         let set = declared(&[Effect {
             target: EffectTarget::Range {
@@ -707,9 +701,7 @@ mod tests {
         let collection = CollectionId([4; 16]);
         let mut store = MemoryStore::new();
         for order in 0..4u128 {
-            store
-                .entry_write(owner, collection, order, vec![1])
-                .unwrap();
+            store.entry_write(owner, collection, order, vec![1]);
         }
         let at_cap = |cap| {
             declared(&[Effect {
@@ -749,9 +741,7 @@ mod tests {
         let collection = CollectionId([4; 16]);
         let mut store = MemoryStore::new();
         for order in 0..4u128 {
-            store
-                .entry_write(owner, collection, order, vec![1])
-                .unwrap();
+            store.entry_write(owner, collection, order, vec![1]);
         }
         let set = declared(&[Effect {
             target: EffectTarget::Range {
@@ -786,9 +776,7 @@ mod tests {
         let collection = CollectionId([4; 16]);
         let mut store = MemoryStore::new();
         for order in 0..4u128 {
-            store
-                .entry_write(owner, collection, order, vec![1])
-                .unwrap();
+            store.entry_write(owner, collection, order, vec![1]);
         }
         let set = declared(&[Effect {
             target: EffectTarget::Range {

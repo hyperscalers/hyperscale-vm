@@ -24,9 +24,7 @@ use common::world::*;
 fn a_refused_authorization_takes_its_consumers_with_it() {
     let world = world();
     let mut store = sealed_store();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
 
     // Bob's signature behind Alice's sign-in: admission passes — the
     // evidence is present, and whether it satisfies the target is the
@@ -67,9 +65,7 @@ fn securify_graph(rule: &StoredRule) -> ManifestGraph {
 fn securify_retires_the_old_key_and_installs_the_rule() {
     let world = world();
     let mut store = sealed_store();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
 
     // Alice's last act under the virtual rule: signing in for its
     // retirement. Everything she stores from here is governed by Bob.
@@ -144,21 +140,15 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
 /// same transaction.
 fn chained_store() -> MemoryStore {
     let mut store = sealed_store();
-    store
-        .write(vault(MAKER, RES_X), encode_amount(150).to_vec())
-        .unwrap();
-    store
-        .write(
-            auth(ALICE),
-            AuthCell::new(uniform_base(BOB)).to_bytes().unwrap(),
-        )
-        .unwrap();
-    store
-        .write(
-            auth(MAKER),
-            AuthCell::new(uniform_base(ALICE)).to_bytes().unwrap(),
-        )
-        .unwrap();
+    store.write(vault(MAKER, RES_X), encode_amount(150).to_vec());
+    store.write(
+        auth(ALICE),
+        AuthCell::new(uniform_base(BOB)).to_bytes().unwrap(),
+    );
+    store.write(
+        auth(MAKER),
+        AuthCell::new(uniform_base(ALICE)).to_bytes().unwrap(),
+    );
     store
 }
 
@@ -221,9 +211,7 @@ fn a_chained_sign_in_acts_two_rules_deep() {
 fn a_proof_opens_only_the_account_that_minted_it() {
     let world = world();
     let mut store = sealed_store();
-    store
-        .write(vault(BOB, RES_X), encode_amount(150).to_vec())
-        .unwrap();
+    store.write(vault(BOB, RES_X), encode_amount(150).to_vec());
 
     // Alice signs in as herself, then aims her proof at Bob's vault —
     // composable and admissible, and dead at Bob's gate.
@@ -272,12 +260,8 @@ fn split_base() -> AuthBase {
 /// written as the guest would write it.
 fn recovered_store() -> MemoryStore {
     let mut store = sealed_store();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
-        .unwrap();
-    store
-        .write(auth(ALICE), AuthCell::new(split_base()).to_bytes().unwrap())
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+    store.write(auth(ALICE), AuthCell::new(split_base()).to_bytes().unwrap());
     store
 }
 
@@ -654,17 +638,13 @@ fn a_freeze_after_maturity_strips_the_promoted_primary() {
 fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
     let world = world();
     let mut store = sealed_store();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
-        .unwrap();
-    store
-        .write(
-            auth(ALICE),
-            AuthCell::new(AuthBase::new(u64::MAX, split_roles()))
-                .to_bytes()
-                .unwrap(),
-        )
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+    store.write(
+        auth(ALICE),
+        AuthCell::new(AuthBase::new(u64::MAX, split_roles()))
+            .to_bytes()
+            .unwrap(),
+    );
     let t0 = env().clock_ms;
 
     let (results, store) = run_both_signed(
@@ -709,17 +689,13 @@ fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
 fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     let world = world();
     let mut store = sealed_store();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
-        .unwrap();
-    store
-        .write(
-            auth(ALICE),
-            AuthCell::new(AuthBase::new(u64::MAX, split_roles()))
-                .to_bytes()
-                .unwrap(),
-        )
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+    store.write(
+        auth(ALICE),
+        AuthCell::new(AuthBase::new(u64::MAX, split_roles()))
+            .to_bytes()
+            .unwrap(),
+    );
     let t0 = env().clock_ms;
 
     // Nothing pending, and the freeze lands anyway.
@@ -895,9 +871,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     // shard holding it judges that against committed state after the
     // virtual rule signed the caller in and before the body runs.
     let mut virtual_store = sealed_store();
-    virtual_store
-        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
-        .unwrap();
+    virtual_store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
     let own_propose = graph(|b| {
         account::propose(
             b,
@@ -1251,9 +1225,7 @@ fn a_declared_threshold_admits_exactly_its_quorum() {
 fn a_fungible_badge_is_custody_while_the_vault_is_funded() {
     let world = world();
     let mut store = sealed_store();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(1).to_vec())
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(1).to_vec());
 
     let gated = gated_by(RES_X.address(), 10);
     let operate_as = |who: PrincipalAddr| {
@@ -1294,9 +1266,7 @@ fn a_fungible_badge_is_custody_while_the_vault_is_funded() {
 fn a_drained_badge_vault_closes_the_custody_it_opened() {
     let world = world();
     let mut store = sealed_store();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(1).to_vec())
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(1).to_vec());
 
     // Alice spends the whole of it, so the leaf is removed rather than
     // written back as zero.

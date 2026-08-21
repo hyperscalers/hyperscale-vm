@@ -227,9 +227,9 @@ impl Chain {
     /// The package is named once, as the handle's own type: an instance
     /// address folds in the declaration hash, and the handle is what
     /// carries the fact that this address runs that declaration. The
-    /// configuration is written to the locked leaf and locked, which is
-    /// what a real creation does and what a body reading `self.config`
-    /// needs to be there.
+    /// configuration is sealed into the record leaf, which is what a
+    /// real creation does and what a body reading `self.config` needs to
+    /// be there.
     ///
     /// # Panics
     ///
@@ -328,9 +328,7 @@ impl Chain {
                 "the seal writes the record's own bytes"
             );
         } else {
-            self.store
-                .write(leaf, bytes)
-                .expect("the store takes a config leaf");
+            self.store.write(leaf, bytes);
         }
         address
     }
@@ -371,9 +369,7 @@ impl Chain {
         amount: u128,
     ) {
         let key = vault(owner, resource);
-        self.store
-            .write(key, encode_amount(amount).to_vec())
-            .expect("the store takes a vault cell");
+        self.store.write(key, encode_amount(amount).to_vec());
     }
 
     /// One committed cell's bytes, or nothing where no cell is.

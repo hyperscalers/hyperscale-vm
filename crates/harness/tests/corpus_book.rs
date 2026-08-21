@@ -100,24 +100,16 @@ fn fill_provisions_the_interval_and_the_fence() {
 fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
     let world = world();
     let mut store = sealed_store();
-    store
-        .write(vault(MAKER, BASE), encode_amount(60).to_vec())
-        .unwrap();
-    store
-        .write(vault(TAKER, QUOTE), encode_amount(150).to_vec())
-        .unwrap();
+    store.write(vault(MAKER, BASE), encode_amount(60).to_vec());
+    store.write(vault(TAKER, QUOTE), encode_amount(150).to_vec());
     // A resting ask at price 5 from an earlier session, escrow included.
-    store
-        .entry_write(
-            Address::from(book()),
-            asks(),
-            (5u128 << 64) | 7,
-            encode_amount(10).to_vec(),
-        )
-        .unwrap();
-    store
-        .write(vault(book(), BASE), encode_amount(10).to_vec())
-        .unwrap();
+    store.entry_write(
+        Address::from(book()),
+        asks(),
+        (5u128 << 64) | 7,
+        encode_amount(10).to_vec(),
+    );
+    store.write(vault(book(), BASE), encode_amount(10).to_vec());
 
     let place = place_graph();
     let fill = fill_graph();

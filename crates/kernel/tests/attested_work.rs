@@ -150,9 +150,7 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
 
 fn funded_store(amount: u128) -> Arc<MemoryStore> {
     let mut store = MemoryStore::default();
-    store
-        .write(cell(PAYER_BYTE), encode_amount(amount).to_vec())
-        .unwrap();
+    store.write(cell(PAYER_BYTE), encode_amount(amount).to_vec());
     Arc::new(store)
 }
 
@@ -382,8 +380,8 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
         })
         .unwrap();
     let mut store = MemoryStore::default();
-    store.write(payer, encode_amount(1_000).to_vec()).unwrap();
-    store.write(nullifier, vec![1]).unwrap();
+    store.write(payer, encode_amount(1_000).to_vec());
+    store.write(nullifier, vec![1]);
     let batch = [BatchTx::new(
         tx(1),
         moving(declared.clone()),
@@ -429,9 +427,7 @@ fn a_completion_flipped_at_apply_drops_its_fuel_but_keeps_its_declaration() {
         ),
     ];
     let mut store = MemoryStore::default();
-    store
-        .write(cell(PAYER_BYTE), encode_amount(1_000).to_vec())
-        .unwrap();
+    store.write(cell(PAYER_BYTE), encode_amount(1_000).to_vec());
     let outcome = run_batch(Arc::new(store), &batch, &transfer_guest, &Locality::All);
 
     let loser = outcome

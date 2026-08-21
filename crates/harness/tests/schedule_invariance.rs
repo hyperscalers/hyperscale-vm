@@ -80,11 +80,9 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
     let recipient = vault(9);
     let mut store = MemoryStore::new();
     for owner in 1u8..=3 {
-        store
-            .write(vault(owner), encode_amount(100).to_vec())
-            .unwrap();
+        store.write(vault(owner), encode_amount(100).to_vec());
     }
-    store.write(rmw_cell(), vec![1, 2, 3]).unwrap();
+    store.write(rmw_cell(), vec![1, 2, 3]);
 
     let mut batch = Vec::new();
     let mut shapes = BTreeMap::new();

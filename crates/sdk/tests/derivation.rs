@@ -362,7 +362,7 @@ mod switch {
     impl Switch {
         /// One of two vaults, and the declaration says which.
         pub fn credit(&mut self, funds: Bucket, to_left: u64) {
-            let settings = self.config().locked();
+            let settings = self.config();
             if to_left == 1 {
                 self.vault(settings.left).put(funds);
             } else {
@@ -374,7 +374,7 @@ mod switch {
         /// edge's own resource, so only one arm says anything about what
         /// the edge carries.
         pub fn credit_one_way(&mut self, funds: Bucket, to_left: u64) {
-            let settings = self.config().locked();
+            let settings = self.config();
             if to_left == 1 {
                 self.vault(settings.left).put(funds);
             } else {
@@ -824,7 +824,7 @@ mod selection {
     impl Selection {
         /// One of two configured sides, and only one.
         pub fn either(&mut self, pick: Address) {
-            let settings = self.config().locked();
+            let settings = self.config();
             let side = if pick == settings.left {
                 settings.left
             } else {
@@ -836,7 +836,7 @@ mod selection {
         /// The superset the same choice declares when the arms are
         /// bodies rather than values.
         pub fn both(&mut self, pick: Address) {
-            let settings = self.config().locked();
+            let settings = self.config();
             if pick == settings.left {
                 self.vault(settings.left).declared();
             } else {
@@ -848,7 +848,7 @@ mod selection {
         /// only where it holds the key, because the untaken arm of a
         /// selection never runs.
         pub fn routed(&mut self, who: Address) {
-            let settings = self.config().locked();
+            let settings = self.config();
             let target = if settings.routes.contains(who) {
                 settings.routes.get(who)
             } else {
@@ -867,7 +867,7 @@ mod selection {
         /// reads, so no spelling falls back to the superset silently.
         #[allow(clippy::nonminimal_bool)] // the redundancy is the spelling under test
         pub fn compared(&mut self, a: u64, b: u64) {
-            let settings = self.config().locked();
+            let settings = self.config();
             let side = if a != b && !(a >= b) || a <= b {
                 settings.left
             } else {

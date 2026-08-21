@@ -20,7 +20,7 @@ mod contract {
         // chooses would cross the call boundary as one value, and no one
         // export parameter carries both shapes.
         pub fn confused(&mut self, pick: Address, amount: Quantity) {
-            let settings = self.config().locked();
+            let settings = self.config();
             let key = if pick == settings.left {
                 settings.left
             } else {

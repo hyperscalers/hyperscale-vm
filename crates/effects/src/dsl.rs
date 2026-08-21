@@ -84,8 +84,8 @@ pub enum Expr {
     /// The n-th manifest argument bound to this call.
     Arg(u32),
     /// The n-th field of the target instance's creation-fixed
-    /// configuration — a locked substate, readable without a declared
-    /// effect.
+    /// configuration, read from the record admission resolved the target
+    /// with rather than through a declared effect.
     Config(u32),
     /// The current `for-each` element; `0` names the innermost binding.
     Binding(u32),
@@ -351,8 +351,6 @@ impl Expr {
 pub enum ModeExpr {
     /// Fresh coherent read.
     Read,
-    /// Read of a locked substate; no proof obligation, no participant.
-    Locked,
     /// Commutative increment or decrement; no declared amount.
     Delta,
     /// Conditional decrement of the evaluated amount.
@@ -448,7 +446,6 @@ pub const fn materialized_kind(clause: &Clause) -> Option<CellKind> {
         } else {
             CellKind::Read
         }),
-        (TargetExpr::Point(_), ModeExpr::Locked) => Some(CellKind::Locked),
         (TargetExpr::Point(_), ModeExpr::Write) => Some(if holds_value {
             CellKind::Amount
         } else {
@@ -1312,7 +1309,6 @@ fn eval_mode(
 ) -> Result<Mode, EvalError> {
     match mode {
         ModeExpr::Read => Ok(Mode::Read),
-        ModeExpr::Locked => Ok(Mode::Locked),
         ModeExpr::Delta => Ok(Mode::Delta),
         ModeExpr::Reserve(expr) => {
             let amount = as_u128(eval_expr(expr, inputs, hasher, bindings, 0)?)?;
@@ -2337,7 +2333,7 @@ mod tests {
                     slot: SlotId(9),
                     material: vec![],
                 }),
-                mode: ModeExpr::Locked,
+                mode: ModeExpr::Read,
                 denomination: None,
             },
         ];
@@ -2354,7 +2350,7 @@ mod tests {
         }));
         assert!(set.contains(&Effect {
             target: EffectTarget::Point(child_key(&TestHasher, ins.self_addr, SlotId(9), &[])),
-            mode: Mode::Locked,
+            mode: Mode::Read,
         }));
 
         let inverted = [Clause::Effect {

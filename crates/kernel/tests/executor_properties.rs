@@ -50,11 +50,6 @@ use proptest::prelude::{Strategy, any, prop_oneof, proptest};
 const CELLS: u8 = 5;
 /// The first byte of a cell's owner; `cell(index)` sits at `CELL_BASE + index`.
 const CELL_BASE: u8 = 0xC0;
-/// A separate space of permanently locked cells. A locked read only admits a
-/// locked target, so generated locked-read claims land here — on keys nothing
-/// can mutate, which is what the mode means.
-const LOCKED_BASE: u8 = 0xD0;
-const LOCKED_CELLS: u8 = 2;
 const BOOK: Address = Address::new([0xB0; 31], AddressClass::Component);
 const ASKS: CollectionId = CollectionId([4; 16]);
 const FUNDING: u128 = 1_000;
@@ -80,18 +75,6 @@ fn cell(index: u8) -> SubstateKey {
     )
 }
 
-fn locked_cell(index: u8) -> SubstateKey {
-    child_key(
-        &TestHasher,
-        Address::new(
-            [LOCKED_BASE + (index % LOCKED_CELLS); 31],
-            AddressClass::Component,
-        ),
-        SlotId(1),
-        &[],
-    )
-}
-
 /// A shard owning exactly the cells `owned` flags, and the order book when
 /// `book` is set.
 fn shard_owning(owned: &[bool], book: bool) -> Locality {
@@ -109,7 +92,6 @@ fn shard_owning(owned: &[bool], book: bool) -> Locality {
 #[derive(Clone, Copy, Debug)]
 enum Claim {
     Read(u8),
-    Locked(u8),
     Delta(u8),
     Reserve(u8, u128),
     Write(u8),
@@ -119,7 +101,6 @@ enum Claim {
 fn arb_claim() -> impl Strategy<Value = Claim> {
     prop_oneof![
         (0u8..CELLS).prop_map(Claim::Read),
-        (0u8..CELLS).prop_map(Claim::Locked),
         (0u8..CELLS).prop_map(Claim::Delta),
         (0u8..CELLS, 0u128..300).prop_map(|(k, a)| Claim::Reserve(k, a)),
         (0u8..CELLS).prop_map(Claim::Write),
@@ -157,10 +138,6 @@ fn declared_of(spec: &TxSpec) -> EffectSet {
             Claim::Read(k) => Effect {
                 target: EffectTarget::Point(cell(k)),
                 mode: Mode::Read,
-            },
-            Claim::Locked(k) => Effect {
-                target: EffectTarget::Point(locked_cell(k)),
-                mode: Mode::Locked,
             },
             Claim::Delta(k) => {
                 if exclusive.contains(&k) {
@@ -247,9 +224,6 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
             match capability {
                 Capability::Read(_) => {
                     let _ = session.read_cell(rep);
-                }
-                Capability::Locked(_) => {
-                    let _ = session.locked_cell(rep);
                 }
                 Capability::Write(_) => {
                     let _ = session.write_cell_set(rep, vec![id.0.0[0]]);
@@ -345,20 +319,10 @@ fn own_movements(entry: &BatchTx) -> BTreeMap<SubstateKey, Movement> {
 fn funded() -> MemoryStore {
     let mut store = MemoryStore::new();
     for index in 0..CELLS {
-        store
-            .write(cell(index), encode_amount(FUNDING).to_vec())
-            .unwrap();
-    }
-    for index in 0..LOCKED_CELLS {
-        store
-            .write(locked_cell(index), encode_amount(FUNDING).to_vec())
-            .unwrap();
-        store.lock(locked_cell(index));
+        store.write(cell(index), encode_amount(FUNDING).to_vec());
     }
     for order in 0..4u128 {
-        store
-            .entry_write(BOOK, ASKS, order, vec![u8::try_from(order).unwrap()])
-            .unwrap();
+        store.entry_write(BOOK, ASKS, order, vec![u8::try_from(order).unwrap()]);
     }
     store
 }
@@ -419,11 +383,9 @@ fn run(
 /// One declared access of a cross-shard leg. Commutative modes only: a
 /// fresh read of a cell resolves against state the owning shard has moved
 /// and the counterpart has not, so a leg that takes one is not portable by
-/// construction. A locked read is, because its target cannot differ between
-/// sides carry.
+/// construction.
 #[derive(Clone, Copy, Debug)]
 enum PortableClaim {
-    Locked(u8),
     Delta(u8),
     Reserve(u8, u128),
 }
@@ -435,7 +397,6 @@ const PORTABLE_RESERVE: u128 = FUNDING / (MAX_CLAIMS * MAX_TXS) as u128;
 
 fn arb_portable_claim() -> impl Strategy<Value = PortableClaim> {
     prop_oneof![
-        (0u8..CELLS).prop_map(PortableClaim::Locked),
         (0u8..CELLS).prop_map(PortableClaim::Delta),
         (0u8..CELLS, 0u128..PORTABLE_RESERVE).prop_map(|(k, a)| PortableClaim::Reserve(k, a)),
     ]
@@ -445,10 +406,6 @@ fn portable_declared(claims: &[PortableClaim]) -> EffectSet {
     let mut set = EffectSet::new();
     for claim in claims {
         let effect = match *claim {
-            PortableClaim::Locked(k) => Effect {
-                target: EffectTarget::Point(locked_cell(k)),
-                mode: Mode::Locked,
-            },
             PortableClaim::Delta(k) => Effect {
                 target: EffectTarget::Point(cell(k)),
                 mode: Mode::Delta,
@@ -466,7 +423,7 @@ fn portable_declared(claims: &[PortableClaim]) -> EffectSet {
 /// The portable guest: commutative capabilities only, with a net credit on
 /// every cell it moves — an uncovered debit is judged at the owning shard
 /// alone. What it reads reaches the receipt through the return value,
-/// so a pinned read that disagreed between shards would show.
+/// so a read that disagreed between shards would show.
 fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
     move |entry: &BatchTx, mut session: KernelSession| {
         let id = entry.tx;
@@ -476,11 +433,6 @@ fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
         for (rep, capability) in caps.iter().enumerate() {
             let rep = u32::try_from(rep).expect("small table");
             match capability {
-                Capability::Locked(_) => {
-                    let cell = session.locked_cell(rep).unwrap_or_default();
-                    observed =
-                        observed.wrapping_add(u64::from(cell.first().copied().unwrap_or_default()));
-                }
                 Capability::Delta(_) => {
                     let _ = session.delta_add(rep, seed % 40 + 17);
                     let _ = session.delta_sub(rep, seed % 17);

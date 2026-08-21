@@ -34,9 +34,6 @@ impl KernelHost for KernelSession {
     fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason> {
         refused(Self::read_cell(self, rep))
     }
-    fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason> {
-        refused(Self::locked_cell(self, rep))
-    }
     fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason> {
         refused(Self::write_cell_get(self, rep))
     }

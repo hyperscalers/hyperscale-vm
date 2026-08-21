@@ -63,13 +63,9 @@ enum Verdict {
 fn session() -> KernelSession {
     let mut store = MemoryStore::new();
     for order in INSTANCES {
-        store
-            .entry_write(OWNER, HOLDINGS, order, b"x".to_vec())
-            .expect("the fixture seeds");
+        store.entry_write(OWNER, HOLDINGS, order, b"x".to_vec());
     }
-    store
-        .write(cell(), encode_amount(BALANCE).to_vec())
-        .expect("the fixture seeds");
+    store.write(cell(), encode_amount(BALANCE).to_vec());
 
     let write = Mode::Write;
     let effects = [

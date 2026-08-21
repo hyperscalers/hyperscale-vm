@@ -4,7 +4,7 @@
 //! traits and their in-memory access-recording implementation; the mode
 //! lattice's execution semantics (amount cells, the order-invariant delta
 //! fold, reservation feasibility in canonical transaction-hash order,
-//! locked substates, capped interval scans); and the per-shard supply
+//! capped interval scans); and the per-shard supply
 //! accumulators that substrate conservation.
 //!
 //! The mode semantics stand on a store's view rather than on a store:

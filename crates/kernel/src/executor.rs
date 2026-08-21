@@ -8,7 +8,7 @@
 //! independently (each threads its own store, members in canonical order;
 //! whether groups run serially, in parallel, or under adversarial worker
 //! timing cannot influence any receipt, because cross-group interaction is
-//! commutative by construction and locked reads cannot change);
+//! commutative by construction);
 //! **apply** every receipt's operations to the committed store, one
 //! transaction at a time in canonical order — absolute writes, movements
 //! floored at outstanding reservations, settlements. An uncovered debit
@@ -372,8 +372,7 @@ fn merge(component: &mut [usize], left: usize, right: usize) {
 /// Which side of the mode lattice a collection claim sits on.
 ///
 /// The three classes the sweep distinguishes are the lattice's own —
-/// [`ConflictClass`] — with a locked claim classifying to `None` and so
-/// never joining a group. The classification, the representatives, and
+/// [`ConflictClass`]. The classification, the representatives, and
 /// the conflict question all live beside
 /// [`compatible`](hyperscale_vm_effects::compatible), so the sweep
 /// cannot drift from the relation it schedules by.
@@ -477,9 +476,8 @@ fn sweep_collection(claims: &mut CollectionClaims, component: &mut [usize]) {
 /// The transactions touching one point key, split by what the mode lattice
 /// does with them.
 ///
-/// Locked reads conflict with nothing. Reads are compatible with each
-/// other and with locked reads; the commutative modes likewise. A write
-/// conflicts with everything but a locked read, itself included.
+/// Reads are compatible with each other, and the commutative modes
+/// likewise. A write conflicts with everything, itself included.
 #[derive(Default)]
 struct PointClasses {
     reads: Vec<usize>,
@@ -490,10 +488,9 @@ struct PointClasses {
 impl PointClasses {
     fn push(&mut self, index: usize, kind: ModeKind) {
         match kind.conflict_class() {
-            Some(ConflictClass::Read) => self.reads.push(index),
-            Some(ConflictClass::Commutative) => self.commutative.push(index),
-            Some(ConflictClass::Write) => self.writes.push(index),
-            None => {}
+            ConflictClass::Read => self.reads.push(index),
+            ConflictClass::Commutative => self.commutative.push(index),
+            ConflictClass::Write => self.writes.push(index),
         }
     }
 
@@ -555,13 +552,12 @@ fn conflict_groups(batch: &[&BatchTx]) -> Vec<Vec<usize>> {
                 | EffectTarget::Range {
                     owner, collection, ..
                 } => {
-                    // A claim conflicting with nothing, or naming an empty
-                    // interval, joins no group and never enters the sweep.
-                    let (Some(class), Some((lo, hi))) =
-                        (kind.conflict_class(), claim_interval(&effect.target))
-                    else {
+                    // A claim naming an empty interval joins no group
+                    // and never enters the sweep.
+                    let Some((lo, hi)) = claim_interval(&effect.target) else {
                         continue;
                     };
+                    let class = kind.conflict_class();
                     collections
                         .entry((owner, collection))
                         .or_default()
@@ -615,12 +611,6 @@ impl From<MaterializeError> for Outcome {
             },
             MaterializeError::Unsupported(_) => Self::UserError {
                 reason: AbortReason::EffectUnsupported,
-            },
-            MaterializeError::MutationOfLocked(_) => Self::UserError {
-                reason: AbortReason::MutationOfLocked,
-            },
-            MaterializeError::UnlockedTarget(_) => Self::UserError {
-                reason: AbortReason::LockedReadOfUnlocked,
             },
             MaterializeError::SelfConflicting(_) => Self::UserError {
                 reason: AbortReason::SelfConflictingModes,
@@ -760,8 +750,8 @@ fn run_group<R: GuestRunner>(
 }
 
 /// The reserve-target pre-screen: a reserve declared on an unusable
-/// target — a locked substate, a malformed amount cell — is the sender's
-/// declaration defect. It aborts its transaction here, so the judge sees
+/// target — a malformed amount cell — is the sender's declaration
+/// defect. It aborts its transaction here, so the judge sees
 /// only sound requests and its own errors stay kernel defects.
 fn screen_reserve_targets<'batch>(
     judged: &OverlayStore,
@@ -916,12 +906,12 @@ pub fn execute_batch<R: GuestRunner>(
     judged.clear_log();
     judged.merge_active();
 
-    // Group and execute; every group's overlay shares the judged store as
-    // its immutable base. Locked reads resolve against that base, so judging
-    // must not have written a cell — see `has_layered_cells`.
+    // Group and execute; every group's overlay shares the judged store
+    // as its immutable base, so judging must not have written a cell —
+    // see `has_layered_cells`.
     assert!(
         !judged.has_layered_cells(),
-        "judging wrote a cell, so every group's locked reads would resolve against post-judge state"
+        "judging wrote a cell, so every group would read post-judge state as its baseline"
     );
     let judged = Arc::new(judged);
     let groups = conflict_groups(&runnable);
@@ -1109,9 +1099,8 @@ mod tests {
     const fn nth_mode(index: u8) -> Mode {
         match index {
             0 => Mode::Read,
-            1 => Mode::Locked,
-            2 => Mode::Delta,
-            3 => Mode::Reserve { amount: 1 },
+            1 => Mode::Delta,
+            2 => Mode::Reserve { amount: 1 },
             _ => Mode::Write,
         }
     }
@@ -1120,7 +1109,7 @@ mod tests {
     /// transactions actually collide.
     fn arb_effect() -> impl Strategy<Value = Effect> {
         prop_oneof![
-            (0u8..4, 0u8..5).prop_map(|(key, mode)| Effect {
+            (0u8..4, 0u8..4).prop_map(|(key, mode)| Effect {
                 target: EffectTarget::Point(child_key(
                     &TestHasher,
                     Address::new([0xC0 + key; 31], AddressClass::Component),
@@ -1133,7 +1122,7 @@ mod tests {
             // the commutative modes are what make a read conflict with
             // something a read does not, and the sweep collapses reads
             // precisely when one arrives.
-            (0u128..6, 0u8..5).prop_map(|(order, mode)| Effect {
+            (0u128..6, 0u8..4).prop_map(|(order, mode)| Effect {
                 target: EffectTarget::Entry {
                     owner: BOOK,
                     collection: ASKS,
@@ -1141,7 +1130,7 @@ mod tests {
                 },
                 mode: nth_mode(mode),
             }),
-            (0u128..6, 0u128..6, 0u8..5).prop_map(|(a, b, mode)| Effect {
+            (0u128..6, 0u128..6, 0u8..4).prop_map(|(a, b, mode)| Effect {
                 target: EffectTarget::Range {
                     owner: BOOK,
                     collection: ASKS,
@@ -1152,7 +1141,7 @@ mod tests {
                 mode: nth_mode(mode),
             }),
             // Inverted intervals name nothing and must group nothing.
-            (0u128..6, 0u128..6, 0u8..5).prop_map(|(a, b, mode)| Effect {
+            (0u128..6, 0u128..6, 0u8..4).prop_map(|(a, b, mode)| Effect {
                 target: EffectTarget::Range {
                     owner: BOOK,
                     collection: ASKS,
@@ -1195,8 +1184,8 @@ mod tests {
         /// The bucketed grouping is an optimisation of the conflict
         /// relation, and its correctness rests on three facts about the
         /// mode lattice: reads are internally compatible, the commutative
-        /// modes are, and a write conflicts with everything but a locked read.
-        /// Those facts live in the lattice, where the optimisation cannot
+        /// modes are, and a write conflicts with everything. Those facts
+        /// live in the lattice, where the optimisation cannot
         /// see them — so rather than argue the two agree, they are run
         /// against each other.
         ///
@@ -1250,7 +1239,6 @@ mod tests {
         );
 
         for sender_fault in [
-            MaterializeError::MutationOfLocked(key),
             MaterializeError::SelfConflicting(key),
             MaterializeError::Unsupported(Box::new(Effect {
                 target: EffectTarget::Point(key),

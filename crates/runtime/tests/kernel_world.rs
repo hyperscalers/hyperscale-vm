@@ -155,10 +155,6 @@ impl KernelHost for TestHost {
         Ok(self.values[rep as usize].clone())
     }
 
-    fn locked_cell(&mut self, rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
-        Ok(self.values[rep as usize].clone())
-    }
-
     fn write_cell_get(&mut self, rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
         Ok(self.values[rep as usize].clone())
     }

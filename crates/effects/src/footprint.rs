@@ -59,14 +59,13 @@ pub const DEPTH_UNITS: u64 = 1;
 /// than agreeing by inspection.
 pub const SCAN_SEEK_ENTRIES: usize = 4;
 
-/// The weight of a mode that excludes nothing — the floor every mode
-/// weight is measured up from.
+/// The weight a mode that excluded nothing would carry — the floor every
+/// mode weight is measured up from.
 pub const EXCLUSIVITY_FLOOR: u64 = 1;
 
 /// Every mode kind, as the exclusion count walks them.
-const KINDS: [ModeKind; 5] = [
+const KINDS: [ModeKind; 4] = [
     ModeKind::Read,
-    ModeKind::Locked,
     ModeKind::Delta,
     ModeKind::Reserve,
     ModeKind::Write,
@@ -75,10 +74,9 @@ const KINDS: [ModeKind; 5] = [
 /// How much of the lattice `kind` excludes, as a multiplier on span.
 ///
 /// Counted from [`compatible`], so the ordering is the lattice's rather
-/// than a judgement: `locked` excludes nothing and sits at the floor;
-/// `delta` and `reserve` exclude fresh reads and writes; `read` excludes
-/// both commutative modes as well; `write` excludes everything but
-/// `locked`, itself included.
+/// than a judgement: `delta` and `reserve` exclude fresh reads and
+/// writes; `read` excludes both commutative modes as well; `write`
+/// excludes everything, itself included.
 ///
 /// The placement of `read` above the commutative modes is the part worth
 /// stating out loud, because intuition puts reads near the bottom. Two
@@ -191,9 +189,8 @@ mod tests {
         mode_weight, order_bits, span_units,
     };
 
-    const KINDS: [ModeKind; 5] = [
+    const KINDS: [ModeKind; 4] = [
         ModeKind::Read,
-        ModeKind::Locked,
         ModeKind::Delta,
         ModeKind::Reserve,
         ModeKind::Write,
@@ -254,10 +251,9 @@ mod tests {
 
     #[test]
     fn the_weight_ordering_is_the_lattice_ordering() {
-        // write > read > {delta, reserve} > locked, off `compatible`.
-        assert_eq!(mode_weight(ModeKind::Locked), EXCLUSIVITY_FLOOR);
+        // write > read > {delta, reserve}, off `compatible`.
         assert_eq!(mode_weight(ModeKind::Delta), mode_weight(ModeKind::Reserve));
-        assert!(mode_weight(ModeKind::Delta) > mode_weight(ModeKind::Locked));
+        assert!(mode_weight(ModeKind::Delta) > EXCLUSIVITY_FLOOR);
         assert!(mode_weight(ModeKind::Read) > mode_weight(ModeKind::Delta));
         assert!(mode_weight(ModeKind::Write) > mode_weight(ModeKind::Read));
     }
@@ -353,13 +349,11 @@ mod tests {
     fn a_set_totals_its_effects() {
         let mut declared = EffectSet::new();
         declared.insert(effect(point(1), Mode::Write)).unwrap();
-        declared
-            .insert(effect(range(0, 1023), Mode::Locked))
-            .unwrap();
+        declared.insert(effect(range(0, 1023), Mode::Read)).unwrap();
         assert_eq!(
             footprint(&declared),
             effect_units(effect(point(1), Mode::Write))
-                + effect_units(effect(range(0, 1023), Mode::Locked)),
+                + effect_units(effect(range(0, 1023), Mode::Read)),
         );
     }
 }

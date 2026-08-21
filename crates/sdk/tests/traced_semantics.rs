@@ -84,7 +84,7 @@ fn basket() -> Blueprint {
             let holdings: Sym<Seq> = t.config(0);
             let owner = t.self_addr();
 
-            t.point(&owner.child(CONFIG, &[])).locked();
+            t.point(&owner.child(CONFIG, &[])).read();
             t.for_each(&holdings, |t, resource| {
                 let owner = t.self_addr();
                 t.point(&owner.child(VAULT, &[resource])).write();
@@ -105,8 +105,8 @@ fn a_for_each_declares_one_effect_per_configured_element() {
     ])];
     let set = declared(signature, &[], &config);
 
-    // The locked config leaf, plus one write per holding — at exactly the
-    // keys `child_key` computes, which is what lets another shard name them.
+    // The config leaf, plus one write per holding — at exactly the keys
+    // `child_key` computes, which is what lets another shard name them.
     assert_eq!(set.len(), 4);
     for resource in [RES_X, RES_Y, RES_Z] {
         assert!(
@@ -213,7 +213,6 @@ fn planned(clauses: &[Clause], depth: usize) -> Vec<Planned> {
             Clause::Effect { target, mode, .. } => shapes.push(Planned {
                 mode: match mode {
                     ModeExpr::Read => ModeKind::Read,
-                    ModeExpr::Locked => ModeKind::Locked,
                     ModeExpr::Delta => ModeKind::Delta,
                     ModeExpr::Reserve(_) => ModeKind::Reserve,
                     ModeExpr::Write => ModeKind::Write,
@@ -249,7 +248,7 @@ fn the_handle_plan_matches_what_the_kernel_materializes() {
                 let x: Sym<Addr> = t.config(0);
                 let y: Sym<Addr> = t.config(1);
                 let pool = t.self_addr();
-                t.point(&pool.child(CONFIG, &[])).locked();
+                t.point(&pool.child(CONFIG, &[])).read();
                 t.point(&pool.child(VAULT, &[x.cast()])).write();
                 t.point(&pool.child(VAULT, &[y.cast()])).write();
             },
@@ -265,7 +264,7 @@ fn the_handle_plan_matches_what_the_kernel_materializes() {
     let planned: Vec<ModeKind> = plan.iter().map(|s| s.mode).collect();
     assert_eq!(
         planned,
-        vec![ModeKind::Locked, ModeKind::Write, ModeKind::Write],
+        vec![ModeKind::Read, ModeKind::Write, ModeKind::Write],
         "the plan follows the author's order"
     );
     assert!(plan.iter().all(|s| s.point));
@@ -329,7 +328,7 @@ fn a_degenerate_config_collapses_the_set_below_the_plan() {
             let x: Sym<Addr> = t.config(0);
             let y: Sym<Addr> = t.config(1);
             let pool = t.self_addr();
-            t.point(&pool.child(CONFIG, &[])).locked();
+            t.point(&pool.child(CONFIG, &[])).read();
             t.point(&pool.child(VAULT, &[x.cast()])).write();
             t.point(&pool.child(VAULT, &[y.cast()])).write();
         })

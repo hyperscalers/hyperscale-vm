@@ -221,8 +221,9 @@ impl Trace {
     /// The `index`-th field of the target instance's creation-fixed
     /// configuration.
     ///
-    /// Config is a locked substate — readable without a declared effect —
-    /// which is what lets a declaration consult it while staying pure.
+    /// The record admission resolved the target with answers it, so a
+    /// declaration consults configuration without declaring anything and
+    /// stays pure.
     #[must_use]
     pub const fn config<K: Kind>(&self, index: u32) -> Sym<K> {
         Sym::new(Expr::Config(index))
@@ -970,17 +971,9 @@ impl<Shape> Access<'_, Shape> {
     /// A fresh coherent read of committed state.
     ///
     /// The costliest read: it excludes both commutative modes as well as
-    /// writes. Prefer [`Access::locked`] where the substate never
-    /// changes.
+    /// writes.
     pub fn read(self) {
         self.declare(ModeExpr::Read);
-    }
-
-    /// A read of a permanently locked substate: no proof obligation, no
-    /// participant, and it excludes nothing. Only a locked target admits
-    /// it; a read of mutable state is [`Access::read`].
-    pub fn locked(self) {
-        self.declare(ModeExpr::Locked);
     }
 
     /// A commutative increment or decrement; the amount is dynamic and

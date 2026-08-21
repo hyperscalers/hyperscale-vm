@@ -22,9 +22,8 @@ use hyperscale_vm_ref::{
 };
 use hyperscale_vm_runtime::{
     AmountCell, AmountRead, Bucket, DeltaCell, HostRefusal, InstanceRange, InstantiationCharges,
-    Issuer, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
-    add_kernel_to_linker, blessed_engine, classify, instantiate_charged, instantiation_charges,
-    validate_component,
+    Issuer, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell, add_kernel_to_linker,
+    blessed_engine, classify, instantiate_charged, instantiation_charges, validate_component,
 };
 use hyperscale_vm_types::{ADDRESS_WORDS, AbortReason, EffectSet, ResourceAddr, TxHash};
 use wasmtime::component::{Component, Instance, Linker, Resource, ResourceAny, Val};
@@ -305,9 +304,6 @@ fn borrow(store: &mut Store<KernelSession>, rep: u32, kind: HandleKind) -> Resul
         }
         HandleKind::ReadCell => {
             ResourceAny::try_from_resource(Resource::<ReadCell>::new_own(rep), store)
-        }
-        HandleKind::LockedCell => {
-            ResourceAny::try_from_resource(Resource::<LockedCell>::new_own(rep), store)
         }
         HandleKind::WriteCell => {
             ResourceAny::try_from_resource(Resource::<WriteCell>::new_own(rep), store)

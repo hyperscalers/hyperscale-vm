@@ -56,8 +56,6 @@ interface state {
 
     /// A declared fresh read of one substate.
     resource read-cell;
-    /// A read of one permanently locked substate.
-    resource locked-cell;
     /// A declared exclusive read-modify-write of one substate.
     resource write-cell;
     /// The same, over a cell that holds value.
@@ -101,9 +99,6 @@ interface state {
     /// surface for a body to read one through, whichever handle reaches
     /// it.
     amount-read-balance: func(c: borrow<amount-read>) -> amount;
-
-    /// The substate's pinned bytes; empty if absent.
-    locked-cell-get: func(c: borrow<locked-cell>) -> list<u8>;
 
     /// The substate's current bytes; empty if absent.
     write-cell-get: func(c: borrow<write-cell>) -> list<u8>;

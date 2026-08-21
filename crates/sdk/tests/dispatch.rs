@@ -81,9 +81,7 @@ fn vault() -> SubstateKey {
 fn session(mode: Mode, funded: u128) -> KernelSession {
     let mut store = MemoryStore::new();
     if funded > 0 {
-        store
-            .write(vault(), encode_amount(funded).to_vec())
-            .expect("the store takes a vault cell");
+        store.write(vault(), encode_amount(funded).to_vec());
     }
 
     let mut declared = EffectSet::new();

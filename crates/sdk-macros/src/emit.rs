@@ -80,8 +80,6 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
         ))
     } else if has(Op::Move).is_some() {
         Some((nothing, quote!(.delta())))
-    } else if has(Op::Locked).is_some() {
-        Some((nothing, quote!(.locked())))
     } else {
         // A handle opened and never used declares nothing. Correct rather
         // than lenient: the body did not touch the substate.

@@ -51,9 +51,7 @@ pub mod amm {
     impl Amm {
         /// Swap `input` against the pool, returning the bought side.
         pub fn swap(&mut self, input: Bucket, min_out: Quantity) -> Result<Bucket, Error> {
-            // Pins the whole configuration record: the fee is read from
-            // it, so the swap wants it stable, not merely consulted.
-            let settings = self.config().locked();
+            let settings = self.config();
             // The direction is carried by the edge that arrives: a bucket
             // knows its own resource, so the pool sells the side it was
             // paid in and pays out of the other. The pair is stated once,

@@ -222,7 +222,7 @@ mod tests {
                             lo: Box::new(Expr::FreshId { slot: 3 }),
                         },
                     },
-                    mode: ModeExpr::Locked,
+                    mode: ModeExpr::Read,
                     denomination: None,
                 },
                 Clause::Effect {
@@ -235,7 +235,7 @@ mod tests {
                         hi: Expr::Literal(Value::U128(u128::MAX)),
                         cap: Expr::Literal(Value::U64(64)),
                     },
-                    mode: ModeExpr::Locked,
+                    mode: ModeExpr::Read,
                     denomination: None,
                 },
                 Clause::ForEach {
@@ -391,7 +391,7 @@ mod tests {
                 hi: deepest,
                 cap: Expr::Literal(Value::U64(1)),
             },
-            mode: ModeExpr::Locked,
+            mode: ModeExpr::Read,
             denomination: None,
         };
         for _ in 0..MAX_CLAUSE_DEPTH {

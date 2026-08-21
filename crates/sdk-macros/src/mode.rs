@@ -16,8 +16,6 @@ use quote::quote;
 pub enum HandleMode {
     /// `read-cell`.
     ReadCell,
-    /// `locked-cell`.
-    LockedCell,
     /// `write-cell`.
     WriteCell,
     /// `amount-cell`.
@@ -42,7 +40,6 @@ impl HandleMode {
     pub const fn world_name(self) -> &'static str {
         match self {
             Self::ReadCell => "read-cell",
-            Self::LockedCell => "locked-cell",
             Self::WriteCell => "write-cell",
             Self::AmountCell => "amount-cell",
             Self::AmountRead => "amount-read",
@@ -59,7 +56,6 @@ impl HandleMode {
     pub fn guest_type(self) -> syn::Ident {
         let name = match self {
             Self::ReadCell => "ReadCell",
-            Self::LockedCell => "LockedCell",
             Self::WriteCell => "WriteCell",
             Self::AmountCell => "AmountCell",
             Self::AmountRead => "AmountRead",
@@ -77,7 +73,6 @@ impl HandleMode {
     pub fn cell_kind(self) -> TokenStream {
         match self {
             Self::ReadCell => quote!(Read),
-            Self::LockedCell => quote!(Locked),
             Self::WriteCell => quote!(Write),
             Self::AmountCell => quote!(Amount),
             Self::AmountRead => quote!(AmountRead),
@@ -94,7 +89,6 @@ impl HandleMode {
     pub fn handle_variant(self) -> TokenStream {
         match self {
             Self::ReadCell => quote!(Read),
-            Self::LockedCell => quote!(Locked),
             Self::WriteCell => quote!(Write),
             Self::AmountCell => quote!(Amount),
             Self::AmountRead => quote!(AmountRead),

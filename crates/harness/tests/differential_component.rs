@@ -13,7 +13,7 @@ use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance,
 };
 use hyperscale_vm_runtime::{
-    DeltaCell, HostRefusal, LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
+    DeltaCell, HostRefusal, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
     add_kernel_to_linker, blessed_engine, validate_component,
 };
 use hyperscale_vm_types::{
@@ -87,13 +87,12 @@ fn fixture() -> Fixture {
     let book = Address::new([0x40; 31], AddressClass::Component);
 
     let mut store = MemoryStore::new();
-    store.write(sender, encode_amount(100).to_vec()).unwrap();
-    store.write(config, vec![7, 7]).unwrap();
-    store.lock(config);
-    store.write(rmw, vec![1, 2, 3]).unwrap();
-    store.write(readable, vec![5]).unwrap();
+    store.write(sender, encode_amount(100).to_vec());
+    store.write(config, vec![7, 7]);
+    store.write(rmw, vec![1, 2, 3]);
+    store.write(readable, vec![5]);
     for (order, value) in [(10u128, vec![3u8]), (20, vec![4]), (30, vec![5])] {
-        store.entry_write(book, ASKS, order, value).unwrap();
+        store.entry_write(book, ASKS, order, value);
     }
 
     let mut declared = EffectSet::new();
@@ -108,7 +107,7 @@ fn fixture() -> Fixture {
         },
         Effect {
             target: EffectTarget::Point(config),
-            mode: Mode::Locked,
+            mode: Mode::Read,
         },
         Effect {
             target: EffectTarget::Point(rmw),
@@ -183,7 +182,6 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Handle
     let point = |wanted: SubstateKey, kind: HandleKind| {
         let rep = rep_at(caps, |c| match (kind, c) {
             (HandleKind::ReadCell, Capability::Read(key))
-            | (HandleKind::LockedCell, Capability::Locked(key))
             | (HandleKind::WriteCell, Capability::Write(key))
             | (HandleKind::DeltaCell, Capability::Delta(key))
             | (HandleKind::ReserveCell, Capability::Reserve { key, .. }) => *key == wanted,
@@ -206,7 +204,7 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Handle
             point(fx.sender, HandleKind::ReserveCell),
             point(fx.recipient, HandleKind::DeltaCell),
         ],
-        "peek" => vec![point(fx.config, HandleKind::LockedCell)],
+        "peek" => vec![point(fx.config, HandleKind::ReadCell)],
         "rmw" => vec![point(fx.rmw, HandleKind::WriteCell)],
         "scan-sum" => vec![range(HandleKind::RangeRead)],
         "fill" | "place" | "no-such-entry" => vec![range(HandleKind::RangeWrite)],
@@ -297,7 +295,6 @@ fn run_blessed(
         }
         (_, [(rep, kind)]) => match kind {
             HandleKind::ReadCell => call1::<ReadCell>(&mut store, &instance, export, *rep),
-            HandleKind::LockedCell => call1::<LockedCell>(&mut store, &instance, export, *rep),
             HandleKind::WriteCell => call1::<WriteCell>(&mut store, &instance, export, *rep),
             HandleKind::DeltaCell => call1::<DeltaCell>(&mut store, &instance, export, *rep),
             HandleKind::ReserveCell => call1::<ReserveCell>(&mut store, &instance, export, *rep),

@@ -202,7 +202,7 @@ fn a_mint_onto_an_instance_already_there_is_refused() {
     let data = instance_data_key(&TestHasher, nf_issuer(), nf_resource(), id);
 
     let mut store = sealed_store();
-    store.write(data, id.to_le_bytes().to_vec()).unwrap();
+    store.write(data, id.to_le_bytes().to_vec());
 
     let (results, _) = run_both_signed(
         &world,

@@ -58,9 +58,6 @@ pub mod fixtures {
         fn read_cell(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn locked_cell(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
-            Err(AbortReason::HandleUnknown)
-        }
         fn write_cell_get(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
@@ -202,8 +199,9 @@ pub mod fixtures {
     /// `transfer` takes a reservation and moves the value it grants into
     /// a delta cell; `hash-tag` folds
     /// the host hash of four scratch bytes, which is the one kernel
-    /// interface a guest cannot check for itself; `peek` reads a
-    /// locked cell; `rmw` bumps a write cell's first byte; `scan-sum`
+    /// interface a guest cannot check for itself; `peek` reads a cell
+    /// and folds the clock in; `rmw` bumps a write cell's first byte;
+    /// `scan-sum`
     /// folds a read interval's entry and order bytes; `fill` rewrites entry
     /// zero and removes the last entry of a write interval; `place` inserts
     /// order 42; `escape` passes a delta handle to a read-cell function

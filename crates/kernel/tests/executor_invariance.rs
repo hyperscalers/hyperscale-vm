@@ -146,10 +146,10 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
 
 fn fixture() -> (MemoryStore, Vec<BatchTx>) {
     let mut store = MemoryStore::new();
-    store.write(cell(0xA), encode_amount(100).to_vec()).unwrap();
-    store.write(cell(0xB), encode_amount(100).to_vec()).unwrap();
-    store.write(cell(0xE), vec![10]).unwrap();
-    store.write(cell(0xF), vec![10]).unwrap();
+    store.write(cell(0xA), encode_amount(100).to_vec());
+    store.write(cell(0xB), encode_amount(100).to_vec());
+    store.write(cell(0xE), vec![10]);
+    store.write(cell(0xF), vec![10]);
 
     let batch = vec![
         // Two transfers into the shared recipient: delta-delta compatible,
@@ -353,8 +353,8 @@ fn each_transaction_sees_its_own_clock() {
     // cross-shard batch mixes transactions committed by different payer
     // blocks — so each session must carry its own entry's value.
     let mut store = MemoryStore::new();
-    store.write(cell(0xE), vec![10]).unwrap();
-    store.write(cell(0xF), vec![10]).unwrap();
+    store.write(cell(0xE), vec![10]);
+    store.write(cell(0xF), vec![10]);
 
     let early = BatchTx::new(
         tx(0x01),
@@ -405,8 +405,8 @@ fn each_transaction_sees_its_own_draw() {
     // of different composition, which is why the draw anchors to the
     // transaction and not to the batch.
     let mut store = MemoryStore::new();
-    store.write(cell(0xE), vec![10]).unwrap();
-    store.write(cell(0xF), vec![10]).unwrap();
+    store.write(cell(0xE), vec![10]);
+    store.write(cell(0xF), vec![10]);
 
     let first = BatchTx::new(
         tx(0x01),

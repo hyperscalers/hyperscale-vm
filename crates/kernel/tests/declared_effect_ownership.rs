@@ -123,8 +123,7 @@ fn a_package_cannot_declare_an_effect_on_a_cell_it_does_not_own() {
     // The victim's balance, committed before the attacker's transaction
     // exists.
     let mut base = MemoryStore::new();
-    base.write(vault_of(VICTIM), encode_amount(10_000).to_vec())
-        .unwrap();
+    base.write(vault_of(VICTIM), encode_amount(10_000).to_vec());
     let store = OverlayStore::new(Arc::new(base));
 
     let Ok(session) = KernelSession::materialize(
@@ -171,8 +170,7 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
     let declaration = routing.declaration().clone();
 
     let mut base = MemoryStore::new();
-    base.write(vault_of(VICTIM), encode_amount(10_000).to_vec())
-        .unwrap();
+    base.write(vault_of(VICTIM), encode_amount(10_000).to_vec());
     let store = OverlayStore::new(Arc::new(base));
 
     let Ok(mut session) = KernelSession::materialize(

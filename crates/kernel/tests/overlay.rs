@@ -11,9 +11,7 @@
 //! Every generated sequence runs against both stores; a merge point
 //! between the two phases pushes the first phase's effects into the
 //! committed layer, so scans and reads exercise all three layers with
-//! writes and tombstones in each. Locked reads are exempt by design —
-//! they pin to the base, not to layered state — and are covered by the
-//! overlay's unit tests.
+//! writes and tombstones in each.
 
 use std::sync::Arc;
 
@@ -135,25 +133,19 @@ fn apply<S: AmountLedger + WorkingStore>(store: &mut S, op: &Op) -> String {
     }
 }
 
-/// A populated base: cells (some amount-encoded), entries, one held
-/// reservation, and one locked cell, so layered ops immediately interact
-/// with base state.
+/// A populated base: cells (some amount-encoded), entries, and one held
+/// reservation, so layered ops immediately interact with base state.
 fn base_store(seed: &[(u8, u128)]) -> MemoryStore {
     let mut base = MemoryStore::new();
     for (index, (k, a)) in seed.iter().enumerate() {
-        base.write(cell(*k), encode_amount(*a).to_vec()).unwrap();
+        base.write(cell(*k), encode_amount(*a).to_vec());
         let owner = OWNERS[index % 2];
         let collection = COLLECTIONS[(index / 2) % 2];
-        base.entry_write(owner, collection, u128::from(*k) % 10, vec![*k])
-            .unwrap();
+        base.entry_write(owner, collection, u128::from(*k) % 10, vec![*k]);
     }
     if let Some((k, a)) = seed.first() {
-        base.write(cell(*k), encode_amount(a.saturating_add(50)).to_vec())
-            .unwrap();
+        base.write(cell(*k), encode_amount(a.saturating_add(50)).to_vec());
         base.judge_and_hold(&[(tx(0), cell(*k), 25)]).unwrap();
-    }
-    if let Some((k, _)) = seed.last() {
-        base.lock(cell(*k));
     }
     base
 }
@@ -184,7 +176,6 @@ proptest! {
 
         // Layered probes agree with the reference across the domains.
         for k in 0..6u8 {
-            assert_eq!(overlay.is_locked(cell(k)), reference.is_locked(cell(k)));
             for t in 0..3u8 {
                 assert_eq!(
                     overlay.held_reservation(cell(k), tx(t)),

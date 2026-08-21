@@ -85,9 +85,7 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() {
 
     let mut store = MemoryStore::new();
     seal(&mut store, &mirror_meta());
-    store
-        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
 
     let graph = {
         // Not a wrapper call: `dana` runs the mirror package, so its
@@ -131,9 +129,7 @@ fn bounded_transfer_graph(constraint: Constraint) -> ManifestGraph {
 fn a_missed_edge_bound_aborts_identically_on_both_runtimes() {
     let world = world();
     let mut store = MemoryStore::new();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(500).to_vec())
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(500).to_vec());
 
     // The withdrawal is feasible and the guest is honest — it returns
     // exactly the 100 it reserved. What fails is the manifest's own
@@ -221,9 +217,7 @@ fn transfer_profile_and_provision_shape_are_exact() {
 fn transfer_executes_end_to_end_on_both_runtimes() {
     let world = world();
     let mut store = MemoryStore::new();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
 
     let graph = transfer_graph();
     let (results, final_store) = run_both(&world, &store, &[(&graph, TxHash(Hash32([0x01; 32])))]);
@@ -280,9 +274,7 @@ fn transfer_executes_end_to_end_on_both_runtimes() {
 fn a_transfer_on_a_minted_proof_settles_like_one_on_the_signature() {
     let world = world();
     let mut store = MemoryStore::new();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
 
     let graph = authorized_transfer_graph();
     let (results, final_store) = run_both(&world, &store, &[(&graph, TxHash(Hash32([0x0A; 32])))]);

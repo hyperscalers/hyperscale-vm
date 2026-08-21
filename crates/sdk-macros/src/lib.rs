@@ -263,7 +263,7 @@ fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
         .map(|s| s.ident.to_string())
         .unwrap_or_default();
     let kind = match outer.as_str() {
-        "Locked" => FieldKind::Locked,
+        "Config" => FieldKind::Config,
         "Cell" => FieldKind::Cell,
         "Keyed" => FieldKind::Keyed,
         "Ordered" => FieldKind::Ordered,
@@ -271,7 +271,7 @@ fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
         _ => {
             return Err(syn::Error::new(
                 field.ty.span(),
-                "a state field must be `Locked<_>`, `Cell<_>`, `Keyed<_>`, `Ordered<_>`, or \
+                "a state field must be `Config<_>`, `Cell<_>`, `Keyed<_>`, `Ordered<_>`, or \
                  `Unordered<_>` — state is reachable only through these, which is what makes \
                  the access mode derivable from the body",
             ));
@@ -1109,7 +1109,7 @@ fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
             "config".to_owned(),
             Field {
                 slot: CONFIG.0,
-                kind: FieldKind::Locked,
+                kind: FieldKind::Config,
                 element: Some(syn::parse_quote!(#config)),
                 denomination: None,
             },
@@ -1119,7 +1119,7 @@ fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
 }
 
 /// The `#[state]` struct: its name, its fields by slot and shape, and the
-/// configuration struct its `Locked<_>` field names, if it has one.
+/// configuration struct its `Config<_>` field names, if it has one.
 fn parse_state(
     items: &[syn::Item],
     span: Span,
@@ -1736,7 +1736,7 @@ fn authoring_accessors(state: &syn::Ident, config: Option<&syn::Ident>) -> Token
     let configured = config.map(|config| {
         quote!(
             /// The instance's creation-fixed configuration.
-            fn config(&self) -> &::hyperscale_vm_sdk::state::Locked<#config> {
+            fn config(&self) -> &::hyperscale_vm_sdk::state::Config<#config> {
                 ::core::unimplemented!("a contract body runs on the guest")
             }
         )

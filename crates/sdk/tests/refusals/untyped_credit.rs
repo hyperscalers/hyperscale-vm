@@ -16,7 +16,7 @@ mod contract {
 
     impl Contract {
         pub fn bank(&mut self, funds: Bucket) {
-            let settings = self.config().locked();
+            let settings = self.config();
             let (mut parts, rest) = funds.split_n(&[]);
             parts.push(rest);
             self.vault(settings.asset).put(parts.remove(0));

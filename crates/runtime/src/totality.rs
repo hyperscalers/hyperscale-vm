@@ -111,7 +111,6 @@ const DISCHARGED: &[(&str, &str)] = &[
     // A get reads the cell its handle names; materialization is the
     // whole of what it needs.
     ("state", "read-cell-get"),
-    ("state", "locked-cell-get"),
     ("state", "write-cell-get"),
     // A set stores the bytes it is handed with no judgment at the call;
     // what a receipt may carry is judged at its own boundary.
@@ -168,7 +167,6 @@ const DISCHARGED: &[(&str, &str)] = &[
 /// `emit`.
 const DISCHARGED_DROPS: &[(&str, &str)] = &[
     ("state", "read-cell"),
-    ("state", "locked-cell"),
     ("state", "write-cell"),
     ("state", "amount-cell"),
     ("state", "amount-read"),

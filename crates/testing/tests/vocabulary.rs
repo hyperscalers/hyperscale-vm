@@ -107,9 +107,7 @@ fn range(mode: Mode) -> Effect {
 fn seeded() -> MemoryStore {
     let mut store = MemoryStore::new();
     for (order, value) in [(1u128, 10u64), (2, 20), (3, 30)] {
-        store
-            .entry_write(OWNER, collection(), order, value.to_le_bytes().to_vec())
-            .expect("the store takes an entry");
+        store.entry_write(OWNER, collection(), order, value.to_le_bytes().to_vec());
     }
     store
 }
@@ -145,9 +143,7 @@ fn a_write_cell_reads_back_what_it_was_set_to() {
 fn value_taken_from_a_cell_is_the_value_in_hand() {
     let vault = key(2);
     let mut store = MemoryStore::new();
-    store
-        .write(vault, encode_amount(100).to_vec())
-        .expect("the store takes it");
+    store.write(vault, encode_amount(100).to_vec());
     let session = value_session(store, vec![point(vault, Mode::Write)]);
 
     let (_, held) = with_kernel(session, || {
@@ -166,9 +162,7 @@ fn value_taken_from_a_cell_is_the_value_in_hand() {
 fn a_bucket_divides_into_what_comes_off_and_what_is_left() {
     let vault = key(3);
     let mut store = MemoryStore::new();
-    store
-        .write(vault, encode_amount(100).to_vec())
-        .expect("the store takes it");
+    store.write(vault, encode_amount(100).to_vec());
     let session = value_session(store, vec![point(vault, Mode::Write)]);
 
     let (_, (split, rest)) = with_kernel(session, || {

@@ -112,16 +112,6 @@ pub fn read_cell_get<P: HostAccess + FuelSink>(
     Ok(value)
 }
 
-/// `locked-cell.get`.
-pub fn locked_cell_get<P: HostAccess + FuelSink>(
-    port: &mut P,
-    rep: u32,
-) -> Result<Vec<u8>, MeterError> {
-    let value = refused(port.host().locked_cell(rep))?;
-    charge(port, value.len())?;
-    Ok(value)
-}
-
 /// `write-cell.get`.
 pub fn write_cell_get<P: HostAccess + FuelSink>(
     port: &mut P,

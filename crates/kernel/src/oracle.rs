@@ -21,7 +21,6 @@ pub const fn permits(declared: ModeKind, access: ModeKind) -> bool {
         (declared, access),
         (ModeKind::Write, ModeKind::Read | ModeKind::Write)
             | (ModeKind::Read, ModeKind::Read)
-            | (ModeKind::Locked, ModeKind::Locked)
             | (ModeKind::Delta, ModeKind::Delta)
             | (ModeKind::Reserve, ModeKind::Reserve)
     )
@@ -376,9 +375,7 @@ mod tests {
         let mut store = MemoryStore::new();
         let write = |store: &mut MemoryStore, slot: usize, order: u128| {
             let (holder, collection) = holdings[slot];
-            store
-                .entry_write(holder, collection, order, vec![1])
-                .unwrap();
+            store.entry_write(holder, collection, order, vec![1]);
         };
         write(&mut store, 0, 7);
         write(&mut store, 1, 9);

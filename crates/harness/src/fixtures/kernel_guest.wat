@@ -1,7 +1,6 @@
 (component
   (import "hyperscale:kernel/state" (instance $state
     (export "read-cell" (type $rc (sub resource)))
-    (export "locked-cell" (type $sc (sub resource)))
     (export "write-cell" (type $wc (sub resource)))
     (export "delta-cell" (type $dc (sub resource)))
     (export "reserve-cell" (type $vc (sub resource)))
@@ -10,7 +9,6 @@
     (type $amt_decl (record (field "low" u64) (field "high" u64)))
     (export "amount" (type $amt (eq $amt_decl)))
     (export "read-cell-get" (func (param "c" (borrow $rc)) (result (list u8))))
-    (export "locked-cell-get" (func (param "c" (borrow $sc)) (result (list u8))))
     (export "write-cell-get" (func (param "c" (borrow $wc)) (result (list u8))))
     (export "write-cell-set" (func (param "c" (borrow $wc)) (param "value" (list u8))))
     (export "bucket" (type $bk (sub resource)))
@@ -30,14 +28,12 @@
     (export "hash" (func (param "data" (list u8)) (result (list u8))))))
 
   (alias export $state "read-cell" (type $rcell))
-  (alias export $state "locked-cell" (type $scell))
   (alias export $state "write-cell" (type $wcell))
   (alias export $state "delta-cell" (type $dcell))
   (alias export $state "reserve-cell" (type $vcell))
   (alias export $state "range-read" (type $rrange))
   (alias export $state "range-write" (type $wrange))
   (alias export $state "read-cell-get" (func $read_get))
-  (alias export $state "locked-cell-get" (func $locked_get))
   (alias export $state "write-cell-get" (func $write_get))
   (alias export $state "write-cell-set" (func $write_set))
   (alias export $state "delta-cell-put" (func $delta_put))
@@ -69,8 +65,6 @@
 
   (core func $read_get_l (canon lower (func $read_get)
     (memory $a "mem") (realloc (func $a "realloc"))))
-  (core func $locked_get_l (canon lower (func $locked_get)
-    (memory $a "mem") (realloc (func $a "realloc"))))
   (core func $write_get_l (canon lower (func $write_get)
     (memory $a "mem") (realloc (func $a "realloc"))))
   (core func $write_set_l (canon lower (func $write_set)
@@ -94,7 +88,6 @@
   (core func $hash_l (canon lower (func $hash)
     (memory $a "mem") (realloc (func $a "realloc"))))
   (core func $drop_r (canon resource.drop $rcell))
-  (core func $drop_s (canon resource.drop $scell))
   (core func $drop_w (canon resource.drop $wcell))
   (core func $drop_d (canon resource.drop $dcell))
   (core func $drop_v (canon resource.drop $vcell))
@@ -104,7 +97,6 @@
   (core module $m
     (import "env" "mem" (memory 4 4))
     (import "k" "read-get" (func $read_get (param i32 i32)))
-    (import "k" "locked-get" (func $locked_get (param i32 i32)))
     (import "k" "write-get" (func $write_get (param i32 i32)))
     (import "k" "write-set" (func $write_set (param i32 i32 i32)))
     (import "k" "delta-put" (func $delta_put (param i32 i32)))
@@ -120,7 +112,6 @@
     (import "k" "clock" (func $clock (result i64)))
     (import "k" "hash" (func $hash (param i32 i32 i32)))
     (import "k" "drop-r" (func $drop_r (param i32)))
-    (import "k" "drop-s" (func $drop_s (param i32)))
     (import "k" "drop-w" (func $drop_w (param i32)))
     (import "k" "drop-d" (func $drop_d (param i32)))
     (import "k" "drop-v" (func $drop_v (param i32)))
@@ -162,14 +153,14 @@
     (func (export "peek") (param i32) (result i64)
       local.get 0
       i32.const 8
-      call $locked_get
+      call $read_get
       i32.const 12
       i32.load
       i64.extend_i32_u
       call $clock
       i64.add
       local.get 0
-      call $drop_s)
+      call $drop_r)
 
     (func (export "rmw") (param i32) (result i64)
       (local $ptr i32) (local $len i32)
@@ -346,7 +337,6 @@
     (with "env" (instance (export "mem" (memory $a "mem"))))
     (with "k" (instance
       (export "read-get" (func $read_get_l))
-      (export "locked-get" (func $locked_get_l))
       (export "write-get" (func $write_get_l))
       (export "write-set" (func $write_set_l))
       (export "delta-put" (func $delta_put_l))
@@ -362,7 +352,6 @@
       (export "clock" (func $clock_l))
       (export "hash" (func $hash_l))
       (export "drop-r" (func $drop_r))
-      (export "drop-s" (func $drop_s))
       (export "drop-w" (func $drop_w))
       (export "drop-d" (func $drop_d))
       (export "drop-v" (func $drop_v))
@@ -375,7 +364,7 @@
   (func (export "hash-tag") (result u64)
     (canon lift (core func $i "hash-tag")))
   (func (export "peek")
-    (param "c" (borrow $scell)) (result u64)
+    (param "c" (borrow $rcell)) (result u64)
     (canon lift (core func $i "peek")))
   (func (export "rmw")
     (param "c" (borrow $wcell)) (result u64)

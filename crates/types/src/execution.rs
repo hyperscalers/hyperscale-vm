@@ -222,9 +222,6 @@ pub enum AbortReason {
     /// An event payload past the per-event byte cap.
     #[hbor(discriminant = 31)]
     EventPayloadTooLarge,
-    /// A mutation of a permanently locked substate.
-    #[hbor(discriminant = 32)]
-    SubstateLocked,
     /// One judging batch carrying the same transaction and cell twice.
     #[hbor(discriminant = 33)]
     DuplicateReservationRequest,
@@ -284,12 +281,6 @@ pub enum AbortReason {
     /// A declared mode and target combination the world cannot hand out.
     #[hbor(discriminant = 46)]
     EffectUnsupported,
-    /// A mutation declared on a permanently locked substate.
-    #[hbor(discriminant = 47)]
-    MutationOfLocked,
-    /// A locked read declared on a substate that is not locked.
-    #[hbor(discriminant = 48)]
-    LockedReadOfUnlocked,
     /// One transaction declaring an exclusive and a commutative mode on
     /// the same cell.
     #[hbor(discriminant = 49)]
@@ -519,7 +510,6 @@ mod tests {
             (29, AbortReason::ErrorCodeOutOfRange),
             (30, AbortReason::EventCountExceeded),
             (31, AbortReason::EventPayloadTooLarge),
-            (32, AbortReason::SubstateLocked),
             (33, AbortReason::DuplicateReservationRequest),
             (34, AbortReason::LedgerInvariant),
             (35, AbortReason::DeltaTotalOverflow),
@@ -534,8 +524,6 @@ mod tests {
             (44, AbortReason::UndenominatedMovement),
             (45, AbortReason::MixedContents),
             (46, AbortReason::EffectUnsupported),
-            (47, AbortReason::MutationOfLocked),
-            (48, AbortReason::LockedReadOfUnlocked),
             (49, AbortReason::SelfConflictingModes),
             (50, AbortReason::ReservationMismatch),
             (51, AbortReason::CapabilityOutOfRange),

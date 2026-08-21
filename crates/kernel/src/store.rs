@@ -15,7 +15,7 @@
 //! [`AmountLedger`](crate::AmountLedger)'s, written once and implemented
 //! here in terms of this store's own view.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use hyperscale_vm_types::{
     AbortReason, Address, CollectionId, EffectTarget, EntryKey, ModeKind, SubstateKey, TxHash,
@@ -28,9 +28,6 @@ use crate::modes::{DeltaOp, ModeError};
 /// replica.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
-    /// A mutation of a permanently locked substate.
-    #[error("substate {0:?} is locked")]
-    Locked(SubstateKey),
     /// Settling or releasing a reservation that is not held.
     #[error("no reservation held by {tx:?} on {key:?}")]
     MissingReservation {
@@ -97,7 +94,6 @@ impl StoreError {
 impl From<StoreError> for AbortReason {
     fn from(error: StoreError) -> Self {
         match error {
-            StoreError::Locked(_) => Self::SubstateLocked,
             StoreError::MissingReservation { .. } => Self::ReservationMissing,
             StoreError::HeldExceedsCommitted(_) => Self::LedgerInvariant,
             StoreError::DuplicateRequest { .. } => Self::DuplicateReservationRequest,
@@ -131,25 +127,18 @@ pub trait WorkingStore {
     /// Any [`StoreError`].
     fn read(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError>;
 
-    /// Pinned read of a point cell; locked substates are read this way.
-    ///
-    /// # Errors
-    ///
-    /// Any [`StoreError`].
-    fn locked(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError>;
-
     /// Exclusive write of a point cell.
     ///
     /// # Errors
     ///
-    /// [`StoreError::Locked`] on a locked substate.
+    /// Any [`StoreError`].
     fn write(&mut self, key: SubstateKey, value: Vec<u8>) -> Result<(), StoreError>;
 
     /// Remove a point cell, returning its value.
     ///
     /// # Errors
     ///
-    /// [`StoreError::Locked`] on a locked substate.
+    /// Any [`StoreError`].
     fn remove(&mut self, key: SubstateKey) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Queue a delta against an amount cell; folded at commit. An absent
@@ -158,7 +147,7 @@ pub trait WorkingStore {
     ///
     /// # Errors
     ///
-    /// [`StoreError::Locked`] on a locked substate.
+    /// Any [`StoreError`].
     fn queue_delta(&mut self, key: SubstateKey, op: DeltaOp) -> Result<(), StoreError>;
 
     /// Write one ordered-collection entry.
@@ -271,18 +260,15 @@ impl<T: Substates + ?Sized> Substates for &T {
 }
 
 /// Committed state as an overlay's baseline reads it: durable content
-/// plus the execution context standing over it — permanent locks and
-/// outstanding reservations.
+/// plus the execution context standing over it — the reservations
+/// outstanding on each cell.
 ///
-/// Locks and holds are execution context, not backend state, which is why
-/// the composite is a separate trait: [`MemoryStore`] implements it whole
+/// Holds are execution context, not backend state, which is why the
+/// composite is a separate trait: [`MemoryStore`] implements it whole
 /// for the kernel suite, while an embedder composes it from a
 /// [`Substates`] backend and its own hold tracking. Pending deltas and
 /// access logs are working state, not baseline.
 pub trait Baseline: Substates + std::fmt::Debug {
-    /// Whether the committed store permanently locks `key`.
-    fn is_locked(&self, key: SubstateKey) -> bool;
-
     /// Every outstanding reservation on `key`.
     fn holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128>;
 
@@ -319,10 +305,6 @@ impl Substates for MemoryStore {
 }
 
 impl Baseline for MemoryStore {
-    fn is_locked(&self, key: SubstateKey) -> bool {
-        Self::is_locked(self, key)
-    }
-
     fn holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128> {
         self.held.get(&key).cloned().unwrap_or_default()
     }
@@ -342,7 +324,6 @@ impl Baseline for MemoryStore {
 pub struct MemoryStore {
     pub(crate) cells: BTreeMap<SubstateKey, Vec<u8>>,
     pub(crate) entries: BTreeMap<(Address, CollectionId), BTreeMap<u128, Vec<u8>>>,
-    pub(crate) locked: BTreeSet<SubstateKey>,
     pub(crate) pending_deltas: BTreeMap<SubstateKey, Vec<DeltaOp>>,
     pub(crate) held: BTreeMap<SubstateKey, BTreeMap<TxHash, u128>>,
 }
@@ -354,23 +335,9 @@ impl MemoryStore {
         Self {
             cells: BTreeMap::new(),
             entries: BTreeMap::new(),
-            locked: BTreeSet::new(),
             pending_deltas: BTreeMap::new(),
             held: BTreeMap::new(),
         }
-    }
-
-    /// Whether a substate is permanently locked.
-    #[must_use]
-    pub fn is_locked(&self, key: SubstateKey) -> bool {
-        self.locked.contains(&key)
-    }
-
-    /// Permanently lock a substate: creation-fixed configuration, composed
-    /// into a base store beside its value. Locked substates read through
-    /// `Mode::Locked` and reject every mutation.
-    pub fn lock(&mut self, key: SubstateKey) {
-        self.locked.insert(key);
     }
 
     /// The reservation amount `tx` holds on `key`, if any.
@@ -454,33 +421,22 @@ impl AmountLedger for MemoryStore {
 /// are the world's, not a transaction's.
 impl MemoryStore {
     /// Seed a point cell.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::Locked`] on a locked substate.
-    pub fn write(&mut self, key: SubstateKey, value: Vec<u8>) -> Result<(), StoreError> {
-        self.reject_locked(key)?;
+    pub fn write(&mut self, key: SubstateKey, value: Vec<u8>) {
         self.cells.insert(key, value);
-        Ok(())
     }
 
     /// Seed an ordered-collection entry.
-    ///
-    /// # Errors
-    ///
-    /// None today; `Result` for symmetry with [`Self::write`].
     pub fn entry_write(
         &mut self,
         owner: Address,
         collection: CollectionId,
         order: u128,
         value: Vec<u8>,
-    ) -> Result<(), StoreError> {
+    ) {
         self.entries
             .entry((owner, collection))
             .or_default()
             .insert(order, value);
-        Ok(())
     }
 }
 
@@ -521,7 +477,7 @@ mod tests {
     fn movements_floor_at_outstanding_holds() {
         let mut store = MemoryStore::new();
         let vault = key(9);
-        store.write(vault, encode_amount(60).to_vec()).unwrap();
+        store.write(vault, encode_amount(60).to_vec());
         store.judge_and_hold(&[(tx(1), vault, 50)]).unwrap();
 
         // Ten of headroom above the hold; eleven is past the floor.
@@ -540,39 +496,6 @@ mod tests {
         assert_eq!(store.apply_movement(vault, 0, 10), Ok(50));
         assert_eq!(store.held_reservation(vault, tx(1)), Some(50));
         assert_eq!(store.settle(vault, tx(1)), Ok(50));
-    }
-
-    #[test]
-    fn locked_substates_reject_every_mutation_and_read_back() {
-        let mut base = MemoryStore::new();
-        let config = key(1);
-        base.write(config, vec![7]).unwrap();
-        base.lock(config);
-        let mut store = over(base);
-
-        assert_eq!(
-            store.write(config, vec![8]),
-            Err(StoreError::Locked(config))
-        );
-        assert_eq!(store.remove(config), Err(StoreError::Locked(config)));
-        assert_eq!(
-            store.queue_delta(config, DeltaOp::Add(1)),
-            Err(StoreError::Locked(config))
-        );
-        assert_eq!(
-            store.judge_and_hold(&[(tx(1), config, 1)]),
-            Err(StoreError::Locked(config))
-        );
-
-        assert_eq!(store.locked(config).unwrap(), Some(vec![7]));
-        // The refusals recorded nothing; the one read is the whole log.
-        assert_eq!(
-            store.access_log(),
-            &[Access {
-                target: EffectTarget::Point(config),
-                kind: ModeKind::Locked,
-            }]
-        );
     }
 
     #[test]
@@ -605,7 +528,7 @@ mod tests {
     fn reservations_hold_settle_and_release() {
         let mut store = MemoryStore::new();
         let vault = key(5);
-        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.write(vault, encode_amount(100).to_vec());
 
         let verdicts = store
             .judge_and_hold(&[(tx(1), vault, 60), (tx(2), vault, 60)])
@@ -643,10 +566,10 @@ mod tests {
         // caller could no longer release it.
         let mut store = MemoryStore::new();
         let vault = key(6);
-        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.write(vault, encode_amount(100).to_vec());
         store.judge_and_hold(&[(tx(1), vault, 100)]).unwrap();
         // Drain the cell behind the hold's back.
-        store.write(vault, encode_amount(10).to_vec()).unwrap();
+        store.write(vault, encode_amount(10).to_vec());
 
         assert_eq!(
             store.settle(vault, tx(1)),
@@ -664,9 +587,7 @@ mod tests {
         let book = Address::new([9; 31], AddressClass::Component);
         let asks = CollectionId([4; 16]);
         for order in [5u128, 10, 15, 20] {
-            store
-                .entry_write(book, asks, order, vec![u8::try_from(order).unwrap()])
-                .unwrap();
+            store.entry_write(book, asks, order, vec![u8::try_from(order).unwrap()]);
         }
         let mut store = over(store);
         let hits = WorkingStore::entries_in_range(&mut store, book, asks, 5, 20, 3).unwrap();

@@ -72,12 +72,10 @@ pub fn config_leaf(owner: impl Into<Address>) -> SubstateKey {
 /// Seal `meta`'s instance: the committed configuration leaf its
 /// instantiation writes, which the fence on every method reads.
 pub fn seal(store: &mut MemoryStore, meta: &InstanceMeta) {
-    store
-        .write(
-            config_leaf(meta.address(&TestHasher)),
-            meta.leaf_bytes().expect("an instance's record encodes"),
-        )
-        .expect("the store takes a config leaf");
+    store.write(
+        config_leaf(meta.address(&TestHasher)),
+        meta.leaf_bytes().expect("an instance's record encodes"),
+    );
 }
 
 /// The book's asks collection, as the stdlib's declarations derive it.
@@ -161,7 +159,7 @@ pub fn pool_meta() -> InstanceMeta {
         package: pkg("amm"),
         // The pair, then the fee: the guest reads the fee as an
         // evaluated slot, so it is configuration rather than a shape
-        // spliced into the locked leaf. Thirty basis points, at the scale
+        // spliced into the record. Thirty basis points, at the scale
         // the bounded type holds — the range was checked when the value
         // was made, and the cell carries what it made.
         config: vec![

@@ -389,20 +389,6 @@ impl KernelSession {
         }
     }
 
-    /// A read through a locked capability: the value comes from
-    /// the overlay's base — the attested version — never from state
-    /// concurrent transactions are changing.
-    ///
-    /// # Errors
-    ///
-    /// Any [`SessionTrap`].
-    pub fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
-        match self.capability(rep)? {
-            Capability::Locked(key) => Ok(self.store.locked(key)?.unwrap_or_default()),
-            _ => Err(SessionTrap::WrongMode(rep)),
-        }
-    }
-
     /// The read half of a write capability.
     ///
     /// # Errors
@@ -835,9 +821,8 @@ mod tests {
             mode: Mode::Read,
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
-        // A read handle is not a locked read, a write, a delta, a reserve, or
-        // an interval.
-        assert_eq!(session.locked_cell(0), Err(SessionTrap::WrongMode(0)));
+        // A read handle is not a write, a delta, a reserve, or an
+        // interval.
         assert_eq!(session.write_cell_get(0), Err(SessionTrap::WrongMode(0)));
         assert_eq!(
             session.write_cell_set(0, vec![1]),
@@ -891,7 +876,7 @@ mod tests {
     fn a_reservation_is_taken_once() {
         let vault = key(6);
         let mut store = MemoryStore::new();
-        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.write(vault, encode_amount(100).to_vec());
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
             mode: Mode::Reserve { amount: 40 },
@@ -908,7 +893,7 @@ mod tests {
     fn judging_refuses_the_same_pair_twice() {
         let vault = key(5);
         let mut store = MemoryStore::new();
-        store.write(vault, encode_amount(100).to_vec()).unwrap();
+        store.write(vault, encode_amount(100).to_vec());
         assert_eq!(
             store.judge_and_hold(&[(tx(1), vault, 10), (tx(1), vault, 20)]),
             Err(StoreError::DuplicateRequest {

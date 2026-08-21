@@ -20,8 +20,6 @@
 pub enum Handle {
     /// A declared fresh read.
     Read(u32),
-    /// A read of a permanently locked substate.
-    Locked(u32),
     /// A declared exclusive read-modify-write of a cell holding bytes.
     Write(u32),
     /// The same, of a cell holding value.

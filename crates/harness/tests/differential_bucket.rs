@@ -92,20 +92,16 @@ fn fixture() -> Fixture {
     let (readable, vault, ledger, opaque, reserved) = (key(1), key(2), key(3), key(4), key(5));
 
     let mut store = MemoryStore::new();
-    store.write(readable, vec![5]).unwrap();
-    store.write(vault, encode_amount(BALANCE).to_vec()).unwrap();
-    store
-        .write(ledger, encode_amount(BALANCE).to_vec())
-        .unwrap();
-    store
-        .write(reserved, encode_amount(BALANCE).to_vec())
-        .unwrap();
+    store.write(readable, vec![5]);
+    store.write(vault, encode_amount(BALANCE).to_vec());
+    store.write(ledger, encode_amount(BALANCE).to_vec());
+    store.write(reserved, encode_amount(BALANCE).to_vec());
     // A write cell holding something that is not an amount: state a
     // movement can only refuse, which is the narrow reading the class has.
-    store.write(opaque, vec![1, 2, 3]).unwrap();
+    store.write(opaque, vec![1, 2, 3]);
     let holder = Address::new([0x90; 31], AddressClass::Component);
     for order in INSTANCES {
-        store.entry_write(holder, HOLDINGS, order, vec![1]).unwrap();
+        store.entry_write(holder, HOLDINGS, order, vec![1]);
     }
 
     let mut declared = EffectSet::new();
@@ -976,9 +972,7 @@ const PEEK_WAT: &str = r#"
 fn peeking() -> KernelSession {
     let key = child_key(&TestHasher, ISSUER, SlotId(1), &[]);
     let mut store = MemoryStore::new();
-    store
-        .write(key, encode_amount(BALANCE).to_vec())
-        .expect("the fixture seeds");
+    store.write(key, encode_amount(BALANCE).to_vec());
     let read = Effect {
         target: EffectTarget::Point(key),
         mode: Mode::Read,

@@ -41,7 +41,7 @@ pub use {
     engine::{blessed_config, blessed_engine},
     world::{
         Amount, AmountCell, AmountRead, Bucket, DeltaCell, HostRefusal, InstanceRange, Issuer,
-        LockedCell, RangeRead, RangeWrite, ReadCell, ReserveCell, Wide, WitOrdering, WitRounding,
-        WriteCell, add_kernel_to_linker,
+        RangeRead, RangeWrite, ReadCell, ReserveCell, Wide, WitOrdering, WitRounding, WriteCell,
+        add_kernel_to_linker,
     },
 };

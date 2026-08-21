@@ -25,13 +25,6 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
 
-    /// The cell's pinned bytes; empty if absent.
-    ///
-    /// # Errors
-    ///
-    /// A deterministic refusal.
-    fn locked_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
-
     /// The cell's current bytes under a write capability; empty if absent.
     ///
     /// # Errors

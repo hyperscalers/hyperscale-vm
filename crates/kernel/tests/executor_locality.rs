@@ -111,9 +111,7 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
     // The payer's shard: it owns the reserve, judges it, settles it, and
     // leaves the recipient's credit unapplied — the outbound record.
     let mut payer_store = MemoryStore::new();
-    payer_store
-        .write(cell(PAYER_BYTE), encode_amount(100).to_vec())
-        .unwrap();
+    payer_store.write(cell(PAYER_BYTE), encode_amount(100).to_vec());
     let payer = execute_batch(
         Arc::new(payer_store),
         &batch,
@@ -210,9 +208,7 @@ fn a_committed_nullifier_reads_the_same_on_both_shards() {
     let tx = batch[0].tx;
 
     let mut payer_store = MemoryStore::new();
-    payer_store
-        .write(cell(PAYER_BYTE), encode_amount(100).to_vec())
-        .unwrap();
+    payer_store.write(cell(PAYER_BYTE), encode_amount(100).to_vec());
     let payer = execute_batch(
         Arc::new(payer_store),
         &batch,
@@ -272,9 +268,7 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
     };
 
     let mut payer_store = MemoryStore::new();
-    payer_store
-        .write(cell(PAYER_BYTE), encode_amount(100).to_vec())
-        .unwrap();
+    payer_store.write(cell(PAYER_BYTE), encode_amount(100).to_vec());
     let payer = execute_batch(
         Arc::new(payer_store),
         &batch,
@@ -455,9 +449,7 @@ fn only_the_owning_shard_judges_an_uncovered_reserve() {
 
     // The payer's shard sees the shortfall and refuses.
     let mut payer_store = MemoryStore::new();
-    payer_store
-        .write(cell(PAYER_BYTE), encode_amount(10).to_vec())
-        .unwrap();
+    payer_store.write(cell(PAYER_BYTE), encode_amount(10).to_vec());
     let payer = execute_batch(
         Arc::new(payer_store),
         &batch,

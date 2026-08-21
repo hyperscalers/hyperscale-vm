@@ -121,9 +121,7 @@ fn entry_for(index: u32, routed: &Routed) -> BatchTx {
 fn funded_store(senders: u32) -> MemoryStore {
     let mut store = MemoryStore::new();
     for index in 0..senders {
-        store
-            .write(vault(sender(index)), encode_amount(1_000).to_vec())
-            .unwrap();
+        store.write(vault(sender(index)), encode_amount(1_000).to_vec());
     }
     store
 }

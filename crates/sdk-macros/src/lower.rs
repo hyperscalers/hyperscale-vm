@@ -53,9 +53,9 @@ use crate::{Declared, Resource, holds_role_table, is_named};
 /// What kind of state a component field holds, and under which slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldKind {
-    /// A permanently locked configuration leaf; its fields are the
-    /// instance's config slots.
-    Locked,
+    /// The instance's creation-fixed configuration; its fields are the
+    /// record's config slots.
+    Config,
     /// A single substate leaf.
     Cell,
     /// A family of leaves keyed by an address.
@@ -228,8 +228,6 @@ impl Site {
             (_, false, false) => {
                 if has(Op::Reserve) {
                     HandleMode::ReserveCell
-                } else if has(Op::Locked) {
-                    HandleMode::LockedCell
                 } else {
                     return None;
                 }
@@ -431,8 +429,7 @@ enum Val {
         /// The sub-collection under the field's slot.
         material: Vec<Term>,
     },
-    /// The value a locked configuration read returns; its fields are
-    /// config slots.
+    /// The instance's configuration record; its fields are config slots.
     Config,
     /// An open handle, by site index.
     Handle(usize),
@@ -1026,10 +1023,9 @@ impl<'a> Lowerer<'a> {
             Op::Get | Op::Set | Op::Move | Op::Create | Op::Existing => {
                 entry.ops.iter().all(|(prior, _)| exclusive(prior))
             }
-            Op::Reserve | Op::Locked => entry
-                .ops
-                .iter()
-                .all(|(prior, _)| *prior == op && op == Op::Locked),
+            // A reservation folds with nothing, itself included, so it
+            // is the only op a handle may carry and it may carry it once.
+            Op::Reserve => entry.ops.is_empty(),
         };
         let opposite = match op {
             Op::Create => Some(Op::Existing),
@@ -1075,19 +1071,19 @@ impl<'a> Lowerer<'a> {
             None
         };
         match expr {
-            // `config.x` — the locked record's slot, by name.
+            // `config.x` — the record's slot, by name.
             syn::Expr::Field(access) => {
                 let syn::Expr::Path(base) = &*access.base else {
                     return refuse(self);
                 };
-                let locked = base.path.get_ident().is_some_and(|ident| {
+                let configured = base.path.get_ident().is_some_and(|ident| {
                     self.state(&ident.to_string())
-                        .is_some_and(|f| f.kind == FieldKind::Locked)
+                        .is_some_and(|f| f.kind == FieldKind::Config)
                 });
                 let syn::Member::Named(name) = &access.member else {
                     return refuse(self);
                 };
-                if !locked {
+                if !configured {
                     return refuse(self);
                 }
                 let name = name.to_string();
@@ -1789,8 +1785,9 @@ impl<'a> Lowerer<'a> {
                     Val::Term(term) => Slot::Value(term.clone()),
                     Val::Handle(index) => Slot::Handle(*index),
                     Val::Produced(term) => Slot::Produced(term.clone()),
-                    // A locked config read binds a name whose *fields* are
-                    // config slots; the binding itself is not a value.
+                    // The configuration record binds a name whose
+                    // *fields* are config slots; the binding itself is
+                    // not a value.
                     Val::Config => Slot::Config,
                     // Several edges are not one value, so the binding as a
                     // whole holds nothing; the names come from the pattern
@@ -2583,12 +2580,9 @@ impl<'a> Lowerer<'a> {
         match (&base.val, member) {
             // `self.config.x` — a configuration field read directly.
             //
-            // This declares nothing, and that is the point: configuration
-            // is a locked substate, verified once and cached process-wide,
-            // so a declaration may consult it without claiming it. Naming
-            // the leaf as a locked read is a separate, deliberate act
-            // (`self.config.locked()`) that a method only performs when it
-            // wants the whole record pinned.
+            // This declares nothing, and that is the point: the record is
+            // what admission resolved the target with, so a declaration
+            // may consult it without claiming anything.
             (
                 Val::Field {
                     name: field_name, ..
@@ -2596,12 +2590,12 @@ impl<'a> Lowerer<'a> {
                 syn::Member::Named(name),
             ) if self
                 .state(field_name)
-                .is_some_and(|f| f.kind == FieldKind::Locked) =>
+                .is_some_and(|f| f.kind == FieldKind::Config) =>
             {
                 self.config_slot(&name.to_string(), field)
             }
 
-            // A field of a value a locked read returned.
+            // A field of the record bound as a whole.
             (Val::Config, syn::Member::Named(name)) => self.config_slot(&name.to_string(), field),
             (Val::Term(term), syn::Member::Unnamed(index)) => {
                 let term = Term::Field(Box::new(term.clone()), index.index);
@@ -3216,7 +3210,7 @@ impl<'a> Lowerer<'a> {
             return Eval::absent(call.span(), "an unknown protocol cell");
         };
         let evals: Vec<Eval> = call.args.iter().map(|arg| self.expr(arg)).collect();
-        let arity = usize::from(!matches!(field.kind, FieldKind::Cell | FieldKind::Locked));
+        let arity = usize::from(!matches!(field.kind, FieldKind::Cell | FieldKind::Config));
         if evals.len() != arity {
             self.error(call.span(), &format!("`{name}` takes {arity} argument(s)"));
             return Eval::absent(call.span(), "a protocol cell named with the wrong arity");
@@ -3247,12 +3241,21 @@ impl<'a> Lowerer<'a> {
                 }
             }
             // The cell itself, which the body then reads or writes.
-            FieldKind::Cell | FieldKind::Locked => Eval {
+            FieldKind::Cell => Eval {
                 val: Val::Field {
                     name: name.to_owned(),
                     material: Vec::new(),
                 },
                 code: Code::Absent(call.span(), "a protocol cell in value position"),
+            },
+            // The configuration record itself. It declares nothing: every
+            // method's fence already reads the leaf it was sealed into
+            // and holds it present, and after the seal the leaf has no
+            // writer. A field of it is a slot the kernel evaluates, so
+            // the record is never decoded on the guest.
+            FieldKind::Config => Eval {
+                val: Val::Config,
+                code: Code::Absent(call.span(), "the configuration record"),
             },
             FieldKind::Unordered => Eval::absent(call.span(), "an unordered protocol cell"),
         }
@@ -3271,18 +3274,6 @@ impl<'a> Lowerer<'a> {
         let declared = self.field_denomination(field);
         let vals: Vec<Val> = args.iter().map(|e| e.val.clone()).collect();
         match (field.kind, method) {
-            // The whole configuration record. It declares nothing of its
-            // own: every method's fence already reads the leaf and holds
-            // it present, and after the seal the leaf has no writer, so
-            // the record is pinned by construction rather than by a
-            // clause this call adds.
-            (FieldKind::Locked, "locked") => Eval {
-                val: Val::Config,
-                // The values it covers reach the guest as evaluated
-                // slots, so the record itself is never decoded.
-                code: Code::Absent(call.span(), "the pinned configuration record"),
-            },
-
             // A family of leaves keyed by an address.
             (FieldKind::Keyed, "at") => {
                 if let Some(Val::Term(key)) = vals.first() {

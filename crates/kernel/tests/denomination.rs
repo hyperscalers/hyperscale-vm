@@ -143,7 +143,7 @@ fn every_producer_stamps_what_its_source_held() {
     }
     let mut store = MemoryStore::new();
     for key in [absolute, reserved] {
-        store.write(key, encode_amount(100).to_vec()).expect("seed");
+        store.write(key, encode_amount(100).to_vec());
     }
 
     let mut session = KernelSession::materialize(
@@ -225,9 +225,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
     }
     let mut store = MemoryStore::new();
     for order in [10u128, 20] {
-        store
-            .entry_write(POOL, held(X), order, vec![1])
-            .expect("seed");
+        store.entry_write(POOL, held(X), order, vec![1]);
     }
 
     let mut session = KernelSession::materialize(

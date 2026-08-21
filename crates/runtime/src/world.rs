@@ -156,8 +156,6 @@ pub struct Bucket;
 pub struct Issuer;
 /// Host-side marker for the `read-cell` resource.
 pub struct ReadCell;
-/// Host-side marker for the `locked-cell` resource.
-pub struct LockedCell;
 /// Host-side marker for the `write-cell` resource.
 pub struct WriteCell;
 /// Host-side marker for the `amount-cell` resource.
@@ -220,9 +218,6 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     )?;
     state.resource("issuer", ResourceType::host::<Issuer>(), |_, _| Ok(()))?;
     state.resource("read-cell", ResourceType::host::<ReadCell>(), |_, _| Ok(()))?;
-    state.resource("locked-cell", ResourceType::host::<LockedCell>(), |_, _| {
-        Ok(())
-    })?;
     state.resource("write-cell", ResourceType::host::<WriteCell>(), |_, _| {
         Ok(())
     })?;
@@ -256,13 +251,6 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         "read-cell-get",
         |mut store: StoreContextMut<'_, T>, (r,): (Resource<ReadCell>,)| {
             let value = meter::read_cell_get(&mut Port(&mut store), r.rep()).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "locked-cell-get",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<LockedCell>,)| {
-            let value = meter::locked_cell_get(&mut Port(&mut store), r.rep()).map_err(fault)?;
             Ok((value,))
         },
     )?;

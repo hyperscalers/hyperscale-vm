@@ -81,15 +81,9 @@ fn a_swap_paid_in_either_side_of_the_pair_admits() {
 
 fn swap_store() -> MemoryStore {
     let mut store = sealed_store();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(600).to_vec())
-        .unwrap();
-    store
-        .write(vault(pool(), RES_X), encode_amount(1_000).to_vec())
-        .unwrap();
-    store
-        .write(vault(pool(), RES_Y), encode_amount(1_000).to_vec())
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(600).to_vec());
+    store.write(vault(pool(), RES_X), encode_amount(1_000).to_vec());
+    store.write(vault(pool(), RES_Y), encode_amount(1_000).to_vec());
     store
 }
 
@@ -176,9 +170,7 @@ fn swap_executes_with_real_pool_math_on_both_runtimes() {
 fn the_pool_trades_both_directions_off_one_instance() {
     let world = world();
     let mut store = swap_store();
-    store
-        .write(vault(ALICE, RES_Y), encode_amount(600).to_vec())
-        .unwrap();
+    store.write(vault(ALICE, RES_Y), encode_amount(600).to_vec());
     let (results, final_store) = run_both(
         &world,
         &store,
@@ -238,15 +230,9 @@ fn a_violated_output_floor_declines_identically() {
 /// for.
 fn shares_store() -> MemoryStore {
     let mut store = sealed_store();
-    store
-        .write(vault(ALICE, RES_X), encode_amount(1_000).to_vec())
-        .unwrap();
-    store
-        .write(vault(shares_vault(), RES_X), encode_amount(1_000).to_vec())
-        .unwrap();
-    store
-        .write(supply_leaf(shares_vault()), encode_amount(777).to_vec())
-        .unwrap();
+    store.write(vault(ALICE, RES_X), encode_amount(1_000).to_vec());
+    store.write(vault(shares_vault(), RES_X), encode_amount(1_000).to_vec());
+    store.write(supply_leaf(shares_vault()), encode_amount(777).to_vec());
     store
 }
 

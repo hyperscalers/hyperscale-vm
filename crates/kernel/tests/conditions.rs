@@ -128,7 +128,7 @@ fn a_presence_condition_is_judged_against_the_committed_leaf() {
 
     let empty = MemoryStore::new();
     let mut occupied = MemoryStore::new();
-    occupied.write(key, vec![7]).unwrap();
+    occupied.write(key, vec![7]);
 
     // Required present: met where the leaf is, unmet where it is not.
     let requiring_present = |store| {
@@ -234,7 +234,7 @@ fn a_stored_leaf_judges_the_stored_rule_and_the_virtual_one() {
     let cell = AuthCell::new(AuthBase::new(1_000, roles))
         .to_bytes()
         .unwrap();
-    securified.write(key, cell).unwrap();
+    securified.write(key, cell);
     assert!(matches!(
         judged(&securified, vec![identity(2)]),
         Outcome::Completed { .. }
@@ -364,10 +364,6 @@ impl Substates for Counting {
 }
 
 impl Baseline for Counting {
-    fn is_locked(&self, key: SubstateKey) -> bool {
-        self.inner.is_locked(key)
-    }
-
     fn holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128> {
         self.inner.holds(key)
     }
@@ -399,14 +395,12 @@ fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
 
     let mut securified = MemoryStore::new();
     let roles = RoleTable::uniform(&StoredRule::Require(identity(2))).unwrap();
-    securified
-        .write(
-            key,
-            AuthCell::new(AuthBase::new(1_000, roles))
-                .to_bytes()
-                .unwrap(),
-        )
-        .unwrap();
+    securified.write(
+        key,
+        AuthCell::new(AuthBase::new(1_000, roles))
+            .to_bytes()
+            .unwrap(),
+    );
 
     let judged = |evidence: Vec<Presented>| {
         let store = Arc::new(Counting::over(securified.clone()));
@@ -474,14 +468,12 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
 
     let mut securified = MemoryStore::new();
     let roles = RoleTable::uniform(&StoredRule::Require(identity(2))).unwrap();
-    securified
-        .write(
-            key,
-            AuthCell::new(AuthBase::new(1_000, roles))
-                .to_bytes()
-                .unwrap(),
-        )
-        .unwrap();
+    securified.write(
+        key,
+        AuthCell::new(AuthBase::new(1_000, roles))
+            .to_bytes()
+            .unwrap(),
+    );
 
     let judged = |store: &MemoryStore, locality: &Locality, evidence: Vec<Presented>| {
         let mut entry = BatchTx::new(tx(8), declaring(key, conditions.clone()), env());

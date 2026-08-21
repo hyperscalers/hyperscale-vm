@@ -340,7 +340,7 @@ pub enum Slot {
     Handle(usize),
     /// A value edge held in a local, carrying the named resource.
     Produced(Term),
-    /// The locked configuration value; its fields are config slots.
+    /// The instance's configuration record; its fields are config slots.
     Config,
     /// Anything else — arithmetic, a state read, a call the macro does not
     /// model. Harmless until it is used as a key.
@@ -357,8 +357,6 @@ pub enum Slot {
 /// body is what says which.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Op {
-    /// `locked()` — a read of a permanently locked substate.
-    Locked,
     /// `get()` — a fresh coherent read.
     Get,
     /// `put()` / `take()` — value moving into or out of an amount cell.
@@ -382,7 +380,6 @@ impl Op {
     /// The operation a method name implies, if it is one of the vocabulary.
     pub fn from_method(name: &str) -> Option<Self> {
         match name {
-            "locked" => Some(Self::Locked),
             "get" | "peek" | "count" | "covered" | "entry" | "order" | "balance" | "pick"
             | "picked" => Some(Self::Get),
             "put" | "take" | "declared" | "file" => Some(Self::Move),

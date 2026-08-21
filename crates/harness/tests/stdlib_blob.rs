@@ -82,9 +82,7 @@ fn session() -> KernelSession {
         })
         .unwrap();
     let mut store = MemoryStore::new();
-    store
-        .write(sender, encode_amount(500).to_vec())
-        .expect("seed sender balance");
+    store.write(sender, encode_amount(500).to_vec());
     // Both cells the transfer moves between hold the same resource,
     // which is what makes the credit a transfer rather than a
     // conversion.

@@ -168,8 +168,7 @@ mod through_the_session {
         // the cell rather than threaded through, because what is under
         // test is the accumulator and not the store.
         let mut held = MemoryStore::new();
-        held.write(vault(1, UNIT.address()), encode_amount(500).to_vec())
-            .expect("seeded");
+        held.write(vault(1, UNIT.address()), encode_amount(500).to_vec());
         let mut burning = session_over(held);
         let taken = burning.delta_take(0, 500).expect("the debit is queued");
         burning.burn(ISSUER_REP, taken).expect("the grant burns");

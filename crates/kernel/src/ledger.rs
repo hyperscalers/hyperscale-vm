@@ -66,28 +66,14 @@ pub trait AmountLedger: Baseline {
             .ok_or(StoreError::HeldExceedsCommitted(key))
     }
 
-    /// Refuse a mutation of a permanently locked cell.
+    /// Whether `key` can carry a reservation at all: either absent or a
+    /// well-formed amount cell. A refusal here is a declaration defect —
+    /// the sender's fault, judged before the feasibility race.
     ///
     /// # Errors
     ///
-    /// [`StoreError::Locked`].
-    fn reject_locked(&self, key: SubstateKey) -> Result<(), StoreError> {
-        if self.is_locked(key) {
-            return Err(StoreError::Locked(key));
-        }
-        Ok(())
-    }
-
-    /// Whether `key` can carry a reservation at all: unlocked and either
-    /// absent or a well-formed amount cell. A refusal here is a
-    /// declaration defect — the sender's fault, judged before the
-    /// feasibility race.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::Locked`] or an amount-cell decode failure.
+    /// An amount-cell decode failure.
     fn check_reserve_target(&self, key: SubstateKey) -> Result<(), StoreError> {
-        self.reject_locked(key)?;
         self.amount(key)?;
         Ok(())
     }
@@ -149,7 +135,6 @@ pub trait AmountLedger: Baseline {
     /// # Errors
     ///
     /// [`StoreError::DuplicateRequest`] for a repeated `(tx, key)` pair,
-    /// [`StoreError::Locked`] for a reservation on a locked substate,
     /// [`StoreError::HeldExceedsCommitted`] on a violated ledger
     /// invariant, or an amount-cell decode failure.
     fn judge_and_hold(
@@ -162,7 +147,6 @@ pub trait AmountLedger: Baseline {
             if !seen.insert((*tx, *key)) {
                 return Err(StoreError::DuplicateRequest { tx: *tx, key: *key });
             }
-            self.reject_locked(*key)?;
             self.note(EffectTarget::Point(*key), ModeKind::Reserve);
             by_key.entry(*key).or_default().push((*tx, *amount));
         }

@@ -15,17 +15,6 @@ use hyperscale_hbor::Hbor;
 pub enum Mode {
     /// Fresh coherent read of committed state.
     Read,
-    /// Read of a locked substate: creation-fixed configuration, identical
-    /// at every version.
-    ///
-    /// Immutability is what the mode buys and what it costs. Because no
-    /// version of the target differs, the read needs no coherence and no
-    /// proof: it carries no obligation, takes no admission key, and makes
-    /// its owner no participant — the one mode a shard can serve without
-    /// joining the transaction. And because it is verified by the target
-    /// being locked rather than by attestation, it says nothing at all
-    /// about mutable state; a read of that is [`Mode::Read`].
-    Locked,
     /// Unconditional commutative increment or decrement; the amount is
     /// dynamic and never part of the declaration.
     Delta,
@@ -56,8 +45,6 @@ pub enum Mode {
 pub enum CellKind {
     /// `read-cell`.
     Read,
-    /// `locked-cell`.
-    Locked,
     /// `write-cell`: a cell holding bytes the package chose.
     Write,
     /// `amount-cell`: the same exclusive access to a cell holding value.
@@ -101,7 +88,6 @@ impl CellKind {
     pub const fn world_type(self) -> &'static str {
         match self {
             Self::Read => "read-cell",
-            Self::Locked => "locked-cell",
             Self::Write => "write-cell",
             Self::Amount => "amount-cell",
             Self::AmountRead => "amount-read",
@@ -120,7 +106,6 @@ impl CellKind {
     pub fn from_world_type(name: &str) -> Option<Self> {
         [
             Self::Read,
-            Self::Locked,
             Self::Write,
             Self::Amount,
             Self::AmountRead,
@@ -188,7 +173,6 @@ impl Mode {
     pub const fn kind(&self) -> ModeKind {
         match self {
             Self::Read => ModeKind::Read,
-            Self::Locked => ModeKind::Locked,
             Self::Delta => ModeKind::Delta,
             Self::Reserve { .. } => ModeKind::Reserve,
             Self::Write => ModeKind::Write,
@@ -201,8 +185,6 @@ impl Mode {
 pub enum ModeKind {
     /// See [`Mode::Read`].
     Read,
-    /// See [`Mode::Locked`].
-    Locked,
     /// See [`Mode::Delta`].
     Delta,
     /// See [`Mode::Reserve`].
@@ -214,18 +196,14 @@ pub enum ModeKind {
 /// The scheduling compatibility relation: whether two in-flight
 /// transactions may hold these modes on the same key concurrently.
 ///
-/// A locked read is compatible with everything, and no longer by
-/// assertion: its target is locked, and every mutating mode refuses a locked
-/// target, so nothing can hold a conflicting mode on one. A fresh read
-/// excludes every mutation; delta and reserve commute with each other;
-/// write excludes everything but a locked read. Symmetric by construction.
+/// A fresh read excludes every mutation; delta and reserve commute with
+/// each other; write excludes everything, itself included. Symmetric by
+/// construction.
 #[must_use]
 pub const fn compatible(a: ModeKind, b: ModeKind) -> bool {
     matches!(
         (a, b),
-        (ModeKind::Locked, _)
-            | (_, ModeKind::Locked)
-            | (ModeKind::Read, ModeKind::Read)
+        (ModeKind::Read, ModeKind::Read)
             | (
                 ModeKind::Delta | ModeKind::Reserve,
                 ModeKind::Delta | ModeKind::Reserve
@@ -276,15 +254,13 @@ impl ConflictClass {
 }
 
 impl ModeKind {
-    /// The conflict class this mode joins, or `None` for a locked read,
-    /// which conflicts with nothing and joins no group.
+    /// The conflict class this mode joins.
     #[must_use]
-    pub const fn conflict_class(self) -> Option<ConflictClass> {
+    pub const fn conflict_class(self) -> ConflictClass {
         match self {
-            Self::Locked => None,
-            Self::Read => Some(ConflictClass::Read),
-            Self::Delta | Self::Reserve => Some(ConflictClass::Commutative),
-            Self::Write => Some(ConflictClass::Write),
+            Self::Read => ConflictClass::Read,
+            Self::Delta | Self::Reserve => ConflictClass::Commutative,
+            Self::Write => ConflictClass::Write,
         }
     }
 }
@@ -312,14 +288,13 @@ mod tests {
     }
     #[test]
     fn compatibility_matrix() {
-        use ModeKind::{Delta, Locked, Read, Reserve, Write};
-        let kinds = [Read, Locked, Delta, Reserve, Write];
+        use ModeKind::{Delta, Read, Reserve, Write};
+        let kinds = [Read, Delta, Reserve, Write];
         let table = [
-            [true, true, false, false, false],
-            [true, true, true, true, true],
-            [false, true, true, true, false],
-            [false, true, true, true, false],
-            [false, true, false, false, false],
+            [true, false, false, false],
+            [false, true, true, false],
+            [false, true, true, false],
+            [false, false, false, false],
         ];
         for (i, &a) in kinds.iter().enumerate() {
             for (j, &b) in kinds.iter().enumerate() {

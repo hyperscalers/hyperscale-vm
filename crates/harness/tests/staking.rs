@@ -66,12 +66,10 @@ const BADGE_ID: u64 = 0;
 /// Seal the pool: the committed configuration leaf its instantiation
 /// writes, which is what makes its methods reachable at all.
 fn seal_pool(store: &mut MemoryStore) {
-    store
-        .write(
-            child_key(&TestHasher, pool(), CONFIG, &[]),
-            pool_meta().leaf_bytes().unwrap(),
-        )
-        .unwrap();
+    store.write(
+        child_key(&TestHasher, pool(), CONFIG, &[]),
+        pool_meta().leaf_bytes().unwrap(),
+    );
 }
 
 /// A store where [`OPERATOR`] holds the pool's owner badge — what every
@@ -79,14 +77,12 @@ fn seal_pool(store: &mut MemoryStore) {
 fn operator_store() -> MemoryStore {
     let mut store = MemoryStore::new();
     seal_pool(&mut store);
-    store
-        .entry_write(
-            OPERATOR.address(),
-            holdings_collection(&TestHasher, OPERATOR, badge()),
-            u128::from(BADGE_ID),
-            Vec::new(),
-        )
-        .unwrap();
+    store.entry_write(
+        OPERATOR.address(),
+        holdings_collection(&TestHasher, OPERATOR, badge()),
+        u128::from(BADGE_ID),
+        Vec::new(),
+    );
     store
 }
 /// The account holding the pool's owner badge: the operator surface
@@ -286,12 +282,10 @@ const UNIT_RECORD: ResourceRecord = ResourceRecord::Fungible { divisibility: 18 
 fn seeded_store(xrd: u128, units: u128) -> MemoryStore {
     let mut store = MemoryStore::new();
     seal_pool(&mut store);
-    store
-        .write(
-            resource_record_key(&TestHasher, pool(), unit()),
-            UNIT_RECORD.to_cell().unwrap(),
-        )
-        .unwrap();
+    store.write(
+        resource_record_key(&TestHasher, pool(), unit()),
+        UNIT_RECORD.to_cell().unwrap(),
+    );
     seed_vault(&mut store, ALICE, XRD, xrd);
     if units > 0 {
         seed_vault(&mut store, ALICE, unit(), units);
@@ -327,7 +321,7 @@ fn a_delegation_to_an_unsealed_pool_is_refused_where_the_leaf_lives() -> Result<
     store.write(
         resource_record_key(&TestHasher, pool(), unit()),
         UNIT_RECORD.to_cell().unwrap(),
-    )?;
+    );
     seed_vault(&mut store, ALICE, XRD, 150);
 
     let (outcome, end) = run_both(&store, std::slice::from_ref(&entry));
@@ -504,7 +498,7 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
     // The leaf already holds a key, which is the state a first
     // registration leaves behind.
     let mut store = operator_store();
-    store.write(validator_leaf(pool(), VALIDATOR), registered_bytes())?;
+    store.write(validator_leaf(pool(), VALIDATOR), registered_bytes());
 
     let (outcome, _) = run_both(&store, std::slice::from_ref(&entry));
     assert!(
@@ -541,7 +535,7 @@ fn a_pool_founds_itself_and_reaches_its_operator_surface() -> Result<()> {
     store.write(
         resource_record_key(&TestHasher, pool(), unit()),
         UNIT_RECORD.to_cell().unwrap(),
-    )?;
+    );
 
     let found = batch_entry(&world, &single_intent(found_graph()), OPERATOR)?;
     let (outcome, after_found) = run_both(&store, std::slice::from_ref(&found));
@@ -635,7 +629,7 @@ fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
 fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
     let world = world();
     let mut store = operator_store();
-    store.write(validator_leaf(pool(), VALIDATOR), registered_bytes())?;
+    store.write(validator_leaf(pool(), VALIDATOR), registered_bytes());
 
     for (method, event_type) in [("deactivate-validator", 3), ("unjail", 4)] {
         let graph = operator_graph(method, VALIDATOR);
@@ -733,7 +727,7 @@ fn a_cast_vote_is_held_on_the_pools_own_leaf_and_reported() -> Result<()> {
 fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     let world = world();
     let mut store = operator_store();
-    store.write(vote_leaf(pool()), cast_payload())?;
+    store.write(vote_leaf(pool()), cast_payload());
 
     let cleared = graph(|b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
@@ -762,7 +756,7 @@ fn a_second_cast_replaces_the_first() -> Result<()> {
     // the latest rather than accumulating.
     let world = world();
     let mut store = operator_store();
-    store.write(vote_leaf(pool()), vec![0xAA; 24])?;
+    store.write(vote_leaf(pool()), vec![0xAA; 24]);
 
     let entry = batch_entry(&world, &single_intent(cast_graph()), OPERATOR)?;
     let (_, end) = run_both(&store, std::slice::from_ref(&entry));
