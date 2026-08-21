@@ -338,7 +338,7 @@ fn edge_types(
             output_resources(
                 signature,
                 node.target,
-                &meta.config,
+                meta,
                 &values,
                 &known,
                 producer,

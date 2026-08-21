@@ -8,9 +8,9 @@
 
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    Clause, Declaration, EvalInputs, Hash32, MAX_FOREACH_ELEMENTS, ManifestHash, MethodSignature,
-    ModeExpr, ParamType, SealedResources, TargetExpr, TestHasher, Value, child_key,
-    evaluate_declaration, evaluate_effects,
+    Clause, Declaration, EvalInputs, Hash32, InstanceMeta, MAX_FOREACH_ELEMENTS, ManifestHash,
+    MethodSignature, ModeExpr, PackageHash, ParamType, SealedResources, TargetExpr, TestHasher,
+    Value, child_key, evaluate_declaration, evaluate_effects,
 };
 use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym, eq};
 use hyperscale_vm_sdk::{Blueprint, Trace};
@@ -36,12 +36,22 @@ fn vault(owner: Address, resource: Address) -> SubstateKey {
     )
 }
 
+/// The creation-fixed record evaluation resolves the target with.
+fn record_of(config: &[Value]) -> InstanceMeta {
+    InstanceMeta {
+        package: PackageHash(Hash32([1; 32])),
+        config: config.to_vec(),
+        salt: Hash32([2; 32]),
+    }
+}
+
 /// Evaluate a traced signature the way routing would.
 fn declared(signature: &MethodSignature, args: &[Value], config: &[Value]) -> EffectSet {
+    let record = record_of(config);
     let inputs = EvalInputs {
         self_addr: BASKET,
         args,
-        config,
+        record: &record,
         node_index: 0,
         identity: identity(),
         sealed: SealedResources::none(),
@@ -53,10 +63,11 @@ fn declared(signature: &MethodSignature, args: &[Value], config: &[Value]) -> Ef
 /// Both views of a traced signature's evaluation: the folded set that
 /// scheduling reads and the clause order that materialization reads.
 fn evaluated(signature: &MethodSignature, args: &[Value], config: &[Value]) -> Declaration {
+    let record = record_of(config);
     let inputs = EvalInputs {
         self_addr: BASKET,
         args,
-        config,
+        record: &record,
         node_index: 0,
         identity: identity(),
         sealed: SealedResources::none(),

@@ -71,6 +71,7 @@ fn arb_expr() -> impl Strategy<Value = Expr> {
         (0u32..4).prop_map(Expr::Config),
         (0u32..3).prop_map(Expr::Binding),
         Just(Expr::SelfAddr),
+        Just(Expr::SelfRecord),
         (0u32..4).prop_map(|slot| Expr::FreshId { slot }),
         (0u32..4).prop_map(|slot| Expr::FreshKey { slot }),
     ];
@@ -116,10 +117,15 @@ proptest! {
         node_index in any::<u32>(),
         seed in any::<[u8; 32]>(),
     ) {
+        let record = InstanceMeta {
+            package: pkg("determinism"),
+            config,
+            salt: Hash32(seed),
+        };
         let inputs = EvalInputs {
             self_addr: Address::new([self_byte; 31], AddressClass::Component),
             args: &args,
-            config: &config,
+            record: &record,
             node_index,
             identity: ManifestHash(Hash32(seed)),
             sealed: SealedResources::none(),

@@ -1141,6 +1141,7 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
         | Expr::Arg(_)
         | Expr::Config(_)
         | Expr::SelfAddr
+        | Expr::SelfRecord
         | Expr::FreshId { .. }
         | Expr::FreshKey { .. }) => leaf,
     }

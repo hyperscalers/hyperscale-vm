@@ -4,9 +4,9 @@
 //! its declared `(key, mode)` set, written in this DSL: field projections,
 //! keyed lookups over input values, canonical-address computation, bounded
 //! collection mapping, point and range targets. No loops, no recursion, no
-//! reads of state — the evaluator takes arguments, instance configuration,
-//! and a hasher, and nothing else, so evaluation is pure by construction
-//! and identical on every node.
+//! reads of state — the evaluator takes arguments, the target's
+//! creation-fixed record, and a hasher, and nothing else, so evaluation is
+//! pure by construction and identical on every node.
 
 use std::collections::BTreeMap;
 
@@ -17,6 +17,7 @@ use hyperscale_vm_types::{
 };
 
 use crate::hash::{Hash32, Hasher};
+use crate::instance::InstanceMeta;
 use crate::manifest::{Condition, JudgedLeaf, ManifestHash};
 use crate::presented::Presented;
 use crate::resource::{ResourceKind, ResourceMeta, ResourceRules, SealedBehaviour};
@@ -243,6 +244,13 @@ pub enum Expr {
         /// Evaluated when it does not.
         otherwise: Box<Self>,
     },
+    /// The target instance's whole creation-fixed record, as the
+    /// canonical bytes the configuration leaf stores.
+    ///
+    /// Evaluated from the record admission resolved the target with, so
+    /// a caller never chooses the bytes: what instantiation writes is
+    /// what the address commits, or the transaction does not admit.
+    SelfRecord,
 }
 
 impl Expr {
@@ -261,6 +269,7 @@ impl Expr {
             | Self::Config(_)
             | Self::Binding(_)
             | Self::SelfAddr
+            | Self::SelfRecord
             | Self::FreshId { .. }
             | Self::FreshKey { .. } => {}
             Self::Field(inner, _)
@@ -697,8 +706,9 @@ pub struct EvalInputs<'a> {
     pub self_addr: Address,
     /// The call's bound arguments, in parameter order.
     pub args: &'a [Value],
-    /// The target instance's creation-fixed configuration.
-    pub config: &'a [Value],
+    /// The target instance's creation-fixed record, as admission
+    /// resolved it.
+    pub record: &'a InstanceMeta,
     /// The invoking manifest node's index; namespaces fresh IDs.
     pub node_index: u32,
     /// The transaction's identity — the signed graph's hash; the one root
@@ -1367,7 +1377,7 @@ fn eval_expr(
         Expr::Arg(index) => indexed(inputs.args, *index)
             .cloned()
             .ok_or(EvalError::ArgOutOfRange(*index)),
-        Expr::Config(index) => indexed(inputs.config, *index)
+        Expr::Config(index) => indexed(&inputs.record.config, *index)
             .cloned()
             .ok_or(EvalError::ConfigOutOfRange(*index)),
         Expr::Binding(index) => usize::try_from(*index)
@@ -1377,6 +1387,12 @@ fn eval_expr(
             .cloned()
             .ok_or(EvalError::BindingOutOfRange(*index)),
         Expr::SelfAddr => Ok(Value::Address(inputs.self_addr)),
+        Expr::SelfRecord => Ok(Value::Bytes(
+            inputs
+                .record
+                .leaf_bytes()
+                .expect("an admitted record encodes"),
+        )),
         Expr::Field(tuple, index) => field(&as_tuple(sub(tuple)?)?, *index),
         Expr::ResourceOf(bucket) => Ok(Value::Address(bucket_parts(sub(bucket)?)?.0.into())),
         Expr::IdsOf(bucket) => edge_ids(bucket_parts(sub(bucket)?)?.1),
@@ -1705,7 +1721,9 @@ mod tests {
         evaluate_expr, fresh_id, fresh_local,
     };
     use crate::hash::{Hash32, TestHasher};
+    use crate::instance::InstanceMeta;
     use crate::manifest::ManifestHash;
+    use crate::metadata::PackageHash;
     use crate::resource::{ResourceKind, issued_resource};
     use crate::types::{
         EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
@@ -1813,14 +1831,31 @@ mod tests {
     }
 
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
+        let record: &'a InstanceMeta = Box::leak(Box::new(InstanceMeta {
+            package: PackageHash(Hash32([1; 32])),
+            config: config.to_vec(),
+            salt: Hash32([2; 32]),
+        }));
         EvalInputs {
             self_addr: Address::new([7; 31], AddressClass::Component),
             args,
-            config,
+            record,
             node_index: 3,
             identity: ManifestHash(Hash32([9; 32])),
             sealed: super::SealedResources::none(),
         }
+    }
+
+    /// The target's own record evaluates to the bytes its configuration
+    /// leaf stores — drawn from what admission resolved the target with,
+    /// never from anything a caller supplies.
+    #[test]
+    fn the_self_record_evaluates_to_the_leaf_bytes() {
+        let context = inputs(&[], &[Value::U64(7)]);
+        assert_eq!(
+            evaluate_expr(&Expr::SelfRecord, &context, &TestHasher),
+            Ok(Value::Bytes(context.record.leaf_bytes().unwrap()))
+        );
     }
 
     /// A `Requires` clause evaluates into the declaration's condition

@@ -883,8 +883,8 @@ mod selection {
 #[test]
 fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() {
     use hyperscale_vm_effects::{
-        EvalInputs, Expr, Hash32, ManifestHash, SealedResources, SlotId, TargetExpr, TestHasher,
-        Value, child_key, evaluate_effects,
+        EvalInputs, Expr, Hash32, InstanceMeta, ManifestHash, PackageHash, SealedResources, SlotId,
+        TargetExpr, TestHasher, Value, child_key, evaluate_effects,
     };
     use hyperscale_vm_sdk::VAULT;
     use hyperscale_vm_types::{Address, AddressClass, EffectTarget};
@@ -910,12 +910,17 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
         Value::List(Vec::new()),
         Value::Address(left),
     ];
+    let record = InstanceMeta {
+        package: PackageHash(Hash32([1; 32])),
+        config: config.to_vec(),
+        salt: Hash32([2; 32]),
+    };
     for (paid, expected) in [(left, left), (right, right), (address(0x33), right)] {
         let args = [Value::Address(paid)];
         let inputs = EvalInputs {
             self_addr,
             args: &args,
-            config: &config,
+            record: &record,
             node_index: 0,
             identity: ManifestHash(Hash32([9; 32])),
             sealed: SealedResources::none(),
@@ -943,7 +948,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
     let inputs = EvalInputs {
         self_addr,
         args: &args,
-        config: &config,
+        record: &record,
         node_index: 0,
         identity: ManifestHash(Hash32([9; 32])),
         sealed: SealedResources::none(),

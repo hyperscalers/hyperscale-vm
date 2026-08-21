@@ -919,7 +919,7 @@ impl Lower<'_> {
         let eval_inputs = EvalInputs {
             self_addr: node.target.address(),
             args: &bound,
-            config: &meta.config,
+            record: meta,
             node_index,
             identity: self.identity,
             sealed: self.sealed,

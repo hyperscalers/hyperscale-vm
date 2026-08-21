@@ -736,9 +736,9 @@ fn vocabulary_shape(
              that resource and denominated in it",
         ),
         CONFIG => (
-            point && bare && matches!(mode, ModeExpr::Locked | ModeExpr::Read),
-            "is the creation-fixed configuration leaf: one leaf, no material, and \
-             nothing rewrites it",
+            point && bare && (creates || matches!(mode, ModeExpr::Locked)),
+            "is the creation-fixed configuration leaf: one leaf, no material, \
+             written where absent and never rewritten",
         ),
         AUTH => (
             point && bare && matches!(mode, ModeExpr::Read | ModeExpr::Write),
@@ -2872,15 +2872,19 @@ mod tests {
             ..MethodSignature::default()
         };
 
-        // A configuration leaf is read and never rewritten; a stored
-        // authority cell is read or rewritten whole. Neither is keyed by
-        // anything and neither holds value.
+        // A configuration leaf is read, written once where absent, and
+        // never rewritten; a stored authority cell is read or rewritten
+        // whole. Neither is keyed by anything and neither holds value.
         for mode in [ModeExpr::Locked, ModeExpr::Read] {
             assert_eq!(
                 check_declarations(&plain(own_point(CONFIG, vec![]), mode)),
                 Ok(())
             );
         }
+        assert_eq!(
+            check_declarations(&creating(own_point(CONFIG, vec![]), None)),
+            Ok(())
+        );
         assert!(misshapen(&plain(own_point(CONFIG, vec![]), write())));
         for mode in [ModeExpr::Read, write()] {
             assert_eq!(

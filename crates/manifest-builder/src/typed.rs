@@ -481,7 +481,7 @@ impl<'a> TypedBuilder<'a> {
         let resources = output_resources(
             signature,
             target,
-            &meta.config,
+            meta,
             &values,
             &known,
             self.graph.len(),
@@ -662,7 +662,7 @@ fn type_args(
 pub(crate) fn output_resources(
     signature: &MethodSignature,
     target: CallTarget,
-    config: &[Value],
+    record: &InstanceMeta,
     values: &[Value],
     known: &[bool],
     node_index: u32,
@@ -671,7 +671,7 @@ pub(crate) fn output_resources(
     let inputs = EvalInputs {
         self_addr: target.address(),
         args: values,
-        config,
+        record,
         node_index,
         identity: UNBOUND,
         sealed: SealedResources::none(),
@@ -726,7 +726,7 @@ fn resolvable(expr: &Expr, known: &[bool], depth: usize) -> bool {
     }
     let deeper = |expr| resolvable(expr, known, depth + 1);
     match expr {
-        Expr::Literal(_) | Expr::SelfAddr | Expr::Config(_) => true,
+        Expr::Literal(_) | Expr::SelfAddr | Expr::SelfRecord | Expr::Config(_) => true,
         Expr::Arg(index) => usize::try_from(*index)
             .ok()
             .and_then(|index| known.get(index).copied())

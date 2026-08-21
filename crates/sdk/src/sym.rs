@@ -393,6 +393,7 @@ pub fn expr_depth(expr: &Expr) -> usize {
         | Expr::Config(_)
         | Expr::Binding(_)
         | Expr::SelfAddr
+        | Expr::SelfRecord
         | Expr::FreshId { .. }
         | Expr::FreshKey { .. } => 0,
         Expr::Field(inner, _)

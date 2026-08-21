@@ -66,8 +66,8 @@ pub struct InstanceMeta {
 pub const MAX_CONFIG_FIELDS: usize = 64;
 
 impl InstanceMeta {
-    /// The configuration leaf's stored bytes — the canonical encoding
-    /// creation locks into the `CONFIG` cell.
+    /// The configuration's canonical encoding — the preimage the
+    /// address derivation hashes.
     ///
     /// # Errors
     ///
@@ -75,6 +75,25 @@ impl InstanceMeta {
     /// caps, which no admitted creation can have produced.
     pub fn config_bytes(&self) -> Result<Vec<u8>, EncodeError> {
         to_vec(&self.config)
+    }
+
+    /// The configuration leaf's stored bytes — the canonical encoding of
+    /// the whole record, which instantiation seals into the `CONFIG`
+    /// cell.
+    ///
+    /// The leaf holds all three parts rather than the configuration
+    /// alone: routing resolves a target to a package to get the
+    /// signature it evaluates, and a hashed address gives nothing back —
+    /// the record in the leaf is what answers. Holding all three also
+    /// makes the leaf self-verifying: recompute [`Self::address`] from
+    /// its contents and compare to the owner it sits under.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError`] if the configuration is past the vocabulary's own
+    /// caps, which no admitted creation can have produced.
+    pub fn leaf_bytes(&self) -> Result<Vec<u8>, EncodeError> {
+        to_vec(self)
     }
 
     /// The address this record derives.
@@ -245,6 +264,7 @@ impl InstanceRegistry {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::from_slice;
     use hyperscale_vm_types::PrincipalAddr;
 
     use super::*;
@@ -324,14 +344,13 @@ mod tests {
     }
 
     #[test]
-    fn the_config_leaf_bytes_are_what_the_address_commits() {
+    fn the_leaf_stores_the_record_the_address_commits() {
         let meta = InstanceMeta {
             package: PackageHash(Hash32([1; 32])),
             config: vec![Value::U64(7), Value::U128(9)],
             salt: Hash32([2; 32]),
         };
-        // Certificate and state agree by literal byte equality: the
-        // preimage is the encoding creation locks into the leaf.
+        // The address commits the configuration's own encoding.
         let bytes = meta.config_bytes().expect("the config encodes");
         assert_eq!(bytes, to_vec(&meta.config).unwrap());
         assert_eq!(
@@ -343,5 +362,12 @@ mod tests {
                 meta.salt,
             )
         );
+        // The leaf stores the whole record, and the stored record is
+        // self-verifying: decode it and it derives the address it sits
+        // under.
+        let leaf = meta.leaf_bytes().expect("the record encodes");
+        let stored: InstanceMeta = from_slice(&leaf).expect("the leaf decodes");
+        assert_eq!(stored, meta);
+        assert!(stored.derives(&TestHasher, meta.address(&TestHasher)));
     }
 }
