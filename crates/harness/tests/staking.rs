@@ -19,10 +19,10 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
-    AdmissionError, EnvelopeTree, Hash32, Hasher, InstanceMeta, InstanceRegistry, IntentDecl,
-    ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, ResourceKind, ResourceRecord,
-    TestHasher, Value, admit_tree, child_key, holdings_collection, instance_data_key,
-    issued_resource, resource_record_key, route_tree,
+    AdmissionError, EnvelopeTree, Hash32, Hasher, InstanceMeta, IntentDecl, ManifestGraph,
+    PackageHash, PrefixShardResolver, Records, ResourceKind, ResourceRecord, TestHasher, Value,
+    admit_tree, child_key, holdings_collection, instance_data_key, issued_resource,
+    resource_record_key, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
@@ -119,14 +119,17 @@ fn staking_pkg() -> PackageHash {
 /// issues and the badge its operator surface admits derive from the pool's
 /// own address; nothing configures which pool it is, the emitter answers
 /// that.
-fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(account_pkg(), account::metadata());
-    cache.publish_unchecked(staking_pkg(), staking::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(account_pkg());
-    instances.create(&TestHasher, pool_meta());
-    (cache, instances)
+fn world() -> Records {
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish_unchecked(account_pkg(), account::metadata());
+    chain
+        .packages
+        .publish_unchecked(staking_pkg(), staking::metadata());
+    chain.instances.serve_principals(account_pkg());
+    chain.instances.create(&TestHasher, pool_meta());
+    chain
 }
 
 /// The pool's record: what it stakes. The resource it *issues* and the
@@ -152,8 +155,8 @@ fn pool() -> staking::Staking {
 /// signature it names and every edge carries the resource that signature
 /// declares — neither of which is written out below.
 fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -> ManifestGraph {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     write(&mut b).expect("every call types against its signature");
     b.build().expect("every output is consumed")
 }
@@ -195,7 +198,7 @@ fn a_delegation_in_the_wrong_resource_is_refused_at_admission() {
         account::deposit(b, ALICE, units)
     }));
     let identity = tree.hash(&TestHasher);
-    let refused = admit_tree(&tree, ALICE, identity, &world.0, &world.1, &TestHasher)
+    let refused = admit_tree(&tree, ALICE, identity, &world, &TestHasher)
         .expect_err("the pool takes its staked resource and this pays units");
 
     assert!(
@@ -213,7 +216,7 @@ fn a_delegation_in_the_pools_own_resource_admits() -> Result<()> {
     let world = world();
     let tree = single_intent(stake_graph(40));
     let identity = tree.hash(&TestHasher);
-    admit_tree(&tree, ALICE, identity, &world.0, &world.1, &TestHasher)
+    admit_tree(&tree, ALICE, identity, &world, &TestHasher)
         .context("the pool's own resource is what it asks for")?;
     Ok(())
 }
@@ -265,15 +268,9 @@ const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
 }
 
 /// Admit and route one envelope into its batch entry.
-fn batch_entry(
-    world: &(MetadataCache, InstanceRegistry),
-    tree: &EnvelopeTree,
-    composer: PrincipalAddr,
-) -> Result<BatchTx> {
-    let (cache, instances) = world;
+fn batch_entry(world: &Records, tree: &EnvelopeTree, composer: PrincipalAddr) -> Result<BatchTx> {
     let identity = tree.hash(&TestHasher);
-    let admitted =
-        admit_tree(tree, composer, identity, cache, instances, &TestHasher).context("admission")?;
+    let admitted = admit_tree(tree, composer, identity, world, &TestHasher).context("admission")?;
     let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
     ensure!(
         routing.per_shard.len() == 1,

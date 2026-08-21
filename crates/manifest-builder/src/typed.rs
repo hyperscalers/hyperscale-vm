@@ -24,11 +24,12 @@
 //! refused transaction and can never admit one the protocol would refuse.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Constraint, EdgeContent, EdgeRef, EvalInputs, EvidenceRef, Expr, GraphArg, Hash32, Hasher,
-    InstanceMeta, InstanceRegistry, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MetadataCache,
-    MethodSignature, PackageHash, ParamType, SealedResources, Value, evaluate_expr,
+    ChainRecords, Constraint, EdgeContent, EdgeRef, EvalInputs, EvidenceRef, Expr, GraphArg,
+    Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MethodSignature,
+    PackageHash, PackageMetadata, ParamType, SealedResources, Value, evaluate_expr,
 };
 use hyperscale_vm_types::{Address, CallTarget, PrincipalAddr, ResourceAddr};
 
@@ -248,23 +249,17 @@ const UNBOUND: ManifestHash = ManifestHash(Hash32([0; 32]));
 /// admission consults.
 pub struct TypedBuilder<'a> {
     graph: GraphBuilder,
-    cache: &'a MetadataCache,
-    instances: &'a InstanceRegistry,
+    chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,
 }
 
 impl<'a> TypedBuilder<'a> {
-    /// A builder with no nodes, typing its calls against `cache` and
-    /// resolving its targets through `instances`.
-    pub fn new(
-        cache: &'a MetadataCache,
-        instances: &'a InstanceRegistry,
-        hasher: &'a dyn Hasher,
-    ) -> Self {
+    /// A builder with no nodes, typing its calls and resolving its
+    /// targets against what `chain` answers for.
+    pub fn new(chain: &'a dyn ChainRecords, hasher: &'a dyn Hasher) -> Self {
         Self {
             graph: GraphBuilder::new(),
-            cache,
-            instances,
+            chain,
             hasher,
         }
     }
@@ -423,8 +418,8 @@ impl<'a> TypedBuilder<'a> {
         args: A,
         proofs: &[Proof],
     ) -> Result<Proof, TypedError> {
-        let (_, signature) = self.resolve(target, method)?;
-        if !signature.mints() {
+        let (_, package) = self.resolve(target, method)?;
+        if !package.methods[method].mints() {
             return Err(TypedError::UnmintingProof {
                 method: method.to_owned(),
             });
@@ -434,30 +429,29 @@ impl<'a> TypedBuilder<'a> {
         Ok(Proof { node, target })
     }
 
-    /// The instance and method signature `target` resolves to — the
-    /// lookup every typed verdict starts from, borrowing the caller's
-    /// tables rather than the builder so appending stays free.
+    /// The instance and package a target's call resolves through, held
+    /// as shared handles so the signature can be read out of them for as
+    /// long as the caller keeps the pair.
     fn resolve(
         &self,
         target: CallTarget,
         method: &str,
-    ) -> Result<(&'a InstanceMeta, &'a MethodSignature), TypedError> {
+    ) -> Result<(Arc<InstanceMeta>, Arc<PackageMetadata>), TypedError> {
         let meta = self
-            .instances
-            .get(target)
+            .chain
+            .instance(target)
             .ok_or_else(|| TypedError::UnknownInstance(target.address()))?;
         let package = self
-            .cache
-            .get(meta.package)
+            .chain
+            .package(meta.package)
             .ok_or(TypedError::UnknownPackage(meta.package))?;
-        let signature = package
-            .methods
-            .get(method)
-            .ok_or_else(|| TypedError::UnknownMethod {
+        if !package.methods.contains_key(method) {
+            return Err(TypedError::UnknownMethod {
                 package: meta.package,
                 method: method.to_owned(),
-            })?;
-        Ok((meta, signature))
+            });
+        }
+        Ok((meta, package))
     }
 
     fn append(
@@ -467,7 +461,9 @@ impl<'a> TypedBuilder<'a> {
         args: impl Args,
         proofs: &[Proof],
     ) -> Result<(u32, Outputs), TypedError> {
-        let (meta, signature) = self.resolve(target, method)?;
+        let (meta, package) = self.resolve(target, method)?;
+        let signature = &package.methods[method];
+        let meta = meta.as_ref();
         let hasher = self.hasher;
 
         let args = args.bind_all(&self.graph);

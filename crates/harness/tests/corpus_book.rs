@@ -30,10 +30,9 @@ fn place_graph() -> ManifestGraph {
 /// the book does not price buys real base with it.
 #[test]
 fn each_side_of_the_book_takes_only_its_own_resource() {
-    let (cache, instances) = world();
+    let chain = world();
     let refused = |graph: &ManifestGraph, signer| {
-        admit(graph, signer, &cache, &instances, &TestHasher)
-            .expect_err("the book declares which side this is")
+        admit(graph, signer, &chain, &TestHasher).expect_err("the book declares which side this is")
     };
 
     // A maker escrowing quote where the book escrows base.
@@ -69,8 +68,8 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
     );
 
     // The controls: each side in the resource it is declared in.
-    admit(&place_graph(), MAKER, &cache, &instances, &TestHasher).expect("an ask in base admits");
-    admit(&fill_graph(), TAKER, &cache, &instances, &TestHasher).expect("a fill in quote admits");
+    admit(&place_graph(), MAKER, &chain, &TestHasher).expect("an ask in base admits");
+    admit(&fill_graph(), TAKER, &chain, &TestHasher).expect("a fill in quote admits");
 }
 
 #[test]
@@ -139,7 +138,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
     };
 
     // The placed ask landed at the declared fresh sequence.
-    let admitted = admit(&place, MAKER, &world.0, &world.1, &TestHasher).unwrap();
+    let admitted = admit(&place, MAKER, &world, &TestHasher).unwrap();
     let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0);
     let placed_ask = EntryKey {
         owner: Address::from(book()),

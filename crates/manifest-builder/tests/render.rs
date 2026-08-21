@@ -5,7 +5,7 @@
 //! somebody before they sign.
 
 use hyperscale_vm_effects::{
-    Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash, TestHasher, Value,
+    Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
 };
 use hyperscale_vm_fixtures::{amm, splitter};
 use hyperscale_vm_manifest_builder::{GraphBuilder, Names, Param, TypedBuilder, render};
@@ -45,16 +45,23 @@ fn splitter() -> ComponentAddr {
     instance("splitter", vec![]).address(&TestHasher)
 }
 
-fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg("account"), account::metadata());
-    cache.publish_unchecked(pkg("amm"), amm::metadata());
-    cache.publish_unchecked(pkg("splitter"), splitter::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg("account"));
-    instances.create(&TestHasher, instance("amm", pair()));
-    instances.create(&TestHasher, instance("splitter", vec![]));
-    (cache, instances)
+fn world() -> Records {
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish_unchecked(pkg("account"), account::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("amm"), amm::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("splitter"), splitter::metadata());
+    chain.instances.serve_principals(pkg("account"));
+    chain.instances.create(&TestHasher, instance("amm", pair()));
+    chain
+        .instances
+        .create(&TestHasher, instance("splitter", vec![]));
+    chain
 }
 
 /// What a wallet knows the addresses by.
@@ -70,8 +77,8 @@ fn vocabulary() -> Names {
 
 #[test]
 fn a_swap_reads_as_the_surface_syntax_names_it() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice_proof = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice_proof, XRD, 100).unwrap();
     let proceeds = pool().swap(&mut b, funds, 1).unwrap();
@@ -81,15 +88,7 @@ fn a_swap_reads_as_the_surface_syntax_names_it() {
     // The shape [08](08-manifest.md) promises, reached from a graph that
     // knows none of these words until the caller supplies them.
     assert_eq!(
-        render(
-            &graph,
-            &cache,
-            &instances,
-            &TestHasher,
-            NETWORK,
-            &vocabulary()
-        )
-        .unwrap(),
+        render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap(),
         "alice.authorize();\n\
          let xrd = alice.withdraw(@xrd, 100);\n\
          let usdc = pool.swap(xrd, 1);\n\
@@ -99,22 +98,14 @@ fn a_swap_reads_as_the_surface_syntax_names_it() {
 
 #[test]
 fn an_unnamed_address_renders_as_itself_and_types_its_binding() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice_proof = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice_proof, XRD, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
 
-    let text = render(
-        &graph,
-        &cache,
-        &instances,
-        &TestHasher,
-        NETWORK,
-        &Names::none(),
-    )
-    .unwrap();
+    let text = render(&graph, &chain, &TestHasher, NETWORK, &Names::none()).unwrap();
     // Nothing is named, so every address is its own bech32m form and the
     // binding falls back to a positional name carrying its type.
     let alice = ALICE.address().to_text(NETWORK).unwrap();
@@ -132,8 +123,8 @@ fn an_unnamed_address_renders_as_itself_and_types_its_binding() {
 
 #[test]
 fn a_split_binds_both_halves_and_numbers_the_repeat() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice_proof = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice_proof, XRD, 100).unwrap();
     let [taken, rest] = splitter::take(&mut b, splitter(), funds, 30).unwrap();
@@ -145,15 +136,7 @@ fn a_split_binds_both_halves_and_numbers_the_repeat() {
     // taken three times and the later two say which they are. The bound
     // the author asserted rides its own use site.
     assert_eq!(
-        render(
-            &graph,
-            &cache,
-            &instances,
-            &TestHasher,
-            NETWORK,
-            &vocabulary()
-        )
-        .unwrap(),
+        render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap(),
         "alice.authorize();\n\
          let xrd = alice.withdraw(@xrd, 100);\n\
          let xrd2, xrd3 = splitter.take(xrd, 30);\n\
@@ -164,7 +147,7 @@ fn a_split_binds_both_halves_and_numbers_the_repeat() {
 
 #[test]
 fn a_graph_renders_without_any_metadata_at_all() {
-    let (cache, instances) = world();
+    let chain = world();
     let mut b = GraphBuilder::new();
     let [] = b.call_signed(ALICE, "authorize", ());
     let [funds] = b.call_bearing(ALICE, "withdraw", (XRD, 100u128), 0);
@@ -175,15 +158,7 @@ fn a_graph_renders_without_any_metadata_at_all() {
     // and the arity is whatever the consumers named. Targets, methods and
     // positional arguments still read, and the author's own assertion is
     // the only thing left saying what the edge carries.
-    let text = render(
-        &graph,
-        &MetadataCache::new(),
-        &InstanceRegistry::new(),
-        &TestHasher,
-        NETWORK,
-        &vocabulary(),
-    )
-    .unwrap();
+    let text = render(&graph, &Records::new(), &TestHasher, NETWORK, &vocabulary()).unwrap();
     assert_eq!(
         text,
         "alice.authorize();\n\
@@ -193,15 +168,7 @@ fn a_graph_renders_without_any_metadata_at_all() {
     // The same graph against the real world types the binding instead,
     // and the assertion stops being worth printing twice.
     assert_eq!(
-        render(
-            &graph,
-            &cache,
-            &instances,
-            &TestHasher,
-            NETWORK,
-            &vocabulary()
-        )
-        .unwrap(),
+        render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap(),
         "alice.authorize();\n\
          let xrd = alice.withdraw(@xrd, 100);\n\
          bob.deposit(xrd);\n"
@@ -210,22 +177,14 @@ fn a_graph_renders_without_any_metadata_at_all() {
 
 #[test]
 fn a_yield_parameter_renders_as_the_hole_it_is() {
-    let (cache, instances) = world();
+    let chain = world();
     let mut b = GraphBuilder::new();
     let [funds] = b.call(ALICE, "withdraw", (XRD, 100u128));
     let _ = b.export(funds);
     let [] = b.call(ALICE, "deposit", (Param(0),));
     let graph = b.build().unwrap();
 
-    let text = render(
-        &graph,
-        &cache,
-        &instances,
-        &TestHasher,
-        NETWORK,
-        &vocabulary(),
-    )
-    .unwrap();
+    let text = render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap();
     // The exported edge has no consumer in this graph, so nothing names
     // its binding; the hole the composition will fill is `$0`.
     assert!(text.ends_with("alice.deposit($0);\n"), "{text}");
@@ -233,21 +192,14 @@ fn a_yield_parameter_renders_as_the_hole_it_is() {
 
 #[test]
 fn a_network_word_the_encoding_refuses_fails_here_too() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice_proof = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice_proof, XRD, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     assert!(matches!(
-        render(
-            &graph,
-            &cache,
-            &instances,
-            &TestHasher,
-            "Main Net",
-            &Names::none()
-        ),
+        render(&graph, &chain, &TestHasher, "Main Net", &Names::none()),
         Err(TextError::InvalidCharacter(_))
     ));
 }

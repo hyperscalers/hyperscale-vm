@@ -30,6 +30,7 @@ pub mod manifest;
 pub mod metadata;
 pub mod presented;
 pub mod publish;
+pub mod records;
 pub mod resource;
 pub mod route;
 pub mod rule;
@@ -90,6 +91,7 @@ pub use publish::{
     SignatureError, check_abi, check_declarations, check_metadata, check_signature, seal_clauses,
     seals,
 };
+pub use records::{ChainRecords, Composed, Records};
 pub use resource::{
     MAX_RESOURCE_MATERIAL_PARTS, RECORD_WIRE_DEPTH, ResourceKind, ResourceMeta, ResourceRecord,
     ResourceRules, SealedBehaviour, holdings_collection, holdings_entry, holdings_range,

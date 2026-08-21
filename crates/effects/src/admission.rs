@@ -15,6 +15,7 @@
 //! reach the identical one.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectConflict, EffectTarget, Mode, Presence, PrincipalAddr,
@@ -28,12 +29,13 @@ use crate::dsl::{
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
-use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
+use crate::instance::{InstanceMeta, ResolveError};
 use crate::invoke::{CallArg, EdgeBound, NodeCall};
 use crate::manifest::{Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
-use crate::metadata::{MetadataCache, PackageHash};
+use crate::metadata::{PackageHash, PackageMetadata};
 use crate::presented::Presented;
-use crate::publish::seals;
+use crate::publish::{CheckedSignature, seals};
+use crate::records::ChainRecords;
 use crate::resource::{ResourceKind, issued_resource};
 use crate::route::{FrameDeclaration, MAX_MANIFEST_NODES};
 use crate::rule::Rule;
@@ -535,8 +537,7 @@ impl Admitted {
 pub fn admit(
     graph: &ManifestGraph,
     composer: PrincipalAddr,
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
+    chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
     check_value_depth(graph)?;
@@ -549,8 +550,7 @@ pub fn admit(
             signer: Some(composer),
         }],
         identity,
-        cache,
-        instances,
+        chain,
         &BTreeSet::new(),
         SealedResources::none(),
         hasher,
@@ -674,8 +674,7 @@ pub(crate) struct IntentView<'a> {
 pub(crate) fn admit_intents(
     intents: &[IntentView<'_>],
     identity: ManifestHash,
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
+    chain: &dyn ChainRecords,
     presented: &BTreeSet<Address>,
     sealed: &SealedResources,
     hasher: &dyn Hasher,
@@ -692,8 +691,7 @@ pub(crate) fn admit_intents(
     let mut lower = Lower {
         intents,
         identity,
-        cache,
-        instances,
+        chain,
         presented,
         sealed,
         hasher,
@@ -867,13 +865,33 @@ fn interleave(
     Ok((flat_of, order))
 }
 
+/// The two records one call resolves through, held as long as the
+/// signature read out of them is.
+struct Resolved {
+    instance: Arc<InstanceMeta>,
+    package: Arc<PackageMetadata>,
+}
+
+impl Resolved {
+    /// The checked signature of `method` on the resolved package.
+    ///
+    /// The witness is the cache's invariant: everything behind the
+    /// publish door passed the composed signature check when it entered,
+    /// so a record reached through here needs no second judgment.
+    fn method(&self, method: &str) -> Option<CheckedSignature<'_>> {
+        self.package
+            .methods
+            .get(method)
+            .map(CheckedSignature::trusted)
+    }
+}
+
 /// The per-node lowering: everything [`admit_intents`] does with one
 /// emitted node, over the accumulators the flattened order threads.
 struct Lower<'a> {
     intents: &'a [IntentView<'a>],
     identity: ManifestHash,
-    cache: &'a MetadataCache,
-    instances: &'a InstanceRegistry,
+    chain: &'a dyn ChainRecords,
     /// The component addresses the envelope's own records resolve, and
     /// nothing committed does.
     ///
@@ -909,7 +927,7 @@ struct Lower<'a> {
     table_len: u32,
 }
 
-impl<'a> Lower<'a> {
+impl Lower<'_> {
     fn lower_node(
         &mut self,
         intent_index: usize,
@@ -920,7 +938,9 @@ impl<'a> Lower<'a> {
         let node_index =
             u32::try_from(self.lowered.len()).map_err(|_| AdmissionError::TooManyNodes)?;
         let local = u32::try_from(local_index).map_err(|_| AdmissionError::TooManyNodes)?;
-        let (meta, signature) = self.resolve_call(node, node_index)?;
+        let resolved = self.resolve_records(node)?;
+        let signature = self.resolve_signature(&resolved, node, node_index)?;
+        let meta = resolved.instance.as_ref();
 
         let (bound, inputs) = self.bind_args(intent_index, local, node, signature, node_index)?;
         let evidence =
@@ -1012,33 +1032,44 @@ impl<'a> Lower<'a> {
         Ok(())
     }
 
-    /// The record and signature a node's call resolves to, held to what
-    /// this envelope may say about them.
+    /// The two records a node's call resolves through: the instance its
+    /// target names, and the package that instance runs.
     ///
-    /// The chain from an address through its record and package to the
-    /// named signature, refused at the first broken link — and then two
-    /// judgments the signature makes possible: whether a record the
-    /// envelope carried may stand for this call at all, and whether the
-    /// arguments match what the method declares.
-    fn resolve_call(
+    /// Held as shared handles rather than borrowed out of a collection,
+    /// because the chain's records need not be a map this can point
+    /// into. The caller keeps the pair alive for as long as it reads the
+    /// signature out of it.
+    fn resolve_records(&self, node: &GraphNode) -> Result<Resolved, AdmissionError> {
+        let instance = self
+            .chain
+            .instance(node.target)
+            .ok_or_else(|| ResolveError::UnknownInstance(node.target.address()))?;
+        let package = self
+            .chain
+            .package(instance.package)
+            .ok_or(ResolveError::UnknownPackage(instance.package))?;
+        Ok(Resolved { instance, package })
+    }
+
+    /// The signature a node's call names, held to what this envelope may
+    /// say about it.
+    ///
+    /// The last link of the chain from an address through its record and
+    /// package — and then two judgments the signature makes possible:
+    /// whether a record the envelope carried may stand for this call at
+    /// all, and whether the arguments match what the method declares.
+    fn resolve_signature<'r>(
         &self,
+        resolved: &'r Resolved,
         node: &GraphNode,
         node_index: u32,
-    ) -> Result<(&'a InstanceMeta, &'a MethodSignature), AdmissionError> {
-        let meta = self
-            .instances
-            .get(node.target)
-            .ok_or_else(|| ResolveError::UnknownInstance(node.target.address()))?;
-        self.cache
-            .get(meta.package)
-            .ok_or(ResolveError::UnknownPackage(meta.package))?;
+    ) -> Result<&'r MethodSignature, AdmissionError> {
         // The witness, not the record: everything behind the cache door
         // passed the composed signature check, so nothing below re-asks.
-        let checked = self
-            .cache
-            .method(meta.package, &node.method)
+        let checked = resolved
+            .method(&node.method)
             .ok_or_else(|| ResolveError::UnknownMethod {
-                package: meta.package,
+                package: resolved.instance.package,
                 method: node.method.clone(),
             })?;
         let signature = checked.signature();
@@ -1060,7 +1091,7 @@ impl<'a> Lower<'a> {
                 found: node.args.len(),
             });
         }
-        Ok((meta, signature))
+        Ok(signature)
     }
 
     /// The instantiation fence for a node's target: the read of its

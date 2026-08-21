@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
+use std::sync::Arc;
 
 use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{Address, SubstateKey};
@@ -117,7 +118,7 @@ impl PackageMetadata {
 /// first-write-wins.
 #[derive(Clone, Debug, Default)]
 pub struct MetadataCache {
-    packages: BTreeMap<PackageHash, PackageMetadata>,
+    packages: BTreeMap<PackageHash, Arc<PackageMetadata>>,
 }
 
 impl MetadataCache {
@@ -167,13 +168,13 @@ impl MetadataCache {
     fn store(&mut self, hash: PackageHash, metadata: PackageMetadata) {
         match self.packages.entry(hash) {
             Entry::Vacant(slot) => {
-                slot.insert(metadata);
+                slot.insert(Arc::new(metadata));
             }
             // The hash is the content address, so a divergent re-publish
             // is a collision or a caller defect; the first record stands
             // either way.
             Entry::Occupied(stored) => {
-                debug_assert_eq!(*stored.get(), metadata, "one package hash, two records");
+                debug_assert_eq!(**stored.get(), metadata, "one package hash, two records");
             }
         }
     }
@@ -194,7 +195,15 @@ impl MetadataCache {
     /// Look up a package's metadata.
     #[must_use]
     pub fn get(&self, hash: PackageHash) -> Option<&PackageMetadata> {
-        self.packages.get(&hash)
+        self.packages.get(&hash).map(AsRef::as_ref)
+    }
+
+    /// The shared handle to a package's metadata — what this cache
+    /// answers a [`ChainRecords`](crate::records::ChainRecords) lookup
+    /// with.
+    #[must_use]
+    pub fn record(&self, hash: PackageHash) -> Option<Arc<PackageMetadata>> {
+        self.packages.get(&hash).map(Arc::clone)
     }
 }
 

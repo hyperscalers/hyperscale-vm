@@ -11,9 +11,8 @@ use std::collections::BTreeSet;
 use hyperscale_vm_types::CallTarget;
 
 use crate::dsl::{Clause, ModeExpr};
-use crate::instance::InstanceRegistry;
 use crate::manifest::{Manifest, NodeInput};
-use crate::metadata::MetadataCache;
+use crate::records::ChainRecords;
 use crate::route::ShardResolver;
 use crate::signature::{MethodSignature, Totality};
 use crate::types::EdgeContent;
@@ -93,11 +92,10 @@ pub struct StarShape {
 #[must_use]
 pub fn classify(
     manifest: &Manifest,
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
+    chain: &dyn ChainRecords,
     shards: &dyn ShardResolver,
 ) -> StarShape {
-    let roles = classify_roles(manifest, cache, instances);
+    let roles = classify_roles(manifest, chain);
     let (crossings, stages) = chain_depths(manifest, shards, &roles);
     let strategy = classify_strategy(manifest, &roles, crossings, stages);
     StarShape {
@@ -125,11 +123,7 @@ pub fn classify(
 /// about. That direction is the safe one: a node wrongly called core
 /// costs the transaction a decomposition it could have had, while a leg
 /// wrongly peeled off the core costs the atomicity the core exists for.
-fn classify_roles(
-    manifest: &Manifest,
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
-) -> Vec<Role> {
+fn classify_roles(manifest: &Manifest, chain: &dyn ChainRecords) -> Vec<Role> {
     let consumed: BTreeSet<u32> = manifest
         .nodes
         .iter()
@@ -145,10 +139,12 @@ fn classify_roles(
         .iter()
         .enumerate()
         .map(|(index, node)| {
-            let signature = CallTarget::try_from(node.target)
+            let resolved = CallTarget::try_from(node.target)
                 .ok()
-                .and_then(|target| instances.get(target))
-                .and_then(|meta| cache.get(meta.package))
+                .and_then(|target| chain.instance(target))
+                .and_then(|meta| chain.package(meta.package));
+            let signature = resolved
+                .as_ref()
                 .and_then(|pkg| pkg.methods.get(&node.method));
             let Some(signature) = signature else {
                 return Role::Core;
@@ -295,9 +291,9 @@ mod tests {
     use super::{MAX_STAGED_DEPTH, Role, Strategy, classify, classify_strategy};
     use crate::dsl::{Expr, ModeExpr};
     use crate::hash::TestHasher;
-    use crate::instance::InstanceRegistry;
     use crate::manifest::{Bounds, Manifest, Node, NodeInput};
-    use crate::metadata::{MetadataCache, PackageMetadata};
+    use crate::metadata::PackageMetadata;
+    use crate::records::Records;
     use crate::route::ShardResolver;
     use crate::signature::{MethodSignature, Totality};
     use crate::test_worlds::{
@@ -307,16 +303,15 @@ mod tests {
     use crate::types::{EdgeContent, SlotId, Value};
 
     /// One instance calling itself: nothing to decompose.
-    fn solo_world() -> (MetadataCache, InstanceRegistry, Manifest) {
-        let mut cache = MetadataCache::new();
+    fn solo_world() -> (Records, Manifest) {
+        let mut chain = Records::new();
         let mut solo = PackageMetadata::default();
         solo.methods.insert(
             "act".into(),
             method(vec![self_point(SlotId(1), ModeExpr::Delta)]),
         );
-        cache.publish_unchecked(pkg("solo"), solo);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("solo"));
+        chain.packages.publish_unchecked(pkg("solo"), solo);
+        chain.instances.create(&TestHasher, meta_of("solo"));
         let manifest = Manifest {
             nodes: vec![Node {
                 target: instance_of("solo").into(),
@@ -325,15 +320,15 @@ mod tests {
                 evidence: Vec::new(),
             }],
         };
-        (cache, instances, manifest)
+        (chain, manifest)
     }
 
     /// A call that stays on one shard crosses nothing, so a staged
     /// execution of it would pay for no boundary at all.
     #[test]
     fn a_single_shard_transaction_alternates_zero_times() {
-        let (cache, instances, manifest) = solo_world();
-        let star = classify(&manifest, &cache, &instances, &resolver());
+        let (chain, manifest) = solo_world();
+        let star = classify(&manifest, &chain, &resolver());
         assert_eq!(star.crossings, 0);
     }
 
@@ -343,13 +338,13 @@ mod tests {
     /// shard it already visited has crossed twice, not once.
     #[test]
     fn a_call_to_another_shard_alternates_once() {
-        let (cache, instances, manifest) = payer_payee_world();
+        let (chain, manifest) = payer_payee_world();
         assert_ne!(
             resolver().shard_of(instance_of("payer").into()),
             resolver().shard_of(instance_of("payee").into()),
             "the fixture has to straddle, or the depth below proves nothing",
         );
-        let star = classify(&manifest, &cache, &instances, &resolver());
+        let star = classify(&manifest, &chain, &resolver());
         assert_eq!(star.crossings, 1);
     }
 
@@ -358,7 +353,7 @@ mod tests {
     /// shard is a boundary even though neither node calls the other.
     #[test]
     fn a_value_edge_across_shards_alternates_once() {
-        let mut cache = MetadataCache::new();
+        let mut chain = Records::new();
         let mut producing = PackageMetadata::default();
         producing.methods.insert(
             "make".into(),
@@ -374,11 +369,10 @@ mod tests {
             "take".into(),
             method(vec![self_point(SlotId(2), ModeExpr::Delta)]),
         );
-        cache.publish_unchecked(pkg("producer"), producing);
-        cache.publish_unchecked(pkg("consumer"), consuming);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("producer"));
-        instances.create(&TestHasher, meta_of("consumer"));
+        chain.packages.publish_unchecked(pkg("producer"), producing);
+        chain.packages.publish_unchecked(pkg("consumer"), consuming);
+        chain.instances.create(&TestHasher, meta_of("producer"));
+        chain.instances.create(&TestHasher, meta_of("consumer"));
         assert_ne!(
             resolver().shard_of(instance_of("producer").into()),
             resolver().shard_of(instance_of("consumer").into()),
@@ -408,7 +402,7 @@ mod tests {
             ],
         };
 
-        let star = classify(&manifest, &cache, &instances, &resolver());
+        let star = classify(&manifest, &chain, &resolver());
         assert_eq!(star.crossings, 1);
     }
 
@@ -417,8 +411,8 @@ mod tests {
     /// reserve is what lets its refusal release rather than abort.
     #[test]
     fn a_reservation_shaped_source_is_an_inbound_leg() {
-        let (cache, instances, manifest) = star_world(Totality::Fallible);
-        let star = classify(&manifest, &cache, &instances, &resolver());
+        let (chain, manifest) = star_world(Totality::Fallible);
+        let star = classify(&manifest, &chain, &resolver());
         assert_eq!(star.roles[0], Role::Inbound);
         assert_eq!(star.roles[1], Role::Core, "the venue is the core");
     }
@@ -434,8 +428,8 @@ mod tests {
             (Totality::Infallible, Role::Core),
             (Totality::Total, Role::Outbound),
         ] {
-            let (cache, instances, manifest) = star_world(totality);
-            let star = classify(&manifest, &cache, &instances, &resolver());
+            let (chain, manifest) = star_world(totality);
+            let star = classify(&manifest, &chain, &resolver());
             assert_eq!(
                 star.roles[2], expected,
                 "a {totality:?} sink should be {expected:?}",
@@ -448,7 +442,7 @@ mod tests {
     /// before the core runs, which is the whole of L3's test.
     #[test]
     fn a_reservation_fed_by_the_core_joins_it() {
-        let (cache, instances, _) = star_world(Totality::Fallible);
+        let (chain, _) = star_world(Totality::Fallible);
         // The venue first, and the same reservation-shaped method after
         // it — its amount now the venue's output rather than a literal.
         let manifest = Manifest {
@@ -480,7 +474,7 @@ mod tests {
             ],
         };
 
-        let star = classify(&manifest, &cache, &instances, &resolver());
+        let star = classify(&manifest, &chain, &resolver());
         assert_eq!(
             star.roles[1],
             Role::Core,
@@ -492,8 +486,8 @@ mod tests {
     /// the same execution and the verdict is the one claiming less.
     #[test]
     fn a_single_shard_transaction_does_not_decompose() {
-        let (cache, instances, manifest) = solo_world();
-        let star = classify(&manifest, &cache, &instances, &resolver());
+        let (chain, manifest) = solo_world();
+        let star = classify(&manifest, &chain, &resolver());
         assert_eq!(star.crossings, 0);
         assert_eq!(star.strategy, Strategy::Replicated);
     }
@@ -504,8 +498,8 @@ mod tests {
     /// a verdict quietly meaning something else.
     #[test]
     fn a_crossing_within_the_budget_decomposes() {
-        let (cache, instances, manifest) = payer_payee_world();
-        let star = classify(&manifest, &cache, &instances, &resolver());
+        let (chain, manifest) = payer_payee_world();
+        let star = classify(&manifest, &chain, &resolver());
         assert!(star.crossings <= MAX_STAGED_DEPTH);
         assert_eq!(star.strategy, Strategy::LegLocal);
     }
@@ -539,8 +533,8 @@ mod tests {
     /// moved, so nothing bounds a fabricated one.
     #[test]
     fn a_leg_moving_named_instances_replicates() {
-        let (cache, instances, manifest) = star_world(Totality::Total);
-        let fungible = classify(&manifest, &cache, &instances, &resolver());
+        let (chain, manifest) = star_world(Totality::Total);
+        let fungible = classify(&manifest, &chain, &resolver());
         assert_eq!(fungible.roles[0], Role::Inbound);
         assert_eq!(fungible.strategy, Strategy::LegLocal);
 
@@ -553,7 +547,7 @@ mod tests {
             content: EdgeContent::NonFungible { ids: vec![7] },
             bounds: Bounds::default(),
         }];
-        let star = classify(&named, &cache, &instances, &resolver());
+        let star = classify(&named, &chain, &resolver());
         assert_eq!(star.strategy, Strategy::Replicated);
     }
 }

@@ -13,9 +13,7 @@
 //! questions can sign an envelope, and a verifier that agrees with it can
 //! accept the result.
 
-use hyperscale_vm_effects::{
-    EnvelopeTree, Hasher, InstanceRegistry, IntentDecl, MetadataCache, PackageHash, TestHasher,
-};
+use hyperscale_vm_effects::{EnvelopeTree, Hasher, IntentDecl, PackageHash, Records, TestHasher};
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap};
 use hyperscale_vm_stdlib::account;
@@ -82,13 +80,14 @@ fn expected_signature(key: &[u8], digest: &[u8; 32]) -> Vec<u8> {
     signature
 }
 
-fn world() -> (MetadataCache, InstanceRegistry) {
+fn world() -> Records {
     let package = PackageHash(TestHasher.hash(b"package", &[b"account"]));
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(package, account::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(package);
-    (cache, instances)
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish_unchecked(package, account::metadata());
+    chain.instances.serve_principals(package);
+    chain
 }
 
 const fn terms() -> Terms {
@@ -105,8 +104,8 @@ const fn terms() -> Terms {
 /// — with no crate outside this workspace in the path.
 #[test]
 fn a_transaction_signs_and_verifies_inside_this_workspace() {
-    let (cache, instances) = world();
-    let mut builder = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut builder = TypedBuilder::new(&chain, &TestHasher);
     let alice = account::authorize(&mut builder, ALICE).expect("an account signs in");
     let funds = account::withdraw(&mut builder, alice, RES, 100).expect("an account withdraws");
     account::deposit(&mut builder, BOB, funds).expect("an account is paid");
@@ -143,8 +142,8 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
 /// scheme or moving a signed field loses it.
 #[test]
 fn the_signature_covers_what_the_envelope_says() {
-    let (cache, instances) = world();
-    let mut builder = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut builder = TypedBuilder::new(&chain, &TestHasher);
     let alice = account::authorize(&mut builder, ALICE).expect("an account signs in");
     let funds = account::withdraw(&mut builder, alice, RES, 100).expect("an account withdraws");
     account::deposit(&mut builder, BOB, funds).expect("an account is paid");

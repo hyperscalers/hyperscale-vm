@@ -3,8 +3,8 @@
 //! them.
 
 use hyperscale_vm_effects::{
-    Constraint, EdgeRef, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
-    MetadataCache, PackageHash, ResourceKind, TestHasher, Value, admit, issued_resource,
+    Constraint, EdgeRef, GraphArg, Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash,
+    Records, ResourceKind, TestHasher, Value, admit, issued_resource,
 };
 use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -58,16 +58,21 @@ fn unit() -> ResourceAddr {
     )
 }
 
-fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg("account"), account::metadata());
-    cache.publish_unchecked(pkg("splitter"), splitter::metadata());
-    cache.publish_unchecked(pkg("staking"), staking::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg("account"));
-    instances.create(&TestHasher, splitter_meta());
-    instances.create(&TestHasher, pool_meta());
-    (cache, instances)
+fn world() -> Records {
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish_unchecked(pkg("account"), account::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("splitter"), splitter::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("staking"), staking::metadata());
+    chain.instances.serve_principals(pkg("account"));
+    chain.instances.create(&TestHasher, splitter_meta());
+    chain.instances.create(&TestHasher, pool_meta());
+    chain
 }
 
 /// The resource every edge argument of `node` asserts, in argument order —
@@ -90,8 +95,8 @@ fn asserted(graph: &ManifestGraph, node: usize) -> Vec<Option<ResourceAddr>> {
 
 #[test]
 fn a_typed_edge_asserts_its_own_resource() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     // Nothing here says the withdrawal produces `RES`; `withdraw`'s
     // declared output does, and the deposit carries the assertion.
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
@@ -103,13 +108,13 @@ fn a_typed_edge_asserts_its_own_resource() {
     b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
     assert_eq!(asserted(&graph, 2), vec![Some(RES)]);
-    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
 fn a_split_of_a_typed_edge_is_two_typed_edges() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
@@ -142,13 +147,13 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
             constraints: vec![Constraint::ResourceIs(RES), Constraint::MinAmount(1)],
         }]
     );
-    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
 fn a_pool_types_its_units_by_itself() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
@@ -162,13 +167,13 @@ fn a_pool_types_its_units_by_itself() {
     b.call(ALICE, "deposit", (units,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
     assert_eq!(asserted(&graph, 3), vec![Some(unit())]);
-    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
 fn an_edge_nothing_typed_stays_untyped() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     // The untyped path mints an edge with no declared type behind it.
     // `take` types its outputs by that edge, so neither output can be
     // typed either — and the layer leaves them alone rather than guessing.
@@ -190,13 +195,13 @@ fn an_edge_nothing_typed_stays_untyped() {
     assert_eq!(asserted(&graph, 3), vec![None]);
     // Untyped is not unadmitted: admission evaluates the same output
     // expressions against the graph it can see whole.
-    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
 fn an_asserted_type_carries_through_the_untyped_path() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     // An author who types the edge by hand tells the layer as much as a
     // signature would, and the type propagates from the assertion.
     let sign_in = b.untyped().len();
@@ -216,8 +221,8 @@ fn an_asserted_type_carries_through_the_untyped_path() {
 #[test]
 #[should_panic(expected = "types this edge as a different resource")]
 fn a_typed_edge_refuses_a_contradicting_assertion() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
@@ -229,8 +234,8 @@ fn a_typed_edge_refuses_a_contradicting_assertion() {
 
 #[test]
 fn a_call_is_typed_against_the_signature_it_names() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
 
     // Four of admission's verdicts, reached one graph early.
     assert!(matches!(
@@ -273,8 +278,8 @@ fn a_call_is_typed_against_the_signature_it_names() {
 
 #[test]
 fn a_refused_call_appends_nothing() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
@@ -290,13 +295,13 @@ fn a_refused_call_appends_nothing() {
     b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
     assert_eq!(graph.nodes.len(), 3);
-    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
 fn a_target_or_method_that_does_not_resolve_is_refused() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     assert!(matches!(
         b.call(ComponentAddr::new([0xAA; 31]), "take", (30u128,)),
         Err(TypedError::UnknownInstance(_))
@@ -309,8 +314,8 @@ fn a_target_or_method_that_does_not_resolve_is_refused() {
 
 #[test]
 fn outputs_unpack_only_into_the_arity_the_method_declares() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     // Naming a slot the producer does not have takes stating an arity,
     // and the signature is what an arity is checked against.
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();

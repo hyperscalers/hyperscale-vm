@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 use common::{ALICE, account, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
     EdgeContent, EdgeRef, EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta,
-    InstanceRegistry, ManifestGraph, ManifestHash, MetadataCache, SealedResources, SlotId,
-    TestHasher, Value, admit, evaluate_expr, route,
+    InstanceRegistry, ManifestGraph, ManifestHash, Records, SealedResources, SlotId, TestHasher,
+    Value, admit, evaluate_expr, route,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, ResourceAddr,
@@ -143,11 +143,10 @@ proptest! {
         resource_byte in any::<u8>(),
     ) {
         let resource = Address::new([resource_byte; 31], AddressClass::Resource);
-        let mut cache = MetadataCache::new();
-        cache.publish_unchecked(pkg("account"), account::metadata());
-        let mut instances = InstanceRegistry::new();
-        let sender = instance(&mut instances, "account", 0, sender_byte);
-        let recipient = instance(&mut instances, "account", 1, recipient_byte);
+        let mut chain = Records::new();
+        chain.packages.publish_unchecked(pkg("account"), account::metadata());
+        let sender = instance(&mut chain.instances, "account", 0, sender_byte);
+        let recipient = instance(&mut chain.instances, "account", 1, recipient_byte);
         let graph = ManifestGraph {
             nodes: vec![
                 GraphNode {
@@ -176,7 +175,7 @@ proptest! {
                 },
             ],
         };
-        let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+        let admitted = admit(&graph, ALICE, &chain, &TestHasher).unwrap();
         let first = route(&admitted, &resolver());
         let second = route(&admitted, &resolver());
         assert_eq!(first, second);
@@ -199,14 +198,13 @@ proptest! {
         resource_byte in any::<u8>(),
     ) {
         let resource = Address::new([resource_byte; 31], AddressClass::Resource);
-        let mut cache = MetadataCache::new();
-        cache.publish_unchecked(pkg("account"), account::metadata());
+        let mut chain = Records::new();
+        chain.packages.publish_unchecked(pkg("account"), account::metadata());
         // Each instance sits at the address its own record derives, so
         // distinct salt lanes are what keep the sender and any generated
         // recipient apart — no address is picked.
-        let mut instances = InstanceRegistry::new();
-        let recipient = instance(&mut instances, "account", 1, recipient_byte);
-        let sender = instance(&mut instances, "account", 0, 0);
+        let recipient = instance(&mut chain.instances, "account", 1, recipient_byte);
+        let sender = instance(&mut chain.instances, "account", 0, 0);
         let graph = ManifestGraph {
             nodes: vec![
                 GraphNode {
@@ -235,7 +233,7 @@ proptest! {
                 },
             ],
         };
-        let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+        let admitted = admit(&graph, ALICE, &chain, &TestHasher).unwrap();
         let first = route(&admitted, &resolver());
         let second = route(&admitted, &resolver());
         assert_eq!(first, second);

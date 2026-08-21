@@ -43,9 +43,8 @@ use std::sync::Arc;
 pub use hyperscale_vm_effects::ResourceKind;
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    AdmissionError, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PackageHash,
-    PrefixShardResolver, TestHasher, Value, admit, child_key, declaration_hash, issued_resource,
-    route,
+    AdmissionError, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, Records,
+    TestHasher, Value, admit, child_key, declaration_hash, issued_resource, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
@@ -101,8 +100,7 @@ fn hash(data: &[u8]) -> [u8; 32] {
 /// created from them.
 pub struct Chain {
     store: MemoryStore,
-    cache: MetadataCache,
-    instances: InstanceRegistry,
+    records: Records,
     engine: Engine,
     clock_ms: u64,
     /// Distinguishes one transaction's hash from the next, so a chain
@@ -157,8 +155,7 @@ impl Chain {
     fn new(engine: Engine) -> Self {
         let mut chain = Self {
             store: MemoryStore::new(),
-            cache: MetadataCache::new(),
-            instances: InstanceRegistry::new(),
+            records: Records::new(),
             engine,
             clock_ms: CLOCK_MS,
             sequence: 0,
@@ -166,10 +163,11 @@ impl Chain {
         };
         let account = account_package();
         chain
-            .cache
+            .records
+            .packages
             .publish(account, account::metadata())
             .expect("the account package publishes");
-        chain.instances.serve_principals(account);
+        chain.records.instances.serve_principals(account);
         chain
     }
 
@@ -216,7 +214,8 @@ impl Chain {
         // network would refuse would let a test pass on a package nobody
         // can deploy — and a hand-written declaration is exactly where
         // that goes wrong.
-        self.cache
+        self.records
+            .packages
             .publish(hash, package.metadata)
             .unwrap_or_else(|refusal| panic!("the package does not publish: {refusal}"));
         hash
@@ -242,7 +241,7 @@ impl Chain {
         let package =
             declaration_hash(&TestHasher, &C::metadata()).expect("a traced declaration encodes");
         assert!(
-            self.cache.get(package).is_some(),
+            self.records.packages.get(package).is_some(),
             "the package must be published before an instance of it is created"
         );
         C::at(self.create(package, config.values()))
@@ -283,6 +282,7 @@ impl Chain {
         let want =
             declaration_hash(&TestHasher, &C::metadata()).expect("a traced declaration encodes");
         let meta = self
+            .records
             .instances
             .get(CallTarget::from(address))
             .ok_or(WrongPackage { address, want })?;
@@ -311,8 +311,13 @@ impl Chain {
         let address = meta.address(&TestHasher);
         let leaf = child_key(&TestHasher, address, CONFIG, &[]);
         let bytes = meta.leaf_bytes().expect("an instance's record encodes");
-        self.instances.create(&TestHasher, meta);
-        if self.cache.method(package, "instantiate").is_some() {
+        self.records.instances.create(&TestHasher, meta);
+        if self
+            .records
+            .packages
+            .method(package, "instantiate")
+            .is_some()
+        {
             self.transact(principal(0xC0), |b| {
                 b.call(address, "instantiate", ())?.none()
             })
@@ -430,11 +435,11 @@ impl Chain {
         signer: PrincipalAddr,
         build: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
     ) -> Result<Outcome, Refused> {
-        let mut builder = TypedBuilder::new(&self.cache, &self.instances, &TestHasher);
+        let mut builder = TypedBuilder::new(&self.records, &TestHasher);
         build(&mut builder)?;
         let graph = builder.build()?;
 
-        let admitted = admit(&graph, signer, &self.cache, &self.instances, &TestHasher)?;
+        let admitted = admit(&graph, signer, &self.records, &TestHasher)?;
         let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
         let declaration = routing.declaration().clone();
 
@@ -490,7 +495,7 @@ impl Chain {
             KernelOutcome::Declined { node, .. } => entry
                 .calls
                 .get(node as usize)
-                .and_then(|call| self.cache.get(call.package))
+                .and_then(|call| self.records.packages.get(call.package))
                 .map(|metadata| metadata.errors.clone())
                 .unwrap_or_default(),
             _ => Vec::new(),

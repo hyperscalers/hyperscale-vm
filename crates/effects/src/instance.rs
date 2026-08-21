@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
+use std::sync::Arc;
 
 use hyperscale_hbor::{EncodeError, Hbor, to_vec};
 use hyperscale_vm_types::{Address, CallTarget, ComponentAddr};
@@ -151,8 +152,8 @@ pub struct CertificateMismatch;
 /// account needs nothing registered before it can be called.
 #[derive(Clone, Debug, Default)]
 pub struct InstanceRegistry {
-    principal: Option<InstanceMeta>,
-    instances: BTreeMap<Address, InstanceMeta>,
+    principal: Option<Arc<InstanceMeta>>,
+    instances: BTreeMap<Address, Arc<InstanceMeta>>,
 }
 
 impl InstanceRegistry {
@@ -171,11 +172,11 @@ impl InstanceRegistry {
     /// than by certificate: a principal's address derives from a key, so
     /// there is no package hash in it to check a claim against.
     pub fn serve_principals(&mut self, package: PackageHash) {
-        self.principal = Some(InstanceMeta {
+        self.principal = Some(Arc::new(InstanceMeta {
             package,
             config: Vec::new(),
             salt: Hash32([0; 32]),
-        });
+        }));
     }
 
     /// Admit a presented record for `address`, verifying that it derives
@@ -197,12 +198,12 @@ impl InstanceRegistry {
         }
         match self.instances.entry(address) {
             Entry::Vacant(slot) => {
-                slot.insert(meta);
+                slot.insert(Arc::new(meta));
             }
             // Two records deriving one address is a hash collision; the
             // first stands either way.
             Entry::Occupied(stored) => {
-                debug_assert_eq!(*stored.get(), meta, "one address, two records");
+                debug_assert_eq!(**stored.get(), meta, "one address, two records");
             }
         }
         Ok(())
@@ -221,31 +222,13 @@ impl InstanceRegistry {
         let address = meta.address(hasher);
         match self.instances.entry(address.address()) {
             Entry::Vacant(slot) => {
-                slot.insert(meta);
+                slot.insert(Arc::new(meta));
             }
             Entry::Occupied(stored) => {
-                debug_assert_eq!(*stored.get(), meta, "one address, two records");
+                debug_assert_eq!(**stored.get(), meta, "one address, two records");
             }
         }
         address
-    }
-
-    /// This registry extended by presented records, each registered at
-    /// exactly the address it derives.
-    ///
-    /// The per-envelope composition derivation runs over: the base is
-    /// what genesis serves, and a presented record can only enable calls
-    /// to the one address its own content derives — a "false" claim
-    /// registers a different instance, and the intended target stays
-    /// unresolvable. First registration wins, so a presented record
-    /// cannot displace a genesis one.
-    #[must_use]
-    pub fn with_instances(&self, records: &[InstanceMeta], hasher: &dyn Hasher) -> Self {
-        let mut composed = self.clone();
-        for meta in records {
-            composed.create(hasher, meta.clone());
-        }
-        composed
     }
 
     /// Look up the creation-fixed record serving a call target.
@@ -256,8 +239,23 @@ impl InstanceRegistry {
     #[must_use]
     pub fn get(&self, target: impl Into<CallTarget>) -> Option<&InstanceMeta> {
         match target.into() {
-            CallTarget::Principal(_) => self.principal.as_ref(),
-            CallTarget::Component(address) => self.instances.get(&address.address()),
+            CallTarget::Principal(_) => self.principal.as_deref(),
+            CallTarget::Component(address) => {
+                self.instances.get(&address.address()).map(AsRef::as_ref)
+            }
+        }
+    }
+
+    /// The shared handle to the record serving a call target — what this
+    /// registry answers a
+    /// [`ChainRecords`](crate::records::ChainRecords) lookup with.
+    #[must_use]
+    pub fn record(&self, target: impl Into<CallTarget>) -> Option<Arc<InstanceMeta>> {
+        match target.into() {
+            CallTarget::Principal(_) => self.principal.clone(),
+            CallTarget::Component(address) => {
+                self.instances.get(&address.address()).map(Arc::clone)
+            }
         }
     }
 }

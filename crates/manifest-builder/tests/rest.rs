@@ -6,8 +6,7 @@
 //! value somewhere the author never named is worse than making them say.
 
 use hyperscale_vm_effects::{
-    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache,
-    PackageHash, TestHasher, admit,
+    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, admit,
 };
 use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{BuildError, GraphBuilder, TypedBuilder, TypedError};
@@ -34,20 +33,23 @@ fn splitter() -> ComponentAddr {
     splitter_meta().address(&TestHasher)
 }
 
-fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg("account"), account::metadata());
-    cache.publish_unchecked(pkg("splitter"), splitter::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg("account"));
-    instances.create(&TestHasher, splitter_meta());
-    (cache, instances)
+fn world() -> Records {
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish_unchecked(pkg("account"), account::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("splitter"), splitter::metadata());
+    chain.instances.serve_principals(pkg("account"));
+    chain.instances.create(&TestHasher, splitter_meta());
+    chain
 }
 
 #[test]
 fn without_a_policy_a_rest_edge_is_still_a_refusal() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();
     let [taken, _rest] = splitter::take(&mut b, splitter(), funds, 30).unwrap();
@@ -63,8 +65,8 @@ fn without_a_policy_a_rest_edge_is_still_a_refusal() {
 
 #[test]
 fn a_policy_deposits_what_nothing_claimed() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     b.rest_to(ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();
@@ -84,13 +86,13 @@ fn a_policy_deposits_what_nothing_claimed() {
     assert_eq!(edge.producer, 2);
     assert_eq!(edge.output, 1);
     assert_eq!(constraints, &vec![Constraint::ResourceIs(RES)]);
-    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
 fn explicit_consumption_wins() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     b.rest_to(ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();
@@ -103,13 +105,13 @@ fn explicit_consumption_wins() {
     // nothing — and the second half went where the author sent it.
     assert_eq!(graph.nodes.len(), 5);
     assert_eq!(graph.nodes[4].target, CallTarget::Principal(BOB));
-    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
 fn every_rest_edge_is_routed_not_just_the_first() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     b.rest_to(ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();
@@ -123,12 +125,12 @@ fn every_rest_edge_is_routed_not_just_the_first() {
         assert_eq!(node.target, CallTarget::Principal(ALICE));
         assert_eq!(node.method, "deposit");
     }
-    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
 fn the_untyped_builder_routes_by_class_alone() {
-    let (cache, instances) = world();
+    let chain = world();
     // No metadata here, and none needed: a principal answers through the
     // protocol's account blueprint, so a deposit to one is well-formed on
     // the strength of the sink's class.
@@ -145,5 +147,5 @@ fn the_untyped_builder_routes_by_class_alone() {
         panic!("a rest edge binds an edge");
     };
     assert!(constraints.is_empty());
-    admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }

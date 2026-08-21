@@ -5,9 +5,10 @@ use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, ResourceAddr};
 
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::hash::{Hash32, Hasher, TestHasher};
-use crate::instance::{InstanceMeta, InstanceRegistry};
+use crate::instance::InstanceMeta;
 use crate::manifest::{Bounds, Manifest, Node, NodeInput};
-use crate::metadata::{MetadataCache, PackageHash, PackageMetadata};
+use crate::metadata::{PackageHash, PackageMetadata};
+use crate::records::Records;
 use crate::resource::ResourceKind;
 use crate::route::PrefixShardResolver;
 use crate::signature::{MethodSignature, ParamType, Totality};
@@ -86,8 +87,8 @@ pub fn resolver() -> PrefixShardResolver {
 ///
 /// Three nodes rather than two because the sink has to be a node the
 /// core does not consume from, which is exactly what makes it a leg.
-pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest) {
-    let mut cache = MetadataCache::new();
+pub fn star_world(sink: Totality) -> (Records, Manifest) {
+    let mut chain = Records::new();
     let mut vault_pkg = PackageMetadata::default();
     vault_pkg.methods.insert(
         "withdraw".into(),
@@ -121,12 +122,11 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
             ..MethodSignature::default()
         },
     );
-    cache.publish_unchecked(pkg("vault"), vault_pkg);
-    cache.publish_unchecked(pkg("venue"), venue_pkg);
-    cache.publish_unchecked(pkg("sink"), sink_pkg);
-    let mut instances = InstanceRegistry::new();
+    chain.packages.publish_unchecked(pkg("vault"), vault_pkg);
+    chain.packages.publish_unchecked(pkg("venue"), venue_pkg);
+    chain.packages.publish_unchecked(pkg("sink"), sink_pkg);
     for name in ["vault", "venue", "sink"] {
-        instances.create(&TestHasher, meta_of(name));
+        chain.instances.create(&TestHasher, meta_of(name));
     }
 
     let edge = |source: u32, resource: ResourceAddr| NodeInput::Edge {
@@ -158,13 +158,13 @@ pub fn star_world(sink: Totality) -> (MetadataCache, InstanceRegistry, Manifest)
             },
         ],
     };
-    (cache, instances, manifest)
+    (chain, manifest)
 }
 
 /// A payer and a payee on different shards, joined by a value edge:
 /// two manifest nodes, one crossing between them.
-pub fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
-    let mut cache = MetadataCache::new();
+pub fn payer_payee_world() -> (Records, Manifest) {
+    let mut chain = Records::new();
     let mut sender_pkg = PackageMetadata::default();
     sender_pkg.methods.insert(
         "pay".into(),
@@ -195,11 +195,10 @@ pub fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
             ..MethodSignature::default()
         },
     );
-    cache.publish_unchecked(pkg("payer"), sender_pkg);
-    cache.publish_unchecked(pkg("payee"), receiver_pkg);
-    let mut instances = InstanceRegistry::new();
-    instances.create(&TestHasher, meta_of("payer"));
-    instances.create(&TestHasher, meta_of("payee"));
+    chain.packages.publish_unchecked(pkg("payer"), sender_pkg);
+    chain.packages.publish_unchecked(pkg("payee"), receiver_pkg);
+    chain.instances.create(&TestHasher, meta_of("payer"));
+    chain.instances.create(&TestHasher, meta_of("payee"));
     let manifest = Manifest {
         nodes: vec![
             Node {
@@ -225,5 +224,5 @@ pub fn payer_payee_world() -> (MetadataCache, InstanceRegistry, Manifest) {
             },
         ],
     };
-    (cache, instances, manifest)
+    (chain, manifest)
 }

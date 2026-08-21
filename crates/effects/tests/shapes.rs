@@ -12,9 +12,8 @@ use common::{
     effect_set, pkg, pool, resolver, shard_of, vault, wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
-    AdmissionError, EdgeRef, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
-    InstanceRegistry, ManifestGraph, MetadataCache, ResolveError, TestHasher, Value, admit,
-    collection_id, fresh_id, route,
+    AdmissionError, Composed, EdgeRef, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
+    ManifestGraph, Records, ResolveError, TestHasher, Value, admit, collection_id, fresh_id, route,
 };
 use hyperscale_vm_types::{Address, Effect, EffectTarget, Mode};
 
@@ -42,7 +41,7 @@ fn fence_read(owner: impl Into<Address>) -> Effect {
 
 #[test]
 fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
-    let (cache, instances) = world();
+    let chain = world();
     let usdc = RES_X;
     let graph = ManifestGraph {
         nodes: vec![
@@ -69,7 +68,7 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
             },
         ],
     };
-    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = route(&admitted, &resolver());
 
     let expected = BTreeMap::from([
@@ -105,7 +104,7 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
 
 #[test]
 fn swap_writes_both_reserves_and_reads_the_config() {
-    let (cache, instances) = world();
+    let chain = world();
     let graph = ManifestGraph {
         nodes: vec![
             GraphNode {
@@ -137,7 +136,7 @@ fn swap_writes_both_reserves_and_reads_the_config() {
             },
         ],
     };
-    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = route(&admitted, &resolver());
 
     let expected = BTreeMap::from([
@@ -182,7 +181,7 @@ fn swap_writes_both_reserves_and_reads_the_config() {
 
 #[test]
 fn order_book_place_inserts_at_a_computed_entry() {
-    let (cache, instances) = world();
+    let chain = world();
     let graph = ManifestGraph {
         nodes: vec![
             GraphNode {
@@ -208,7 +207,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
             },
         ],
     };
-    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = route(&admitted, &resolver());
 
     let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0);
@@ -250,7 +249,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
 
 #[test]
 fn order_book_fill_declares_a_capped_price_interval() {
-    let (cache, instances) = world();
+    let chain = world();
     let graph = ManifestGraph {
         nodes: vec![
             GraphNode {
@@ -294,7 +293,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
             },
         ],
     };
-    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = route(&admitted, &resolver());
 
     let expected = BTreeMap::from([
@@ -359,10 +358,11 @@ fn order_book_fill_declares_a_capped_price_interval() {
 
 #[test]
 fn a_declared_superset_evaluates_without_error() {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg("wide"), wide_account_metadata());
-    let mut instances = InstanceRegistry::new();
-    let alice = instances.create(
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish_unchecked(pkg("wide"), wide_account_metadata());
+    let alice = chain.instances.create(
         &TestHasher,
         InstanceMeta {
             package: pkg("wide"),
@@ -389,7 +389,7 @@ fn a_declared_superset_evaluates_without_error() {
             },
         ],
     };
-    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = route(&admitted, &resolver());
     let set = &routing.per_shard[&shard_of(alice)];
     // The exact effect and the never-touched superset both routed; two
@@ -409,9 +409,8 @@ fn a_declared_superset_evaluates_without_error() {
 /// and against nothing else.
 #[test]
 fn a_presented_record_is_the_whole_of_instantiation() {
-    let (cache, registered) = world();
-    let mut bare = InstanceRegistry::new();
-    bare.serve_principals(pkg("account"));
+    let registered = world();
+    let bare = common::bare_world();
 
     let graph = ManifestGraph {
         nodes: vec![
@@ -447,24 +446,24 @@ fn a_presented_record_is_the_whole_of_instantiation() {
 
     // Unregistered and uncertified: the target is unresolvable.
     assert!(matches!(
-        admit(&graph, ALICE, &cache, &bare, &TestHasher),
+        admit(&graph, ALICE, &bare, &TestHasher),
         Err(AdmissionError::Resolve(ResolveError::UnknownInstance(_)))
     ));
 
     // A record for some other instance enables nothing at the pool.
-    let elsewhere = bare.with_instances(&[common::book_meta()], &TestHasher);
+    let elsewhere = Composed::new(&bare, &[common::book_meta()], &TestHasher);
     assert!(matches!(
-        admit(&graph, ALICE, &cache, &elsewhere, &TestHasher),
+        admit(&graph, ALICE, &elsewhere, &TestHasher),
         Err(AdmissionError::Resolve(ResolveError::UnknownInstance(_)))
     ));
 
     // The pool's own record resolves the call — to exactly the
     // routing a pre-registered world derives.
-    let certified = bare.with_instances(&[common::pool_meta()], &TestHasher);
-    let admitted = admit(&graph, ALICE, &cache, &certified, &TestHasher).expect("admits");
+    let certified = Composed::new(&bare, &[common::pool_meta()], &TestHasher);
+    let admitted = admit(&graph, ALICE, &certified, &TestHasher).expect("admits");
     let routing = route(&admitted, &resolver());
 
-    let reference = admit(&graph, ALICE, &cache, &registered, &TestHasher).expect("admits");
+    let reference = admit(&graph, ALICE, &registered, &TestHasher).expect("admits");
     let reference = route(&reference, &resolver());
     assert_eq!(routing.per_shard, reference.per_shard);
 }

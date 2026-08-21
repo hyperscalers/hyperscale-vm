@@ -33,9 +33,8 @@ use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
-    Constraint, EdgeRef, EnvelopeTree, GraphArg, Hasher, InstanceMeta, InstanceRegistry,
-    IntentDecl, MAX_YIELD_PARAMS, ManifestGraph, MetadataCache, ResourceMeta, Subintent,
-    YieldBinding, YieldParam,
+    ChainRecords, Constraint, EdgeRef, EnvelopeTree, GraphArg, Hasher, InstanceMeta, IntentDecl,
+    MAX_YIELD_PARAMS, ManifestGraph, ResourceMeta, Subintent, YieldBinding, YieldParam,
 };
 use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
@@ -152,13 +151,9 @@ impl<'a> IntentBuilder<'a> {
     /// [`YieldSink`]: those come from [`EnvelopeBuilder::present`], on the
     /// composing side, where the intent this declaration will be is known.
     #[must_use]
-    pub fn declaration(
-        cache: &'a MetadataCache,
-        instances: &'a InstanceRegistry,
-        hasher: &'a dyn Hasher,
-    ) -> Self {
+    pub fn declaration(chain: &'a dyn ChainRecords, hasher: &'a dyn Hasher) -> Self {
         Self {
-            graph: TypedBuilder::new(cache, instances, hasher),
+            graph: TypedBuilder::new(chain, hasher),
             envelope: NEXT_ENVELOPE.fetch_add(1, Ordering::Relaxed),
             intent: 0,
             params: Vec::new(),
@@ -246,8 +241,7 @@ impl DerefMut for IntentBuilder<'_> {
 
 /// A composition of intents over typed yield edges.
 pub struct EnvelopeBuilder<'a> {
-    cache: &'a MetadataCache,
-    instances: &'a InstanceRegistry,
+    chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,
     id: u64,
     /// The signer of each subintent, in envelope order; the root has none.
@@ -270,15 +264,10 @@ impl<'a> EnvelopeBuilder<'a> {
     /// An envelope and its root intent — the composer's own, which every
     /// composition has exactly one of.
     #[must_use]
-    pub fn new(
-        cache: &'a MetadataCache,
-        instances: &'a InstanceRegistry,
-        hasher: &'a dyn Hasher,
-    ) -> (Self, IntentBuilder<'a>) {
+    pub fn new(chain: &'a dyn ChainRecords, hasher: &'a dyn Hasher) -> (Self, IntentBuilder<'a>) {
         let id = NEXT_ENVELOPE.fetch_add(1, Ordering::Relaxed);
         let envelope = Self {
-            cache,
-            instances,
+            chain,
             hasher,
             id,
             signers: Vec::new(),
@@ -288,7 +277,7 @@ impl<'a> EnvelopeBuilder<'a> {
             sealed: Vec::new(),
         };
         let root = IntentBuilder {
-            graph: TypedBuilder::new(cache, instances, hasher),
+            graph: TypedBuilder::new(chain, hasher),
             envelope: id,
             intent: 0,
             params: Vec::new(),
@@ -326,7 +315,7 @@ impl<'a> EnvelopeBuilder<'a> {
         self.signers.push(signer);
         self.intents.push(None);
         IntentBuilder {
-            graph: TypedBuilder::new(self.cache, self.instances, self.hasher),
+            graph: TypedBuilder::new(self.chain, self.hasher),
             envelope: self.id,
             intent,
             params: Vec::new(),

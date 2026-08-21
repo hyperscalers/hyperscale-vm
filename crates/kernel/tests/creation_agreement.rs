@@ -6,10 +6,9 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    Clause, Expr, GraphNode, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
-    MethodSignature, ModeExpr, PackageHash, PackageMetadata, PrefixShardResolver, ShardResolver,
-    SlotId, TargetExpr, TestHasher, Totality, Value, admit, collection_id, fresh_id, fresh_local,
-    route,
+    Clause, Expr, GraphNode, Hash32, InstanceMeta, ManifestGraph, MethodSignature, ModeExpr,
+    PackageHash, PackageMetadata, PrefixShardResolver, Records, ShardResolver, SlotId, TargetExpr,
+    TestHasher, Totality, Value, admit, collection_id, fresh_id, fresh_local, route,
 };
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_types::{Effect, EffectTarget, Mode, PrincipalAddr, SubstateKey};
@@ -66,10 +65,9 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     const COMPOSER: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
     let package = spawner();
     let package_hash = PackageHash(Hash32([1; 32]));
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(package_hash, package);
-    let mut instances = InstanceRegistry::new();
-    let creator = instances.create(
+    let mut chain = Records::new();
+    chain.packages.publish_unchecked(package_hash, package);
+    let creator = chain.instances.create(
         &TestHasher,
         InstanceMeta {
             package: package_hash,
@@ -96,7 +94,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
             },
         ],
     };
-    let admitted = admit(&graph, COMPOSER, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, COMPOSER, &chain, &TestHasher).expect("admits");
     let identity = admitted.identity();
     let routing = route(&admitted, &PrefixShardResolver { bits: 8 });
     // Asked of the resolver rather than restated: the claim is about the

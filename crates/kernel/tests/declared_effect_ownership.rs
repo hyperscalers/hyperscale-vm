@@ -19,10 +19,9 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Clause, Declaration, Expr, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, InstanceRegistry,
-    ManifestGraph, MetadataCache, MethodSignature, ModeExpr, PackageHash, PackageMetadata,
-    ParamType, PrefixShardResolver, SlotId, TargetExpr, TestHasher, Totality, Value, admit,
-    child_key, route,
+    Clause, Declaration, Expr, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, ManifestGraph,
+    MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
+    Records, SlotId, TargetExpr, TestHasher, Totality, Value, admit, child_key, route,
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_types::{
@@ -82,11 +81,10 @@ fn predator() -> PackageMetadata {
     methods
 }
 
-fn world() -> (MetadataCache, InstanceRegistry, ComponentAddr) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(package(), predator());
-    let mut instances = InstanceRegistry::new();
-    let instance = instances.create(
+fn world() -> (Records, ComponentAddr) {
+    let mut chain = Records::new();
+    chain.packages.publish_unchecked(package(), predator());
+    let instance = chain.instances.create(
         &TestHasher,
         InstanceMeta {
             package: package(),
@@ -94,7 +92,7 @@ fn world() -> (MetadataCache, InstanceRegistry, ComponentAddr) {
             salt: Hash32([7; 32]),
         },
     );
-    (cache, instances, instance)
+    (chain, instance)
 }
 
 /// The attacker's whole transaction: one node, on their own component,
@@ -111,12 +109,12 @@ fn drain_graph(instance: ComponentAddr) -> ManifestGraph {
 
 #[test]
 fn a_package_cannot_declare_an_effect_on_a_cell_it_does_not_own() {
-    let (cache, instances, instance) = world();
+    let (chain, instance) = world();
     let graph = drain_graph(instance);
 
     // Admission judges the shape. The method is public — nothing about
     // it requires authority — so nothing here is an authority question.
-    let Ok(admitted) = admit(&graph, ATTACKER, &cache, &instances, &TestHasher) else {
+    let Ok(admitted) = admit(&graph, ATTACKER, &chain, &TestHasher) else {
         return; // Refused before routing: the gap is closed at admission.
     };
     let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
@@ -163,10 +161,10 @@ fn a_package_cannot_declare_an_effect_on_a_cell_it_does_not_own() {
 /// reasons: the first says a handle exists, this says the handle spends.
 #[test]
 fn a_capability_on_a_strangers_vault_cannot_spend_it() {
-    let (cache, instances, instance) = world();
+    let (chain, instance) = world();
     let graph = drain_graph(instance);
 
-    let Ok(admitted) = admit(&graph, ATTACKER, &cache, &instances, &TestHasher) else {
+    let Ok(admitted) = admit(&graph, ATTACKER, &chain, &TestHasher) else {
         return;
     };
     let routing = route(&admitted, &PrefixShardResolver { bits: 0 });

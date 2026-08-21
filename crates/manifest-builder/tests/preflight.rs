@@ -6,9 +6,8 @@
 //! checked against the same call made directly.
 
 use hyperscale_vm_effects::{
-    Constraint, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache, PRIMARY,
-    PackageHash, PrefixShardResolver, ResourceKind, TestHasher, Value, admit, footprint,
-    resource_address, route,
+    Constraint, Hash32, Hasher, InstanceMeta, PRIMARY, PackageHash, PrefixShardResolver, Records,
+    ResourceKind, TestHasher, Value, admit, footprint, resource_address, route,
 };
 use hyperscale_vm_manifest_builder::{
     Authority, EnvelopeBuilder, PreflightError, TypedBuilder, preflight, preflight_tree,
@@ -54,41 +53,35 @@ fn badge() -> ResourceAddr {
     )
 }
 
-fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg("account"), account::metadata());
-    cache.publish_unchecked(pkg("staking"), staking::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg("account"));
-    instances.create(&TestHasher, pool_meta());
-    (cache, instances)
+fn world() -> Records {
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish_unchecked(pkg("account"), account::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("staking"), staking::metadata());
+    chain.instances.serve_principals(pkg("account"));
+    chain.instances.create(&TestHasher, pool_meta());
+    chain
 }
 
 const SHARDS: PrefixShardResolver = PrefixShardResolver { bits: 2 };
 
 #[test]
 fn a_report_is_what_the_chain_derives() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice_proof = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice_proof, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
 
-    let report = preflight(
-        &graph,
-        ALICE,
-        &cache,
-        &instances,
-        &TestHasher,
-        &SHARDS,
-        NETWORK,
-    )
-    .unwrap();
+    let report = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
 
     // Nothing new is computed here, so everything must equal the direct
     // call it composes.
-    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).unwrap();
+    let admitted = admit(&graph, ALICE, &chain, &TestHasher).unwrap();
     let routing = route(&admitted, &SHARDS);
     assert_eq!(report.identity(), admitted.identity());
     assert_eq!(report.manifest(), admitted.manifest());
@@ -115,22 +108,13 @@ fn a_report_is_what_the_chain_derives() {
 
 #[test]
 fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice_proof = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice_proof, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight(
-        &graph,
-        ALICE,
-        &cache,
-        &instances,
-        &TestHasher,
-        &SHARDS,
-        NETWORK,
-    )
-    .unwrap();
+    let report = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
 
     // Spending is the sender's; being paid is nobody's to refuse, so a
     // transfer composes under one signature — presented once, at the
@@ -148,21 +132,12 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
 
 #[test]
 fn the_operator_surface_is_the_badge_holders_custody() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let operator = account::present_badge(&mut b, OPERATOR, badge()).unwrap();
     pool().unjail(&mut b, operator, 42).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight(
-        &graph,
-        ALICE,
-        &cache,
-        &instances,
-        &TestHasher,
-        &SHARDS,
-        NETWORK,
-    )
-    .unwrap();
+    let report = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
 
     // A pool is owned by nobody, so its operator surface admits whoever
     // presents the pool's own badge: custody at the presentation, and
@@ -186,22 +161,13 @@ fn the_operator_surface_is_the_badge_holders_custody() {
 
 #[test]
 fn every_address_the_report_names_is_named_for_the_network() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice_proof = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice_proof, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight(
-        &graph,
-        ALICE,
-        &cache,
-        &instances,
-        &TestHasher,
-        &SHARDS,
-        NETWORK,
-    )
-    .unwrap();
+    let report = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
 
     for (address, text) in &report.named {
         assert_eq!(*text, address.to_text(NETWORK).unwrap());
@@ -212,49 +178,32 @@ fn every_address_the_report_names_is_named_for_the_network() {
         report.named.get(&ALICE.address()).map(String::as_str)
     );
     // A report on one network says nothing about another.
-    let elsewhere = preflight(
-        &graph,
-        ALICE,
-        &cache,
-        &instances,
-        &TestHasher,
-        &SHARDS,
-        "testnet",
-    )
-    .unwrap();
+    let elsewhere = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, "testnet").unwrap();
     assert_ne!(elsewhere.named, report.named);
 }
 
 #[test]
 fn a_network_word_the_encoding_refuses_fails_once() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice_proof = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice_proof, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     assert!(matches!(
-        preflight(
-            &graph,
-            ALICE,
-            &cache,
-            &instances,
-            &TestHasher,
-            &SHARDS,
-            "Main Net"
-        ),
+        preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, "Main Net"),
         Err(PreflightError::Network(TextError::InvalidCharacter(_)))
     ));
     assert!(matches!(
-        preflight(&graph, ALICE, &cache, &instances, &TestHasher, &SHARDS, ""),
+        preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, ""),
         Err(PreflightError::Network(TextError::IncompletePrefix))
     ));
 }
 
 #[test]
 fn a_composition_names_every_signer_it_needs() {
-    let (cache, instances) = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
 
     let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
@@ -283,16 +232,7 @@ fn a_composition_names_every_signer_it_needs() {
     env.bind(wants_x, paid_x);
     let tree = env.build().unwrap();
 
-    let report = preflight_tree(
-        &tree,
-        ALICE,
-        &cache,
-        &instances,
-        &TestHasher,
-        &SHARDS,
-        NETWORK,
-    )
-    .unwrap();
+    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
     // Both withdrawals name their own account, and the subintent's signer
     // signs its declaration; here the two sets coincide.
     assert_eq!(report.signers(), [ALICE, BOB].into_iter().collect());

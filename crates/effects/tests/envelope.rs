@@ -5,10 +5,10 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    AdmissionError, AdmittedTree, Bounds, Constraint, EdgeContent, EdgeRef, EnvelopeTree, GraphArg,
-    GraphNode, Hash32, Hasher, InstanceMeta, InstanceRegistry, IntentDecl, MAX_VALUE_DEPTH,
-    MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, MetadataCache, NULLIFIER_SLOT, NodeInput,
-    PackageHash, PrefixShardResolver, ResourceKind, ShardResolver, Subintent, TestHasher, Value,
+    AdmissionError, AdmittedTree, Bounds, ChainRecords, Constraint, EdgeContent, EdgeRef,
+    EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl, MAX_VALUE_DEPTH,
+    MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput, PackageHash,
+    PrefixShardResolver, Records, ResourceKind, ShardResolver, Subintent, TestHasher, Value,
     YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
 use hyperscale_vm_fixtures::lottery;
@@ -27,12 +27,11 @@ fn pkg() -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[b"account"]))
 }
 
-fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg(), account::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg());
-    (cache, instances)
+fn world() -> Records {
+    let mut chain = Records::new();
+    chain.packages.publish_unchecked(pkg(), account::metadata());
+    chain.instances.serve_principals(pkg());
+    chain
 }
 
 fn authorize(target: impl Into<CallTarget>) -> GraphNode {
@@ -112,9 +111,9 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
 }
 
 fn admit_composed(tree: &EnvelopeTree) -> Result<AdmittedTree, AdmissionError> {
-    let (cache, instances) = world();
+    let chain = world();
     let identity = tree.hash(&TestHasher);
-    admit_tree(tree, ALICE, identity, &cache, &instances, &TestHasher)
+    admit_tree(tree, ALICE, identity, &chain, &TestHasher)
 }
 
 #[test]
@@ -405,7 +404,7 @@ fn bindings_must_cover_the_declared_params() {
 #[test]
 fn two_bindings_cannot_consume_one_output() {
     // A second subintent binds the same root output the first consumes.
-    let (cache, instances) = world();
+    let chain = world();
     let second_signer = PrincipalAddr::new([0x21; 31]);
     let mut tree = composed_tree(100);
     let mut second = tree.subintents[0].clone();
@@ -413,7 +412,7 @@ fn two_bindings_cannot_consume_one_output() {
     second.decl.graph.nodes[1] = withdraw(BOB, RES_Y, 11);
     tree.subintents.push(second);
     let identity = tree.hash(&TestHasher);
-    let result = admit_tree(&tree, ALICE, identity, &cache, &instances, &TestHasher);
+    let result = admit_tree(&tree, ALICE, identity, &chain, &TestHasher);
     assert_eq!(
         result,
         Err(AdmissionError::DoubleConsumption {
@@ -472,12 +471,12 @@ fn a_yield_param_cannot_bind_a_value_parameter() {
 
 #[test]
 fn a_bare_graph_admits_no_params() {
-    let (cache, instances) = world();
+    let chain = world();
     let graph = ManifestGraph {
         nodes: vec![deposit_param(ALICE, 0)],
     };
     assert_eq!(
-        admit(&graph, ALICE, &cache, &instances, &TestHasher),
+        admit(&graph, ALICE, &chain, &TestHasher),
         Err(AdmissionError::UnboundParam { node: 0, param: 0 })
     );
 }
@@ -487,7 +486,7 @@ fn fresh_keys_root_at_the_envelope_identity() {
     // Two envelopes carrying the same tree but different identities mint
     // different fresh keys: the identity, not the tree, roots the
     // derivation.
-    let (cache, instances) = world();
+    let chain = world();
     let tree = composed_tree(100);
     let identities = [
         tree.hash(&TestHasher),
@@ -495,9 +494,7 @@ fn fresh_keys_root_at_the_envelope_identity() {
     ];
     let admitted: Vec<_> = identities
         .iter()
-        .map(|identity| {
-            admit_tree(&tree, ALICE, *identity, &cache, &instances, &TestHasher).unwrap()
-        })
+        .map(|identity| admit_tree(&tree, ALICE, *identity, &chain, &TestHasher).unwrap())
         .collect();
     assert_eq!(
         admitted[0].admitted.manifest(),
@@ -586,7 +583,7 @@ proptest! {
         output in any::<u32>(),
         on_subintent in any::<bool>(),
     ) {
-        let (cache, instances) = world();
+        let chain = world();
         let mut tree = composed_tree(100);
         let binding = YieldBinding { intent, edge: EdgeRef { producer, output } };
         if on_subintent {
@@ -595,8 +592,8 @@ proptest! {
             tree.root_bindings[0] = binding;
         }
         let identity = tree.hash(&TestHasher);
-        let first = admit_tree(&tree, ALICE, identity, &cache, &instances, &TestHasher);
-        let second = admit_tree(&tree, ALICE, identity, &cache, &instances, &TestHasher);
+        let first = admit_tree(&tree, ALICE, identity, &chain, &TestHasher);
+        let second = admit_tree(&tree, ALICE, identity, &chain, &TestHasher);
         assert_eq!(first, second);
     }
 }
@@ -646,11 +643,12 @@ fn a_deep_instance_config_value_refuses_at_admission() {
 #[test]
 fn a_record_stands_for_a_seal_and_for_no_other_call() {
     let drawing = PackageHash(TestHasher.hash(b"package", &[b"lottery"]));
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg(), account::metadata());
-    cache.publish_unchecked(drawing, lottery::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg());
+    let mut chain = Records::new();
+    chain.packages.publish_unchecked(pkg(), account::metadata());
+    chain
+        .packages
+        .publish_unchecked(drawing, lottery::metadata());
+    chain.instances.serve_principals(pkg());
 
     let meta = InstanceMeta {
         package: drawing,
@@ -675,21 +673,14 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
         instances: records,
         resources: Vec::new(),
     };
-    let admit_with = |tree: &EnvelopeTree, instances: &InstanceRegistry| {
-        admit_tree(
-            tree,
-            ALICE,
-            tree.hash(&TestHasher),
-            &cache,
-            instances,
-            &TestHasher,
-        )
+    let admit_with = |tree: &EnvelopeTree, chain: &dyn ChainRecords| {
+        admit_tree(tree, ALICE, tree.hash(&TestHasher), chain, &TestHasher)
     };
 
     // The seal: nothing committed answers for the component yet, which
     // is exactly what the record is for.
     let seal = calling("instantiate", Vec::new(), vec![meta.clone()]);
-    assert!(admit_with(&seal, &instances).is_ok());
+    assert!(admit_with(&seal, &chain).is_ok());
 
     // Any other call carrying the same record is refused, though the
     // record is honest and derives the address it claims.
@@ -703,16 +694,17 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
     let drawn = draw();
     assert!(
         matches!(
-            admit_with(&drawn, &instances),
+            admit_with(&drawn, &chain),
             Err(AdmissionError::PresentedForCall { node: 0, .. })
         ),
         "a record stands for the seal alone: {:?}",
-        admit_with(&drawn, &instances)
+        admit_with(&drawn, &chain)
     );
 
     // And once the chain answers for the component, the same call
     // admits carrying nothing at all.
-    let sealed = instances.with_instances(std::slice::from_ref(&meta), &TestHasher);
+    let mut sealed = chain.clone();
+    sealed.instances.create(&TestHasher, meta.clone());
     let bare = calling("draw", vec![GraphArg::Literal(Value::U64(8))], Vec::new());
     assert!(admit_with(&bare, &sealed).is_ok());
 

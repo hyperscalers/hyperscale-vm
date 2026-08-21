@@ -192,11 +192,12 @@ mod tests {
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
     use crate::hash::{Hash32, TestHasher};
-    use crate::instance::{InstanceMeta, InstanceRegistry, ResolveError};
+    use crate::instance::{InstanceMeta, ResolveError};
     use crate::invoke::CallArg;
     use crate::manifest::Bounds;
     use crate::metadata::{MetadataCache, PackageMetadata};
     use crate::publish::{AbiError, SignatureError};
+    use crate::records::{ChainRecords, Records};
     use crate::route::MAX_MANIFEST_NODES;
     use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
     use crate::test_worlds::{
@@ -233,12 +234,8 @@ mod tests {
 
     /// Admit and route in one step, for the graphs these tests are not
     /// about refusing.
-    fn routed(
-        graph: &ManifestGraph,
-        cache: &MetadataCache,
-        instances: &InstanceRegistry,
-    ) -> Routing {
-        let admitted = admit(graph, alice(), cache, instances, &TestHasher).expect("admits");
+    fn routed(graph: &ManifestGraph, chain: &dyn ChainRecords) -> Routing {
+        let admitted = admit(graph, alice(), chain, &TestHasher).expect("admits");
         route(&admitted, &resolver())
     }
 
@@ -248,7 +245,7 @@ mod tests {
 
     #[test]
     fn frames_carry_the_clause_order_materialization_walks() {
-        let (cache, instances, _) = payer_payee_world();
+        let (chain, _) = payer_payee_world();
         let graph = ManifestGraph {
             nodes: vec![
                 node(
@@ -262,7 +259,7 @@ mod tests {
                 node(instance_of("payee"), "recv", vec![edge(0, 0)]),
             ],
         };
-        let routing = routed(&graph, &cache, &instances);
+        let routing = routed(&graph, &chain);
 
         // Node order: one frame each, which is the order
         // `KernelSession::materialize` builds its capability table in, so
@@ -337,13 +334,7 @@ mod tests {
         };
         let a_1_4 = ghost_meta.address(&TestHasher);
         let graph = one_node(a_1_4);
-        let empty = admit(
-            &graph,
-            alice(),
-            &MetadataCache::new(),
-            &InstanceRegistry::new(),
-            &TestHasher,
-        );
+        let empty = admit(&graph, alice(), &Records::new(), &TestHasher);
         assert_eq!(
             empty.err(),
             Some(AdmissionError::Resolve(ResolveError::UnknownInstance(
@@ -351,15 +342,9 @@ mod tests {
             )))
         );
 
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, ghost_meta);
-        let missing_pkg = admit(
-            &graph,
-            alice(),
-            &MetadataCache::new(),
-            &instances,
-            &TestHasher,
-        );
+        let mut ghost = Records::new();
+        ghost.instances.create(&TestHasher, ghost_meta);
+        let missing_pkg = admit(&graph, alice(), &ghost, &TestHasher);
         assert_eq!(
             missing_pkg.err(),
             Some(AdmissionError::Resolve(ResolveError::UnknownPackage(pkg(
@@ -367,9 +352,13 @@ mod tests {
             ))))
         );
 
-        let mut cache = MetadataCache::new();
-        cache.publish_unchecked(pkg("ghost"), PackageMetadata::default());
-        let missing_method = admit(&graph, alice(), &cache, &instances, &TestHasher);
+        // The instance resolves and its package is published; only the
+        // method is missing.
+        let mut chain = ghost;
+        chain
+            .packages
+            .publish_unchecked(pkg("ghost"), PackageMetadata::default());
+        let missing_method = admit(&graph, alice(), &chain, &TestHasher);
         assert_eq!(
             missing_method.err(),
             Some(AdmissionError::Resolve(ResolveError::UnknownMethod {
@@ -392,7 +381,7 @@ mod tests {
 
     #[test]
     fn a_locked_read_declares_its_target() {
-        let mut cache = MetadataCache::new();
+        let mut chain = Records::new();
         let mut meta = PackageMetadata::default();
         meta.methods.insert(
             "peek".into(),
@@ -401,13 +390,12 @@ mod tests {
                 self_point(SlotId(2), ModeExpr::Locked),
             ]),
         );
-        cache.publish_unchecked(pkg("oracle"), meta);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("oracle"));
+        chain.packages.publish_unchecked(pkg("oracle"), meta);
+        chain.instances.create(&TestHasher, meta_of("oracle"));
         let graph = ManifestGraph {
             nodes: vec![node(instance_of("oracle"), "peek", vec![])],
         };
-        let routing = routed(&graph, &cache, &instances);
+        let routing = routed(&graph, &chain);
         // A locked read declares its target like any other mode; whether the
         // target is actually locked is the kernel's to refuse, since only
         // the store knows.
@@ -427,19 +415,18 @@ mod tests {
         // node cap must admit and route: the budget is sized from the
         // cap, and a graph one node past it is rejected for its size,
         // never for arithmetic.
-        let mut cache = MetadataCache::new();
+        let mut chain = Records::new();
         let mut meta = PackageMetadata::default();
         meta.methods.insert("m".into(), method(vec![]));
-        cache.publish_unchecked(pkg("wide"), meta);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("wide"));
+        chain.packages.publish_unchecked(pkg("wide"), meta);
+        chain.instances.create(&TestHasher, meta_of("wide"));
         let admit_at = |count: usize| {
             let graph = ManifestGraph {
                 nodes: (0..count)
                     .map(|_| node(instance_of("wide"), "m", vec![]))
                     .collect(),
             };
-            admit(&graph, alice(), &cache, &instances, &TestHasher)
+            admit(&graph, alice(), &chain, &TestHasher)
                 .map(|admitted| route(&admitted, &resolver()))
         };
 
@@ -458,7 +445,7 @@ mod tests {
         // The effect set sums reserves on one target, so two maximal
         // declarations on the same cell leave `u128` — an admission
         // verdict, not a panic.
-        let mut cache = MetadataCache::new();
+        let mut chain = Records::new();
         let mut meta = PackageMetadata::default();
         meta.methods.insert(
             "take".into(),
@@ -478,9 +465,8 @@ mod tests {
                 ..MethodSignature::default()
             },
         );
-        cache.publish_unchecked(pkg("vault"), meta);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("vault"));
+        chain.packages.publish_unchecked(pkg("vault"), meta);
+        chain.instances.create(&TestHasher, meta_of("vault"));
         let take = || {
             node(
                 instance_of("vault"),
@@ -494,8 +480,7 @@ mod tests {
                     nodes: vec![take(), take()],
                 },
                 alice(),
-                &cache,
-                &instances,
+                &chain,
                 &TestHasher,
             )
             .err(),
@@ -591,14 +576,12 @@ mod tests {
         package
     }
 
-    fn spreading_world(
-        spread: Vec<Value>,
-        abi: Vec<AbiParam>,
-    ) -> (MetadataCache, InstanceRegistry, ManifestGraph) {
-        let mut cache = MetadataCache::new();
-        cache.publish_unchecked(pkg("spread"), spreading_package(abi));
-        let mut instances = InstanceRegistry::new();
-        let spreader = instances.create(
+    fn spreading_world(spread: Vec<Value>, abi: Vec<AbiParam>) -> (Records, ManifestGraph) {
+        let mut chain = Records::new();
+        chain
+            .packages
+            .publish_unchecked(pkg("spread"), spreading_package(abi));
+        let spreader = chain.instances.create(
             &TestHasher,
             InstanceMeta {
                 package: pkg("spread"),
@@ -606,7 +589,7 @@ mod tests {
                 salt: Hash32([15; 32]),
             },
         );
-        (cache, instances, one_node(spreader))
+        (chain, one_node(spreader))
     }
 
     #[test]
@@ -616,8 +599,8 @@ mod tests {
         // moves with it while its clause index does not.
         for width in 1u64..4 {
             let spread: Vec<Value> = (0..width).map(Value::U64).collect();
-            let (cache, instances, graph) = spreading_world(spread, vec![AbiParam::Handle(1)]);
-            let routing = routed(&graph, &cache, &instances);
+            let (chain, graph) = spreading_world(spread, vec![AbiParam::Handle(1)]);
+            let routing = routed(&graph, &chain);
             let CallArg::Handle(rep) = routing.calls[0].args[0] else {
                 panic!("a handle argument");
             };
@@ -636,11 +619,7 @@ mod tests {
     /// A world whose one method guards its point clause on whether the
     /// instance's first configuration slot equals its second, with the
     /// clause's own verdict bound beside the handle it backs.
-    fn guarded_world(
-        left: Value,
-        right: Value,
-        abi: Vec<AbiParam>,
-    ) -> (MetadataCache, InstanceRegistry, ManifestGraph) {
+    fn guarded_world(left: Value, right: Value, abi: Vec<AbiParam>) -> (Records, ManifestGraph) {
         let mut package = PackageMetadata::default();
         package.methods.insert(
             "m".into(),
@@ -663,10 +642,9 @@ mod tests {
                 ..MethodSignature::default()
             },
         );
-        let mut cache = MetadataCache::new();
-        cache.publish_unchecked(pkg("guarded"), package);
-        let mut instances = InstanceRegistry::new();
-        let target = instances.create(
+        let mut chain = Records::new();
+        chain.packages.publish_unchecked(pkg("guarded"), package);
+        let target = chain.instances.create(
             &TestHasher,
             InstanceMeta {
                 package: pkg("guarded"),
@@ -674,15 +652,15 @@ mod tests {
                 salt: Hash32([21; 32]),
             },
         );
-        (cache, instances, one_node(target))
+        (chain, one_node(target))
     }
 
     #[test]
     fn a_guarded_out_clause_declares_nothing_and_locks_nothing() {
         // The precision half: a method that writes one of two cells
         // declares, locks and routes to exactly the one it will write.
-        let (cache, instances, graph) = guarded_world(Value::U64(1), Value::U64(2), Vec::new());
-        let routing = routed(&graph, &cache, &instances);
+        let (chain, graph) = guarded_world(Value::U64(1), Value::U64(2), Vec::new());
+        let routing = routed(&graph, &chain);
         assert_eq!(
             own_effects(
                 &routing.declaration().clone().set,
@@ -699,8 +677,8 @@ mod tests {
         );
 
         // The same signature over a configuration its guard holds for.
-        let (cache, instances, graph) = guarded_world(Value::U64(1), Value::U64(1), Vec::new());
-        let routing = routed(&graph, &cache, &instances);
+        let (chain, graph) = guarded_world(Value::U64(1), Value::U64(1), Vec::new());
+        let routing = routed(&graph, &chain);
         assert_eq!(
             own_effects(
                 &routing.declaration().clone().set,
@@ -717,15 +695,15 @@ mod tests {
         // handle that answers nothing — carrying the type routing is the
         // last thing to know, beside the verdict that says so.
         let abi = vec![AbiParam::Handle(0), AbiParam::Guard(0)];
-        let (cache, instances, graph) = guarded_world(Value::U64(1), Value::U64(2), abi.clone());
-        let routing = routed(&graph, &cache, &instances);
+        let (chain, graph) = guarded_world(Value::U64(1), Value::U64(2), abi.clone());
+        let routing = routed(&graph, &chain);
         assert_eq!(
             routing.calls[0].args,
             vec![CallArg::AbsentHandle(CellKind::Write), CallArg::Bool(false)]
         );
 
-        let (cache, instances, graph) = guarded_world(Value::U64(1), Value::U64(1), abi);
-        let routing = routed(&graph, &cache, &instances);
+        let (chain, graph) = guarded_world(Value::U64(1), Value::U64(1), abi);
+        let routing = routed(&graph, &chain);
         assert!(matches!(routing.calls[0].args[0], CallArg::Handle(_)));
         assert_eq!(routing.calls[0].args[1], CallArg::Bool(true));
     }
@@ -761,10 +739,9 @@ mod tests {
                 ..MethodSignature::default()
             },
         );
-        let mut cache = MetadataCache::new();
-        cache.publish_unchecked(pkg("looped"), package);
-        let mut instances = InstanceRegistry::new();
-        let target = instances.create(
+        let mut chain = Records::new();
+        chain.packages.publish_unchecked(pkg("looped"), package);
+        let target = chain.instances.create(
             &TestHasher,
             InstanceMeta {
                 package: pkg("looped"),
@@ -776,7 +753,7 @@ mod tests {
                 salt: Hash32([22; 32]),
             },
         );
-        let routing = routed(&one_node(target), &cache, &instances);
+        let routing = routed(&one_node(target), &chain);
         let declaration = routing.declaration().clone();
         assert_eq!(
             own_effects(&declaration.set, target),
@@ -832,8 +809,8 @@ mod tests {
             Box::new(Expr::Config(0)),
             Box::new(Expr::Config(0)),
         ));
-        let (cache, instances, graph) = spreading_world(spread, vec![judgment]);
-        let error = admit(&graph, alice(), &cache, &instances, &TestHasher)
+        let (chain, graph) = spreading_world(spread, vec![judgment]);
+        let error = admit(&graph, alice(), &chain, &TestHasher)
             .expect_err("a boolean cannot cross the ABI");
         assert!(
             matches!(
@@ -873,17 +850,16 @@ mod tests {
                 ..MethodSignature::default()
             },
         );
-        let mut cache = MetadataCache::new();
-        cache.publish_unchecked(pkg("nf"), package);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("nf"));
+        let mut chain = Records::new();
+        chain.packages.publish_unchecked(pkg("nf"), package);
+        chain.instances.create(&TestHasher, meta_of("nf"));
         let graph = ManifestGraph {
             nodes: vec![
                 node(instance_of("nf"), "make", vec![]),
                 node(instance_of("nf"), "take", vec![edge(0, 0)]),
             ],
         };
-        let routing = routed(&graph, &cache, &instances);
+        let routing = routed(&graph, &chain);
         assert_eq!(
             routing.calls[0].outputs,
             vec![EdgeContent::NonFungible { ids: vec![3, 9] }]
@@ -916,10 +892,9 @@ mod tests {
                 ..MethodSignature::default()
             },
         );
-        let mut cache = MetadataCache::new();
-        cache.publish_unchecked(pkg("edges"), package);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("edges"));
+        let mut chain = Records::new();
+        chain.packages.publish_unchecked(pkg("edges"), package);
+        chain.instances.create(&TestHasher, meta_of("edges"));
         let graph = ManifestGraph {
             nodes: vec![
                 node(instance_of("edges"), "make", vec![]),
@@ -939,7 +914,7 @@ mod tests {
                 ),
             ],
         };
-        let routing = routed(&graph, &cache, &instances);
+        let routing = routed(&graph, &chain);
         assert_eq!(
             routing.calls[1].args[0],
             CallArg::Bucket {
@@ -960,7 +935,7 @@ mod tests {
 
     /// A world whose `forward` consumes a bucket without reading its
     /// amount, plus a producer to feed it.
-    fn forwarding_world() -> (MetadataCache, InstanceRegistry, ManifestGraph) {
+    fn forwarding_world() -> (Records, ManifestGraph) {
         let mut router = PackageMetadata::default();
         router.methods.insert(
             "forward".into(),
@@ -982,10 +957,9 @@ mod tests {
                 ..MethodSignature::default()
             },
         );
-        let mut cache = MetadataCache::new();
-        cache.publish_unchecked(pkg("router"), router);
-        let mut instances = InstanceRegistry::new();
-        instances.create(&TestHasher, meta_of("router"));
+        let mut chain = Records::new();
+        chain.packages.publish_unchecked(pkg("router"), router);
+        chain.instances.create(&TestHasher, meta_of("router"));
         let graph = ManifestGraph {
             nodes: vec![
                 node(instance_of("router"), "make", vec![]),
@@ -1002,7 +976,7 @@ mod tests {
                 ),
             ],
         };
-        (cache, instances, graph)
+        (chain, graph)
     }
 
     #[test]
@@ -1011,8 +985,8 @@ mod tests {
         // method that consumes its funds without reading them carries no
         // bucket in its own ABI — and the signer's bound is owed a check
         // all the same, at the node where the edge resolves.
-        let (cache, instances, graph) = forwarding_world();
-        let routing = routed(&graph, &cache, &instances);
+        let (chain, graph) = forwarding_world();
+        let routing = routed(&graph, &chain);
         let call = &routing.calls[1];
         assert!(
             !call
@@ -1055,10 +1029,9 @@ mod tests {
                     ..MethodSignature::default()
                 },
             );
-            let mut cache = MetadataCache::new();
-            cache.publish_unchecked(pkg("reacher"), package);
-            let mut instances = InstanceRegistry::new();
-            instances.create(&TestHasher, meta_of("reacher"));
+            let mut chain = Records::new();
+            chain.packages.publish_unchecked(pkg("reacher"), package);
+            chain.instances.create(&TestHasher, meta_of("reacher"));
             let graph = ManifestGraph {
                 nodes: vec![node(
                     instance_of("reacher"),
@@ -1066,7 +1039,7 @@ mod tests {
                     vec![GraphArg::Literal(Value::Address(victim))],
                 )],
             };
-            admit(&graph, alice(), &cache, &instances, &TestHasher)
+            admit(&graph, alice(), &chain, &TestHasher)
         };
 
         // Every way a frame can name somebody else: what its caller

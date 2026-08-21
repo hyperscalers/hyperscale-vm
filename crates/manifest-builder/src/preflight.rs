@@ -23,9 +23,9 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, EnvelopeTree, Hasher, InstanceRegistry, JudgedLeaf, Manifest,
-    ManifestGraph, ManifestHash, MetadataCache, Presented, RoleId, Routing, Rule, ShardId,
-    ShardResolver, SubintentRecord, admit, admit_tree, footprint, route, route_tree,
+    AdmissionError, Admitted, ChainRecords, EnvelopeTree, Hasher, JudgedLeaf, Manifest,
+    ManifestGraph, ManifestHash, Presented, RoleId, Routing, Rule, ShardId, ShardResolver,
+    SubintentRecord, admit, admit_tree, footprint, route, route_tree,
 };
 use hyperscale_vm_types::{
     Address, CallTarget, NetworkWord, PrincipalAddr, ResourceAddr, SchemeId, TextError,
@@ -216,13 +216,12 @@ impl Report {
 pub fn preflight(
     graph: &ManifestGraph,
     composer: PrincipalAddr,
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
+    chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
     shards: &dyn ShardResolver,
     network: &str,
 ) -> Result<Report, PreflightError> {
-    let admitted = admit(graph, composer, cache, instances, hasher)?;
+    let admitted = admit(graph, composer, chain, hasher)?;
     let routing = route(&admitted, shards);
     report(admitted, routing, Vec::new(), network)
 }
@@ -236,14 +235,13 @@ pub fn preflight(
 pub fn preflight_tree(
     tree: &EnvelopeTree,
     composer: PrincipalAddr,
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
+    chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
     shards: &dyn ShardResolver,
     network: &str,
 ) -> Result<Report, PreflightError> {
     let identity = tree.hash(hasher);
-    let admitted = admit_tree(tree, composer, identity, cache, instances, hasher)?;
+    let admitted = admit_tree(tree, composer, identity, chain, hasher)?;
     let routing = route_tree(&admitted, shards);
     report(admitted.admitted, routing, admitted.subintents, network)
 }

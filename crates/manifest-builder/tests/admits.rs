@@ -14,8 +14,7 @@
 //! hand.
 
 use hyperscale_vm_effects::{
-    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, InstanceRegistry, MetadataCache,
-    PackageHash, TestHasher, admit,
+    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, admit,
 };
 use hyperscale_vm_fixtures::splitter;
 use hyperscale_vm_manifest_builder::{GraphBuilder, TypedBuilder};
@@ -48,14 +47,17 @@ fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
 }
 
-fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg("account"), account::metadata());
-    cache.publish_unchecked(pkg("splitter"), splitter::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg("account"));
-    instances.create(&TestHasher, splitter_meta());
-    (cache, instances)
+fn world() -> Records {
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish_unchecked(pkg("account"), account::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("splitter"), splitter::metadata());
+    chain.instances.serve_principals(pkg("account"));
+    chain.instances.create(&TestHasher, splitter_meta());
+    chain
 }
 
 /// One transfer's shape: who pays whom how much, optionally split on the
@@ -91,7 +93,7 @@ fn transfer() -> impl Strategy<Value = Transfer> {
 proptest! {
     #[test]
     fn built_graphs_admit(transfers in prop::collection::vec(transfer(), 1..12)) {
-        let (cache, instances) = world();
+        let chain = world();
         let mut b = GraphBuilder::new();
         for t in &transfers {
             let sign_in = b.len();
@@ -110,13 +112,13 @@ proptest! {
             }
         }
         let graph = b.build().expect("every output is consumed");
-        admit(&graph, ACCOUNTS[0], &cache, &instances, &TestHasher).expect("a built graph admits");
+        admit(&graph, ACCOUNTS[0], &chain, &TestHasher).expect("a built graph admits");
     }
 
     #[test]
     fn typed_graphs_admit_and_type_every_edge(transfers in prop::collection::vec(transfer(), 1..12)) {
-        let (cache, instances) = world();
-        let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+        let chain = world();
+        let mut b = TypedBuilder::new(&chain, &TestHasher);
         for t in &transfers {
             // No `resource_is` anywhere below: `withdraw` declares its
             // output's type and `take` carries it, so the assertions are
@@ -145,7 +147,7 @@ proptest! {
                 }
             }
         }
-        admit(&graph, ACCOUNTS[0], &cache, &instances, &TestHasher).expect("a built graph admits");
+        admit(&graph, ACCOUNTS[0], &chain, &TestHasher).expect("a built graph admits");
     }
 }
 
@@ -153,12 +155,12 @@ proptest! {
 /// transfer, admitted and lowered to the node count the graph declares.
 #[test]
 fn the_walkthrough_transfer_admits() {
-    let (cache, instances) = world();
+    let chain = world();
     let mut b = GraphBuilder::new();
     let [] = b.call_signed(ACCOUNTS[0], "authorize", ());
     let [funds] = b.call_bearing(ACCOUNTS[0], "withdraw", (RES, 100u128), 0);
     let [] = b.call(ACCOUNTS[1], "deposit", (funds.resource_is(RES),));
     let graph = b.build().unwrap();
-    let admitted = admit(&graph, ACCOUNTS[0], &cache, &instances, &TestHasher).unwrap();
+    let admitted = admit(&graph, ACCOUNTS[0], &chain, &TestHasher).unwrap();
     assert_eq!(admitted.manifest().nodes.len(), 3);
 }

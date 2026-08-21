@@ -6,9 +6,9 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG};
 use hyperscale_vm_effects::{
-    AuthBase, EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph,
-    MetadataCache, PackageHash, PrefixShardResolver, Presented, ResourceKind, RoleTable, Routing,
-    ShardId, ShardResolver, StarShape, StoredRule, TestHasher, Value, admit, child_key,
+    AuthBase, EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash,
+    PrefixShardResolver, Presented, Records, ResourceKind, RoleTable, Routing, ShardId,
+    ShardResolver, StarShape, StoredRule, TestHasher, Value, admit, child_key,
     classify as classify_star, collection_id, issued_resource, route,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
@@ -99,21 +99,32 @@ pub fn uniform_base(identity: PrincipalAddr) -> AuthBase {
     )
 }
 
-pub fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg("account"), account::metadata());
-    cache.publish_unchecked(pkg("amm"), amm::metadata());
-    cache.publish_unchecked(pkg("book"), book::metadata());
-    cache.publish_unchecked(pkg("registry"), registry::metadata());
-    cache.publish_unchecked(pkg("nf"), nf::metadata());
-    cache.publish_unchecked(pkg("lottery"), lottery::metadata());
-    cache.publish_unchecked(pkg("shares"), shares::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg("account"));
+pub fn world() -> Records {
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish_unchecked(pkg("account"), account::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("amm"), amm::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("book"), book::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("registry"), registry::metadata());
+    chain.packages.publish_unchecked(pkg("nf"), nf::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("lottery"), lottery::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("shares"), shares::metadata());
+    chain.instances.serve_principals(pkg("account"));
     for meta in world_instances() {
-        instances.create(&TestHasher, meta);
+        chain.instances.create(&TestHasher, meta);
     }
-    (cache, instances)
+    chain
 }
 
 /// Every component the corpus world holds a record for.
@@ -375,7 +386,7 @@ pub struct Signing {
 /// same code path the genesis packages take.
 pub fn execute_manifest(
     backend: &dyn GuestBackend,
-    world: &(MetadataCache, InstanceRegistry),
+    world: &Records,
     store: MemoryStore,
     graph: &ManifestGraph,
     under: Signing,
@@ -385,8 +396,7 @@ pub fn execute_manifest(
         signer,
         clock_ms,
     } = under;
-    let (cache, instances) = world;
-    let admitted = admit(graph, signer, cache, instances, &TestHasher).context("admission")?;
+    let admitted = admit(graph, signer, world, &TestHasher).context("admission")?;
     let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
     // The null resolver puts every effect on one shard, so the whole
     // declaration is the sole entry — taken as that rather than by naming
@@ -470,12 +480,8 @@ pub fn shard_of(address: impl Into<Address>) -> ShardId {
     PrefixShardResolver { bits: 8 }.shard_of(address.into())
 }
 
-pub fn sharded_routing(
-    world: &(MetadataCache, InstanceRegistry),
-    graph: &ManifestGraph,
-) -> Routing {
-    let (cache, instances) = world;
-    let admitted = admit(graph, composer(graph), cache, instances, &TestHasher).expect("admits");
+pub fn sharded_routing(world: &Records, graph: &ManifestGraph) -> Routing {
+    let admitted = admit(graph, composer(graph), world, &TestHasher).expect("admits");
     let first = route(&admitted, &PrefixShardResolver { bits: 8 });
     let second = route(&admitted, &PrefixShardResolver { bits: 8 });
     assert_eq!(first, second, "route is a function over the corpus");
@@ -505,19 +511,13 @@ pub fn routing_fingerprint(routing: &Routing) -> String {
 }
 
 /// The star the classifier reads off a graph's admitted form.
-pub fn star_of(world: &(MetadataCache, InstanceRegistry), graph: &ManifestGraph) -> StarShape {
-    let (cache, instances) = world;
-    let admitted = admit(graph, composer(graph), cache, instances, &TestHasher).expect("admits");
-    classify_star(
-        admitted.manifest(),
-        cache,
-        instances,
-        &PrefixShardResolver { bits: 8 },
-    )
+pub fn star_of(world: &Records, graph: &ManifestGraph) -> StarShape {
+    let admitted = admit(graph, composer(graph), world, &TestHasher).expect("admits");
+    classify_star(admitted.manifest(), world, &PrefixShardResolver { bits: 8 })
 }
 
 pub fn run_both(
-    world: &(MetadataCache, InstanceRegistry),
+    world: &Records,
     store: &MemoryStore,
     transactions: &[(&ManifestGraph, TxHash)],
 ) -> (Vec<TxResult>, MemoryStore) {
@@ -527,7 +527,7 @@ pub fn run_both(
 /// As [`run_both`], with one signature riding every graph — how a test
 /// puts the wrong signer behind an authorization.
 pub fn run_both_signed(
-    world: &(MetadataCache, InstanceRegistry),
+    world: &Records,
     store: &MemoryStore,
     transactions: &[(&ManifestGraph, TxHash)],
     signer: Option<PrincipalAddr>,
@@ -538,7 +538,7 @@ pub fn run_both_signed(
 /// As [`run_both_signed`], at an explicit transaction clock — how the
 /// recovery tests move weighted time between transactions.
 pub fn run_both_at(
-    world: &(MetadataCache, InstanceRegistry),
+    world: &Records,
     store: &MemoryStore,
     transactions: &[(&ManifestGraph, TxHash)],
     signer: Option<PrincipalAddr>,
@@ -593,10 +593,10 @@ pub fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>
 /// configuration names something only a run can produce — an instance id
 /// — is registered by the test rather than by the shared fixture.
 pub fn graph_in(
-    world: &(MetadataCache, InstanceRegistry),
+    world: &Records,
     write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
 ) -> ManifestGraph {
-    let mut b = TypedBuilder::new(&world.0, &world.1, &TestHasher);
+    let mut b = TypedBuilder::new(&world, &TestHasher);
     write(&mut b).expect("every call types against its signature");
     b.build().expect("every output is consumed")
 }

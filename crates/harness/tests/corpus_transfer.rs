@@ -77,10 +77,11 @@ fn mirror_metadata() -> PackageMetadata {
 
 #[test]
 fn a_package_published_at_runtime_is_callable_through_the_same_walk() {
-    let (mut cache, mut instances) = world();
-    cache.publish_unchecked(pkg("mirror"), mirror_metadata());
-    let dana = instances.create(&TestHasher, mirror_meta());
-    let world = (cache, instances);
+    let mut world = world();
+    world
+        .packages
+        .publish_unchecked(pkg("mirror"), mirror_metadata());
+    let dana = world.instances.create(&TestHasher, mirror_meta());
 
     let mut store = MemoryStore::new();
     seal(&mut store, &mirror_meta());
@@ -91,8 +92,7 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() {
     let graph = {
         // Not a wrapper call: `dana` runs the mirror package, so its
         // deposit is the one this test published rather than the account's.
-        let (cache, instances) = &world;
-        let mut b = TypedBuilder::new(cache, instances, &TestHasher);
+        let mut b = TypedBuilder::new(&world, &TestHasher);
         let alice = account::authorize(&mut b, ALICE).unwrap();
         let funds = account::withdraw(&mut b, alice, RES_X, 100).unwrap();
         b.call(dana, "deposit", (funds,)).unwrap().none().unwrap();

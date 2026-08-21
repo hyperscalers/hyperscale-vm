@@ -46,9 +46,9 @@ fn untraded_swap_graph() -> ManifestGraph {
 /// the sender nothing.
 #[test]
 fn a_swap_paid_in_a_resource_the_pool_does_not_trade_is_refused() {
-    let (cache, instances) = world();
+    let chain = world();
     let graph = untraded_swap_graph();
-    let refused = admit(&graph, ALICE, &cache, &instances, &TestHasher)
+    let refused = admit(&graph, ALICE, &chain, &TestHasher)
         .expect_err("the pool trades a pair and this manifest pays neither side");
 
     let AdmissionError::WrongDenomination {
@@ -72,9 +72,9 @@ fn a_swap_paid_in_a_resource_the_pool_does_not_trade_is_refused() {
 /// The control: both sides of the pair admit against one instance.
 #[test]
 fn a_swap_paid_in_either_side_of_the_pair_admits() {
-    let (cache, instances) = world();
+    let chain = world();
     for graph in [swap_graph(300), reverse_swap_graph(300)] {
-        admit(&graph, ALICE, &cache, &instances, &TestHasher)
+        admit(&graph, ALICE, &chain, &TestHasher)
             .expect("either side of the configured pair is one the declaration asks for");
     }
 }

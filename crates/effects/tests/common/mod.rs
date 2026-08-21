@@ -6,7 +6,7 @@ pub use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Clause, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestHash, MetadataCache,
     MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
-    ShardId, ShardResolver, SlotId, TargetExpr, TestHasher, Totality, Value, child_key,
+    Records, ShardId, ShardResolver, SlotId, TargetExpr, TestHasher, Totality, Value, child_key,
 };
 pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
 pub use hyperscale_vm_fixtures::{amm, book, splitter};
@@ -47,17 +47,32 @@ pub const fn identity() -> ManifestHash {
 
 /// The published world every shape test routes against.
 #[must_use]
-pub fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg("account"), account::metadata());
-    cache.publish_unchecked(pkg("amm"), amm::metadata());
-    cache.publish_unchecked(pkg("book"), book::metadata());
+pub fn world() -> Records {
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish_unchecked(pkg("account"), account::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("amm"), amm::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("book"), book::metadata());
 
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg("account"));
-    instances.create(&TestHasher, pool_meta());
-    instances.create(&TestHasher, book_meta());
-    (cache, instances)
+    chain.instances.serve_principals(pkg("account"));
+    chain.instances.create(&TestHasher, pool_meta());
+    chain.instances.create(&TestHasher, book_meta());
+    chain
+}
+
+/// The same packages, with no instance created from any of them — the
+/// base a presented record layers over.
+#[must_use]
+pub fn bare_world() -> Records {
+    let mut chain = world();
+    chain.instances = InstanceRegistry::new();
+    chain.instances.serve_principals(pkg("account"));
+    chain
 }
 
 /// The constant-product pool's record, and the address it derives.

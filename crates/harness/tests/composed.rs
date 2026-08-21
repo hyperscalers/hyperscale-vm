@@ -6,8 +6,8 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    AdmittedTree, Constraint, EnvelopeTree, Hasher, InstanceRegistry, MetadataCache, PackageHash,
-    PrefixShardResolver, TestHasher, admit_tree, route_tree,
+    AdmittedTree, Constraint, EnvelopeTree, Hasher, PackageHash, PrefixShardResolver, Records,
+    TestHasher, admit_tree, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_harness::fixtures::build_guest;
@@ -35,12 +35,11 @@ fn pkg() -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[b"account"]))
 }
 
-fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg(), account::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg());
-    (cache, instances)
+fn world() -> Records {
+    let mut chain = Records::new();
+    chain.packages.publish_unchecked(pkg(), account::metadata());
+    chain.instances.serve_principals(pkg());
+    chain
 }
 
 /// The composition: the composer pays `pay` of X for the subintent's 10
@@ -48,8 +47,8 @@ fn world() -> (MetadataCache, InstanceRegistry) {
 /// yield. Neither graph names the other; the envelope is the two edges
 /// between them.
 fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
-    let (cache, instances) = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
 
     let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
     let composer_proof = account::authorize(&mut root, composer).expect("sign-in types");
@@ -82,14 +81,12 @@ fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
 /// Admit and route one envelope into its batch entry, plus the manifest
 /// its runner walks.
 fn batch_entry(
-    world: &(MetadataCache, InstanceRegistry),
+    world: &Records,
     tree: &EnvelopeTree,
     composer: PrincipalAddr,
 ) -> Result<(BatchTx, AdmittedTree)> {
-    let (cache, instances) = world;
     let identity = tree.hash(&TestHasher);
-    let admitted =
-        admit_tree(tree, composer, identity, cache, instances, &TestHasher).context("admission")?;
+    let admitted = admit_tree(tree, composer, identity, world, &TestHasher).context("admission")?;
     let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
     // The null resolver puts every effect on one shard, so the whole
     // declaration is the sole entry — taken as that rather than by naming

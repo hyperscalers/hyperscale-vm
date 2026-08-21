@@ -14,9 +14,9 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    EvidenceRef, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache,
-    PackageHash, PackageMetadata, Presented, ResourceKind, RoleTable, StoredRule, TestHasher,
-    Value, admit, issued_resource,
+    EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash, PackageMetadata,
+    Presented, Records, ResourceKind, RoleTable, StoredRule, TestHasher, Value, admit,
+    issued_resource,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -71,13 +71,12 @@ fn amm_config() -> Vec<Value> {
     ]
 }
 
-fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
+fn world() -> Records {
+    let mut chain = Records::new();
     for (name, metadata) in stdlib() {
-        cache.publish_unchecked(pkg(name), metadata);
+        chain.packages.publish_unchecked(pkg(name), metadata);
     }
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg("account"));
+    chain.instances.serve_principals(pkg("account"));
     for (name, config) in [
         ("staking", pool_config()),
         ("amm", amm_config()),
@@ -88,9 +87,9 @@ fn world() -> (MetadataCache, InstanceRegistry) {
         ("splitter", vec![]),
         ("lottery", vec![]),
     ] {
-        instances.create(&TestHasher, instance(name, config));
+        chain.instances.create(&TestHasher, instance(name, config));
     }
-    (cache, instances)
+    chain
 }
 
 /// Every authored package, by the name its hash derives from.
@@ -110,11 +109,11 @@ fn stdlib() -> Vec<(&'static str, PackageMetadata)> {
 /// Build through `write` and admit the result, so a wrapper disagreeing
 /// with its signature fails here rather than at a signer's node.
 fn admits(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -> ManifestGraph {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     write(&mut b).expect("every wrapper types against its own signature");
     let graph = b.build().expect("every output is consumed");
-    admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("a wrapped graph admits");
+    admit(&graph, ALICE, &chain, &TestHasher).expect("a wrapped graph admits");
     graph
 }
 
@@ -153,8 +152,8 @@ fn the_account_wrappers_match_their_signatures() {
 /// writes it.
 #[test]
 fn a_degenerate_rule_is_refused_where_it_is_written() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let refused = account::securify_uniform(
         &mut b,
@@ -195,8 +194,8 @@ fn a_chained_sign_in_admits() {
 /// one, a minted proof asked of a method that mints nothing.
 #[test]
 fn misplaced_evidence_is_refused_at_the_call_site() {
-    let (cache, instances) = world();
-    let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, BASE, 100).unwrap();
     assert!(matches!(

@@ -31,8 +31,8 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use hyperscale_vm_effects::{
-    Constraint, EdgeContent, EdgeRef, GraphArg, Hasher, InstanceRegistry, ManifestGraph,
-    MetadataCache, ParamType, Value,
+    ChainRecords, Constraint, EdgeContent, EdgeRef, GraphArg, Hasher, ManifestGraph, ParamType,
+    Value,
 };
 use hyperscale_vm_types::{Address, ResourceAddr, SubstateKey, TextError};
 
@@ -89,8 +89,7 @@ impl<A: Into<Address>, S: Into<String>> FromIterator<(A, S)> for Names {
 /// [`TextError`] if `network` is a word no address can be named under.
 pub fn render(
     graph: &ManifestGraph,
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
+    chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
     network: &str,
     names: &Names,
@@ -104,7 +103,7 @@ pub fn render(
     };
     // Resolved before the walk, because a binding's name is read at its
     // definition and its constraints are written at its use.
-    let types = edge_types(graph, cache, instances, hasher);
+    let types = edge_types(graph, chain, hasher);
 
     let mut out = String::new();
     for (index, node) in graph.nodes.iter().enumerate() {
@@ -289,18 +288,19 @@ fn hex(bytes: &[u8]) -> String {
 /// binds every edge somebody takes.
 fn edge_types(
     graph: &ManifestGraph,
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
+    chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> BTreeMap<u32, Vec<Option<ResourceAddr>>> {
     let consumed = consumed_slots(graph);
     let mut types: BTreeMap<u32, Vec<Option<ResourceAddr>>> = BTreeMap::new();
     for (index, node) in graph.nodes.iter().enumerate() {
         let producer = u32::try_from(index).unwrap_or(u32::MAX);
-        let declared = instances
-            .get(node.target)
-            .and_then(|meta| Some((meta, cache.get(meta.package)?)))
-            .and_then(|(meta, package)| Some((meta, package.methods.get(&node.method)?)));
+        let resolved = chain
+            .instance(node.target)
+            .and_then(|meta| Some((chain.package(meta.package)?, meta)));
+        let declared = resolved
+            .as_ref()
+            .and_then(|(package, meta)| Some((meta.as_ref(), package.methods.get(&node.method)?)));
         let Some((meta, signature)) = declared else {
             let slots = consumed.get(&producer).copied().unwrap_or(0);
             types.insert(producer, vec![None; usize::try_from(slots).unwrap_or(0)]);

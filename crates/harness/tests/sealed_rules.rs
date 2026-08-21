@@ -11,9 +11,9 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, Hasher, InstanceRegistry, MetadataCache, PackageHash, PrefixShardResolver,
-    Presented, ResourceKind, ResourceMeta, ResourceRules, RoleBytes, SealedBehaviour, StoredRule,
-    TestHasher, admit_tree, route_tree,
+    EnvelopeTree, Hasher, PackageHash, PrefixShardResolver, Presented, Records, ResourceKind,
+    ResourceMeta, ResourceRules, RoleBytes, SealedBehaviour, StoredRule, TestHasher, admit_tree,
+    route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
@@ -45,14 +45,14 @@ fn account_pkg() -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[b"account"]))
 }
 
-fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache
+fn world() -> Records {
+    let mut chain = Records::new();
+    chain
+        .packages
         .publish(account_pkg(), account::metadata())
         .expect("the account publishes");
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(account_pkg());
-    (cache, instances)
+    chain.instances.serve_principals(account_pkg());
+    chain
 }
 
 /// The record the resource's address commits: recall sealed to
@@ -80,8 +80,8 @@ fn resource() -> ResourceAddr {
 /// resource out of [`HOLDER`]'s account, and banks it — presenting the
 /// record where `present` says to.
 fn recall_tree(signer: PrincipalAddr, amount: u128, present: bool) -> Result<EnvelopeTree> {
-    let (cache, instances) = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let caller = account::authorize(b, signer)?;
         let funds = account::recall(b, &[caller], HOLDER, resource(), amount)?;
@@ -96,10 +96,10 @@ fn recall_tree(signer: PrincipalAddr, amount: u128, present: bool) -> Result<Env
 }
 
 fn batch_entry(tree: &EnvelopeTree, composer: PrincipalAddr) -> Result<BatchTx> {
-    let (cache, instances) = world();
+    let chain = world();
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(tree, composer, identity, &cache, &instances, &TestHasher)
-        .context("admission")?;
+    let admitted =
+        admit_tree(tree, composer, identity, &chain, &TestHasher).context("admission")?;
     let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
     ensure!(routing.per_shard.len() == 1, "one shard");
     Ok(
@@ -165,9 +165,9 @@ fn a_stranger_is_refused_by_the_sealed_rule() -> Result<()> {
 fn an_unpresented_record_refuses_at_admission() -> Result<()> {
     let tree = recall_tree(RECALLER, 60, false)?;
     let identity = tree.hash(&TestHasher);
-    let (cache, instances) = world();
+    let chain = world();
     assert!(
-        admit_tree(&tree, RECALLER, identity, &cache, &instances, &TestHasher).is_err(),
+        admit_tree(&tree, RECALLER, identity, &chain, &TestHasher).is_err(),
         "an unpresented sealed rule refuses",
     );
     Ok(())
@@ -179,8 +179,8 @@ fn an_unpresented_record_refuses_at_admission() -> Result<()> {
 /// holder owns stays unverifiable — refused, not reinterpreted.
 #[test]
 fn a_changed_rule_is_a_different_resource() -> Result<()> {
-    let (cache, instances) = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&cache, &instances, &TestHasher);
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let caller = account::authorize(b, STRANGER)?;
         let funds = account::recall(b, &[caller], HOLDER, resource(), 60)?;
@@ -203,7 +203,7 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     let tree = env.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
     assert!(
-        admit_tree(&tree, STRANGER, identity, &cache, &instances, &TestHasher).is_err(),
+        admit_tree(&tree, STRANGER, identity, &chain, &TestHasher).is_err(),
         "a forged record registers a different resource",
     );
     Ok(())

@@ -6,8 +6,8 @@
 //! `cargo run -p hyperscale-vm-manifest-builder --example render`.
 
 use hyperscale_vm_effects::{
-    Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestGraph, MetadataCache, PackageHash,
-    PrefixShardResolver, ResourceKind, TestHasher, Value, issued_resource,
+    Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash, PrefixShardResolver, Records,
+    ResourceKind, TestHasher, Value, issued_resource,
 };
 use hyperscale_vm_fixtures::{amm, splitter};
 use hyperscale_vm_manifest_builder::{
@@ -76,18 +76,29 @@ fn units() -> ResourceAddr {
     )
 }
 
-fn world() -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg("account"), account::metadata());
-    cache.publish_unchecked(pkg("amm"), amm::metadata());
-    cache.publish_unchecked(pkg("splitter"), splitter::metadata());
-    cache.publish_unchecked(pkg("staking"), staking::metadata());
-    let mut instances = InstanceRegistry::new();
-    instances.serve_principals(pkg("account"));
-    instances.create(&TestHasher, instance("amm", pair()));
-    instances.create(&TestHasher, instance("splitter", vec![]));
-    instances.create(&TestHasher, instance("staking", operated()));
-    (cache, instances)
+fn world() -> Records {
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish_unchecked(pkg("account"), account::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("amm"), amm::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("splitter"), splitter::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("staking"), staking::metadata());
+    chain.instances.serve_principals(pkg("account"));
+    chain.instances.create(&TestHasher, instance("amm", pair()));
+    chain
+        .instances
+        .create(&TestHasher, instance("splitter", vec![]));
+    chain
+        .instances
+        .create(&TestHasher, instance("staking", operated()));
+    chain
 }
 
 /// What this reader already calls the addresses these graphs name. A
@@ -106,9 +117,9 @@ fn vocabulary() -> Names {
 }
 
 fn main() {
-    let (cache, instances) = world();
+    let chain = world();
     let build = |write: &dyn Fn(&mut TypedBuilder<'_>) -> Result<(), TypedError>| -> ManifestGraph {
-        let mut b = TypedBuilder::new(&cache, &instances, &TestHasher);
+        let mut b = TypedBuilder::new(&chain, &TestHasher);
         write(&mut b).expect("every call types against its signature");
         b.build().expect("every output is consumed")
     };
@@ -161,18 +172,11 @@ fn main() {
         println!("── {title} ──\n");
         print!(
             "{}",
-            render(
-                graph,
-                &cache,
-                &instances,
-                &TestHasher,
-                NETWORK,
-                &vocabulary()
-            )
-            .expect("mainnet is a network word")
+            render(graph, &chain, &TestHasher, NETWORK, &vocabulary())
+                .expect("mainnet is a network word")
         );
         println!();
-        summarise(graph, &cache, &instances);
+        summarise(graph, &chain);
         println!();
     }
 
@@ -182,30 +186,15 @@ fn main() {
     println!("── a transfer, to somebody the reader has no name for ──\n");
     print!(
         "{}",
-        render(
-            &graphs[0].1,
-            &cache,
-            &instances,
-            &TestHasher,
-            NETWORK,
-            &Names::none()
-        )
-        .expect("mainnet is a network word")
+        render(&graphs[0].1, &chain, &TestHasher, NETWORK, &Names::none())
+            .expect("mainnet is a network word")
     );
 }
 
 /// The preflight report, as a wallet would read it out.
-fn summarise(graph: &ManifestGraph, cache: &MetadataCache, instances: &InstanceRegistry) {
-    let report = preflight(
-        graph,
-        ALICE,
-        cache,
-        instances,
-        &TestHasher,
-        &SHARDS,
-        NETWORK,
-    )
-    .expect("the graph admits and routes");
+fn summarise(graph: &ManifestGraph, chain: &Records) {
+    let report = preflight(graph, ALICE, chain, &TestHasher, &SHARDS, NETWORK)
+        .expect("the graph admits and routes");
     let names = vocabulary();
     let signers: Vec<String> = report
         .signers()

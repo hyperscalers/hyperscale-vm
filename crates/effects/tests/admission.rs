@@ -11,10 +11,10 @@ use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world}
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, AdmissionError, Clause, Condition, ConditionExpr, Constraint, EdgeRef, EvalError,
-    EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, InstanceRegistry, JudgedLeaf,
-    MAX_VALUE_DEPTH, ManifestGraph, MetadataCache, MethodSignature, ModeExpr, PRIMARY,
-    PackageMetadata, ParamType, Presented, ResourceKind, Rule, RuleExpr, RuleLeaf, TargetExpr,
-    TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry, route,
+    EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, JudgedLeaf, MAX_VALUE_DEPTH,
+    ManifestGraph, MethodSignature, ModeExpr, PRIMARY, PackageMetadata, ParamType, Presented,
+    Records, ResourceKind, Rule, RuleExpr, RuleLeaf, TargetExpr, TestHasher, Totality, Value,
+    admit, child_key, fresh_id, holdings_entry, route,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
@@ -69,11 +69,13 @@ fn sorter() -> ComponentAddr {
     sorter_meta().address(&TestHasher)
 }
 
-fn setup() -> (MetadataCache, InstanceRegistry) {
-    let (mut cache, mut instances) = world();
-    cache.publish_unchecked(pkg("splitter"), splitter::metadata());
-    instances.create(&TestHasher, splitter_meta());
-    (cache, instances)
+fn setup() -> Records {
+    let mut chain = world();
+    chain
+        .packages
+        .publish_unchecked(pkg("splitter"), splitter::metadata());
+    chain.instances.create(&TestHasher, splitter_meta());
+    chain
 }
 
 /// Sign in, withdraw 100, split off 30, deposit the taken part to Bob
@@ -141,8 +143,8 @@ fn valid_graph() -> ManifestGraph {
 
 #[test]
 fn a_well_formed_graph_lowers_and_routes() {
-    let (cache, instances) = setup();
-    let admitted = admit(&valid_graph(), ALICE, &cache, &instances, &TestHasher).expect("admits");
+    let chain = setup();
+    let admitted = admit(&valid_graph(), ALICE, &chain, &TestHasher).expect("admits");
 
     // The lowered edges carry their static resource types.
     let routing = route(&admitted, &resolver());
@@ -164,15 +166,15 @@ fn a_well_formed_graph_lowers_and_routes() {
 
 #[test]
 fn constraint_changes_reach_lowering_and_the_fresh_id_root() {
-    let (cache, instances) = setup();
+    let chain = setup();
     let mut loosened = valid_graph();
     let GraphArg::Edge { constraints, .. } = &mut loosened.nodes[3].args[0] else {
         panic!("edge arg");
     };
     constraints[0] = Constraint::MinAmount(29);
 
-    let strict = admit(&valid_graph(), ALICE, &cache, &instances, &TestHasher).expect("admits");
-    let loose = admit(&loosened, ALICE, &cache, &instances, &TestHasher).expect("admits");
+    let strict = admit(&valid_graph(), ALICE, &chain, &TestHasher).expect("admits");
+    let loose = admit(&loosened, ALICE, &chain, &TestHasher).expect("admits");
     // A bound is execution-relevant, so lowering carries it: the two
     // manifests differ where the constraint does. The identity differs
     // too — it is the signed graph's hash, so two distinct signed
@@ -190,11 +192,11 @@ fn constraint_changes_reach_lowering_and_the_fresh_id_root() {
 /// could see.
 #[test]
 fn evidence_is_presented_exactly_where_it_is_required() {
-    let (cache, instances) = setup();
+    let chain = setup();
     let mut extra = valid_graph();
     extra.nodes[2].evidence = [EvidenceRef::IntentSignature].into();
     assert_eq!(
-        admit(&extra, ALICE, &cache, &instances, &TestHasher),
+        admit(&extra, ALICE, &chain, &TestHasher),
         Err(AdmissionError::UnexpectedEvidence { node: 2 })
     );
 
@@ -202,7 +204,7 @@ fn evidence_is_presented_exactly_where_it_is_required() {
     let mut missing = valid_graph();
     missing.nodes[1].evidence.clear();
     assert_eq!(
-        admit(&missing, ALICE, &cache, &instances, &TestHasher),
+        admit(&missing, ALICE, &chain, &TestHasher),
         Err(AdmissionError::MissingEvidence { node: 1 })
     );
 
@@ -211,7 +213,7 @@ fn evidence_is_presented_exactly_where_it_is_required() {
     let mut signature = valid_graph();
     signature.nodes[1].evidence = [EvidenceRef::IntentSignature].into();
     assert_eq!(
-        admit(&signature, ALICE, &cache, &instances, &TestHasher),
+        admit(&signature, ALICE, &chain, &TestHasher),
         Err(AdmissionError::SignatureForGuarded { node: 1 })
     );
 }
@@ -257,8 +259,8 @@ fn proof_graph() -> ManifestGraph {
 /// virtual account, reached through the authorizing node instead.
 #[test]
 fn a_minted_proof_resolves_to_its_producers_target() {
-    let (cache, instances) = setup();
-    let admitted = admit(&proof_graph(), ALICE, &cache, &instances, &TestHasher).expect("admits");
+    let chain = setup();
+    let admitted = admit(&proof_graph(), ALICE, &chain, &TestHasher).expect("admits");
 
     // The authorizing gate is the stored rule at the cell the method's
     // own declared read names; the guarded withdrawal keeps the pure
@@ -297,10 +299,7 @@ enum Presenting {
     Instance(Expr, Expr),
 }
 
-fn custodian_world(
-    presenting: &Presenting,
-    config: Vec<Value>,
-) -> (MetadataCache, InstanceRegistry, ComponentAddr) {
+fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, ComponentAddr) {
     let auth_cell = || Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
         slot: AUTH,
@@ -379,16 +378,16 @@ fn custodian_world(
             ..MethodSignature::default()
         },
     );
-    let (mut cache, mut instances) = setup();
-    cache.publish_unchecked(pkg("custodian"), package);
+    let mut chain = setup();
+    chain.packages.publish_unchecked(pkg("custodian"), package);
     let meta = InstanceMeta {
         package: pkg("custodian"),
         config,
         salt: Hash32([9; 32]),
     };
     let custodian = meta.address(&TestHasher);
-    instances.create(&TestHasher, meta);
-    (cache, instances, custodian)
+    chain.instances.create(&TestHasher, meta);
+    (chain, custodian)
 }
 
 fn custodian_graph(custodian: ComponentAddr) -> ManifestGraph {
@@ -417,18 +416,11 @@ fn custodian_graph(custodian: ComponentAddr) -> ManifestGraph {
 fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     let badge = ResourceAddr::new([0xB0; 31]);
 
-    let (cache, instances, custodian) = custodian_world(
+    let (chain, custodian) = custodian_world(
         &Presenting::Fungible(Expr::Config(0)),
         vec![Value::Address(badge.address())],
     );
-    let admitted = admit(
-        &custodian_graph(custodian),
-        ALICE,
-        &cache,
-        &instances,
-        &TestHasher,
-    )
-    .expect("admits");
+    let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
         admitted.calls()[0].requires,
         vec![Rule::Require(JudgedLeaf::Stored {
@@ -467,16 +459,9 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     // An identity sign-in mints the target itself: satisfying one's own
     // rule is no feat, so an identity it could name beyond itself would
     // be forgeable — which is why the justification check names none.
-    let (cache, instances, custodian) =
+    let (chain, custodian) =
         custodian_world(&Presenting::Identity, vec![Value::Address(badge.address())]);
-    let admitted = admit(
-        &custodian_graph(custodian),
-        ALICE,
-        &cache,
-        &instances,
-        &TestHasher,
-    )
-    .expect("admits");
+    let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
         admitted.manifest().nodes[1].evidence,
         vec![Presented::Identity(custodian.into())]
@@ -485,18 +470,11 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     // behind it.
     // An instance mint widens to its resource where possession was
     // verified: the minted set carries both claims.
-    let (cache, instances, custodian) = custodian_world(
+    let (chain, custodian) = custodian_world(
         &Presenting::Instance(Expr::Config(0), Expr::Literal(Value::U64(7))),
         vec![Value::Address(badge.address())],
     );
-    let admitted = admit(
-        &custodian_graph(custodian),
-        ALICE,
-        &cache,
-        &instances,
-        &TestHasher,
-    )
-    .expect("admits");
+    let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
         admitted.manifest().nodes[1].evidence,
         vec![Presented::Instance(badge, 7), Presented::Resource(badge),],
@@ -505,36 +483,27 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
 
     // A badge that is not a resource address has nothing possessable
     // behind it: the mint's claim evaluates to no badge.
-    let (cache, instances, custodian) = custodian_world(
+    let (chain, custodian) = custodian_world(
         &Presenting::Fungible(Expr::Config(0)),
         vec![Value::Address(Address::new(
             [0xB0; 31],
             AddressClass::Component,
         ))],
     );
-    assert!(
-        admit(
-            &custodian_graph(custodian),
-            ALICE,
-            &cache,
-            &instances,
-            &TestHasher
-        )
-        .is_err()
-    );
+    assert!(admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).is_err());
 }
 
 /// A proof consumer never runs ahead of its producer, and never draws
 /// authority from a method that merely does something.
 #[test]
 fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
-    let (cache, instances) = setup();
+    let chain = setup();
 
     // Its own node: not earlier.
     let mut own = proof_graph();
     own.nodes[1].evidence = [EvidenceRef::Node(1)].into();
     assert_eq!(
-        admit(&own, ALICE, &cache, &instances, &TestHasher),
+        admit(&own, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ForwardProof {
             node: 1,
             producer: 1
@@ -545,7 +514,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     let mut later = proof_graph();
     later.nodes[1].evidence = [EvidenceRef::Node(2)].into();
     assert_eq!(
-        admit(&later, ALICE, &cache, &instances, &TestHasher),
+        admit(&later, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ForwardProof {
             node: 1,
             producer: 2
@@ -567,7 +536,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
         evidence: [EvidenceRef::Node(2)].into(),
     });
     assert_eq!(
-        admit(&unminting, ALICE, &cache, &instances, &TestHasher),
+        admit(&unminting, ALICE, &chain, &TestHasher),
         Err(AdmissionError::UnmintingProof {
             node: 3,
             producer: 2
@@ -578,7 +547,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     let mut unsigned = proof_graph();
     unsigned.nodes[0].evidence.clear();
     assert_eq!(
-        admit(&unsigned, ALICE, &cache, &instances, &TestHasher),
+        admit(&unsigned, ALICE, &chain, &TestHasher),
         Err(AdmissionError::MissingEvidence { node: 0 })
     );
 }
@@ -586,8 +555,8 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
 #[test]
 #[allow(clippy::too_many_lines)] // one assertion block per mutation class
 fn every_malformed_mutation_rejects() {
-    let (cache, instances) = setup();
-    let admit_it = |graph: &ManifestGraph| admit(graph, ALICE, &cache, &instances, &TestHasher);
+    let chain = setup();
+    let admit_it = |graph: &ManifestGraph| admit(graph, ALICE, &chain, &TestHasher);
 
     // Dangling edge: drop the rest-consuming node.
     let mut dangling = valid_graph();
@@ -769,7 +738,7 @@ fn every_malformed_mutation_rejects() {
 
 #[test]
 fn a_literal_nested_past_the_bound_rejects_ahead_of_the_hash() {
-    let (cache, instances) = setup();
+    let chain = setup();
     let nest = |levels: usize| {
         let mut value = Value::U64(0);
         for _ in 0..levels {
@@ -781,7 +750,7 @@ fn a_literal_nested_past_the_bound_rejects_ahead_of_the_hash() {
     let mut graph = valid_graph();
     graph.nodes[1].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH));
     assert_eq!(
-        admit(&graph, ALICE, &cache, &instances, &TestHasher),
+        admit(&graph, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ValueTooDeep { node: 1, param: 0 })
     );
 
@@ -789,15 +758,15 @@ fn a_literal_nested_past_the_bound_rejects_ahead_of_the_hash() {
     // takes over, so the bound is exactly where it says it is.
     graph.nodes[1].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH - 1));
     assert!(matches!(
-        admit(&graph, ALICE, &cache, &instances, &TestHasher),
+        admit(&graph, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ParamKind { .. })
     ));
 }
 
 #[test]
 fn repeated_amount_bounds_fold_to_their_conjunction() {
-    let (cache, instances) = setup();
-    let admit_it = |graph: &ManifestGraph| admit(graph, ALICE, &cache, &instances, &TestHasher);
+    let chain = setup();
+    let admit_it = |graph: &ManifestGraph| admit(graph, ALICE, &chain, &TestHasher);
 
     // Execution enforces every constraint in the list, so admission judges
     // the conjunction — greatest lower bound against least upper bound.
@@ -846,9 +815,11 @@ fn repeated_amount_bounds_fold_to_their_conjunction() {
 /// unpublishable for a reason nobody wrote down.
 #[test]
 fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
-    let (mut cache, mut instances) = setup();
-    cache.publish_unchecked(pkg("sorter"), sorter_metadata());
-    instances.create(&TestHasher, sorter_meta());
+    let mut chain = setup();
+    chain
+        .packages
+        .publish_unchecked(pkg("sorter"), sorter_metadata());
+    chain.instances.create(&TestHasher, sorter_meta());
     let sorted = |resource: ResourceAddr| ManifestGraph {
         nodes: vec![
             valid_graph().nodes[0].clone(),
@@ -873,18 +844,12 @@ fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
 
     // The edge carries what the later argument names.
     assert_eq!(
-        admit(&sorted(RES_X), ALICE, &cache, &instances, &TestHasher).map(|_| ()),
+        admit(&sorted(RES_X), ALICE, &chain, &TestHasher).map(|_| ()),
         Ok(())
     );
     // And does not.
     assert!(matches!(
-        admit(
-            &sorted(common::RES_Y),
-            ALICE,
-            &cache,
-            &instances,
-            &TestHasher
-        ),
+        admit(&sorted(common::RES_Y), ALICE, &chain, &TestHasher),
         Err(AdmissionError::WrongDenomination {
             node: 2,
             param: 0,
@@ -897,9 +862,11 @@ fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
 /// refused at admission, naming the class the caller wrote.
 #[test]
 fn a_component_address_where_a_resource_belongs_is_refused() {
-    let (mut cache, mut instances) = setup();
-    cache.publish_unchecked(pkg("sorter"), sorter_metadata());
-    instances.create(&TestHasher, sorter_meta());
+    let mut chain = setup();
+    chain
+        .packages
+        .publish_unchecked(pkg("sorter"), sorter_metadata());
+    chain.instances.create(&TestHasher, sorter_meta());
     let component = Address::new([0x44; 31], AddressClass::Component);
     let graph = ManifestGraph {
         nodes: vec![
@@ -923,7 +890,7 @@ fn a_component_address_where_a_resource_belongs_is_refused() {
         ],
     };
     assert!(matches!(
-        admit(&graph, ALICE, &cache, &instances, &TestHasher),
+        admit(&graph, ALICE, &chain, &TestHasher),
         Err(AdmissionError::Eval {
             node: 2,
             source: EvalError::NotAResource(err),
@@ -939,7 +906,7 @@ proptest! {
         mins in prop_vec(any::<u128>(), 1..4),
         maxes in prop_vec(any::<u128>(), 1..4),
     ) {
-        let (cache, instances) = setup();
+        let chain = setup();
         let mut graph = valid_graph();
         let mut constraints: Vec<Constraint> =
             mins.iter().copied().map(Constraint::MinAmount).collect();
@@ -948,7 +915,7 @@ proptest! {
             edge: EdgeRef { producer: 2, output: 0 },
             constraints,
         };
-        let verdict = admit(&graph, ALICE, &cache, &instances, &TestHasher);
+        let verdict = admit(&graph, ALICE, &chain, &TestHasher);
         let lower = mins.iter().copied().max().expect("non-empty");
         let upper = maxes.iter().copied().min().expect("non-empty");
         if lower > upper {
@@ -971,7 +938,7 @@ proptest! {
         producer in any::<u32>(),
         output in any::<u32>(),
     ) {
-        let (cache, instances) = setup();
+        let chain = setup();
         let mut graph = valid_graph();
         let args = &mut graph.nodes[node].args;
         let slot = arg.min(args.len() - 1);
@@ -979,21 +946,21 @@ proptest! {
             edge: EdgeRef { producer, output },
             constraints: vec![],
         };
-        let first = admit(&graph, ALICE, &cache, &instances, &TestHasher);
-        let second = admit(&graph, ALICE, &cache, &instances, &TestHasher);
+        let first = admit(&graph, ALICE, &chain, &TestHasher);
+        let second = admit(&graph, ALICE, &chain, &TestHasher);
         assert_eq!(first, second);
     }
 
     /// Amount-window constraints reject exactly when the window is empty.
     #[test]
     fn amount_windows_admit_iff_satisfiable(min in any::<u128>(), max in any::<u128>()) {
-        let (cache, instances) = setup();
+        let chain = setup();
         let mut graph = valid_graph();
         graph.nodes[3].args[0] = GraphArg::Edge {
             edge: EdgeRef { producer: 2, output: 0 },
             constraints: vec![Constraint::MinAmount(min), Constraint::MaxAmount(max)],
         };
-        let verdict = admit(&graph, ALICE, &cache, &instances, &TestHasher);
+        let verdict = admit(&graph, ALICE, &chain, &TestHasher);
         if min > max {
             assert_eq!(
                 verdict,
@@ -1058,10 +1025,11 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
             ..MethodSignature::default()
         },
     );
-    let (mut cache, mut instances) = setup();
+    let mut chain = setup();
     // Through the checked door: the composed signature check admits the
     // condition-carrying shape.
-    cache
+    chain
+        .packages
         .publish(pkg("conditional"), package)
         .expect("publishes");
     let meta = InstanceMeta {
@@ -1070,7 +1038,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
         salt: Hash32([4; 32]),
     };
     let target = meta.address(&TestHasher);
-    instances.create(&TestHasher, meta);
+    chain.instances.create(&TestHasher, meta);
 
     let graph = ManifestGraph {
         nodes: vec![GraphNode {
@@ -1080,7 +1048,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
             evidence: [EvidenceRef::IntentSignature].into(),
         }],
     };
-    let admitted = admit(&graph, ALICE, &cache, &instances, &TestHasher).expect("admits");
+    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
 
     let key = child_key(&TestHasher, target, AUTH, &[]);
     // The signature's own condition, then the instantiation fence

@@ -35,9 +35,9 @@ use crate::admission::{
 use crate::dsl::SealedResources;
 use crate::graph::{Constraint, EdgeRef, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
-use crate::instance::{InstanceMeta, InstanceRegistry};
+use crate::instance::InstanceMeta;
 use crate::manifest::ManifestHash;
-use crate::metadata::MetadataCache;
+use crate::records::{ChainRecords, Composed};
 use crate::resource::ResourceMeta;
 use crate::route::{MAX_MANIFEST_NODES, Routing, ShardResolver, route};
 use crate::types::{SlotId, child_key};
@@ -276,8 +276,7 @@ pub fn admit_tree(
     tree: &EnvelopeTree,
     composer: PrincipalAddr,
     identity: ManifestHash,
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
+    chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<AdmittedTree, AdmissionError> {
     if tree.subintents.len() > MAX_SUBINTENTS {
@@ -321,7 +320,7 @@ pub fn admit_tree(
             signer: Some(subintent.signer),
         });
     }
-    // The envelope's own records, composed over what the chain already
+    // The envelope's own records, layered behind what the chain already
     // answers for. Each stands for the seal of the component it derives
     // and for nothing else — `Lower` holds every node targeting one to
     // being that component's seal.
@@ -330,22 +329,14 @@ pub fn admit_tree(
     // envelope means the same thing wherever it is judged, so a record
     // beside an ordinary call is refused whether or not the component it
     // names is already there.
-    let resolvable = instances.with_instances(&tree.instances, hasher);
+    let resolvable = Composed::new(chain, &tree.instances, hasher);
     let presented: BTreeSet<Address> = tree
         .instances
         .iter()
         .map(|meta| meta.address(hasher).address())
         .collect();
     let sealed = SealedResources::from_presented(hasher, &tree.resources);
-    let admitted = admit_intents(
-        &views,
-        identity,
-        cache,
-        &resolvable,
-        &presented,
-        &sealed,
-        hasher,
-    )?;
+    let admitted = admit_intents(&views, identity, &resolvable, &presented, &sealed, hasher)?;
     Ok(AdmittedTree {
         admitted,
         subintents: records,

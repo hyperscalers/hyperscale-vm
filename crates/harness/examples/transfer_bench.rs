@@ -13,8 +13,8 @@ use std::time::Instant;
 
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, InstanceRegistry, ManifestGraph, MetadataCache, NodeCall,
-    PackageHash, PrefixShardResolver, TestHasher, Value, admit, child_key, route,
+    Declaration, Hash32, Hasher, ManifestGraph, NodeCall, PackageHash, PrefixShardResolver,
+    Records, TestHasher, Value, admit, child_key, route,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
@@ -76,22 +76,17 @@ fn pkg() -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[b"account"]))
 }
 
-fn world(_senders: u32) -> (MetadataCache, InstanceRegistry) {
-    let mut cache = MetadataCache::new();
-    cache.publish_unchecked(pkg(), account::metadata());
-    let mut instances = InstanceRegistry::new();
+fn world(_senders: u32) -> Records {
+    let mut chain = Records::new();
+    chain.packages.publish_unchecked(pkg(), account::metadata());
     // Senders and the recipient are principals: one record serves every
     // account, so the bench's population costs the registry nothing.
-    instances.serve_principals(pkg());
-    (cache, instances)
+    chain.instances.serve_principals(pkg());
+    chain
 }
 
-fn transfer_graph(
-    cache: &MetadataCache,
-    instances: &InstanceRegistry,
-    from: PrincipalAddr,
-) -> ManifestGraph {
-    let mut b = TypedBuilder::new(cache, instances, &TestHasher);
+fn transfer_graph(world: &Records, from: PrincipalAddr) -> ManifestGraph {
+    let mut b = TypedBuilder::new(world, &TestHasher);
     let proof = account::authorize(&mut b, from).expect("sign-in types");
     let funds = account::withdraw(&mut b, proof, RES, AMOUNT).expect("withdraw types");
     account::deposit(&mut b, RECIPIENT, funds).expect("deposit types");
@@ -109,10 +104,9 @@ struct Routed {
     calls: Vec<NodeCall>,
 }
 
-fn routed(world: &(MetadataCache, InstanceRegistry), from: PrincipalAddr) -> Result<Routed> {
-    let (cache, instances) = world;
-    let graph = transfer_graph(cache, instances, from);
-    let admitted = admit(&graph, from, cache, instances, &TestHasher)?;
+fn routed(world: &Records, from: PrincipalAddr) -> Result<Routed> {
+    let graph = transfer_graph(world, from);
+    let admitted = admit(&graph, from, world, &TestHasher)?;
     let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
     Ok(Routed {
         declaration: routing.declaration().clone(),
@@ -198,33 +192,21 @@ fn main() -> Result<()> {
     // what every node derives at gossip. Metadata-cache-hot, as designed.
     {
         let count = 2_000u32;
-        let (cache, instances) = world(count);
+        let chain = world(count);
         let resolver = PrefixShardResolver { bits: 0 };
         // Built up front: the timed section is what a node derives from a
         // graph it received, and construction happened at a wallet.
         let graphs: Vec<ManifestGraph> = (0..count)
-            .map(|index| transfer_graph(&cache, &instances, sender(index)))
+            .map(|index| transfer_graph(&chain, sender(index)))
             .collect();
         // Warmup.
         for (index, graph) in graphs.iter().enumerate().take(200) {
-            let admitted = admit(
-                graph,
-                sender(u32::try_from(index)?),
-                &cache,
-                &instances,
-                &TestHasher,
-            )?;
+            let admitted = admit(graph, sender(u32::try_from(index)?), &chain, &TestHasher)?;
             std::hint::black_box(route(&admitted, &resolver));
         }
         let start = Instant::now();
         for (index, graph) in graphs.iter().enumerate() {
-            let admitted = admit(
-                graph,
-                sender(u32::try_from(index)?),
-                &cache,
-                &instances,
-                &TestHasher,
-            )?;
+            let admitted = admit(graph, sender(u32::try_from(index)?), &chain, &TestHasher)?;
             std::hint::black_box(route(&admitted, &resolver));
         }
         println!(
@@ -239,14 +221,9 @@ fn main() -> Result<()> {
     println!();
     let walk = ManifestWalk { backend: &bench };
     for senders in [100u32, 1_000, 4_000] {
-        let (cache, instances) = world(senders);
+        let chain = world(senders);
         let entries: Vec<BatchTx> = (0..senders)
-            .map(|index| {
-                Ok(entry_for(
-                    index,
-                    &routed(&(cache.clone(), instances.clone()), sender(index))?,
-                ))
-            })
+            .map(|index| Ok(entry_for(index, &routed(&chain, sender(index))?)))
             .collect::<Result<_>>()?;
         let mut store = OverlayStore::new(Arc::new(funded_store(senders)));
         let start = Instant::now();
@@ -276,9 +253,9 @@ fn main() -> Result<()> {
     println!();
     for batch_size in [100u32, 1_000] {
         let store = funded_store(batch_size);
-        let world = world(batch_size);
+        let chain = world(batch_size);
         let batch: Vec<BatchTx> = (0..batch_size)
-            .map(|index| Ok(entry_for(index, &routed(&world, sender(index))?)))
+            .map(|index| Ok(entry_for(index, &routed(&chain, sender(index))?)))
             .collect::<Result<_>>()?;
         let start = Instant::now();
         let outcome = execute_batch(

@@ -3,9 +3,9 @@
 //! gates badges open.
 
 use hyperscale_vm_effects::{
-    AuthBase, AuthCell, CONFIRMATION, Hash32, InstanceMeta, InstanceRegistry, ManifestGraph,
-    MetadataCache, PRIMARY, Presented, Proposal, RECOVERY, RoleBytes, RoleTable, StoredRule,
-    TestHasher, Value, holdings_collection,
+    AuthBase, AuthCell, CONFIRMATION, Hash32, InstanceMeta, ManifestGraph, PRIMARY, Presented,
+    Proposal, RECOVERY, Records, RoleBytes, RoleTable, StoredRule, TestHasher, Value,
+    holdings_collection,
 };
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, vault};
@@ -292,7 +292,7 @@ fn confirm_graph() -> ManifestGraph {
 /// Whether `signer` opens Alice's sign-in at `clock_ms`: the whole
 /// authorized transfer completes, or refuses at its authorize node.
 fn assert_acts(
-    world: &(MetadataCache, InstanceRegistry),
+    world: &Records,
     store: &MemoryStore,
     signer: PrincipalAddr,
     clock_ms: u64,
@@ -1045,7 +1045,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
 /// admin a burn rather than a redeploy.
 #[test]
 fn distinct_instances_of_one_badge_are_distinct_authorities() {
-    let (cache, mut instances) = world();
+    let mut world = world();
     let store = sealed_store();
     let badge = nf_resource();
 
@@ -1056,11 +1056,7 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
         let second = nf::mint(b, nf_issuer())?;
         account::deposit_nf(b, BOB, second)
     });
-    let (results, mut store) = run_both(
-        &(cache.clone(), instances.clone()),
-        &store,
-        &[(&seat, TxHash(Hash32([0x81; 32])))],
-    );
+    let (results, mut store) = run_both(&world, &store, &[(&seat, TxHash(Hash32([0x81; 32])))]);
     assert!(matches!(results[0], TxResult::Completed(_)));
     let held = |store: &MemoryStore, who: PrincipalAddr| -> Vec<u64> {
         store
@@ -1086,8 +1082,7 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
     };
     let by_instance_addr = by_instance.address(&TestHasher);
     seal(&mut store, &by_instance);
-    instances.create(&TestHasher, by_instance);
-    let world = (cache, instances);
+    world.instances.create(&TestHasher, by_instance);
     let by_resource = gated_by(badge.address(), 9);
 
     let operate_instance = |who: PrincipalAddr, id: u64| {
@@ -1154,7 +1149,7 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
 /// presentations across three signed intents.
 #[test]
 fn a_declared_threshold_admits_exactly_its_quorum() {
-    let (cache, mut instances) = world();
+    let mut world = world();
     let store = sealed_store();
     let badge = nf_resource();
 
@@ -1166,11 +1161,7 @@ fn a_declared_threshold_admits_exactly_its_quorum() {
         }
         Ok(())
     });
-    let (results, mut store) = run_both(
-        &(cache.clone(), instances.clone()),
-        &store,
-        &[(&seat, TxHash(Hash32([0x91; 32])))],
-    );
+    let (results, mut store) = run_both(&world, &store, &[(&seat, TxHash(Hash32([0x91; 32])))]);
     assert!(matches!(results[0], TxResult::Completed(_)));
     let mut ids: Vec<u64> = store
         .collection_entries()
@@ -1200,8 +1191,7 @@ fn a_declared_threshold_admits_exactly_its_quorum() {
     };
     let quorum_addr = quorum.address(&TestHasher);
     seal(&mut store, &quorum);
-    instances.create(&TestHasher, quorum);
-    let world = (cache, instances);
+    world.instances.create(&TestHasher, quorum);
 
     let operate = |presented: &[u64]| {
         let presented = presented.to_vec();
