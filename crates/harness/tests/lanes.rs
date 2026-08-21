@@ -11,9 +11,12 @@
 //! could differ silently, the loop would be a comfort rather than a
 //! check.
 
+use hyperscale_vm_effects::{ResourceKind, TestHasher, instance_data_key, issued_resource};
 use hyperscale_vm_fixtures::amm::{self, Settings};
+use hyperscale_vm_fixtures::grammar;
 use hyperscale_vm_harness::fixtures::repo_root;
 use hyperscale_vm_kernel::Receipt;
+use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
     Chain, Package, PrincipalAddr, ResourceAddr, account, principal, resource,
@@ -32,6 +35,15 @@ fn amm() -> Package {
         amm::metadata(),
         repo_root().join("guests").join("amm"),
         amm::invoke,
+    )
+}
+
+/// The shapes package, rooted at the crate its artifact is built from.
+fn grammar() -> Package {
+    Package::new(
+        grammar::metadata(),
+        repo_root().join("guests").join("grammar"),
+        grammar::invoke,
     )
 }
 
@@ -130,4 +142,45 @@ fn a_transfer_reads_the_same_in_both_lanes() {
     assert_eq!(comparable(&native), comparable(&blessed), "lanes diverged");
     assert_eq!(native_balances, blessed_balances, "state diverged");
     assert_eq!(native_balances, [60, 40]);
+}
+
+/// A fielded mint and the read of what it filed agree across the lanes.
+///
+/// The one shape a host build cannot settle on its own: the write and
+/// the read are each a cfg with a guest half and a host half, and a
+/// native run reads only the host one. So the cell a mint files on wasm
+/// and the value a read decodes there are held to what the bodies did.
+#[test]
+fn a_fielded_instance_reads_the_same_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(());
+        chain
+            .transact(ALICE, |b| shapes.found(b))
+            .expect_completed();
+        let outcome = chain.transact(ALICE, |b| {
+            let seat = shapes.seat(b, 3, 42)?;
+            account::deposit_nf(b, ALICE, seat)
+        });
+        let receipt = outcome.receipt().clone();
+        let seat = issued_resource(
+            &TestHasher,
+            shapes,
+            ResourceKind::NonFungible,
+            grammar::SEAT,
+        );
+        let filed = chain.cell(instance_data_key(&TestHasher, shapes, seat, 3));
+        (receipt, filed)
+    };
+
+    let (native, native_filed) = run(Chain::native());
+    let (blessed, blessed_filed) = run(Chain::wasm());
+
+    assert_eq!(comparable(&native), comparable(&blessed), "lanes diverged");
+    assert_eq!(native_filed, blessed_filed, "the filed record diverged");
+    assert_eq!(
+        native_filed,
+        Some(to_vec(&grammar::Seat { holder: 42 }).expect("the record encodes")),
+        "the cell holds the record the mark declares",
+    );
 }

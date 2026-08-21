@@ -9,18 +9,28 @@
 //!
 //! So this crate is the emission's side of the same question: every shape
 //! below is here because it is one the grammar admits, and the check is
-//! that `cargo hyperscale` gets an artifact out of it.
+//! that `cargo hyperscale` gets an artifact out of it — and, for the
+//! shapes whose halves a host build cannot tell apart, that running it
+//! answers what running the bodies did.
 
 use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod grammar {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Ids, Keyed, Ordered, Quantity, Vault, pack};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Ids, NfBucket, Ordered, Quantity, pack};
+
+    /// A mark carrying a schema: what one of its instances holds, in the
+    /// encoding the mark itself declares.
+    #[resource(non_fungible)]
+    struct Seat {
+        holder: u64,
+    }
 
     #[state]
     struct Grammar {
         entries: Ordered<Quantity>,
+        noted: Cell<u64>,
     }
 
     impl Grammar {
@@ -89,6 +99,24 @@ pub mod grammar {
         /// is exercised beside the statement ones.
         pub fn take(&mut self, resource: ResourceAddr, amount: Quantity) -> Bucket {
             self.vault(resource).reserve(amount)
+        }
+
+        /// The mark's own record, under the one-way door its absence is.
+        pub fn found(&mut self) {
+            Seat::create();
+        }
+
+        /// A fielded mint beside the read of what it filed: one cell,
+        /// written as the record the mark declares and decoded back as
+        /// the same. Both halves are here because a host build settles
+        /// the declaration for either order and says nothing about what
+        /// the guest half writes.
+        pub fn seat(&mut self, id: u64, holder: u64) -> NfBucket {
+            let seated = Seat::mint(id, Seat { holder });
+            if let Some(seat) = Seat::at(id) {
+                self.noted.set(seat.holder);
+            }
+            seated
         }
     }
 }

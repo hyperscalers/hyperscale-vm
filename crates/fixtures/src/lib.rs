@@ -31,6 +31,7 @@
 
 pub mod amm;
 pub mod book;
+pub mod grammar;
 pub mod lottery;
 pub mod nf;
 pub mod registry;
