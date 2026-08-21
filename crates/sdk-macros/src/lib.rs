@@ -1669,7 +1669,7 @@ fn lower_methods(
 /// One declaration because two sites read it: the refusal that keeps an
 /// authored method off the name, and the method the macro synthesizes to
 /// take it.
-const INSTANTIATE: &str = "instantiate";
+pub(crate) const INSTANTIATE: &str = "instantiate";
 
 /// The generated `instantiate` — the seal that makes a component actual,
 /// beside the record of every resource it declares.

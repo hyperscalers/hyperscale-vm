@@ -27,9 +27,7 @@ use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vau
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
 use hyperscale_vm_manifest_builder::{Names, TypedBuilder, TypedError, render};
 use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
-use hyperscale_vm_stdlib::{
-    ACCOUNT_COMPONENT, INSTANTIATE, STAKING_COMPONENT, account, instantiate, staking,
-};
+use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, instantiate, staking};
 use hyperscale_vm_types::{
     Address, Outcome, Presence, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, UnmetCondition,
     encode_amount,
@@ -513,22 +511,20 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
 /// record of each mark it issues, and minting the owner badge it comes
 /// up holding — filed in the founder's own account.
 fn bring_up_graph() -> ManifestGraph {
-    let signature = staking::metadata()
-        .methods
-        .remove(INSTANTIATE)
-        .expect("an instance-serving package declares its seal");
-    graph(|b| instantiate(b, OPERATOR, pool().into(), &signature))
+    graph(|b| instantiate(b, OPERATOR, pool().into()))
 }
 
 /// The same bring-up, written out — the sign-in, the seal, the deposit.
 ///
-/// What the generated composition is held to: it reads which of those
-/// nodes exist off the package's own declaration, and this says what the
-/// answer is for a package that gates its bring-up and issues a badge.
+/// What the composed one is held to: it reads which of those nodes exist
+/// off the package's own declaration, and this says what the answer is
+/// for a package that gates its bring-up and issues a badge. Written
+/// against the untyped call rather than a generated wrapper, because the
+/// point is what a caller composing it by hand would have to write.
 fn hand_written_bring_up() -> ManifestGraph {
     graph(|b| {
         let founder = account::authorize(b, OPERATOR)?;
-        let badge = pool().instantiate(b, founder)?;
+        let badge = b.call_as(founder, pool(), "instantiate", ())?.one()?;
         account::deposit_nf(b, OPERATOR, badge)
     })
 }

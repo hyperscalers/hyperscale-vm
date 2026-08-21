@@ -10,7 +10,7 @@ use hyperscale_vm_types::{Address, SubstateKey};
 use crate::KERNEL_SLOT_BASE;
 use crate::auth::{CONFIRMATION, PACKAGE_ROLE_BASE, PRIMARY, RECOVERY, RoleId};
 use crate::hash::{Hash32, Hasher};
-use crate::publish::{CheckedSignature, SignatureError, check_signature};
+use crate::publish::{CheckedSignature, SignatureError, check_signature, seals};
 use crate::signature::MethodSignature;
 use crate::types::{SlotId, child_key};
 
@@ -110,6 +110,26 @@ impl PackageMetadata {
                 .get(usize::from(n.checked_sub(PACKAGE_ROLE_BASE)?))
                 .map(String::as_str),
         }
+    }
+
+    /// The method that makes a component of this package actual, and the
+    /// name it publishes under.
+    ///
+    /// Found by what it declares rather than by what it is called: the
+    /// seal is the method writing the component's own configuration
+    /// leaf, which is the same question the publish gate asks before it
+    /// admits the package at all. A caller looking the name up would be
+    /// a second answer, and a hand-written package that spelled the name
+    /// differently would publish fine and compose nowhere.
+    ///
+    /// `None` for a package serving principals, which has no creation to
+    /// finish.
+    #[must_use]
+    pub fn seal(&self) -> Option<(&str, &MethodSignature)> {
+        self.methods
+            .iter()
+            .find(|(_, signature)| seals(signature))
+            .map(|(name, signature)| (name.as_str(), signature))
     }
 }
 

@@ -53,7 +53,7 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 #[cfg(feature = "wasm")]
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
-use hyperscale_vm_stdlib::{INSTANTIATE, instantiate};
+use hyperscale_vm_stdlib::instantiate;
 pub use hyperscale_vm_types::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_types::{
     CallTarget, Outcome as KernelOutcome, SubstateKey, TxHash, encode_amount,
@@ -325,18 +325,18 @@ impl Chain {
         self.records.instances.create(&TestHasher, meta);
         // The chain answers for the address from here, which is this
         // tier's answer to what an envelope's presented record is.
-        let Some(signature) = self
+        let seals = self
             .records
             .packages
-            .method(package, INSTANTIATE)
-            .map(|checked| checked.signature().clone())
-        else {
+            .get(package)
+            .is_some_and(|metadata| metadata.seal().is_some());
+        if !seals {
             self.store.write(leaf, bytes);
             return address;
-        };
+        }
         // The bring-up, composed where what the package asks for is read
         // off its own declaration rather than restated here.
-        self.transact(founder, |b| instantiate(b, founder, address, &signature))
+        self.transact(founder, |b| instantiate(b, founder, address))
             .expect_completed();
         assert_eq!(
             self.store.cell(leaf),

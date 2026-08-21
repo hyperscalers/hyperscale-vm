@@ -19,7 +19,7 @@ use hyperscale_vm_effects::ResourceKind;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 
-use crate::{Gate, Resource, is_named, kebab};
+use crate::{Gate, INSTANTIATE, Resource, is_named, kebab};
 
 /// Which addresses a package's instances sit at, and so how it is
 /// called.
@@ -452,8 +452,14 @@ pub fn module(
 ) -> TokenStream2 {
     let slots = slots(fields);
     let issued = issued(resources, config);
+    // The seal is composed rather than called: what a bring-up carries
+    // beside it — the sign-in a gated package asks for, the account the
+    // supply is filed in — is read off the declaration by the stdlib's
+    // own composition, and a bare wrapper would let a caller write the
+    // node without them and learn so at admission.
     let calls: Vec<_> = methods
         .iter()
+        .filter(|method| !matches!(serves, Serves::Instances) || method.published != INSTANTIATE)
         .flat_map(|method| wrappers(method, serves))
         .collect();
 

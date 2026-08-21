@@ -21,7 +21,7 @@ use hyperscale_vm_effects::{
     Hasher, PackageHash, attach_metadata, native_address, package_hash, package_key,
 };
 use hyperscale_vm_types::{NativeAddr, StateWrites};
-pub use instantiate::{INSTANTIATE, instantiate};
+pub use instantiate::instantiate;
 
 /// The componentized account guest: reservation-backed `withdraw` and
 /// delta `deposit`.

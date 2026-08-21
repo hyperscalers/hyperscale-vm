@@ -48,6 +48,11 @@ pub enum TypedError {
     /// A target whose package is not in the metadata cache.
     #[error("no package {0:?} in the metadata cache")]
     UnknownPackage(PackageHash),
+    /// A target whose package declares no way to make a component of it
+    /// actual. Every published package does; the one serving principals
+    /// does not, and has no creation to finish.
+    #[error("package {0:?} declares no seal")]
+    NoSeal(PackageHash),
     /// A method the target's package does not declare.
     #[error("package {package:?} has no method `{method}`")]
     UnknownMethod {
@@ -261,6 +266,39 @@ impl<'a> TypedBuilder<'a> {
             chain,
             hasher,
         }
+    }
+
+    /// The seal of `target`'s package: the name it publishes under, and
+    /// the signature it declares.
+    ///
+    /// Asked of the declaration rather than looked up by name, which is
+    /// the same question the publish gate asks before it admits the
+    /// package — so a composition and the gate cannot disagree about
+    /// which method makes a component actual.
+    ///
+    /// Owned, because the caller's next act is to append a call and the
+    /// builder cannot be borrowed twice.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::UnknownInstance`] or [`TypedError::UnknownPackage`]
+    /// when the target does not resolve, and [`TypedError::NoSeal`] for
+    /// a package that declares none.
+    pub fn seal(
+        &self,
+        target: impl Into<CallTarget>,
+    ) -> Result<(String, MethodSignature), TypedError> {
+        let target = target.into();
+        let meta = self
+            .chain
+            .instance(target)
+            .ok_or_else(|| TypedError::UnknownInstance(target.address()))?;
+        let package = self
+            .chain
+            .package(meta.package)
+            .ok_or(TypedError::UnknownPackage(meta.package))?;
+        let (name, signature) = package.seal().ok_or(TypedError::NoSeal(meta.package))?;
+        Ok((name.to_owned(), signature.clone()))
     }
 
     /// Append an invocation of `method` on `target`, typed against the
