@@ -32,6 +32,13 @@ jobs:
         run: cargo +nightly fmt --all --check
       - name: Cargo Clippy
         run: cargo +nightly clippy --all-targets -- -D warnings
+      # The fuzz targets are their own workspace — they need a
+      # sanitizer-instrumented build and must not join the ordinary one —
+      # so nothing above reaches them and an API move breaks them
+      # silently. Compiling them is the whole of what this catches, and
+      # it wants neither a sanitizer nor a corpus.
+      - name: Cargo Clippy (fuzz)
+        run: cargo +nightly clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
 
   test:
     name: Test Suite
