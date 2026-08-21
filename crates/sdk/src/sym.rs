@@ -365,6 +365,14 @@ pub fn tuple<K: Kind>(fields: &[Sym<K>]) -> Sym<Opaque> {
     Sym::new(Expr::Tuple(fields.iter().map(|f| f.expr.clone()).collect()))
 }
 
+/// The target instance's whole creation-fixed record — the bytes its
+/// configuration leaf stores, evaluated from what admission resolved the
+/// target with rather than from anything a caller supplies.
+#[must_use]
+pub const fn self_record() -> Sym<Opaque> {
+    Sym::new(Expr::SelfRecord)
+}
+
 /// A `u64` literal.
 #[must_use]
 pub const fn lit_u64(value: u64) -> Sym<Num> {

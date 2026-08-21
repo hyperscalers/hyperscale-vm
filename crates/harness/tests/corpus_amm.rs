@@ -90,10 +90,7 @@ fn swap_store() -> MemoryStore {
     store
         .write(vault(pool(), RES_Y), encode_amount(1_000).to_vec())
         .unwrap();
-    store
-        .write(config_leaf(pool()), pool_meta().config_bytes().unwrap())
-        .unwrap();
-    store.lock(config_leaf(pool()));
+    seal(&mut store, &pool_meta());
     store
 }
 
@@ -106,17 +103,19 @@ fn swap_profile_and_provision_shape_are_exact() {
     assert_eq!(
         *pool_set,
         set(&[
-            point(config_leaf(pool()), Mode::Locked,),
+            point(config_leaf(pool()), Mode::Read),
             point(vault(pool(), RES_X), Mode::Write),
             point(vault(pool(), RES_Y), Mode::Write),
         ])
     );
-    // The pool-shard provision carries the two balance cells and nothing
-    // else: the reserves are read-modify-writes, the locked config is
-    // verified-once and free.
+    // The pool-shard provision carries the two balance cells and the
+    // fence's leaf: the reserves are read-modify-writes, and the
+    // configuration read is what every participant judges the
+    // component's presence by.
     assert_eq!(
         pool_set.provision_targets(),
         [
+            EffectTarget::Point(config_leaf(pool())),
             EffectTarget::Point(vault(pool(), RES_X)),
             EffectTarget::Point(vault(pool(), RES_Y)),
         ]
@@ -249,13 +248,7 @@ fn shares_store() -> MemoryStore {
     store
         .write(supply_leaf(shares_vault()), encode_amount(777).to_vec())
         .unwrap();
-    store
-        .write(
-            config_leaf(shares_vault()),
-            shares_meta().config_bytes().unwrap(),
-        )
-        .unwrap();
-    store.lock(config_leaf(shares_vault()));
+    seal(&mut store, &shares_meta());
     store
 }
 

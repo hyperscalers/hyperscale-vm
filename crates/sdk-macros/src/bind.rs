@@ -149,6 +149,9 @@ pub fn derived_shape(
         ))),
         // A resource is an address however it was derived.
         Term::SelfResource(..) | Term::ResourceOf(_) => Shape::Address,
+        // The record crosses as the leaf's own bytes, which is the cell
+        // representation it is.
+        Term::SelfRecord => Shape::Cell(Box::new(syn::parse_quote!(::std::vec::Vec<u8>))),
         Term::Arg(index) => params
             .get(*index as usize)
             .map_or(Shape::Scalar, |(_, ty)| named(ty)),

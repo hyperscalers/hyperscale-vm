@@ -22,7 +22,9 @@ use hyperscale_vm_effects::{CONFIRMATION, PackageMetadata, ParamType, RECOVERY, 
 use hyperscale_vm_fixtures::{
     amm as amm_package, book as book_package, splitter as splitter_package,
 };
-use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Num, Sym, eq, lit_u64, pack, select};
+use hyperscale_vm_sdk::sym::{
+    Addr, Amount, Bucket, Num, Sym, eq, lit_u64, pack, select, self_record,
+};
 use hyperscale_vm_sdk::{Blueprint, SealedBehaviour, Trace};
 use hyperscale_vm_stdlib::account as account_package;
 
@@ -139,6 +141,7 @@ fn amm() -> Blueprint {
             "swap",
             &[ParamType::Bucket, ParamType::U128],
             |t: &mut Trace| {
+                t.fence();
                 // The reserve pair is creation-fixed, and which side of it
                 // a call sells is read off the arriving bucket — so both
                 // vault keys are one conditional over configuration
@@ -152,8 +155,6 @@ fn amm() -> Blueprint {
                 let sold: Sym<Addr> = select(&sells_x, &x, &y).cast();
                 let bought: Sym<Addr> = select(&sells_x, &y, &x).cast();
 
-                let config = pool.child(CONFIG, &[]);
-                t.point(&config).locked();
                 t.point(&pool.child(VAULT, &[sold.clone().cast()]))
                     .holding(&sold)
                     .write();
@@ -167,6 +168,15 @@ fn amm() -> Blueprint {
                 t.output(&bought);
             },
         )
+        .method("instantiate", &[], |t: &mut Trace| {
+            // The generated seal: the record into the configuration
+            // leaf, under the one-way door its absence is, with the
+            // bytes evaluated rather than supplied.
+            let leaf = t.self_addr().child(CONFIG, &[]);
+            t.point(&leaf).create();
+            t.bind_handle();
+            t.bind_derived(&self_record());
+        })
         .build()
 }
 
@@ -177,6 +187,7 @@ fn book() -> Blueprint {
             "place-ask",
             &[ParamType::U64, ParamType::Bucket],
             |t: &mut Trace| {
+                t.fence();
                 let price: Sym<Num> = t.arg(0);
                 let _funds: Sym<Bucket> = t.arg(1);
                 let venue = t.self_addr();
@@ -200,6 +211,7 @@ fn book() -> Blueprint {
             "fill-asks",
             &[ParamType::U64, ParamType::U64, ParamType::Bucket],
             |t: &mut Trace| {
+                t.fence();
                 let from: Sym<Num> = t.arg(0);
                 let to: Sym<Num> = t.arg(1);
                 let payment: Sym<Bucket> = t.arg(2);
@@ -236,6 +248,15 @@ fn book() -> Blueprint {
                 t.output(&payment.resource());
             },
         )
+        .method("instantiate", &[], |t: &mut Trace| {
+            // The generated seal: the record into the configuration
+            // leaf, under the one-way door its absence is, with the
+            // bytes evaluated rather than supplied.
+            let leaf = t.self_addr().child(CONFIG, &[]);
+            t.point(&leaf).create();
+            t.bind_handle();
+            t.bind_derived(&self_record());
+        })
         .build()
 }
 

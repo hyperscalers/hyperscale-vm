@@ -64,6 +64,7 @@ fn draw_cell(store: &MemoryStore) -> Option<Vec<u8>> {
 fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
     let world = world();
     let mut store = MemoryStore::new();
+    seal(&mut store, &lottery_meta());
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
@@ -171,6 +172,7 @@ fn the_same_draw_at_two_caps_is_priced_apart() {
 fn a_draw_buys_a_page_past_any_ceiling() {
     let world = world();
     let mut store = MemoryStore::new();
+    seal(&mut store, &lottery_meta());
     store
         .write(vault(ALICE, RES_X), encode_amount(150).to_vec())
         .unwrap();
@@ -210,6 +212,7 @@ fn a_draw_buys_a_page_past_any_ceiling() {
 fn a_draw_declines_a_page_that_did_not_cover_the_round() {
     let world = world();
     let mut store = MemoryStore::new();
+    seal(&mut store, &lottery_meta());
     for who in [ALICE, BOB] {
         store
             .write(vault(who, RES_X), encode_amount(150).to_vec())

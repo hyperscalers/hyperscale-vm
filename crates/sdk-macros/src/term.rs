@@ -84,6 +84,9 @@ pub enum Term {
     /// A resource the instance issues, marked apart from its others, of
     /// the kind its derivation folds.
     SelfResource(ResourceKind, Vec<u8>),
+    /// The instance's whole creation-fixed record — the bytes its
+    /// configuration leaf stores.
+    SelfRecord,
     /// A non-fungible edge: the resource, and the instances it carries.
     NfBucket {
         /// The resource the edge is denominated in.
@@ -229,6 +232,7 @@ impl Term {
                 let mark = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
                 quote!(__t.self_resource(#kind, #mark).cast::<::hyperscale_vm_sdk::Opaque>())
             }
+            Self::SelfRecord => quote!(::hyperscale_vm_sdk::sym::self_record()),
             Self::NfBucket { resource, ids } => {
                 let resource = resource.emit();
                 let ids = ids.emit();

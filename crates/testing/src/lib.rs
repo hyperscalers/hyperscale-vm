@@ -293,7 +293,14 @@ impl Chain {
         }
     }
 
-    /// Write a creation record and its locked configuration leaf.
+    /// Register a creation record and make the instance actual.
+    ///
+    /// A package that declares the generated seal is sealed through it:
+    /// an `instantiate` transaction, the same node a wallet composes,
+    /// with the leaf's bytes evaluated from the record rather than
+    /// supplied by anyone. A package written the long way declares no
+    /// seal, so the chain seats its leaf directly, as genesis seats what
+    /// it writes.
     fn create(&mut self, package: PackageHash, config: Vec<Value>) -> ComponentAddr {
         self.created += 1;
         let meta = InstanceMeta {
@@ -303,14 +310,23 @@ impl Chain {
         };
         let address = meta.address(&TestHasher);
         let leaf = child_key(&TestHasher, address, CONFIG, &[]);
-        let bytes = meta
-            .config_bytes()
-            .expect("an instance's configuration encodes");
+        let bytes = meta.leaf_bytes().expect("an instance's record encodes");
         self.instances.create(&TestHasher, meta);
-        self.store
-            .write(leaf, bytes)
-            .expect("the store takes a config leaf");
-        self.store.lock(leaf);
+        if self.cache.method(package, "instantiate").is_some() {
+            self.transact(principal(0xC0), |b| {
+                b.call(address, "instantiate", ())?.none()
+            })
+            .expect_completed();
+            assert_eq!(
+                self.store.cell(leaf),
+                Some(bytes),
+                "the seal writes the record's own bytes"
+            );
+        } else {
+            self.store
+                .write(leaf, bytes)
+                .expect("the store takes a config leaf");
+        }
         address
     }
 

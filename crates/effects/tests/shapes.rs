@@ -16,7 +16,7 @@ use hyperscale_vm_effects::{
     InstanceRegistry, ManifestGraph, MetadataCache, ResolveError, TestHasher, Value, admit,
     collection_id, fresh_id, route,
 };
-use hyperscale_vm_types::{Effect, EffectTarget, Mode};
+use hyperscale_vm_types::{Address, Effect, EffectTarget, Mode};
 
 /// One consumed output edge, unconstrained.
 const fn edge(producer: u32, output: u32) -> GraphArg {
@@ -29,6 +29,15 @@ const fn edge(producer: u32, output: u32) -> GraphArg {
 /// An ordinary write: on a leaf that may or may not be there.
 const fn write() -> Mode {
     Mode::Write
+}
+
+/// The instantiation fence's read of `owner`'s configuration leaf, which
+/// every method of an instance-serving package carries.
+fn fence_read(owner: impl Into<Address>) -> Effect {
+    Effect {
+        target: EffectTarget::Point(config_leaf(owner)),
+        mode: Mode::Read,
+    }
 }
 
 #[test]
@@ -95,7 +104,7 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
 }
 
 #[test]
-fn swap_writes_both_reserves_and_reads_the_locked_config() {
+fn swap_writes_both_reserves_and_reads_the_config() {
     let (cache, instances) = world();
     let graph = ManifestGraph {
         nodes: vec![
@@ -156,10 +165,7 @@ fn swap_writes_both_reserves_and_reads_the_locked_config() {
         (
             shard_of(pool()),
             effect_set(&[
-                Effect {
-                    target: EffectTarget::Point(config_leaf(pool())),
-                    mode: Mode::Locked,
-                },
+                fence_read(pool()),
                 Effect {
                     target: EffectTarget::Point(vault(pool(), RES_X)),
                     mode: write(),
@@ -223,6 +229,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
         (
             shard_of(book()),
             effect_set(&[
+                fence_read(book()),
                 Effect {
                     target: EffectTarget::Entry {
                         owner: book().into(),
@@ -325,6 +332,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
         (
             shard_of(book()),
             effect_set(&[
+                fence_read(book()),
                 Effect {
                     target: EffectTarget::Range {
                         owner: book().into(),

@@ -17,6 +17,7 @@
 
 use std::sync::LazyLock;
 
+use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
     AdmissionError, EnvelopeTree, Hash32, Hasher, InstanceMeta, InstanceRegistry, IntentDecl,
     ManifestGraph, MetadataCache, PackageHash, PrefixShardResolver, ResourceKind, ResourceRecord,
@@ -62,10 +63,22 @@ fn badge() -> ResourceAddr {
 /// The badge instance the operator holds in these tests.
 const BADGE_ID: u64 = 0;
 
+/// Seal the pool: the committed configuration leaf its instantiation
+/// writes, which is what makes its methods reachable at all.
+fn seal_pool(store: &mut MemoryStore) {
+    store
+        .write(
+            child_key(&TestHasher, pool(), CONFIG, &[]),
+            pool_meta().leaf_bytes().unwrap(),
+        )
+        .unwrap();
+}
+
 /// A store where [`OPERATOR`] holds the pool's owner badge — what every
 /// operator-surface test starts from.
 fn operator_store() -> MemoryStore {
     let mut store = MemoryStore::new();
+    seal_pool(&mut store);
     store
         .entry_write(
             OPERATOR.address(),
@@ -275,6 +288,7 @@ const UNIT_RECORD: ResourceRecord = ResourceRecord::Fungible { divisibility: 18 
 
 fn seeded_store(xrd: u128, units: u128) -> MemoryStore {
     let mut store = MemoryStore::new();
+    seal_pool(&mut store);
     store
         .write(
             resource_record_key(&TestHasher, pool(), unit()),
@@ -301,6 +315,42 @@ static LANES: LazyLock<Lanes> = LazyLock::new(|| {
 
 fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> (BatchOutcome, MemoryStore) {
     run_lanes(&LANES, store, batch)
+}
+
+/// The fence: a delegation to a pool whose creation never finished is
+/// refused as the leaf's unmet presence, judged where the leaf lives,
+/// before any body runs — so nothing vaults the funds and nothing mints
+/// units against an object with no operator.
+#[test]
+fn a_delegation_to_an_unsealed_pool_is_refused_where_the_leaf_lives() -> Result<()> {
+    let world = world();
+    let entry = batch_entry(&world, &single_intent(stake_graph(100)), ALICE)?;
+
+    let mut store = MemoryStore::new();
+    store.write(
+        resource_record_key(&TestHasher, pool(), unit()),
+        UNIT_RECORD.to_cell().unwrap(),
+    )?;
+    seed_vault(&mut store, ALICE, XRD, 150);
+
+    let (outcome, end) = run_both(&store, std::slice::from_ref(&entry));
+    assert!(
+        matches!(
+            outcome.receipts[&entry.tx].outcome,
+            Outcome::ConditionUnmet {
+                condition: UnmetCondition::Holds {
+                    required: Presence::Present,
+                    ..
+                },
+            }
+        ),
+        "refused as the unmet presence: {:?}",
+        outcome.receipts[&entry.tx].outcome,
+    );
+    assert_eq!(amount_of(&end, vault(ALICE, XRD)), 150);
+    assert_eq!(amount_of(&end, vault(pool(), XRD)), 0);
+    assert_eq!(amount_of(&end, vault(ALICE, unit())), 0);
+    Ok(())
 }
 
 #[test]
@@ -490,6 +540,7 @@ const BADGE_RECORD: ResourceRecord = ResourceRecord::NonFungible;
 fn a_pool_founds_itself_and_reaches_its_operator_surface() -> Result<()> {
     let world = world();
     let mut store = MemoryStore::new();
+    seal_pool(&mut store);
     store.write(
         resource_record_key(&TestHasher, pool(), unit()),
         UNIT_RECORD.to_cell().unwrap(),
@@ -539,8 +590,10 @@ fn a_pool_founds_itself_and_reaches_its_operator_surface() -> Result<()> {
 #[test]
 fn a_second_founding_is_refused_where_the_record_lives() -> Result<()> {
     let world = world();
+    let mut store = MemoryStore::new();
+    seal_pool(&mut store);
     let found = batch_entry(&world, &single_intent(found_graph()), OPERATOR)?;
-    let (_, after_found) = run_both(&MemoryStore::new(), std::slice::from_ref(&found));
+    let (_, after_found) = run_both(&store, std::slice::from_ref(&found));
 
     let again = batch_entry(&world, &single_intent(found_graph()), OPERATOR)?;
     let (outcome, _) = run_both(&after_found, std::slice::from_ref(&again));

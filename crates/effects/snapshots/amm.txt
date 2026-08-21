@@ -1,5 +1,51 @@
 PackageMetadata {
     methods: {
+        "instantiate": MethodSignature {
+            totality: Infallible,
+            issues: None,
+            params: [],
+            outputs: [],
+            denominations: [],
+            effects: [
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    3,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Absent,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                3,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                    denomination: None,
+                },
+            ],
+            abi: [
+                Handle(
+                    1,
+                ),
+                Derived(
+                    SelfRecord,
+                ),
+            ],
+        },
         "swap": MethodSignature {
             totality: Fallible,
             issues: None,
@@ -51,6 +97,21 @@ PackageMetadata {
                 None,
             ],
             effects: [
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    3,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Present,
+                    },
+                },
                 Effect {
                     guard: None,
                     target: Point(
@@ -62,7 +123,7 @@ PackageMetadata {
                             material: [],
                         },
                     ),
-                    mode: Locked,
+                    mode: Read,
                     denomination: None,
                 },
                 Effect {
@@ -172,10 +233,10 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    1,
+                    2,
                 ),
                 Handle(
-                    2,
+                    3,
                 ),
                 Derived(
                     Config(

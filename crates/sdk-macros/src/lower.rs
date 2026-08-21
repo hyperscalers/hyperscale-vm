@@ -41,7 +41,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::ResourceKind;
-use hyperscale_vm_effects::vocabulary::{INSTANCE, RESOURCE};
+use hyperscale_vm_effects::vocabulary::{CONFIG, INSTANCE, RESOURCE};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
@@ -1246,6 +1246,33 @@ impl<'a> Lowerer<'a> {
         Eval::plain(quote!(#leaf.create(#record)))
     }
 
+    /// Lower the generated `instantiate` body's one statement: the
+    /// creation-fixed record sealed into the configuration leaf, under
+    /// the one-way door its absence is.
+    ///
+    /// The bytes are the kernel's evaluation of the record admission
+    /// resolved the target with, handed over as a value the body cannot
+    /// choose — so what the leaf ends holding is what the address
+    /// commits, or the transaction never admitted.
+    fn seal_record(&mut self, call: &syn::ExprMethodCall) -> Eval {
+        let site = self.open(
+            Target::Point {
+                slot: CONFIG.0,
+                material: vec![],
+            },
+            Some(syn::parse_quote!(::std::vec::Vec<u8>)),
+            None,
+        );
+        self.record(site, Op::Create, None, call.span());
+        let leaf = self.value(Code::Handle {
+            site,
+            form: Form::Slot,
+            span: call.span(),
+        });
+        let record = self.need(&Need::Derived(Term::SelfRecord));
+        Eval::plain(quote!(#leaf.set(#record)))
+    }
+
     /// Lower `Name::at(id)` — the record one instance carries, read at
     /// the cell its mint filed it in.
     ///
@@ -1606,6 +1633,7 @@ impl<'a> Lowerer<'a> {
             | Term::Len(_)
             | Term::OrderKey { .. }
             | Term::SelfResource(..)
+            | Term::SelfRecord
             | Term::Add(..)
             | Term::If { .. } => self.need(&Need::Derived(term.clone())),
             // A judgment has no guest representation, so what crosses is
@@ -2735,6 +2763,12 @@ impl<'a> Lowerer<'a> {
         // component, whose accesses cannot land in this declaration.
         if is_self(&call.receiver) {
             let name = call.method.to_string();
+            // The generated seal's marker, which no authored body can
+            // spell: `expand` never emits it into the module, so the one
+            // caller is the synthesized `instantiate`.
+            if name == "__seal" {
+                return self.seal_record(call);
+            }
             if self.declared.accessors.contains_key(&name) {
                 return self.accessor(&name, call);
             }
@@ -3237,26 +3271,17 @@ impl<'a> Lowerer<'a> {
         let declared = self.field_denomination(field);
         let vals: Vec<Val> = args.iter().map(|e| e.val.clone()).collect();
         match (field.kind, method) {
-            // The locked configuration: a read that excludes nothing,
-            // and the value whose fields are the config slots.
-            (FieldKind::Locked, "locked") => {
-                let site = self.open(
-                    Target::Point {
-                        slot,
-                        material: vec![],
-                    },
-                    field.element.clone(),
-                    declared,
-                );
-                self.record(site, Op::Locked, None, call.span());
-                Eval {
-                    val: Val::Config,
-                    // The pin is a declaration; the values it covers reach
-                    // the guest as evaluated slots, so the record itself
-                    // is never decoded.
-                    code: Code::Absent(call.span(), "the pinned configuration record"),
-                }
-            }
+            // The whole configuration record. It declares nothing of its
+            // own: every method's fence already reads the leaf and holds
+            // it present, and after the seal the leaf has no writer, so
+            // the record is pinned by construction rather than by a
+            // clause this call adds.
+            (FieldKind::Locked, "locked") => Eval {
+                val: Val::Config,
+                // The values it covers reach the guest as evaluated
+                // slots, so the record itself is never decoded.
+                code: Code::Absent(call.span(), "the pinned configuration record"),
+            },
 
             // A family of leaves keyed by an address.
             (FieldKind::Keyed, "at") => {

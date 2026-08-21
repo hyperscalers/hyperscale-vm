@@ -69,6 +69,17 @@ pub fn config_leaf(owner: impl Into<Address>) -> SubstateKey {
     child_key(&TestHasher, owner, CONFIG, &[])
 }
 
+/// Seal `meta`'s instance: the committed configuration leaf its
+/// instantiation writes, which the fence on every method reads.
+pub fn seal(store: &mut MemoryStore, meta: &InstanceMeta) {
+    store
+        .write(
+            config_leaf(meta.address(&TestHasher)),
+            meta.leaf_bytes().expect("an instance's record encodes"),
+        )
+        .expect("the store takes a config leaf");
+}
+
 /// The book's asks collection, as the stdlib's declarations derive it.
 pub fn asks() -> CollectionId {
     collection_id(&TestHasher, book(), book::ASKS, &[])

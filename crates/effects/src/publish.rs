@@ -766,6 +766,26 @@ fn vocabulary_shape(
     Some((shaped, wanted))
 }
 
+/// Whether `clause` is the instantiation fence's presence condition —
+/// the unguarded `Present` over the target's own bare configuration
+/// leaf that every instance method carries.
+fn is_fence(clause: &Clause) -> bool {
+    matches!(
+        clause,
+        Clause::Requires {
+            guard: None,
+            condition: ConditionExpr::Holds {
+                target,
+                presence: Presence::Present,
+            },
+        } if matches!(
+            target.as_ref(),
+            TargetExpr::Point(Expr::ChildKey { owner, slot, material })
+                if **owner == Expr::SelfAddr && *slot == CONFIG && material.is_empty()
+        )
+    )
+}
+
 /// Whether `resource` is a denomination this signature states — at a
 /// parameter position, or on one of its own clauses.
 ///
@@ -949,10 +969,14 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     }
     // The mark promises a caller has nothing to hear back, and a
     // precondition is a verdict some caller hears: a total method
-    // declares no condition and no reservation.
+    // declares no condition and no reservation. The instantiation fence
+    // is the one exception: actuality is monotone — a sealed component
+    // never unseals — so the fence refuses only calls into a creation
+    // that never finished, and against an actual component the mark's
+    // promise stands whole.
     if signature.totality.is_total()
         && flat.iter().any(|clause| {
-            matches!(clause, Clause::Requires { .. })
+            (matches!(clause, Clause::Requires { .. }) && !is_fence(clause))
                 || matches!(
                     clause,
                     Clause::Effect {

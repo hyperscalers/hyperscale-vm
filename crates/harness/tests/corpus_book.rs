@@ -75,21 +75,25 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
 }
 
 #[test]
-fn fill_provisions_only_the_interval() {
+fn fill_provisions_the_interval_and_the_fence() {
     let world = world();
     let routing = sharded_routing(&world, &fill_graph());
     let book_set = &routing.per_shard[&shard_of(book())];
-    // The write interval is the only provisioned target: the escrow legs
-    // are deltas and carry nothing.
+    // The write interval and the fence's leaf are the provisioned
+    // targets: the escrow legs are deltas and carry nothing.
     assert_eq!(
         book_set.provision_targets(),
-        std::iter::once(EffectTarget::Range {
-            owner: book().into(),
-            collection: asks(),
-            lo: 3u128 << 64,
-            hi: (5u128 << 64) | u128::from(u64::MAX),
-            cap: book::FILL_CAP,
-        })
+        [
+            EffectTarget::Point(config_leaf(book())),
+            EffectTarget::Range {
+                owner: book().into(),
+                collection: asks(),
+                lo: 3u128 << 64,
+                hi: (5u128 << 64) | u128::from(u64::MAX),
+                cap: book::FILL_CAP,
+            },
+        ]
+        .into_iter()
         .collect()
     );
 }
@@ -98,6 +102,7 @@ fn fill_provisions_only_the_interval() {
 fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
     let world = world();
     let mut store = MemoryStore::new();
+    seal(&mut store, &book_meta());
     store
         .write(vault(MAKER, BASE), encode_amount(60).to_vec())
         .unwrap();

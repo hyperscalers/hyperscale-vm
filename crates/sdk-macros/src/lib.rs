@@ -1391,7 +1391,19 @@ fn lower_method(
         }
     }
     let total = claim.is_some();
-    let closure = emit::declaration(&lowered, &gate_calls(&gate, &lowered), declining, total);
+    // Every method of an instance-serving package carries the
+    // instantiation fence, except the seal itself: `instantiate` is the
+    // one method that must run while the leaf is absent, and it carries
+    // the opposite door. A principal has no creation to finish, so its
+    // methods carry nothing.
+    let fenced = matches!(serves, client::Serves::Instances) && published != "instantiate";
+    let closure = emit::declaration(
+        &lowered,
+        &gate_calls(&gate, &lowered),
+        declining,
+        total,
+        fenced,
+    );
     let declaration = quote!(
         .method(#published, &[#(#kinds),*], #closure)
     );
@@ -1625,11 +1637,40 @@ fn lower_methods(
                 continue;
             };
             if matches!(method.vis, syn::Visibility::Public(_)) {
+                if matches!(serves, client::Serves::Instances) && method.sig.ident == "instantiate"
+                {
+                    return Err(syn::Error::new(
+                        method.sig.ident.span(),
+                        "`instantiate` is the generated seal: the macro derives it for \
+                         every instance-serving package, so an authored method cannot \
+                         take the name",
+                    ));
+                }
                 lowered.push(lower_method(method, declared, serves)?);
             }
         }
     }
+    if matches!(serves, client::Serves::Instances) {
+        lowered.push(lower_method(&instantiate_method(), declared, serves)?);
+    }
     Ok(lowered)
+}
+
+/// The generated `instantiate` — the seal that makes a component actual.
+///
+/// Synthesized rather than authored: the body's one statement lowers to
+/// the `CONFIG` write under its absence door, with the record's bytes
+/// evaluated by the kernel, and the method is never emitted into the
+/// module — only its lowered halves exist.
+fn instantiate_method() -> syn::ImplItemFn {
+    syn::parse_quote!(
+        /// Makes this component actual: seals its creation-fixed record
+        /// into the configuration leaf, refused where the leaf is
+        /// already there.
+        pub fn instantiate(&mut self) {
+            self.__seal()
+        }
+    )
 }
 
 /// Remove the macro's own attributes, so what it emits is ordinary Rust.
