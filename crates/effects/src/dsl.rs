@@ -640,6 +640,12 @@ pub enum EvalError {
     /// vocabulary's caps, or a grafted tree past them.
     #[error("a sealed rule does not decode within the vocabulary's caps")]
     SealedRuleMalformed,
+    /// A target's record that does not encode under the vocabulary's
+    /// caps. Nothing admission resolves a target with can be one — a
+    /// record is checked by re-encoding it — so this is spoken as a
+    /// refusal rather than taken on trust.
+    #[error("the target's record does not encode within the vocabulary's caps")]
+    RecordMalformed,
     /// A tuple projection past the tuple's arity.
     #[error("tuple field {index} out of range (arity {arity})")]
     FieldOutOfRange {
@@ -1387,12 +1393,11 @@ fn eval_expr(
             .cloned()
             .ok_or(EvalError::BindingOutOfRange(*index)),
         Expr::SelfAddr => Ok(Value::Address(inputs.self_addr)),
-        Expr::SelfRecord => Ok(Value::Bytes(
-            inputs
-                .record
-                .leaf_bytes()
-                .expect("an admitted record encodes"),
-        )),
+        Expr::SelfRecord => inputs
+            .record
+            .leaf_bytes()
+            .map(Value::Bytes)
+            .map_err(|_| EvalError::RecordMalformed),
         Expr::Field(tuple, index) => field(&as_tuple(sub(tuple)?)?, *index),
         Expr::ResourceOf(bucket) => Ok(Value::Address(bucket_parts(sub(bucket)?)?.0.into())),
         Expr::IdsOf(bucket) => edge_ids(bucket_parts(sub(bucket)?)?.1),
