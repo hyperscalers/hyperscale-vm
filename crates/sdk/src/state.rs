@@ -1365,7 +1365,7 @@ pub fn mint_nf_granted(grant: u32, id: u64) -> NfBucket {
 /// Called by generated code, never by an author. One byte rather than
 /// nothing, so the cell reads as present wherever presence is asked; a
 /// genesis-seated instance writes the same byte, which is what holds a
-/// founded object and a seeded one to the same cells.
+/// instantiated object and a seeded one to the same cells.
 #[doc(hidden)]
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]

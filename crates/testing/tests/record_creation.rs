@@ -83,7 +83,8 @@ mod issuer {
     }
 }
 
-fn founded() -> (Chain, issuer::client::Issuer) {
+/// A chain holding an instance of the issuer, brought up.
+fn instantiated() -> (Chain, issuer::client::Issuer) {
     let mut chain = Chain::native();
     chain.publish(package!(issuer));
     let instance = chain.instantiate::<issuer::client::Issuer>(FOUNDER, ());
@@ -99,7 +100,7 @@ fn founded() -> (Chain, issuer::client::Issuer) {
 /// one never has to know whether anything has been issued yet.
 #[test]
 fn instantiation_writes_the_canonical_record_of_every_mark() {
-    let (chain, instance) = founded();
+    let (chain, instance) = instantiated();
 
     for (resource, record) in [
         (
@@ -128,7 +129,7 @@ fn instantiation_writes_the_canonical_record_of_every_mark() {
 /// body.
 #[test]
 fn a_second_instantiation_is_refused_where_the_leaves_live() {
-    let (mut chain, instance) = founded();
+    let (mut chain, instance) = instantiated();
 
     let outcome = chain
         .transact(FOUNDER, |b| {
@@ -157,7 +158,7 @@ fn a_second_instantiation_is_refused_where_the_leaves_live() {
 /// issuer — the cell genesis writes for a seated instance.
 #[test]
 fn a_mint_files_the_instance_cell_at_its_id() {
-    let (chain, instance) = founded();
+    let (chain, instance) = instantiated();
 
     let badge = instance.issued_owner_badge(&TestHasher);
     assert_eq!(
@@ -181,7 +182,7 @@ fn seated(chain: &mut Chain, instance: issuer::client::Issuer) {
 /// same cell under the same absence requirement.
 #[test]
 fn a_fielded_mint_files_the_record_its_mark_declares() {
-    let (mut chain, instance) = founded();
+    let (mut chain, instance) = instantiated();
     chain
         .transact(FOUNDER, |b| {
             let seat = instance.seat(b, 42)?;
@@ -208,7 +209,7 @@ fn a_fielded_mint_files_the_record_its_mark_declares() {
 /// where an instance exists.
 #[test]
 fn an_unminted_id_has_no_data_cell() {
-    let (mut chain, instance) = founded();
+    let (mut chain, instance) = instantiated();
     chain
         .transact(FOUNDER, |b| {
             let seat = instance.seat(b, 42)?;
@@ -228,7 +229,7 @@ fn an_unminted_id_has_no_data_cell() {
 /// them.
 #[test]
 fn an_issuer_reads_its_instances_record_back() {
-    let (mut chain, instance) = founded();
+    let (mut chain, instance) = instantiated();
     seated(&mut chain, instance);
 
     chain
@@ -250,7 +251,7 @@ fn an_issuer_reads_its_instances_record_back() {
 /// so a body can tell "no such instance" from one whose fields are zero.
 #[test]
 fn an_unminted_id_reads_as_absent() {
-    let (mut chain, instance) = founded();
+    let (mut chain, instance) = instantiated();
     seated(&mut chain, instance);
 
     chain
@@ -273,7 +274,7 @@ fn an_unminted_id_reads_as_absent() {
 /// record the mint writes is the record the read decodes.
 #[test]
 fn a_mint_and_a_read_of_one_instance_are_one_cell() {
-    let (mut chain, instance) = founded();
+    let (mut chain, instance) = instantiated();
     seated(&mut chain, instance);
 
     chain

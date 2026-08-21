@@ -53,7 +53,7 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 #[cfg(feature = "wasm")]
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
-use hyperscale_vm_stdlib::{INSTANTIATE, found};
+use hyperscale_vm_stdlib::{INSTANTIATE, instantiate};
 pub use hyperscale_vm_types::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_types::{
     CallTarget, Outcome as KernelOutcome, SubstateKey, TxHash, encode_amount,
@@ -336,7 +336,7 @@ impl Chain {
         };
         // The bring-up, composed where what the package asks for is read
         // off its own declaration rather than restated here.
-        self.transact(founder, |b| found(b, founder, address, &signature))
+        self.transact(founder, |b| instantiate(b, founder, address, &signature))
             .expect_completed();
         assert_eq!(
             self.store.cell(leaf),

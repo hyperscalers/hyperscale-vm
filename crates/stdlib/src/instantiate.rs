@@ -1,4 +1,4 @@
-//! Bringing a component up, as one call.
+//! Instantiation, as one call.
 //!
 //! Every composition that creates a component writes the same three
 //! nodes, and the two facts deciding which of them exist are the
@@ -29,7 +29,8 @@ use crate::account;
 /// declares.
 pub const INSTANTIATE: &str = "instantiate";
 
-/// Append the bring-up of the component at `address`, as `founder`.
+/// Append the instantiation of the component at `address`, as
+/// `founder`.
 ///
 /// The seal is called, and the supply it yields — where the package
 /// declares one — is filed in the founder's own account. What the
@@ -40,7 +41,7 @@ pub const INSTANTIATE: &str = "instantiate";
 ///
 /// [`TypedError`] where the composition does not build — a chain that
 /// answers for no such address, or a seal the builder cannot shape.
-pub fn found(
+pub fn instantiate(
     root: &mut TypedBuilder<'_>,
     founder: PrincipalAddr,
     address: ComponentAddr,

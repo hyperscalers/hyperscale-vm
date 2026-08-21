@@ -124,7 +124,7 @@ fn admin(rule: &StoredRule) -> RoleTable {
 
 /// Seed the registry's table with `Admin` held by instance 0 of the
 /// badge its bring-up already filed in the founder's account.
-fn founded() -> (Chain, registry::client::Registry) {
+fn seeded() -> (Chain, registry::client::Registry) {
     let (mut chain, instance) = setup();
     let table = admin(&StoredRule::Require(Presented::Instance(
         badge(instance),
@@ -168,7 +168,7 @@ fn an_unseeded_registry_refuses_its_surface_as_the_routed_absence() {
 /// rules name — the badge the bring-up already minted.
 #[test]
 fn a_seeded_table_opens_the_surface_to_the_badge_holder() {
-    let (mut chain, instance) = founded();
+    let (mut chain, instance) = seeded();
     chain
         .transact(FOUNDER, |b| {
             let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
@@ -181,7 +181,7 @@ fn a_seeded_table_opens_the_surface_to_the_badge_holder() {
 /// lives, before any body runs.
 #[test]
 fn a_second_seeding_is_refused_where_the_table_lives() {
-    let (mut chain, instance) = founded();
+    let (mut chain, instance) = seeded();
     let table = admin(&StoredRule::Require(Presented::Instance(
         badge(instance),
         0,
@@ -213,7 +213,7 @@ fn a_second_seeding_is_refused_where_the_table_lives() {
 /// governed component moved.
 #[test]
 fn a_transferred_badge_rotates_the_admin_without_touching_the_registry() {
-    let (mut chain, instance) = founded();
+    let (mut chain, instance) = seeded();
     chain
         .transact(FOUNDER, |b| {
             let owner = account::authorize(b, FOUNDER)?;
@@ -256,7 +256,7 @@ fn a_transferred_badge_rotates_the_admin_without_touching_the_registry() {
 /// it, the roles have traded places.
 #[test]
 fn a_rotation_governs_only_after_the_stored_delay() {
-    let (chain, instance) = founded();
+    let (chain, instance) = seeded();
     let mut chain = chain.at(1_000_000);
     chain
         .transact(FOUNDER, |b| {

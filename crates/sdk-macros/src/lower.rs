@@ -3464,14 +3464,14 @@ impl<'a> Lowerer<'a> {
                 // A role table is read whole where it is judged, and an
                 // absent one denies. A `get` would read the absence as an
                 // empty table and carry on — on a component nobody
-                // founded, silently — so the table is reached by
+                // instantiated, silently — so the table is reached by
                 // `existing()`, whose presence condition makes that the
                 // routed refusal it should be.
                 if matches!(method, "get" | "peek") && holds_role_table(field) {
                     self.error(
                         call.span(),
                         "a stored role table is read with `existing()` — a `get` reads an \
-                         absent table as an empty one, and on a component nobody founded \
+                         absent table as an empty one, and on a component nobody instantiated \
                          that silence is the defect. The presence condition `existing()` \
                          carries is what turns it into a routed refusal",
                     );

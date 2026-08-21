@@ -28,7 +28,7 @@ use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substa
 use hyperscale_vm_manifest_builder::{Names, TypedBuilder, TypedError, render};
 use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
 use hyperscale_vm_stdlib::{
-    ACCOUNT_COMPONENT, INSTANTIATE, STAKING_COMPONENT, account, found, staking,
+    ACCOUNT_COMPONENT, INSTANTIATE, STAKING_COMPONENT, account, instantiate, staking,
 };
 use hyperscale_vm_types::{
     Address, Outcome, Presence, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, UnmetCondition,
@@ -517,7 +517,7 @@ fn bring_up_graph() -> ManifestGraph {
         .methods
         .remove(INSTANTIATE)
         .expect("an instance-serving package declares its seal");
-    graph(|b| found(b, OPERATOR, pool().into(), &signature))
+    graph(|b| instantiate(b, OPERATOR, pool().into(), &signature))
 }
 
 /// The same bring-up, written out — the sign-in, the seal, the deposit.
@@ -562,37 +562,37 @@ fn a_pool_brings_itself_up_and_reaches_its_operator_surface() -> Result<()> {
     let world = world();
     let store = MemoryStore::new();
 
-    let found = batch_entry(&world, &single_intent(bring_up_graph()), OPERATOR)?;
-    let (outcome, after_found) = run_both(&store, std::slice::from_ref(&found));
+    let brought_up = batch_entry(&world, &single_intent(bring_up_graph()), OPERATOR)?;
+    let (outcome, after) = run_both(&store, std::slice::from_ref(&brought_up));
     assert!(
         matches!(
-            outcome.receipts[&found.tx].outcome,
+            outcome.receipts[&brought_up.tx].outcome,
             Outcome::Completed { .. }
         ),
         "{:?}",
-        outcome.receipts[&found.tx].outcome,
+        outcome.receipts[&brought_up.tx].outcome,
     );
 
     // The cells genesis writes for a seated pool, byte for byte: the
     // seal, a record per mark, the instance's data cell, and the
     // holdings entry.
     assert_eq!(
-        after_found.cell(child_key(&TestHasher, pool(), CONFIG, &[])),
+        after.cell(child_key(&TestHasher, pool(), CONFIG, &[])),
         Some(pool_meta().leaf_bytes().unwrap()),
     );
     assert_eq!(
-        after_found.cell(resource_record_key(&TestHasher, pool(), unit())),
+        after.cell(resource_record_key(&TestHasher, pool(), unit())),
         Some(UNIT_RECORD.to_cell().unwrap()),
     );
     assert_eq!(
-        after_found.cell(resource_record_key(&TestHasher, pool(), badge())),
+        after.cell(resource_record_key(&TestHasher, pool(), badge())),
         Some(BADGE_RECORD.to_cell().unwrap()),
     );
     assert_eq!(
-        after_found.cell(instance_data_key(&TestHasher, pool(), badge(), BADGE_ID)),
+        after.cell(instance_data_key(&TestHasher, pool(), badge(), BADGE_ID)),
         Some(vec![1]),
     );
-    let holdings: Vec<_> = after_found
+    let holdings: Vec<_> = after
         .collection_entries()
         .filter(|(key, _)| key.collection == holdings_collection(&TestHasher, OPERATOR, badge()))
         .map(|(key, held)| (key.order, held.to_vec()))
@@ -602,7 +602,7 @@ fn a_pool_brings_itself_up_and_reaches_its_operator_surface() -> Result<()> {
     // And the surface is open: the founder registers a validator with
     // the badge the bring-up minted.
     let register = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
-    let (outcome, end) = run_both(&after_found, std::slice::from_ref(&register));
+    let (outcome, end) = run_both(&after, std::slice::from_ref(&register));
     assert!(matches!(
         outcome.receipts[&register.tx].outcome,
         Outcome::Completed { .. }
@@ -620,11 +620,11 @@ fn a_pool_brings_itself_up_and_reaches_its_operator_surface() -> Result<()> {
 fn a_second_bring_up_is_refused_where_the_seal_lives() -> Result<()> {
     let world = world();
     let store = MemoryStore::new();
-    let found = batch_entry(&world, &single_intent(bring_up_graph()), OPERATOR)?;
-    let (_, after_found) = run_both(&store, std::slice::from_ref(&found));
+    let brought_up = batch_entry(&world, &single_intent(bring_up_graph()), OPERATOR)?;
+    let (_, after) = run_both(&store, std::slice::from_ref(&brought_up));
 
     let again = batch_entry(&world, &single_intent(bring_up_graph()), OPERATOR)?;
-    let (outcome, _) = run_both(&after_found, std::slice::from_ref(&again));
+    let (outcome, _) = run_both(&after, std::slice::from_ref(&again));
     assert!(
         matches!(
             outcome.receipts[&again.tx].outcome,

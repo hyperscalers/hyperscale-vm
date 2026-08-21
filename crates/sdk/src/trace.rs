@@ -716,9 +716,9 @@ impl Trace {
     /// emitted clause declared — and that the table is there at all.
     ///
     /// The presence condition is the difference from the protocol table:
-    /// every method runs on a component nobody founded, a package cell
+    /// every method runs on a component nobody instantiated, a package cell
     /// has no virtual rule to fall back to, and the condition is what
-    /// makes an unfounded component's gated call a routed refusal a
+    /// makes such a component's gated call a routed refusal a
     /// caller can read rather than a deny inside the gate.
     pub fn table_gated(&mut self, role: RoleId) {
         let cell = self.last_point_target();

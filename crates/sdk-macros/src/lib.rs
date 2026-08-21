@@ -1565,7 +1565,7 @@ fn check_gate_shape(
         // A table-gated method's body is its own: the gate declares the
         // read it judges where the body does not reach the table. Where
         // it does, the rewrite must read what it rewrites — `existing()`
-        // — so an unfounded component's rotation refuses as the routed
+        // — so a component nobody instantiated refuses its rotation as the routed
         // absence rather than creating a table out of nowhere.
         Gate::TableGated { slot, .. } => {
             let Some(site) = lowered.point_site(*slot) else {
@@ -1574,8 +1574,8 @@ fn check_gate_shape(
             if !site.ops.iter().any(|(op, _)| *op == Op::Existing) {
                 return refuse(
                     "a role-gated rewrite of its own table reads what it rewrites — \
-                     `existing()` — so an unfounded component refuses as the routed \
-                     absence rather than seeding a table its founding never wrote",
+                     `existing()` — so a component nobody instantiated refuses as the \
+                     routed absence rather than seeding a table nothing ever wrote",
                 );
             }
             // Where the body reaches the table the gate rides the body's
@@ -1961,14 +1961,14 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
                  — drop them, or declare the resource `non_fungible`",
             ));
         }
-        // A mark carrying a schema founds its instances through a method
+        // A mark carrying a schema mints its instances through a method
         // that takes the record: what one holds is runtime data, and an
         // attribute is not the place for it.
         if initial.is_some() && !item.fields.is_empty() {
             return Err(syn::Error::new(
                 item.fields.span(),
                 "a mark carrying a schema states no initial supply — what its instance \
-                 holds is runtime data, so it is founded through a method that takes \
+                 holds is runtime data, so it is minted through a method that takes \
                  the record",
             ));
         }
@@ -2624,7 +2624,7 @@ struct Declared<'a> {
 ///
 /// The absence is what the shape turns on, so the `Option` is read as
 /// well as the element under it — a table that cannot be absent has no
-/// founding door to be behind.
+/// one-way door to be behind.
 pub(crate) fn holds_role_table(field: &Field) -> bool {
     field.element.as_ref().is_some_and(|ty| {
         is_named(ty, "Option") && element_of(ty).is_some_and(|held| is_named(&held, "AuthCell"))
