@@ -220,7 +220,7 @@ impl ResourceGrants {
             .map(|index| &self.0[index].1)
     }
 
-    /// Seal `bytes` for `behaviour`, replacing what was there.
+    /// Grant `bytes` for `behaviour`, replacing what was there.
     pub fn set(&mut self, behaviour: GrantedBehaviour, bytes: RoleBytes) {
         match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
             Ok(index) => self.0[index].1 = bytes,
@@ -283,7 +283,7 @@ impl GrantsExpr {
         self.0.is_empty()
     }
 
-    /// Seal `rule` for `behaviour`, replacing what was there.
+    /// Grant `rule` for `behaviour`, replacing what was there.
     pub fn set(&mut self, behaviour: GrantedBehaviour, rule: GrantRuleExpr) {
         match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
             Ok(index) => self.0[index].1 = rule,

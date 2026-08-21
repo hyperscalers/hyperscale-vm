@@ -35,8 +35,6 @@ pub mod staking {
     use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity};
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
-    /// The pool's creation-fixed configuration: what a delegation is
-    /// denominated in.
     /// The identity the pool's operator surface admits: a badge this
     /// instance issues, so holding it is operating the pool and selling
     /// the pool is transferring it.
@@ -53,10 +51,12 @@ pub mod staking {
     #[resource]
     struct StakeUnit;
 
-    /// Only the founder the configuration names may bring the pool up.
+    /// The pool's creation-fixed configuration: what a delegation is
+    /// denominated in, and who may bring the pool up.
+    ///
     /// A pool's address is derivable by anyone, and the badge is what
-    /// confers the operator surface — so without this the race to seal
-    /// an address is the race to own the pool it names.
+    /// confers the operator surface — so without the gate the race to
+    /// seal an address is the race to own the pool it names.
     #[config]
     #[requires(founder)]
     struct Settings {

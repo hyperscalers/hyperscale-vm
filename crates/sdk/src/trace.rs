@@ -252,6 +252,7 @@ impl Trace {
     /// not be expressible. The mark is what lets one instance issue more
     /// than one — a stake unit and the badge that operates the pool are
     /// the same derivation over different material.
+    ///
     /// The rules the resource grants ride the derivation, because the
     /// address is the hash of them too — and they are read from what
     /// [`Trace::grants`] registered rather than supplied here, so a gate

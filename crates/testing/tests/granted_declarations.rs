@@ -21,10 +21,10 @@ const FOUNDER: PrincipalAddr = principal(0x71);
 mod mill {
     use hyperscale_vm_sdk::state::{Bucket, Quantity};
 
-    /// The badge the token's granted recall rule names. Unsealed itself,
-    /// which is what a grant leaf may name: a leaf derives through the
-    /// granting-nothing form, so a badge is nameable before anything grants against it
-    /// against it.
+    /// The badge the token's granted recall rule names. It grants
+    /// nothing itself, which is what a grant leaf may name: a leaf
+    /// derives through the granting-nothing form, so a badge is nameable
+    /// before anything grants against it.
     #[resource(non_fungible, initial(0))]
     struct OwnerBadge;
 
@@ -67,7 +67,7 @@ fn declared_rules(instance: impl Into<Address>) -> ResourceGrants {
 /// What a body mints lands at the address the declaration's rules
 /// derive, and not at the one the same mark would derive granting nothing.
 #[test]
-fn a_sealed_declaration_mints_at_the_address_its_rules_derive() {
+fn a_granting_declaration_mints_at_the_address_its_rules_derive() {
     let mut chain = Chain::native();
     chain.publish(package!(mill));
     let instance = chain.instantiate::<mill::client::Mill>(FOUNDER, ());
@@ -99,7 +99,7 @@ fn a_sealed_declaration_mints_at_the_address_its_rules_derive() {
 
     assert_ne!(
         granting, ungranting,
-        "sealing rules is what makes it a different resource"
+        "granting rules is what makes it a different resource"
     );
     assert_eq!(
         chain.balance(FOUNDER, granting),

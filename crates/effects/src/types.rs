@@ -330,7 +330,7 @@ pub fn native_address(hasher: &dyn Hasher, role: NativeRole) -> NativeAddr {
 /// configuration.
 ///
 /// The preimage is the encoded configuration leaf verbatim — one framed
-/// part — so a certificate and the state it describes agree by literal
+/// part — so a record and the state it describes agree by literal
 /// byte equality, with the decoder's canonicity supplying the bijection
 /// between the value list and its bytes.
 #[must_use]

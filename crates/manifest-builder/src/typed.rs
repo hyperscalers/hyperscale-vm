@@ -2,10 +2,9 @@
 //!
 //! [`GraphBuilder`] reads no metadata, so a call's arity, its argument
 //! kinds and its output count are the author's claims, judged where every
-//! claim is. A [`TypedBuilder`] holds the same tables admission does — the
-//! metadata cache and the instance registry — and resolves the target
-//! before appending anything: a principal by its class, a component
-//! through the certificate its address derives. With the signature in
+//! claim is. A [`TypedBuilder`] asks the same chain admission does, and
+//! resolves the target before appending anything: a principal by its
+//! class, a component through the record its address derives. With the signature in
 //! hand, four of admission's verdicts move to the call site, and the
 //! output count stops being a claim at all.
 //!
@@ -43,7 +42,7 @@ use crate::builder::{Bucket, BuildError, GraphBuilder};
 /// index in a graph they have not finished building.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TypedError {
-    /// A call target no certificate resolves.
+    /// A call target no record resolves.
     #[error("no instance at {0:?}")]
     UnknownInstance(Address),
     /// A target whose package is not in the metadata cache.
@@ -553,7 +552,7 @@ impl<'a> TypedBuilder<'a> {
     }
 
     /// The untyped builder underneath, for calls this layer cannot type —
-    /// a target the caller holds no certificate for, or a graph written
+    /// a target the caller holds no record for, or a graph written
     /// deliberately to be refused. Its handles share this one's index
     /// space, so the two paths interleave freely.
     pub const fn untyped(&mut self) -> &mut GraphBuilder {

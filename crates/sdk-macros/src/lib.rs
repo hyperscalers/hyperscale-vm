@@ -1698,7 +1698,7 @@ fn instantiate_method(resources: &[Resource], gate: Option<&syn::Attribute>) -> 
         None => (quote!(), quote!()),
     };
     syn::parse_quote!(
-        /// Makes this component actual: grants its creation-fixed record
+        /// Makes this component actual: seals its creation-fixed record
         /// into the configuration leaf, writes the record of every
         /// resource it issues, and issues the supply it comes up
         /// holding — each write refused where its leaf is already there.

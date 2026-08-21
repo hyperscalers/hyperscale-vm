@@ -50,9 +50,9 @@ use crate::typed::{TypedBuilder, TypedError};
 /// [`admit_tree`]: hyperscale_vm_effects::admit_tree
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum EnvelopeError {
-    /// An intent the composition never granted, so there is no declaration
+    /// An intent the composition never sealed, so there is no declaration
     /// to carry.
-    #[error("intent {intent} was never granted")]
+    #[error("intent {intent} was never sealed")]
     UnsealedIntent {
         /// The intent: `0` is the root, `i + 1` is subintent `i`.
         intent: u32,

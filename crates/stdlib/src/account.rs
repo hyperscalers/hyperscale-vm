@@ -7,7 +7,7 @@
 //!
 //! Free functions rather than a handle, because the instance registry
 //! serves this package to every principal address by class rather than
-//! by certificate. A principal's address derives from a key and folds in
+//! by record. A principal's address derives from a key and folds in
 //! no package hash, so [`PrincipalAddr`] is already the whole of what a
 //! handle could say.
 //!

@@ -41,12 +41,14 @@ pub enum ResolveError {
 /// configuration it was created under, and the salt separating it from
 /// every other instance of the same two.
 ///
-/// A presented claim rather than trusted state. A component's address is
-/// the hash of exactly these three, so a holder checks the record by
-/// recomputing the address rather than by consulting a registry — which
-/// is what lets any shard verify any target with no foreign reads, and
-/// what makes a false package claim a hash collision rather than a
-/// lookup that disagrees.
+/// Checked by re-derivation rather than trusted for where it came from.
+/// A component's address is the hash of exactly these three, so a holder
+/// checks the record by recomputing the address rather than by consulting
+/// a registry — which is what lets any shard verify any target with no
+/// foreign reads, and what makes a false package claim a hash collision
+/// rather than a lookup that disagrees. A committed leaf, a fetched
+/// answer and a record an envelope presents are all held to the one
+/// check.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct InstanceMeta {
     /// The package the instance runs.
@@ -63,7 +65,7 @@ pub struct InstanceMeta {
 ///
 /// A signature indexes them positionally with a `u32`, and the whole list
 /// is hashed into the instance's address, so the cap is what keeps a
-/// presented certificate's decode bounded by its own declaration.
+/// presented record's decode bounded by its own declaration.
 pub const MAX_CONFIG_FIELDS: usize = 64;
 
 impl InstanceMeta {
@@ -79,7 +81,7 @@ impl InstanceMeta {
     }
 
     /// The configuration leaf's stored bytes — the canonical encoding of
-    /// the whole record, which instantiation grants into the `CONFIG`
+    /// the whole record, which instantiation seals into the `CONFIG`
     /// cell.
     ///
     /// The leaf holds all three parts rather than the configuration
@@ -119,7 +121,7 @@ impl InstanceMeta {
 
     /// Whether this record derives `address`.
     ///
-    /// The whole of certificate admission: the address commits the
+    /// The whole of a record's admission: the address commits the
     /// package, the configuration leaf's bytes and the salt, so equality
     /// here is the verification and there is nothing else to consult. The
     /// question is total over every class — an address of any other one is
@@ -134,10 +136,10 @@ impl InstanceMeta {
     }
 }
 
-/// A presented certificate that does not derive the address it claims.
+/// A record that does not derive the address it is claimed for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 #[error("the presented record does not derive the address it claims")]
-pub struct CertificateMismatch;
+pub struct RecordMismatch;
 
 /// Addresses to the creation-fixed record each one derives.
 ///
@@ -169,7 +171,7 @@ impl InstanceRegistry {
     /// Bind the package that serves every principal address.
     ///
     /// The protocol's own account blueprint, resolved by class rather
-    /// than by certificate: a principal's address derives from a key, so
+    /// than by record: a principal's address derives from a key, so
     /// there is no package hash in it to check a claim against.
     pub fn serve_principals(&mut self, package: PackageHash) {
         self.principal = Some(Arc::new(InstanceMeta {
@@ -184,17 +186,17 @@ impl InstanceRegistry {
     ///
     /// # Errors
     ///
-    /// [`CertificateMismatch`] when the record derives some other
+    /// [`RecordMismatch`] when the record derives some other
     /// address — the refusal that replaces a lookup coming back empty.
     pub fn admit(
         &mut self,
         hasher: &dyn Hasher,
         address: impl Into<Address>,
         meta: InstanceMeta,
-    ) -> Result<(), CertificateMismatch> {
+    ) -> Result<(), RecordMismatch> {
         let address = address.into();
         if !meta.derives(hasher, address) {
-            return Err(CertificateMismatch);
+            return Err(RecordMismatch);
         }
         match self.instances.entry(address) {
             Entry::Vacant(slot) => {
@@ -286,7 +288,7 @@ mod tests {
         let elsewhere = ComponentAddr::new([9; 31]);
         assert_eq!(
             registry.admit(&TestHasher, elsewhere, meta),
-            Err(CertificateMismatch)
+            Err(RecordMismatch)
         );
         assert_eq!(registry.get(elsewhere), None);
     }
@@ -310,7 +312,7 @@ mod tests {
         let mut registry = InstanceRegistry::new();
         assert_eq!(
             registry.admit(&TestHasher, address, forged),
-            Err(CertificateMismatch)
+            Err(RecordMismatch)
         );
 
         // And the configuration is committed on the same terms.
