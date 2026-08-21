@@ -130,7 +130,7 @@ pub mod account {
         pub fn present_instance(&mut self, badge: Address, id: u64) {}
 
         /// Hand `amount` of `resource` out of this account, to whoever
-        /// the resource's own sealed recall rule admits.
+        /// the resource's own granted recall rule admits.
         ///
         /// The one way a recall reaches a holder's vault: the holder's
         /// own method, declared under the holder's own prefix, gated on

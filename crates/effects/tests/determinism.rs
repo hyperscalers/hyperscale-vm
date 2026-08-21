@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use common::{ALICE, account, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
     EdgeContent, EdgeRef, EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta,
-    InstanceRegistry, ManifestGraph, ManifestHash, Records, SealedResources, SlotId, TestHasher,
+    InstanceRegistry, ManifestGraph, ManifestHash, PresentedGrants, Records, SlotId, TestHasher,
     Value, admit, evaluate_expr, route,
 };
 use hyperscale_vm_types::{
@@ -128,7 +128,7 @@ proptest! {
             record: &record,
             node_index,
             identity: ManifestHash(Hash32(seed)),
-            sealed: SealedResources::none(),
+            grants: PresentedGrants::none(),
         };
         let first = evaluate_expr(&expr, &inputs, &TestHasher);
         let second = evaluate_expr(&expr, &inputs, &TestHasher);

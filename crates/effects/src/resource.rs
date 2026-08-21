@@ -15,9 +15,9 @@ use crate::auth::RoleBytes;
 use crate::dsl::{Expr, TargetExpr};
 use crate::hash::{Hash32, Hasher};
 use crate::presented::Presented;
-use crate::rule::{SealedClaim, SealedRuleExpr, StoredRule};
+use crate::rule::{GrantClaim, GrantRuleExpr, StoredRule};
 use crate::types::{
-    Value, child_key, collection_id, native_address, resource_address, sealed_resource_address,
+    Value, child_key, collection_id, granting_resource_address, native_address, resource_address,
 };
 use crate::vocabulary::GENESIS_PUBLISHER;
 pub use crate::vocabulary::{INSTANCE, NF_VAULT, RESOURCE};
@@ -76,25 +76,25 @@ pub fn issued_resource(
     kind: ResourceKind,
     mark: &[u8],
 ) -> ResourceAddr {
-    sealed_issued_resource(hasher, instance, kind, &ResourceRules::new(), mark)
+    granting_issued_resource(hasher, instance, kind, &ResourceGrants::new(), mark)
 }
 
-/// The same derivation, over a mark that seals rules.
+/// The same derivation, over a mark that grants rules.
 ///
 /// Beside [`issued_resource`] rather than inside it so the mark's
-/// encoding into derivation material is spelled once: the unsealed form
-/// is this one over the empty set, which is what every unsealed
+/// encoding into derivation material is spelled once: the granting-nothing form
+/// is this one over the empty set, which is what every granting-nothing
 /// resource's address already folds.
 #[must_use]
-pub fn sealed_issued_resource(
+pub fn granting_issued_resource(
     hasher: &dyn Hasher,
     instance: impl Into<Address>,
     kind: ResourceKind,
-    rules: &ResourceRules,
+    rules: &ResourceGrants,
     mark: &[u8],
 ) -> ResourceAddr {
     let material = [Value::Bytes(mark.to_vec()).canonical_bytes()];
-    sealed_resource_address(hasher, instance, kind, rules, &material)
+    granting_resource_address(hasher, instance, kind, rules, &material)
 }
 
 /// The decoder cap for a record cell: the one variant frame a record is,
@@ -161,14 +161,14 @@ impl ResourceRecord {
     }
 }
 
-/// A behaviour a resource's sealed rules govern.
+/// A behaviour a resource's granted rules govern.
 ///
 /// The set the address cannot answer by arithmetic: who may mint is the
 /// derivation's, and these are the rest. Closed like the role band — a
 /// behaviour is assigned or it is not one, and adding one is a protocol
 /// version change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
-pub enum SealedBehaviour {
+pub enum GrantedBehaviour {
     /// Reaching the resource out of a holder's own account, through
     /// that account's own method and no other way.
     #[hbor(discriminant = 0)]
@@ -182,7 +182,7 @@ pub enum SealedBehaviour {
     Deposit,
 }
 
-/// The sealed rules a resource's address commits to: rules by
+/// The granted rules a resource's address commits to: rules by
 /// behaviour, each as the bytes it was handed.
 ///
 /// The same sorted-list discipline the role table keeps, and the same
@@ -192,28 +192,28 @@ pub enum SealedBehaviour {
 /// address, so a rule that changed would be a different resource.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 #[hbor(transparent, validate = ascending_behaviours)]
-pub struct ResourceRules(Vec<(SealedBehaviour, RoleBytes)>);
+pub struct ResourceGrants(Vec<(GrantedBehaviour, RoleBytes)>);
 
 /// The list's canonical-order rule: behaviours strictly ascending.
-fn ascending_behaviours(rules: &ResourceRules) -> Result<(), &'static str> {
+fn ascending_behaviours(rules: &ResourceGrants) -> Result<(), &'static str> {
     rules
         .0
         .windows(2)
         .all(|pair| pair[0].0 < pair[1].0)
         .then_some(())
-        .ok_or("sealed behaviours must be ascending and distinct")
+        .ok_or("granted behaviours must be ascending and distinct")
 }
 
-impl ResourceRules {
-    /// The empty set, which seals nothing and denies every behaviour.
+impl ResourceGrants {
+    /// The empty set, which grants nothing and denies every behaviour.
     #[must_use]
     pub const fn new() -> Self {
         Self(Vec::new())
     }
 
-    /// The rule sealed for `behaviour`, where one is.
+    /// The rule granted for `behaviour`, where one is.
     #[must_use]
-    pub fn rule(&self, behaviour: SealedBehaviour) -> Option<&RoleBytes> {
+    pub fn rule(&self, behaviour: GrantedBehaviour) -> Option<&RoleBytes> {
         self.0
             .binary_search_by_key(&behaviour, |(b, _)| *b)
             .ok()
@@ -221,7 +221,7 @@ impl ResourceRules {
     }
 
     /// Seal `bytes` for `behaviour`, replacing what was there.
-    pub fn set(&mut self, behaviour: SealedBehaviour, bytes: RoleBytes) {
+    pub fn set(&mut self, behaviour: GrantedBehaviour, bytes: RoleBytes) {
         match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
             Ok(index) => self.0[index].1 = bytes,
             Err(index) => self.0.insert(index, (behaviour, bytes)),
@@ -230,7 +230,7 @@ impl ResourceRules {
 
     /// The commitment the address folds: a domain-separated hash of the
     /// canonical encoding, the empty set committed like any other so a
-    /// sealed resource and an unsealed one can never collide.
+    /// granting resource and one that grants nothing can never collide.
     ///
     /// # Panics
     ///
@@ -238,61 +238,61 @@ impl ResourceRules {
     /// same standing every wire-bounded value has.
     #[must_use]
     pub fn commitment(&self, hasher: &dyn Hasher) -> Hash32 {
-        let bytes = to_vec(self).expect("a sealed-rules list is a wire-bounded value");
-        hasher.hash(DOMAIN_SEALED_RULES, &[&bytes])
+        let bytes = to_vec(self).expect("a granted-rules list is a wire-bounded value");
+        hasher.hash(DOMAIN_RESOURCE_GRANTS, &[&bytes])
     }
 }
 
-const DOMAIN_SEALED_RULES: &[u8] = b"hyperscale-vm/sealed-rules";
+const DOMAIN_RESOURCE_GRANTS: &[u8] = b"hyperscale-vm/granted-rules";
 
-/// The sealed rules a declaration commits, before the instance issuing
+/// The granted rules a declaration commits, before the instance issuing
 /// them is known.
 ///
-/// [`ResourceRules`] as a package writes it down: the same
+/// [`ResourceGrants`] as a package writes it down: the same
 /// behaviour-keyed list under the same ascending discipline, holding the
 /// rule's tree rather than the bytes it encodes to. What separates them
 /// is what a leaf names — a declared leaf names a derivation, and
 /// resolving one against an instance is what [`Self::resolve`] does.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 #[hbor(transparent, validate = ascending_declared_behaviours)]
-pub struct SealedRulesExpr(Vec<(SealedBehaviour, SealedRuleExpr)>);
+pub struct GrantsExpr(Vec<(GrantedBehaviour, GrantRuleExpr)>);
 
-fn ascending_declared_behaviours(rules: &SealedRulesExpr) -> Result<(), &'static str> {
+fn ascending_declared_behaviours(rules: &GrantsExpr) -> Result<(), &'static str> {
     rules
         .0
         .windows(2)
         .all(|pair| pair[0].0 < pair[1].0)
         .then_some(())
-        .ok_or("sealed behaviours must be ascending and distinct")
+        .ok_or("granted behaviours must be ascending and distinct")
 }
 
-impl SealedRulesExpr {
-    /// The empty set, which seals nothing.
+impl GrantsExpr {
+    /// The empty set, which grants nothing.
     #[must_use]
     pub const fn new() -> Self {
         Self(Vec::new())
     }
 
-    /// Whether this declaration seals anything at all.
+    /// Whether this declaration grants anything at all.
     ///
     /// The one question the derivation asks before doing any work: an
-    /// empty set resolves to the empty [`ResourceRules`], which is what
-    /// every unsealed resource's address already folds.
+    /// empty set resolves to the empty [`ResourceGrants`], which is what
+    /// every ungranting resource's address already folds.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
     /// Seal `rule` for `behaviour`, replacing what was there.
-    pub fn set(&mut self, behaviour: SealedBehaviour, rule: SealedRuleExpr) {
+    pub fn set(&mut self, behaviour: GrantedBehaviour, rule: GrantRuleExpr) {
         match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
             Ok(index) => self.0[index].1 = rule,
             Err(index) => self.0.insert(index, (behaviour, rule)),
         }
     }
 
-    /// Every behaviour sealed here, with the rule declared for it.
-    pub fn iter(&self) -> impl Iterator<Item = (SealedBehaviour, &SealedRuleExpr)> {
+    /// Every behaviour granted here, with the rule declared for it.
+    pub fn iter(&self) -> impl Iterator<Item = (GrantedBehaviour, &GrantRuleExpr)> {
         self.0.iter().map(|(behaviour, rule)| (*behaviour, rule))
     }
 
@@ -301,7 +301,7 @@ impl SealedRulesExpr {
     ///
     /// # Errors
     ///
-    /// [`SealedResolveError`] for a configuration field the record does
+    /// [`GrantsResolveError`] for a configuration field the record does
     /// not have or whose value names no claim, and for a rule whose
     /// resolved form is past the caps a stored rule is held to.
     pub fn resolve(
@@ -309,31 +309,31 @@ impl SealedRulesExpr {
         hasher: &dyn Hasher,
         instance: Address,
         config: &[Value],
-    ) -> Result<ResourceRules, SealedResolveError> {
-        let mut resolved = ResourceRules::new();
+    ) -> Result<ResourceGrants, GrantsResolveError> {
+        let mut resolved = ResourceGrants::new();
         for (behaviour, rule) in self.iter() {
             let stored = resolve_rule(hasher, instance, config, rule)?;
             let bytes =
-                RoleBytes::try_from(&stored).map_err(|_| SealedResolveError::PastTheCaps)?;
+                RoleBytes::try_from(&stored).map_err(|_| GrantsResolveError::PastTheCaps)?;
             resolved.set(behaviour, bytes);
         }
         Ok(resolved)
     }
 }
 
-/// Why a declared sealed set does not resolve against an instance.
+/// Why a declared granted set does not resolve against an instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum SealedResolveError {
+pub enum GrantsResolveError {
     /// A leaf naming a configuration field the record does not have.
-    #[error("sealed rule names configuration field {0}, which the record does not have")]
+    #[error("granted rule names configuration field {0}, which the record does not have")]
     NoSuchField(u32),
     /// A configuration field whose value names no claim — a package
     /// address, a protocol role, anything not callable and not a
     /// resource.
-    #[error("sealed rule names configuration field {0}, whose value names no claim")]
+    #[error("granted rule names configuration field {0}, whose value names no claim")]
     NotAClaim(u32),
     /// A resolved rule past the caps a stored rule is held to.
-    #[error("a resolved sealed rule is past the caps a stored rule is held to")]
+    #[error("a resolved granted rule is past the caps a stored rule is held to")]
     PastTheCaps,
 }
 
@@ -341,13 +341,13 @@ fn resolve_rule(
     hasher: &dyn Hasher,
     instance: Address,
     config: &[Value],
-    rule: &SealedRuleExpr,
-) -> Result<StoredRule, SealedResolveError> {
+    rule: &GrantRuleExpr,
+) -> Result<StoredRule, GrantsResolveError> {
     Ok(match rule {
-        SealedRuleExpr::Require(claim) => {
+        GrantRuleExpr::Require(claim) => {
             StoredRule::Require(resolve_claim(hasher, instance, config, claim)?)
         }
-        SealedRuleExpr::CountOf { count, rules } => StoredRule::CountOf {
+        GrantRuleExpr::CountOf { count, rules } => StoredRule::CountOf {
             count: *count,
             rules: rules
                 .iter()
@@ -361,24 +361,24 @@ fn resolve_claim(
     hasher: &dyn Hasher,
     instance: Address,
     config: &[Value],
-    claim: &SealedClaim,
-) -> Result<Presented, SealedResolveError> {
-    // A badge named inside a sealed rule derives through the unsealed
-    // form, which is what keeps the derivation well-founded: nothing
+    claim: &GrantClaim,
+) -> Result<Presented, GrantsResolveError> {
+    // A badge named inside a granted rule derives through the form that
+    // grants nothing, which keeps the derivation well-founded: nothing
     // here can name a resource whose own rules are still being computed.
     let badge = |kind, mark: &[u8]| issued_resource(hasher, instance, kind, mark);
     Ok(match claim {
-        SealedClaim::SelfAddr => Presented::of_address(instance)
+        GrantClaim::SelfAddr => Presented::of_address(instance)
             .expect("an instance issuing a resource is a callable address"),
-        SealedClaim::SelfBadge { mark } => Presented::Resource(badge(ResourceKind::Fungible, mark)),
-        SealedClaim::SelfInstance { mark, id } => {
+        GrantClaim::SelfBadge { mark } => Presented::Resource(badge(ResourceKind::Fungible, mark)),
+        GrantClaim::SelfInstance { mark, id } => {
             Presented::Instance(badge(ResourceKind::NonFungible, mark), *id)
         }
-        SealedClaim::Config(slot) => {
+        GrantClaim::Config(slot) => {
             let value = config
                 .get(*slot as usize)
-                .ok_or(SealedResolveError::NoSuchField(*slot))?;
-            Presented::of(value).ok_or(SealedResolveError::NotAClaim(*slot))?
+                .ok_or(GrantsResolveError::NoSuchField(*slot))?;
+            Presented::of(value).ok_or(GrantsResolveError::NotAClaim(*slot))?
         }
     })
 }
@@ -388,7 +388,7 @@ fn resolve_claim(
 ///
 /// The same standing an instance's record has — a presented claim
 /// rather than trusted state. The address is the hash of exactly these
-/// four, so a holder checks a resource's sealed rules by recomputing
+/// four, so a holder checks a resource's granted rules by recomputing
 /// the derivation, with no cell read anywhere in the path; a false
 /// record derives a different address, and the resource it lied about
 /// stays exactly what it was.
@@ -402,8 +402,8 @@ pub struct ResourceMeta {
     /// byte parts the derivation hashes.
     #[hbor(max = MAX_RESOURCE_MATERIAL_PARTS)]
     pub material: Vec<Vec<u8>>,
-    /// The sealed rules whose commitment the address folds.
-    pub rules: ResourceRules,
+    /// The granted rules whose commitment the address folds.
+    pub rules: ResourceGrants,
 }
 
 /// The material parts one resource derivation may fold — a wire bound
@@ -415,7 +415,7 @@ impl ResourceMeta {
     /// The address these four derive.
     #[must_use]
     pub fn address(&self, hasher: &dyn Hasher) -> ResourceAddr {
-        sealed_resource_address(hasher, self.minter, self.kind, &self.rules, &self.material)
+        granting_resource_address(hasher, self.minter, self.kind, &self.rules, &self.material)
     }
 }
 

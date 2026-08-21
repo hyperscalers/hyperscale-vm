@@ -16,7 +16,7 @@
 // the appearance is an artifact of a contract living inside a test binary.
 #![allow(dead_code)]
 
-use hyperscale_vm_effects::{Clause, ModeExpr, ResourceKind, RuleExpr, SealedRulesExpr};
+use hyperscale_vm_effects::{Clause, GrantsExpr, ModeExpr, ResourceKind, RuleExpr};
 use hyperscale_vm_sdk::blueprint;
 
 /// Control-flow spellings of one access set, each beside its straight-line
@@ -320,7 +320,7 @@ fn an_instance_issues_resources_its_own_address_derives() {
         vec![Expr::SelfResource {
             kind: ResourceKind::Fungible,
             material: vec![Expr::Literal(Value::Bytes(b"unit".to_vec()))],
-            seals: SealedRulesExpr::new(),
+            grants: GrantsExpr::new(),
         }],
     );
     // The badge is the same derivation over its own mark — and its own
@@ -334,7 +334,7 @@ fn an_instance_issues_resources_its_own_address_derives() {
                     rule: RuleExpr::claim(Expr::SelfResource {
                         kind: ResourceKind::NonFungible,
                         material: vec![Expr::Literal(Value::Bytes(b"owner-badge".to_vec()))],
-                        seals: SealedRulesExpr::new(),
+                        grants: GrantsExpr::new(),
                     }),
                 },
             })
@@ -883,7 +883,7 @@ mod selection {
 #[test]
 fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() {
     use hyperscale_vm_effects::{
-        EvalInputs, Expr, Hash32, InstanceMeta, ManifestHash, PackageHash, SealedResources, SlotId,
+        EvalInputs, Expr, Hash32, InstanceMeta, ManifestHash, PackageHash, PresentedGrants, SlotId,
         TargetExpr, TestHasher, Value, child_key, evaluate_effects,
     };
     use hyperscale_vm_sdk::VAULT;
@@ -922,7 +922,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
             record: &record,
             node_index: 0,
             identity: ManifestHash(Hash32([9; 32])),
-            sealed: SealedResources::none(),
+            grants: PresentedGrants::none(),
         };
         let set = evaluate_effects(&effects("either"), &inputs, &TestHasher).unwrap();
         let vaults: Vec<_> = [left, right, address(0x33)]
@@ -950,7 +950,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
         record: &record,
         node_index: 0,
         identity: ManifestHash(Hash32([9; 32])),
-        sealed: SealedResources::none(),
+        grants: PresentedGrants::none(),
     };
     let set = evaluate_effects(&effects("routed"), &inputs, &TestHasher).unwrap();
     let fallback = EffectTarget::Point(child_key(

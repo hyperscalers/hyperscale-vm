@@ -50,9 +50,9 @@ use crate::typed::{TypedBuilder, TypedError};
 /// [`admit_tree`]: hyperscale_vm_effects::admit_tree
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum EnvelopeError {
-    /// An intent the composition never sealed, so there is no declaration
+    /// An intent the composition never granted, so there is no declaration
     /// to carry.
-    #[error("intent {intent} was never sealed")]
+    #[error("intent {intent} was never granted")]
     UnsealedIntent {
         /// The intent: `0` is the root, `i + 1` is subintent `i`.
         intent: u32,
@@ -255,9 +255,10 @@ pub struct EnvelopeBuilder<'a> {
     /// The creation-fixed records the tree carries for targets beyond
     /// the genesis registry.
     presented: Vec<InstanceMeta>,
-    /// The sealed-rule records this envelope presents, in the order the
+    /// The resource records this envelope presents — the preimage of
+    /// each granting address a gate reads through — in the order the
     /// composer added them.
-    sealed: Vec<ResourceMeta>,
+    grants: Vec<ResourceMeta>,
 }
 
 impl<'a> EnvelopeBuilder<'a> {
@@ -274,7 +275,7 @@ impl<'a> EnvelopeBuilder<'a> {
             intents: vec![None],
             bindings: BTreeMap::new(),
             presented: Vec::new(),
-            sealed: Vec::new(),
+            grants: Vec::new(),
         };
         let root = IntentBuilder {
             graph: TypedBuilder::new(chain, hasher),
@@ -296,11 +297,11 @@ impl<'a> EnvelopeBuilder<'a> {
         self.presented.push(meta);
     }
 
-    /// Present a resource's sealed-rule record, registered at the
-    /// address its own content derives — what a sealed gate in this
+    /// Present a resource's granted-rule record, registered at the
+    /// address its own content derives — what a granted gate in this
     /// envelope resolves against, on the terms `instance` states.
     pub fn resource(&mut self, meta: ResourceMeta) {
-        self.sealed.push(meta);
+        self.grants.push(meta);
     }
 
     /// A separately signed subintent, whose signer owns the nullifier
@@ -481,7 +482,7 @@ impl<'a> EnvelopeBuilder<'a> {
             root_bindings,
             subintents,
             instances: self.presented,
-            resources: self.sealed,
+            resources: self.grants,
         })
     }
 }

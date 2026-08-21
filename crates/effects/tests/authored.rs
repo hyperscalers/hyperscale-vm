@@ -7,8 +7,9 @@
 
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
-    CONFIRMATION, Clause, ConditionExpr, Expr, PRIMARY, PackageMetadata, RECOVERY, ResourceKind,
-    RuleExpr, RuleLeaf, SealedBehaviour, SealedRulesExpr, Value, check_abi, check_declarations,
+    CONFIRMATION, Clause, ConditionExpr, Expr, GrantedBehaviour, GrantsExpr, PRIMARY,
+    PackageMetadata, RECOVERY, ResourceKind, RuleExpr, RuleLeaf, Value, check_abi,
+    check_declarations,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_stdlib::staking::OWNER_BADGE;
@@ -82,7 +83,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         vec![RuleExpr::claim(Expr::SelfResource {
             kind: ResourceKind::NonFungible,
             material: vec![Expr::Literal(Value::Bytes(OWNER_BADGE.to_vec()))],
-            seals: SealedRulesExpr::new(),
+            grants: GrantsExpr::new(),
         })]
     };
     let open = Vec::new;
@@ -114,9 +115,9 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         (
             "account",
             "recall",
-            vec![RuleExpr::Require(RuleLeaf::Sealed {
+            vec![RuleExpr::Require(RuleLeaf::Granted {
                 resource: Expr::Arg(0),
-                behaviour: SealedBehaviour::Recall,
+                behaviour: GrantedBehaviour::Recall,
             })],
             vec![],
         ),

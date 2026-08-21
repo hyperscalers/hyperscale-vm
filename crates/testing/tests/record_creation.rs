@@ -1,7 +1,7 @@
 //! An issuer brings its own resources into existence.
 //!
 //! A record is the issuer's own cell, written where the component
-//! becomes actual: instantiation seals the configuration leaf and files
+//! becomes actual: instantiation grants the configuration leaf and files
 //! one record per declared mark, each under the `Absent` condition that
 //! is its one-way door. The cells it writes are held to the protocol's
 //! own encoding, byte for byte — an instantiated resource and a

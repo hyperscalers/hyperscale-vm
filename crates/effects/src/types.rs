@@ -9,7 +9,7 @@ use hyperscale_vm_types::{
 
 use crate::hash::{Hash32, Hasher};
 use crate::metadata::PackageHash;
-use crate::resource::{ResourceKind, ResourceRules};
+use crate::resource::{ResourceGrants, ResourceKind};
 
 /// A shard identity, as resolved from an address prefix.
 ///
@@ -274,11 +274,11 @@ pub fn package_address(hasher: &dyn Hasher, package: PackageHash) -> PackageAddr
 /// The address of a resource minted under `minter`, sealing nothing.
 ///
 /// A resource address commits to its provenance, its kind, and its
-/// sealed rules: who may mint it, what it is, and the behaviours it
+/// granted rules: who may mint it, what it is, and the behaviours it
 /// grants are readable from the address, so a holder checks all three
 /// by recomputing the derivation rather than by trusting a claim about
 /// any of them. The material separates the resources one minter issues;
-/// this spelling commits the empty sealed set, which is what almost
+/// this spelling commits the empty granted set, which is what almost
 /// every resource carries.
 #[must_use]
 pub fn resource_address(
@@ -287,20 +287,20 @@ pub fn resource_address(
     kind: ResourceKind,
     material: &[Vec<u8>],
 ) -> ResourceAddr {
-    sealed_resource_address(hasher, minter, kind, &ResourceRules::new(), material)
+    granting_resource_address(hasher, minter, kind, &ResourceGrants::new(), material)
 }
 
 /// The address of a resource minted under `minter`, sealing `rules`.
 ///
-/// The empty set is committed like any other — a sealed resource and an
-/// unsealed one can never collide — and immutability is the derivation:
+/// The empty set is committed like any other — a granting resource and an
+/// one granting nothing can never collide — and immutability is the derivation:
 /// a rule that changed would be a different resource.
 #[must_use]
-pub fn sealed_resource_address(
+pub fn granting_resource_address(
     hasher: &dyn Hasher,
     minter: impl Into<Address>,
     kind: ResourceKind,
-    rules: &ResourceRules,
+    rules: &ResourceGrants,
     material: &[Vec<u8>],
 ) -> ResourceAddr {
     let minter_bytes = minter.into().to_bytes();
@@ -491,14 +491,14 @@ mod tests {
     use super::{
         Address, EdgeContent, LocalKey, MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH, NativeRole,
         SchemeId, SlotId, SubstateKey, Value, child_key, component_address, config_hash,
-        native_address, package_address, principal_address, resource_address,
-        sealed_resource_address, to_vec,
+        granting_resource_address, native_address, package_address, principal_address,
+        resource_address, to_vec,
     };
     use crate::auth::RoleBytes;
     use crate::hash::{Hash32, TestHasher};
     use crate::metadata::PackageHash;
     use crate::presented::Presented;
-    use crate::resource::{ResourceKind, ResourceRules, SealedBehaviour};
+    use crate::resource::{GrantedBehaviour, ResourceGrants, ResourceKind};
     use crate::rule::StoredRule;
     use crate::vectors::{
         CONFIG_LEAF, PACKAGE, SALT, address_vector_lines, address_vectors, expected_classes,
@@ -607,10 +607,10 @@ mod tests {
                 "principal/ed25519/b = ca6f00440ae6880825310430406d4bfc462131d3fa34aa0d993da698a6bd6e01",
                 "component/salted = 182371a0c66262beab502fc6f5e9c7a92f94c5f903e378fdc07d999c58fa2b02",
                 "package/content = 94cb538bce2c0a6cf61a9fff32d805fb229e1db7174679c17d404686430e4103",
-                "resource/minted = 64a8cf23fafde1035cc52bce44ec804e0506e1aad2f412eb1ca805aa153ba504",
-                "resource/minted-nf = 554d97617eb3d43b823b682953b3a31779cd0c28aa94db7bd7c5fd43fe4f3d04",
+                "resource/minted = 35e2ddac0061bd4baedfd4c17865b7fdb9c43ff09bcdc667577a354a98e7a104",
+                "resource/minted-nf = ce323aed0de4701b5e19461095919d188c93222c950ac229058846d5fe9c3604",
                 "native/genesis-publisher = dca99635de8cbff5c1f6b5fccaaa14489bdf24ac9f2b1be31e576da9a31c5305",
-                "resource/xrd = db0ba1b458db861cc47f490ddbaf15cfa8515d8f5d3a54a6fb29809f98faf704",
+                "resource/xrd = d683b9db3acf0dc13756bad11d8011cc5d6eacd723a678b5b44f6707d5a56404",
             ]
         );
     }
@@ -700,23 +700,27 @@ mod tests {
             ),
             resource_address(&TestHasher, minter, fungible, &[b"abc".to_vec()])
         );
-        // The sealed rules are derivation material too: a rule cannot
+        // The granted rules are derivation material too: a rule cannot
         // change without the resource becoming a different resource, and
         // sealing nothing is committed like sealing something.
         let admit = |who: ComponentAddr| {
-            let mut rules = ResourceRules::new();
+            let mut rules = ResourceGrants::new();
             rules.set(
-                SealedBehaviour::Recall,
+                GrantedBehaviour::Recall,
                 RoleBytes::try_from(&StoredRule::Require(Presented::Identity(who.into())))
                     .expect("a rule encodes"),
             );
             rules
         };
-        let sealed = sealed_resource_address(&TestHasher, minter, fungible, &admit(minter), &[]);
-        assert_ne!(sealed, resource_address(&TestHasher, minter, fungible, &[]));
+        let granting =
+            granting_resource_address(&TestHasher, minter, fungible, &admit(minter), &[]);
         assert_ne!(
-            sealed,
-            sealed_resource_address(&TestHasher, minter, fungible, &admit(other), &[])
+            granting,
+            resource_address(&TestHasher, minter, fungible, &[])
+        );
+        assert_ne!(
+            granting,
+            granting_resource_address(&TestHasher, minter, fungible, &admit(other), &[])
         );
     }
 

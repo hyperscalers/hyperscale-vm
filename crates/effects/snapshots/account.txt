@@ -651,7 +651,7 @@ PackageMetadata {
                     guard: None,
                     condition: Satisfies {
                         rule: Require(
-                            Sealed {
+                            Granted {
                                 resource: Arg(
                                     0,
                                 ),

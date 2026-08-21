@@ -23,7 +23,7 @@ use hyperscale_vm_types::{
 };
 
 use crate::dsl::{
-    Declaration, DeclaredAccess, EvalError, EvalInputs, SealedResources, evaluate_declaration,
+    Declaration, DeclaredAccess, EvalError, EvalInputs, PresentedGrants, evaluate_declaration,
     evaluate_expr, materialized_kind,
 };
 use crate::envelope::{YieldBinding, YieldParam};
@@ -36,7 +36,7 @@ use crate::metadata::{PackageHash, PackageMetadata};
 use crate::presented::Presented;
 use crate::publish::{CheckedSignature, seals};
 use crate::records::ChainRecords;
-use crate::resource::{ResourceKind, sealed_issued_resource};
+use crate::resource::{ResourceKind, granting_issued_resource};
 use crate::route::{FrameDeclaration, MAX_MANIFEST_NODES};
 use crate::rule::Rule;
 use crate::signature::{AbiParam, MethodSignature, ParamType};
@@ -552,7 +552,7 @@ pub fn admit(
         identity,
         chain,
         &BTreeSet::new(),
-        SealedResources::none(),
+        PresentedGrants::none(),
         hasher,
     )
 }
@@ -676,7 +676,7 @@ pub(crate) fn admit_intents(
     identity: ManifestHash,
     chain: &dyn ChainRecords,
     presented: &BTreeSet<Address>,
-    sealed: &SealedResources,
+    grants: &PresentedGrants,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
     let total: usize = intents.iter().map(|view| view.graph.nodes.len()).sum();
@@ -693,7 +693,7 @@ pub(crate) fn admit_intents(
         identity,
         chain,
         presented,
-        sealed,
+        grants,
         hasher,
         flat_of: &flat_of,
         outputs: Vec::with_capacity(total),
@@ -902,7 +902,7 @@ struct Lower<'a> {
     /// caller name the configuration of a component somebody else
     /// created.
     presented: &'a BTreeSet<Address>,
-    sealed: &'a SealedResources,
+    grants: &'a PresentedGrants,
     hasher: &'a dyn Hasher,
     /// Flattened position per (intent, local node).
     flat_of: &'a [Vec<u32>],
@@ -953,7 +953,7 @@ impl Lower<'_> {
             record: meta,
             node_index,
             identity: self.identity,
-            sealed: self.sealed,
+            grants: self.grants,
         };
         check_denominations(signature, &bound, &eval_inputs, self.hasher, node_index)?;
         let node_outputs = project_outputs(signature, &eval_inputs, self.hasher, node_index)?;
@@ -1122,10 +1122,10 @@ impl Lower<'_> {
             return Ok(None);
         };
         let leaf = EffectTarget::Point(child_key(self.hasher, address, CONFIG, &[]));
-        let seals = frame.ordered.iter().any(|access| {
+        let grants = frame.ordered.iter().any(|access| {
             access.effect.target == leaf && matches!(access.effect.mode, Mode::Write)
         });
-        if seals {
+        if grants {
             return Ok(None);
         }
         let effect = Effect {
@@ -1593,18 +1593,18 @@ fn lower_call(
             .issues
             .as_ref()
             .map(|issuance| -> Result<_, AdmissionError> {
-                // The rules the mark seals ride the grant's own address,
+                // The rules the mark grants ride the grant's own address,
                 // so what a body mints is what a gate naming the same
                 // resource resolves to.
                 let rules = issuance
-                    .seals
+                    .grants
                     .resolve(hasher, target, &inputs.record.config)
                     .map_err(|source| AdmissionError::Eval {
                         node: node_index,
                         source: source.into(),
                     })?;
                 Ok((
-                    sealed_issued_resource(hasher, target, issuance.kind, &rules, &issuance.mark),
+                    granting_issued_resource(hasher, target, issuance.kind, &rules, &issuance.mark),
                     issuance.kind,
                 ))
             })

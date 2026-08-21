@@ -9,8 +9,8 @@
 use hyperscale_vm_effects::dsl::{Clause, ConditionExpr, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::vocabulary::INSTANCE;
 use hyperscale_vm_effects::{
-    AbiParam, Expr, Issuance, MethodSignature, PackageMetadata, ParamType, ResourceKind, RuleExpr,
-    SealedRulesExpr, Totality, Value, holdings_range,
+    AbiParam, Expr, GrantsExpr, Issuance, MethodSignature, PackageMetadata, ParamType,
+    ResourceKind, RuleExpr, Totality, Value, holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
 use hyperscale_vm_types::{ComponentAddr, Presence, ResourceAddr};
@@ -70,7 +70,7 @@ pub fn metadata() -> PackageMetadata {
     let minted_resource = Expr::SelfResource {
         kind: ResourceKind::NonFungible,
         material: vec![Expr::Literal(Value::Bytes(BADGE.to_vec()))],
-        seals: SealedRulesExpr::new(),
+        grants: GrantsExpr::new(),
     };
     let minted_id = Expr::FreshId { slot: 0 };
     let mut methods = PackageMetadata::default();
@@ -84,7 +84,7 @@ pub fn metadata() -> PackageMetadata {
             issues: Some(Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
-                seals: SealedRulesExpr::new(),
+                grants: GrantsExpr::new(),
             }),
             params: vec![],
             abi: vec![
@@ -152,7 +152,7 @@ pub fn metadata() -> PackageMetadata {
             issues: Some(Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
-                seals: SealedRulesExpr::new(),
+                grants: GrantsExpr::new(),
             }),
             params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Bucket(0), AbiParam::Issuer],

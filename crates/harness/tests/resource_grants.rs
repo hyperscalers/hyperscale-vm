@@ -1,9 +1,9 @@
-//! A resource's sealed rules: committed by its address, presented in
+//! A resource's granted rules: committed by its address, presented in
 //! the envelope, verified by re-derivation — no cell read anywhere.
 //!
 //! Recall is the consumer: the one way it reaches a holder's vault is
 //! the holder's own account method, gated on the rule the resource's
-//! address seals. The record travels in the envelope's `resources`
+//! address grants. The record travels in the envelope's `resources`
 //! section, and a record that lies derives a different address — so the
 //! rule a holder checked when accepting the asset is the rule that
 //! governs, forever, or the resource is a different resource.
@@ -11,8 +11,8 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, Hasher, PackageHash, PrefixShardResolver, Presented, Records, ResourceKind,
-    ResourceMeta, ResourceRules, RoleBytes, SealedBehaviour, StoredRule, TestHasher, admit_tree,
+    EnvelopeTree, GrantedBehaviour, Hasher, PackageHash, PrefixShardResolver, Presented, Records,
+    ResourceGrants, ResourceKind, ResourceMeta, RoleBytes, StoredRule, TestHasher, admit_tree,
     route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
@@ -23,14 +23,14 @@ use hyperscale_vm_types::{Address, AddressClass, Outcome, PrincipalAddr, Resourc
 use wasmtime::Result;
 use wasmtime::error::{Context, ensure};
 
-/// The account that holds the sealed resource.
+/// The account that holds the granting resource.
 const HOLDER: PrincipalAddr = PrincipalAddr::new([0x61; 31]);
-/// The identity the resource's sealed recall rule admits.
+/// The identity the resource's granted recall rule admits.
 const RECALLER: PrincipalAddr = PrincipalAddr::new([0x62; 31]);
 /// An identity the rule does not admit.
 const STRANGER: PrincipalAddr = PrincipalAddr::new([0x63; 31]);
 
-/// The minter the sealed resource's address commits — an address whose
+/// The minter the granting resource's address commits — an address whose
 /// code never runs here: nothing about a recall involves the minter.
 const MINTER: Address = Address::new([0x6A; 31], AddressClass::Component);
 
@@ -55,12 +55,12 @@ fn world() -> Records {
     chain
 }
 
-/// The record the resource's address commits: recall sealed to
+/// The record the resource's address commits: recall granted to
 /// [`RECALLER`]'s identity.
-fn sealed_meta() -> ResourceMeta {
-    let mut rules = ResourceRules::new();
+fn granting_meta() -> ResourceMeta {
+    let mut rules = ResourceGrants::new();
     rules.set(
-        SealedBehaviour::Recall,
+        GrantedBehaviour::Recall,
         RoleBytes::try_from(&StoredRule::Require(Presented::Identity(RECALLER.into())))
             .expect("a rule within the caps encodes"),
     );
@@ -73,10 +73,10 @@ fn sealed_meta() -> ResourceMeta {
 }
 
 fn resource() -> ResourceAddr {
-    sealed_meta().address(&TestHasher)
+    granting_meta().address(&TestHasher)
 }
 
-/// One envelope: `signer` authorizes, recalls `amount` of the sealed
+/// One envelope: `signer` authorizes, recalls `amount` of the granting
 /// resource out of [`HOLDER`]'s account, and banks it — presenting the
 /// record where `present` says to.
 fn recall_tree(signer: PrincipalAddr, amount: u128, present: bool) -> Result<EnvelopeTree> {
@@ -89,9 +89,9 @@ fn recall_tree(signer: PrincipalAddr, amount: u128, present: bool) -> Result<Env
     };
     build(&mut root).context("the recall types against the account")?;
     if present {
-        env.resource(sealed_meta());
+        env.resource(granting_meta());
     }
-    env.seal(root).context("the root seals")?;
+    env.seal(root).context("the root grants")?;
     env.build().context("the tree builds")
 }
 
@@ -126,7 +126,7 @@ fn holder_store(amount: u128) -> MemoryStore {
 }
 
 /// The recall reaches the holder's vault through the holder's own
-/// method: the recaller presents its identity, the sealed rule the
+/// method: the recaller presents its identity, the granted rule the
 /// envelope-presented record carries admits it, and the funds move —
 /// with the holder signing nothing and no cell read resolving the rule.
 #[test]
@@ -142,7 +142,7 @@ fn a_sealed_recall_reaches_the_holder_through_their_own_account() -> Result<()> 
     Ok(())
 }
 
-/// An identity the sealed rule does not admit is refused at the gate,
+/// An identity the granted rule does not admit is refused at the gate,
 /// and the holder's vault never moves.
 #[test]
 fn a_stranger_is_refused_by_the_sealed_rule() -> Result<()> {
@@ -153,7 +153,7 @@ fn a_stranger_is_refused_by_the_sealed_rule() -> Result<()> {
             outcome.receipts[&entry.tx].outcome,
             Outcome::Completed { .. }
         ),
-        "the sealed rule admits the recaller alone",
+        "the granted rule admits the recaller alone",
     );
     assert_eq!(amount_of(&end, vault(HOLDER, resource())), 100);
     Ok(())
@@ -168,13 +168,13 @@ fn an_unpresented_record_refuses_at_admission() -> Result<()> {
     let chain = world();
     assert!(
         admit_tree(&tree, RECALLER, identity, &chain, &TestHasher).is_err(),
-        "an unpresented sealed rule refuses",
+        "an unpresented granted rule refuses",
     );
     Ok(())
 }
 
 /// A record with different rules derives a different address, so the
-/// sealed set can never be swapped under a holder: presenting the
+/// granted set can never be swapped under a holder: presenting the
 /// altered record registers a different resource, and the one the
 /// holder owns stays unverifiable — refused, not reinterpreted.
 #[test]
@@ -190,16 +190,16 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     // The stranger presents a record whose recall rule admits them —
     // but those rules derive a different address, so the resource the
     // manifest names stays unpresented.
-    let mut forged = sealed_meta();
-    forged.rules = ResourceRules::new();
+    let mut forged = granting_meta();
+    forged.rules = ResourceGrants::new();
     forged.rules.set(
-        SealedBehaviour::Recall,
+        GrantedBehaviour::Recall,
         RoleBytes::try_from(&StoredRule::Require(Presented::Identity(STRANGER.into())))
             .expect("a rule encodes"),
     );
     assert_ne!(forged.address(&TestHasher), resource());
     env.resource(forged);
-    env.seal(root).context("the root seals")?;
+    env.seal(root).context("the root grants")?;
     let tree = env.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
     assert!(

@@ -1,6 +1,6 @@
-//! A package seals its own resource's rules, so the tier has a minter.
+//! A package grants its own resource's rules, so the tier has a minter.
 //!
-//! A sealed rule is folded into the address it governs: the resource a
+//! A granted rule is folded into the address it governs: the resource a
 //! body mints and the resource a client derives from the declaration are
 //! the same address exactly when they agree about the rules, and a
 //! package that changed one would be minting a different resource. What
@@ -9,8 +9,8 @@
 //! the grant that mints it all read one registration.
 
 use hyperscale_vm_effects::{
-    Presented, ResourceKind, ResourceRules, RoleBytes, SealedBehaviour, StoredRule, TestHasher,
-    issued_resource, sealed_issued_resource,
+    GrantedBehaviour, Presented, ResourceGrants, ResourceKind, RoleBytes, StoredRule, TestHasher,
+    granting_issued_resource, issued_resource,
 };
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::{Address, Chain, PrincipalAddr, account, package, principal};
@@ -21,23 +21,23 @@ const FOUNDER: PrincipalAddr = principal(0x71);
 mod mill {
     use hyperscale_vm_sdk::state::{Bucket, Quantity};
 
-    /// The badge the token's sealed recall rule names. Unsealed itself,
-    /// which is what a sealed leaf may name: a leaf derives through the
-    /// unsealed form, so a badge is nameable before anything seals
+    /// The badge the token's granted recall rule names. Unsealed itself,
+    /// which is what a grant leaf may name: a leaf derives through the
+    /// granting-nothing form, so a badge is nameable before anything grants against it
     /// against it.
     #[resource(non_fungible, initial(0))]
     struct OwnerBadge;
 
     /// A token whose holders can be recalled from, by whoever holds the
     /// badge — a rule its address commits and no cell holds.
-    #[resource(seals(recall = issued(OwnerBadge, 0)))]
+    #[resource(grants(recall = issued(OwnerBadge, 0)))]
     struct Token;
 
     #[state]
     struct Mill {}
 
     impl Mill {
-        /// Issue `amount` of the token, at the address its sealed rules
+        /// Issue `amount` of the token, at the address its granted rules
         /// derive.
         pub fn issue(&mut self, amount: Quantity) -> Bucket {
             Token::mint(amount)
@@ -48,16 +48,16 @@ mod mill {
 /// The rules the declaration says the token's address commits, built
 /// here from the protocol's own types rather than from the macro's — so
 /// agreement is between two derivations rather than one restated.
-fn declared_rules(instance: impl Into<Address>) -> ResourceRules {
+fn declared_rules(instance: impl Into<Address>) -> ResourceGrants {
     let badge = issued_resource(
         &TestHasher,
         instance,
         ResourceKind::NonFungible,
         mill::OWNER_BADGE,
     );
-    let mut rules = ResourceRules::new();
+    let mut rules = ResourceGrants::new();
     rules.set(
-        SealedBehaviour::Recall,
+        GrantedBehaviour::Recall,
         RoleBytes::try_from(&StoredRule::Require(Presented::Instance(badge, 0)))
             .expect("a rule within the caps encodes"),
     );
@@ -65,7 +65,7 @@ fn declared_rules(instance: impl Into<Address>) -> ResourceRules {
 }
 
 /// What a body mints lands at the address the declaration's rules
-/// derive, and not at the one the same mark would derive unsealed.
+/// derive, and not at the one the same mark would derive granting nothing.
 #[test]
 fn a_sealed_declaration_mints_at_the_address_its_rules_derive() {
     let mut chain = Chain::native();
@@ -83,31 +83,31 @@ fn a_sealed_declaration_mints_at_the_address_its_rules_derive() {
     // out of the protocol's own types — two derivations rather than one
     // restated, which is the whole of what agreement means here.
     let helper = instance.issued_token(&TestHasher);
-    let sealed = sealed_issued_resource(
+    let granting = granting_issued_resource(
         &TestHasher,
         instance,
         ResourceKind::Fungible,
         &declared_rules(instance),
         mill::TOKEN,
     );
-    let unsealed = issued_resource(&TestHasher, instance, ResourceKind::Fungible, mill::TOKEN);
+    let ungranting = issued_resource(&TestHasher, instance, ResourceKind::Fungible, mill::TOKEN);
 
     assert_eq!(
-        helper, sealed,
-        "the handle's own helper folds the rules its declaration seals",
+        helper, granting,
+        "the handle's own helper folds the rules its declaration grants",
     );
 
     assert_ne!(
-        sealed, unsealed,
+        granting, ungranting,
         "sealing rules is what makes it a different resource"
     );
     assert_eq!(
-        chain.balance(FOUNDER, sealed),
+        chain.balance(FOUNDER, granting),
         500,
-        "the mint lands at the address the sealed rules derive",
+        "the mint lands at the address the granted rules derive",
     );
     assert_eq!(
-        chain.balance(FOUNDER, unsealed),
+        chain.balance(FOUNDER, ungranting),
         0,
         "and nothing lands at the address the mark alone would derive",
     );

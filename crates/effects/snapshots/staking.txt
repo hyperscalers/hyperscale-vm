@@ -37,7 +37,7 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
-                                    seals: SealedRulesExpr(
+                                    grants: GrantsExpr(
                                         [],
                                     ),
                                 },
@@ -114,7 +114,7 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
-                                    seals: SealedRulesExpr(
+                                    grants: GrantsExpr(
                                         [],
                                     ),
                                 },
@@ -178,7 +178,7 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
-                                    seals: SealedRulesExpr(
+                                    grants: GrantsExpr(
                                         [],
                                     ),
                                 },
@@ -250,7 +250,7 @@ PackageMetadata {
                         101,
                     ],
                     kind: NonFungible,
-                    seals: SealedRulesExpr(
+                    grants: GrantsExpr(
                         [],
                     ),
                 },
@@ -279,7 +279,7 @@ PackageMetadata {
                                 ),
                             ),
                         ],
-                        seals: SealedRulesExpr(
+                        grants: GrantsExpr(
                             [],
                         ),
                     },
@@ -368,7 +368,7 @@ PackageMetadata {
                                                 ),
                                             ),
                                         ],
-                                        seals: SealedRulesExpr(
+                                        grants: GrantsExpr(
                                             [],
                                         ),
                                     },
@@ -408,7 +408,7 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
-                                    seals: SealedRulesExpr(
+                                    grants: GrantsExpr(
                                         [],
                                     ),
                                 },
@@ -448,7 +448,7 @@ PackageMetadata {
                                                 ),
                                             ),
                                         ],
-                                        seals: SealedRulesExpr(
+                                        grants: GrantsExpr(
                                             [],
                                         ),
                                     },
@@ -487,7 +487,7 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
-                                    seals: SealedRulesExpr(
+                                    grants: GrantsExpr(
                                         [],
                                     ),
                                 },
@@ -528,7 +528,7 @@ PackageMetadata {
                                                 ),
                                             ),
                                         ],
-                                        seals: SealedRulesExpr(
+                                        grants: GrantsExpr(
                                             [],
                                         ),
                                     },
@@ -573,7 +573,7 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
-                                    seals: SealedRulesExpr(
+                                    grants: GrantsExpr(
                                         [],
                                     ),
                                 },
@@ -645,7 +645,7 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
-                                    seals: SealedRulesExpr(
+                                    grants: GrantsExpr(
                                         [],
                                     ),
                                 },
@@ -729,7 +729,7 @@ PackageMetadata {
                         116,
                     ],
                     kind: Fungible,
-                    seals: SealedRulesExpr(
+                    grants: GrantsExpr(
                         [],
                     ),
                 },
@@ -758,7 +758,7 @@ PackageMetadata {
                             ),
                         ),
                     ],
-                    seals: SealedRulesExpr(
+                    grants: GrantsExpr(
                         [],
                     ),
                 },
@@ -839,7 +839,7 @@ PackageMetadata {
                                             ),
                                         ),
                                     ],
-                                    seals: SealedRulesExpr(
+                                    grants: GrantsExpr(
                                         [],
                                     ),
                                 },
@@ -910,7 +910,7 @@ PackageMetadata {
                         116,
                     ],
                     kind: Fungible,
-                    seals: SealedRulesExpr(
+                    grants: GrantsExpr(
                         [],
                     ),
                 },
@@ -941,7 +941,7 @@ PackageMetadata {
                                 ),
                             ),
                         ],
-                        seals: SealedRulesExpr(
+                        grants: GrantsExpr(
                             [],
                         ),
                     },

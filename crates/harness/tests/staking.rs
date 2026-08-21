@@ -519,7 +519,7 @@ fn bring_up_graph() -> ManifestGraph {
 }
 
 /// A pool brings itself up and reaches its own operator surface: one
-/// node seals its record, writes the record of each mark it issues,
+/// node grants its record, writes the record of each mark it issues,
 /// mints the owner badge and files it in the founder's account — and
 /// the surface opens to whoever presents it. The cells a seated pool
 /// holds, written by the vocabulary instead of by genesis.

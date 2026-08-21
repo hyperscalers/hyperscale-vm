@@ -55,7 +55,7 @@ pub use auth::{
 pub use dsl::{
     Clause, ConditionExpr, Declaration, DeclaredAccess, EvalError, EvalInputs, Expr,
     MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr,
-    SealedResources, TargetExpr, evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id,
+    PresentedGrants, TargetExpr, evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id,
     fresh_local, materialized_kind, self_child,
 };
 pub use envelope::{
@@ -93,23 +93,23 @@ pub use publish::{
 };
 pub use records::{ChainRecords, Composed, Records};
 pub use resource::{
-    MAX_RESOURCE_MATERIAL_PARTS, RECORD_WIRE_DEPTH, ResourceKind, ResourceMeta, ResourceRecord,
-    ResourceRules, SealedBehaviour, SealedResolveError, SealedRulesExpr, holdings_collection,
-    holdings_entry, holdings_range, instance_data_key, issued_resource, resource_record_key,
-    sealed_issued_resource, xrd,
+    GrantedBehaviour, GrantsExpr, GrantsResolveError, MAX_RESOURCE_MATERIAL_PARTS,
+    RECORD_WIRE_DEPTH, ResourceGrants, ResourceKind, ResourceMeta, ResourceRecord,
+    granting_issued_resource, holdings_collection, holdings_entry, holdings_range,
+    instance_data_key, issued_resource, resource_record_key, xrd,
 };
 pub use route::{
     FrameDeclaration, MAX_MANIFEST_NODES, PrefixShardResolver, Routing, ShardResolver, route,
 };
 pub use rule::{
-    MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, RuleLeaf, SealedClaim,
-    SealedRuleExpr, StoredRule, well_formed,
+    GrantClaim, GrantRuleExpr, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule,
+    RuleExpr, RuleLeaf, StoredRule, well_formed,
 };
 pub use signature::{AbiParam, Issuance, MethodSignature, ParamType, Totality};
 pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};
 pub use types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, NativeRole,
     PACKAGE_SLOT_BASE, ShardId, SlotId, Value, child_key, collection_id, component_address,
-    config_hash, native_address, order_key, package_address, package_slot, principal_address,
-    resource_address, sealed_resource_address,
+    config_hash, granting_resource_address, native_address, order_key, package_address,
+    package_slot, principal_address, resource_address,
 };

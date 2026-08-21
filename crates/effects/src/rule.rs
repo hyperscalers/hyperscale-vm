@@ -25,7 +25,7 @@ use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_
 use crate::auth::RoleId;
 use crate::dsl::Expr;
 use crate::presented::Presented;
-use crate::resource::SealedBehaviour;
+use crate::resource::GrantedBehaviour;
 
 /// The bound on a rule's nesting depth: a lone identity is one, a
 /// threshold one more than its deepest branch.
@@ -122,19 +122,19 @@ pub enum RuleLeaf {
         /// The role selecting the stored rule. An absent entry denies.
         role: RoleId,
     },
-    /// The rule a resource's own address seals for one behaviour,
+    /// The rule a resource's own address grants for one behaviour,
     /// resolved at admission from the presented record whose derivation
     /// the address commits — no cell read anywhere in the path.
     ///
     /// An unpresented record refuses the call, and so does an absent
-    /// behaviour: the sealed set is the address's own claim, and a
-    /// behaviour it never sealed is one nobody holds.
-    Sealed {
-        /// The resource whose sealed rules govern, evaluated over the
+    /// behaviour: the granted set is the address's own claim, and a
+    /// behaviour it never granted is one nobody holds.
+    Granted {
+        /// The resource whose granted rules govern, evaluated over the
         /// method's own inputs.
         resource: Expr,
-        /// The behaviour selecting the sealed rule.
-        behaviour: SealedBehaviour,
+        /// The behaviour selecting the granted rule.
+        behaviour: GrantedBehaviour,
     },
 }
 
@@ -147,10 +147,10 @@ impl RuleLeaf {
             Self::Stored { cell, .. } => cell.reads_call_inputs(),
             // A caller may name the resource: the rule is the address's
             // own commitment, verified by re-derivation, so the namer
-            // chooses which sealed rule governs and never what it says
+            // chooses which granted rule governs and never what it says
             // — unlike a named claim, which its namer can present, or a
             // named cell, which holds whatever admits them.
-            Self::Sealed { .. } => false,
+            Self::Granted { .. } => false,
         }
     }
 }
@@ -168,16 +168,16 @@ impl RuleLeaf {
 /// [`check_metadata`]: crate::metadata::check_metadata
 pub type RuleExpr = Rule<RuleLeaf>;
 
-/// A sealed rule's leaf: a claim a resource's own derivation commits to.
+/// A granted rule's leaf: a claim a resource's own derivation commits to.
 ///
-/// Its own closed vocabulary rather than [`RuleLeaf`], because a sealed
+/// Its own closed vocabulary rather than [`RuleLeaf`], because a granted
 /// rule is folded into an address rather than judged against a cell. Two
 /// things follow from the closure. **The tree stays a tree**: reusing
 /// [`RuleLeaf`] would put a [`Rule`] inside an [`Expr`] while
 /// [`RuleLeaf::Claim`] already holds one, making the two mutually
 /// recursive and their depth caps a joint property. And **the derivation
-/// stays well-founded**: a badge named here derives through the unsealed
-/// form, so nothing in a resource's sealed rules can name a resource
+/// stays well-founded**: a badge named here derives through the form
+/// that grants nothing, so nothing in a resource's granted rules can name a resource
 /// whose own rules are still being computed.
 ///
 /// What it can name is what a resource's own address already knows: the
@@ -185,7 +185,7 @@ pub type RuleExpr = Rule<RuleLeaf>;
 /// the configuration the instance's address folds. Nothing a caller
 /// supplies, because a caller supplies nothing to a derivation.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
-pub enum SealedClaim {
+pub enum GrantClaim {
     /// The issuing instance, acting as itself.
     SelfAddr,
     /// A fungible badge the issuing instance also issues, at the
@@ -197,7 +197,7 @@ pub enum SealedClaim {
     /// One named instance of a non-fungible badge the issuing instance
     /// also issues.
     SelfInstance {
-        /// The mark, as [`SealedClaim::SelfBadge`] states it.
+        /// The mark, as [`GrantClaim::SelfBadge`] states it.
         mark: Vec<u8>,
         /// Which instance of it.
         id: u64,
@@ -208,13 +208,13 @@ pub enum SealedClaim {
     Config(u32),
 }
 
-/// A rule a resource's address seals, before the instance that issues it
+/// A rule a resource's address grants, before the instance that issues it
 /// is known.
 ///
 /// The shape is static and only the leaves resolve, on the terms
 /// [`RuleExpr`] states — so the caps a declaration is held to at publish
-/// are the caps the sealed set is held to wherever it is judged.
-pub type SealedRuleExpr = Rule<SealedClaim>;
+/// are the caps the granted set is held to wherever it is judged.
+pub type GrantRuleExpr = Rule<GrantClaim>;
 
 /// The threshold rule one node meets, wherever the rule came from.
 ///
@@ -308,7 +308,7 @@ impl<L> Rule<L> {
 
     /// Replace every leaf with a whole rule, keeping the tree above it.
     ///
-    /// What a leaf that *names* a rule resolves through: a sealed leaf
+    /// What a leaf that *names* a rule resolves through: a grant leaf
     /// stands for the tree its resource commits to, and grafting is how
     /// that tree takes the leaf's place under whatever threshold held
     /// it. The caller re-checks the grafted tree against the caps — a

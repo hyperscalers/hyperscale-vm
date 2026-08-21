@@ -614,23 +614,23 @@ fn guarded_rule(
             ))
         }
         // `recalls(resource)` — the rule the resource's own address
-        // seals for recall, resolved at admission from the presented
-        // record. The other sealed behaviours get their spellings when
+        // grants for recall, resolved at admission from the presented
+        // record. The other granted behaviours get their spellings when
         // something consumes them.
         syn::Expr::Call(call) if named(&call.func, "recalls") => {
             let Some(arg) = call.args.first() else {
                 return Err(syn::Error::new(
                     call.span(),
-                    "`recalls` names the resource whose sealed recall rule governs",
+                    "`recalls` names the resource whose granted recall rule governs",
                 ));
             };
             // A caller may name the resource, unlike an authority: the
             // rule is the address's own commitment, so naming the
-            // resource chooses which sealed rule governs and can never
+            // resource chooses which granted rule governs and can never
             // choose what it says.
-            let resource = sealed_subject(arg, config_fields, params)?;
+            let resource = granted_subject(arg, config_fields, params)?;
             Ok((
-                quote!(__t.sealed(::hyperscale_vm_sdk::SealedBehaviour::Recall, &#resource)),
+                quote!(__t.granted(::hyperscale_vm_sdk::GrantedBehaviour::Recall, &#resource)),
                 false,
                 true,
             ))
@@ -735,14 +735,14 @@ fn count_literal(expr: &syn::Expr) -> Option<u8> {
 /// it, so a gate over an argument reads as guarded and admits everyone —
 /// which is the refusal `check_abi` makes at publish, made here on the
 /// line that wrote it.
-/// The resource a sealed leaf governs by: a parameter or a configured
+/// The resource a grant leaf governs by: a parameter or a configured
 /// field, resolved to the expression admission evaluates.
 ///
-/// Caller-named on purpose, where an authority never may be: the sealed
+/// Caller-named on purpose, where an authority never may be: the granted
 /// rule is the address's own commitment, verified by re-derivation, so
 /// the namer picks which resource's rule applies and nothing about what
 /// it admits.
-fn sealed_subject(
+fn granted_subject(
     subject: &syn::Expr,
     config_fields: &[(String, syn::Type)],
     params: &[(String, syn::Type)],
@@ -750,7 +750,7 @@ fn sealed_subject(
     let refuse = || {
         syn::Error::new(
             subject.span(),
-            "a sealed rule's resource is a method parameter or one of the component's \
+            "a granted rule's resource is a method parameter or one of the component's \
              configuration fields",
         )
     };
@@ -1396,7 +1396,7 @@ fn lower_method(
         &gate_calls(&gate, &lowered),
         declining,
         total,
-        &sealed_registrations(declared.resources),
+        &grant_registrations(declared.resources),
     );
     let declaration = quote!(
         .method(#published, &[#(#kinds),*], #closure)
@@ -1698,7 +1698,7 @@ fn instantiate_method(resources: &[Resource], gate: Option<&syn::Attribute>) -> 
         None => (quote!(), quote!()),
     };
     syn::parse_quote!(
-        /// Makes this component actual: seals its creation-fixed record
+        /// Makes this component actual: grants its creation-fixed record
         /// into the configuration leaf, writes the record of every
         /// resource it issues, and issues the supply it comes up
         /// holding — each write refused where its leaf is already there.
@@ -1949,7 +1949,7 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
             kind,
             divisibility,
             initial,
-            seals,
+            grants,
         } = resource_attr(attr)?;
         // Fields are an instance's data, and a fungible resource has no
         // instances — so a fielded fungible declaration states a schema
@@ -1977,24 +1977,24 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
             kind,
             divisibility,
             initial,
-            seals,
+            grants,
             !item.fields.is_empty(),
         ));
     }
     // Rendered in a second pass, against the whole declared set: a
-    // sealed leaf names another of the package's own marks, so what its
-    // kind is and whether it seals rules of its own are answers only the
+    // grant leaf names another of the package's own marks, so what its
+    // kind is and whether it grants rules of its own are answers only the
     // full set has.
     let named: Vec<(&syn::Ident, ResourceKind, bool)> = structs
         .iter()
-        .map(|(ident, kind, _, _, seals, _)| (*ident, *kind, seals.is_some()))
+        .map(|(ident, kind, _, _, grants, _)| (*ident, *kind, grants.is_some()))
         .collect();
     let rendered: Vec<(TokenStream2, bool)> = structs
         .iter()
-        .map(|(_, _, _, _, seals, _)| {
-            seals.as_ref().map_or_else(
-                || Ok((quote!(::hyperscale_vm_sdk::SealedRulesExpr::new()), false)),
-                |list| sealed_rules(list, &named, config_fields),
+        .map(|(_, _, _, _, grants, _)| {
+            grants.as_ref().map_or_else(
+                || Ok((quote!(::hyperscale_vm_sdk::GrantsExpr::new()), false)),
+                |list| granted_rules(list, &named, config_fields),
             )
         })
         .collect::<syn::Result<_>>()?;
@@ -2004,15 +2004,15 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
         .zip(marks)
         .zip(rendered)
         .map(
-            |(((ident, kind, divisibility, initial, _, schema), mark), (seals, seals_config))| {
+            |(((ident, kind, divisibility, initial, _, schema), mark), (grants, grants_config))| {
                 Resource {
                     name: ident.to_string(),
                     mark: mark.into_bytes(),
                     kind,
                     divisibility,
                     initial,
-                    seals,
-                    seals_config,
+                    grants,
+                    grants_config,
                     schema,
                 }
             },
@@ -2042,17 +2042,17 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
 }
 
 /// What a declaration registers before it declares anything: the rules
-/// each of the package's own marks seals.
+/// each of the package's own marks grants.
 ///
 /// Emitted once per method rather than at each site naming a resource,
 /// because the address folds these rules — so one registration is what
 /// keeps a gate, a key and a mint from deriving three addresses. A
-/// package that seals nothing emits nothing.
-fn sealed_registrations(resources: &[Resource]) -> TokenStream2 {
-    let registered = resources.iter().filter(|r| !r.seals.is_empty()).map(|r| {
+/// package that grants nothing emits nothing.
+fn grant_registrations(resources: &[Resource]) -> TokenStream2 {
+    let registered = resources.iter().filter(|r| !r.grants.is_empty()).map(|r| {
         let mark = syn::LitByteStr::new(&r.mark, Span::call_site());
-        let seals = &r.seals;
-        quote!(__t.seals(#mark, #seals);)
+        let grants = &r.grants;
+        quote!(__t.grant(#mark, #grants);)
     });
     quote!(#(#registered)*)
 }
@@ -2063,15 +2063,15 @@ fn calls(func: &syn::Expr, name: &str) -> bool {
         if path.path.segments.last().is_some_and(|last| last.ident == name))
 }
 
-/// The sealed-rule grammar: a behaviour, and the rule its resource's
+/// The granted-rule grammar: a behaviour, and the rule its resource's
 /// address commits for it.
 ///
 /// The same combinators `#[requires(..)]` takes — `||`, `&&`,
-/// `n_of(k, …)` — over a closed leaf set, because a sealed rule is
+/// `n_of(k, …)` — over a closed leaf set, because a granted rule is
 /// folded into an address rather than judged against a cell. What a leaf
 /// may name is what the address already knows: the issuing instance,
 /// a badge that instance also issues, or a configuration field.
-fn sealed_rules(
+fn granted_rules(
     attr: &syn::MetaList,
     resources: &[(&syn::Ident, ResourceKind, bool)],
     config_fields: &[String],
@@ -2079,7 +2079,7 @@ fn sealed_rules(
     let entries = attr.parse_args_with(
         syn::punctuated::Punctuated::<syn::MetaNameValue, syn::Token![,]>::parse_terminated,
     )?;
-    let mut sealed = Vec::new();
+    let mut granted = Vec::new();
     let mut named: Vec<String> = Vec::new();
     // Whether any leaf names configuration, which is what decides
     // whether the address is derivable from the handle alone.
@@ -2092,7 +2092,7 @@ fn sealed_rules(
             _ => {
                 return Err(syn::Error::new(
                     entry.path.span(),
-                    "a sealed behaviour is `recall`, `freeze`, or `deposit` — the set an \
+                    "a granted behaviour is `recall`, `freeze`, or `deposit` — the set an \
                      address cannot answer by arithmetic, since who may mint is the \
                      derivation's",
                 ));
@@ -2103,28 +2103,28 @@ fn sealed_rules(
             return Err(syn::Error::new(
                 entry.path.span(),
                 format!(
-                    "`{}` is sealed twice, and a resource seals one rule for each \
+                    "`{}` is granted twice, and a resource grants one rule for each \
                          behaviour",
                     entry.path.get_ident().expect("matched an ident")
                 ),
             ));
         }
         named.push(name);
-        let rule = sealed_rule(&entry.value, resources, config_fields, 0)?;
+        let rule = granted_rule(&entry.value, resources, config_fields, 0)?;
         reads_config |= names_config(&entry.value, config_fields);
-        sealed.push(quote!(
-            __seals.set(::hyperscale_vm_sdk::SealedBehaviour::#behaviour, #rule);
+        granted.push(quote!(
+            __seals.set(::hyperscale_vm_sdk::GrantedBehaviour::#behaviour, #rule);
         ));
     }
     let rendered = quote!({
-        let mut __seals = ::hyperscale_vm_sdk::SealedRulesExpr::new();
-        #(#sealed)*
+        let mut __seals = ::hyperscale_vm_sdk::GrantsExpr::new();
+        #(#granted)*
         __seals
     });
     Ok((rendered, reads_config))
 }
 
-/// Whether a sealed rule names a configuration field anywhere in it.
+/// Whether a granted rule names a configuration field anywhere in it.
 ///
 /// What it decides is a signature: a resource whose rules name
 /// configuration has an address that is a function of the instance's
@@ -2148,14 +2148,14 @@ fn names_config(expr: &syn::Expr, config_fields: &[String]) -> bool {
     }
 }
 
-fn sealed_rule(
+fn granted_rule(
     expr: &syn::Expr,
     resources: &[(&syn::Ident, ResourceKind, bool)],
     config_fields: &[String],
     depth: usize,
 ) -> syn::Result<TokenStream2> {
     match expr {
-        syn::Expr::Paren(inner) => sealed_rule(&inner.expr, resources, config_fields, depth),
+        syn::Expr::Paren(inner) => granted_rule(&inner.expr, resources, config_fields, depth),
         syn::Expr::Binary(binary) => {
             let all = match binary.op {
                 syn::BinOp::Or(_) => false,
@@ -2163,19 +2163,20 @@ fn sealed_rule(
                 _ => {
                     return Err(syn::Error::new(
                         binary.op.span(),
-                        "a sealed rule combines claims with `||`, `&&`, or `n_of(k, …)`",
+                        "a granted rule combines claims with `||`, `&&`, or `n_of(k, …)`",
                     ));
                 }
             };
             let branches = flatten(expr, &binary.op);
-            let lowered = sealed_branches(expr.span(), &branches, resources, config_fields, depth)?;
+            let lowered =
+                granted_branches(expr.span(), &branches, resources, config_fields, depth)?;
             let count = if all {
                 u8::try_from(lowered.len()).unwrap_or(u8::MAX)
             } else {
                 1u8
             };
             check_threshold_node(expr.span(), count, lowered.len())?;
-            Ok(quote!(::hyperscale_vm_sdk::SealedRuleExpr::CountOf {
+            Ok(quote!(::hyperscale_vm_sdk::GrantRuleExpr::CountOf {
                 count: #count,
                 rules: ::std::vec![#(#lowered),*],
             }))
@@ -2195,21 +2196,22 @@ fn sealed_rule(
                 }
             };
             let branches: Vec<&syn::Expr> = args.collect();
-            let lowered = sealed_branches(call.span(), &branches, resources, config_fields, depth)?;
+            let lowered =
+                granted_branches(call.span(), &branches, resources, config_fields, depth)?;
             check_threshold_node(call.span(), count, lowered.len())?;
-            Ok(quote!(::hyperscale_vm_sdk::SealedRuleExpr::CountOf {
+            Ok(quote!(::hyperscale_vm_sdk::GrantRuleExpr::CountOf {
                 count: #count,
                 rules: ::std::vec![#(#lowered),*],
             }))
         }
         other => {
-            let claim = sealed_claim(other, resources, config_fields)?;
-            Ok(quote!(::hyperscale_vm_sdk::SealedRuleExpr::Require(#claim)))
+            let claim = granted_claim(other, resources, config_fields)?;
+            Ok(quote!(::hyperscale_vm_sdk::GrantRuleExpr::Require(#claim)))
         }
     }
 }
 
-fn sealed_branches(
+fn granted_branches(
     span: Span,
     branches: &[&syn::Expr],
     resources: &[(&syn::Ident, ResourceKind, bool)],
@@ -2219,17 +2221,17 @@ fn sealed_branches(
     if depth + 1 >= MAX_RULE_DEPTH {
         return Err(syn::Error::new(
             span,
-            format!("a sealed rule nests past the {MAX_RULE_DEPTH} levels the vocabulary admits"),
+            format!("a granted rule nests past the {MAX_RULE_DEPTH} levels the vocabulary admits"),
         ));
     }
     branches
         .iter()
-        .map(|branch| sealed_rule(branch, resources, config_fields, depth + 1))
+        .map(|branch| granted_rule(branch, resources, config_fields, depth + 1))
         .collect()
 }
 
-/// One sealed leaf, as the closed vocabulary spells it.
-fn sealed_claim(
+/// One grant leaf, as the closed vocabulary spells it.
+fn granted_claim(
     expr: &syn::Expr,
     resources: &[(&syn::Ident, ResourceKind, bool)],
     config_fields: &[String],
@@ -2237,7 +2239,7 @@ fn sealed_claim(
     let refuse = |span| {
         syn::Error::new(
             span,
-            "a sealed claim is `self`, `issued(<Resource>)` for a fungible badge, \
+            "a grant claim is `self`, `issued(<Resource>)` for a fungible badge, \
              `issued(<Resource>, <id>)` for one instance of a non-fungible one, or a \
              configuration field by name — a derivation the address already knows, \
              never anything a caller supplies",
@@ -2246,7 +2248,7 @@ fn sealed_claim(
     match expr {
         // The issuing instance, acting as itself.
         syn::Expr::Path(path) if path.path.is_ident("self") => {
-            Ok(quote!(::hyperscale_vm_sdk::SealedClaim::SelfAddr))
+            Ok(quote!(::hyperscale_vm_sdk::GrantClaim::SelfAddr))
         }
         // A configuration field, whose address class says which claim.
         syn::Expr::Path(path) => {
@@ -2265,7 +2267,7 @@ fn sealed_claim(
                     )
                 })?;
             let slot = u32::try_from(slot).unwrap_or(u32::MAX);
-            Ok(quote!(::hyperscale_vm_sdk::SealedClaim::Config(#slot)))
+            Ok(quote!(::hyperscale_vm_sdk::GrantClaim::Config(#slot)))
         }
         // A badge the issuing instance also issues.
         syn::Expr::Call(call) if calls(&call.func, "issued") => {
@@ -2275,7 +2277,7 @@ fn sealed_claim(
                 _ => None,
             }
             .ok_or_else(|| refuse(call.span()))?;
-            let Some((ident, kind, seals)) = resources.iter().find(|(ident, ..)| **ident == named)
+            let Some((ident, kind, grants)) = resources.iter().find(|(ident, ..)| **ident == named)
             else {
                 return Err(syn::Error::new(
                     call.span(),
@@ -2283,26 +2285,27 @@ fn sealed_claim(
                 ));
             };
             // The well-foundedness rule, said where the author wrote it:
-            // a leaf derives through the unsealed form, so naming a mark
-            // that seals its own rules would name an address nothing is
+            // a leaf derives through the granting-nothing form, so naming a mark
+            // that grants its own rules would name an address nothing is
             // ever minted at.
-            if *seals {
+            if *grants {
                 return Err(syn::Error::new(
                     call.span(),
                     format!(
-                        "`{named}` seals rules of its own, and a sealed rule names only \
-                         resources that seal none — a leaf derives through the unsealed \
-                         form, so this would name an address nothing is minted at"
+                        "`{named}` grants rules of its own, and a granted rule names only \
+                         resources that grant none — a leaf derives through the \
+                         granting-nothing form, so this would name an address nothing \
+                         is minted at"
                     ),
                 ));
             }
             let mark = syn::LitByteStr::new(kebab(&named).as_bytes(), ident.span());
             match (kind, args.next()) {
                 (ResourceKind::Fungible, None) => Ok(quote!(
-                    ::hyperscale_vm_sdk::SealedClaim::SelfBadge { mark: #mark.to_vec() }
+                    ::hyperscale_vm_sdk::GrantClaim::SelfBadge { mark: #mark.to_vec() }
                 )),
                 (ResourceKind::NonFungible, Some(id)) => Ok(quote!(
-                    ::hyperscale_vm_sdk::SealedClaim::SelfInstance {
+                    ::hyperscale_vm_sdk::GrantClaim::SelfInstance {
                         mark: #mark.to_vec(),
                         id: #id,
                     }
@@ -2344,10 +2347,10 @@ struct Resource {
     /// them. Rendered once here because three sites emit it — a gate
     /// naming the resource, a term over it, and the grant that mints it
     /// — and an address they disagreed about would be three resources.
-    seals: TokenStream2,
+    grants: TokenStream2,
     /// Whether those rules name configuration, which decides whether the
     /// address is derivable from a handle alone.
-    seals_config: bool,
+    grants_config: bool,
     /// Whether the struct has fields, which is what makes it an
     /// instance's data schema and not only a bare mark.
     schema: bool,
@@ -2374,14 +2377,14 @@ struct ResourceAttr {
     kind: ResourceKind,
     divisibility: u8,
     initial: Option<syn::LitInt>,
-    seals: Option<syn::MetaList>,
+    grants: Option<syn::MetaList>,
 }
 
 fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
     let mut kind = None;
     let mut divisibility = None;
     let mut initial = None;
-    let mut seals = None;
+    let mut grants = None;
     if matches!(attr.meta, syn::Meta::List(_)) {
         let terms = attr.parse_args_with(
             syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
@@ -2402,9 +2405,9 @@ fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
                         ));
                     }
                 }
-                syn::Meta::List(list) if list.path.is_ident("seals") => {
-                    if seals.replace(list.clone()).is_some() {
-                        return Err(syn::Error::new(list.path.span(), "seals, twice"));
+                syn::Meta::List(list) if list.path.is_ident("grants") => {
+                    if grants.replace(list.clone()).is_some() {
+                        return Err(syn::Error::new(list.path.span(), "grants, twice"));
                     }
                 }
                 syn::Meta::List(list) if list.path.is_ident("initial") => {
@@ -2445,7 +2448,7 @@ fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
         kind,
         divisibility: divisibility.unwrap_or(DEFAULT_DIVISIBILITY),
         initial,
-        seals,
+        grants,
     })
 }
 
@@ -2453,9 +2456,9 @@ fn unknown_resource_term(at: &impl Spanned) -> syn::Error {
     syn::Error::new(
         at.span(),
         "a resource states `fungible` (the default) or `non_fungible`, the supply \
-         its component comes up holding as `initial(<n>)`, the rules its address \
-         commits as `seals(<behaviour> = <rule>, …)`, and — where it is fungible — \
-         `divisibility = <digits>`",
+         its component comes up holding as `initial(<n>)`, the behaviours its \
+         address grants as `grants(<behaviour> = <rule>, …)`, and — where it is \
+         fungible — `divisibility = <digits>`",
     )
 }
 

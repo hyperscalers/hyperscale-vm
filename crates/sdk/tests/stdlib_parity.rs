@@ -25,7 +25,7 @@ use hyperscale_vm_fixtures::{
 use hyperscale_vm_sdk::sym::{
     Addr, Amount, Bucket, Num, Sym, eq, lit_u64, pack, select, self_record,
 };
-use hyperscale_vm_sdk::{Blueprint, SealedBehaviour, Trace};
+use hyperscale_vm_sdk::{Blueprint, GrantedBehaviour, Trace};
 use hyperscale_vm_stdlib::account as account_package;
 
 /// The fungible account.
@@ -55,9 +55,9 @@ fn account() -> Blueprint {
                 let _amount: Sym<Amount> = t.arg(1);
                 let holder = t.self_addr();
 
-                // The gate is the resource's own sealed rule, resolved
+                // The gate is the resource's own granted rule, resolved
                 // at admission from the presented record.
-                let rule = t.sealed(SealedBehaviour::Recall, &resource);
+                let rule = t.granted(GrantedBehaviour::Recall, &resource);
                 t.guarded_by(rule);
                 let vault = holder.child(VAULT, &[resource.clone().cast()]);
                 t.point(&vault).holding(&resource).delta();

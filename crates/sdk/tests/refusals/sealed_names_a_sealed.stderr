@@ -1,5 +1,0 @@
-error: `AdminBadge` seals rules of its own, and a sealed rule names only resources that seal none — a leaf derives through the unsealed form, so this would name an address nothing is minted at
- --> tests/refusals/sealed_names_a_sealed.rs:8:31
-  |
-8 |     #[resource(seals(recall = issued(AdminBadge, 0)))]
-  |                               ^^^^^^

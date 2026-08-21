@@ -197,7 +197,7 @@ fn a_move_of_more_instances_prices_above_fewer() {
     use hyperscale_vm_effects::dsl::{Clause, ModeExpr};
     use hyperscale_vm_effects::{
         DEPTH_UNITS, EvalInputs, Expr, Hash32, InstanceMeta, ManifestHash, PackageHash,
-        SealedResources, TestHasher, Value, evaluate_effects, holdings_range,
+        PresentedGrants, TestHasher, Value, evaluate_effects, holdings_range,
     };
 
     let holder = Address::new([3; 31], AddressClass::Component);
@@ -226,7 +226,7 @@ fn a_move_of_more_instances_prices_above_fewer() {
             record: &record,
             node_index: 0,
             identity: ManifestHash(Hash32([7; 32])),
-            sealed: SealedResources::none(),
+            grants: PresentedGrants::none(),
         };
         footprint(&evaluate_effects(&clauses, &inputs, &TestHasher).unwrap())
     };

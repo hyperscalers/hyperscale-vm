@@ -32,9 +32,9 @@
 use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{
-    AbiParam, Clause, ConditionExpr, Expr, Issuance, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
-    MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, PRIMARY, ParamType, ResourceKind, RoleId,
-    RuleExpr, RuleLeaf, SealedBehaviour, SealedRulesExpr, SlotId, TargetExpr, Totality, Value,
+    AbiParam, Clause, ConditionExpr, Expr, GrantedBehaviour, GrantsExpr, Issuance,
+    MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, PRIMARY,
+    ParamType, ResourceKind, RoleId, RuleExpr, RuleLeaf, SlotId, TargetExpr, Totality, Value,
     well_formed,
 };
 use hyperscale_vm_types::Presence;
@@ -64,10 +64,10 @@ pub struct Trace {
     guards: Vec<Expr>,
     /// The next unused fresh-derivation slot.
     next_slot: u32,
-    /// The rules each of the package's own marks seals, by mark. Read by
+    /// The rules each of the package's own marks grants, by mark. Read by
     /// every site that names one of the instance's resources, so one
     /// registration fixes the address all of them derive.
-    sealed: BTreeMap<Vec<u8>, SealedRulesExpr>,
+    grants: BTreeMap<Vec<u8>, GrantsExpr>,
     /// Resource expressions for the value edges this method produces.
     outputs: Vec<Expr>,
     /// The resource each consumed edge is fixed to, by parameter; sized
@@ -102,7 +102,7 @@ impl Trace {
             params,
             scopes: vec![Vec::new()],
             next_slot: 0,
-            sealed: BTreeMap::new(),
+            grants: BTreeMap::new(),
             outputs: Vec::new(),
             guards: Vec::new(),
             flags: Vec::new(),
@@ -252,9 +252,9 @@ impl Trace {
     /// not be expressible. The mark is what lets one instance issue more
     /// than one — a stake unit and the badge that operates the pool are
     /// the same derivation over different material.
-    /// The rules the resource seals ride the derivation, because the
+    /// The rules the resource grants ride the derivation, because the
     /// address is the hash of them too — and they are read from what
-    /// [`Trace::seals`] registered rather than supplied here, so a gate
+    /// [`Trace::grants`] registered rather than supplied here, so a gate
     /// naming this resource and the mint that issues it cannot disagree
     /// about which resource they mean.
     #[must_use]
@@ -263,25 +263,25 @@ impl Trace {
         Sym::new(Expr::SelfResource {
             kind,
             material,
-            seals: self.sealed_for(mark),
+            grants: self.grants_for(mark),
         })
     }
 
-    /// Register the rules one of the package's own marks seals.
+    /// Register the rules one of the package's own marks grants.
     ///
     /// Stated once for the declaration rather than at each site that
     /// names the resource, because it is a property of the package: the
     /// address folds these rules, so a site that named the resource
     /// without them would name a different one. Every site reads what is
     /// registered here, so there is one answer to disagree with.
-    pub fn seals(&mut self, mark: &[u8], rules: SealedRulesExpr) {
-        self.sealed.insert(mark.to_vec(), rules);
+    pub fn grant(&mut self, mark: &[u8], rules: GrantsExpr) {
+        self.grants.insert(mark.to_vec(), rules);
     }
 
-    /// What `mark` seals, or the empty set — which is what every
-    /// unsealed resource's address already folds.
-    fn sealed_for(&self, mark: &[u8]) -> SealedRulesExpr {
-        self.sealed.get(mark).cloned().unwrap_or_default()
+    /// What `mark` grants, or the empty set — which is what every
+    /// ungranting resource's address already folds.
+    fn grants_for(&self, mark: &[u8]) -> GrantsExpr {
+        self.grants.get(mark).cloned().unwrap_or_default()
     }
 
     /// A deterministic fresh 64-bit id, in the next unused slot.
@@ -585,13 +585,13 @@ impl Trace {
     /// is the material separating one of the instance's own resources
     /// from its others, so what a method may create is fixed by the
     /// declaration and cannot be another instance's; the kind and the
-    /// rules the mark seals ride with it because the grant's derivation
+    /// rules the mark grants ride with it because the grant's derivation
     /// folds both.
     pub fn bind_issuer(&mut self, kind: ResourceKind, mark: &[u8]) {
         self.issues = Some(Issuance {
             mark: mark.to_vec(),
             kind,
-            seals: self.sealed_for(mark),
+            grants: self.grants_for(mark),
         });
         self.values.push(AbiParam::Issuer);
     }
@@ -629,11 +629,11 @@ impl Trace {
     }
 
     /// The requirement standing for the rule `resource`'s own address
-    /// seals for `behaviour` — resolved at admission from the presented
+    /// grants for `behaviour` — resolved at admission from the presented
     /// record the address verifies, with no cell read anywhere.
     #[must_use]
-    pub fn sealed(&self, behaviour: SealedBehaviour, resource: &Sym<Addr>) -> Requirement {
-        Requirement(RuleExpr::Require(RuleLeaf::Sealed {
+    pub fn granted(&self, behaviour: GrantedBehaviour, resource: &Sym<Addr>) -> Requirement {
+        Requirement(RuleExpr::Require(RuleLeaf::Granted {
             resource: self.lower(resource.expr().clone()),
             behaviour,
         }))
@@ -1125,14 +1125,14 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
         Expr::SelfResource {
             kind,
             material,
-            seals,
+            grants,
         } => Expr::SelfResource {
             kind,
             material: material
                 .into_iter()
                 .map(|expr| rebind(expr, depth))
                 .collect(),
-            seals,
+            grants,
         },
         Expr::ChildKey {
             owner,

@@ -11,10 +11,10 @@
 //! the wrappers are gated out of it, which is what makes emitting them
 //! move no package hash and no blob.
 
+use hyperscale_vm_effects::{GrantsExpr, ResourceKind, Value, granting_issued_resource};
 pub use hyperscale_vm_effects::{
     Hasher, PackageMetadata, RoleTable, SlotId, StoredRule, Value as ManifestValue,
 };
-use hyperscale_vm_effects::{ResourceKind, SealedRulesExpr, Value, sealed_issued_resource};
 pub use hyperscale_vm_manifest_builder::{
     AddressArg, Arg, Args, Bucket, BucketArg, Outputs, Proof, TypedBuilder, TypedError,
 };
@@ -46,14 +46,14 @@ pub fn issued_at(
     instance: impl Into<Address>,
     kind: ResourceKind,
     mark: &[u8],
-    seals: &SealedRulesExpr,
+    grants: &GrantsExpr,
     config: &[Value],
 ) -> ResourceAddr {
     let instance = instance.into();
-    let rules = seals
+    let rules = grants
         .resolve(hasher, instance, config)
-        .expect("a declared sealed set resolves against its own configuration");
-    sealed_issued_resource(hasher, instance, kind, &rules, mark)
+        .expect("a declared granted set resolves against its own configuration");
+    granting_issued_resource(hasher, instance, kind, &rules, mark)
 }
 
 /// A component known to run one package.

@@ -79,7 +79,7 @@ impl InstanceMeta {
     }
 
     /// The configuration leaf's stored bytes — the canonical encoding of
-    /// the whole record, which instantiation seals into the `CONFIG`
+    /// the whole record, which instantiation grants into the `CONFIG`
     /// cell.
     ///
     /// The leaf holds all three parts rather than the configuration

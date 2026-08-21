@@ -21,12 +21,12 @@ use crate::instance::InstanceMeta;
 use crate::manifest::{Condition, JudgedLeaf, ManifestHash};
 use crate::presented::Presented;
 use crate::resource::{
-    ResourceKind, ResourceMeta, ResourceRules, SealedBehaviour, SealedResolveError, SealedRulesExpr,
+    GrantedBehaviour, GrantsExpr, GrantsResolveError, ResourceGrants, ResourceKind, ResourceMeta,
 };
 use crate::rule::{Rule, RuleExpr, RuleLeaf};
 use crate::types::{
-    EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
-    sealed_resource_address,
+    EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id,
+    granting_resource_address, order_key,
 };
 
 /// The bound on any collection a `for-each` clause maps over. Keeps
@@ -161,14 +161,14 @@ pub enum Expr {
         /// The material separating this resource from the instance's
         /// others, canonically encoded into the derivation.
         material: Vec<Self>,
-        /// The rules the resource's address seals, resolved against the
+        /// The rules the resource's address grants, resolved against the
         /// issuing instance where this evaluates.
         ///
         /// Part of the derivation rather than beside it: the address is
         /// the hash of these too, so a resource whose rules changed
         /// would be a different resource, and the tier has a minter
         /// rather than only a verifier.
-        seals: SealedRulesExpr,
+        grants: GrantsExpr,
     },
     /// The canonical child key `owner | H(slot, material…)`.
     ChildKey {
@@ -634,23 +634,23 @@ pub enum EvalError {
     /// resource.
     #[error(transparent)]
     NotAResource(#[from] WrongClass),
-    /// A resource whose declared sealed rules do not resolve against
+    /// A resource whose declared granted rules do not resolve against
     /// the instance issuing it.
     #[error(transparent)]
-    SealedUnresolvable(#[from] SealedResolveError),
-    /// A sealed leaf naming a resource whose record the envelope never
+    GrantsUnresolvable(#[from] GrantsResolveError),
+    /// A grant leaf naming a resource whose record the envelope never
     /// presented — there is nothing to verify a rule against.
-    #[error("the sealed rules of {0:?} were not presented")]
-    SealedUnpresented(ResourceAddr),
-    /// A sealed leaf naming a behaviour the resource never sealed. An
+    #[error("the granted rules of {0:?} were not presented")]
+    GrantsUnpresented(ResourceAddr),
+    /// A grant leaf naming a behaviour the resource never granted. An
     /// absent entry denies, and the deny is spoken here where a caller
     /// can read it.
-    #[error("the resource seals no {0:?} rule, which denies")]
-    SealedDenies(SealedBehaviour),
-    /// A presented sealed rule that does not decode under the
+    #[error("the resource grants no {0:?} rule, which denies")]
+    GrantsNobody(GrantedBehaviour),
+    /// A presented granted rule that does not decode under the
     /// vocabulary's caps, or a grafted tree past them.
-    #[error("a sealed rule does not decode within the vocabulary's caps")]
-    SealedRuleMalformed,
+    #[error("a granted rule does not decode within the vocabulary's caps")]
+    GrantRuleMalformed,
     /// A target's record that does not encode under the vocabulary's
     /// caps. Nothing admission resolves a target with can be one — a
     /// record is checked by re-encoding it — so this is spoken as a
@@ -731,23 +731,23 @@ pub struct EvalInputs<'a> {
     /// The transaction's identity — the signed graph's hash; the one root
     /// of every fresh-ID derivation.
     pub identity: ManifestHash,
-    /// The sealed rules the envelope presented, each verified at the
+    /// The granted rules the envelope presented, each verified at the
     /// address its own record derives. Not state: a presented claim, on
     /// the terms an instance's record is.
-    pub sealed: &'a SealedResources,
+    pub grants: &'a PresentedGrants,
 }
 
-/// The sealed rules an envelope presented, by the address each record
+/// The granted rules an envelope presented, by the address each record
 /// derives — first registration wins, and a false record registers a
 /// different resource.
 #[derive(Clone, Debug)]
-pub struct SealedResources(BTreeMap<ResourceAddr, ResourceRules>);
+pub struct PresentedGrants(BTreeMap<ResourceAddr, ResourceGrants>);
 
-impl SealedResources {
+impl PresentedGrants {
     /// No records presented: what every plain graph evaluates over.
     #[must_use]
     pub fn none() -> &'static Self {
-        static NONE: SealedResources = SealedResources(BTreeMap::new());
+        static NONE: PresentedGrants = PresentedGrants(BTreeMap::new());
         &NONE
     }
 
@@ -755,18 +755,18 @@ impl SealedResources {
     /// derives.
     #[must_use]
     pub fn from_presented(hasher: &dyn Hasher, records: &[ResourceMeta]) -> Self {
-        let mut sealed = BTreeMap::new();
+        let mut granted = BTreeMap::new();
         for record in records {
-            sealed
+            granted
                 .entry(record.address(hasher))
                 .or_insert_with(|| record.rules.clone());
         }
-        Self(sealed)
+        Self(granted)
     }
 
-    /// The sealed rules of `resource`, where its record was presented.
+    /// The granted rules of `resource`, where its record was presented.
     #[must_use]
-    pub fn rules(&self, resource: ResourceAddr) -> Option<&ResourceRules> {
+    pub fn rules(&self, resource: ResourceAddr) -> Option<&ResourceGrants> {
         self.0.get(&resource)
     }
 }
@@ -1207,11 +1207,11 @@ fn eval_condition(
                     cell: as_key(eval_expr(cell, inputs, hasher, bindings, 0)?)?,
                     role: *role,
                 })),
-                // The sealed leaf stands for the tree its resource
+                // The grant leaf stands for the tree its resource
                 // commits to: resolve the address, read the rule off the
                 // presented record the address verifies, and graft it in
                 // place — no cell read anywhere in the path.
-                RuleLeaf::Sealed {
+                RuleLeaf::Granted {
                     resource,
                     behaviour,
                 } => {
@@ -1225,21 +1225,21 @@ fn eval_condition(
                     let address =
                         ResourceAddr::try_from(address).map_err(EvalError::NotAResource)?;
                     let rules = inputs
-                        .sealed
+                        .grants
                         .rules(address)
-                        .ok_or(EvalError::SealedUnpresented(address))?;
-                    let sealed = rules
+                        .ok_or(EvalError::GrantsUnpresented(address))?;
+                    let granted = rules
                         .rule(*behaviour)
-                        .ok_or(EvalError::SealedDenies(*behaviour))?
+                        .ok_or(EvalError::GrantsNobody(*behaviour))?
                         .decode()
-                        .map_err(|_| EvalError::SealedRuleMalformed)?;
-                    sealed.map_leaves(&mut |claim| Ok::<_, EvalError>(JudgedLeaf::Claim(*claim)))
+                        .map_err(|_| EvalError::GrantRuleMalformed)?;
+                    granted.map_leaves(&mut |claim| Ok::<_, EvalError>(JudgedLeaf::Claim(*claim)))
                 }
             })?;
             // A graft can deepen what a map never could, so the spliced
             // tree meets the vocabulary's caps again here.
             if !rule.within_caps(0) {
-                return Err(EvalError::SealedRuleMalformed);
+                return Err(EvalError::GrantRuleMalformed);
             }
             Ok(Condition::Satisfies { rule })
         }
@@ -1316,9 +1316,9 @@ fn eval_collection(
 }
 
 /// The address of a resource the target instance issues: the derivation
-/// over its material, folding the rules its declaration seals.
+/// over its material, folding the rules its declaration grants.
 ///
-/// The sealed set resolves here rather than at publish because its
+/// The granted set resolves here rather than at publish because its
 /// leaves name the issuing instance — a badge that instance also issues,
 /// a field of the configuration its address commits — none of which
 /// exist until a target is resolved.
@@ -1327,11 +1327,11 @@ fn self_resource(
     inputs: &EvalInputs<'_>,
     kind: ResourceKind,
     material: &[Vec<u8>],
-    seals: &SealedRulesExpr,
+    grants: &GrantsExpr,
 ) -> Result<Value, EvalError> {
-    let rules = seals.resolve(hasher, inputs.self_addr, &inputs.record.config)?;
+    let rules = grants.resolve(hasher, inputs.self_addr, &inputs.record.config)?;
     Ok(Value::Address(
-        sealed_resource_address(hasher, inputs.self_addr, kind, &rules, material).into(),
+        granting_resource_address(hasher, inputs.self_addr, kind, &rules, material).into(),
     ))
 }
 
@@ -1438,8 +1438,8 @@ fn eval_expr(
         Expr::SelfResource {
             kind,
             material: parts,
-            seals,
-        } => self_resource(hasher, inputs, *kind, &material(parts)?, seals),
+            grants,
+        } => self_resource(hasher, inputs, *kind, &material(parts)?, grants),
         Expr::ChildKey {
             owner,
             slot,
@@ -1758,7 +1758,7 @@ mod tests {
     use crate::instance::InstanceMeta;
     use crate::manifest::ManifestHash;
     use crate::metadata::PackageHash;
-    use crate::resource::{ResourceKind, SealedRulesExpr, issued_resource};
+    use crate::resource::{GrantsExpr, ResourceKind, issued_resource};
     use crate::types::{
         EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
     };
@@ -1791,7 +1791,7 @@ mod tests {
                 Expr::SelfResource {
                     kind: ResourceKind::Fungible,
                     material: vec![leaf(1), leaf(2)],
-                    seals: SealedRulesExpr::new(),
+                    grants: GrantsExpr::new(),
                 },
                 vec![1, 2],
             ),
@@ -1880,7 +1880,7 @@ mod tests {
             record,
             node_index: 3,
             identity: ManifestHash(Hash32([9; 32])),
-            sealed: super::SealedResources::none(),
+            grants: super::PresentedGrants::none(),
         }
     }
 
@@ -2021,7 +2021,7 @@ mod tests {
                         &Expr::SelfResource {
                             kind,
                             material,
-                            seals: SealedRulesExpr::new(),
+                            grants: GrantsExpr::new(),
                         },
                         &context,
                         &TestHasher

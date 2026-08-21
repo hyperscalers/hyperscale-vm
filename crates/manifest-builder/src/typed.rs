@@ -29,7 +29,7 @@ use std::sync::Arc;
 use hyperscale_vm_effects::{
     ChainRecords, Constraint, EdgeContent, EdgeRef, EvalInputs, EvidenceRef, Expr, GraphArg,
     Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MethodSignature,
-    PackageHash, PackageMetadata, ParamType, SealedResources, Value, evaluate_expr,
+    PackageHash, PackageMetadata, ParamType, PresentedGrants, Value, evaluate_expr,
 };
 use hyperscale_vm_types::{Address, CallTarget, PrincipalAddr, ResourceAddr};
 
@@ -670,7 +670,7 @@ pub(crate) fn output_resources(
         record,
         node_index,
         identity: UNBOUND,
-        sealed: SealedResources::none(),
+        grants: PresentedGrants::none(),
     };
     signature
         .outputs

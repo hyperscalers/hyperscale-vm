@@ -9,7 +9,7 @@ use crate::instance::InstanceMeta;
 use crate::manifest::{Bounds, Manifest, Node, NodeInput};
 use crate::metadata::{PackageHash, PackageMetadata};
 use crate::records::Records;
-use crate::resource::{ResourceKind, SealedRulesExpr};
+use crate::resource::{GrantsExpr, ResourceKind};
 use crate::route::PrefixShardResolver;
 use crate::signature::{MethodSignature, ParamType, Totality};
 use crate::types::{EdgeContent, SlotId, Value, resource_address};
@@ -96,7 +96,7 @@ pub fn star_world(sink: Totality) -> (Records, Manifest) {
             outputs: vec![Expr::SelfResource {
                 kind: ResourceKind::Fungible,
                 material: vec![],
-                seals: SealedRulesExpr::new(),
+                grants: GrantsExpr::new(),
             }],
             effects: vec![self_point(SlotId(1), ModeExpr::Reserve(Expr::Arg(0)))],
             ..MethodSignature::default()
@@ -109,7 +109,7 @@ pub fn star_world(sink: Totality) -> (Records, Manifest) {
             outputs: vec![Expr::SelfResource {
                 kind: ResourceKind::Fungible,
                 material: vec![],
-                seals: SealedRulesExpr::new(),
+                grants: GrantsExpr::new(),
             }],
             effects: vec![self_point(SlotId(2), ModeExpr::Write)],
             ..MethodSignature::default()

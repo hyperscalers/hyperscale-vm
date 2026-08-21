@@ -15,7 +15,7 @@ use crate::dsl::{
     ModeExpr, TargetExpr, materialized_kind,
 };
 use crate::metadata::PackageMetadata;
-use crate::resource::{SealedRulesExpr, holdings_entry};
+use crate::resource::{GrantsExpr, holdings_entry};
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
 use crate::signature::{AbiParam, MethodSignature};
 use crate::types::{MAX_VALUE_DEPTH, SlotId, Value};
@@ -368,13 +368,13 @@ pub enum DeclarationError {
         /// effects.
         clause: u32,
     },
-    /// A sealed gate over a resource this method does not move.
+    /// A granted gate over a resource this method does not move.
     #[error(
-        "condition clause {clause} reads a sealed rule of a resource this method never \
+        "condition clause {clause} reads a granted rule of a resource this method never \
          denominates, so a caller satisfies it with a resource of their own over value it \
          says nothing about"
     )]
-    SealedOverAnother {
+    GrantOverAnother {
         /// The offending clause.
         clause: u32,
     },
@@ -760,7 +760,7 @@ fn vocabulary_shape(
 /// Whether `resource` is a denomination this signature states — at a
 /// parameter position, or on one of its own clauses.
 ///
-/// What ties a sealed gate to the value it governs. Syntactic, because
+/// What ties a granted gate to the value it governs. Syntactic, because
 /// this runs at publish where no arguments exist: the same standard the
 /// target comparison holds to, and what keeps a caller's choice of
 /// resource a choice of which rule governs rather than of what it says.
@@ -1209,7 +1209,7 @@ fn check_conditions(signature: &MethodSignature, flat: &[&Clause]) -> Result<(),
                     return Err(DeclarationError::CallerNamedCondition { clause });
                 }
                 for leaf in rule.leaves() {
-                    // A sealed leaf is the one condition a caller may
+                    // A grant leaf is the one condition a caller may
                     // name, because the rule is the resource's own
                     // commitment and naming it chooses which rule
                     // governs rather than what it says. That holds only
@@ -1218,9 +1218,9 @@ fn check_conditions(signature: &MethodSignature, flat: &[&Clause]) -> Result<(),
                     // denominated in another is a rule a caller
                     // satisfies with a resource of their own, over
                     // value it says nothing about.
-                    if let RuleLeaf::Sealed { resource, .. } = leaf {
+                    if let RuleLeaf::Granted { resource, .. } = leaf {
                         if !denominates(signature, flat, resource) {
-                            return Err(DeclarationError::SealedOverAnother { clause });
+                            return Err(DeclarationError::GrantOverAnother { clause });
                         }
                         continue;
                     }
@@ -1393,7 +1393,7 @@ fn check_rule_bounds(rule: &RuleExpr) -> Result<(), SignatureBoundsError> {
     match rule {
         RuleExpr::Require(RuleLeaf::Claim(claim)) => check_expr_bounds(claim, 0),
         RuleExpr::Require(
-            RuleLeaf::Stored { cell, .. } | RuleLeaf::Sealed { resource: cell, .. },
+            RuleLeaf::Stored { cell, .. } | RuleLeaf::Granted { resource: cell, .. },
         ) => check_expr_bounds(cell, 0),
         RuleExpr::CountOf { rules, .. } => rules.iter().try_for_each(check_rule_bounds),
     }
@@ -1412,7 +1412,7 @@ fn check_signature_bounds(signature: &MethodSignature) -> Result<(), SignatureBo
         }
     }
     if let Some(issuance) = &signature.issues {
-        check_sealed_bounds(&issuance.seals)?;
+        check_grants_bounds(&issuance.grants)?;
     }
     let mut declared = 0usize;
     check_clause_bounds(&signature.effects, 0, &mut declared)
@@ -1532,24 +1532,24 @@ fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), SignatureBoundsErr
     {
         return Err(SignatureBoundsError::LiteralDepth);
     }
-    // The sealed set is not a child — its leaves hold no expression at
+    // The granted set is not a child — its leaves hold no expression at
     // all — so it is walked here rather than reached by the recursion.
-    if let Expr::SelfResource { seals, .. } = expr {
-        check_sealed_bounds(seals)?;
+    if let Expr::SelfResource { grants, .. } = expr {
+        check_grants_bounds(grants)?;
     }
     expr.children()
         .try_for_each(|child| check_expr_bounds(child, depth + 1))
 }
 
-/// Every rule a declaration seals, under the caps a stored rule is
+/// Every rule a declaration grants, under the caps a stored rule is
 /// decoded under.
 ///
 /// Held here as well as at resolution because a resolved rule is what a
 /// holder judges: a set past the caps would derive an address whose
 /// rules nothing could decode, and refusing at publish is the verdict a
 /// package author can read.
-fn check_sealed_bounds(seals: &SealedRulesExpr) -> Result<(), SignatureBoundsError> {
-    seals.iter().try_for_each(|(_, rule)| {
+fn check_grants_bounds(grants: &GrantsExpr) -> Result<(), SignatureBoundsError> {
+    grants.iter().try_for_each(|(_, rule)| {
         rule.within_caps(0)
             .then_some(())
             .ok_or(SignatureBoundsError::RuleCaps)
@@ -1566,7 +1566,7 @@ mod tests {
     use crate::auth::PRIMARY;
     use crate::envelope::NULLIFIER_SLOT;
     use crate::metadata::PACKAGE_SLOT;
-    use crate::resource::{ResourceKind, SealedBehaviour, SealedRulesExpr};
+    use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
     use crate::signature::{Issuance, ParamType, Totality};
     use crate::types::{Value, package_slot};
 
@@ -1995,10 +1995,10 @@ mod tests {
         );
     }
 
-    /// A sealed leaf is the one condition a caller may name, and what
+    /// A grant leaf is the one condition a caller may name, and what
     /// makes that safe is the resource governed being the resource
     /// moved. Naming one the method never denominates lets a caller
-    /// bring a resource of their own — sealed to themselves — and
+    /// bring a resource of their own — granting themselves — and
     /// satisfy a gate over value it says nothing about.
     #[test]
     fn a_sealed_gate_over_a_resource_the_method_never_moves_is_refused() {
@@ -2012,12 +2012,12 @@ mod tests {
             mode: ModeExpr::Delta,
             denomination: Some(Box::new(resource)),
         };
-        let sealed = |resource: Expr| Clause::Requires {
+        let granted = |resource: Expr| Clause::Requires {
             guard: None,
             condition: ConditionExpr::Satisfies {
-                rule: RuleExpr::Require(RuleLeaf::Sealed {
+                rule: RuleExpr::Require(RuleLeaf::Granted {
                     resource,
-                    behaviour: SealedBehaviour::Recall,
+                    behaviour: GrantedBehaviour::Recall,
                 }),
             },
         };
@@ -2033,22 +2033,22 @@ mod tests {
         // argument, so the caller chooses which rule governs and the
         // rule governs what they chose.
         assert_eq!(
-            declared(vec![sealed(Expr::Arg(0)), vault(Expr::Arg(0))]),
+            declared(vec![granted(Expr::Arg(0)), vault(Expr::Arg(0))]),
             Ok(())
         );
 
         // The same gate over value it does not govern.
         assert_eq!(
-            declared(vec![sealed(Expr::Arg(0)), vault(Expr::Arg(1))]),
-            Err(DeclarationError::SealedOverAnother { clause: 0 })
+            declared(vec![granted(Expr::Arg(0)), vault(Expr::Arg(1))]),
+            Err(DeclarationError::GrantOverAnother { clause: 0 })
         );
 
-        // And a gate beside no movement at all: a sealed behaviour is
+        // And a gate beside no movement at all: a granted behaviour is
         // about what happens to the resource, so a method that touches
         // none of it has nothing for the rule to be read over.
         assert_eq!(
-            declared(vec![sealed(Expr::Arg(0))]),
-            Err(DeclarationError::SealedOverAnother { clause: 0 })
+            declared(vec![granted(Expr::Arg(0))]),
+            Err(DeclarationError::GrantOverAnother { clause: 0 })
         );
     }
 
@@ -2064,7 +2064,7 @@ mod tests {
                 issues: Some(Issuance {
                     mark: mark.to_vec(),
                     kind: ResourceKind::Fungible,
-                    seals: SealedRulesExpr::new(),
+                    grants: GrantsExpr::new(),
                 }),
                 ..MethodSignature::default()
             })

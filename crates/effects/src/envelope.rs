@@ -32,7 +32,7 @@ use crate::admission::{
     AdmissionError, Admitted, IntentView, MAX_YIELD_PARAMS, admit_intents, check_instance_values,
     check_value_depth,
 };
-use crate::dsl::SealedResources;
+use crate::dsl::PresentedGrants;
 use crate::graph::{Constraint, EdgeRef, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
 use crate::instance::InstanceMeta;
@@ -165,11 +165,11 @@ pub struct EnvelopeTree {
     /// dead weight its composer paid to carry, not a refusal.
     #[hbor(max = MAX_MANIFEST_NODES)]
     pub instances: Vec<InstanceMeta>,
-    /// The sealed-rule records of the resources the tree's gates name —
+    /// The granted-rule records of the resources the tree's gates name —
     /// each registered, at derivation, at exactly the address it
     /// derives, on the terms `instances` states.
     ///
-    /// Inside the signed tree for the same reason: what a sealed leaf
+    /// Inside the signed tree for the same reason: what a grant leaf
     /// resolves against is covered by the envelope's identity, and the
     /// composer pays the record's bytes.
     #[hbor(max = MAX_MANIFEST_NODES)]
@@ -335,8 +335,8 @@ pub fn admit_tree(
         .iter()
         .map(|meta| meta.address(hasher).address())
         .collect();
-    let sealed = SealedResources::from_presented(hasher, &tree.resources);
-    let admitted = admit_intents(&views, identity, &resolvable, &presented, &sealed, hasher)?;
+    let grants = PresentedGrants::from_presented(hasher, &tree.resources);
+    let admitted = admit_intents(&views, identity, &resolvable, &presented, &grants, hasher)?;
     Ok(AdmittedTree {
         admitted,
         subintents: records,
