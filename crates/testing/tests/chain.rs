@@ -7,7 +7,7 @@
 
 use hyperscale_vm_effects::{TestHasher, declaration_hash};
 use hyperscale_vm_fixtures::{book, lottery};
-use hyperscale_vm_testing::{Chain, Component, ComponentAddr};
+use hyperscale_vm_testing::{Chain, Component, ComponentAddr, principal};
 
 /// A handle is reached by adopting an address the chain agrees runs that
 /// package, and by nothing else — the unchecked `at` is for a holder that
@@ -19,7 +19,7 @@ fn an_address_adopts_as_the_package_the_chain_holds_at_it() {
 
     // Created from the package's own declaration hash, which is what an
     // instance address folds in and what adoption compares against.
-    let address = chain.instantiate_raw(hash(lottery::metadata()), ());
+    let address = chain.instantiate_raw(principal(0xC0), hash(lottery::metadata()), ());
 
     assert_eq!(
         chain

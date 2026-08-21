@@ -1,0 +1,5 @@
+error: `OwnerBadge` already states the supply this component comes up holding, and a body brings one thing into existence. Mint `Coupon` through a method of your own, called once the component is actual
+ --> tests/refusals/two_initial_supplies.rs:8:24
+  |
+8 |     #[resource(initial(100))]
+  |                        ^^^

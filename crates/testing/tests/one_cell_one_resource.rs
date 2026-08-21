@@ -109,7 +109,7 @@ fn value_does_not_change_resource_by_crossing_a_cell() {
         env!("CARGO_MANIFEST_DIR"),
         mixer_body,
     ));
-    let mixer: ComponentAddr = chain.instantiate_raw(package, ());
+    let mixer: ComponentAddr = chain.instantiate_raw(ATTACKER, package, ());
     chain.credit(ATTACKER, CHEAP, 1_000);
 
     chain

@@ -98,7 +98,7 @@ fn minting<const MINTED: u64>() -> (Chain, ComponentAddr) {
         env!("CARGO_MANIFEST_DIR"),
         body::<MINTED>,
     ));
-    let instance = chain.instantiate_raw(hash, ());
+    let instance = chain.instantiate_raw(MINTER, hash, ());
     (chain, instance)
 }
 
@@ -141,7 +141,7 @@ fn an_edge_of_another_shape_than_the_declaration_is_refused() {
         env!("CARGO_MANIFEST_DIR"),
         body::<DECLARED>,
     ));
-    let instance = chain.instantiate_raw(hash, ());
+    let instance = chain.instantiate_raw(MINTER, hash, ());
     let outcome = chain.transact(MINTER, |b| {
         let edge = b.call(instance, "mint", ())?.one()?;
         account::deposit(b, MINTER, edge)

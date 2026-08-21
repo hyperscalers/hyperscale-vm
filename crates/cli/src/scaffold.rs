@@ -137,7 +137,7 @@ fn first_test(module: &str) -> String {
          \n\
          \x20   let mut chain = Chain::native();\n\
          \x20   chain.publish(package!({module}::{module}));\n\
-         \x20   let instance = chain.instantiate::<State>(());\n\
+         \x20   let instance = chain.instantiate::<State>(principal(1), ());\n\
          \x20   chain.credit(alice, xrd, 100);\n\
          \n\
          \x20   chain\n\

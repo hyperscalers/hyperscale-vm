@@ -45,7 +45,7 @@ mod ledger {
 fn a_record_no_event_names_carries_a_length() {
     let mut chain = Chain::native();
     chain.publish(package!(ledger));
-    let ledger = chain.instantiate::<ledger::client::Ledger>(());
+    let ledger = chain.instantiate::<ledger::client::Ledger>(CALLER, ());
 
     let memo = vec![0xAB; 300];
     chain

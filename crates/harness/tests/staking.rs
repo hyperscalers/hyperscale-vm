@@ -518,34 +518,49 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
     Ok(())
 }
 
-fn found_graph() -> ManifestGraph {
+/// Bringing the pool up: one node, sealing its record, writing the
+/// record of each mark it issues, and minting the owner badge it comes
+/// up holding — filed in the founder's own account.
+fn bring_up_graph() -> ManifestGraph {
     graph(|b| {
         let founder = account::authorize(b, OPERATOR)?;
-        let badge = pool().found(b, founder)?;
+        let badge = pool().instantiate(b, founder)?;
         account::deposit_nf(b, OPERATOR, badge)
     })
 }
 
-/// A pool instantiated outside genesis reaches its own operator surface:
-/// its instantiation writes each mark's record, one founding call mints
-/// the badge and files it in the founder's account, and the surface
-/// opens to whoever presents it — the cells a seated pool holds,
-/// written by the vocabulary instead of by genesis.
+/// A pool brings itself up and reaches its own operator surface: one
+/// node seals its record, writes the record of each mark it issues,
+/// mints the owner badge and files it in the founder's account — and
+/// the surface opens to whoever presents it. The cells a seated pool
+/// holds, written by the vocabulary instead of by genesis.
 #[test]
-fn a_pool_founds_itself_and_reaches_its_operator_surface() -> Result<()> {
+fn a_pool_brings_itself_up_and_reaches_its_operator_surface() -> Result<()> {
     let world = world();
-    let mut store = MemoryStore::new();
-    seal_pool(&mut store);
+    let store = MemoryStore::new();
 
-    let found = batch_entry(&world, &single_intent(found_graph()), OPERATOR)?;
+    let found = batch_entry(&world, &single_intent(bring_up_graph()), OPERATOR)?;
     let (outcome, after_found) = run_both(&store, std::slice::from_ref(&found));
-    assert!(matches!(
+    assert!(
+        matches!(
+            outcome.receipts[&found.tx].outcome,
+            Outcome::Completed { .. }
+        ),
+        "{:?}",
         outcome.receipts[&found.tx].outcome,
-        Outcome::Completed { .. }
-    ));
+    );
 
     // The cells genesis writes for a seated pool, byte for byte: the
-    // record, the instance's data cell, and the holdings entry.
+    // seal, a record per mark, the instance's data cell, and the
+    // holdings entry.
+    assert_eq!(
+        after_found.cell(child_key(&TestHasher, pool(), CONFIG, &[])),
+        Some(pool_meta().leaf_bytes().unwrap()),
+    );
+    assert_eq!(
+        after_found.cell(resource_record_key(&TestHasher, pool(), unit())),
+        Some(UNIT_RECORD.to_cell().unwrap()),
+    );
     assert_eq!(
         after_found.cell(resource_record_key(&TestHasher, pool(), badge())),
         Some(BADGE_RECORD.to_cell().unwrap()),
@@ -562,7 +577,7 @@ fn a_pool_founds_itself_and_reaches_its_operator_surface() -> Result<()> {
     assert_eq!(holdings, vec![(u128::from(BADGE_ID), Vec::new())]);
 
     // And the surface is open: the founder registers a validator with
-    // the badge the founding minted.
+    // the badge the bring-up minted.
     let register = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
     let (outcome, end) = run_both(&after_found, std::slice::from_ref(&register));
     assert!(matches!(
@@ -576,17 +591,16 @@ fn a_pool_founds_itself_and_reaches_its_operator_surface() -> Result<()> {
     Ok(())
 }
 
-/// The one-way door: a second founding is refused as the record's unmet
+/// The one-way door: a second bring-up is refused as the seal's unmet
 /// absence, judged where the leaf lives, before any body runs.
 #[test]
-fn a_second_founding_is_refused_where_the_record_lives() -> Result<()> {
+fn a_second_bring_up_is_refused_where_the_seal_lives() -> Result<()> {
     let world = world();
-    let mut store = MemoryStore::new();
-    seal_pool(&mut store);
-    let found = batch_entry(&world, &single_intent(found_graph()), OPERATOR)?;
+    let store = MemoryStore::new();
+    let found = batch_entry(&world, &single_intent(bring_up_graph()), OPERATOR)?;
     let (_, after_found) = run_both(&store, std::slice::from_ref(&found));
 
-    let again = batch_entry(&world, &single_intent(found_graph()), OPERATOR)?;
+    let again = batch_entry(&world, &single_intent(bring_up_graph()), OPERATOR)?;
     let (outcome, _) = run_both(&after_found, std::slice::from_ref(&again));
     assert!(
         matches!(

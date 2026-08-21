@@ -221,8 +221,8 @@ impl Chain {
         hash
     }
 
-    /// Create an instance of `C`'s package under `config`, and answer a
-    /// handle to it.
+    /// Bring up an instance of `C`'s package under `config`, as
+    /// `founder`, and answer a handle to it.
     ///
     /// The package is named once, as the handle's own type: an instance
     /// address folds in the declaration hash, and the handle is what
@@ -237,17 +237,18 @@ impl Chain {
     /// chain does not hold answers no call — or if the configuration
     /// does not encode, which is a slot the package could not have
     /// declared.
-    pub fn instantiate<C: Component>(&mut self, config: C::Config) -> C {
+    pub fn instantiate<C: Component>(&mut self, founder: PrincipalAddr, config: C::Config) -> C {
         let package =
             declaration_hash(&TestHasher, &C::metadata()).expect("a traced declaration encodes");
         assert!(
             self.records.packages.get(package).is_some(),
             "the package must be published before an instance of it is created"
         );
-        C::at(self.create(package, config.values()))
+        C::at(self.create(founder, package, config.values()))
     }
 
-    /// Create an instance of a package the chain holds only as a hash.
+    /// Bring up an instance of a package the chain holds only as a
+    /// hash, as `founder`.
     ///
     /// What a hand-written package uses, having no module for the macro
     /// to derive a handle from.
@@ -258,10 +259,11 @@ impl Chain {
     /// not have declared.
     pub fn instantiate_raw(
         &mut self,
+        founder: PrincipalAddr,
         package: PackageHash,
         config: impl ConfigValues,
     ) -> ComponentAddr {
-        self.create(package, config.values())
+        self.create(founder, package, config.values())
     }
 
     /// Adopt `address` as an instance of `C`'s package.
@@ -296,12 +298,20 @@ impl Chain {
     /// Register a creation record and make the instance actual.
     ///
     /// A package that declares the generated seal is sealed through it:
-    /// an `instantiate` transaction, the same node a wallet composes,
-    /// with the leaf's bytes evaluated from the record rather than
-    /// supplied by anyone. A package written the long way declares no
-    /// seal, so the chain seats its leaf directly, as genesis seats what
-    /// it writes.
-    fn create(&mut self, package: PackageHash, config: Vec<Value>) -> ComponentAddr {
+    /// an `instantiate` transaction signed by `founder`, the same node a
+    /// wallet composes, with the leaf's bytes evaluated from the record
+    /// rather than supplied by anyone. `founder` signs in first, because
+    /// a package may hold bringing up to the caller its configuration
+    /// names; and the supply the component comes up holding leaves as an
+    /// edge, filed in that same account. A package written the long way
+    /// declares no seal, so the chain seats its leaf directly, as
+    /// genesis seats what it writes.
+    fn create(
+        &mut self,
+        founder: PrincipalAddr,
+        package: PackageHash,
+        config: Vec<Value>,
+    ) -> ComponentAddr {
         self.created += 1;
         let meta = InstanceMeta {
             package,
@@ -312,24 +322,46 @@ impl Chain {
         let leaf = child_key(&TestHasher, address, CONFIG, &[]);
         let bytes = meta.leaf_bytes().expect("an instance's record encodes");
         self.records.instances.create(&TestHasher, meta);
-        if self
+        // The kind decides which door the edge is filed through: a
+        // balance lands in a vault and an instance in the holdings
+        // interval, and the two share no accessor. And the gate decides
+        // whether the founder signs in first: a package may hold
+        // bringing up to the caller its configuration names, and a
+        // method that admits anyone reads no proof.
+        let stated = self
             .records
             .packages
             .method(package, "instantiate")
-            .is_some()
-        {
-            self.transact(principal(0xC0), |b| {
-                b.call(address, "instantiate", ())?.none()
-            })
-            .expect_completed();
-            assert_eq!(
-                self.store.cell(leaf),
-                Some(bytes),
-                "the seal writes the record's own bytes"
-            );
-        } else {
+            .map(|checked| {
+                let signature = checked.signature();
+                (
+                    signature.issues.as_ref().map(|issued| issued.kind),
+                    signature.requires_evidence(),
+                )
+            });
+        let Some((issues, gated)) = stated else {
             self.store.write(leaf, bytes);
-        }
+            return address;
+        };
+        self.transact(founder, |b| {
+            let outputs = if gated {
+                let signed_in = account::authorize(b, founder)?;
+                b.call_as(signed_in, address, "instantiate", ())?
+            } else {
+                b.call(address, "instantiate", ())?
+            };
+            match issues {
+                Some(ResourceKind::NonFungible) => account::deposit_nf(b, founder, outputs.one()?),
+                Some(ResourceKind::Fungible) => account::deposit(b, founder, outputs.one()?),
+                None => outputs.none(),
+            }
+        })
+        .expect_completed();
+        assert_eq!(
+            self.store.cell(leaf),
+            Some(bytes),
+            "the seal writes the record's own bytes"
+        );
         address
     }
 

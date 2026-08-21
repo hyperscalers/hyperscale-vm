@@ -223,7 +223,7 @@ PackageMetadata {
                 ),
             ],
         },
-        "found": MethodSignature {
+        "instantiate": MethodSignature {
             totality: Infallible,
             issues: Some(
                 Issuance {
@@ -293,106 +293,6 @@ PackageMetadata {
                         ),
                     },
                 },
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    7,
-                                ),
-                                material: [
-                                    SelfResource {
-                                        kind: NonFungible,
-                                        material: [
-                                            Literal(
-                                                Bytes(
-                                                    [
-                                                        111,
-                                                        119,
-                                                        110,
-                                                        101,
-                                                        114,
-                                                        45,
-                                                        98,
-                                                        97,
-                                                        100,
-                                                        103,
-                                                        101,
-                                                    ],
-                                                ),
-                                            ),
-                                        ],
-                                    },
-                                    Literal(
-                                        U64(
-                                            0,
-                                        ),
-                                    ),
-                                ],
-                            },
-                        ),
-                        presence: Absent,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                7,
-                            ),
-                            material: [
-                                SelfResource {
-                                    kind: NonFungible,
-                                    material: [
-                                        Literal(
-                                            Bytes(
-                                                [
-                                                    111,
-                                                    119,
-                                                    110,
-                                                    101,
-                                                    114,
-                                                    45,
-                                                    98,
-                                                    97,
-                                                    100,
-                                                    103,
-                                                    101,
-                                                ],
-                                            ),
-                                        ),
-                                    ],
-                                },
-                                Literal(
-                                    U64(
-                                        0,
-                                    ),
-                                ),
-                            ],
-                        },
-                    ),
-                    mode: Write,
-                    denomination: None,
-                },
-            ],
-            abi: [
-                Handle(
-                    2,
-                ),
-                Issuer,
-            ],
-        },
-        "instantiate": MethodSignature {
-            totality: Infallible,
-            issues: None,
-            params: [],
-            outputs: [],
-            denominations: [],
-            effects: [
                 Requires {
                     guard: None,
                     condition: Holds {
@@ -570,20 +470,109 @@ PackageMetadata {
                     mode: Write,
                     denomination: None,
                 },
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    7,
+                                ),
+                                material: [
+                                    SelfResource {
+                                        kind: NonFungible,
+                                        material: [
+                                            Literal(
+                                                Bytes(
+                                                    [
+                                                        111,
+                                                        119,
+                                                        110,
+                                                        101,
+                                                        114,
+                                                        45,
+                                                        98,
+                                                        97,
+                                                        100,
+                                                        103,
+                                                        101,
+                                                    ],
+                                                ),
+                                            ),
+                                        ],
+                                    },
+                                    Literal(
+                                        U64(
+                                            0,
+                                        ),
+                                    ),
+                                ],
+                            },
+                        ),
+                        presence: Absent,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                7,
+                            ),
+                            material: [
+                                SelfResource {
+                                    kind: NonFungible,
+                                    material: [
+                                        Literal(
+                                            Bytes(
+                                                [
+                                                    111,
+                                                    119,
+                                                    110,
+                                                    101,
+                                                    114,
+                                                    45,
+                                                    98,
+                                                    97,
+                                                    100,
+                                                    103,
+                                                    101,
+                                                ],
+                                            ),
+                                        ),
+                                    ],
+                                },
+                                Literal(
+                                    U64(
+                                        0,
+                                    ),
+                                ),
+                            ],
+                        },
+                    ),
+                    mode: Write,
+                    denomination: None,
+                },
             ],
             abi: [
                 Handle(
-                    1,
+                    2,
                 ),
                 Handle(
-                    3,
+                    4,
                 ),
                 Handle(
-                    5,
+                    6,
+                ),
+                Handle(
+                    8,
                 ),
                 Derived(
                     SelfRecord,
                 ),
+                Issuer,
             ],
         },
         "register-validator": MethodSignature {

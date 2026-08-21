@@ -1,5 +1,5 @@
-//! A package's own stored roles: declared names, a table behind a
-//! founding call's one-way door, and gates that read it where it lives.
+//! A package's own stored roles: declared names, a table behind its own
+//! one-way door, and gates that read it where it lives.
 //!
 //! The admin's authority is a badge the registry itself issues, so
 //! handing the admin seat over is an ordinary holdings transfer that
@@ -21,13 +21,14 @@ const SUCCESSOR: PrincipalAddr = principal(0x52);
 mod registry {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{
-        AuthBase, AuthCell, Cell, NfBucket, Proposal, Quantity, RoleTable, clock_ms,
+        AuthBase, AuthCell, Cell, Proposal, Quantity, RoleTable, clock_ms,
     };
 
     /// The badge the table's rules name: the registry's own issue, so
     /// holding it is holding the seat and selling the seat is a
-    /// transfer.
-    #[resource(non_fungible)]
+    /// transfer. The registry comes up holding its one instance, which
+    /// leaves as the edge the bring-up yields.
+    #[resource(non_fungible, initial(0))]
     struct AdminBadge;
 
     #[roles]
@@ -35,7 +36,9 @@ mod registry {
         Admin,
     }
 
+    /// Only the founder may bring the registry up or seed its table.
     #[config]
+    #[requires(founder)]
     struct Settings {
         founder: Address,
     }
@@ -47,15 +50,19 @@ mod registry {
     }
 
     impl Registry {
-        /// Seed the roles under their one-way door, and mint the badge
-        /// the seeded rules name.
+        /// Seed the roles, under the one-way door the table's own
+        /// absence is.
+        ///
+        /// A call of its own rather than part of the bring-up: what the
+        /// table holds is what a caller hands over, and an attribute has
+        /// no way to say it. The cell's `Absent` door is what makes it
+        /// once-only, so it needs no help from the seal.
         #[requires(founder)]
-        pub fn found(&mut self, table: RoleTable, delay_ms: u64) -> NfBucket {
+        pub fn seed_roles(&mut self, table: RoleTable, delay_ms: u64) {
             self.roles.create(AuthCell::new(AuthBase {
                 recovery_delay_ms: delay_ms,
                 roles: table,
             }));
-            AdminBadge::mint(0)
         }
 
         /// The admin surface.
@@ -91,9 +98,12 @@ const DELAY_MS: u64 = 100_000;
 fn setup() -> (Chain, registry::client::Registry) {
     let mut chain = Chain::native();
     chain.publish(package!(registry));
-    let instance = chain.instantiate::<registry::client::Registry>(registry::client::Settings {
-        founder: FOUNDER.address(),
-    });
+    let instance = chain.instantiate::<registry::client::Registry>(
+        FOUNDER,
+        registry::client::Settings {
+            founder: FOUNDER.address(),
+        },
+    );
     (chain, instance)
 }
 
@@ -117,8 +127,8 @@ fn admin(rule: &StoredRule) -> RoleTable {
     table
 }
 
-/// Found the registry with `Admin` held by instance 0 of its own badge,
-/// filed in the founder's account.
+/// Seed the registry's table with `Admin` held by instance 0 of the
+/// badge its bring-up already filed in the founder's account.
 fn founded() -> (Chain, registry::client::Registry) {
     let (mut chain, instance) = setup();
     let table = admin(&StoredRule::Require(Presented::Instance(
@@ -128,24 +138,23 @@ fn founded() -> (Chain, registry::client::Registry) {
     chain
         .transact(FOUNDER, |b| {
             let founder = account::authorize(b, FOUNDER)?;
-            let minted = instance.found(b, founder, table.clone(), DELAY_MS)?;
-            account::deposit_nf(b, FOUNDER, minted)
+            instance.seed_roles(b, founder, table.clone(), DELAY_MS)
         })
         .expect_completed();
     (chain, instance)
 }
 
-/// An unfounded component's gated call is refused as the table's unmet
-/// presence — a routed verdict a caller can read, never a trap and
-/// never an empty table silently denying.
+/// A component whose table nobody seeded refuses its gated call as the
+/// table's unmet presence — a routed verdict a caller can read, never a
+/// trap and never an empty table silently denying.
 #[test]
-fn an_unfounded_registry_refuses_its_surface_as_the_routed_absence() {
+fn an_unseeded_registry_refuses_its_surface_as_the_routed_absence() {
     let (mut chain, instance) = setup();
     let outcome = chain
         .transact(FOUNDER, |b| instance.set_flag(b, 7))
         .refused()
         .cloned()
-        .expect("an unfounded table refuses");
+        .expect("an unseeded table refuses");
     assert!(
         matches!(
             outcome,
@@ -160,10 +169,10 @@ fn an_unfounded_registry_refuses_its_surface_as_the_routed_absence() {
     );
 }
 
-/// The founding seeds the table and mints the badge its rules name, and
-/// the surface opens to whoever presents it.
+/// Seeding the table opens the surface to whoever holds the badge its
+/// rules name — the badge the bring-up already minted.
 #[test]
-fn a_founding_opens_the_surface_to_the_badge_holder() {
+fn a_seeded_table_opens_the_surface_to_the_badge_holder() {
     let (mut chain, instance) = founded();
     chain
         .transact(FOUNDER, |b| {
@@ -173,10 +182,10 @@ fn a_founding_opens_the_surface_to_the_badge_holder() {
         .expect_completed();
 }
 
-/// The one-way door: a second founding is refused where the table
+/// The one-way door: a second seeding is refused where the table
 /// lives, before any body runs.
 #[test]
-fn a_second_founding_is_refused_where_the_table_lives() {
+fn a_second_seeding_is_refused_where_the_table_lives() {
     let (mut chain, instance) = founded();
     let table = admin(&StoredRule::Require(Presented::Instance(
         badge(instance),
@@ -185,12 +194,11 @@ fn a_second_founding_is_refused_where_the_table_lives() {
     let outcome = chain
         .transact(FOUNDER, |b| {
             let founder = account::authorize(b, FOUNDER)?;
-            let minted = instance.found(b, founder, table.clone(), DELAY_MS)?;
-            account::deposit_nf(b, FOUNDER, minted)
+            instance.seed_roles(b, founder, table.clone(), DELAY_MS)
         })
         .refused()
         .cloned()
-        .expect("the second founding is refused");
+        .expect("the second seeding is refused");
     assert!(
         matches!(
             outcome,

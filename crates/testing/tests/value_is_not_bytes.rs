@@ -126,7 +126,7 @@ fn a_package_cannot_assign_itself_a_balance() {
         env!("CARGO_MANIFEST_DIR"),
         forge,
     ));
-    let mint = chain.instantiate_raw(package, ());
+    let mint = chain.instantiate_raw(ATTACKER, package, ());
     chain.credit(VICTIM, xrd(), 1_000);
 
     let outcome = chain.transact(ATTACKER, |b| {
@@ -366,8 +366,9 @@ fn a_badge_a_package_never_held_opens_nothing() {
         env!("CARGO_MANIFEST_DIR"),
         treasury_body,
     ));
-    let front: ComponentAddr = chain.instantiate_raw(impostor_pkg, ());
+    let front: ComponentAddr = chain.instantiate_raw(ATTACKER, impostor_pkg, ());
     let vault: ComponentAddr = chain.instantiate_raw(
+        ATTACKER,
         treasury_pkg,
         vec![
             Value::Address(BADGE.address()),
@@ -446,7 +447,7 @@ fn a_cell_that_says_nothing_takes_no_value() {
         env!("CARGO_MANIFEST_DIR"),
         silent_body,
     ));
-    let pot = chain.instantiate_raw(package, ());
+    let pot = chain.instantiate_raw(ATTACKER, package, ());
     chain.credit(ATTACKER, TREASURE, 1_000);
 
     let outcome = chain.transact(ATTACKER, |b| {

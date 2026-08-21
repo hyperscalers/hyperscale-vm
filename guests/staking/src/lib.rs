@@ -32,7 +32,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod staking {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, NfBucket, Quantity};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity};
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
     /// The pool's creation-fixed configuration: what a delegation is
@@ -40,7 +40,11 @@ pub mod staking {
     /// The identity the pool's operator surface admits: a badge this
     /// instance issues, so holding it is operating the pool and selling
     /// the pool is transferring it.
-    #[resource(non_fungible)]
+    ///
+    /// The pool comes up holding its one instance, which leaves as the
+    /// edge the bring-up yields — so a pool that exists has an operator
+    /// and there is no window in which it does not.
+    #[resource(non_fungible, initial(0))]
     struct OwnerBadge;
 
     /// A delegation's receipt: the resource the pool issues against what
@@ -49,13 +53,18 @@ pub mod staking {
     #[resource]
     struct StakeUnit;
 
+    /// Only the founder the configuration names may bring the pool up.
+    /// A pool's address is derivable by anyone, and the badge is what
+    /// confers the operator surface — so without this the race to seal
+    /// an address is the race to own the pool it names.
     #[config]
+    #[requires(founder)]
     struct Settings {
         staked_resource: ResourceAddr,
-        /// Who may found the pool: the one caller `found` admits, fixed
-        /// where the address is derived — so whoever names an address
-        /// names its founder, and the race an open founding call would
-        /// be is decided before any transaction exists.
+        /// Who may bring the pool up: fixed where the address is
+        /// derived, so whoever names an address names its founder, and
+        /// the race an open bring-up would be is decided before any
+        /// transaction exists.
         founder: Address,
     }
 
@@ -160,18 +169,6 @@ pub mod staking {
             let returned = units.quantity();
             StakeUnit::burn(units);
             Unstaked { amount: returned }.emit();
-        }
-
-        /// Mint the pool's one owner badge, handed back for the founder
-        /// to keep.
-        ///
-        /// The instance's data cell is the one-way door — a second
-        /// founding is refused by the shard holding the leaf before any
-        /// body runs. Genesis seats its own pools by writing these same
-        /// cells directly, and is held to them byte for byte.
-        #[requires(founder)]
-        pub fn found(&mut self) -> NfBucket {
-            OwnerBadge::mint(0)
         }
 
         /// Take on a validator, recording the key the pool registered.

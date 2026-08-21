@@ -1,0 +1,8 @@
+error: a mark carrying a schema states no initial supply — what its instance holds is runtime data, so it is founded through a method that takes the record
+ --> tests/refusals/supply_of_a_schema.rs:6:17
+  |
+6 |       struct Seat {
+  |  _________________^
+7 | |         operator: u64,
+8 | |     }
+  | |_____^

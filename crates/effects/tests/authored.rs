@@ -171,11 +171,10 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("staking", "deactivate-validator", owner_badge(), vec![]),
         (
             "staking",
-            "found",
+            "instantiate",
             vec![RuleExpr::claim(Expr::Config(1))],
             vec![],
         ),
-        ("staking", "instantiate", open(), vec![]),
         ("staking", "register-validator", owner_badge(), vec![]),
         ("staking", "stake", open(), vec![]),
         ("staking", "unjail", owner_badge(), vec![]),

@@ -22,7 +22,9 @@ const FOUNDER: PrincipalAddr = principal(0x31);
 mod issuer {
     use hyperscale_vm_sdk::state::{Cell, NfBucket};
 
-    #[resource(non_fungible)]
+    /// The issuer comes up holding this badge's one instance, which
+    /// leaves as the edge the bring-up yields.
+    #[resource(non_fungible, initial(0))]
     struct OwnerBadge;
 
     /// A fielded mark: the instance's data cell holds this record, in
@@ -42,12 +44,6 @@ mod issuer {
     }
 
     impl Issuer {
-        /// Mint the badge's first instance, handed back as an edge for
-        /// the founder to keep.
-        pub fn found(&mut self) -> NfBucket {
-            OwnerBadge::mint(0)
-        }
-
         /// Note who operates the seat at `id`, where such a seat was
         /// minted: the issuer reads its own instance's record and acts
         /// on what it holds.
@@ -90,19 +86,8 @@ mod issuer {
 fn founded() -> (Chain, issuer::client::Issuer) {
     let mut chain = Chain::native();
     chain.publish(package!(issuer));
-    let instance = chain.instantiate::<issuer::client::Issuer>(());
+    let instance = chain.instantiate::<issuer::client::Issuer>(FOUNDER, ());
     (chain, instance)
-}
-
-/// Found the pool: create the badge's record, mint instance 0, and file
-/// the edge in the founder's own account.
-fn found(chain: &mut Chain, instance: issuer::client::Issuer) {
-    chain
-        .transact(FOUNDER, |b| {
-            let badge = instance.found(b)?;
-            account::deposit_nf(b, FOUNDER, badge)
-        })
-        .expect_completed();
 }
 
 /// Instantiation writes a record per declared mark, in the protocol's
@@ -150,7 +135,10 @@ fn a_second_instantiation_is_refused_where_the_leaves_live() {
     let (mut chain, instance) = founded();
 
     let outcome = chain
-        .transact(FOUNDER, |b| b.call(instance, "instantiate", ())?.none())
+        .transact(FOUNDER, |b| {
+            let badge = b.call(instance, "instantiate", ())?.one()?;
+            account::deposit_nf(b, FOUNDER, badge)
+        })
         .refused()
         .cloned()
         .expect("the second instantiation is refused");
@@ -173,8 +161,7 @@ fn a_second_instantiation_is_refused_where_the_leaves_live() {
 /// issuer — the cell genesis writes for a seated instance.
 #[test]
 fn a_mint_files_the_instance_cell_at_its_id() {
-    let (mut chain, instance) = founded();
-    found(&mut chain, instance);
+    let (chain, instance) = founded();
 
     let badge = issued_resource(
         &TestHasher,

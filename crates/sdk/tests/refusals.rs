@@ -69,6 +69,8 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/bare_mint_with_record.rs");
     refuse.compile_fail("tests/refusals/fielded_mint_without_record.rs");
     refuse.compile_fail("tests/refusals/fielded_fungible.rs");
+    refuse.compile_fail("tests/refusals/two_initial_supplies.rs");
+    refuse.compile_fail("tests/refusals/supply_of_a_schema.rs");
     refuse.compile_fail("tests/refusals/bare_instance_read.rs");
     refuse.compile_fail("tests/refusals/fungible_instance_read.rs");
 }

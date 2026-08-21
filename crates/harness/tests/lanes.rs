@@ -50,11 +50,14 @@ fn grammar() -> Package {
 /// A pool with a thousand of each side, and Alice holding six hundred.
 fn pool(mut chain: Chain) -> (Chain, amm::Amm) {
     chain.publish(amm());
-    let pool = chain.instantiate::<amm::Amm>(Settings {
-        x: X,
-        y: Y,
-        fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
-    });
+    let pool = chain.instantiate::<amm::Amm>(
+        ALICE,
+        Settings {
+            x: X,
+            y: Y,
+            fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
+        },
+    );
     chain.credit(ALICE, X, 600);
     chain.credit(pool, X, 1_000);
     chain.credit(pool, Y, 1_000);
@@ -154,7 +157,7 @@ fn a_transfer_reads_the_same_in_both_lanes() {
 fn a_fielded_instance_reads_the_same_in_both_lanes() {
     let run = |mut chain: Chain| {
         chain.publish(grammar());
-        let shapes = chain.instantiate::<grammar::Grammar>(());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
         let outcome = chain.transact(ALICE, |b| {
             let seat = shapes.seat(b, 3, 42)?;
             account::deposit_nf(b, ALICE, seat)

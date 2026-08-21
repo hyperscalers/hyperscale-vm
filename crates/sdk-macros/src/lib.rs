@@ -1640,7 +1640,7 @@ fn lower_methods(
     }
     if matches!(serves, client::Serves::Instances) {
         lowered.push(lower_method(
-            &instantiate_method(declared.resources),
+            &instantiate_method(declared.resources, instantiation_gate(items)),
             declared,
             serves,
         )?);
@@ -1661,7 +1661,7 @@ fn lower_methods(
 /// the node that makes the component actual is the node that says what
 /// it issues. A package declaring no resource comes up in this one node
 /// and nothing else.
-fn instantiate_method(resources: &[Resource]) -> syn::ImplItemFn {
+fn instantiate_method(resources: &[Resource], gate: Option<&syn::Attribute>) -> syn::ImplItemFn {
     let records = resources.iter().map(|resource| {
         let name = syn::Ident::new(&resource.name, Span::call_site());
         let stated = match resource.kind {
@@ -1673,16 +1673,56 @@ fn instantiate_method(resources: &[Resource]) -> syn::ImplItemFn {
         };
         quote!(#name::__record(#stated);)
     });
+    // The supply, where a mark states one: the node that makes the
+    // component actual is the node that issues what it comes up
+    // holding, so the two are one invocation and the edge leaves with
+    // whoever composed the bring-up.
+    let supplied = resources
+        .iter()
+        .find_map(|resource| Some((resource, resource.initial.as_ref()?)));
+    let (returns, supply) = match supplied {
+        Some((resource, initial)) => {
+            let name = syn::Ident::new(&resource.name, Span::call_site());
+            let edge = match resource.kind {
+                ResourceKind::Fungible => quote!(::hyperscale_vm_sdk::state::Bucket),
+                ResourceKind::NonFungible => quote!(::hyperscale_vm_sdk::state::NfBucket),
+            };
+            (quote!(-> #edge), quote!(#name::mint(#initial)))
+        }
+        None => (quote!(), quote!()),
+    };
     syn::parse_quote!(
         /// Makes this component actual: seals its creation-fixed record
-        /// into the configuration leaf and writes the record of every
-        /// resource it issues, each refused where its leaf is already
-        /// there.
-        pub fn instantiate(&mut self) {
+        /// into the configuration leaf, writes the record of every
+        /// resource it issues, and issues the supply it comes up
+        /// holding — each write refused where its leaf is already there.
+        #gate
+        pub fn instantiate(&mut self) #returns {
             self.__seal();
             #(#records)*
+            #supply
         }
     )
+}
+
+/// The `#[requires(..)]` a `#[config]` struct carries, if any: who may
+/// bring a component of this package up.
+///
+/// A property of the configuration rather than of the state, because the
+/// configuration is where the founder is named — a pool's `founder`
+/// field is what makes one address's bring-up different from another's,
+/// and the gate is what holds the two together. Inherited by the
+/// generated `instantiate`, which is the whole of bringing up.
+fn instantiation_gate(items: &[syn::Item]) -> Option<&syn::Attribute> {
+    items.iter().find_map(|item| {
+        let syn::Item::Struct(item) = item else {
+            return None;
+        };
+        if !item.attrs.iter().any(|a| a.path().is_ident("config")) {
+            return None;
+        }
+        item.attrs.iter().find(|a| a.path().is_ident("requires"))
+    })
 }
 
 /// Remove the macro's own attributes, so what it emits is ordinary Rust.
@@ -1899,7 +1939,11 @@ fn resources(items: &[syn::Item]) -> syn::Result<Vec<Resource>> {
         let Some(attr) = item.attrs.iter().find(|a| a.path().is_ident("resource")) else {
             continue;
         };
-        let ResourceAttr { kind, divisibility } = resource_attr(attr)?;
+        let ResourceAttr {
+            kind,
+            divisibility,
+            initial,
+        } = resource_attr(attr)?;
         // Fields are an instance's data, and a fungible resource has no
         // instances — so a fielded fungible declaration states a schema
         // nothing could ever hold.
@@ -1910,20 +1954,61 @@ fn resources(items: &[syn::Item]) -> syn::Result<Vec<Resource>> {
                  — drop them, or declare the resource `non_fungible`",
             ));
         }
-        structs.push((&item.ident, kind, divisibility, !item.fields.is_empty()));
-    }
-    let marks = distinct_band("resources", structs.iter().map(|(ident, ..)| *ident))?;
-    Ok(structs
-        .into_iter()
-        .zip(marks)
-        .map(|((ident, kind, divisibility, schema), mark)| Resource {
-            name: ident.to_string(),
-            mark: mark.into_bytes(),
+        // A mark carrying a schema founds its instances through a method
+        // that takes the record: what one holds is runtime data, and an
+        // attribute is not the place for it.
+        if initial.is_some() && !item.fields.is_empty() {
+            return Err(syn::Error::new(
+                item.fields.span(),
+                "a mark carrying a schema states no initial supply — what its instance \
+                 holds is runtime data, so it is founded through a method that takes \
+                 the record",
+            ));
+        }
+        structs.push((
+            &item.ident,
             kind,
             divisibility,
-            schema,
-        })
-        .collect())
+            initial,
+            !item.fields.is_empty(),
+        ));
+    }
+    let marks = distinct_band("resources", structs.iter().map(|(ident, ..)| *ident))?;
+    let declared: Vec<Resource> = structs
+        .into_iter()
+        .zip(marks)
+        .map(
+            |((ident, kind, divisibility, initial, schema), mark)| Resource {
+                name: ident.to_string(),
+                mark: mark.into_bytes(),
+                kind,
+                divisibility,
+                initial,
+                schema,
+            },
+        )
+        .collect();
+    // The kernel grants one issuance per invocation, and bringing a
+    // component up is one invocation — so a component brings one thing
+    // into existence, and a second initial supply is a second grant the
+    // node it would ride has no room for.
+    let mut supplied = declared.iter().filter(|r| r.initial.is_some());
+    if let (Some(first), Some(second)) = (supplied.next(), supplied.next()) {
+        return Err(syn::Error::new(
+            second
+                .initial
+                .as_ref()
+                .expect("filtered on a stated supply")
+                .span(),
+            format!(
+                "`{}` already states the supply this component comes up holding, and \
+                 a body brings one thing into existence. Mint `{}` through a method \
+                 of your own, called once the component is actual",
+                first.name, second.name,
+            ),
+        ));
+    }
+    Ok(declared)
 }
 
 /// One `#[resource]` declaration, as everything downstream reads it.
@@ -1938,6 +2023,10 @@ struct Resource {
     /// The display quantization its record carries. Meaningless on a
     /// non-fungible mark, where it is never read.
     divisibility: u8,
+    /// The supply the component comes up holding, where its attribute
+    /// states one: a quantity for a fungible mark, an instance id for a
+    /// non-fungible one — the same split the mint itself takes.
+    initial: Option<syn::LitInt>,
     /// Whether the struct has fields, which is what makes it an
     /// instance's data schema and not only a bare mark.
     schema: bool,
@@ -1963,11 +2052,13 @@ const DEFAULT_DIVISIBILITY: u8 = 18;
 struct ResourceAttr {
     kind: ResourceKind,
     divisibility: u8,
+    initial: Option<syn::LitInt>,
 }
 
 fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
     let mut kind = None;
     let mut divisibility = None;
+    let mut initial = None;
     if matches!(attr.meta, syn::Meta::List(_)) {
         let terms = attr.parse_args_with(
             syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
@@ -1986,6 +2077,11 @@ fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
                             "a resource is one kind — the derivation folds it, so two \
                              spellings would be two addresses",
                         ));
+                    }
+                }
+                syn::Meta::List(list) if list.path.is_ident("initial") => {
+                    if initial.replace(list.parse_args::<syn::LitInt>()?).is_some() {
+                        return Err(syn::Error::new(list.path.span(), "initial, twice"));
                     }
                 }
                 syn::Meta::NameValue(nv) if nv.path.is_ident("divisibility") => {
@@ -2020,14 +2116,16 @@ fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
     Ok(ResourceAttr {
         kind,
         divisibility: divisibility.unwrap_or(DEFAULT_DIVISIBILITY),
+        initial,
     })
 }
 
 fn unknown_resource_term(at: &impl Spanned) -> syn::Error {
     syn::Error::new(
         at.span(),
-        "a resource states `fungible` (the default) or `non_fungible`, and a \
-         fungible one may state `divisibility = <digits>`",
+        "a resource states `fungible` (the default) or `non_fungible`, the supply \
+         its component comes up holding as `initial(<n>)`, and — where it is \
+         fungible — `divisibility = <digits>`",
     )
 }
 
