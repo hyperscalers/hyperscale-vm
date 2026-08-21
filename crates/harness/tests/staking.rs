@@ -72,7 +72,7 @@ fn seal_pool(store: &mut MemoryStore) {
 
 /// The records the pool's instantiation writes: one per mark it
 /// declares, whether or not anything has been issued at it yet.
-const UNIT_RECORD: ResourceRecord = ResourceRecord::Fungible { divisibility: 18 };
+const UNIT_RECORD: ResourceRecord = ResourceRecord::Fungible { display_digits: 18 };
 const BADGE_RECORD: ResourceRecord = ResourceRecord::NonFungible;
 
 /// A store where [`OPERATOR`] holds the pool's owner badge — what every

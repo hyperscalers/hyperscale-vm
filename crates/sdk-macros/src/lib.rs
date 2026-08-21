@@ -1689,8 +1689,8 @@ fn instantiate_method(resources: &[Resource], gate: Option<&syn::Attribute>) -> 
         let name = syn::Ident::new(&resource.name, Span::call_site());
         let stated = match resource.kind {
             ResourceKind::Fungible => {
-                let divisibility = resource.divisibility;
-                quote!(#divisibility)
+                let display_digits = resource.display_digits;
+                quote!(#display_digits)
             }
             ResourceKind::NonFungible => quote!(),
         };
@@ -1965,7 +1965,7 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
         };
         let ResourceAttr {
             kind,
-            divisibility,
+            display_digits,
             initial,
             grants,
         } = resource_attr(attr)?;
@@ -1993,7 +1993,7 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
         structs.push((
             &item.ident,
             kind,
-            divisibility,
+            display_digits,
             initial,
             grants,
             !item.fields.is_empty(),
@@ -2022,12 +2022,15 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
         .zip(marks)
         .zip(rendered)
         .map(
-            |(((ident, kind, divisibility, initial, _, schema), mark), (grants, grants_config))| {
+            |(
+                ((ident, kind, display_digits, initial, _, schema), mark),
+                (grants, grants_config),
+            )| {
                 Resource {
                     name: ident.to_string(),
                     mark: mark.into_bytes(),
                     kind,
-                    divisibility,
+                    display_digits,
                     initial,
                     grants,
                     grants_config,
@@ -2356,7 +2359,7 @@ struct Resource {
     kind: ResourceKind,
     /// The display quantization its record carries. Meaningless on a
     /// non-fungible mark, where it is never read.
-    divisibility: u8,
+    display_digits: u8,
     /// The supply the component comes up holding, where its attribute
     /// states one: a quantity for a fungible mark, an instance id for a
     /// non-fungible one — the same split the mint itself takes.
@@ -2379,28 +2382,28 @@ struct Resource {
 ///
 /// The width the protocol's own fee resource is recorded at, so a
 /// package that says nothing is recorded like the one resource every
-/// network already holds. Nothing on-chain consults it — a divisibility
+/// network already holds. Nothing on-chain consults it — a display width
 /// is what a client renders with — which is why a default is a default
 /// and not a guess with consequences.
-const DEFAULT_DIVISIBILITY: u8 = 18;
+const DEFAULT_DISPLAY_DIGITS: u8 = 18;
 
 /// What a `#[resource]` attribute states about the resource beside its
 /// name.
 ///
 /// Stated in the source because the derivation and the record both fold
 /// it: the mark constant a gate evaluates and the address a host derives
-/// need the kind, and the record `instantiate` writes needs the
-/// divisibility. The attribute is the one place all three read from.
+/// need the kind, and the record `instantiate` writes needs the display
+/// width. The attribute is the one place all three read from.
 struct ResourceAttr {
     kind: ResourceKind,
-    divisibility: u8,
+    display_digits: u8,
     initial: Option<syn::LitInt>,
     grants: Option<syn::MetaList>,
 }
 
 fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
     let mut kind = None;
-    let mut divisibility = None;
+    let mut display_digits = None;
     let mut initial = None;
     let mut grants = None;
     if matches!(attr.meta, syn::Meta::List(_)) {
@@ -2433,7 +2436,7 @@ fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
                         return Err(syn::Error::new(list.path.span(), "initial, twice"));
                     }
                 }
-                syn::Meta::NameValue(nv) if nv.path.is_ident("divisibility") => {
+                syn::Meta::NameValue(nv) if nv.path.is_ident("display_digits") => {
                     let syn::Expr::Lit(syn::ExprLit {
                         lit: syn::Lit::Int(int),
                         ..
@@ -2441,11 +2444,11 @@ fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
                     else {
                         return Err(syn::Error::new(
                             nv.value.span(),
-                            "a divisibility is a literal count of subunit digits",
+                            "a display width is a literal count of subunit digits",
                         ));
                     };
-                    if divisibility.replace(int.base10_parse::<u8>()?).is_some() {
-                        return Err(syn::Error::new(nv.path.span(), "divisibility, twice"));
+                    if display_digits.replace(int.base10_parse::<u8>()?).is_some() {
+                        return Err(syn::Error::new(nv.path.span(), "display_digits, twice"));
                     }
                 }
                 other => return Err(unknown_resource_term(other)),
@@ -2455,16 +2458,16 @@ fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
     let kind = kind.unwrap_or(ResourceKind::Fungible);
     // Instances are whole by construction, so there is no quantity for a
     // quantization to be about.
-    if kind == ResourceKind::NonFungible && divisibility.is_some() {
+    if kind == ResourceKind::NonFungible && display_digits.is_some() {
         return Err(syn::Error::new(
             attr.span(),
-            "a non-fungible resource has no divisibility — its instances are whole, \
+            "a non-fungible resource has no display width — its instances are whole, \
              and what a client renders is an id",
         ));
     }
     Ok(ResourceAttr {
         kind,
-        divisibility: divisibility.unwrap_or(DEFAULT_DIVISIBILITY),
+        display_digits: display_digits.unwrap_or(DEFAULT_DISPLAY_DIGITS),
         initial,
         grants,
     })
@@ -2476,7 +2479,7 @@ fn unknown_resource_term(at: &impl Spanned) -> syn::Error {
         "a resource states `fungible` (the default) or `non_fungible`, the supply \
          its component comes up holding as `initial(<n>)`, the behaviours its \
          address grants as `grants(<behaviour> = <rule>, …)`, and — where it is \
-         fungible — `divisibility = <digits>`",
+         fungible — `display_digits = <digits>`",
     )
 }
 
@@ -2546,8 +2549,8 @@ fn issuance(name: &str, kind: ResourceKind, schema: bool, mark: &syn::Ident) -> 
     methods.push(match kind {
         ResourceKind::Fungible => syn::parse_quote!(
             #[doc = #create_doc]
-            pub fn create(divisibility: u8) {
-                let _ = divisibility;
+            pub fn create(display_digits: u8) {
+                let _ = display_digits;
                 #stub
             }
         ),

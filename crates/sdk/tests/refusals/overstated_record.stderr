@@ -1,5 +1,5 @@
-error: a non-fungible resource has no divisibility — its instances are whole, and what a client renders is an id
+error: a non-fungible resource has no display width — its instances are whole, and what a client renders is an id
  --> tests/refusals/overstated_record.rs:7:5
   |
-7 |     #[resource(non_fungible, divisibility = 6)]
+7 |     #[resource(non_fungible, display_digits = 6)]
   |     ^

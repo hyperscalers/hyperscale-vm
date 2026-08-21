@@ -111,7 +111,7 @@ pub const RECORD_WIRE_DEPTH: usize = 1;
 /// that its address cannot be read backwards to give them.
 ///
 /// The kind is restated rather than stated — the address commits it, and
-/// nothing on-chain consults the record — and the divisibility rides the
+/// nothing on-chain consults the record — and the display width rides the
 /// fungible arm because that is the only arm it means anything on:
 /// instances are whole by construction, so a non-fungible record has
 /// nothing to say beyond existing.
@@ -119,10 +119,13 @@ pub const RECORD_WIRE_DEPTH: usize = 1;
 pub enum ResourceRecord {
     /// Linear amounts in vault cells; edges carry 16-byte quantities.
     Fungible {
-        /// Display quantization: how many base-10 subunit digits a
-        /// client renders. Amounts are integers of the smallest unit
-        /// everywhere in the kernel; nothing on-chain consults this.
-        divisibility: u8,
+        /// How many base-10 subunit digits a client renders. Amounts are
+        /// integers of the smallest unit everywhere in the kernel, and
+        /// nothing on-chain consults this — so it is what a balance is
+        /// *shown* as and never what the protocol will hold a mint to.
+        /// A resource wanting whole units enforces that in its own
+        /// bodies.
+        display_digits: u8,
     },
     /// Named instances held as sub-collection entries; edges carry id
     /// sets.
@@ -567,7 +570,7 @@ mod tests {
     #[test]
     fn records_round_trip_canonically() {
         for record in [
-            ResourceRecord::Fungible { divisibility: 18 },
+            ResourceRecord::Fungible { display_digits: 18 },
             ResourceRecord::NonFungible,
         ] {
             assert_canonical(&record);

@@ -4,7 +4,7 @@ use hyperscale_vm_sdk::blueprint;
 mod contract {
     use hyperscale_vm_sdk::state::{Cell, Quantity};
 
-    #[resource(non_fungible, divisibility = 6)]
+    #[resource(non_fungible, display_digits = 6)]
     struct OwnerBadge;
 
     #[state]

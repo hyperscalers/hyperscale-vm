@@ -273,7 +273,7 @@ impl Quantity {
 
     /// Whether this is a whole multiple of `step`.
     ///
-    /// Nothing on-chain consults a resource's divisibility, so a contract
+    /// Nothing on-chain consults a resource's display width, so a contract
     /// that wants granularity enforces it. A zero step divides nothing
     /// and answers false rather than trapping.
     #[must_use]

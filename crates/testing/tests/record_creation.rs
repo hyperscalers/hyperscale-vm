@@ -35,7 +35,7 @@ mod issuer {
         label: String,
     }
 
-    #[resource(divisibility = 6)]
+    #[resource(display_digits = 6)]
     struct Coupon;
 
     #[state]
@@ -113,7 +113,7 @@ fn instantiation_writes_the_canonical_record_of_every_mark() {
         ),
         (
             instance.issued_coupon(&TestHasher),
-            ResourceRecord::Fungible { divisibility: 6 },
+            ResourceRecord::Fungible { display_digits: 6 },
         ),
     ] {
         assert_eq!(

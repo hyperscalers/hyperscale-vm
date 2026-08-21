@@ -54,7 +54,7 @@ use hyperscale_hbor::{
 /// The record a resource's cell holds, in the shape a client reads.
 ///
 /// Named here for the code the macro emits: a body never constructs one —
-/// `create` on the record handle states at most a divisibility, and the
+/// `create` on the record handle states at most a display width, and the
 /// kind comes from the mark's own declaration.
 pub use hyperscale_vm_effects::ResourceRecord;
 /// The stored-authority vocabulary, named where a body's words live.

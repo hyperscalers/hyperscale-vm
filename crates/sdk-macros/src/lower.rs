@@ -1201,16 +1201,16 @@ impl<'a> Lowerer<'a> {
             .collect();
         let record = match issued.kind {
             ResourceKind::Fungible => {
-                let Some(divisibility) = stated.first() else {
+                let Some(display_digits) = stated.first() else {
                     self.error(
                         call.span(),
                         "a fungible record states its display quantization: \
-                         `create(<divisibility>)`",
+                         `create(<display_digits>)`",
                     );
-                    return Eval::absent(call.span(), "a record with no divisibility");
+                    return Eval::absent(call.span(), "a record with no display width");
                 };
                 quote!(::hyperscale_vm_sdk::state::ResourceRecord::Fungible {
-                    divisibility: #divisibility,
+                    display_digits: #display_digits,
                 })
             }
             ResourceKind::NonFungible => {
@@ -3072,16 +3072,16 @@ impl<'a> Lowerer<'a> {
                 {
                     let record = match kind {
                         ResourceKind::Fungible => {
-                            let Some(divisibility) = rewritten.first() else {
+                            let Some(display_digits) = rewritten.first() else {
                                 self.error(
                                     call.span(),
                                     "a fungible record states its display quantization: \
-                                     `create(<divisibility>)`",
+                                     `create(<display_digits>)`",
                                 );
-                                return Eval::absent(call.span(), "a record with no divisibility");
+                                return Eval::absent(call.span(), "a record with no display width");
                             };
                             quote!(::hyperscale_vm_sdk::state::ResourceRecord::Fungible {
-                                divisibility: #divisibility,
+                                display_digits: #display_digits,
                             })
                         }
                         ResourceKind::NonFungible => {
